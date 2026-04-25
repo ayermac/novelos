@@ -1,8 +1,10 @@
-"""File size policy enforcement for CLI modularization (v3.7.2 Round 1).
+"""File size policy enforcement for CLI & Repository modularization (v3.7.2).
 
 Rules:
   - novel_factory/cli.py must be <= 150 lines
   - All novel_factory/cli_app/**/*.py files must be <= 1000 lines
+  - novel_factory/db/repository.py must be <= 300 lines
+  - All novel_factory/db/repositories/**/*.py files must be <= 1000 lines
 """
 
 from pathlib import Path
@@ -38,3 +40,27 @@ class TestCLIAppSizePolicy:
     def test_file_under_1000_lines(self, cli_app_py):
         lines = _count_lines(cli_app_py)
         assert lines <= 1000, f"{cli_app_py.relative_to(ROOT)} has {lines} lines, must be <= 1000"
+
+
+class TestRepositorySizePolicy:
+    """Verify db/repository.py is a thin facade (<= 300 lines)."""
+
+    def test_repository_py_thin_facade(self):
+        path = ROOT / "db" / "repository.py"
+        lines = _count_lines(path)
+        assert lines <= 300, f"db/repository.py has {lines} lines, must be <= 300"
+
+
+class TestRepositoriesSizePolicy:
+    """Verify all db/repositories/**/*.py files are <= 1000 lines."""
+
+    @pytest.fixture(params=[
+        p.relative_to(ROOT)
+        for p in (ROOT / "db" / "repositories").rglob("*.py")
+    ])
+    def repo_py(self, request):
+        return ROOT / request.param
+
+    def test_file_under_1000_lines(self, repo_py):
+        lines = _count_lines(repo_py)
+        assert lines <= 1000, f"{repo_py.relative_to(ROOT)} has {lines} lines, must be <= 1000"
