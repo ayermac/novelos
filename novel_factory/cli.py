@@ -245,7 +245,7 @@ def cmd_run_chapter(args) -> dict:
     
     # v3.1: Check for LLM configuration errors (distinguished by specific error messages)
     # Business logic errors (max_steps exceeded, requires_human) should NOT cause exit(1)
-    error_msg = result.get("error", "")
+    error_msg = result.get("error") or ""
     is_llm_config_error = "LLM configuration error" in error_msg or "API key" in error_msg or "base_url" in error_msg
     
     if is_llm_config_error:
@@ -1037,7 +1037,7 @@ def cmd_architect_suggest(args) -> None:
     
     # v3.1: run_architect_suggest already returns {ok, error, data} format
     # Check for LLM configuration errors (distinguished by ok=false and specific error messages)
-    error_msg = result.get("error", "")
+    error_msg = result.get("error") or ""
     is_llm_config_error = not result.get("ok") and (
         "LLM configuration error" in error_msg or 
         "API key" in error_msg or 
@@ -1588,7 +1588,7 @@ def cmd_batch_run(args) -> None:
     # v3.1: run_batch already returns {ok, error, data} format
     # Check for LLM configuration errors (distinguished by ok=false and specific error messages)
     # Business logic errors (blocked chapter) should NOT cause exit(1)
-    error_msg = result.get("error", "")
+    error_msg = result.get("error") or ""
     is_llm_config_error = not result.get("ok") and (
         "LLM configuration error" in error_msg or 
         "API key" in error_msg or 
