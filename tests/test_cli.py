@@ -64,6 +64,22 @@ class TestCLIHelp:
             parser.parse_args(["--help"])
         assert exc_info.value.code == 0
 
+    def test_novelos_version(self):
+        """--version should exit 0 and print version string."""
+        parser = build_parser()
+        with pytest.raises(SystemExit) as exc_info:
+            parser.parse_args(["--version"])
+        assert exc_info.value.code == 0
+
+    def test_novelos_version_output(self, capsys):
+        """--version output should contain 'novelos'."""
+        parser = build_parser()
+        with pytest.raises(SystemExit) as exc_info:
+            parser.parse_args(["--version"])
+        assert exc_info.value.code == 0
+        output = capsys.readouterr().out
+        assert "novelos" in output
+
     def test_init_db_help(self):
         parser = build_parser()
         with pytest.raises(SystemExit) as exc_info:
@@ -245,6 +261,16 @@ class TestCLILegacy:
         )
         assert result.returncode == 0
         assert "novelos" in result.stdout or "novel-factory" in result.stdout
+
+    def test_python_m_cli_version(self):
+        """python -m novel_factory.cli --version should exit 0."""
+        result = subprocess.run(
+            [sys.executable, "-m", "novel_factory.cli", "--version"],
+            capture_output=True, text=True,
+            cwd="/Users/chenchao/Workspace/AI-Project/claw-novel",
+        )
+        assert result.returncode == 0
+        assert "novelos" in result.stdout
 
 
 # ── v1.3 Rework regression tests ────────────────────────────────
