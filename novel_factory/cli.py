@@ -1,4 +1,4 @@
-"""Novel Factory CLI — command-line interface for v3.5.
+"""Novel Factory CLI — command-line interface for v3.6.
 
 Provides the ``novelos`` console script and preserves ``python -m novel_factory.cli``
 compatibility.
@@ -28,6 +28,13 @@ Commands:
     batch queue-cancel   Cancel a queue item (v3.5)
     batch queue-recover  Recover a stuck running item (v3.5)
     batch queue-doctor   Diagnose queue item (v3.5)
+    serial create    Create a serial plan (v3.6)
+    serial status    Get serial plan status (v3.6)
+    serial enqueue-next  Enqueue next batch for serial plan (v3.6)
+    serial advance   Advance serial plan with decision (v3.6)
+    serial pause     Pause a serial plan (v3.6)
+    serial resume    Resume a paused serial plan (v3.6)
+    serial cancel    Cancel a serial plan (v3.6)
 """
 
 from __future__ import annotations
@@ -2240,6 +2247,190 @@ def cmd_batch_queue_run_limit(args) -> None:
             print(f"Error: {result.get('error')}")
 
 
+# ── Serial commands (v3.6) ──────────────────────────────────────────────
+
+
+def cmd_serial_create(args) -> None:
+    """Create a new serial plan."""
+    settings = _get_settings(args)
+    init_db(settings.db_path)
+
+    repo = Repository(settings.db_path)
+    stub_llm = _StubLLM()
+    dispatcher = Dispatcher(repo, stub_llm, max_retries=3)
+
+    result = dispatcher.create_serial_plan(
+        project_id=args.project_id,
+        name=args.name,
+        start_chapter=args.start_chapter,
+        target_chapter=args.target_chapter,
+        batch_size=args.batch_size,
+    )
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        if result.get("ok"):
+            data = result["data"]
+            print(f"Serial plan created: {data['serial_plan_id']}")
+            print(f"Status: {data['status']}")
+            print(f"Current chapter: {data['current_chapter']}")
+        else:
+            print(f"Error: {result.get('error')}")
+
+
+def cmd_serial_status(args) -> None:
+    """Get serial plan status."""
+    settings = _get_settings(args)
+    init_db(settings.db_path)
+
+    repo = Repository(settings.db_path)
+    stub_llm = _StubLLM()
+    dispatcher = Dispatcher(repo, stub_llm, max_retries=3)
+
+    result = dispatcher.get_serial_status(args.serial_plan_id)
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        if result.get("ok"):
+            data = result["data"]
+            print(f"Serial plan: {data['serial_plan_id']}")
+            print(f"Project: {data['project_id']}")
+            print(f"Name: {data['name']}")
+            print(f"Status: {data['status']}")
+            print(f"Progress: {data['current_chapter']}/{data['target_chapter']}")
+            print(f"Batch size: {data['batch_size']}")
+            print(f"Completed chapters: {data['completed_chapters']}")
+            if data.get("current_queue_id"):
+                print(f"Current queue: {data['current_queue_id']}")
+            if data.get("current_production_run_id"):
+                print(f"Current production run: {data['current_production_run_id']}")
+        else:
+            print(f"Error: {result.get('error')}")
+
+
+def cmd_serial_enqueue_next(args) -> None:
+    """Enqueue next batch for serial plan."""
+    settings = _get_settings(args)
+    init_db(settings.db_path)
+
+    repo = Repository(settings.db_path)
+    stub_llm = _StubLLM()
+    dispatcher = Dispatcher(repo, stub_llm, max_retries=3)
+
+    result = dispatcher.enqueue_serial_next(args.serial_plan_id)
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        if result.get("ok"):
+            data = result["data"]
+            print(f"Enqueued chapters {data['from_chapter']}-{data['to_chapter']}")
+            print(f"Queue ID: {data['queue_id']}")
+            print(f"Status: {data['status']}")
+        else:
+            print(f"Error: {result.get('error')}")
+
+
+def cmd_serial_advance(args) -> None:
+    """Advance serial plan with decision."""
+    settings = _get_settings(args)
+    init_db(settings.db_path)
+
+    repo = Repository(settings.db_path)
+    stub_llm = _StubLLM()
+    dispatcher = Dispatcher(repo, stub_llm, max_retries=3)
+
+    result = dispatcher.advance_serial_plan(
+        serial_plan_id=args.serial_plan_id,
+        decision=args.decision,
+        notes=getattr(args, "notes", None),
+    )
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        if result.get("ok"):
+            data = result["data"]
+            print(f"Decision: {args.decision}")
+            print(f"Status: {data['status']}")
+            if "current_chapter" in data:
+                print(f"Current chapter: {data['current_chapter']}")
+        else:
+            print(f"Error: {result.get('error')}")
+
+
+def cmd_serial_pause(args) -> None:
+    """Pause a serial plan."""
+    settings = _get_settings(args)
+    init_db(settings.db_path)
+
+    repo = Repository(settings.db_path)
+    stub_llm = _StubLLM()
+    dispatcher = Dispatcher(repo, stub_llm, max_retries=3)
+
+    result = dispatcher.pause_serial_plan(args.serial_plan_id)
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        if result.get("ok"):
+            print(f"Serial plan paused: {args.serial_plan_id}")
+        else:
+            print(f"Error: {result.get('error')}")
+
+
+def cmd_serial_resume(args) -> None:
+    """Resume a paused serial plan."""
+    settings = _get_settings(args)
+    init_db(settings.db_path)
+
+    repo = Repository(settings.db_path)
+    stub_llm = _StubLLM()
+    dispatcher = Dispatcher(repo, stub_llm, max_retries=3)
+
+    result = dispatcher.resume_serial_plan(args.serial_plan_id)
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        if result.get("ok"):
+            print(f"Serial plan resumed: {args.serial_plan_id}")
+        else:
+            print(f"Error: {result.get('error')}")
+
+
+def cmd_serial_cancel(args) -> None:
+    """Cancel a serial plan."""
+    settings = _get_settings(args)
+    init_db(settings.db_path)
+
+    repo = Repository(settings.db_path)
+    stub_llm = _StubLLM()
+    dispatcher = Dispatcher(repo, stub_llm, max_retries=3)
+
+    result = dispatcher.cancel_serial_plan(
+        serial_plan_id=args.serial_plan_id,
+        reason=getattr(args, "reason", None),
+    )
+
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        if result.get("ok"):
+            print(f"Serial plan cancelled: {args.serial_plan_id}")
+        else:
+            print(f"Error: {result.get('error')}")
+
+
 # ── Argument parser ──────────────────────────────────────────────
 
 
@@ -2591,6 +2782,59 @@ def build_parser() -> argparse.ArgumentParser:
     batch_queue_doctor.add_argument("--queue-id", required=True, help="Queue item ID")
     batch_queue_doctor.add_argument("--json", action="store_true", help="Output in JSON format")
     batch_queue_doctor.set_defaults(func=cmd_batch_queue_doctor)
+
+    # serial (v3.6)
+    serial_parser = subparsers.add_parser("serial", help="Serial plan operations")
+    serial_subparsers = serial_parser.add_subparsers(dest="serial_command", help="Serial subcommands")
+
+    # serial create
+    serial_create = serial_subparsers.add_parser("create", help="Create a serial plan")
+    serial_create.add_argument("--project-id", required=True, help="Project ID")
+    serial_create.add_argument("--name", required=True, help="Serial plan name")
+    serial_create.add_argument("--start-chapter", type=int, required=True, help="Starting chapter number")
+    serial_create.add_argument("--target-chapter", type=int, required=True, help="Target chapter number")
+    serial_create.add_argument("--batch-size", type=int, required=True, help="Chapters per batch")
+    serial_create.add_argument("--json", action="store_true", help="Output in JSON format")
+    serial_create.set_defaults(func=cmd_serial_create)
+
+    # serial status
+    serial_status = serial_subparsers.add_parser("status", help="Get serial plan status")
+    serial_status.add_argument("--serial-plan-id", required=True, help="Serial plan ID")
+    serial_status.add_argument("--json", action="store_true", help="Output in JSON format")
+    serial_status.set_defaults(func=cmd_serial_status)
+
+    # serial enqueue-next
+    serial_enqueue_next = serial_subparsers.add_parser("enqueue-next", help="Enqueue next batch")
+    serial_enqueue_next.add_argument("--serial-plan-id", required=True, help="Serial plan ID")
+    serial_enqueue_next.add_argument("--json", action="store_true", help="Output in JSON format")
+    serial_enqueue_next.set_defaults(func=cmd_serial_enqueue_next)
+
+    # serial advance
+    serial_advance = serial_subparsers.add_parser("advance", help="Advance serial plan with decision")
+    serial_advance.add_argument("--serial-plan-id", required=True, help="Serial plan ID")
+    serial_advance.add_argument("--decision", required=True, choices=["approve", "request_changes", "pause", "cancel"], help="Decision")
+    serial_advance.add_argument("--notes", help="Optional notes")
+    serial_advance.add_argument("--json", action="store_true", help="Output in JSON format")
+    serial_advance.set_defaults(func=cmd_serial_advance)
+
+    # serial pause
+    serial_pause = serial_subparsers.add_parser("pause", help="Pause a serial plan")
+    serial_pause.add_argument("--serial-plan-id", required=True, help="Serial plan ID")
+    serial_pause.add_argument("--json", action="store_true", help="Output in JSON format")
+    serial_pause.set_defaults(func=cmd_serial_pause)
+
+    # serial resume
+    serial_resume = serial_subparsers.add_parser("resume", help="Resume a paused serial plan")
+    serial_resume.add_argument("--serial-plan-id", required=True, help="Serial plan ID")
+    serial_resume.add_argument("--json", action="store_true", help="Output in JSON format")
+    serial_resume.set_defaults(func=cmd_serial_resume)
+
+    # serial cancel
+    serial_cancel = serial_subparsers.add_parser("cancel", help="Cancel a serial plan")
+    serial_cancel.add_argument("--serial-plan-id", required=True, help="Serial plan ID")
+    serial_cancel.add_argument("--reason", help="Cancellation reason")
+    serial_cancel.add_argument("--json", action="store_true", help="Output in JSON format")
+    serial_cancel.set_defaults(func=cmd_serial_cancel)
 
     # Legacy aliases: 'init' → 'init-db', 'run' → 'run-chapter'
     init_compat = subparsers.add_parser("init", help="Initialize the database (legacy alias for init-db)")

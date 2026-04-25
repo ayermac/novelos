@@ -121,6 +121,16 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         required = {"production_queue", "production_queue_events"}
         return required.issubset(tables)
 
+    if name == "011_v3_6_serial_plan":
+        # 011 adds 2 tables: serial_plans, serial_plan_events
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+            "('serial_plans', 'serial_plan_events')"
+        )
+        tables = {row[0] for row in cursor.fetchall()}
+        required = {"serial_plans", "serial_plan_events"}
+        return required.issubset(tables)
+
     return False
 
 
