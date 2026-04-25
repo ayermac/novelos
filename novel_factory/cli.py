@@ -1,4 +1,4 @@
-"""Novel Factory CLI — command-line interface for v3.4.
+"""Novel Factory CLI — command-line interface for v3.5.
 
 Provides the ``novelos`` console script and preserves ``python -m novel_factory.cli``
 compatibility.
@@ -24,6 +24,10 @@ Commands:
     batch queue-resume  Resume a paused queue item (v3.4)
     batch queue-retry   Retry a failed/timed-out queue item (v3.4)
     batch queue-timeouts  Mark timed-out queue items (v3.4)
+    batch queue-events   View queue item audit events (v3.5)
+    batch queue-cancel   Cancel a queue item (v3.5)
+    batch queue-recover  Recover a stuck running item (v3.5)
+    batch queue-doctor   Diagnose queue item (v3.5)
 """
 
 from __future__ import annotations
@@ -2059,6 +2063,183 @@ def cmd_batch_queue_timeouts(args) -> None:
             print(f"Error: {result.get('error')}")
 
 
+# ── v3.5 Queue Runtime Hardening commands ───────────────────────────
+
+
+def cmd_batch_queue_events(args) -> None:
+    """View queue item audit events."""
+    settings = _get_settings(args)
+    init_db(settings.db_path)
+    
+    repo = Repository(settings.db_path)
+    stub_llm = _StubLLM()
+    dispatcher = Dispatcher(repo, stub_llm, max_retries=3)
+    
+    result = dispatcher.get_queue_events(args.queue_id)
+    
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        if result.get("ok"):
+            data = result["data"]
+            print(f"Queue item: {data['queue_id']}")
+            print(f"Events ({len(data['events'])}):")
+            for event in data["events"]:
+                print(f"  [{event['event_type']}] {event['from_status'] or '-'} → {event['to_status'] or '-'}")
+                if event.get("message"):
+                    print(f"    {event['message']}")
+                print(f"    at {event['created_at']}")
+        else:
+            print(f"Error: {result.get('error')}")
+
+
+def cmd_batch_queue_cancel(args) -> None:
+    """Cancel a queue item."""
+    settings = _get_settings(args)
+    init_db(settings.db_path)
+    
+    repo = Repository(settings.db_path)
+    stub_llm = _StubLLM()
+    dispatcher = Dispatcher(repo, stub_llm, max_retries=3)
+    
+    result = dispatcher.cancel_queue_item(
+        queue_id=args.queue_id,
+        reason=getattr(args, "reason", None),
+    )
+    
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        if result.get("ok"):
+            print(f"Queue item cancelled: {result['data']['queue_id']}")
+        else:
+            print(f"Error: {result.get('error')}")
+
+
+def cmd_batch_queue_recover(args) -> None:
+    """Recover a stuck running queue item."""
+    settings = _get_settings(args)
+    init_db(settings.db_path)
+    
+    repo = Repository(settings.db_path)
+    stub_llm = _StubLLM()
+    dispatcher = Dispatcher(repo, stub_llm, max_retries=3)
+    
+    result = dispatcher.recover_queue_item(
+        queue_id=args.queue_id,
+        force=getattr(args, "force", False),
+    )
+    
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        if result.get("ok"):
+            print(f"Queue item recovered: {result['data']['queue_id']}")
+        else:
+            print(f"Error: {result.get('error')}")
+
+
+def cmd_batch_queue_doctor(args) -> None:
+    """Diagnose a queue item."""
+    settings = _get_settings(args)
+    init_db(settings.db_path)
+    
+    repo = Repository(settings.db_path)
+    stub_llm = _StubLLM()
+    dispatcher = Dispatcher(repo, stub_llm, max_retries=3)
+    
+    result = dispatcher.doctor_queue_item(args.queue_id)
+    
+    use_json = getattr(args, "json", False)
+    if use_json:
+        print(json.dumps(result, ensure_ascii=False))
+    else:
+        if result.get("ok"):
+            data = result["data"]
+            print(f"Queue item: {data['queue_id']}")
+            print(f"Status: {data['status']}")
+            print(f"Production run: {data.get('production_run_id') or 'N/A'}")
+            print(f"\nChecks:")
+            for check in data["checks"]:
+                status = "✓" if check["pass"] else "✗"
+                msg = check.get("message", "")
+                print(f"  {status} {check['name']}: {msg or ('pass' if check['pass'] else 'fail')}")
+            if data.get("recent_error"):
+                print(f"\nRecent error: {data['recent_error']}")
+        else:
+            print(f"Error: {result.get('error')}")
+
+
+def cmd_batch_queue_run_limit(args) -> None:
+    """Execute multiple queue items."""
+    settings = _get_settings(args)
+    init_db(settings.db_path)
+    
+    repo = Repository(settings.db_path)
+    llm_mode = getattr(args, "llm_mode", "real")
+    
+    try:
+        dispatcher = _build_dispatcher(repo, settings, llm_mode)
+    except ValueError as e:
+        if getattr(args, "json", False):
+            print(json.dumps({"ok": False, "error": str(e), "data": {}}, ensure_ascii=False))
+        else:
+            print(f"Error: {e}")
+        sys.exit(1)
+    
+    # Handle --once as --limit 1
+    limit = getattr(args, "limit", 1)
+    if getattr(args, "once", False):
+        limit = 1
+    
+    result = dispatcher.run_queue(limit=limit)
+    
+    use_json = getattr(args, "json", False)
+    
+    # v3.4 backward compatibility: when limit=1 and stopped_reason=idle,
+    # return the old format {"status": "idle"} instead of the new format
+    is_v34_compat = (
+        limit == 1
+        and result.get("ok")
+        and result.get("data", {}).get("stopped_reason") == "idle"
+    )
+    if is_v34_compat:
+        runs = result.get("data", {}).get("runs", [])
+        if runs and runs[0].get("ok"):
+            v34_result = runs[0]  # The original run_queue_once result
+        else:
+            v34_result = result
+    
+    if use_json:
+        if is_v34_compat:
+            print(json.dumps(v34_result, ensure_ascii=False))
+        else:
+            print(json.dumps(result, ensure_ascii=False))
+    else:
+        if result.get("ok"):
+            data = result["data"]
+            if data.get("stopped_reason") == "idle" and data.get("executed", 0) == 0:
+                print("No pending queue items")
+            else:
+                print(f"Executed {data['executed']}/{data['limit']} queue items")
+                if data.get("stopped_reason"):
+                    print(f"Stopped: {data['stopped_reason']}")
+                for i, run in enumerate(data.get("runs", []), 1):
+                    if run.get("ok"):
+                        run_data = run.get("data", {})
+                        if run_data.get("status") == "idle":
+                            print(f"  Run {i}: idle")
+                        else:
+                            print(f"  Run {i}: {run_data.get('queue_id')} → {run_data.get('status')}")
+                    else:
+                        print(f"  Run {i}: failed - {run.get('error')}")
+        else:
+            print(f"Error: {result.get('error')}")
+
+
 # ── Argument parser ──────────────────────────────────────────────
 
 
@@ -2349,10 +2530,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # batch queue-run (v3.4)
     batch_queue_run = batch_subparsers.add_parser("queue-run", help="Execute next pending queue item")
-    batch_queue_run.add_argument("--once", action="store_true", default=True, help="Run once (default)")
+    batch_queue_run.add_argument("--once", action="store_true", help="Run once (equivalent to --limit 1)")
+    batch_queue_run.add_argument("--limit", type=int, default=1, help="Maximum number of queue items to execute (default: 1)")
     batch_queue_run.add_argument("--llm-mode", choices=["stub", "real"], default="real", help="LLM mode: stub for demo, real for actual LLM (default: real)")
     batch_queue_run.add_argument("--json", action="store_true", help="Output in JSON format")
-    batch_queue_run.set_defaults(func=cmd_batch_queue_run)
+    batch_queue_run.set_defaults(func=cmd_batch_queue_run_limit)
 
     # batch queue-status (v3.4)
     batch_queue_status = batch_subparsers.add_parser("queue-status", help="Get production queue status")
@@ -2383,6 +2565,32 @@ def build_parser() -> argparse.ArgumentParser:
     batch_queue_timeouts = batch_subparsers.add_parser("queue-timeouts", help="Mark timed-out queue items")
     batch_queue_timeouts.add_argument("--json", action="store_true", help="Output in JSON format")
     batch_queue_timeouts.set_defaults(func=cmd_batch_queue_timeouts)
+
+    # batch queue-events (v3.5)
+    batch_queue_events = batch_subparsers.add_parser("queue-events", help="View queue item audit events")
+    batch_queue_events.add_argument("--queue-id", required=True, help="Queue item ID")
+    batch_queue_events.add_argument("--json", action="store_true", help="Output in JSON format")
+    batch_queue_events.set_defaults(func=cmd_batch_queue_events)
+
+    # batch queue-cancel (v3.5)
+    batch_queue_cancel = batch_subparsers.add_parser("queue-cancel", help="Cancel a queue item")
+    batch_queue_cancel.add_argument("--queue-id", required=True, help="Queue item ID")
+    batch_queue_cancel.add_argument("--reason", help="Cancellation reason")
+    batch_queue_cancel.add_argument("--json", action="store_true", help="Output in JSON format")
+    batch_queue_cancel.set_defaults(func=cmd_batch_queue_cancel)
+
+    # batch queue-recover (v3.5)
+    batch_queue_recover = batch_subparsers.add_parser("queue-recover", help="Recover a stuck running queue item")
+    batch_queue_recover.add_argument("--queue-id", required=True, help="Queue item ID")
+    batch_queue_recover.add_argument("--force", action="store_true", help="Force recovery even if not stuck")
+    batch_queue_recover.add_argument("--json", action="store_true", help="Output in JSON format")
+    batch_queue_recover.set_defaults(func=cmd_batch_queue_recover)
+
+    # batch queue-doctor (v3.5)
+    batch_queue_doctor = batch_subparsers.add_parser("queue-doctor", help="Diagnose a queue item")
+    batch_queue_doctor.add_argument("--queue-id", required=True, help="Queue item ID")
+    batch_queue_doctor.add_argument("--json", action="store_true", help="Output in JSON format")
+    batch_queue_doctor.set_defaults(func=cmd_batch_queue_doctor)
 
     # Legacy aliases: 'init' → 'init-db', 'run' → 'run-chapter'
     init_compat = subparsers.add_parser("init", help="Initialize the database (legacy alias for init-db)")
