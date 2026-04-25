@@ -222,7 +222,7 @@ def test_init_db_temp_dir(tmp_path):
     assert db_path.exists()
 
 
-def test_real_mode_missing_key_fails(tmp_path):
+def test_real_mode_missing_key_fails(tmp_path, monkeypatch):
     """Test real mode without API key fails with proper error."""
     db_path = tmp_path / "test_real_mode.db"
     
@@ -245,6 +245,12 @@ def test_real_mode_missing_key_fails(tmp_path):
     conn.commit()
     conn.close()
     
+    # Build clean environment for subprocess: disable .env and clear API keys
+    env = os.environ.copy()
+    env["NOVEL_FACTORY_DISABLE_DOTENV"] = "1"
+    env.pop("OPENAI_API_KEY", None)
+    env.pop("OPENAI_BASE_URL", None)
+    
     # Try real mode without API key
     result = subprocess.run(
         [sys.executable, "-m", "novel_factory.cli",
@@ -257,6 +263,7 @@ def test_real_mode_missing_key_fails(tmp_path):
         capture_output=True,
         text=True,
         cwd=Path(__file__).parent.parent,
+        env=env,
     )
     
     assert result.returncode != 0
@@ -275,6 +282,7 @@ def test_real_mode_missing_key_fails(tmp_path):
         capture_output=True,
         text=True,
         cwd=Path(__file__).parent.parent,
+        env=env,
     )
     
     assert result.returncode != 0

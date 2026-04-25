@@ -49,15 +49,35 @@ from .config.settings import Settings
 from .db.connection import init_db
 from .db.repository import Repository
 from .dispatcher import Dispatcher
+from .llm.stub_provider import StubLLM as _StubLLM
 from .llm.provider import LLMProvider
 
 
 # ── Helpers ──────────────────────────────────────────────────────
 
 
+def _get_effective_llm_mode(args) -> str:
+    """Get effective LLM mode with proper global/subcommand priority.
+    
+    Priority:
+    1. Subcommand --llm-mode (if explicitly provided by user)
+    2. Global --llm-mode (if explicitly provided by user)
+    3. Default "real"
+    
+    Since argparse writes both global and subcommand --llm-mode to
+    args.llm_mode (subcommand default overwrites global), we use
+    separate dest names to distinguish them.
+    """
+    return (
+        getattr(args, "llm_mode", None)
+        or getattr(args, "global_llm_mode", None)
+        or "real"
+    )
+
+
 def _get_settings(args) -> Settings:
     """Load settings with explicit priority."""
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     return load_settings_with_cli(
         config_path=getattr(args, "config", None),
         db_path=getattr(args, "db_path", None),
@@ -78,7 +98,7 @@ def _get_llm(settings: Settings, llm_mode: str = "real") -> LLMProvider:
         return _StubLLM()
     # real mode
     if not settings.llm.api_key:
-        raise ValueError("LLM API key is required for real mode")
+        raise ValueError("API key not configured for real mode. Set OPENAI_API_KEY environment variable or configure in .env file.")
     from .llm.openai_compatible import OpenAICompatibleProvider
     return OpenAICompatibleProvider(settings.llm)
 
@@ -119,185 +139,36 @@ def _build_dispatcher(repo, settings: Settings, llm_mode: str = "real"):
             # No llm_profiles, use single stub LLM
             return Dispatcher(repo, llm=stub_llm, max_retries=settings.quality_gate.max_retries)
     
+    # Real mode: load .env for API keys (non-polluting)
+    from .config.env_loader import load_dotenv, create_env_getter
+    
+    dotenv_vars = load_dotenv()
+    env_getter = create_env_getter(dotenv_vars)
+    
     # Real mode: check if llm_profiles is configured
     if settings.llm_profiles and len(settings.llm_profiles) > 0:
-        # Use LLMRouter for agent-level routing
+        # Profile mode: build LLMRouter and let it validate per-profile keys
         from .llm.profiles import LLMProfilesConfig
         from .llm.router import LLMRouter
-        from .config.env_loader import load_dotenv, create_env_getter
         
-        # Load .env for API keys (non-polluting)
-        dotenv_vars = load_dotenv()
-        
-        # Create env getter with priority: OS env > .env > default
-        env_getter = create_env_getter(dotenv_vars)
-        
-        # Build LLMProfilesConfig
         config = LLMProfilesConfig(
             default_llm=settings.default_llm,
             llm_profiles=settings.llm_profiles,
             agent_llm=settings.agent_llm,
         )
         
-        # Create LLMRouter with custom env_getter
+        # Create LLMRouter with custom env_getter — validation happens per-profile
         router = LLMRouter(config, llm_mode=llm_mode, env_getter=env_getter)
         
-        # Create Dispatcher with router
         return Dispatcher(repo, llm_router=router, max_retries=settings.quality_gate.max_retries)
     else:
-        # Fallback to old single LLM for backward compatibility
+        # Legacy single-LLM fallback: check OPENAI_API_KEY before constructing
+        api_key_available = bool(env_getter("OPENAI_API_KEY"))
+        if not api_key_available and not settings.llm.api_key:
+            raise ValueError("API key not configured for real mode. Set OPENAI_API_KEY environment variable or configure in .env file.")
+        
         llm = _get_llm(settings, llm_mode)
         return Dispatcher(repo, llm=llm, max_retries=settings.quality_gate.max_retries)
-
-
-class _StubLLM(LLMProvider):
-    """Stub LLM that returns minimal valid outputs for each agent."""
-
-    def invoke_json(self, messages, schema=None, temperature=None) -> dict:
-        schema_name = getattr(schema, "__name__", "") if schema else ""
-        if "Planner" in schema_name:
-            return {
-                "chapter_brief": {
-                    "objective": "推进剧情",
-                    "required_events": ["事件1"],
-                    "plots_to_plant": [],
-                    "plots_to_resolve": [],
-                    "ending_hook": "悬念",
-                    "constraints": [],
-                }
-            }
-        if "Screenwriter" in schema_name:
-            return {"scene_beats": [{"sequence": 1, "scene_goal": "场景目标", "conflict": "冲突", "hook": "钩子"}]}
-        if "Author" in schema_name:
-            # Generate content with conflict, dialogue, and hook to pass final_gate
-            # Must be >= 500 characters, avoid death penalty words
-            content = """林默推开房门，屋内弥漫着淡淡的茶香。他缓步走到窗前，凝望着外面的雨幕。
-"你来了。"身后传来一个低沉的声音。林默转身，看到一个黑衣男子站在阴影中。
-"你是谁？"林默警觉地问道，手已经摸向腰间的短剑。
-"我是谁不重要，"黑衣男子缓缓走近，"重要的是，你正在寻找的东西，也在寻找你。"
-林默心中一凛。这件事他从未告诉过任何人，这个人是怎么知道的？
-"别紧张，"黑衣男子停下脚步，"我是来帮你的。但你必须做出选择。"
-"什么选择？"林默紧盯着对方，随时准备出手。
-"是继续寻找真相，还是保全你现在的平静生活。"黑衣男子的目光变得复杂。
-林默沉默了片刻。窗外的雨越下越大，雷声隐隐传来。
-"我已经没有退路了，"他终于说道，"不管前面是什么，我都必须走下去。"
-黑衣男子点了点头。"很好。那么，从现在开始，你要小心身边的每一个人。"
-说完，他的身影渐渐消失在阴影中，仿佛从未出现过。
-林默站在原地，心中涌起一股不安。窗外的雨声似乎变得更加急促，仿佛在预示着什么。
-他走到书桌前，翻开那本泛黄的笔记本。纸页上密密麻麻的字迹记录着这些年来的调查。
-他拿起笔，在空白处写下今天的日期，然后停住了。笔尖悬在纸面上，迟迟没有落下。
-最后，他只写了一句话：今天，一切都将改变。
-就在这时，门外传来急促的敲门声。林默迅速合上笔记本，藏好短剑，然后走去开门。
-门外站着一个陌生的年轻人，浑身湿透，目光中带着惊恐。
-"救救我，"年轻人喘着气说，"他们...他们要杀我。"
-林默还没来得及反应，远处就传来了脚步声。不止一个人，而且正在快速接近。
-他一把将年轻人拉进屋内，关上门，然后吹灭了桌上的蜡烛。
-黑暗中，他听到了自己的心跳声。这一刻，他知道，平静的日子已经结束了。"""
-            return {
-                "title": "测试章节",
-                "content": content,
-                "word_count": len(content),
-                "implemented_events": ["事件1"],
-                "used_plot_refs": [],
-            }
-        if "Polisher" in schema_name:
-            # Return polished content (same as author for simplicity)
-            content = """林默推开房门，屋内弥漫着淡淡的茶香。他缓步走到窗前，凝望着外面的雨幕。
-"你来了。"身后传来一个低沉的声音。林默转身，看到一个黑衣男子站在阴影中。
-"你是谁？"林默警觉地问道，手已经摸向腰间的短剑。
-"我是谁不重要，"黑衣男子缓缓走近，"重要的是，你正在寻找的东西，也在寻找你。"
-林默心中一凛。这件事他从未告诉过任何人，这个人是怎么知道的？
-"别紧张，"黑衣男子停下脚步，"我是来帮你的。但你必须做出选择。"
-"什么选择？"林默紧盯着对方，随时准备出手。
-"是继续寻找真相，还是保全你现在的平静生活。"黑衣男子的目光变得复杂。
-林默沉默了片刻。窗外的雨越下越大，雷声隐隐传来。
-"我已经没有退路了，"他终于说道，"不管前面是什么，我都必须走下去。"
-黑衣男子点了点头。"很好。那么，从现在开始，你要小心身边的每一个人。"
-说完，他的身影渐渐消失在阴影中，仿佛从未出现过。
-林默站在原地，心中涌起一股不安。窗外的雨声似乎变得更加急促，仿佛在预示着什么。
-他走到书桌前，翻开那本泛黄的笔记本。纸页上密密麻麻的字迹记录着这些年来的调查。
-他拿起笔，在空白处写下今天的日期，然后停住了。笔尖悬在纸面上，迟迟没有落下。
-最后，他只写了一句话：今天，一切都将改变。
-就在这时，门外传来急促的敲门声。林默迅速合上笔记本，藏好短剑，然后走去开门。
-门外站着一个陌生的年轻人，浑身湿透，目光中带着惊恐。
-"救救我，"年轻人喘着气说，"他们...他们要杀我。"
-林默还没来得及反应，远处就传来了脚步声。不止一个人，而且正在快速接近。
-他一把将年轻人拉进屋内，关上门，然后吹灭了桌上的蜡烛。
-黑暗中，他听到了自己的心跳声。这一刻，他知道，平静的日子已经结束了。"""
-            return {
-                "content": content,
-                "fact_change_risk": "none",
-                "changed_scope": ["sentence", "rhythm"],
-                "summary": "微调表达",
-            }
-        if "Editor" in schema_name:
-            return {
-                "pass": True,
-                "score": 92,
-                "scores": {"setting": 20, "logic": 20, "poison": 18, "text": 17, "pacing": 17},
-                "issues": [],
-                "suggestions": [],
-                "revision_target": None,
-                "state_card": {},
-            }
-        # v2 sidecar agents
-        if "ScoutOutput" in schema_name:
-            return {
-                "market_report": {
-                    "genre": "玄幻",
-                    "platform": "起点",
-                    "audience": "男性读者",
-                    "trends": ["趋势1", "趋势2"],
-                    "opportunities": ["机会1", "机会2"],
-                    "reader_preferences": ["偏好1", "偏好2"],
-                    "competitor_notes": ["竞品1", "竞品2"],
-                    "summary": "市场分析摘要",
-                    "recommendations": ["建议1", "建议2"]
-                },
-                "topic": "都市异能",
-                "keywords": ["关键词1", "关键词2"]
-            }
-        if "ContinuityCheckerOutput" in schema_name:
-            return {
-                "report": {
-                    "project_id": "demo",
-                    "from_chapter": 1,
-                    "to_chapter": 5,
-                    "issues": [{
-                        "issue_type": "character",
-                        "severity": "warning",
-                        "chapter_range": "1-5",
-                        "description": "角色不一致",
-                        "recommendation": "检查角色设定"
-                    }],
-                    "warnings": ["警告1"],
-                    "state_card_consistency": True,
-                    "character_consistency": True,
-                    "plot_consistency": True,
-                    "summary": "连续性检查摘要"
-                },
-                "agent_messages": []
-            }
-        if "ArchitectOutput" in schema_name:
-            return {
-                "proposals": [{
-                    "proposal_type": "quality_rule",
-                    "scope": "quality",
-                    "title": "改进提案",
-                    "description": "描述",
-                    "risk_level": "medium",
-                    "affected_area": ["editor"],
-                    "recommendation": "建议",
-                    "rationale": "理由",
-                    "implementation_notes": "实施说明"
-                }],
-                "summary": "架构改进提案摘要",
-                "total_proposals": 1
-            }
-        return {}
-
-    def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
-        return "{}"
 
 
 def _print_output(data: Any, use_json: bool = False) -> None:
@@ -344,22 +215,31 @@ def cmd_run_chapter(args) -> dict:
     init_db(settings.db_path)
 
     repo = Repository(settings.db_path)
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     
     try:
         dispatcher = _build_dispatcher(repo, settings, llm_mode)
     except ValueError as e:
         if getattr(args, "json", False):
-            print(json.dumps({"ok": False, "error": str(e), "data": {}}, ensure_ascii=False))
+            print(json.dumps({"ok": False, "error": str(e), "data": {"error": str(e)}}, ensure_ascii=False))
         else:
             print(f"Error: {e}")
         sys.exit(1)
 
-    result = dispatcher.run_chapter(
-        project_id=args.project_id,
-        chapter_number=args.chapter,
-        max_steps=args.max_steps,
-    )
+    try:
+        result = dispatcher.run_chapter(
+            project_id=args.project_id,
+            chapter_number=args.chapter,
+            max_steps=args.max_steps,
+        )
+    except Exception as e:
+        use_json = getattr(args, "json", False)
+        error_msg = f"LLM runtime error: {type(e).__name__}: {e}"
+        if use_json:
+            print(json.dumps({"ok": False, "error": error_msg, "data": {"error_type": type(e).__name__}}, ensure_ascii=False))
+        else:
+            print(f"Error: {error_msg}")
+        sys.exit(1)
 
     use_json = getattr(args, "json", False)
     
@@ -525,7 +405,7 @@ def cmd_config_show(args) -> None:
             "task_timeout_minutes": settings.workflow.task_timeout_minutes,
             "checkpoint_enabled": settings.workflow.checkpoint_enabled,
         },
-        "llm_mode": getattr(args, "llm_mode", "real"),
+        "llm_mode": _get_effective_llm_mode(args),
     }
     
     if use_json:
@@ -548,7 +428,7 @@ def cmd_config_show(args) -> None:
 def cmd_config_validate(args) -> None:
     """Validate configuration."""
     settings = _get_settings(args)
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     issues = validate_settings(settings, llm_mode)
     use_json = getattr(args, "json", False)
     
@@ -580,7 +460,7 @@ def cmd_llm_profiles(args) -> None:
     env_getter = create_env_getter(dotenv_vars)
     
     settings = _get_settings(args)
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     use_json = getattr(args, "json", False)
     
     # Build LLMProfilesConfig from settings
@@ -622,7 +502,7 @@ def cmd_llm_route(args) -> None:
     env_getter = create_env_getter(dotenv_vars)
     
     settings = _get_settings(args)
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     use_json = getattr(args, "json", False)
     agent_id = args.agent
     
@@ -670,7 +550,7 @@ def cmd_llm_validate(args) -> None:
     env_getter = create_env_getter(dotenv_vars)
     
     settings = _get_settings(args)
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     use_json = getattr(args, "json", False)
     
     # Build LLMProfilesConfig from settings
@@ -780,7 +660,10 @@ def cmd_smoke_run(args) -> None:
     
     project_id = getattr(args, "project_id", "demo")
     chapter = getattr(args, "chapter", 1)
-    llm_mode = getattr(args, "llm_mode", "stub")
+    # smoke-run defaults to stub mode if no explicit --llm-mode is given
+    llm_mode = _get_effective_llm_mode(args)
+    if llm_mode == "real" and getattr(args, "llm_mode", None) is None and getattr(args, "global_llm_mode", None) is None:
+        llm_mode = "stub"
     max_steps = getattr(args, "max_steps", 20)
     use_json = getattr(args, "json", False)
     
@@ -823,11 +706,19 @@ def cmd_smoke_run(args) -> None:
             print(f"Error: {e}")
         sys.exit(1)
     
-    result = dispatcher.run_chapter(
-        project_id=project_id,
-        chapter_number=chapter,
-        max_steps=max_steps,
-    )
+    try:
+        result = dispatcher.run_chapter(
+            project_id=project_id,
+            chapter_number=chapter,
+            max_steps=max_steps,
+        )
+    except Exception as e:
+        error_msg = f"LLM runtime error: {type(e).__name__}: {e}"
+        if use_json:
+            print(json.dumps({"ok": False, "error": error_msg, "data": {"error_type": type(e).__name__}}, ensure_ascii=False))
+        else:
+            print(f"Error: {error_msg}")
+        sys.exit(1)
     
     # Wrap in envelope
     if use_json:
@@ -924,7 +815,7 @@ def cmd_scout(args) -> None:
     init_db(settings.db_path)
     
     repo = Repository(settings.db_path)
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     
     try:
         dispatcher = _build_dispatcher(repo, settings, llm_mode)
@@ -935,13 +826,22 @@ def cmd_scout(args) -> None:
             print(f"Error: {e}")
         sys.exit(1)
     
-    result = dispatcher.run_scout(
-        project_id=args.project_id,
-        topic=getattr(args, "topic", None),
-        genre=getattr(args, "genre", None),
-        platform=getattr(args, "platform", None),
-        audience=getattr(args, "audience", None),
-    )
+    try:
+        result = dispatcher.run_scout(
+            project_id=args.project_id,
+            topic=getattr(args, "topic", None),
+            genre=getattr(args, "genre", None),
+            platform=getattr(args, "platform", None),
+            audience=getattr(args, "audience", None),
+        )
+    except Exception as e:
+        use_json = getattr(args, "json", False)
+        error_msg = f"LLM runtime error: {type(e).__name__}: {e}"
+        if use_json:
+            print(json.dumps({"ok": False, "error": error_msg, "data": {"error_type": type(e).__name__}}, ensure_ascii=False))
+        else:
+            print(f"Error: {error_msg}")
+        sys.exit(1)
     
     use_json = getattr(args, "json", False)
     if not result.get("ok"):
@@ -1049,7 +949,7 @@ def cmd_continuity_check(args) -> None:
     init_db(settings.db_path)
     
     repo = Repository(settings.db_path)
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     
     try:
         dispatcher = _build_dispatcher(repo, settings, llm_mode)
@@ -1060,11 +960,20 @@ def cmd_continuity_check(args) -> None:
             print(f"Error: {e}")
         sys.exit(1)
     
-    result = dispatcher.run_continuity_check(
-        project_id=args.project_id,
-        from_chapter=args.from_chapter,
-        to_chapter=args.to_chapter,
-    )
+    try:
+        result = dispatcher.run_continuity_check(
+            project_id=args.project_id,
+            from_chapter=args.from_chapter,
+            to_chapter=args.to_chapter,
+        )
+    except Exception as e:
+        use_json = getattr(args, "json", False)
+        error_msg = f"LLM runtime error: {type(e).__name__}: {e}"
+        if use_json:
+            print(json.dumps({"ok": False, "error": error_msg, "data": {"error_type": type(e).__name__}}, ensure_ascii=False))
+        else:
+            print(f"Error: {error_msg}")
+        sys.exit(1)
     
     use_json = getattr(args, "json", False)
     if not result.get("ok"):
@@ -1099,7 +1008,7 @@ def cmd_architect_suggest(args) -> None:
     init_db(settings.db_path)
     
     repo = Repository(settings.db_path)
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     
     try:
         dispatcher = _build_dispatcher(repo, settings, llm_mode)
@@ -1110,10 +1019,19 @@ def cmd_architect_suggest(args) -> None:
             print(f"Error: {e}")
         sys.exit(1)
     
-    result = dispatcher.run_architect_suggest(
-        project_id=args.project_id,
-        scope=getattr(args, "scope", "quality"),
-    )
+    try:
+        result = dispatcher.run_architect_suggest(
+            project_id=args.project_id,
+            scope=getattr(args, "scope", "quality"),
+        )
+    except Exception as e:
+        use_json = getattr(args, "json", False)
+        error_msg = f"LLM runtime error: {type(e).__name__}: {e}"
+        if use_json:
+            print(json.dumps({"ok": False, "error": error_msg, "data": {"error_type": type(e).__name__}}, ensure_ascii=False))
+        else:
+            print(f"Error: {error_msg}")
+        sys.exit(1)
     
     use_json = getattr(args, "json", False)
     
@@ -1639,7 +1557,7 @@ def cmd_batch_run(args) -> None:
     init_db(settings.db_path)
     
     repo = Repository(settings.db_path)
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     
     try:
         dispatcher = _build_dispatcher(repo, settings, llm_mode)
@@ -1650,11 +1568,20 @@ def cmd_batch_run(args) -> None:
             print(f"Error: {e}")
         sys.exit(1)
     
-    result = dispatcher.run_batch(
-        project_id=args.project_id,
-        from_chapter=args.from_chapter,
-        to_chapter=args.to_chapter,
-    )
+    try:
+        result = dispatcher.run_batch(
+            project_id=args.project_id,
+            from_chapter=args.from_chapter,
+            to_chapter=args.to_chapter,
+        )
+    except Exception as e:
+        use_json = getattr(args, "json", False)
+        error_msg = f"LLM runtime error: {type(e).__name__}: {e}"
+        if use_json:
+            print(json.dumps({"ok": False, "error": error_msg, "data": {"error_type": type(e).__name__}}, ensure_ascii=False))
+        else:
+            print(f"Error: {error_msg}")
+        sys.exit(1)
     
     use_json = getattr(args, "json", False)
     
@@ -1726,7 +1653,7 @@ def cmd_batch_revise(args) -> None:
     init_db(settings.db_path)
     
     repo = Repository(settings.db_path)
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     
     try:
         dispatcher = _build_dispatcher(repo, settings, llm_mode)
@@ -1738,10 +1665,19 @@ def cmd_batch_revise(args) -> None:
         sys.exit(1)
     
     # Create revision plan
-    plan_result = dispatcher.create_batch_revision_plan(
-        run_id=args.run_id,
-        plan_json=args.plan_json,
-    )
+    try:
+        plan_result = dispatcher.create_batch_revision_plan(
+            run_id=args.run_id,
+            plan_json=args.plan_json,
+        )
+    except Exception as e:
+        use_json = getattr(args, "json", False)
+        error_msg = f"LLM runtime error: {type(e).__name__}: {e}"
+        if use_json:
+            print(json.dumps({"ok": False, "error": error_msg, "data": {"error_type": type(e).__name__}}, ensure_ascii=False))
+        else:
+            print(f"Error: {error_msg}")
+        sys.exit(1)
     
     if not plan_result.get("ok"):
         use_json = getattr(args, "json", False)
@@ -1753,7 +1689,16 @@ def cmd_batch_revise(args) -> None:
     
     # Execute revision
     revision_run_id = plan_result["data"]["revision_run_id"]
-    run_result = dispatcher.run_batch_revision(revision_run_id)
+    try:
+        run_result = dispatcher.run_batch_revision(revision_run_id)
+    except Exception as e:
+        use_json = getattr(args, "json", False)
+        error_msg = f"LLM runtime error: {type(e).__name__}: {e}"
+        if use_json:
+            print(json.dumps({"ok": False, "error": error_msg, "data": {"error_type": type(e).__name__}}, ensure_ascii=False))
+        else:
+            print(f"Error: {error_msg}")
+        sys.exit(1)
     
     use_json = getattr(args, "json", False)
     if use_json:
@@ -1815,7 +1760,7 @@ def cmd_batch_continuity(args) -> None:
     init_db(settings.db_path)
     
     repo = Repository(settings.db_path)
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     
     try:
         dispatcher = _build_dispatcher(repo, settings, llm_mode)
@@ -1920,7 +1865,7 @@ def cmd_batch_queue_run(args) -> None:
     init_db(settings.db_path)
     
     repo = Repository(settings.db_path)
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     
     try:
         dispatcher = _build_dispatcher(repo, settings, llm_mode)
@@ -2186,7 +2131,7 @@ def cmd_batch_queue_run_limit(args) -> None:
     init_db(settings.db_path)
     
     repo = Repository(settings.db_path)
-    llm_mode = getattr(args, "llm_mode", "real")
+    llm_mode = _get_effective_llm_mode(args)
     
     try:
         dispatcher = _build_dispatcher(repo, settings, llm_mode)
@@ -2652,7 +2597,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--config", help="Path to config YAML file")
     parser.add_argument("--db-path", help="Path to SQLite database file")
-    parser.add_argument("--llm-mode", choices=["stub", "real"], default="real", help="LLM mode: stub for demo, real for actual LLM (global default)")
+    parser.add_argument("--llm-mode", dest="global_llm_mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (global default)")
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
@@ -2665,7 +2610,7 @@ def build_parser() -> argparse.ArgumentParser:
     run_parser.add_argument("--project-id", required=True, help="Project ID")
     run_parser.add_argument("--chapter", type=int, required=True, help="Chapter number")
     run_parser.add_argument("--max-steps", type=int, default=20, help="Maximum dispatch steps (default: 20)")
-    run_parser.add_argument("--llm-mode", choices=["stub", "real"], default="real", help="LLM mode: stub for demo, real for actual LLM (default: real)")
+    run_parser.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: real)")
     run_parser.add_argument("--json", action="store_true", help="Output in JSON format")
     run_parser.set_defaults(func=cmd_run_chapter)
 
@@ -2694,7 +2639,7 @@ def build_parser() -> argparse.ArgumentParser:
     resume_parser.add_argument("--project-id", required=True, help="Project ID")
     resume_parser.add_argument("--chapter", type=int, required=True, help="Chapter number")
     resume_parser.add_argument("--status", required=True, help="Target status to resume to")
-    resume_parser.add_argument("--llm-mode", choices=["stub", "real"], default="real", help="LLM mode: stub for demo, real for actual LLM (default: real)")
+    resume_parser.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: real)")
     resume_parser.add_argument("--json", action="store_true", help="Output in JSON format")
     resume_parser.set_defaults(func=cmd_human_resume)
 
@@ -2737,7 +2682,7 @@ def build_parser() -> argparse.ArgumentParser:
     smoke_parser = subparsers.add_parser("smoke-run", help="Run a smoke test on demo project")
     smoke_parser.add_argument("--project-id", default="demo", help="Project ID to test (default: demo)")
     smoke_parser.add_argument("--chapter", type=int, default=1, help="Chapter number to test (default: 1)")
-    smoke_parser.add_argument("--llm-mode", choices=["stub", "real"], default="stub", help="LLM mode: stub for demo, real for actual LLM (default: stub)")
+    smoke_parser.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: stub)")
     smoke_parser.add_argument("--max-steps", type=int, default=20, help="Maximum dispatch steps (default: 20)")
     smoke_parser.add_argument("--json", action="store_true", help="Output in JSON format")
     smoke_parser.set_defaults(func=cmd_smoke_run)
@@ -2754,7 +2699,7 @@ def build_parser() -> argparse.ArgumentParser:
     scout_parser.add_argument("--genre", help="Target genre")
     scout_parser.add_argument("--platform", help="Target platform")
     scout_parser.add_argument("--audience", help="Target audience")
-    scout_parser.add_argument("--llm-mode", choices=["stub", "real"], default="real", help="LLM mode: stub for demo, real for actual LLM (default: real)")
+    scout_parser.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: real)")
     scout_parser.add_argument("--json", action="store_true", help="Output in JSON format")
     scout_parser.set_defaults(func=cmd_scout)
 
@@ -2784,7 +2729,7 @@ def build_parser() -> argparse.ArgumentParser:
     continuity_parser.add_argument("--project-id", required=True, help="Project ID")
     continuity_parser.add_argument("--from-chapter", type=int, required=True, help="Start chapter")
     continuity_parser.add_argument("--to-chapter", type=int, required=True, help="End chapter")
-    continuity_parser.add_argument("--llm-mode", choices=["stub", "real"], default="real", help="LLM mode: stub for demo, real for actual LLM (default: real)")
+    continuity_parser.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: real)")
     continuity_parser.add_argument("--json", action="store_true", help="Output in JSON format")
     continuity_parser.set_defaults(func=cmd_continuity_check)
 
@@ -2795,7 +2740,7 @@ def build_parser() -> argparse.ArgumentParser:
     architect_suggest = architect_subparsers.add_parser("suggest", help="Generate improvement proposals")
     architect_suggest.add_argument("--project-id", required=True, help="Project ID")
     architect_suggest.add_argument("--scope", choices=["quality", "workflow", "agent", "system"], default="quality", help="Analysis scope (default: quality)")
-    architect_suggest.add_argument("--llm-mode", choices=["stub", "real"], default="real", help="LLM mode: stub for demo, real for actual LLM (default: real)")
+    architect_suggest.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: real)")
     architect_suggest.add_argument("--json", action="store_true", help="Output in JSON format")
     architect_suggest.set_defaults(func=cmd_architect_suggest)
 
@@ -2860,7 +2805,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch_run.add_argument("--project-id", required=True, help="Project ID")
     batch_run.add_argument("--from-chapter", type=int, required=True, help="Starting chapter number (inclusive)")
     batch_run.add_argument("--to-chapter", type=int, required=True, help="Ending chapter number (inclusive)")
-    batch_run.add_argument("--llm-mode", choices=["stub", "real"], default="real", help="LLM mode: stub for demo, real for actual LLM (default: real)")
+    batch_run.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: real)")
     batch_run.add_argument("--json", action="store_true", help="Output in JSON format")
     batch_run.set_defaults(func=cmd_batch_run)
     
@@ -2880,7 +2825,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch_revise = batch_subparsers.add_parser("revise", help="Create and execute batch revision plan")
     batch_revise.add_argument("--run-id", required=True, help="Production run ID")
     batch_revise.add_argument("--plan-json", required=True, help="Revision plan JSON string")
-    batch_revise.add_argument("--llm-mode", choices=["stub", "real"], default="real", help="LLM mode: stub for demo, real for actual LLM (default: real)")
+    batch_revise.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: real)")
     batch_revise.add_argument("--json", action="store_true", help="Output in JSON format")
     batch_revise.set_defaults(func=cmd_batch_revise)
 
@@ -2893,7 +2838,7 @@ def build_parser() -> argparse.ArgumentParser:
     # batch continuity (v3.3)
     batch_continuity = batch_subparsers.add_parser("continuity", help="Run batch continuity gate")
     batch_continuity.add_argument("--run-id", required=True, help="Production run ID")
-    batch_continuity.add_argument("--llm-mode", choices=["stub", "real"], default="real", help="LLM mode: stub for demo, real for actual LLM (default: real)")
+    batch_continuity.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: real)")
     batch_continuity.add_argument("--json", action="store_true", help="Output in JSON format")
     batch_continuity.set_defaults(func=cmd_batch_continuity)
 
@@ -2919,7 +2864,7 @@ def build_parser() -> argparse.ArgumentParser:
     batch_queue_run = batch_subparsers.add_parser("queue-run", help="Execute next pending queue item")
     batch_queue_run.add_argument("--once", action="store_true", help="Run once (equivalent to --limit 1)")
     batch_queue_run.add_argument("--limit", type=int, default=1, help="Maximum number of queue items to execute (default: 1)")
-    batch_queue_run.add_argument("--llm-mode", choices=["stub", "real"], default="real", help="LLM mode: stub for demo, real for actual LLM (default: real)")
+    batch_queue_run.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: real)")
     batch_queue_run.add_argument("--json", action="store_true", help="Output in JSON format")
     batch_queue_run.set_defaults(func=cmd_batch_queue_run_limit)
 

@@ -18,6 +18,17 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def is_dotenv_disabled() -> bool:
+    """Check if .env loading is disabled via environment variable.
+    
+    When NOVEL_FACTORY_DISABLE_DOTENV is set to 1, true, yes, or on,
+    load_dotenv() will return an empty dict without reading any .env file.
+    This is primarily used in test environments to prevent project root
+    .env files from polluting test scenarios.
+    """
+    return os.getenv("NOVEL_FACTORY_DISABLE_DOTENV") in ("1", "true", "yes", "on")
+
+
 def find_project_root() -> Path:
     """Find project root directory.
     
@@ -40,6 +51,7 @@ def load_dotenv(dotenv_path: Optional[Path] = None, override: bool = False) -> d
     """Load environment variables from .env file.
     
     v3.1: Returns a dict instead of polluting os.environ.
+    v3.7: Respects NOVEL_FACTORY_DISABLE_DOTENV to skip .env loading.
     
     Args:
         dotenv_path: Path to .env file. If None, looks for .env in project root.
@@ -49,6 +61,10 @@ def load_dotenv(dotenv_path: Optional[Path] = None, override: bool = False) -> d
         Dict of environment variables loaded from .env file.
         Does NOT modify os.environ.
     """
+    if is_dotenv_disabled():
+        logger.debug("NOVEL_FACTORY_DISABLE_DOTENV is set, skipping .env loading")
+        return {}
+    
     if dotenv_path is None:
         dotenv_path = find_project_root() / ".env"
     

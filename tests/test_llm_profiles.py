@@ -214,8 +214,11 @@ class TestEnvLoader:
         result = load_dotenv(dotenv_path=tmp_path / ".env.missing")
         assert result == {}
 
-    def test_load_dotenv_loads_vars(self, tmp_path):
+    def test_load_dotenv_loads_vars(self, tmp_path, monkeypatch):
         """load_dotenv loads variables from file into dict."""
+        # Temporarily re-enable .env loading for this test
+        monkeypatch.delenv("NOVEL_FACTORY_DISABLE_DOTENV", raising=False)
+        
         env_file = tmp_path / ".env"
         env_file.write_text("TEST_VAR=test_value\n")
         
@@ -224,9 +227,12 @@ class TestEnvLoader:
         # Verify it does NOT pollute os.environ
         assert "TEST_VAR" not in os.environ
 
-    def test_load_dotenv_respects_os_env_priority(self, tmp_path):
+    def test_load_dotenv_respects_os_env_priority(self, tmp_path, monkeypatch):
         """OS environment variables have priority over .env via create_env_getter."""
         from novel_factory.config.env_loader import create_env_getter
+        
+        # Temporarily re-enable .env loading for this test
+        monkeypatch.delenv("NOVEL_FACTORY_DISABLE_DOTENV", raising=False)
         
         env_file = tmp_path / ".env"
         env_file.write_text("TEST_PRIORITY=from_file\n")

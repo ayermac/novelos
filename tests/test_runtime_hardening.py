@@ -49,6 +49,13 @@ def test_llm_mode_stub_vs_real(tmp_path):
     conn.commit()
     conn.close()
     
+    # Build clean environment for subprocess: disable .env and clear API keys
+    import os
+    env = os.environ.copy()
+    env["NOVEL_FACTORY_DISABLE_DOTENV"] = "1"
+    env.pop("OPENAI_API_KEY", None)
+    env.pop("OPENAI_BASE_URL", None)
+    
     # Test stub mode should work
     result = subprocess.run(
         [sys.executable, "-m", "novel_factory.cli",
@@ -61,6 +68,7 @@ def test_llm_mode_stub_vs_real(tmp_path):
         capture_output=True,
         text=True,
         cwd=Path(__file__).parent.parent,
+        env=env,
     )
     assert result.returncode == 0, f"Stub mode failed: {result.stderr}"
     
@@ -76,6 +84,7 @@ def test_llm_mode_stub_vs_real(tmp_path):
         capture_output=True,
         text=True,
         cwd=Path(__file__).parent.parent,
+        env=env,
     )
     assert result.returncode != 0, "Real mode without API key should fail"
     assert "API key" in result.stderr or "API key" in result.stdout

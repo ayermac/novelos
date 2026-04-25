@@ -212,10 +212,24 @@ class TestSchemaDetection:
 class TestCLIChainIdempotency:
     """Test that real CLI command chains work after repeated init_db() calls."""
 
-    def _run_cli(self, args: list[str]) -> tuple[int, str, str]:
-        """Run CLI command and return exit code, stdout, stderr."""
+    def _run_cli(self, args: list[str], clean_env: bool = False) -> tuple[int, str, str]:
+        """Run CLI command and return exit code, stdout, stderr.
+        
+        Args:
+            args: CLI arguments.
+            clean_env: If True, set NOVEL_FACTORY_DISABLE_DOTENV=1 and clear
+                       OPENAI_API_KEY/OPENAI_BASE_URL from subprocess environment.
+        """
+        import os
         cmd = [sys.executable, "-m", "novel_factory.cli"] + args
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        if clean_env:
+            env = os.environ.copy()
+            env["NOVEL_FACTORY_DISABLE_DOTENV"] = "1"
+            env.pop("OPENAI_API_KEY", None)
+            env.pop("OPENAI_BASE_URL", None)
+            result = subprocess.run(cmd, capture_output=True, text=True, env=env)
+        else:
+            result = subprocess.run(cmd, capture_output=True, text=True)
         return result.returncode, result.stdout, result.stderr
 
     def test_seed_demo_then_run_chapter_no_traceback(self, tmp_path):
@@ -230,12 +244,13 @@ class TestCLIChainIdempotency:
         assert code == 0, f"seed-demo failed: {stdout}{stderr}"
 
         # Step 2: run-chapter (stub mode to avoid LLM errors)
+        # Use clean_env to ensure .env doesn't interfere
         code, stdout, stderr = self._run_cli([
             "--db-path", str(db_path),
             "--llm-mode", "stub",
             "run-chapter", "--project-id", "demo", "--chapter", "1",
             "--max-steps", "1", "--json",
-        ])
+        ], clean_env=True)
         # Should not traceback
         assert "Traceback" not in stdout, f"stdout contains traceback: {stdout[:500]}"
         assert "Traceback" not in stderr, f"stderr contains traceback: {stderr[:500]}"
@@ -280,15 +295,17 @@ class TestCLIChainIdempotency:
         assert code == 0, f"seed-demo failed: {stdout}{stderr}"
 
         # Step 2: run-chapter with real mode (will fail due to missing env)
+        # Use clean_env to ensure .env doesn't interfere and real mode fails properly
         code, stdout, stderr = self._run_cli([
             "--db-path", str(db_path),
             "--config", str(config_path),
             "--llm-mode", "real",
             "run-chapter", "--project-id", "demo", "--chapter", "1", "--json",
-        ])
+        ], clean_env=True)
 
         # Should not traceback
         assert "Traceback" not in stdout, f"stdout contains traceback: {stdout[:500]}"
+        assert "Traceback" not in stderr, f"stderr contains traceback: {stderr[:500]}"
 
         # Should return valid JSON envelope
         result = json.loads(stdout)
