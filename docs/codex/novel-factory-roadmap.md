@@ -25,6 +25,8 @@ v3.3 Batch Continuity Gate
 v3.4 Production Queue
 v3.5 Queue Runtime Hardening
 v3.6 Semi-Auto Serial Mode
+v3.7 Review Workbench
+v3.8 Skill Import Bridge
 v4   多模型与生产治理
 ```
 
@@ -532,21 +534,91 @@ agent_llm:
 
 ## v3.6：Semi-Auto Serial Mode
 
-目标：支持半自动连载模式，例如每日自动生成固定章节，但发布前仍需人工确认。
+目标：支持半自动连载计划，例如每轮生成固定章节数，但每轮完成后必须等待人工确认。
 
 范围：
 
 - serial plan。
-- 每日/每轮生产目标。
+- 每轮生产目标。
+- 分轮 enqueue。
 - 人工确认后进入下一轮。
-- 成本和质量摘要。
-- 自动进入下一批次。
+- serial plan 与 queue / production run 关联。
+- serial plan events 审计。
 
 验收：
 
-- 用户可设置每日生成章节数。
+- 用户可设置每轮生成章节数和目标章节。
 - 每轮完成后进入人工 review。
-- 不经人工确认不得自动发布。
+- 不经人工确认不得自动进入下一轮。
+- 多章节 approve 必须通过 continuity gate。
+- 所有 serial 操作可审计。
+
+## v3.7：Review Workbench
+
+目标：让人工审核多章节批次和半自动连载计划时，不再需要手动拼接 status、quality、continuity、queue、serial 和版本数据。
+
+范围：
+
+- review pack。
+- chapter review view。
+- timeline 聚合。
+- chapter version diff 摘要。
+- markdown / json 导出。
+- approve 辅助判断 `decision_hint`。
+
+验收：
+
+- 用户可按 production run、serial plan 或章节范围生成 review pack。
+- review pack 能显示 blocking reasons、warnings、continuity gate、quality reports 和章节摘要。
+- review timeline 能聚合 serial、queue、batch、revision、quality 等事件。
+- review diff 能比较最新版本与上一版本，或指定两个版本。
+- review export 可导出 markdown / json。
+- 所有 review 命令只读，不改变生产状态。
+
+禁止：
+
+- Web UI / FastAPI。
+- 自动 approve。
+- 自动 publish。
+- 自动 request_changes。
+- 自动生成 revision plan。
+- 新增 LLM 调用。
+- 新增 Agent。
+
+## v3.8：Skill Import Bridge
+
+目标：把 skills.sh / Codex / Claude Code / Cursor 生态里的本地 `SKILL.md` 型 Agent Skill，安全转换为 novel_factory 内部受控 Skill Package 草案。
+
+范围：
+
+- 本地 Skill 目录读取。
+- `SKILL.md` frontmatter 解析。
+- import plan。
+- 生成 `novel_factory/skill_packages/<id>` 草案。
+- 生成 manifest / handler stub / fixtures。
+- 检测 scripts / references / assets / rules / prompts。
+- `skills import-plan`。
+- `skills import-apply`。
+- `skills import-validate`。
+
+验收：
+
+- 能从本地 `SKILL.md` 目录生成 package 草案。
+- 生成的 Skill 默认只允许 `manual/manual`。
+- 生成的 Skill 不自动挂载到 Polisher / Editor / Author。
+- 外部 scripts 只复制不执行，默认 disabled。
+- imported package 可被 `skills validate` / `skills test` 检查。
+- 所有 JSON 输出稳定 envelope。
+
+禁止：
+
+- 联网下载 skills.sh skill。
+- 调用 `npx skills add`。
+- 任意 GitHub clone。
+- 外部 Skill 热加载。
+- 自动启用 imported Skill。
+- 自动修改生产 Agent 挂载配置。
+- 自动执行外部 scripts。
 
 ## v4：多模型与生产治理
 

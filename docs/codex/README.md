@@ -25,6 +25,8 @@
 | `novel-factory-v3.4-production-queue-spec.md` | v3.4 本地 SQLite 生产队列、显式 queue-run、暂停、恢复、重试 | 开发 Agent、质量验收 |
 | `novel-factory-v3.5-queue-runtime-hardening-spec.md` | v3.5 队列运行期硬化、事件查询、取消、恢复、doctor、limit run | 开发 Agent、质量验收 |
 | `novel-factory-v3.6-semi-auto-serial-mode-spec.md` | v3.6 半自动连载计划、分轮 enqueue、人工确认后推进 | 开发 Agent、质量验收 |
+| `novel-factory-v3.7-review-workbench-spec.md` | v3.7 人工 Review 工作台、审核包、时间线、版本差异、导出 | 开发 Agent、质量验收 |
+| `novel-factory-v3.8-skill-import-bridge-spec.md` | v3.8 skills.sh / Agent Skill 本地导入桥、受控转换为 Skill Package | 开发 Agent、质量验收 |
 
 ## 使用方式
 
@@ -47,10 +49,12 @@
 - 开发 v3.4 本地生产队列时，优先读 `novel-factory-v3.4-production-queue-spec.md`。
 - 开发 v3.5 队列运行期硬化时，优先读 `novel-factory-v3.5-queue-runtime-hardening-spec.md`。
 - 开发 v3.6 半自动连载计划时，优先读 `novel-factory-v3.6-semi-auto-serial-mode-spec.md`。
+- 开发 v3.7 人工 Review 工作台时，优先读 `novel-factory-v3.7-review-workbench-spec.md`。
+- 开发 v3.8 Skill 导入桥时，优先读 `novel-factory-v3.8-skill-import-bridge-spec.md`。
 
 ## 当前版本
 
-当前开发基线是 **v3.6 Semi-Auto Serial Mode 已通过，等待下一阶段规划**。
+当前开发基线是 **v3.6 Semi-Auto Serial Mode 已通过，进入 v3.7 Review Workbench 规划与开发**。
 
 v1 只实现：
 
@@ -72,5 +76,5 @@ v1 不实现：
 
 当前下一步：
 
-- 基于 v3.6 稳定节点，规划下一阶段能力。
-- 下一阶段开始前，先由 Codex 输出版本规格与开发验收标准。
+- 按 `novel-factory-v3.7-review-workbench-spec.md` 完成 review pack、chapter view、timeline、diff 与 export。
+- 全量测试通过后，提交给 Codex 做 v3.7 验收 review。
