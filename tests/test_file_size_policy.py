@@ -1,10 +1,12 @@
-"""File size policy enforcement for CLI & Repository modularization (v3.7.2).
+"""File size policy enforcement for CLI, Repository & Dispatcher modularization (v3.7.2).
 
 Rules:
   - novel_factory/cli.py must be <= 150 lines
   - All novel_factory/cli_app/**/*.py files must be <= 1000 lines
   - novel_factory/db/repository.py must be <= 300 lines
   - All novel_factory/db/repositories/**/*.py files must be <= 1000 lines
+  - novel_factory/dispatcher.py must be <= 300 lines
+  - All novel_factory/dispatch/**/*.py files must be <= 1000 lines
 """
 
 from pathlib import Path
@@ -64,3 +66,27 @@ class TestRepositoriesSizePolicy:
     def test_file_under_1000_lines(self, repo_py):
         lines = _count_lines(repo_py)
         assert lines <= 1000, f"{repo_py.relative_to(ROOT)} has {lines} lines, must be <= 1000"
+
+
+class TestDispatcherSizePolicy:
+    """Verify dispatcher.py is a thin facade (<= 300 lines)."""
+
+    def test_dispatcher_py_thin_facade(self):
+        path = ROOT / "dispatcher.py"
+        lines = _count_lines(path)
+        assert lines <= 300, f"dispatcher.py has {lines} lines, must be <= 300"
+
+
+class TestDispatchSizePolicy:
+    """Verify all dispatch/**/*.py files are <= 1000 lines."""
+
+    @pytest.fixture(params=[
+        p.relative_to(ROOT)
+        for p in (ROOT / "dispatch").rglob("*.py")
+    ])
+    def dispatch_py(self, request):
+        return ROOT / request.param
+
+    def test_file_under_1000_lines(self, dispatch_py):
+        lines = _count_lines(dispatch_py)
+        assert lines <= 1000, f"{dispatch_py.relative_to(ROOT)} has {lines} lines, must be <= 1000"
