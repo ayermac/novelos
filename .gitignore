@@ -25,6 +25,8 @@ share/python-wheels/
 .installed.cfg
 *.egg
 MANIFEST
+!novel_factory/config/skills/manifest/
+!novel_factory/config/skills/manifest/*.yaml
 
 # PyInstaller
 #  Usually these files are written by a python script from a template
@@ -205,3 +207,13 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# OS / local workspace noise
+.DS_Store
+.omc/
+**/.claude/settings.local.json
+
+# Local SQLite databases and WAL files
+*.db
+*.db-shm
+*.db-wal

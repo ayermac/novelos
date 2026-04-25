@@ -1,0 +1,174 @@
+# NarrativeQualityScorer 测试用例
+
+cases:
+  - name: high_quality_narrative
+    description: "高质量叙事文本"
+    input:
+      text: |
+        "你必须做出选择！"他愤怒地喊道，眼中闪烁着怒火。
+        
+        "我没有选择，"她低声说道，"为了救他，我只能这么做。"
+        
+        房间里弥漫着紧张的气氛，光线昏暗，空气中充满了压抑感。她能感觉到自己的心跳在加速，每一次跳动都像是在提醒她即将面临的困境。
+        
+        突然，门外传来了脚步声。就在这时，她意识到一切都变了。然而，等待她的将是更大的挑战。
+    expect:
+      ok: true
+      contains:
+        - scores
+        - grade
+      check:
+        overall_score_min: 50
+
+  - name: low_conflict
+    description: "冲突不足"
+    input:
+      text: "今天天气很好，我去公园散步。看到了很多花，心情很愉快。然后我去超市买了些东西，回家做饭。"
+    expect:
+      ok: true
+      contains:
+        - scores
+        - issues
+      check:
+        conflict_intensity_max: 30
+        has_issue_type: "low_conflict"
+
+  - name: weak_hook
+    description: "钩子不足"
+    input:
+      text: "他回到家，吃了晚饭，然后睡觉了。第二天早上起来，继续上班。生活就这样平淡地继续着。"
+    expect:
+      ok: true
+      contains:
+        - scores
+        - issues
+      check:
+        hook_strength_max: 30
+        has_issue_type: "weak_hook"
+
+  - name: low_dialogue
+    description: "对话不足"
+    input:
+      text: "他走在路上，思考着人生的意义。天空很蓝，云朵很白。他继续走着，没有遇到任何人，也没有说任何话。整个下午就这样过去了。"
+    expect:
+      ok: true
+      contains:
+        - scores
+        - issues
+      check:
+        dialogue_naturalness_max: 40
+        has_issue_type: "low_dialogue"
+
+  - name: good_dialogue_ratio
+    description: "对话比例良好"
+    input:
+      text: |
+        "你好，"他说。
+        "你好，"她回答，"今天天气不错。"
+        "是啊，"他点点头，"很适合散步。"
+        "那我们一起去吧，"她笑着说。
+        "好啊，"他高兴地答应了。
+    expect:
+      ok: true
+      contains:
+        - scores
+      check:
+        dialogue_naturalness_min: 60
+
+  - name: good_scene_immersion
+    description: "场景沉浸感良好"
+    input:
+      text: "阳光透过窗户洒进房间，温暖的光线照在木质地板上。空气中弥漫着咖啡的香味，远处传来鸟儿的叫声。她能感觉到微风轻抚过脸庞，带来一丝凉爽。房间很宽敞，布置得很温馨。"
+    expect:
+      ok: true
+      contains:
+        - scores
+      check:
+        scene_immersion_min: 50
+
+  - name: good_character_motivation
+    description: "人物动机清晰"
+    input:
+      text: "为了实现自己的梦想，他决定离开家乡。他想要证明自己，希望得到认可。他必须成功，这是他对自己的承诺。他立志要成为最优秀的人，追求自己的目标。"
+    expect:
+      ok: true
+      contains:
+        - scores
+      check:
+        character_motivation_min: 50
+
+  - name: mixed_quality
+    description: "混合质量"
+    input:
+      text: "他走在路上，遇到了一个老朋友。\"好久不见！\"他们聊了起来。阳光很好，微风轻拂。但是，他内心有些复杂。"
+    expect:
+      ok: true
+      contains:
+        - scores
+        - grade
+        - suggestions
+
+  - name: empty_text
+    description: "空文本"
+    input:
+      text: ""
+    expect:
+      ok: false
+      error_contains:
+        - "缺少text字段"
+
+  - name: grade_s
+    description: "S级评分"
+    input:
+      text: |
+        "你这个叛徒！"他怒吼道，眼中满是愤怒和失望。
+        
+        "我没有选择，"她低声说，"为了救我的家人，我只能这么做。"
+        
+        房间里弥漫着紧张的气氛，昏暗的灯光下，空气中充满了压抑感。窗外的雷声轰鸣，闪电照亮了她苍白的脸庞。
+        
+        "我不会原谅你的，"他咬牙切齿地说，"永远不会。"
+        
+        就在这时，门突然被撞开了。然而，等待他们的将是更大的危机。
+    expect:
+      ok: true
+      contains:
+        - scores
+        - grade
+      check:
+        overall_score_min: 50
+
+  - name: custom_config
+    description: "自定义配置"
+    input:
+      text: "他走在路上，思考着问题。"
+      config:
+        min_conflict_score: 20
+        min_hook_score: 30
+    expect:
+      ok: true
+      contains:
+        - scores
+        - issues
+
+  - name: pacing_variety
+    description: "节奏变化"
+    input:
+      text: "他走。然后他停下来。看着远方。突然，他意识到什么。心跳加速。呼吸急促。一切都变了。然而，这只是开始。等待他的将是更大的挑战。命运的齿轮开始转动。"
+    expect:
+      ok: true
+      contains:
+        - scores
+      check:
+        pacing_control_min: 30
+
+  - name: suggestions_generation
+    description: "建议生成"
+    input:
+      text: "他走在路上。他看到一棵树。他继续走。他回到家。他吃了饭。他睡觉了。"
+    expect:
+      ok: true
+      contains:
+        - suggestions
+      check:
+        has_suggestions: true

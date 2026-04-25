@@ -1,0 +1,252 @@
+# AI风格检测规则
+
+## 概述
+
+定义AI生成文本的典型特征和检测规则。
+
+## 检测维度
+
+### 1. 模板句式 (Template Phrases)
+
+权重: 25%
+
+AI常用固定句式模板，缺乏变化。
+
+**模板句式列表:**
+
+```yaml
+template_phrases:
+  - pattern: "然而，"
+    category: "转折"
+    severity: "medium"
+    
+  - pattern: "但是，"
+    category: "转折"
+    severity: "low"
+    
+  - pattern: "不过，"
+    category: "转折"
+    severity: "low"
+    
+  - pattern: "与此同时"
+    category: "时间"
+    severity: "high"
+    
+  - pattern: "不仅如此"
+    category: "递进"
+    severity: "medium"
+    
+  - pattern: "由此可见"
+    category: "推理"
+    severity: "high"
+    
+  - pattern: "总而言之"
+    category: "总结"
+    severity: "medium"
+    
+  - pattern: "综上所述"
+    category: "总结"
+    severity: "high"
+    
+  - pattern: "毫无疑问"
+    category: "强调"
+    severity: "medium"
+    
+  - pattern: "众所周知"
+    category: "强调"
+    severity: "high"
+    
+  - pattern: "不言而喻"
+    category: "强调"
+    severity: "high"
+    
+  - pattern: "令人惊讶的是"
+    category: "情感"
+    severity: "high"
+    
+  - pattern: "让人意想不到的是"
+    category: "情感"
+    severity: "high"
+    
+  - pattern: "出乎意料的是"
+    category: "情感"
+    severity: "high"
+```
+
+**评分规则:**
+- 0次/千字 = 0分
+- 10+次/千字 = 100分
+- 线性插值
+
+### 2. 连接词密度 (Connector Density)
+
+权重: 20%
+
+AI文本连接词使用频率异常高。
+
+**连接词列表:**
+
+```yaml
+connector_words:
+  - "然后"
+  - "接着"
+  - "随后"
+  - "于是"
+  - "因此"
+  - "所以"
+  - "但是"
+  - "然而"
+  - "不过"
+  - "而且"
+  - "并且"
+  - "或者"
+  - "虽然"
+  - "尽管"
+  - "因为"
+  - "由于"
+```
+
+**评分规则:**
+- 0次/千字 = 0分
+- 15+次/千字 = 100分
+- 线性插值
+
+### 3. 空泛情绪 (Vague Emotions)
+
+权重: 25%
+
+AI文本常使用空泛的情绪描写，缺乏具体细节。
+
+**空泛情绪模式:**
+
+```yaml
+vague_emotions:
+  - pattern: "心中.*?涌起.*?感觉"
+    description: "心中涌起XX感觉"
+    
+  - pattern: "一股.*?涌上心头"
+    description: "一股XX涌上心头"
+    
+  - pattern: "内心.*?复杂"
+    description: "内心复杂"
+    
+  - pattern: "心情.*?难以言喻"
+    description: "心情难以言喻"
+    
+  - pattern: "说不出的.*?感"
+    description: "说不出的XX感"
+    
+  - pattern: "莫名.*?感动"
+    description: "莫名感动"
+    
+  - pattern: "深深的.*?触动"
+    description: "深深的触动"
+    
+  - pattern: "强烈的.*?冲击"
+    description: "强烈的冲击"
+```
+
+**评分规则:**
+- 0次/千字 = 0分
+- 5+次/千字 = 100分
+- 线性插值
+
+### 4. 句式重复 (Sentence Repetition)
+
+权重: 15%
+
+AI文本句式结构重复度高。
+
+**重复模式:**
+
+```yaml
+repetitive_patterns:
+  - pattern: "他.*?地.*?了"
+    description: "他XX地XX了"
+    
+  - pattern: "她.*?地.*?了"
+    description: "她XX地XX了"
+    
+  - pattern: "它.*?地.*?了"
+    description: "它XX地XX了"
+```
+
+**评分规则:**
+- 0次/千字 = 0分
+- 8+次/千字 = 100分
+- 线性插值
+
+### 5. 过度解释 (Over-explanation)
+
+权重: 15%
+
+AI文本倾向于过度解释显而易见的内容。
+
+**过度解释模式:**
+
+```yaml
+over_explanation:
+  - pattern: "之所以.*?是因为"
+    description: "之所以XX是因为XX"
+    
+  - pattern: "之所以.*?是由于"
+    description: "之所以XX是由于XX"
+    
+  - pattern: "原因.*?在于"
+    description: "原因在于XX"
+    
+  - pattern: "这.*?意味着"
+    description: "这意味着XX"
+    
+  - pattern: "也就是说"
+    description: "也就是说XX"
+    
+  - pattern: "换句话说"
+    description: "换句话说XX"
+```
+
+**评分规则:**
+- 0次/千字 = 0分
+- 6+次/千字 = 100分
+- 线性插值
+
+## 综合评分
+
+**计算公式:**
+
+```
+overall_score = 
+  template_score * 0.25 +
+  connector_score * 0.20 +
+  emotion_score * 0.25 +
+  repetition_score * 0.15 +
+  explanation_score * 0.15
+```
+
+## 风险等级
+
+```yaml
+risk_levels:
+  - level: "low"
+    threshold: 0
+    blocking: false
+    description: "AI痕迹较低"
+    
+  - level: "medium"
+    threshold: 45
+    blocking: false
+    description: "存在一定AI痕迹"
+    
+  - level: "high"
+    threshold: 70
+    blocking: true
+    description: "AI痕迹明显"
+```
+
+## 配置项
+
+```yaml
+config:
+  warn_threshold: 45    # 警告阈值
+  fail_threshold: 70    # 失败阈值
+```

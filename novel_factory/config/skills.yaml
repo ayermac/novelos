@@ -1,0 +1,58 @@
+# v2.3 Skill Configuration with Package Support
+# 所有 Skill 必须在此配置，v2.3 引入 package 优先加载
+
+skills:
+  humanizer-zh:
+    enabled: true
+    # v2.3: package 优先，如果存在 package 则从 package 加载
+    package: skill_packages/humanizer_zh
+    # v2.2 兼容: manifest 作为 fallback
+    manifest: config/skills/manifest/humanizer-zh.yaml
+    # v2.1 兼容字段（如果存在 package/manifest，以 package/manifest 为准）
+    type: transform
+    class: HumanizerZhSkill
+    description: "中文AI去味，用于Polisher"
+    config:
+      preserve_facts: true
+      max_change_ratio: 0.35
+      fail_on_fact_risk: true
+
+  ai-style-detector:
+    enabled: true
+    # v2.3: package 优先
+    package: skill_packages/ai_style_detector
+    # v2.2 兼容: manifest 作为 fallback
+    manifest: config/skills/manifest/ai-style-detector.yaml
+    # v2.1 兼容字段
+    type: validator
+    class: AIStyleDetectorSkill
+    description: "AI味检测，用于Polisher和Editor"
+    config:
+      warn_threshold: 45
+      fail_threshold: 70
+
+  narrative-quality:
+    enabled: true
+    # v2.3: package 优先
+    package: skill_packages/narrative_quality
+    # v2.2 兼容: manifest 作为 fallback
+    manifest: config/skills/manifest/narrative-quality.yaml
+    # v2.1 兼容字段
+    type: validator
+    class: NarrativeQualityScorer
+    description: "叙事质量评分，用于Editor和QualityHub"
+    config:
+      pass_score: 75
+
+# Agent挂载配置
+agent_skills:
+  polisher:
+    after_llm:
+      - humanizer-zh
+    before_save:
+      - ai-style-detector
+
+  editor:
+    before_review:
+      - ai-style-detector
+      - narrative-quality

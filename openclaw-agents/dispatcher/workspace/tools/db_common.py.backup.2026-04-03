@@ -1,0 +1,30 @@
+def cmd_task_fail(args):
+    """
+    标记任务失败。
+    用法: db.py task_fail <project> <task_type> <chapter> <error_message>
+    """
+    if len(args) < 4:
+        print("Usage: db.py task_fail <project> <task_type> <chapter> <error_message>")
+        return
+    project_id, task_type, chapter_num, error_message = args[0], args[1], int(args[2]), ' '.join(args[3:])
+    conn = get_connection()
+    # 先检查是否有 running 任务
+    cursor = conn.execute("""
+        SELECT id FROM task_status 
+        WHERE project_id=? AND task_type=? AND chapter_number=? AND status='running'
+    """, (project_id, task_type, chapter_num))
+    task = cursor.fetchone()
+    if not task:
+        conn.close()
+        print(json.dumps({"success": False, "error": "没有找到运行中的任务"}, ensure_ascii=False))
+        return
+    # 更新为失败
+    conn.execute("""
+        UPDATE task_status 
+        SET status='failed', completed_at=datetime('now','+8 hours'), 
+            error_message=?, retry_count=retry_count+1
+        WHERE id=?
+    """, (error_message, task['id']))
+    conn.commit()
+    conn.close()
+    print(json.dumps({"success": True, "task_id": task['id'], "retry_count": task[1] if task[1] else 0}, ensure_ascii=False))

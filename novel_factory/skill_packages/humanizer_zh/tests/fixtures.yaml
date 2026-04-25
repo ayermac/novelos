@@ -1,0 +1,130 @@
+# HumanizerZhSkill 测试用例
+
+cases:
+  - name: simple_template_connector
+    description: "简单的模板连接词替换"
+    input:
+      text: "然而，这是一个测试。"
+    expect:
+      ok: true
+      contains:
+        - humanized_text
+      not_contains:
+        - "然而，"
+
+  - name: multiple_template_connectors
+    description: "多个模板连接词替换"
+    input:
+      text: "然而，这是一个测试。但是，结果并不理想。与此同时，我们需要继续努力。"
+    expect:
+      ok: true
+      contains:
+        - humanized_text
+      not_contains:
+        - "然而，"
+        - "但是，"
+        - "与此同时，"
+
+  - name: vague_psychology
+    description: "空泛心理描写替换"
+    input:
+      text: "他内心感到复杂，心情难以言喻。"
+    expect:
+      ok: true
+      contains:
+        - humanized_text
+
+  - name: exaggerated_emotions
+    description: "夸张情绪词替换"
+    input:
+      text: "这部电影震撼心灵，令人窒息。"
+    expect:
+      ok: true
+      contains:
+        - humanized_text
+
+  - name: cliche_phrases
+    description: "高频套话替换"
+    input:
+      text: "命运的齿轮开始转动，时间的流逝让他感慨万千。"
+    expect:
+      ok: true
+      contains:
+        - humanized_text
+
+  - name: mechanical_explanation
+    description: "机械解释替换"
+    input:
+      text: "这意味着他必须做出选择。"
+    expect:
+      ok: true
+      contains:
+        - humanized_text
+
+  - name: mixed_content
+    description: "混合内容测试"
+    input:
+      text: "然而，尽管如此，他内心感到复杂。这表明他需要时间思考。命运齿轮转动，令人窒息。"
+    expect:
+      ok: true
+      contains:
+        - humanized_text
+        - changes
+
+  - name: fact_preservation
+    description: "事实保护测试"
+    input:
+      text: "【伏笔1】他获得了传说中的宝剑。然而，这把剑的力量超出了他的想象。"
+      fact_lock:
+        key_events:
+          - "获得了传说中的宝剑"
+    expect:
+      ok: true
+      contains:
+        - humanized_text
+        - "【伏笔1】"
+        - "获得了传说中的宝剑"
+
+  - name: empty_text
+    description: "空文本测试"
+    input:
+      text: ""
+    expect:
+      ok: false
+      error_contains:
+        - "缺少text字段"
+
+  - name: no_ai_patterns
+    description: "无AI模式文本"
+    input:
+      text: "今天天气不错，我去公园散步。看到了很多花，心情很好。"
+    expect:
+      ok: true
+      contains:
+        - humanized_text
+      check:
+        changes_count: 0
+
+  - name: high_change_ratio
+    description: "高改动比例测试"
+    input:
+      text: "然而，但是，尽管如此，与此同时，不仅如此，显而易见，毫无疑问，由此可见，综上所述，总而言之。"
+    expect:
+      ok: true
+      contains:
+        - humanized_text
+        - risk_level
+
+  - name: fact_risk_detection
+    description: "事实风险检测"
+    input:
+      text: "【伏笔1】重要事件发生。然而，后续发展出人意料。"
+      fact_lock:
+        key_events:
+          - "重要事件"
+      config:
+        fail_on_fact_risk: true
+    expect:
+      ok: true
+      contains:
+        - "【伏笔1】"

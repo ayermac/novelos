@@ -1,0 +1,13 @@
+# Novel Factory v1 - Dependencies
+# Core
+langgraph>=0.2.0
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+pydantic>=2.0.0
+pyyaml>=6.0
+
+# Database
+# sqlite3 is stdlib, no extra package needed
+
+# Testing
+pytest>=7.0.0

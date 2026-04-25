@@ -1,0 +1,96 @@
+id: narrative-quality
+name: Narrative Quality Scorer
+version: "2.3.0"
+kind: validator
+class_name: NarrativeQualityScorer
+description: "评估文本的叙事质量"
+enabled: true
+builtin: true
+package:
+  name: narrative_quality
+  handler: handler.py
+  entry_class: NarrativeQualityScorer
+  prompts_dir: null
+  rules_dir: rules
+  fixtures: tests/fixtures.yaml
+allowed_agents:
+  - editor
+  - qualityhub
+  - manual
+allowed_stages:
+  - before_review
+  - final_gate
+  - manual
+permissions:
+  read_context: false
+  read_chapter: false
+  transform_text: false
+  validate_text: true
+  write_quality_report: false
+  write_skill_run: true
+  write_chapter_content: false
+  update_chapter_status: false
+  send_agent_message: false
+  call_llm: false
+  call_network: false
+input_schema:
+  type: object
+  required:
+    - text
+  properties:
+    text:
+      type: string
+      description: "要评估的文本内容"
+output_schema:
+  type: object
+  required:
+    - scores
+  properties:
+    scores:
+      type: object
+      description: "各维度评分"
+      properties:
+        pacing:
+          type: number
+        character:
+          type: number
+        setting:
+          type: number
+        emotion:
+          type: number
+        overall_score:
+          type: number
+    issues:
+      type: array
+      description: "问题列表"
+      items:
+        type: object
+    suggestions:
+      type: array
+      description: "建议列表"
+      items:
+        type: string
+    grade:
+      type: string
+      enum:
+        - A
+        - B
+        - C
+        - D
+        - F
+      description: "等级评定"
+config_schema:
+  type: object
+  properties:
+    pass_score:
+      type: number
+      description: "及格分数"
+      minimum: 0
+      maximum: 100
+default_config:
+  pass_score: 75
+failure_policy:
+  on_error: block
+  max_retries: 0
+  timeout_seconds: null
+  blocking_threshold: 75

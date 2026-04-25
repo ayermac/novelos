@@ -1,0 +1,381 @@
+# 叙事质量评分规则
+
+## 概述
+
+定义叙事质量评分的维度、阈值和计算规则。
+
+## 评分维度
+
+### 1. 冲突强度 (Conflict Intensity)
+
+权重: 14.3%
+
+检测文本中的冲突元素密度。
+
+**冲突关键词:**
+
+```yaml
+conflict_keywords:
+  # 直接冲突
+  - "冲突"
+  - "矛盾"
+  - "争执"
+  - "争吵"
+  - "对抗"
+  - "对立"
+  - "敌对"
+  
+  # 威胁危机
+  - "威胁"
+  - "危机"
+  - "危险"
+  - "挑战"
+  - "困境"
+  - "难题"
+  - "障碍"
+  
+  # 战斗动作
+  - "争斗"
+  - "搏斗"
+  - "战斗"
+  - "打斗"
+  - "厮杀"
+  - "交锋"
+  
+  # 反抗行为
+  - "反对"
+  - "抵抗"
+  - "反抗"
+  - "反击"
+  - "回击"
+```
+
+**评分规则:**
+- 冲突密度得分（0-50分）: `min(conflict_density * 5, 50)`
+- 冲突对话得分（0-50分）: `min(conflict_dialogues * 10, 50)`
+- 总分 = 密度得分 + 对话得分
+
+**阈值:**
+- 优秀: >= 70
+- 良好: 50-70
+- 不足: < 40
+
+### 2. 钩子强度 (Hook Strength)
+
+权重: 14.3%
+
+检测章末是否有悬念、转折等钩子。
+
+**钩子模式:**
+
+```yaml
+hook_patterns:
+  # 章末转折
+  - pattern: "然而[，,]?$"
+    score: 25
+    
+  - pattern: "但是[，,]?$"
+    score: 25
+    
+  # 章末悬念
+  - pattern: "就在这时[，,]?$"
+    score: 25
+    
+  - pattern: "突然[，,]?$"
+    score: 25
+    
+  - pattern: "意想不到的是[，,]?$"
+    score: 25
+    
+  - pattern: "他.{1,5}不知道的是[，,]?$"
+    score: 25
+    
+  - pattern: "等待他的将是[，,]?$"
+    score: 25
+    
+  - pattern: "命运.{1,5}转折[，,]?$"
+    score: 25
+    
+  # 章末标点
+  - pattern: "\\?\\s*$"
+    description: "章末疑问"
+    score: 20
+    
+  - pattern: "！\\s*$"
+    description: "章末感叹"
+    score: 15
+    
+  - pattern: "\\.\\.\\."
+    description: "章末省略"
+    score: 15
+```
+
+**评分规则:**
+- 检测最后2句话的钩子模式
+- 累加匹配模式的分数
+- 最高100分
+
+**阈值:**
+- 优秀: >= 70
+- 良好: 50-70
+- 不足: < 50
+
+### 3. 信息密度 (Information Density)
+
+权重: 14.3%
+
+检测文本中的信息量。
+
+**评分规则:**
+- 句子密度: `(punct_count / char_count) * 1000`
+- 信息元素密度: `(number_count + quote_count / 2) / char_count * 1000`
+- 总分 = `min(sentence_density * 2 + info_density * 5, 100)`
+
+**阈值:**
+- 优秀: >= 70
+- 良好: 50-70
+- 不足: < 40
+
+### 4. 节奏控制 (Pacing Control)
+
+权重: 14.3%
+
+检测文本的节奏变化。
+
+**评分规则:**
+- 计算句子长度标准差
+- 标准差 < 5: 40分（过于单调）
+- 标准差 5-15: 80分（节奏良好）
+- 标准差 15-30: 70分（节奏尚可）
+- 标准差 > 30: 50分（过于混乱）
+- 段落变化加成: +10分
+
+**阈值:**
+- 优秀: >= 70
+- 良好: 50-70
+- 不足: < 50
+
+### 5. 对话自然度 (Dialogue Naturalness)
+
+权重: 14.3%
+
+检测对话的比例和自然程度。
+
+**对话比例评分:**
+- 比例 < 0.1: 40分
+- 比例 0.1-0.3: 80分
+- 比例 0.3-0.5: 70分
+- 比例 > 0.5: 50分
+
+**自然度评分:**
+- 口语化表达: +5分/个
+- 对话长度适中(5-30字): +3分/个
+
+**总分:**
+- 总分 = 比例得分 + 自然度得分
+- 最高100分
+
+**阈值:**
+- 优秀: >= 70
+- 良好: 50-70
+- 不足: < 50
+
+### 6. 场景沉浸感 (Scene Immersion)
+
+权重: 14.3%
+
+检测场景描写的丰富程度。
+
+**场景关键词:**
+
+```yaml
+scene_keywords:
+  # 视觉
+  - "光线"
+  - "阳光"
+  - "月光"
+  - "灯光"
+  - "阴影"
+  - "黑暗"
+  - "颜色"
+  - "红色"
+  - "蓝色"
+  - "绿色"
+  - "黄色"
+  
+  # 听觉
+  - "声音"
+  - "响声"
+  - "噪音"
+  - "寂静"
+  - "沉默"
+  
+  # 嗅觉
+  - "气味"
+  - "香味"
+  - "臭味"
+  - "气息"
+  
+  # 触觉
+  - "温度"
+  - "寒冷"
+  - "炎热"
+  - "温暖"
+  - "凉爽"
+  - "触感"
+  - "粗糙"
+  - "光滑"
+  - "柔软"
+  - "坚硬"
+  
+  # 空间
+  - "空间"
+  - "宽敞"
+  - "狭窄"
+  - "开阔"
+  - "封闭"
+```
+
+**评分规则:**
+- 场景密度得分（0-70分）: `min(scene_density * 7, 70)`
+- 场景段落得分（0-30分）: `min(scene_paragraphs * 5, 30)`
+- 总分 = 密度得分 + 段落得分
+
+**阈值:**
+- 优秀: >= 60
+- 良好: 40-60
+- 不足: < 30
+
+### 7. 人物动机清晰度 (Character Motivation)
+
+权重: 14.3%
+
+检测人物动机的表达。
+
+**动机关键词:**
+
+```yaml
+motivation_keywords:
+  # 目标导向
+  - "为了"
+  - "想要"
+  - "希望"
+  - "渴望"
+  - "追求"
+  - "目标"
+  
+  # 必要性
+  - "必须"
+  - "需要"
+  - "不得不"
+  - "只能"
+  
+  # 决心
+  - "决心"
+  - "决定"
+  - "立志"
+  - "发誓"
+  - "承诺"
+  
+  # 愿景
+  - "梦想"
+  - "理想"
+  - "愿望"
+  - "期盼"
+  - "期待"
+```
+
+**评分规则:**
+- 动机密度得分（0-60分）: `min(motivation_density * 6, 60)`
+- 动机句式得分（0-40分）: `min(pattern_count * 10, 40)`
+- 总分 = 密度得分 + 句式得分
+
+**阈值:**
+- 优秀: >= 60
+- 良好: 40-60
+- 不足: < 30
+
+## 综合评分
+
+**计算公式:**
+
+```
+overall_score = (
+  conflict_intensity +
+  hook_strength +
+  information_density +
+  pacing_control +
+  dialogue_naturalness +
+  scene_immersion +
+  character_motivation
+) / 7
+```
+
+## 等级评定
+
+```yaml
+grade_scale:
+  - grade: "S"
+    min_score: 90
+    description: "优秀"
+    
+  - grade: "A"
+    min_score: 80
+    description: "良好"
+    
+  - grade: "B"
+    min_score: 70
+    description: "中等"
+    
+  - grade: "C"
+    min_score: 60
+    description: "及格"
+    
+  - grade: "D"
+    min_score: 50
+    description: "不及格"
+    
+  - grade: "F"
+    min_score: 0
+    description: "失败"
+```
+
+## 配置项
+
+```yaml
+config:
+  min_conflict_score: 40      # 最低冲突分
+  min_hook_score: 50          # 最低钩子分
+  min_dialogue_ratio: 0.1     # 最低对话比例
+  pass_score: 75              # 及格分数
+```
+
+## 问题检测
+
+```yaml
+issue_detection:
+  - type: "low_conflict"
+    threshold: 40
+    severity: "warning"
+    message: "冲突强度不足"
+    
+  - type: "weak_hook"
+    threshold: 50
+    severity: "warning"
+    message: "章末钩子强度不足"
+    
+  - type: "low_dialogue"
+    threshold: 0.1
+    severity: "info"
+    message: "对话比例较低"
+    
+  - type: "low_scene"
+    threshold: 30
+    severity: "info"
+    message: "场景描写较少"
+    
+  - type: "unclear_motivation"
+    threshold: 30
+    severity: "info"
+    message: "人物动机表达不够清晰"
+```

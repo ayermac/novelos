@@ -1,0 +1,101 @@
+id: ai-style-detector
+name: AI Style Detector
+version: "2.3.0"
+kind: validator
+class_name: AIStyleDetectorSkill
+description: "检测文本中的AI生成痕迹"
+enabled: true
+builtin: true
+package:
+  name: ai_style_detector
+  handler: handler.py
+  entry_class: AIStyleDetectorSkill
+  prompts_dir: null
+  rules_dir: rules
+  fixtures: tests/fixtures.yaml
+allowed_agents:
+  - polisher
+  - editor
+  - qualityhub
+  - manual
+allowed_stages:
+  - before_save
+  - before_review
+  - final_gate
+  - check_polished
+  - manual
+permissions:
+  read_context: false
+  read_chapter: false
+  transform_text: false
+  validate_text: true
+  write_quality_report: false
+  write_skill_run: true
+  write_chapter_content: false
+  update_chapter_status: false
+  send_agent_message: false
+  call_llm: false
+  call_network: false
+input_schema:
+  type: object
+  required:
+    - text
+  properties:
+    text:
+      type: string
+      description: "要检测的文本内容"
+    content:
+      type: string
+      description: "备用文本字段（兼容）"
+output_schema:
+  type: object
+  required:
+    - ai_trace_score
+  properties:
+    ai_trace_score:
+      type: number
+      description: "AI痕迹评分（0-100）"
+      minimum: 0
+      maximum: 100
+    risk_level:
+      type: string
+      enum:
+        - none
+        - low
+        - medium
+        - high
+      description: "风险等级"
+    blocking:
+      type: boolean
+      description: "是否阻断"
+    issues:
+      type: array
+      description: "问题列表"
+      items:
+        type: object
+    suggestions:
+      type: array
+      description: "建议列表"
+      items:
+        type: string
+config_schema:
+  type: object
+  properties:
+    warn_threshold:
+      type: number
+      description: "警告阈值"
+      minimum: 0
+      maximum: 100
+    fail_threshold:
+      type: number
+      description: "失败阈值"
+      minimum: 0
+      maximum: 100
+default_config:
+  warn_threshold: 45
+  fail_threshold: 70
+failure_policy:
+  on_error: block
+  max_retries: 0
+  timeout_seconds: null
+  blocking_threshold: 70

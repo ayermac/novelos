@@ -1,0 +1,228 @@
+# 替换规则配置
+
+## 模板连接词替换
+
+template_connectors:
+  - pattern: "然而[，,]"
+    replacement: "但"
+    description: "替换正式连接词为口语化表达"
+    
+  - pattern: "但是[，,]"
+    replacement: "但"
+    description: "简化连接词"
+    
+  - pattern: "不过[，,]"
+    replacement: "只是"
+    description: "替换为更自然的转折"
+    
+  - pattern: "尽管如此[，,]"
+    replacement: "即便如此，"
+    description: "保持语气的连贯性"
+    
+  - pattern: "与此同时[，,]"
+    replacement: "同时，"
+    description: "简化时间连接词"
+    
+  - pattern: "不仅如此[，,]"
+    replacement: "而且，"
+    description: "使用更简洁的递进词"
+    
+  - pattern: "值得注意的是[，,]"
+    replacement: "要注意的是，"
+    description: "降低正式感"
+    
+  - pattern: "需要指出的是[，,]"
+    replacement: "需要说明的是，"
+    description: "使用更自然的表达"
+    
+  - pattern: "显而易见[，,]"
+    replacement: "明显，"
+    description: "简化强调词"
+    
+  - pattern: "毫无疑问[，,]"
+    replacement: "无疑，"
+    description: "缩短表达"
+    
+  - pattern: "由此可见[，,]"
+    replacement: "可见，"
+    description: "简化推理连接词"
+    
+  - pattern: "综上所述[，,]"
+    replacement: "综上，"
+    description: "简化总结词"
+    
+  - pattern: "总而言之[，,]"
+    replacement: "总之，"
+    description: "使用更简洁的总结词"
+    
+  - pattern: "换句话说[，,]"
+    replacement: "也就是说，"
+    description: "使用更自然的解释词"
+    
+  - pattern: "换言之[，,]"
+    replacement: "即"
+    description: "极简化表达"
+
+## 空泛心理描写替换
+
+vague_psychology:
+  - pattern: "内心.{0,5}复杂"
+    replacement: "心里有些乱"
+    description: "具体化心理状态"
+    
+  - pattern: "心情.{0,5}难以言喻"
+    replacement: "说不出是什么滋味"
+    description: "使用更具体的表达"
+    
+  - pattern: "思绪.{0,5}万千"
+    replacement: "想了很多"
+    description: "简化心理描写"
+    
+  - pattern: "心中.{0,5}五味杂陈"
+    replacement: "心里五味杂陈"
+    description: "保持常用表达"
+    
+  - pattern: "百感交集"
+    replacement: "感慨良多"
+    description: "使用更自然的表达"
+    
+  - pattern: "心潮澎湃"
+    replacement: "心情激动"
+    description: "降低夸张程度"
+    
+  - pattern: "内心.{0,5}挣扎"
+    replacement: "心里很矛盾"
+    description: "使用更口语化的表达"
+    
+  - pattern: "心情.{0,5}沉重"
+    replacement: "心情有些沉重"
+    description: "增加缓和词"
+    
+  - pattern: "心中.{0,5}涌起"
+    replacement: "心里涌起"
+    description: "简化表达"
+    
+  - pattern: "内心.{0,5}波澜"
+    replacement: "心里起了波澜"
+    description: "增加动态感"
+
+## 夸张情绪词替换
+
+exaggerated_emotions:
+  - pattern: "震撼.{0,3}心灵"
+    replacement: "震撼人心"
+    description: "降低夸张程度"
+    
+  - pattern: "令人.{0,3}窒息"
+    replacement: "让人透不过气"
+    description: "使用更自然的表达"
+    
+  - pattern: "无法.{0,3}自拔"
+    replacement: "难以自拔"
+    description: "降低绝对化程度"
+    
+  - pattern: "彻底.{0,3}崩溃"
+    replacement: "崩溃"
+    description: "去除过度修饰"
+    
+  - pattern: "完全.{0,3}绝望"
+    replacement: "绝望"
+    description: "简化表达"
+    
+  - pattern: "瞬间.{0,3}泪目"
+    replacement: "眼眶湿润"
+    description: "降低夸张程度"
+    
+  - pattern: "感动.{0,3}落泪"
+    replacement: "感动得流泪"
+    description: "使用更自然的表达"
+    
+  - pattern: "心碎.{0,3}一地"
+    replacement: "心碎"
+    description: "去除过度修饰"
+    
+  - pattern: "彻底.{0,3}沦陷"
+    replacement: "沦陷"
+    description: "简化表达"
+    
+  - pattern: "无法.{0,3}抗拒"
+    replacement: "难以抗拒"
+    description: "降低绝对化程度"
+
+## 高频套话替换
+
+cliches:
+  - pattern: "命运.{0,5}齿轮"
+    replacement: "命运的转折"
+    description: "替换陈词滥调"
+    
+  - pattern: "时间.{0,5}流逝"
+    replacement: "时光流逝"
+    description: "使用更自然的表达"
+    
+  - pattern: "岁月.{0,5}痕迹"
+    replacement: "岁月的印记"
+    description: "降低文学化程度"
+    
+  - pattern: "人生.{0,5}转折点"
+    replacement: "人生的转折"
+    description: "简化表达"
+    
+  - pattern: "命运.{0,5}安排"
+    replacement: "命运的安排"
+    description: "保持自然表达"
+    
+  - pattern: "冥冥之中"
+    replacement: "冥冥中"
+    description: "简化表达"
+    
+  - pattern: "命中注定"
+    replacement: "注定"
+    description: "缩短表达"
+    
+  - pattern: "天意弄人"
+    replacement: "造化弄人"
+    description: "使用更地道的表达"
+    
+  - pattern: "世事无常"
+    replacement: "世事难料"
+    description: "使用更自然的表达"
+    
+  - pattern: "人生如戏"
+    replacement: "人生如戏"
+    description: "保持常用表达"
+
+## 机械解释替换
+
+mechanical_explanations:
+  - pattern: "这.{1,3}意味着"
+    replacement: "也就是说"
+    description: "使用更自然的解释词"
+    
+  - pattern: "这.{1,3}说明"
+    replacement: "这说明"
+    description: "保持自然表达"
+    
+  - pattern: "这.{1,3}表明"
+    replacement: "这表明"
+    description: "保持自然表达"
+    
+  - pattern: "这.{1,3}代表"
+    replacement: "这代表"
+    description: "保持自然表达"
+    
+  - pattern: "这.{1,3}暗示"
+    replacement: "这暗示"
+    description: "保持自然表达"
+    
+  - pattern: "这.{1,3}预示"
+    replacement: "这预示"
+    description: "保持自然表达"
+    
+  - pattern: "这.{1,3}反映"
+    replacement: "这反映"
+    description: "保持自然表达"
+    
+  - pattern: "这.{1,3}体现"
+    replacement: "这体现"
+    description: "保持自然表达"

@@ -1,0 +1,146 @@
+# AIStyleDetectorSkill 测试用例
+
+cases:
+  - name: no_ai_patterns
+    description: "无AI模式的正常文本"
+    input:
+      text: "今天天气不错，我去公园散步。看到了很多花，心情很好。"
+    expect:
+      ok: true
+      contains:
+        - ai_trace_score
+      check:
+        ai_trace_score_max: 30
+        risk_level: "low"
+        blocking: false
+
+  - name: template_phrases_high
+    description: "模板句式密度高"
+    input:
+      text: "然而，这是一个测试。但是，结果并不理想。与此同时，我们需要继续努力。不仅如此，我们还要保持信心。由此可见，成功需要坚持。总而言之，不要放弃。"
+    expect:
+      ok: true
+      contains:
+        - ai_trace_score
+        - issues
+      check:
+        ai_trace_score_min: 40
+        has_issue_type: "template_phrases"
+
+  - name: connector_density_high
+    description: "连接词密度高"
+    input:
+      text: "然后我去了学校，接着上了课，随后吃了午饭，于是回家了。因此我很累，所以想休息。但是作业还没做完，而且明天要交。"
+    expect:
+      ok: true
+      contains:
+        - ai_trace_score
+      check:
+        ai_trace_score_min: 15
+        has_issue_type: "connector_density"
+
+  - name: vague_emotions
+    description: "空泛情绪描写"
+    input:
+      text: "他心中涌起一股难以言喻的感觉。内心复杂，心情沉重。说不出的感动涌上心头，深深的触动让他无法自已。"
+    expect:
+      ok: true
+      contains:
+        - ai_trace_score
+      check:
+        ai_trace_score_min: 20
+        has_issue_type: "vague_emotions"
+
+  - name: sentence_repetition
+    description: "句式重复"
+    input:
+      text: "他慢慢地走了过来。他轻轻地敲了敲门。他静静地等待着回应。他仔细地观察着四周。他认真地思考着问题。"
+    expect:
+      ok: true
+      contains:
+        - ai_trace_score
+      check:
+        ai_trace_score_min: 10
+        has_issue_type: "sentence_repetition"
+
+  - name: over_explanation
+    description: "过度解释"
+    input:
+      text: "之所以他迟到是因为路上堵车。之所以堵车是因为前方施工。这也就是说他无法准时到达。换句话说，会议需要推迟。"
+    expect:
+      ok: true
+      contains:
+        - ai_trace_score
+      check:
+        ai_trace_score_min: 30
+        has_issue_type: "over_explanation"
+
+  - name: mixed_ai_patterns
+    description: "混合AI模式"
+    input:
+      text: "然而，他心中涌起一股难以言喻的感觉。之所以这样是因为内心复杂。与此同时，他慢慢地走向窗前，静静地观察着外面。总而言之，这是一个特殊的时刻。"
+    expect:
+      ok: true
+      contains:
+        - ai_trace_score
+        - risk_level
+        - issues
+        - suggestions
+      check:
+        ai_trace_score_min: 40
+
+  - name: blocking_threshold
+    description: "达到阻断阈值"
+    input:
+      text: "然而，但是，与此同时，不仅如此，由此可见，总而言之，综上所述，毫无疑问，众所周知，不言而喻，令人惊讶的是，让人意想不到的是，出乎意料的是。然后接着随后于是因此所以但是然而不过而且并且或者虽然尽管因为由于。"
+    expect:
+      ok: true
+      contains:
+        - ai_trace_score
+        - blocking
+      check:
+        ai_trace_score_min: 40
+        blocking: false
+        risk_level: "medium"
+
+  - name: empty_text
+    description: "空文本"
+    input:
+      text: ""
+    expect:
+      ok: false
+      error_contains:
+        - "No text or content provided"
+
+  - name: content_field_compatibility
+    description: "使用content字段（兼容性）"
+    input:
+      content: "然而，这是一个测试。"
+    expect:
+      ok: true
+      contains:
+        - ai_trace_score
+
+  - name: custom_threshold
+    description: "自定义阈值"
+    input:
+      text: "然而，这是一个测试。但是，结果并不理想。"
+      config:
+        warn_threshold: 30
+        fail_threshold: 50
+    expect:
+      ok: true
+      contains:
+        - ai_trace_score
+        - risk_level
+
+  - name: suggestions_generation
+    description: "建议生成"
+    input:
+      text: "然而，他心中涌起一股难以言喻的感觉。之所以这样是因为内心复杂。他慢慢地走向窗前。"
+    expect:
+      ok: true
+      contains:
+        - suggestions
+      check:
+        has_suggestions: true

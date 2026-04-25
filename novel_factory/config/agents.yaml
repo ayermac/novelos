@@ -1,0 +1,81 @@
+# Agent configuration for Novel Factory v1
+# Each agent defines its required input status, output schema, and constraints.
+
+agents:
+  planner:
+    agent_id: planner
+    description: "总编/策划 — 生成章节写作指令"
+    required_status:
+      - idea
+      - outlined
+      - planned
+    output_schema: PlannerOutput
+    can_write:
+      - instructions
+      - plot_holes
+      - world_settings
+    cannot_write:
+      - chapters.content
+      - reviews
+
+  screenwriter:
+    agent_id: screenwriter
+    description: "编剧 — 将指令拆解为场景 beat"
+    required_status:
+      - planned
+    output_schema: ScreenwriterOutput
+    can_write:
+      - scene_beats
+      - agent_artifacts
+    cannot_write:
+      - chapters.content
+      - world_settings
+      - characters
+
+  author:
+    agent_id: author
+    description: "执笔 — 根据指令和场景 beat 创作正文"
+    required_status:
+      - scripted
+      - revision
+    output_schema: AuthorOutput
+    can_write:
+      - chapters.content
+      - chapter_versions
+      - agent_artifacts
+    cannot_write:
+      - plot_holes
+      - characters
+      - instructions
+
+  polisher:
+    agent_id: polisher
+    description: "润色 — 清理 AI 味，优化句式，不改剧情事实"
+    required_status:
+      - drafted
+      - revision
+    output_schema: PolisherOutput
+    can_write:
+      - chapter_versions
+      - polish_reports
+      - agent_artifacts
+    cannot_write:
+      - plot_holes
+      - characters
+      - instructions
+
+  editor:
+    agent_id: editor
+    description: "质检 — 五层审校，通过/退回"
+    required_status:
+      - polished
+      - review
+    output_schema: EditorOutput
+    can_write:
+      - reviews
+      - chapter_state
+      - agent_messages
+      - agent_artifacts
+    cannot_write:
+      - chapters.content
+      - instructions

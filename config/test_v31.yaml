@@ -1,0 +1,29 @@
+default_llm: default
+
+llm_profiles:
+  default:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: gpt-4o-mini
+    temperature: 0.7
+    max_tokens: 4096
+
+  author:
+    provider: openai_compatible
+    base_url_env: OPENROUTER_BASE_URL
+    api_key_env: OPENROUTER_API_KEY
+    model: anthropic/claude-3.7-sonnet
+    temperature: 0.8
+    max_tokens: 12000
+
+agent_llm:
+  planner: default
+  screenwriter: default
+  author: author
+  polisher: default
+  editor: default
+  scout: default
+  secretary: default
+  continuity_checker: default
+  architect: default
