@@ -130,7 +130,8 @@ class TestV23CLI:
             result = json.loads(output)
             
             assert result["ok"], "All tests should pass"
-            assert result["data"]["total"] == 3, "Should test 3 skills"
+            # v3.8: total may include auto-discovered imported skills
+            assert result["data"]["total"] >= 3, "Should test at least 3 skills"
             assert result["data"]["failed"] == 0, "No skills should fail"
         finally:
             sys.stdout = old_stdout

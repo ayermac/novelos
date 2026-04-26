@@ -29,7 +29,8 @@ class TestSkillConfiguration:
         for skill in skills:
             # v2.2: Use "kind" field if available, fallback to "type" for v2.1 compatibility
             skill_type = skill.get("kind") or skill.get("type")
-            assert skill_type in ("transform", "validator")
+            # v3.8: imported_instruction is a valid kind for auto-discovered imported skills
+            assert skill_type in ("transform", "validator", "imported_instruction")
     
     def test_agent_skill_configuration(self):
         """Test agent skill configuration from skills.yaml."""

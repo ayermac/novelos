@@ -73,6 +73,57 @@ class SkillRegistry:
             logger.error(f"Failed to load skills config: {e}")
             self.skills_config = {}
             self.agent_skills = {}
+
+        # v3.8: Auto-discover imported skill packages
+        self._discover_imported_skills()
+
+    def _discover_imported_skills(self) -> None:
+        """Scan skill_packages/ for imported skills and register them.
+
+        Imported skills are added to skills_config with enabled=false so
+        they can be inspected via ``skills show/test``, but they are NOT
+        added to agent_skills (no auto-mount).
+        """
+        packages_dir = self.config_path.parent.parent / "skill_packages"
+        if not packages_dir.is_dir():
+            return
+
+        for pkg_dir in sorted(packages_dir.iterdir()):
+            if not pkg_dir.is_dir():
+                continue
+
+            manifest_path = pkg_dir / "manifest.yaml"
+            if not manifest_path.exists():
+                continue
+
+            try:
+                with open(manifest_path, "r", encoding="utf-8") as f:
+                    manifest_data = yaml.safe_load(f)
+            except Exception:
+                continue
+
+            # Only register imported_instruction skills
+            if not isinstance(manifest_data, dict):
+                continue
+            if manifest_data.get("kind") != "imported_instruction":
+                continue
+
+            skill_id = manifest_data.get("id")
+            if not skill_id or skill_id in self.skills_config:
+                continue
+
+            # Register with safe defaults
+            self.skills_config[skill_id] = {
+                "enabled": manifest_data.get("enabled", False),
+                "package": f"skill_packages/{pkg_dir.name}",
+                "type": manifest_data.get("kind", "context"),
+                "class": manifest_data.get("class_name", "ImportedInstructionSkill"),
+                "description": manifest_data.get("description", ""),
+                "config": {},
+                "_imported": True,  # marker for imported skills
+            }
+
+            logger.info(f"Auto-discovered imported skill: {skill_id}")
     
     def _resolve_package_manifest_path(self, package_path: str) -> Optional[Path]:
         """Resolve package manifest path with security validation.
@@ -628,6 +679,10 @@ class SkillRegistry:
     def test_skill(self, skill_id: str) -> dict[str, Any]:
         """Run fixtures for a skill.
 
+        Unlike run_skill, this method can test disabled skills because
+        ``skills test`` is a manual operation — the user explicitly asked
+        to test the skill.
+
         Args:
             skill_id: Skill identifier
 
@@ -689,7 +744,48 @@ class SkillRegistry:
                 "error": "No test cases found in fixtures",
                 "data": None,
             }
-        
+
+        # Get skill instance — allow testing disabled skills
+        skill = self.get_skill(skill_id)
+        if not skill:
+            # For disabled skills, try to instantiate directly via package
+            manifest = self.get_manifest(skill_id)
+            if manifest and manifest.package:
+                skill_class = self._load_skill_from_package(
+                    package_path, manifest.package.entry_class
+                )
+                if skill_class:
+                    try:
+                        skill = skill_class(config=skill_config.get("config", {}))
+                    except Exception:
+                        pass
+
+        if not skill:
+            return {
+                "ok": False,
+                "error": f"Cannot instantiate skill: {skill_id}",
+                "data": None,
+            }
+
+        # Validate manifest for agent/stage access (manual/manual is allowed for imported)
+        # Note: We check allowed_agents/allowed_stages but NOT manifest.enabled,
+        # because ``skills test`` is a manual operation that should work on
+        # disabled skills.
+        manifest = self.get_manifest(skill_id)
+        if manifest:
+            if "manual" not in manifest.allowed_agents:
+                return {
+                    "ok": False,
+                    "error": f"Skill '{skill_id}' is not allowed for agent 'manual'",
+                    "data": None,
+                }
+            if "manual" not in manifest.allowed_stages:
+                return {
+                    "ok": False,
+                    "error": f"Skill '{skill_id}' is not allowed for stage 'manual'",
+                    "data": None,
+                }
+
         passed = 0
         failed = 0
         results = []
@@ -699,9 +795,12 @@ class SkillRegistry:
             case_input = case.get("input", {})
             case_expect = case.get("expect", {})
             
-            # Run skill with input
-            result = self.run_skill(skill_id, case_input, agent="manual", stage="manual")
-            
+            # Run skill directly (bypass enabled check)
+            try:
+                result = skill.run(case_input)
+            except Exception as e:
+                result = {"ok": False, "error": str(e), "data": {}}
+
             # Validate result against expectations
             is_passed = self._validate_test_result(result, case_expect)
             

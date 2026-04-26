@@ -82,7 +82,7 @@ class SkillManifest(BaseModel):
     id: str
     name: str
     version: str
-    kind: Literal["transform", "validator", "context", "report"]
+    kind: Literal["transform", "validator", "context", "report", "imported_instruction"]
     class_name: str
     module: Optional[str] = None
     description: str = ""

@@ -45,6 +45,11 @@ from .commands.skills import (
     cmd_skill_validate,
     cmd_skill_test,
 )
+from .commands.skill_import import (
+    cmd_skill_import_plan,
+    cmd_skill_import_apply,
+    cmd_skill_import_validate,
+)
 from .commands.quality import (
     cmd_quality_check,
     cmd_quality_report,
@@ -303,6 +308,24 @@ def build_parser() -> argparse.ArgumentParser:
     skills_test.add_argument("--all", action="store_true", help="Test all skills with packages")
     skills_test.add_argument("--json", action="store_true", help="Output in JSON format")
     skills_test.set_defaults(func=cmd_skill_test)
+
+    # v3.8: skills import subcommands
+    skills_import_plan = skills_subparsers.add_parser("import-plan", help="Generate import plan for external skill")
+    skills_import_plan.add_argument("--source", required=True, help="Path to external skill directory")
+    skills_import_plan.add_argument("--json", action="store_true", help="Output in JSON format")
+    skills_import_plan.set_defaults(func=cmd_skill_import_plan)
+
+    skills_import_apply = skills_subparsers.add_parser("import-apply", help="Apply import plan and generate skill package")
+    skills_import_apply.add_argument("--source", required=True, help="Path to external skill directory")
+    skills_import_apply.add_argument("--skill-id", required=True, help="Target skill ID (e.g., imported-demo)")
+    skills_import_apply.add_argument("--force", action="store_true", help="Overwrite existing package directory")
+    skills_import_apply.add_argument("--json", action="store_true", help="Output in JSON format")
+    skills_import_apply.set_defaults(func=cmd_skill_import_apply)
+
+    skills_import_validate = skills_subparsers.add_parser("import-validate", help="Validate imported skill package")
+    skills_import_validate.add_argument("--skill-id", required=True, help="Skill ID to validate")
+    skills_import_validate.add_argument("--json", action="store_true", help="Output in JSON format")
+    skills_import_validate.set_defaults(func=cmd_skill_import_validate)
 
     # quality
     quality_parser = subparsers.add_parser("quality", help="Quality hub operations")

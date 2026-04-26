@@ -15,6 +15,7 @@ BUILTIN_SKILLS = {
     "HumanizerZhSkill": None,  # Will be imported lazily
     "AIStyleDetectorSkill": None,
     "NarrativeQualityScorer": None,
+    "ImportedInstructionSkill": None,  # v3.8: imported skill handler
 }
 
 
@@ -33,6 +34,9 @@ def _get_skill_class(class_name: str):
     elif class_name == "NarrativeQualityScorer":
         from .narrative_quality_scorer import NarrativeQualityScorer
         return NarrativeQualityScorer
+    elif class_name == "ImportedInstructionSkill":
+        from .import_bridge import ImportedInstructionSkill
+        return ImportedInstructionSkill
     
     return None
 

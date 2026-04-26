@@ -26,8 +26,11 @@ v3.4 Production Queue
 v3.5 Queue Runtime Hardening
 v3.6 Semi-Auto Serial Mode
 v3.7 Review Workbench
+v3.7.1 CLI Runtime Stable
+v3.7.2 Modularity Baseline
 v3.8 Skill Import Bridge
-v4   多模型与生产治理
+v3.9 LLM Model Catalog & Agent Recommendation
+v4.0 Style Bible MVP
 ```
 
 ## v1：章节生产 MVP
@@ -620,7 +623,61 @@ agent_llm:
 - 自动修改生产 Agent 挂载配置。
 - 自动执行外部 scripts。
 
-## v4：多模型与生产治理
+状态：已通过验收。
+
+## v3.7.1：CLI Runtime Stable
+
+目标：CLI 稳定化，--version 支持与错误处理增强。
+
+范围：
+
+- `--version` flag 支持。
+- CLI 错误码稳定。
+- JSON envelope 稳定性。
+
+状态：已通过验收。
+
+## v3.7.2：Modularity Baseline
+
+目标：核心大文件模块化拆分，提升多 Agent 可维护性。
+
+范围：
+
+- CLI 模块化（cli.py ≤ 150 行 → cli_app/ 包）。
+- Repository 模块化（repository.py ≤ 300 行 → repositories/ 包）。
+- Dispatcher 模块化（dispatcher.py ≤ 300 行 → dispatch/ 包）。
+- 文件体积策略测试。
+
+状态：已通过验收。
+
+## v3.9：LLM Model Catalog & Agent Recommendation
+
+目标：支持模型目录、Agent 模型推荐和 fallback 策略。
+
+范围：
+
+- LLM Model Catalog 配置。
+- Agent 级模型推荐。
+- Model fallback 策略。
+- Provider 健康检查。
+
+暂缓原因：
+
+- 需要先完成 Skill Import Bridge 安全模型验证。
+- Model fallback 和健康检查需要真实 API 集成测试。
+
+## v4.0：Style Bible MVP
+
+目标：支持平台风格 Bible，让不同平台/受众使用不同的写作风格配置。
+
+范围：
+
+- Style Bible 配置。
+- 平台风格规则。
+- Style 检查 Skill。
+- 风格一致性验证。
+
+## v4+：多模型与生产治理
 
 目标：支持真实长期运行所需的模型、成本、可观测性和数据治理。
 
