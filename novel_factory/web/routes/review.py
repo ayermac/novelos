@@ -31,6 +31,7 @@ async def review_pack(
 ):
     """Build a review pack."""
     try:
+        repo = get_repo(request)
         dispatcher = build_dispatcher_for_web(request)
         result = dispatcher.build_review_pack(
             run_id=run_id or None,
@@ -39,20 +40,28 @@ async def review_pack(
             from_chapter=from_chapter or None,
             to_chapter=to_chapter or None,
         )
-        return render(request, "review.html", {"result": result})
+        # Fetch projects for form dropdown
+        projects = repo.list_projects()
+        return render(request, "review.html", {"result": result, "projects": projects})
     except Exception as e:
-        return render(request, "review.html", {"error": safe_error_message(e)})
+        repo = get_repo(request)
+        projects = repo.list_projects()
+        return render(request, "review.html", {"error": safe_error_message(e), "projects": projects})
 
 
 @router.get("/chapter")
 async def review_chapter(request: Request, project_id: str, chapter: int):
     """Get review view for a chapter."""
     try:
+        repo = get_repo(request)
         dispatcher = build_dispatcher_for_web(request)
         result = dispatcher.get_review_chapter(project_id=project_id, chapter=chapter)
-        return render(request, "review.html", {"result": result})
+        projects = repo.list_projects()
+        return render(request, "review.html", {"result": result, "projects": projects})
     except Exception as e:
-        return render(request, "review.html", {"error": safe_error_message(e)})
+        repo = get_repo(request)
+        projects = repo.list_projects()
+        return render(request, "review.html", {"error": safe_error_message(e), "projects": projects})
 
 
 @router.get("/timeline")

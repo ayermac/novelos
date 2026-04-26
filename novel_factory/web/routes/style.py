@@ -20,6 +20,9 @@ def _build_style_context(repo, extra: dict | None = None) -> dict:
 
     bibles = {}
     pending_proposals = {}
+    gate_configs = {}
+    samples_by_project = {}
+    
     for project in projects:
         project_id = project["project_id"]
 
@@ -31,10 +34,22 @@ def _build_style_context(repo, extra: dict | None = None) -> dict:
         if proposals:
             pending_proposals[project_id] = proposals
 
+        # Get gate config
+        gate_config = repo.get_style_gate_config(project_id)
+        if gate_config:
+            gate_configs[project_id] = gate_config
+
+        # Get samples
+        samples = repo.list_style_samples(project_id)
+        if samples:
+            samples_by_project[project_id] = samples
+
     context = {
         "projects": projects,
         "bibles": bibles,
         "pending_proposals": pending_proposals,
+        "gate_configs": gate_configs,
+        "samples_by_project": samples_by_project,
     }
     if extra:
         context.update(extra)

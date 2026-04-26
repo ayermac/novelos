@@ -829,6 +829,29 @@ constraints 支持：cost_tier 最大值、quality_tier 最小值、provider 白
 
 状态：已通过验收，测试基线 1201/1201
 
+## v4.4：Web Review UX Hardening
+
+目标：把 v4.3 的本地 Web 验收控制台打磨成更适合个人作者完整验收的操作台，减少手输 ID、减少原始 JSON、增强批次/队列/连载/风格审核的状态可视化。
+
+范围：
+
+- Review 页面卡片化展示 review pack、decision_hint、chapters、quality issues、continuity gate、queue status、timeline。
+- Batch 页面展示 production runs 列表、章节范围、进度、阻塞章节，并为 awaiting_review run 提供行内审核表单。
+- Queue 页面按状态分组展示 pending/running/failed/timeout/paused/completed，并提供合法操作按钮。
+- Serial 页面展示 serial plans、进度、current queue/run，并提供 enqueue-next/advance/pause/resume/cancel 操作。
+- Style 页面展示 gate config、samples、pending proposals，并支持行内 approve/reject。
+- 统一 result/error panel，错误不泄露 traceback 或 API key。
+
+验收：
+
+- v4.3 + v4.4 Web 测试通过（38/38）。
+- 全量测试通过（1213/1213）。
+- 文件体积策略通过。
+- 所有新增 POST 测试验证真实 DB 状态变化，不只断言 HTTP 200。
+- 不引入登录、权限、多用户、WebSocket、daemon、Redis/Celery/Kafka/PostgreSQL。
+
+状态：已通过验收，测试基线 1213/1213
+
 ## v4+：多模型与生产治理
 
 目标：支持真实长期运行所需的模型、成本、可观测性和数据治理。

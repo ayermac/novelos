@@ -14,9 +14,8 @@ async def serial_status(request: Request):
     """Show serial plans."""
     try:
         repo = get_repo(request)
-        # List all serial plans (simplified - would need a repo method)
-        # For now, show placeholder
-        return render(request, "serial.html", {"plans": []})
+        plans = repo.list_serial_plans(limit=50)
+        return render(request, "serial.html", {"plans": plans})
     except Exception as e:
         return render(request, "serial.html", {"error": safe_error_message(e)})
 
@@ -32,6 +31,7 @@ async def serial_create(
 ):
     """Create a serial plan."""
     try:
+        repo = get_repo(request)
         dispatcher = build_dispatcher_for_web(request)
         result = dispatcher.create_serial_plan(
             project_id=project_id,
@@ -40,20 +40,43 @@ async def serial_create(
             target_chapter=target_chapter,
             batch_size=batch_size,
         )
-        return render(request, "serial.html", {"result": result})
+        
+        # Refresh plans list
+        plans = repo.list_serial_plans(limit=50)
+        return render(request, "serial.html", {
+            "result": result,
+            "plans": plans
+        })
     except Exception as e:
-        return render(request, "serial.html", {"error": safe_error_message(e)})
+        repo = get_repo(request)
+        plans = repo.list_serial_plans(limit=50)
+        return render(request, "serial.html", {
+            "error": safe_error_message(e),
+            "plans": plans
+        })
 
 
 @router.post("/enqueue-next")
 async def serial_enqueue_next(request: Request, serial_plan_id: str = Form(...)):
     """Enqueue next batch for serial plan."""
     try:
+        repo = get_repo(request)
         dispatcher = build_dispatcher_for_web(request)
         result = dispatcher.enqueue_serial_next(serial_plan_id=serial_plan_id)
-        return render(request, "serial.html", {"result": result})
+        
+        # Refresh plans list
+        plans = repo.list_serial_plans(limit=50)
+        return render(request, "serial.html", {
+            "result": result,
+            "plans": plans
+        })
     except Exception as e:
-        return render(request, "serial.html", {"error": safe_error_message(e)})
+        repo = get_repo(request)
+        plans = repo.list_serial_plans(limit=50)
+        return render(request, "serial.html", {
+            "error": safe_error_message(e),
+            "plans": plans
+        })
 
 
 @router.post("/advance")
@@ -65,37 +88,73 @@ async def serial_advance(
 ):
     """Advance serial plan with decision."""
     try:
+        repo = get_repo(request)
         dispatcher = build_dispatcher_for_web(request)
         result = dispatcher.advance_serial_plan(
             serial_plan_id=serial_plan_id,
             decision=decision,
             notes=notes,
         )
-        return render(request, "serial.html", {"result": result})
+        
+        # Refresh plans list
+        plans = repo.list_serial_plans(limit=50)
+        return render(request, "serial.html", {
+            "result": result,
+            "plans": plans
+        })
     except Exception as e:
-        return render(request, "serial.html", {"error": safe_error_message(e)})
+        repo = get_repo(request)
+        plans = repo.list_serial_plans(limit=50)
+        return render(request, "serial.html", {
+            "error": safe_error_message(e),
+            "plans": plans
+        })
 
 
 @router.post("/pause")
 async def serial_pause(request: Request, serial_plan_id: str = Form(...)):
     """Pause a serial plan."""
     try:
+        repo = get_repo(request)
         dispatcher = build_dispatcher_for_web(request)
         result = dispatcher.pause_serial_plan(serial_plan_id=serial_plan_id)
-        return render(request, "serial.html", {"result": result})
+        
+        # Refresh plans list
+        plans = repo.list_serial_plans(limit=50)
+        return render(request, "serial.html", {
+            "result": result,
+            "plans": plans
+        })
     except Exception as e:
-        return render(request, "serial.html", {"error": safe_error_message(e)})
+        repo = get_repo(request)
+        plans = repo.list_serial_plans(limit=50)
+        return render(request, "serial.html", {
+            "error": safe_error_message(e),
+            "plans": plans
+        })
 
 
 @router.post("/resume")
 async def serial_resume(request: Request, serial_plan_id: str = Form(...)):
     """Resume a paused serial plan."""
     try:
+        repo = get_repo(request)
         dispatcher = build_dispatcher_for_web(request)
         result = dispatcher.resume_serial_plan(serial_plan_id=serial_plan_id)
-        return render(request, "serial.html", {"result": result})
+        
+        # Refresh plans list
+        plans = repo.list_serial_plans(limit=50)
+        return render(request, "serial.html", {
+            "result": result,
+            "plans": plans
+        })
     except Exception as e:
-        return render(request, "serial.html", {"error": safe_error_message(e)})
+        repo = get_repo(request)
+        plans = repo.list_serial_plans(limit=50)
+        return render(request, "serial.html", {
+            "error": safe_error_message(e),
+            "plans": plans
+        })
 
 
 @router.post("/cancel")
@@ -106,8 +165,20 @@ async def serial_cancel(
 ):
     """Cancel a serial plan."""
     try:
+        repo = get_repo(request)
         dispatcher = build_dispatcher_for_web(request)
         result = dispatcher.cancel_serial_plan(serial_plan_id=serial_plan_id, reason=reason)
-        return render(request, "serial.html", {"result": result})
+        
+        # Refresh plans list
+        plans = repo.list_serial_plans(limit=50)
+        return render(request, "serial.html", {
+            "result": result,
+            "plans": plans
+        })
     except Exception as e:
-        return render(request, "serial.html", {"error": safe_error_message(e)})
+        repo = get_repo(request)
+        plans = repo.list_serial_plans(limit=50)
+        return render(request, "serial.html", {
+            "error": safe_error_message(e),
+            "plans": plans
+        })

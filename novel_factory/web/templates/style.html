@@ -3,6 +3,24 @@
 {% block content %}
 <h1>Style Bible & Samples</h1>
 
+{% if error %}
+<div class="error-panel">
+    <h3>Error</h3>
+    <p>{{ error }}</p>
+</div>
+{% endif %}
+
+{% if result %}
+<div class="result-panel {% if result.ok %}success-panel{% else %}error-panel{% endif %}">
+    <h3>Result</h3>
+    {% if result.ok %}
+        <p>✅ {{ result.message | default('Operation succeeded') }}</p>
+    {% else %}
+        <p>❌ {{ result.error | default('Operation failed') }}</p>
+    {% endif %}
+</div>
+{% endif %}
+
 <h2>Initialize Style Bible</h2>
 <form method="POST" action="/style/init" class="form">
     <div class="form-group">
@@ -48,21 +66,6 @@
     <button type="submit" class="btn">Import Sample</button>
 </form>
 
-<h2>Generate Proposals from Samples</h2>
-<form method="POST" action="/style/sample-propose" class="form">
-    <div class="form-group">
-        <label for="project_id">Project ID:</label>
-        <input type="text" name="project_id" id="project_id" required>
-    </div>
-
-    <div class="form-group">
-        <label for="sample_ids">Sample IDs (comma-separated):</label>
-        <input type="text" name="sample_ids" id="sample_ids" required>
-    </div>
-
-    <button type="submit" class="btn">Generate Proposals</button>
-</form>
-
 <h2>Configure Style Gate</h2>
 <form method="POST" action="/style/gate-set" class="form">
     <div class="form-group">
@@ -95,67 +98,127 @@
     <button type="submit" class="btn">Update Gate Config</button>
 </form>
 
-<h2>Decide Style Proposal</h2>
+<!-- Style Gate Configs -->
+{% if gate_configs %}
+<h2>Current Style Gate Configurations</h2>
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Project</th>
+            <th>Mode</th>
+            <th>Threshold</th>
+            <th>Enabled</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for project_id, config in gate_configs.items() %}
+        <tr>
+            <td>{{ project_id }}</td>
+            <td>
+                <span class="status-badge status-{{ config.mode | default('off') }}">
+                    {{ config.mode | default('off') }}
+                </span>
+            </td>
+            <td>{{ config.blocking_threshold | default(70) }}</td>
+            <td>{{ config.enabled | default(true) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
+<!-- Pending Proposals with Inline Actions -->
 {% if pending_proposals %}
-<div class="info-panel">
-    <h3>Pending Proposals</h3>
-    {% for project_id, proposals in pending_proposals.items() %}
-    <h4>{{ project_id }}</h4>
+<h2>Pending Style Evolution Proposals</h2>
+<div class="pending_proposal_visible">
+{% for project_id, proposals in pending_proposals.items() %}
+<div class="proposal-section">
+    <h3>{{ project_id }} ({{ proposals | length }} pending)</h3>
     <table class="data-table">
         <thead>
             <tr>
                 <th>ID</th>
+                <th>Created</th>
                 <th>Type</th>
                 <th>Rationale</th>
-                <th>Created</th>
+                <th>Actions</th>
             </tr>
         </thead>
         <tbody>
             {% for proposal in proposals %}
             <tr>
                 <td><code>{{ proposal.id }}</code></td>
-                <td>{{ proposal.proposal_type }}</td>
-                <td>{{ proposal.rationale }}</td>
-                <td>{{ proposal.created_at }}</td>
+                <td>{{ proposal.created_at[:19] }}</td>
+                <td>{{ proposal.proposal_type | default('N/A') }}</td>
+                <td>{{ proposal.rationale | default('N/A') }}</td>
+                <td>
+                    <form method="POST" action="/style/proposal-decide" style="display:inline">
+                        <input type="hidden" name="proposal_id" value="{{ proposal.id }}">
+                        <input type="hidden" name="decision" value="approve">
+                        <button type="submit" class="btn btn-sm btn-success">Approve</button>
+                    </form>
+                    <form method="POST" action="/style/proposal-decide" style="display:inline">
+                        <input type="hidden" name="proposal_id" value="{{ proposal.id }}">
+                        <input type="hidden" name="decision" value="reject">
+                        <button type="submit" class="btn btn-sm btn-danger">Reject</button>
+                    </form>
+                </td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
-    {% endfor %}
 </div>
-{% else %}
-<p>No pending style proposals.</p>
-{% endif %}
-
-<form method="POST" action="/style/proposal-decide" class="form">
-    <div class="form-group">
-        <label for="proposal_id">Proposal ID:</label>
-        <input type="text" name="proposal_id" id="proposal_id" required>
-    </div>
-
-    <div class="form-group">
-        <label for="decision">Decision:</label>
-        <select name="decision" id="decision" required>
-            <option value="approve">Approve</option>
-            <option value="reject">Reject</option>
-        </select>
-    </div>
-
-    <div class="form-group">
-        <label for="notes">Notes (optional):</label>
-        <textarea name="notes" id="notes" rows="3"></textarea>
-    </div>
-
-    <button type="submit" class="btn">Submit Decision</button>
-</form>
-
-{% if result %}
-<div class="result-panel">
-    <h2>Result</h2>
-    <pre>{{ result | tojson(indent=2) }}</pre>
+{% endfor %}
 </div>
 {% endif %}
 
+<!-- Style Samples -->
+{% if samples_projects %}
+<h2>Style Samples</h2>
+{% for project_id, samples in samples_by_project.items() %}
+<div class="samples-section">
+    <h3>{{ project_id }} ({{ samples | length }} samples)</h3>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Name</th>
+                <th>Status</th>
+                <th>Chars</th>
+                <th>Created</th>
+                <th>Actions</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for sample in samples %}
+            <tr>
+                <td><code>{{ sample.id[:8] }}</code></td>
+                <td>{{ sample.name }}</td>
+                <td>
+                    <span class="status-badge status-{{ sample.status }}">
+                        {{ sample.status }}
+                    </span>
+                </td>
+                <td>{{ sample.char_count | default('N/A') }}</td>
+                <td>{{ sample.created_at[:19] }}</td>
+                <td>
+                    {% if sample.status == 'analyzed' %}
+                    <form method="POST" action="/style/sample-propose" style="display:inline">
+                        <input type="hidden" name="project_id" value="{{ project_id }}">
+                        <input type="hidden" name="sample_ids" value="{{ sample.id }}">
+                        <button type="submit" class="btn btn-sm">Propose</button>
+                    </form>
+                    {% endif %}
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+{% endfor %}
+{% endif %}
+
+<!-- Style Bibles -->
 <h2>Style Bibles</h2>
 {% if bibles %}
 <table class="data-table">
@@ -179,4 +242,57 @@
 {% else %}
 <p>No Style Bibles initialized</p>
 {% endif %}
+
+<style>
+.status-badge {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.status-off { background: #e2e3e5; color: #383d41; }
+.status-warn { background: #fff3cd; color: #856404; }
+.status-block { background: #f8d7da; color: #721c24; }
+.status-analyzed { background: #d4edda; color: #155724; }
+.status-pending { background: #fff3cd; color: #856404; }
+
+.success-panel {
+    background: #d4edda;
+    border: 1px solid #c3e6cb;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.error-panel {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.proposal-section, .samples-section {
+    margin-top: 1rem;
+    padding: 1rem;
+    background: #f8f9fa;
+    border-radius: 4px;
+}
+
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+}
+
+.btn-success {
+    background: #28a745;
+    color: white;
+}
+
+.btn-danger {
+    background: #dc3545;
+    color: white;
+}
+</style>
 {% endblock %}

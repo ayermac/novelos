@@ -11,6 +11,11 @@
     </div>
 
     <div class="form-group">
+        <label for="serial_plan_id">Serial Plan ID:</label>
+        <input type="text" name="serial_plan_id" id="serial_plan_id" placeholder="Optional">
+    </div>
+
+    <div class="form-group">
         <label for="project_id">Project ID:</label>
         <input type="text" name="project_id" id="project_id" placeholder="Optional">
     </div>
@@ -45,10 +50,284 @@
     <button type="submit" class="btn">View Chapter</button>
 </form>
 
-{% if result %}
-<div class="result-panel">
-    <h2>Result</h2>
-    <pre>{{ result | tojson(indent=2) }}</pre>
+{% if error %}
+<div class="error-panel">
+    <h3>Error</h3>
+    <p>{{ error }}</p>
 </div>
 {% endif %}
+
+{% if result %}
+<div class="result-panel">
+    <h2>Review Pack Result</h2>
+    
+    {% if result.ok %}
+        {% if result.pack %}
+        <div class="review-pack">
+            <!-- Decision Hint -->
+            {% if result.pack.decision_hint %}
+            <div class="decision-hint-card">
+                <h3>Decision Hint</h3>
+                <div class="hint-status hint-{{ result.pack.decision_hint.status | default('unknown') }}">
+                    <strong>Status:</strong> 
+                    {% if result.pack.decision_hint.status == 'approve_allowed' %}
+                        ✅ Approve Allowed
+                    {% elif result.pack.decision_hint.status == 'needs_revision' %}
+                        ⚠️ Needs Revision
+                    {% elif result.pack.decision_hint.status == 'blocked' %}
+                        🚫 Blocked
+                    {% else %}
+                        ❓ {{ result.pack.decision_hint.status }}
+                    {% endif %}
+                </div>
+                {% if result.pack.decision_hint.reason %}
+                <p><strong>Reason:</strong> {{ result.pack.decision_hint.reason }}</p>
+                {% endif %}
+                {% if result.pack.decision_hint.suggestions %}
+                <p><strong>Suggestions:</strong> {{ result.pack.decision_hint.suggestions | join(', ') }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
+
+            <!-- Summary -->
+            {% if result.pack.summary %}
+            <div class="summary-card">
+                <h3>Summary</h3>
+                <table class="data-table">
+                    <tbody>
+                        {% if result.pack.summary.run_id %}
+                        <tr>
+                            <th>Run ID</th>
+                            <td><code>{{ result.pack.summary.run_id }}</code></td>
+                        </tr>
+                        {% endif %}
+                        {% if result.pack.summary.project_id %}
+                        <tr>
+                            <th>Project</th>
+                            <td>{{ result.pack.summary.project_id }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if result.pack.summary.chapter_range %}
+                        <tr>
+                            <th>Chapter Range</th>
+                            <td>{{ result.pack.summary.chapter_range }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if result.pack.summary.total_chapters %}
+                        <tr>
+                            <th>Total Chapters</th>
+                            <td>{{ result.pack.summary.total_chapters }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if result.pack.summary.completed_chapters %}
+                        <tr>
+                            <th>Completed</th>
+                            <td>{{ result.pack.summary.completed_chapters }}</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            <!-- Chapters -->
+            {% if result.pack.chapters %}
+            <div class="chapters-card">
+                <h3>Chapters ({{ result.pack.chapters | length }})</h3>
+                <table class="data-table">
+                    <thead>
+                        <tr>
+                            <th>Chapter</th>
+                            <th>Status</th>
+                            <th>Quality Score</th>
+                            <th>Issues</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for chapter in result.pack.chapters %}
+                        <tr>
+                            <td>{{ chapter.chapter_number }}</td>
+                            <td>
+                                <span class="status-badge status-{{ chapter.status | default('unknown') }}">
+                                    {{ chapter.status | default('N/A') }}
+                                </span>
+                            </td>
+                            <td>{{ chapter.quality_score | default('N/A') }}</td>
+                            <td>{{ chapter.issues | length | default(0) }}</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            <!-- Quality Issues -->
+            {% if result.pack.quality_issues and result.pack.quality_issues | length > 0 %}
+            <div class="issues-card">
+                <h3>Quality Issues ({{ result.pack.quality_issues | length }})</h3>
+                <ul>
+                    {% for issue in result.pack.quality_issues %}
+                    <li class="issue-item">
+                        <strong>Chapter {{ issue.chapter }}:</strong> 
+                        {{ issue.description | default(issue.message | default(issue)) }}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+
+            <!-- Continuity Gate -->
+            {% if result.pack.continuity_gate %}
+            <div class="continuity-card">
+                <h3>Continuity Gate</h3>
+                <table class="data-table">
+                    <tbody>
+                        <tr>
+                            <th>Status</th>
+                            <td>
+                                <span class="status-badge status-{{ result.pack.continuity_gate.status | default('unknown') }}">
+                                    {{ result.pack.continuity_gate.status | default('N/A') }}
+                                </span>
+                            </td>
+                        </tr>
+                        {% if result.pack.continuity_gate.blocked_chapter %}
+                        <tr>
+                            <th>Blocked Chapter</th>
+                            <td>{{ result.pack.continuity_gate.blocked_chapter }}</td>
+                        </tr>
+                        {% endif %}
+                        {% if result.pack.continuity_gate.reason %}
+                        <tr>
+                            <th>Reason</th>
+                            <td>{{ result.pack.continuity_gate.reason }}</td>
+                        </tr>
+                        {% endif %}
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            <!-- Queue Status -->
+            {% if result.pack.queue_status %}
+            <div class="queue-status-card">
+                <h3>Queue Status</h3>
+                <table class="data-table">
+                    <tbody>
+                        <tr>
+                            <th>Queue ID</th>
+                            <td><code>{{ result.pack.queue_status.queue_id | default('N/A') }}</code></td>
+                        </tr>
+                        <tr>
+                            <th>Status</th>
+                            <td>{{ result.pack.queue_status.status | default('N/A') }}</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            {% endif %}
+
+            <!-- Timeline -->
+            {% if result.pack.timeline and result.pack.timeline | length > 0 %}
+            <div class="timeline-card">
+                <h3>Timeline ({{ result.pack.timeline | length }} events)</h3>
+                <ul class="timeline-list">
+                    {% for event in result.pack.timeline %}
+                    <li class="timeline-item">
+                        <strong>{{ event.timestamp | default('N/A') }}</strong>: 
+                        {{ event.event_type | default('Event') }} 
+                        {% if event.chapter %}(Ch. {{ event.chapter }}){% endif %}
+                    </li>
+                    {% endfor %}
+                </ul>
+            </div>
+            {% endif %}
+        </div>
+        {% else %}
+        <p>No pack data available.</p>
+        {% endif %}
+    {% else %}
+        <div class="error-panel">
+            <p>{{ result.error | default('Unknown error') }}</p>
+        </div>
+    {% endif %}
+</div>
+{% endif %}
+
+<style>
+.decision-hint-card {
+    background: #f8f9fa;
+    border-left: 4px solid #007bff;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.hint-status {
+    font-size: 1.1rem;
+    padding: 0.5rem;
+    border-radius: 4px;
+    margin-bottom: 0.5rem;
+}
+
+.hint-approve_allowed {
+    background: #d4edda;
+    color: #155724;
+}
+
+.hint-needs_revision {
+    background: #fff3cd;
+    color: #856404;
+}
+
+.hint-blocked {
+    background: #f8d7da;
+    color: #721c24;
+}
+
+.hint-unknown {
+    background: #e2e3e5;
+    color: #383d41;
+}
+
+.summary-card, .chapters-card, .issues-card, .continuity-card, .queue-status-card, .timeline-card {
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+}
+
+.status-badge {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.status-completed { background: #d4edda; color: #155724; }
+.status-running { background: #cce5ff; color: #004085; }
+.status-failed { background: #f8d7da; color: #721c24; }
+.status-pending { background: #e2e3e5; color: #383d41; }
+
+.issue-item {
+    margin-bottom: 0.5rem;
+}
+
+.timeline-list {
+    list-style: none;
+    padding-left: 0;
+}
+
+.timeline-item {
+    padding: 0.5rem;
+    border-bottom: 1px solid #eee;
+}
+
+.error-panel {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-top: 1rem;
+}
+</style>
 {% endblock %}

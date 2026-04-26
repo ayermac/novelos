@@ -44,18 +44,70 @@
     <button type="submit" class="btn">Check Status</button>
 </form>
 
+{% if error %}
+<div class="error-panel">
+    <h3>Error</h3>
+    <p>{{ error }}</p>
+</div>
+{% endif %}
+
 {% if result %}
-<div class="result-panel">
-    <h2>Result</h2>
-    <pre>{{ result | tojson(indent=2) }}</pre>
+<div class="result-panel {% if result.ok %}success-panel{% else %}error-panel{% endif %}">
+    <h3>Result</h3>
+    {% if result.ok %}
+        <p>✅ {{ result.message | default('Operation succeeded') }}</p>
+        {% if result.run_id %}
+        <p><strong>Run ID:</strong> <code>{{ result.run_id }}</code></p>
+        {% endif %}
+    {% else %}
+        <p>❌ {{ result.error | default('Operation failed') }}</p>
+    {% endif %}
 </div>
 {% endif %}
 
 {% if run %}
-<div class="result-panel">
-    <h2>Run: {{ run.id }}</h2>
-    <p><strong>Status:</strong> {{ run.status }}</p>
-    <p><strong>Project:</strong> {{ run.project_id }}</p>
+<div class="run-detail-panel">
+    <h2>Run: <code>{{ run.id }}</code></h2>
+    <table class="data-table">
+        <tbody>
+            <tr>
+                <th>Status</th>
+                <td>
+                    <span class="status-badge status-{{ run.status }}">
+                        {{ run.status }}
+                    </span>
+                </td>
+            </tr>
+            <tr>
+                <th>Project</th>
+                <td>{{ run.project_id }}</td>
+            </tr>
+            <tr>
+                <th>Chapter Range</th>
+                <td>{{ run.from_chapter }} - {{ run.to_chapter }}</td>
+            </tr>
+            <tr>
+                <th>Progress</th>
+                <td>{{ run.completed_chapters | default(0) }} / {{ run.total_chapters }}</td>
+            </tr>
+            {% if run.blocked_chapter %}
+            <tr>
+                <th>Blocked Chapter</th>
+                <td class="text-warning">{{ run.blocked_chapter }}</td>
+            </tr>
+            {% endif %}
+            {% if run.error %}
+            <tr>
+                <th>Error</th>
+                <td class="text-error">{{ run.error }}</td>
+            </tr>
+            {% endif %}
+            <tr>
+                <th>Created</th>
+                <td>{{ run.created_at }}</td>
+            </tr>
+        </tbody>
+    </table>
 
     {% if items %}
     <h3>Items</h3>
@@ -65,43 +117,154 @@
                 <th>Chapter</th>
                 <th>Status</th>
                 <th>Attempts</th>
+                <th>Error</th>
             </tr>
         </thead>
         <tbody>
             {% for item in items %}
             <tr>
                 <td>{{ item.chapter_number }}</td>
-                <td>{{ item.status }}</td>
+                <td>
+                    <span class="status-badge status-{{ item.status }}">
+                        {{ item.status }}
+                    </span>
+                </td>
                 <td>{{ item.attempts }}</td>
+                <td>{{ item.error | default('-') }}</td>
             </tr>
             {% endfor %}
         </tbody>
     </table>
     {% endif %}
+
+    <!-- Review Form for awaiting_review runs -->
+    {% if run.status == 'awaiting_review' %}
+    <div class="review-form-panel">
+        <h3>Review Decision</h3>
+        <form method="POST" action="/batch/review" class="form">
+            <input type="hidden" name="run_id" value="{{ run.id }}">
+            
+            <div class="form-group">
+                <label for="decision">Decision:</label>
+                <select name="decision" id="decision" required>
+                    <option value="approve">Approve</option>
+                    <option value="request_changes">Request Changes</option>
+                    <option value="reject">Reject</option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="notes">Notes:</label>
+                <textarea name="notes" id="notes" rows="3" placeholder="Optional notes"></textarea>
+            </div>
+
+            <button type="submit" class="btn btn-primary">Submit Review</button>
+        </form>
+    </div>
+    {% endif %}
 </div>
 {% endif %}
 
 {% if recent_runs %}
-<h2>Recent Runs</h2>
+<h2>Recent Production Runs</h2>
 <table class="data-table">
     <thead>
         <tr>
             <th>ID</th>
             <th>Project</th>
+            <th>Chapter Range</th>
             <th>Status</th>
+            <th>Progress</th>
+            <th>Blocked</th>
             <th>Created</th>
+            <th>Actions</th>
         </tr>
     </thead>
     <tbody>
         {% for r in recent_runs %}
         <tr>
-            <td><code>{{ r.id[:8] }}</code></td>
+            <td><code>{{ r.id[:12] }}</code></td>
             <td>{{ r.project_id }}</td>
-            <td>{{ r.status }}</td>
-            <td>{{ r.created_at }}</td>
+            <td>{{ r.from_chapter }}-{{ r.to_chapter }}</td>
+            <td>
+                <span class="status-badge status-{{ r.status }}">
+                    {{ r.status }}
+                </span>
+            </td>
+            <td>{{ r.completed_chapters | default(0) }}/{{ r.total_chapters }}</td>
+            <td>
+                {% if r.blocked_chapter %}
+                <span class="text-warning">Ch.{{ r.blocked_chapter }}</span>
+                {% else %}
+                -
+                {% endif %}
+            </td>
+            <td>{{ r.created_at[:19] }}</td>
+            <td>
+                <a href="/batch/status?run_id={{ r.id }}" class="btn btn-sm">View</a>
+            </td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
+{% else %}
+<p>No production runs yet.</p>
 {% endif %}
+
+<style>
+.status-badge {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.status-completed { background: #d4edda; color: #155724; }
+.status-running { background: #cce5ff; color: #004085; }
+.status-failed { background: #f8d7da; color: #721c24; }
+.status-pending { background: #e2e3e5; color: #383d41; }
+.status-awaiting_review { background: #fff3cd; color: #856404; }
+.status-approved { background: #d4edda; color: #155724; }
+.status-rejected { background: #f8d7da; color: #721c24; }
+
+.success-panel {
+    background: #d4edda;
+    border: 1px solid #c3e6cb;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-top: 1rem;
+}
+
+.error-panel {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-top: 1rem;
+}
+
+.run-detail-panel {
+    background: #f8f9fa;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-top: 1rem;
+}
+
+.review-form-panel {
+    background: white;
+    border: 1px solid #ffc107;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-top: 1rem;
+}
+
+.text-warning { color: #856404; }
+.text-error { color: #721c24; }
+
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+}
+</style>
 {% endblock %}

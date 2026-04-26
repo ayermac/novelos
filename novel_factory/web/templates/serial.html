@@ -15,14 +15,16 @@
         <input type="text" name="name" id="name" required>
     </div>
 
-    <div class="form-group">
-        <label for="start_chapter">Start Chapter:</label>
-        <input type="number" name="start_chapter" id="start_chapter" value="1" min="1" required>
-    </div>
+    <div class="form-row">
+        <div class="form-group">
+            <label for="start_chapter">Start Chapter:</label>
+            <input type="number" name="start_chapter" id="start_chapter" value="1" min="1" required>
+        </div>
 
-    <div class="form-group">
-        <label for="target_chapter">Target Chapter:</label>
-        <input type="number" name="target_chapter" id="target_chapter" value="10" min="1" required>
+        <div class="form-group">
+            <label for="target_chapter">Target Chapter:</label>
+            <input type="number" name="target_chapter" id="target_chapter" value="10" min="1" required>
+        </div>
     </div>
 
     <div class="form-group">
@@ -33,36 +35,193 @@
     <button type="submit" class="btn btn-primary">Create Plan</button>
 </form>
 
+{% if error %}
+<div class="error-panel">
+    <h3>Error</h3>
+    <p>{{ error }}</p>
+</div>
+{% endif %}
+
 {% if result %}
-<div class="result-panel">
-    <h2>Result</h2>
-    <pre>{{ result | tojson(indent=2) }}</pre>
+<div class="result-panel {% if result.ok %}success-panel{% else %}error-panel{% endif %}">
+    <h3>Result</h3>
+    {% if result.ok %}
+        <p>✅ {{ result.message | default('Operation succeeded') }}</p>
+        {% if result.serial_plan_id %}
+        <p><strong>Plan ID:</strong> <code>{{ result.serial_plan_id }}</code></p>
+        {% endif %}
+        {% if result.queue_id %}
+        <p><strong>Queue ID:</strong> <code>{{ result.queue_id }}</code></p>
+        {% endif %}
+    {% else %}
+        <p>❌ {{ result.error | default('Operation failed') }}</p>
+    {% endif %}
 </div>
 {% endif %}
 
 {% if plans %}
-<h2>Plans</h2>
+<h2>Serial Plans</h2>
 <table class="data-table">
     <thead>
         <tr>
             <th>ID</th>
             <th>Name</th>
-            <th>Status</th>
+            <th>Project</th>
             <th>Progress</th>
+            <th>Status</th>
+            <th>Batch Size</th>
+            <th>Current Queue/Run</th>
+            <th>Actions</th>
         </tr>
     </thead>
     <tbody>
         {% for plan in plans %}
         <tr>
-            <td><code>{{ plan.id[:8] }}</code></td>
+            <td><code>{{ plan.id[:12] }}</code></td>
             <td>{{ plan.name }}</td>
-            <td>{{ plan.status }}</td>
-            <td>{{ plan.current_chapter }} / {{ plan.target_chapter }}</td>
+            <td>{{ plan.project_id }}</td>
+            <td>
+                <div class="progress-info">
+                    <span>{{ plan.current_chapter | default(plan.start_chapter) }} / {{ plan.target_chapter }}</span>
+                    <div class="progress-bar">
+                        {% set progress = ((plan.current_chapter | default(plan.start_chapter) - plan.start_chapter) / (plan.target_chapter - plan.start_chapter) * 100) | int %}
+                        <div class="progress-fill" style="width: {{ progress }}%"></div>
+                    </div>
+                </div>
+            </td>
+            <td>
+                <span class="status-badge status-{{ plan.status }}">
+                    {{ plan.status }}
+                </span>
+            </td>
+            <td>{{ plan.batch_size }}</td>
+            <td>
+                {% if plan.current_queue_id %}
+                <small>Queue: <code>{{ plan.current_queue_id[:8] }}</code></small><br>
+                {% endif %}
+                {% if plan.current_run_id %}
+                <small>Run: <code>{{ plan.current_run_id[:8] }}</code></small>
+                {% endif %}
+            </td>
+            <td>
+                <div class="action-buttons">
+                    {% if plan.status == 'active' %}
+                    <form method="POST" action="/serial/enqueue-next" style="display:inline">
+                        <input type="hidden" name="serial_plan_id" value="{{ plan.id }}">
+                        <button type="submit" class="btn btn-sm btn-primary">Enqueue Next</button>
+                    </form>
+                    <form method="POST" action="/serial/pause" style="display:inline">
+                        <input type="hidden" name="serial_plan_id" value="{{ plan.id }}">
+                        <button type="submit" class="btn btn-sm">Pause</button>
+                    </form>
+                    {% elif plan.status == 'paused' %}
+                    <form method="POST" action="/serial/resume" style="display:inline">
+                        <input type="hidden" name="serial_plan_id" value="{{ plan.id }}">
+                        <button type="submit" class="btn btn-sm">Resume</button>
+                    </form>
+                    {% elif plan.status == 'awaiting_review' %}
+                    <form method="POST" action="/serial/advance" style="display:inline">
+                        <input type="hidden" name="serial_plan_id" value="{{ plan.id }}">
+                        <input type="hidden" name="decision" value="approve">
+                        <button type="submit" class="btn btn-sm btn-success">Approve</button>
+                    </form>
+                    <form method="POST" action="/serial/advance" style="display:inline">
+                        <input type="hidden" name="serial_plan_id" value="{{ plan.id }}">
+                        <input type="hidden" name="decision" value="request_changes">
+                        <button type="submit" class="btn btn-sm btn-warning">Request Changes</button>
+                    </form>
+                    {% endif %}
+                    
+                    {% if plan.status in ['active', 'paused', 'awaiting_review'] %}
+                    <form method="POST" action="/serial/cancel" style="display:inline">
+                        <input type="hidden" name="serial_plan_id" value="{{ plan.id }}">
+                        <button type="submit" class="btn btn-sm btn-danger">Cancel</button>
+                    </form>
+                    {% endif %}
+                </div>
+            </td>
         </tr>
         {% endfor %}
     </tbody>
 </table>
 {% else %}
-<p>No serial plans</p>
+<p>No serial plans yet.</p>
 {% endif %}
+
+<style>
+.progress-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+}
+
+.progress-bar {
+    width: 100%;
+    height: 8px;
+    background: #e9ecef;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.progress-fill {
+    height: 100%;
+    background: #28a745;
+    transition: width 0.3s ease;
+}
+
+.status-badge {
+    padding: 0.25rem 0.5rem;
+    border-radius: 4px;
+    font-size: 0.875rem;
+    font-weight: 500;
+}
+
+.status-active { background: #cce5ff; color: #004085; }
+.status-paused { background: #e2e3e5; color: #383d41; }
+.status-awaiting_review { background: #fff3cd; color: #856404; }
+.status-completed { background: #d4edda; color: #155724; }
+.status-cancelled { background: #f8d7da; color: #721c24; }
+
+.success-panel {
+    background: #d4edda;
+    border: 1px solid #c3e6cb;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-top: 1rem;
+}
+
+.error-panel {
+    background: #f8d7da;
+    border: 1px solid #f5c6cb;
+    border-radius: 4px;
+    padding: 1rem;
+    margin-top: 1rem;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 0.25rem;
+    flex-wrap: wrap;
+}
+
+.btn-sm {
+    padding: 0.25rem 0.5rem;
+    font-size: 0.875rem;
+}
+
+.btn-success {
+    background: #28a745;
+    color: white;
+}
+
+.btn-warning {
+    background: #ffc107;
+    color: #212529;
+}
+
+.btn-danger {
+    background: #dc3545;
+    color: white;
+}
+</style>
 {% endblock %}
