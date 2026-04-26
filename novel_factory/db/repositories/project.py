@@ -7,6 +7,17 @@ from datetime import datetime, timezone
 from ..connection import row_to_dict
 
 class ProjectRepositoryMixin:
+    def list_projects(self) -> list[dict]:
+        """List all projects, newest first."""
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM projects ORDER BY created_at DESC, project_id"
+            ).fetchall()
+            return [row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+
     def get_project(self, project_id: str) -> dict | None:
         """Get project information."""
         conn = self._conn()

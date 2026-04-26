@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Review Workbench</h1>
+
+<h2>Build Review Pack</h2>
+<form method="GET" action="/review/pack" class="form">
+    <div class="form-group">
+        <label for="run_id">Run ID:</label>
+        <input type="text" name="run_id" id="run_id" placeholder="Optional">
+    </div>
+
+    <div class="form-group">
+        <label for="project_id">Project ID:</label>
+        <input type="text" name="project_id" id="project_id" placeholder="Optional">
+    </div>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label for="from_chapter">From Chapter:</label>
+            <input type="number" name="from_chapter" id="from_chapter" min="1">
+        </div>
+
+        <div class="form-group">
+            <label for="to_chapter">To Chapter:</label>
+            <input type="number" name="to_chapter" id="to_chapter" min="1">
+        </div>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Build Pack</button>
+</form>
+
+<h2>View Chapter</h2>
+<form method="GET" action="/review/chapter" class="form">
+    <div class="form-group">
+        <label for="project_id">Project ID:</label>
+        <input type="text" name="project_id" id="project_id" required>
+    </div>
+
+    <div class="form-group">
+        <label for="chapter">Chapter:</label>
+        <input type="number" name="chapter" id="chapter" min="1" required>
+    </div>
+
+    <button type="submit" class="btn">View Chapter</button>
+</form>
+
+{% if result %}
+<div class="result-panel">
+    <h2>Result</h2>
+    <pre>{{ result | tojson(indent=2) }}</pre>
+</div>
+{% endif %}
+{% endblock %}

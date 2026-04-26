@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Serial Plans</h1>
+
+<h2>Create Serial Plan</h2>
+<form method="POST" action="/serial/create" class="form">
+    <div class="form-group">
+        <label for="project_id">Project ID:</label>
+        <input type="text" name="project_id" id="project_id" required>
+    </div>
+
+    <div class="form-group">
+        <label for="name">Plan Name:</label>
+        <input type="text" name="name" id="name" required>
+    </div>
+
+    <div class="form-group">
+        <label for="start_chapter">Start Chapter:</label>
+        <input type="number" name="start_chapter" id="start_chapter" value="1" min="1" required>
+    </div>
+
+    <div class="form-group">
+        <label for="target_chapter">Target Chapter:</label>
+        <input type="number" name="target_chapter" id="target_chapter" value="10" min="1" required>
+    </div>
+
+    <div class="form-group">
+        <label for="batch_size">Batch Size:</label>
+        <input type="number" name="batch_size" id="batch_size" value="5" min="1">
+    </div>
+
+    <button type="submit" class="btn btn-primary">Create Plan</button>
+</form>
+
+{% if result %}
+<div class="result-panel">
+    <h2>Result</h2>
+    <pre>{{ result | tojson(indent=2) }}</pre>
+</div>
+{% endif %}
+
+{% if plans %}
+<h2>Plans</h2>
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Name</th>
+            <th>Status</th>
+            <th>Progress</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for plan in plans %}
+        <tr>
+            <td><code>{{ plan.id[:8] }}</code></td>
+            <td>{{ plan.name }}</td>
+            <td>{{ plan.status }}</td>
+            <td>{{ plan.current_chapter }} / {{ plan.target_chapter }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No serial plans</p>
+{% endif %}
+{% endblock %}

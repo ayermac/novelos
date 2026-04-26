@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Project: {{ project.project_id }}</h1>
+
+<div class="project-info">
+    <p><strong>Name:</strong> {{ project.name }}</p>
+    <p><strong>Genre:</strong> {{ project.genre or '-' }}</p>
+    <p><strong>Created:</strong> {{ project.created_at }}</p>
+</div>
+
+<h2>Chapters</h2>
+
+{% if chapters %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Chapter</th>
+            <th>Title</th>
+            <th>Status</th>
+            <th>Words</th>
+            <th>Updated</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for ch in chapters %}
+        <tr>
+            <td>{{ ch.chapter_number }}</td>
+            <td>{{ ch.title or '-' }}</td>
+            <td>{{ ch.status }}</td>
+            <td>{{ ch.word_count or 0 }}</td>
+            <td>{{ ch.updated_at }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No chapters found.</p>
+{% endif %}
+
+<p><a href="/projects">&larr; Back to Projects</a></p>
+{% endblock %}

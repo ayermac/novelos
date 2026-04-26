@@ -1,0 +1,71 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Configuration & LLM</h1>
+
+<h2>LLM Profiles</h2>
+{% if profiles %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>Provider</th>
+            <th>Model</th>
+            <th>API Key</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for profile in profiles %}
+        <tr>
+            <td>{{ profile.name }}</td>
+            <td>{{ profile.provider }}</td>
+            <td>{{ profile.model }}</td>
+            <td>{{ profile.key_status if profile.has_key else 'not configured' }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No LLM profiles configured</p>
+{% endif %}
+
+<h2>Agent Routes</h2>
+{% if agent_routes %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Agent</th>
+            <th>LLM Route</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for route in agent_routes %}
+        <tr>
+            <td>{{ route.agent }}</td>
+            <td>{{ route.route }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No agent routes configured</p>
+{% endif %}
+
+{% if validation_errors %}
+<h2>Validation Errors</h2>
+<ul class="alert alert-error">
+    {% for error in validation_errors %}
+    <li>{{ error }}</li>
+    {% endfor %}
+</ul>
+{% endif %}
+
+{% if validation_warnings %}
+<h2>Validation Warnings</h2>
+<ul class="alert alert-warning">
+    {% for warning in validation_warnings %}
+    <li>{{ warning }}</li>
+    {% endfor %}
+</ul>
+{% endif %}
+{% endblock %}

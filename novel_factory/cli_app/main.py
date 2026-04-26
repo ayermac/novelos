@@ -122,6 +122,7 @@ from .commands.style_sample import (
     cmd_style_sample_delete,
     cmd_style_sample_propose,
 )
+from .commands.web import cmd_web
 
 
 # ── Argument parser ──────────────────────────────────────────────
@@ -745,6 +746,15 @@ def build_parser() -> argparse.ArgumentParser:
     style_sample_propose.add_argument("--sample-ids", help="Comma-separated sample IDs")
     style_sample_propose.add_argument("--json", action="store_true", help="Output in JSON format")
     style_sample_propose.set_defaults(func=cmd_style_sample_propose)
+
+    # v4.3: web command
+    web_parser = subparsers.add_parser("web", help="Start web UI acceptance console")
+    web_parser.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
+    web_parser.add_argument("--port", type=int, default=8765, help="Port to bind (default: 8765)")
+    web_parser.add_argument("--db-path", help="Path to SQLite database file")
+    web_parser.add_argument("--config", help="Path to config YAML file")
+    web_parser.add_argument("--llm-mode", choices=["stub", "real"], default="stub", help="LLM mode: stub for demo, real for actual LLM (default: stub)")
+    web_parser.set_defaults(func=cmd_web)
 
     # Legacy aliases: 'init' → 'init-db', 'run' → 'run-chapter'
     init_compat = subparsers.add_parser("init", help="Initialize the database (legacy alias for init-db)")

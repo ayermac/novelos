@@ -33,7 +33,7 @@ v3.9 LLM Model Catalog & Agent Recommendation
 v4.0 Style Bible MVP
 v4.1 Style Gate & Style Evolution
 v4.2 Style Sample Analyzer & Calibration
-v4.3 Web UI Acceptance Console MVP (预告)
+v4.3 Web UI Acceptance Console MVP
 ```
 
 ## v1：章节生产 MVP
@@ -793,31 +793,41 @@ constraints 支持：cost_tier 最大值、quality_tier 最小值、provider 白
 - 不出现作者模仿字段
 - 全量测试通过，0 skipped
 
-状态：开发完成，待验收。
+状态：已通过验收，测试基线 1175/1175。
 
-## v4.3：Web UI Acceptance Console MVP (预告)
+## v4.3：Web UI Acceptance Console MVP
 
-> 本节为预告，不在 v4.2 中实现。
+目标：提供轻量级 Web UI 验收控制台，让用户通过浏览器进行人工审核、批次管理、队列监控和风格配置，无需终端操作。
 
-目标：提供本地验收台 Web UI，让用户通过浏览器查看和操作 Style Bible、Style Gate、Style Evolution Proposals 和 Style Samples。
+范围：
 
-范围（预告）：
+- FastAPI + Jinja2 + HTMX 轻量 Web 服务
+- Dashboard：系统状态、最近运行、队列项
+- Projects：项目列表与详情
+- Run Chapter：单章运行表单
+- Batch：批次生产、状态查询、审核决策
+- Queue：队列管理（暂停、恢复、重试、恢复）
+- Serial：连载计划管理
+- Review：审核工作台（pack、chapter、timeline、diff、export）
+- Style：Style Bible、Gate、Proposals、Samples 管理
+- Config：配置查看（API keys 已脱敏）
+- CLI 命令：`novelos web --host 127.0.0.1 --port 8765 --db-path ./novel_factory.db --llm-mode stub`
+- 16 项约束：无登录、无多用户、无 WebSocket、无后台 workers、无 Redis/Celery/Kafka、无 PostgreSQL、无 SQLite 替换、无自动发布、无自动批准、无绕过 Dispatcher、无明文 API keys、无 API keys 泄露、无真实 LLM 测试、无 traceback 泄露、文件 <1000 行、模板拆分
 
-- 本地 Flask/FastAPI 轻量 Web 服务
-- Style Bible 查看与编辑页面
-- Style Gate 配置页面
-- Style Evolution Proposals 列表与审批页面
-- Style Samples 查看页面
-- 不实现登录、权限、Redis、PostgreSQL
-- 只做本地验收台，不做生产级多用户后台
+验收：
 
-禁止：
+- 所有 26 个 v4.3 测试通过
+- 全量测试通过（1201/1201）
+- 所有 16 项约束满足
+- 文件体积策略达标（最大文件 124 行）
+- API keys 永不暴露在 HTML/logs/tests
+- 错误页面无 traceback
+- 所有路由调用 Dispatcher 方法
+- CLI 命令 `novelos web --help` 可用
+- 依赖已添加到 pyproject.toml 和 requirements.txt
+- 无 config/stderr.txt/API keys 提交到仓库
 
-- 不实现登录/权限系统
-- 不引入 Redis/PostgreSQL
-- 不做生产级多用户后台
-- 不实现真实 LLM 调用
-- 不实现自动化验收
+状态：已通过验收，测试基线 1201/1201
 
 ## v4+：多模型与生产治理
 

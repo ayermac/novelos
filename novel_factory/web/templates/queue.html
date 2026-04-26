@@ -1,0 +1,91 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Production Queue</h1>
+
+<h2>Enqueue Batch</h2>
+<form method="POST" action="/queue/enqueue" class="form">
+    <div class="form-group">
+        <label for="project_id">Project ID:</label>
+        <input type="text" name="project_id" id="project_id" required>
+    </div>
+
+    <div class="form-group">
+        <label for="from_chapter">From Chapter:</label>
+        <input type="number" name="from_chapter" id="from_chapter" value="1" min="1" required>
+    </div>
+
+    <div class="form-group">
+        <label for="to_chapter">To Chapter:</label>
+        <input type="number" name="to_chapter" id="to_chapter" value="3" min="1" required>
+    </div>
+
+    <div class="form-group">
+        <label for="priority">Priority:</label>
+        <input type="number" name="priority" id="priority" value="100" min="1">
+    </div>
+
+    <button type="submit" class="btn btn-primary">Enqueue</button>
+</form>
+
+<h2>Run Queue</h2>
+<form method="POST" action="/queue/run" class="form">
+    <div class="form-group">
+        <label for="limit">Limit:</label>
+        <input type="number" name="limit" id="limit" value="1" min="1">
+    </div>
+    <button type="submit" class="btn">Run Once</button>
+</form>
+
+{% if result %}
+<div class="result-panel">
+    <h2>Result</h2>
+    <pre>{{ result | tojson(indent=2) }}</pre>
+</div>
+{% endif %}
+
+<h2>Queue Items</h2>
+{% if items %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Project</th>
+            <th>Status</th>
+            <th>Priority</th>
+            <th>Actions</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for item in items %}
+        <tr>
+            <td><code>{{ item.id[:8] }}</code></td>
+            <td>{{ item.project_id }}</td>
+            <td>{{ item.status }}</td>
+            <td>{{ item.priority }}</td>
+            <td>
+                {% if item.status == 'pending' %}
+                <form method="POST" action="/queue/pause" style="display:inline">
+                    <input type="hidden" name="queue_id" value="{{ item.id }}">
+                    <button type="submit" class="btn btn-sm">Pause</button>
+                </form>
+                {% elif item.status == 'paused' %}
+                <form method="POST" action="/queue/resume" style="display:inline">
+                    <input type="hidden" name="queue_id" value="{{ item.id }}">
+                    <button type="submit" class="btn btn-sm">Resume</button>
+                </form>
+                {% elif item.status == 'failed' %}
+                <form method="POST" action="/queue/retry" style="display:inline">
+                    <input type="hidden" name="queue_id" value="{{ item.id }}">
+                    <button type="submit" class="btn btn-sm">Retry</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No queue items</p>
+{% endif %}
+{% endblock %}

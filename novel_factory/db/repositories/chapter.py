@@ -83,6 +83,13 @@ class ChapterRepositoryMixin:
         finally:
             conn.close()
 
+    def list_chapters(self, project_id: str) -> list[dict]:
+        """List all chapters for a project.
+
+        Alias kept for Web UI/read-model callers.
+        """
+        return self.get_chapters(project_id)
+
     def save_chapter(
         self,
         project_id: str,

@@ -1,0 +1,182 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Style Bible & Samples</h1>
+
+<h2>Initialize Style Bible</h2>
+<form method="POST" action="/style/init" class="form">
+    <div class="form-group">
+        <label for="project_id">Project ID:</label>
+        <select name="project_id" id="project_id" required>
+            {% for p in projects %}
+            <option value="{{ p.project_id }}">{{ p.project_id }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="template">Template:</label>
+        <select name="template" id="template">
+            <option value="default_web_serial">default_web_serial</option>
+        </select>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Initialize</button>
+</form>
+
+<h2>Import Style Sample</h2>
+<form method="POST" action="/style/sample-import" enctype="multipart/form-data" class="form">
+    <div class="form-group">
+        <label for="project_id">Project ID:</label>
+        <select name="project_id" id="project_id" required>
+            {% for p in projects %}
+            <option value="{{ p.project_id }}">{{ p.project_id }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="name">Sample Name:</label>
+        <input type="text" name="name" id="name" placeholder="Optional">
+    </div>
+
+    <div class="form-group">
+        <label for="file">Text File (max 200KB):</label>
+        <input type="file" name="file" id="file" accept=".txt" required>
+    </div>
+
+    <button type="submit" class="btn">Import Sample</button>
+</form>
+
+<h2>Generate Proposals from Samples</h2>
+<form method="POST" action="/style/sample-propose" class="form">
+    <div class="form-group">
+        <label for="project_id">Project ID:</label>
+        <input type="text" name="project_id" id="project_id" required>
+    </div>
+
+    <div class="form-group">
+        <label for="sample_ids">Sample IDs (comma-separated):</label>
+        <input type="text" name="sample_ids" id="sample_ids" required>
+    </div>
+
+    <button type="submit" class="btn">Generate Proposals</button>
+</form>
+
+<h2>Configure Style Gate</h2>
+<form method="POST" action="/style/gate-set" class="form">
+    <div class="form-group">
+        <label for="project_id">Project ID:</label>
+        <input type="text" name="project_id" id="project_id" required>
+    </div>
+
+    <div class="form-group">
+        <label for="mode">Gate Mode:</label>
+        <select name="mode" id="mode">
+            <option value="off">Off</option>
+            <option value="warn">Warn</option>
+            <option value="block">Block</option>
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="threshold">Blocking Threshold (score):</label>
+        <input type="number" name="threshold" id="threshold" value="70" min="0" max="100">
+    </div>
+
+    <div class="form-group">
+        <label for="enabled">Enabled:</label>
+        <select name="enabled" id="enabled">
+            <option value="true">Yes</option>
+            <option value="false">No</option>
+        </select>
+    </div>
+
+    <button type="submit" class="btn">Update Gate Config</button>
+</form>
+
+<h2>Decide Style Proposal</h2>
+{% if pending_proposals %}
+<div class="info-panel">
+    <h3>Pending Proposals</h3>
+    {% for project_id, proposals in pending_proposals.items() %}
+    <h4>{{ project_id }}</h4>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>ID</th>
+                <th>Type</th>
+                <th>Rationale</th>
+                <th>Created</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for proposal in proposals %}
+            <tr>
+                <td><code>{{ proposal.id }}</code></td>
+                <td>{{ proposal.proposal_type }}</td>
+                <td>{{ proposal.rationale }}</td>
+                <td>{{ proposal.created_at }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endfor %}
+</div>
+{% else %}
+<p>No pending style proposals.</p>
+{% endif %}
+
+<form method="POST" action="/style/proposal-decide" class="form">
+    <div class="form-group">
+        <label for="proposal_id">Proposal ID:</label>
+        <input type="text" name="proposal_id" id="proposal_id" required>
+    </div>
+
+    <div class="form-group">
+        <label for="decision">Decision:</label>
+        <select name="decision" id="decision" required>
+            <option value="approve">Approve</option>
+            <option value="reject">Reject</option>
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="notes">Notes (optional):</label>
+        <textarea name="notes" id="notes" rows="3"></textarea>
+    </div>
+
+    <button type="submit" class="btn">Submit Decision</button>
+</form>
+
+{% if result %}
+<div class="result-panel">
+    <h2>Result</h2>
+    <pre>{{ result | tojson(indent=2) }}</pre>
+</div>
+{% endif %}
+
+<h2>Style Bibles</h2>
+{% if bibles %}
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>Project</th>
+            <th>Name</th>
+            <th>Genre</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for pid, bible in bibles.items() %}
+        <tr>
+            <td>{{ pid }}</td>
+            <td>{{ bible.bible.name }}</td>
+            <td>{{ bible.bible.genre }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>No Style Bibles initialized</p>
+{% endif %}
+{% endblock %}

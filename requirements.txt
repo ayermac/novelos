@@ -9,5 +9,11 @@ pyyaml>=6.0
 # Database
 # sqlite3 is stdlib, no extra package needed
 
+# Web UI (v4.3)
+fastapi>=0.100.0
+uvicorn>=0.23.0
+jinja2>=3.0.0
+python-multipart>=0.0.6
+
 # Testing
 pytest>=7.0.0

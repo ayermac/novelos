@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Novel Factory - Acceptance Console</title>
+    <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+    <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">Novel Factory v4.3</div>
+        <div class="nav-links">
+            <a href="/">Dashboard</a>
+            <a href="/projects">Projects</a>
+            <a href="/run">Run</a>
+            <a href="/batch">Batch</a>
+            <a href="/queue">Queue</a>
+            <a href="/serial">Serial</a>
+            <a href="/review">Review</a>
+            <a href="/style">Style</a>
+            <a href="/config">Config</a>
+        </div>
+        <div class="nav-status">
+            <span class="status-badge">DB: {{ db_path or 'default' }}</span>
+            <span class="status-badge">LLM: {{ llm_mode }}</span>
+        </div>
+    </nav>
+
+    <main class="container">
+        {% if error %}
+        <div class="alert alert-error">
+            <strong>Error:</strong> {{ error }}
+        </div>
+        {% endif %}
+
+        {% block content %}{% endblock %}
+    </main>
+
+    <footer class="footer">
+        <p>Novel Factory Acceptance Console - v4.3 MVP</p>
+    </footer>
+</body>
+</html>

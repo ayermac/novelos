@@ -1,0 +1,107 @@
+{% extends "base.html" %}
+
+{% block content %}
+<h1>Batch Production</h1>
+
+<h2>Run Batch</h2>
+<form method="POST" action="/batch/run" class="form">
+    <div class="form-group">
+        <label for="project_id">Project ID:</label>
+        <select name="project_id" id="project_id" required>
+            {% for p in projects %}
+            <option value="{{ p.project_id }}">{{ p.project_id }}</option>
+            {% endfor %}
+        </select>
+    </div>
+
+    <div class="form-group">
+        <label for="from_chapter">From Chapter:</label>
+        <input type="number" name="from_chapter" id="from_chapter" value="1" min="1" required>
+    </div>
+
+    <div class="form-group">
+        <label for="to_chapter">To Chapter:</label>
+        <input type="number" name="to_chapter" id="to_chapter" value="3" min="1" required>
+    </div>
+
+    <div class="form-group">
+        <label for="llm_mode">LLM Mode:</label>
+        <select name="llm_mode" id="llm_mode">
+            <option value="stub">stub (demo)</option>
+            <option value="real">real</option>
+        </select>
+    </div>
+
+    <button type="submit" class="btn btn-primary">Run Batch</button>
+</form>
+
+<h2>Check Status</h2>
+<form method="GET" action="/batch/status" class="form">
+    <div class="form-group">
+        <label for="run_id">Run ID:</label>
+        <input type="text" name="run_id" id="run_id" placeholder="Enter run ID">
+    </div>
+    <button type="submit" class="btn">Check Status</button>
+</form>
+
+{% if result %}
+<div class="result-panel">
+    <h2>Result</h2>
+    <pre>{{ result | tojson(indent=2) }}</pre>
+</div>
+{% endif %}
+
+{% if run %}
+<div class="result-panel">
+    <h2>Run: {{ run.id }}</h2>
+    <p><strong>Status:</strong> {{ run.status }}</p>
+    <p><strong>Project:</strong> {{ run.project_id }}</p>
+
+    {% if items %}
+    <h3>Items</h3>
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Chapter</th>
+                <th>Status</th>
+                <th>Attempts</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td>{{ item.chapter_number }}</td>
+                <td>{{ item.status }}</td>
+                <td>{{ item.attempts }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+</div>
+{% endif %}
+
+{% if recent_runs %}
+<h2>Recent Runs</h2>
+<table class="data-table">
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Project</th>
+            <th>Status</th>
+            <th>Created</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for r in recent_runs %}
+        <tr>
+            <td><code>{{ r.id[:8] }}</code></td>
+            <td>{{ r.project_id }}</td>
+            <td>{{ r.status }}</td>
+            <td>{{ r.created_at }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+{% endblock %}
