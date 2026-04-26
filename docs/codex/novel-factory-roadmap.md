@@ -38,6 +38,8 @@ v4.4 Web Review UX Hardening
 v4.5 Personal Novel Project Onboarding
 v4.6 First Run Guided Workflow
 v4.7 Project Workspace / Author Cockpit
+v4.8 Web Acceptance Matrix & Parity Hardening
+v4.9 Settings / LLM / Agent Ops Console
 v4+  Multi-Model & Production Governance
 ```
 
@@ -930,11 +932,114 @@ constraints 支持：cost_tier 最大值、quality_tier 最小值、provider 白
 - 页面展示项目基础信息、章节进度、最近 run。
 - 页面展示 Review、Queue、Serial、Style 状态或空状态。
 - 页面展示 Quick Actions。
+- 项目不存在时显示可读错误，不出现 traceback。
+- 页面不包含 API key / secret。
 - seeded DB 中的 run/queue/serial/style 数据能在页面出现。
-- project 不存在时显示可读错误，不出现 traceback。
 - 不新增生产写入逻辑，不自动运行/approve/publish。
+- Next Best Action 正确识别阻塞章节、待审核章节、队列失败、待处理 Style proposals、可运行章节，并按优先级推荐。
+- Review Queue 正确识别 `status='review'` 的待审核章节。
+- Style Health 正确显示 Style Gate 配置状态和待处理 proposals 数量。
 
-状态：规划中。
+状态：**已通过最终验收**，测试基线 1283/1283。
+
+## v4.8：Web Acceptance Matrix & Parity Hardening
+
+目标：新增 Web Acceptance Matrix，让 Web UI 可以展示所有已实现能力的验收覆盖情况，包括 Web route、CLI command、success test、failure test、DB assertion、secret/traceback safety、status。
+
+范围：
+
+- 新增 `/acceptance` 路由展示验收矩阵
+- 集中定义所有能力及其验收状态（14 个能力）
+- 展示 Web route、CLI command、测试覆盖、DB 验证、安全检查
+- 页面以 read-model 展示为主，不新增生产写入逻辑
+- 不执行 pytest 或 shell 命令
+- 不泄露 API key、secret、traceback
+
+验收：
+
+- GET /acceptance 返回 200
+- 页面包含所有核心能力
+- 页面包含 pass/partial/missing 状态
+- 页面展示 Web route 和测试覆盖信息
+- 页面不包含 Traceback/API key/secret
+- acceptance matrix 定义来自集中 Python 数据结构，不只是在模板硬编码
+- 每个 capability_id 唯一
+- 每个 capability 至少有 label/web_route/status
+- status 只能是 pass/partial/missing
+- 页面有摘要统计
+- 页面不展示 raw JSON
+- 不执行 pytest 或 shell 命令
+- 不写入数据库
+- 不触发生产逻辑
+
+状态：**已通过最终验收**，测试基线 1312/1312。
+
+## v4.9：Settings / LLM / Agent Ops Console
+
+目标：新增 Web Settings / LLM / Agent Ops Console，让用户可以在浏览器中查看当前 LLM 配置、Agent 路由、模型推荐、Skill/QualityHub 状态和诊断信息。
+
+范围：
+
+- 新增 `/settings` 路由展示配置与运行状态控制台
+- 展示 Runtime Mode（llm_mode, default_llm）
+- 展示 LLM Profiles 列表（provider, model, base_url, api_key 状态）
+- 展示 Agent Routing（agent_id → profile 映射，fallback 标记）
+- 展示 Model Recommendations（Top 3 推荐 per Agent）
+- 展示 Skill/QualityHub 状态
+- 展示 Diagnostics（配置验证、警告、错误）
+- 所有敏感信息脱敏（API keys, secrets）
+- 无 raw JSON 显示，无 traceback 泄露
+- 只读页面，无生产写入逻辑
+- 更新 v4.8 acceptance matrix 新增 settings_ops capability
+
+验收：
+
+- GET /settings 返回 200
+- 页面展示 runtime mode 和 default_llm
+- 页面展示 LLM profiles 列表
+- 页面展示 agent routing 映射
+- 页面展示 model recommendations
+- 页面展示 skill/qualityhub 状态
+- 页面展示 diagnostics
+- API keys 和 secrets 已脱敏
+- 页面不包含 raw JSON
+- 页面不包含 traceback
+- 页面不执行生产写入
+- 页面不触发生产逻辑
+- acceptance matrix 包含 settings_ops capability
+- v4.9 测试通过（29/29）
+- Web UI 测试通过（166/166）
+- 文件体积策略通过（65/65）
+- 全量测试通过（1341/1341）
+
+状态：**已通过最终验收**，测试基线 1341/1341。
+
+## v5.0：Implemented Features & WebUI Acceptance
+
+目标：对 v1-v4.9 已实现功能做整体验收和 WebUI 验收，确认每个 pass capability 真实可验证，不新增大功能。
+
+范围：
+
+- 基于 acceptance matrix 梳理 v1-v4.9 已实现能力（16 个 pass capability）
+- 确认每个 pass capability 的 web_route 存在并返回可读页面
+- 确认 success_test/failure_test 文件真实存在
+- 新增 v5.0 整体验收测试
+- 覆盖 WebUI 核心链路 12 个路径
+- 验证安全：不泄露 API key/secret/traceback/raw JSON
+- 验证文档一致性：README、roadmap、v5.0 spec、acceptance matrix
+- 如发现已有能力标 pass 但覆盖不足，标注 partial 或补测试
+
+验收：
+
+- 16 个 capability 全部为 pass，无 partial 或 missing
+- 所有 success_test 文件真实存在
+- 所有 web_route 返回 200
+- 无 API key/secret/traceback 泄露
+- v5.0 专项测试通过
+- Web UI 组合测试通过
+- 全量测试通过
+
+状态：**已通过验收**，测试基线 1386/1386。
 
 ## v4+：多模型与生产治理
 

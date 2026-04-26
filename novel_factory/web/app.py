@@ -51,7 +51,7 @@ def create_app(
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     # Register routes
-    from .routes import dashboard, projects, run, batch, queue, serial, review, style, config, onboarding
+    from .routes import dashboard, projects, run, batch, queue, serial, review, style, config, onboarding, acceptance, settings
 
     app.include_router(dashboard.router, tags=["dashboard"])
     app.include_router(projects.router, prefix="/projects", tags=["projects"])
@@ -63,6 +63,8 @@ def create_app(
     app.include_router(review.router, prefix="/review", tags=["review"])
     app.include_router(style.router, prefix="/style", tags=["style"])
     app.include_router(config.router, prefix="/config", tags=["config"])
+    app.include_router(acceptance.router, prefix="/acceptance", tags=["acceptance"])
+    app.include_router(settings.router, prefix="/settings", tags=["settings"])
 
     # Exception handler for all errors
     @app.exception_handler(Exception)

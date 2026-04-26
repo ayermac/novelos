@@ -165,3 +165,58 @@ python3 -m pytest -q
 4. 补充 v4.7 测试，优先覆盖真实 DB 状态展示。
 5. 跑 Web 组合测试、文件体积策略和全量测试。
 
+## 验收结果
+
+**状态：已通过最终验收**
+
+测试基线：1283/1283 通过
+
+实现要点：
+1. ✅ 复用 `/projects/{project_id}` 路由，构建 workspace read model
+2. ✅ 页面包含所有必需模块：
+   - Project Overview：项目基础信息
+   - Next Best Action：智能推荐下一步操作
+   - Chapter Progress：章节进度和状态分组
+   - Recent Runs：最近 workflow runs
+   - Review Queue：审核入口和待审核摘要
+   - Production Queue：队列状态
+   - Serial Plan：连载计划
+   - Style Health：风格状态
+   - Quick Actions：快捷操作按钮
+3. ✅ 优雅处理空状态，缺少数据时显示空状态而不崩溃
+4. ✅ 页面不展示 raw JSON，使用可读的 UI 组件
+5. ✅ 不泄露 traceback、API key、secret
+6. ✅ 项目不存在时显示可读错误
+7. ✅ 测试覆盖所有关键功能：
+   - 工作台页面加载
+   - 项目信息展示
+   - 章节进度展示
+   - 运行记录展示
+   - Review/Queue/Serial/Style 状态展示
+   - 空状态处理
+   - 错误处理
+   - 导航链接正确性
+   - 数据展示验证
+
+修复记录（Review 后）：
+- [P2] 修复 Style Gate 查询方法：使用 `get_style_gate_config()` 而非不存在的 `get_style_gate()`
+- [P2] 添加 pending Style Evolution Proposals 支持：查询并展示 pending proposals，Next Best Action 优先推荐处理
+- [P2] 修复 Review 状态判断：`status='review'` 为待审核状态，`status='reviewed'` 为审核通过
+- [P2] 修复 Next Best Action 优先级：pending style proposals 优先于 planned chapters，确保提案不被抢走
+
+修改文件：
+- novel_factory/web/routes/projects.py：构建 workspace read model，修复四个问题
+- novel_factory/web/templates/project_detail.html：工作台布局，修复 Style Gate 和 Review 状态显示
+
+新增文件：
+- tests/test_v47_project_workspace.py：29 个测试用例（新增 5 个覆盖四个缺口）
+
+遵守禁止范围：
+- ✅ 不新增生产写入逻辑
+- ✅ 不自动运行章节生产
+- ✅ 不自动 approve/publish
+- ✅ 不实现登录/注册/权限
+- ✅ 不引入 WebSocket/Redis/Celery
+- ✅ 不新增真实 LLM 调用测试
+- ✅ 不提交 config/acceptance.yaml 或真实密钥
+

@@ -36,6 +36,9 @@
 | `novel-factory-v4.5-personal-onboarding-spec.md` | v4.5 个人小说项目 Onboarding、从 Web 创建项目与初始资料 | 开发 Agent、质量验收 |
 | `novel-factory-v4.6-first-run-guided-workflow-spec.md` | v4.6 首次运行引导闭环、项目创建后运行第一章并进入审核 | 开发 Agent、质量验收 |
 | `novel-factory-v4.7-project-workspace-author-cockpit-spec.md` | v4.7 项目级作者工作台、聚合项目状态和下一步操作 | 开发 Agent、质量验收 |
+| `novel-factory-v4.8-web-acceptance-matrix-spec.md` | v4.8 Web 验收矩阵、展示系统能力覆盖情况 | 开发 Agent、质量验收 |
+| `novel-factory-v4.9-settings-llm-agent-ops-console-spec.md` | v4.9 Settings / LLM / Agent Ops Console、配置与运行状态控制台 | 开发 Agent、质量验收 |
+| `novel-factory-v5.0-implemented-features-webui-acceptance-spec.md` | v5.0 已实现功能整体验收与 WebUI 验收 | 开发 Agent、质量验收 |
 
 ## 使用方式
 
@@ -69,10 +72,13 @@
 - 开发 v4.5 个人小说项目 Onboarding 时，优先读 `novel-factory-v4.5-personal-onboarding-spec.md`。
 - 开发 v4.6 首次运行引导闭环时，优先读 `novel-factory-v4.6-first-run-guided-workflow-spec.md`。
 - 开发 v4.7 项目级作者工作台时，优先读 `novel-factory-v4.7-project-workspace-author-cockpit-spec.md`。
+- 开发/验收 v4.8 Web Acceptance Matrix 时，优先读 `novel-factory-v4.8-web-acceptance-matrix-spec.md`。
+- 开发/验收 v4.9 Settings / LLM / Agent Ops Console 时，优先读 `novel-factory-v4.9-settings-llm-agent-ops-console-spec.md`。
+- 验收 v5.0 已实现功能与 WebUI 时，优先读 `novel-factory-v5.0-implemented-features-webui-acceptance-spec.md`。
 
 ## 当前版本
 
-当前开发基线是 **v4.6 First Run Guided Workflow 已通过验收，测试基线 1254/1254**。
+当前开发基线是 **v5.0 Implemented Features & WebUI Acceptance 已通过验收，测试基线 1386/1386**。
 
 v1 只实现：
 
@@ -94,4 +100,4 @@ v1 不实现：
 
 当前下一步：
 
-- 按 `novel-factory-v4.7-project-workspace-author-cockpit-spec.md` 开发 Project Workspace / Author Cockpit。
+- 进入 v5.1+ 多模型与生产治理规划与开发。
