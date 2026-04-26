@@ -1,0 +1,196 @@
+# v3.9 LLM Model Catalog
+# Offline catalog of LLM models with capability tags for agent recommendation.
+# NOTE: No real API keys are stored here.
+
+catalog:
+  # ── OpenAI ──────────────────────────────────────────────────
+  - provider: openai
+    model: gpt-4o
+    display_name: GPT-4o
+    profile_template: openai_compatible
+    context_window: 128000
+    cost_tier: high
+    latency_tier: medium
+    quality_tier: premium
+    strengths:
+      - reasoning
+      - planning
+      - json
+      - prose
+      - editing
+      - long_context
+    recommended_agents:
+      - planner
+      - screenwriter
+      - author
+      - polisher
+      - editor
+      - continuity_checker
+      - architect
+    notes: "Flagship model, strong across all tasks."
+
+  - provider: openai
+    model: gpt-4o-mini
+    display_name: GPT-4o Mini
+    profile_template: openai_compatible
+    context_window: 128000
+    cost_tier: low
+    latency_tier: low
+    quality_tier: draft
+    strengths:
+      - speed
+      - json
+      - planning
+    recommended_agents:
+      - scout
+      - secretary
+    notes: "Fast and cheap, good for lightweight tasks."
+
+  - provider: openai
+    model: o3-mini
+    display_name: O3 Mini
+    profile_template: openai_compatible
+    context_window: 200000
+    cost_tier: medium
+    latency_tier: medium
+    quality_tier: standard
+    strengths:
+      - reasoning
+      - planning
+      - json
+    recommended_agents:
+      - planner
+      - screenwriter
+      - editor
+      - architect
+    notes: "Reasoning-optimized, good for structured planning tasks."
+
+  # ── DeepSeek ────────────────────────────────────────────────
+  - provider: deepseek
+    model: deepseek-chat
+    display_name: DeepSeek Chat
+    profile_template: openai_compatible
+    context_window: 64000
+    cost_tier: low
+    latency_tier: medium
+    quality_tier: standard
+    strengths:
+      - prose
+      - speed
+      - json
+      - editing
+    recommended_agents:
+      - author
+      - polisher
+      - scout
+      - secretary
+    notes: "Cost-effective, strong Chinese prose quality."
+
+  - provider: deepseek
+    model: deepseek-reasoner
+    display_name: DeepSeek Reasoner
+    profile_template: openai_compatible
+    context_window: 64000
+    cost_tier: medium
+    latency_tier: high
+    quality_tier: premium
+    strengths:
+      - reasoning
+      - planning
+      - json
+    recommended_agents:
+      - planner
+      - screenwriter
+      - editor
+      - architect
+      - continuity_checker
+    notes: "Reasoning-focused, good for planning and analysis."
+
+  # ── Anthropic (via OpenAI-compatible proxy) ──────────────────
+  - provider: anthropic-compatible
+    model: claude-3.5-sonnet
+    display_name: Claude 3.5 Sonnet
+    profile_template: openai_compatible
+    context_window: 200000
+    cost_tier: high
+    latency_tier: medium
+    quality_tier: premium
+    strengths:
+      - prose
+      - editing
+      - long_context
+      - safety
+      - reasoning
+    recommended_agents:
+      - author
+      - polisher
+      - editor
+      - continuity_checker
+    notes: "Excellent prose quality, long context window, strong editing."
+
+  - provider: anthropic-compatible
+    model: claude-3-haiku
+    display_name: Claude 3 Haiku
+    profile_template: openai_compatible
+    context_window: 200000
+    cost_tier: low
+    latency_tier: low
+    quality_tier: draft
+    strengths:
+      - speed
+      - json
+    recommended_agents:
+      - scout
+      - secretary
+    notes: "Fast and affordable, good for lightweight tasks."
+
+  # ── OpenRouter ──────────────────────────────────────────────
+  - provider: openrouter
+    model: google/gemini-2.0-flash-001
+    display_name: Gemini 2.0 Flash
+    profile_template: openai_compatible
+    context_window: 1000000
+    cost_tier: low
+    latency_tier: low
+    quality_tier: standard
+    strengths:
+      - long_context
+      - speed
+      - json
+    recommended_agents:
+      - continuity_checker
+      - scout
+      - secretary
+    notes: "Very long context, fast, good for summarization."
+
+  - provider: openrouter
+    model: meta-llama/llama-3.3-70b-instruct
+    display_name: Llama 3.3 70B
+    profile_template: openai_compatible
+    context_window: 128000
+    cost_tier: low
+    latency_tier: medium
+    quality_tier: standard
+    strengths:
+      - speed
+      - json
+      - planning
+    recommended_agents:
+      - scout
+      - secretary
+      - planner
+    notes: "Open model, good for budget-conscious setups."
+
+  # ── Local / Stub ────────────────────────────────────────────
+  - provider: local
+    model: stub
+    display_name: Stub LLM (Test/Demo)
+    profile_template: stub
+    context_window: 0
+    cost_tier: low
+    latency_tier: low
+    quality_tier: draft
+    strengths:
+      - speed
+    recommended_agents: []
+    notes: "Deterministic stub for testing and demos. No real LLM calls."

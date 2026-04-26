@@ -652,19 +652,57 @@ agent_llm:
 
 ## v3.9：LLM Model Catalog & Agent Recommendation
 
-目标：支持模型目录、Agent 模型推荐和 fallback 策略。
+目标：建立离线、可审计的 LLM 模型目录和 Agent 模型推荐系统，让用户可以查看"每个 Agent 适合用什么模型"，并生成推荐配置草案。
 
 范围：
 
-- LLM Model Catalog 配置。
-- Agent 级模型推荐。
-- Model fallback 策略。
-- Provider 健康检查。
+- LLM Model Catalog 配置（`novel_factory/config/llm_catalog.yaml`）。
+- 每个 provider/model 的能力标签、价格等级、上下文长度、推荐用途。
+- Agent 级模型推荐器（`novel_factory/llm/recommender.py`）。
+- 根据 Agent 职责自动推荐模型（Planner 偏推理、Author 偏长文本、Editor 偏审校等）。
+- CLI 命令：`llm catalog`、`llm recommend`、`llm config-plan`。
+- 生成 `llm_profiles` + `agent_llm` 配置草案（只输出不写盘）。
+- 保持与 v3.1 LLMRouter 完全兼容。
 
-暂缓原因：
+推荐逻辑：
 
-- 需要先完成 Skill Import Bridge 安全模型验证。
-- Model fallback 和健康检查需要真实 API 集成测试。
+- Planner/Screenwriter：偏 reasoning + planning + json。
+- Author：偏 prose + long_context。
+- Polisher：偏 editing + prose + safety。
+- Editor：偏 editing + reasoning + json。
+- Scout：偏 speed + summarization/reasoning。
+- ContinuityChecker：偏 long_context + reasoning + json。
+- Architect：偏 reasoning + json。
+- Secretary：偏 low cost + speed。
+
+constraints 支持：cost_tier 最大值、quality_tier 最小值、provider 白名单、require_strengths、prefer_low_latency。
+
+验收：
+
+- `novelos llm catalog --json` 可列出所有模型。
+- `novelos llm recommend --agent author --json` 可推荐模型。
+- `novelos llm recommend --all --json` 可推荐所有 Agent 模型。
+- `novelos llm config-plan --all --json` 可输出配置草案。
+- 所有 `--json` 输出稳定为 `{ok, error, data}` 信封。
+- 推荐输出不包含 API key 或任何 secret。
+- 不修改主创作流程、不写用户配置、不联网。
+- 现有 v3.1 llm CLI 测试不回归。
+- 全量测试通过。
+
+禁止：
+
+- 不实现自动 fallback。
+- 不做 provider health check。
+- 不做真实 API 调用。
+- 不做联网模型榜单同步。
+- 不写入用户配置文件。
+- 不修改 `.env`。
+- 不引入数据库 migration。
+- 不修改主 Agent 编排流程。
+- 不新增 Web UI / FastAPI。
+- 不让推荐器自动覆盖用户现有 `agent_llm`。
+
+状态：已通过验收，当前测试基线为 `932/932`。
 
 ## v4.0：Style Bible MVP
 

@@ -91,6 +91,11 @@ from .commands.review import (
     cmd_review_diff,
     cmd_review_export,
 )
+from .commands.llm_catalog import (
+    cmd_llm_catalog,
+    cmd_llm_recommend,
+    cmd_llm_config_plan,
+)
 
 
 # ── Argument parser ──────────────────────────────────────────────
@@ -201,6 +206,31 @@ def build_parser() -> argparse.ArgumentParser:
     llm_validate = llm_subparsers.add_parser("validate", help="Validate LLM configuration")
     llm_validate.add_argument("--json", action="store_true", help="Output in JSON format")
     llm_validate.set_defaults(func=cmd_llm_validate)
+
+    # v3.9: llm catalog / recommend / config-plan
+    llm_catalog = llm_subparsers.add_parser("catalog", help="List LLM model catalog")
+    llm_catalog.add_argument("--json", action="store_true", help="Output in JSON format")
+    llm_catalog.set_defaults(func=cmd_llm_catalog)
+
+    llm_recommend = llm_subparsers.add_parser("recommend", help="Recommend LLM models for agents")
+    llm_recommend.add_argument("--agent", help="Agent ID (e.g., author, editor)")
+    llm_recommend.add_argument("--all", action="store_true", help="Recommend for all agents")
+    llm_recommend.add_argument("--cost-tier", choices=["low", "medium", "high"], help="Maximum cost tier")
+    llm_recommend.add_argument("--quality-tier", choices=["draft", "standard", "premium"], help="Minimum quality tier")
+    llm_recommend.add_argument("--provider", help="Comma-separated provider whitelist (e.g., openai,deepseek)")
+    llm_recommend.add_argument("--require-strengths", dest="require_strengths", help="Comma-separated required strengths (e.g., reasoning,json)")
+    llm_recommend.add_argument("--prefer-low-latency", dest="prefer_low_latency", action="store_true", help="Prefer low-latency models")
+    llm_recommend.add_argument("--json", action="store_true", help="Output in JSON format")
+    llm_recommend.set_defaults(func=cmd_llm_recommend)
+
+    llm_config_plan = llm_subparsers.add_parser("config-plan", help="Generate LLM configuration plan draft")
+    llm_config_plan.add_argument("--all", action="store_true", help="Generate plan for all agents (default behavior)")
+    llm_config_plan.add_argument("--cost-tier", choices=["low", "medium", "high"], help="Maximum cost tier")
+    llm_config_plan.add_argument("--quality-tier", choices=["draft", "standard", "premium"], help="Minimum quality tier")
+    llm_config_plan.add_argument("--provider", help="Comma-separated provider whitelist")
+    llm_config_plan.add_argument("--prefer-low-latency", dest="prefer_low_latency", action="store_true", help="Prefer low-latency models")
+    llm_config_plan.add_argument("--json", action="store_true", help="Output in JSON format")
+    llm_config_plan.set_defaults(func=cmd_llm_config_plan)
 
     # seed-demo
     seed_parser = subparsers.add_parser("seed-demo", help="Seed demo project data")

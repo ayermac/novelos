@@ -7,6 +7,7 @@ Rules:
   - All novel_factory/db/repositories/**/*.py files must be <= 1000 lines
   - novel_factory/dispatcher.py must be <= 300 lines
   - All novel_factory/dispatch/**/*.py files must be <= 1000 lines
+  - All novel_factory/llm/**/*.py files must be <= 1000 lines (v3.9)
 """
 
 from pathlib import Path
@@ -90,3 +91,18 @@ class TestDispatchSizePolicy:
     def test_file_under_1000_lines(self, dispatch_py):
         lines = _count_lines(dispatch_py)
         assert lines <= 1000, f"{dispatch_py.relative_to(ROOT)} has {lines} lines, must be <= 1000"
+
+
+class TestLLMSizePolicy:
+    """Verify all llm/**/*.py files are <= 1000 lines (v3.9)."""
+
+    @pytest.fixture(params=[
+        p.relative_to(ROOT)
+        for p in (ROOT / "llm").rglob("*.py")
+    ])
+    def llm_py(self, request):
+        return ROOT / request.param
+
+    def test_file_under_1000_lines(self, llm_py):
+        lines = _count_lines(llm_py)
+        assert lines <= 1000, f"{llm_py.relative_to(ROOT)} has {lines} lines, must be <= 1000"
