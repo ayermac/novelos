@@ -79,6 +79,11 @@ class PlannerAgent(BaseAgent):
             msg_str = "\n".join(f"- [{m['from_agent']}] {m['type']}: {m['content'][:200]}" for m in messages[:5])
             parts.append(f"【待处理异议】\n{msg_str}")
 
+        # v4.0: Style Bible injection
+        style_ctx = self._get_style_bible_context(project_id, "planner")
+        if style_ctx:
+            parts.append(style_ctx)
+
         return "\n\n".join(parts)
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:

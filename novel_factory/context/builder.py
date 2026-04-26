@@ -4,15 +4,19 @@ v1.2 implements:
 - Per-agent context with different fragments and priorities.
 - Token budget with mandatory (P0-P2) and trimmable (P3-P9) segments.
 - Integration with learned_patterns and best_practices.
+- v4.0: Style Bible injection for all agents.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 from typing import Any
 
 from ..db.repository import Repository
 from ..validators.death_penalty import format_death_penalty_for_prompt
+
+logger = logging.getLogger(__name__)
 
 
 # ── Token estimation ───────────────────────────────────────────
@@ -307,6 +311,20 @@ class ContextBuilder:
             mandatory=True,
         )
 
+    # ── v4.0 Style Bible fragment ────────────────────────────────
+
+    def _frag_style_bible(self, project_id: str, agent_id: str) -> ContextFragment:
+        """P3: Style Bible rules for the given agent (v4.0)."""
+        try:
+            from ..style_bible.loader import get_style_context_for_agent
+            style_text = get_style_context_for_agent(project_id, agent_id, self.repo)
+            if not style_text:
+                return ContextFragment("style_bible", "", 3)
+            return ContextFragment("style_bible", style_text, 3)
+        except Exception:
+            logger.debug("Style Bible fragment unavailable for project=%s agent=%s", project_id, agent_id)
+            return ContextFragment("style_bible", "", 3)
+
     # ── Agent-specific build methods ────────────────────────
 
     def build_for_author(self, project_id: str, chapter_number: int) -> str:
@@ -317,6 +335,7 @@ class ContextBuilder:
             self._frag_instruction(project_id, chapter_number),     # P1
             self._frag_review_notes(project_id, chapter_number),    # P2 (v3.2)
             self._frag_prev_state_card(project_id, chapter_number), # P2
+            self._frag_style_bible(project_id, "author"),            # P3 (v4.0)
             self._frag_scene_beats(project_id, chapter_number),     # P3
             self._frag_plot_requirements(project_id, chapter_number), # P4
             self._frag_characters(project_id),                      # P5
@@ -340,6 +359,7 @@ class ContextBuilder:
             ContextFragment("original_draft", draft_content, 1, mandatory=True),  # P1
             self._frag_instruction(project_id, chapter_number),     # P1
             self._frag_review_notes(project_id, chapter_number),    # P2 (v3.2)
+            self._frag_style_bible(project_id, "polisher"),          # P3 (v4.0)
             self._frag_learned_patterns(project_id),                # P8
             self._frag_best_practices(project_id),                  # P9
         ]
@@ -368,6 +388,7 @@ class ContextBuilder:
             ContextFragment("chapter_content", content_text, 1, mandatory=True),  # P1
             self._frag_instruction(project_id, chapter_number),     # P1
             self._frag_prev_state_card(project_id, chapter_number), # P2
+            self._frag_style_bible(project_id, "editor"),            # P3 (v4.0)
             self._frag_continuity_warning(project_id, chapter_number),  # P3 (v2)
             self._frag_plot_requirements(project_id, chapter_number), # P4
             ContextFragment("anti_patterns", anti_pat_text, 7),     # P7-like
@@ -381,6 +402,7 @@ class ContextBuilder:
         fragments = [
             self._frag_review_notes(project_id, chapter_number),    # P2 (v3.2)
             self._frag_prev_state_card(project_id, chapter_number),  # P2
+            self._frag_style_bible(project_id, "planner"),           # P3 (v4.0)
             self._frag_continuity_warning(project_id, chapter_number),  # P3 (v2)
             self._frag_plot_requirements(project_id, chapter_number), # P4
             self._frag_characters(project_id),                       # P5

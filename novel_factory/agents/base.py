@@ -142,3 +142,15 @@ class BaseAgent:
         if prev_ch < 1:
             return None
         return self.repo.get_chapter_state(state["project_id"], prev_ch)
+
+    def _get_style_bible_context(self, project_id: str, agent_id: str) -> str:
+        """Helper: get Style Bible context for a specific agent (v4.0).
+
+        Returns an empty string if no Style Bible exists for the project.
+        Silently returns "" on any error (never blocks the main flow).
+        """
+        try:
+            from ..style_bible.loader import get_style_context_for_agent
+            return get_style_context_for_agent(project_id, agent_id, self.repo)
+        except Exception:
+            return ""

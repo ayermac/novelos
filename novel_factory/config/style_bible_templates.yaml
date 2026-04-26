@@ -1,0 +1,232 @@
+# Style Bible Templates for v4.0
+# Each template describes abstract style dimensions only.
+# NO template may reference a specific living author.
+
+templates:
+  default_web_serial:
+    name: "网文默认风格"
+    description: "通用网文风格，适合起点/番茄等平台"
+    genre: "玄幻/都市"
+    target_platform: "web_serial"
+    target_audience: "18-35岁男性读者"
+    tone_keywords:
+      - "热血"
+      - "爽感"
+      - "升级"
+    pacing: "fast"
+    pov: "third_person_limited"
+    dialogue_style: "简洁有力"
+    prose_style: "紧凑叙事"
+    tension_style: "peaks"
+    humor_style: "dry"
+    emotional_intensity: "medium"
+    forbidden_expressions:
+      - pattern: "不由得"
+        reason: "AI痕迹重"
+        severity: "warning"
+      - pattern: "不禁"
+        reason: "AI痕迹重"
+        severity: "warning"
+      - pattern: "嘴角勾起一抹"
+        reason: "AI痕迹重"
+        severity: "blocking"
+      - pattern: "眼中闪过一道"
+        reason: "AI痕迹重"
+        severity: "blocking"
+    preferred_expressions:
+      - pattern: "短句+动作推进"
+        context: "战斗/升级场景"
+    sentence_rules:
+      - description: "避免连续三个以上长句，适当用短句调节节奏"
+        severity: "warning"
+      - description: "对话不超过5轮不插入动作或心理"
+        severity: "warning"
+    paragraph_rules:
+      - description: "每段控制在3-8句"
+        severity: "warning"
+    chapter_opening_rules:
+      - description: "首句须有动作或冲突，不纯描写"
+        severity: "warning"
+    chapter_ending_rules:
+      - description: "章末须有钩子（悬念/反转/新信息）"
+        severity: "warning"
+    ai_trace_avoidance:
+      avoid_patterns:
+        - "冷笑"
+        - "倒吸一口凉气"
+        - "不仅...而且...更是..."
+        - "心中暗想"
+        - "夜色笼罩"
+      prefer_patterns:
+        - "用动作暗示情绪"
+        - "用环境投射心理"
+      notes: "避免典型AI味表达，追求网文本土感"
+
+  urban_fantasy_fast:
+    name: "都市异能快节奏"
+    description: "适合都市异能/系统流，强调节奏感"
+    genre: "都市异能"
+    target_platform: "web_serial"
+    target_audience: "18-30岁男性读者"
+    tone_keywords:
+      - "紧张"
+      - "反转"
+      - "暗爽"
+    pacing: "fast"
+    pov: "first_person"
+    dialogue_style: "口语化、带梗"
+    prose_style: "极简白描"
+    tension_style: "constant"
+    humor_style: "dry"
+    emotional_intensity: "medium"
+    forbidden_expressions:
+      - pattern: "嘴角微扬"
+        reason: "AI痕迹"
+        severity: "blocking"
+    preferred_expressions:
+      - pattern: "内心吐槽+外在冷静"
+        context: "反差萌"
+    sentence_rules:
+      - description: "战斗段每句不超过15字"
+        severity: "warning"
+    paragraph_rules: []
+    chapter_opening_rules:
+      - description: "直接进入冲突，不铺垫"
+        severity: "warning"
+    chapter_ending_rules:
+      - description: "必须反转或打脸"
+        severity: "warning"
+    ai_trace_avoidance:
+      avoid_patterns:
+        - "深邃的目光"
+        - "一股暖流"
+      prefer_patterns:
+        - "用具体动作代替抽象描述"
+      notes: "追求极快节奏，杜绝注水"
+
+  xianxia_progression:
+    name: "修仙升级流"
+    description: "适合修仙/仙侠升级文"
+    genre: "仙侠"
+    target_platform: "web_serial"
+    target_audience: "18-35岁男性读者"
+    tone_keywords:
+      - "超脱"
+      - "悟道"
+      - "逆天"
+    pacing: "balanced"
+    pov: "third_person_limited"
+    dialogue_style: "半文半白"
+    prose_style: "意境描写+节奏推进"
+    tension_style: "slow_burn"
+    humor_style: "none"
+    emotional_intensity: "medium"
+    forbidden_expressions: []
+    preferred_expressions:
+      - pattern: "意境化描写+简洁动作"
+        context: "突破/悟道场景"
+    sentence_rules:
+      - description: "悟道段落用排比和短句营造顿悟感"
+        severity: "warning"
+    paragraph_rules:
+      - description: "修炼描写不超过2段，用结果代替过程"
+        severity: "warning"
+    chapter_opening_rules: []
+    chapter_ending_rules:
+      - description: "章末须有境界/实力变化暗示"
+        severity: "warning"
+    ai_trace_avoidance:
+      avoid_patterns:
+        - "一道流光"
+        - "金光大盛"
+      prefer_patterns:
+        - "用自然意象替代特效描述"
+      notes: "修仙文追求意境，避免西化表达"
+
+  romance_emotional:
+    name: "言情细腻流"
+    description: "适合言情/甜宠/虐恋"
+    genre: "言情"
+    target_platform: "web_serial"
+    target_audience: "18-35岁女性读者"
+    tone_keywords:
+      - "心动"
+      - "细腻"
+      - "甜虐交织"
+    pacing: "slow"
+    pov: "third_person_limited"
+    dialogue_style: "含蓄留白"
+    prose_style: "细腻心理描写"
+    tension_style: "slow_burn"
+    humor_style: "dry"
+    emotional_intensity: "high"
+    forbidden_expressions:
+      - pattern: "霸道总裁"
+        reason: "过度刻板化"
+        severity: "warning"
+    preferred_expressions:
+      - pattern: "用细节动作暗示情感变化"
+        context: "感情推进"
+    sentence_rules:
+      - description: "情绪转折点用短句强化冲击"
+        severity: "warning"
+    paragraph_rules:
+      - description: "心理描写不超过3句后须切入动作或对话"
+        severity: "warning"
+    chapter_opening_rules:
+      - description: "首段须有情感钩子"
+        severity: "warning"
+    chapter_ending_rules:
+      - description: "章末须有情感悬念"
+        severity: "warning"
+    ai_trace_avoidance:
+      avoid_patterns:
+        - "心中泛起涟漪"
+        - "一抹不易察觉的"
+      prefer_patterns:
+        - "用具体感官描写替代抽象情绪词"
+      notes: "言情文重细节，避免空泛情绪词"
+
+  mystery_suspense:
+    name: "悬疑推理流"
+    description: "适合悬疑/推理/惊悚"
+    genre: "悬疑"
+    target_platform: "web_serial"
+    target_audience: "18-40岁男女读者"
+    tone_keywords:
+      - "紧张"
+      - "克制"
+      - "疑虑"
+    pacing: "balanced"
+    pov: "third_person_limited"
+    dialogue_style: "话中有话"
+    prose_style: "冷静白描+关键细节"
+    tension_style: "constant"
+    humor_style: "none"
+    emotional_intensity: "low"
+    forbidden_expressions:
+      - pattern: "不禁倒吸一口凉气"
+        reason: "AI痕迹+过度反应"
+        severity: "blocking"
+    preferred_expressions:
+      - pattern: "用环境和细节暗示危险"
+        context: "悬疑铺垫"
+    sentence_rules:
+      - description: "关键线索用独立短句呈现"
+        severity: "warning"
+    paragraph_rules:
+      - description: "信息密度均匀，不堆砌线索"
+        severity: "warning"
+    chapter_opening_rules:
+      - description: "首段须埋入至少一条新信息"
+        severity: "warning"
+    chapter_ending_rules:
+      - description: "章末须反转或加深悬念"
+        severity: "blocking"
+    ai_trace_avoidance:
+      avoid_patterns:
+        - "不寒而栗"
+        - "毛骨悚然"
+      prefer_patterns:
+        - "用客观细节替代主观恐惧词"
+      notes: "悬疑文重克制，用留白制造恐惧"

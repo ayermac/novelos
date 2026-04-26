@@ -106,3 +106,18 @@ class TestLLMSizePolicy:
     def test_file_under_1000_lines(self, llm_py):
         lines = _count_lines(llm_py)
         assert lines <= 1000, f"{llm_py.relative_to(ROOT)} has {lines} lines, must be <= 1000"
+
+
+class TestStyleBibleSizePolicy:
+    """Verify all style_bible/**/*.py files are <= 1000 lines (v4.0)."""
+
+    @pytest.fixture(params=[
+        p.relative_to(ROOT)
+        for p in (ROOT / "style_bible").rglob("*.py")
+    ])
+    def style_bible_py(self, request):
+        return ROOT / request.param
+
+    def test_file_under_1000_lines(self, style_bible_py):
+        lines = _count_lines(style_bible_py)
+        assert lines <= 1000, f"{style_bible_py.relative_to(ROOT)} has {lines} lines, must be <= 1000"

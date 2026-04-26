@@ -86,6 +86,11 @@ class AuthorAgent(BaseAgent):
             char_str = "\n".join(f"- {c['name']}({c['role']}): {c.get('description', '')}" for c in characters[:10])
             parts.append(f"【角色设定】\n{char_str}")
 
+        # v4.0: Style Bible injection
+        style_ctx = self._get_style_bible_context(project_id, "author")
+        if style_ctx:
+            parts.append(style_ctx)
+
         # If revision, include review issues
         chapter = self._get_chapter_info(state)
         if chapter and chapter.get("status") == ChapterStatus.REVISION.value:

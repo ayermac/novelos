@@ -706,14 +706,37 @@ constraints 支持：cost_tier 最大值、quality_tier 最小值、provider 白
 
 ## v4.0：Style Bible MVP
 
-目标：支持平台风格 Bible，让不同平台/受众使用不同的写作风格配置。
+目标：支持项目级 Style Bible，让不同平台/受众使用不同的写作风格配置，并集成到 Agent 上下文和质检流程。
 
 范围：
 
-- Style Bible 配置。
-- 平台风格规则。
-- Style 检查 Skill。
-- 风格一致性验证。
+- Style Bible 数据模型（Pydantic）：pacing、POV、tone_keywords、forbidden/preferred expressions、AI trace avoidance、sentence/paragraph/chapter rules
+- 数据库迁移（012_v4_0_style_bible.sql）：style_bibles 表
+- Repository Mixin（StyleBibleRepositoryMixin）：CRUD + rowcount 检查
+- 模板系统（5 套预设模板）：default_web_serial、urban_fantasy_fast、xianxia_progression、romance_emotional、mystery_suspense
+- ContextBuilder 集成：按 agent_id 注入不同规则子集到 Planner/Author/Editor 上下文
+- StyleBibleChecker Skill：纯规则检查（不调 LLM、不联网）
+- QualityHub 集成：check_draft 中运行 Style Bible 检查（v4.0 MVP 仅 warning 级）
+- CLI 命令：style templates/init/show/update/check/delete
+- 禁止模仿作者风格、禁止 LLM 调用检查、禁止联网、禁止自动重写、默认不阻塞主生产流
+
+验收：
+
+- `novelos style templates --json` 列出可用模板。
+- `novelos style init --project-id demo --template default_web_serial --json` 创建 Style Bible。
+- `novelos style show --project-id demo --json` 展示 Style Bible。
+- `novelos style update --project-id demo --set genre=仙侠 --json` 更新字段。
+- `novelos style check --project-id demo --chapter 1 --json` 检查章节风格合规。
+- `novelos style delete --project-id demo --json` 删除 Style Bible。
+- 所有 CLI 输出稳定 `{ok, error, data}` 信封。
+- Style Bible 进入 Planner/Author/Editor 上下文（可验证）。
+- QualityHub 不阻塞发布（仅 warning 级）。
+- Repository 写入有 rowcount 检查。
+- Migration 012 幂等。
+- 文件体积策略达标。
+- 全量测试通过（基线 1015/1015）。
+
+状态：已通过验收。
 
 ## v4+：多模型与生产治理
 

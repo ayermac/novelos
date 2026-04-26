@@ -91,6 +91,11 @@ class EditorAgent(BaseAgent):
             char_str = "\n".join(f"- {c['name']}({c['role']}): {c.get('description', '')}" for c in characters[:10])
             parts.append(f"【角色设定】\n{char_str}")
 
+        # v4.0: Style Bible injection
+        style_ctx = self._get_style_bible_context(state["project_id"], "editor")
+        if style_ctx:
+            parts.append(style_ctx)
+
         return "\n\n".join(parts)
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:

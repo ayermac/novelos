@@ -1,0 +1,82 @@
+id: style-bible-checker
+name: Style Bible Checker
+version: "1.0.0"
+kind: validator
+class_name: StyleBibleCheckerSkill
+description: "检查文本是否符合 Style Bible 风格规范"
+enabled: true
+builtin: true
+allowed_agents:
+  - polisher
+  - editor
+  - qualityhub
+  - manual
+allowed_stages:
+  - before_review
+  - before_save
+  - check_polished
+  - final_gate
+  - manual
+permissions:
+  read_context: false
+  read_chapter: false
+  transform_text: false
+  validate_text: true
+  write_quality_report: false
+  write_skill_run: true
+  write_chapter_content: false
+  update_chapter_status: false
+  send_agent_message: false
+  call_llm: false
+  call_network: false
+input_schema:
+  type: object
+  required:
+    - text
+    - style_bible
+  properties:
+    text:
+      type: string
+      description: "要检查的文本内容"
+    style_bible:
+      type: object
+      description: "Style Bible 数据"
+output_schema:
+  type: object
+  required:
+    - total_issues
+    - blocking_issues
+    - score
+  properties:
+    total_issues:
+      type: integer
+      description: "总问题数"
+    blocking_issues:
+      type: integer
+      description: "阻断问题数"
+    warning_issues:
+      type: integer
+      description: "警告问题数"
+    score:
+      type: number
+      description: "合规评分（0-100）"
+    issues:
+      type: array
+      description: "问题列表"
+      items:
+        type: object
+config_schema:
+  type: object
+  properties:
+    blocking_threshold:
+      type: number
+      description: "阻断阈值分数"
+      minimum: 0
+      maximum: 100
+default_config:
+  blocking_threshold: 50
+failure_policy:
+  on_error: warn
+  max_retries: 0
+  timeout_seconds: null
+  blocking_threshold: 50

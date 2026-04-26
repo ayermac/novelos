@@ -44,6 +44,14 @@ skills:
     config:
       pass_score: 75
 
+  style-bible-checker:
+    enabled: true
+    type: validator
+    class: StyleBibleCheckerSkill
+    description: "Style Bible风格合规检查，用于Editor和Polisher"
+    config:
+      blocking_threshold: 50
+
 # Agent挂载配置
 agent_skills:
   polisher:

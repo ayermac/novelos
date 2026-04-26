@@ -96,6 +96,14 @@ from .commands.llm_catalog import (
     cmd_llm_recommend,
     cmd_llm_config_plan,
 )
+from .commands.style_bible import (
+    cmd_style_templates,
+    cmd_style_init,
+    cmd_style_show,
+    cmd_style_update,
+    cmd_style_check,
+    cmd_style_delete,
+)
 
 
 # ── Argument parser ──────────────────────────────────────────────
@@ -595,6 +603,44 @@ def build_parser() -> argparse.ArgumentParser:
     review_export.add_argument("--force", action="store_true", help="Force overwrite")
     review_export.add_argument("--json", action="store_true", help="Output in JSON format")
     review_export.set_defaults(func=cmd_review_export)
+
+    # v4.0: style commands
+    style_parser = subparsers.add_parser("style", help="Style Bible operations")
+    style_subparsers = style_parser.add_subparsers(dest="style_command", help="Style subcommands")
+
+    style_templates = style_subparsers.add_parser("templates", help="List available Style Bible templates")
+    style_templates.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_templates.set_defaults(func=cmd_style_templates)
+
+    style_init = style_subparsers.add_parser("init", help="Initialize Style Bible from template")
+    style_init.add_argument("--project-id", required=True, help="Project ID")
+    style_init.add_argument("--template", default="default_web_serial", help="Template ID (default: default_web_serial)")
+    style_init.add_argument("--create-project", action="store_true", help="Auto-create project row if it does not exist")
+    style_init.add_argument("--set", action="append", help="Override field (key=value, can repeat)")
+    style_init.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_init.set_defaults(func=cmd_style_init)
+
+    style_show = style_subparsers.add_parser("show", help="Show Style Bible for a project")
+    style_show.add_argument("--project-id", required=True, help="Project ID")
+    style_show.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_show.set_defaults(func=cmd_style_show)
+
+    style_update = style_subparsers.add_parser("update", help="Update Style Bible fields")
+    style_update.add_argument("--project-id", required=True, help="Project ID")
+    style_update.add_argument("--set", action="append", help="Set field (key=value, can repeat)")
+    style_update.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_update.set_defaults(func=cmd_style_update)
+
+    style_check = style_subparsers.add_parser("check", help="Check chapter against Style Bible")
+    style_check.add_argument("--project-id", required=True, help="Project ID")
+    style_check.add_argument("--chapter", type=int, required=True, help="Chapter number")
+    style_check.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_check.set_defaults(func=cmd_style_check)
+
+    style_delete = style_subparsers.add_parser("delete", help="Delete Style Bible for a project")
+    style_delete.add_argument("--project-id", required=True, help="Project ID")
+    style_delete.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_delete.set_defaults(func=cmd_style_delete)
 
     # Legacy aliases: 'init' → 'init-db', 'run' → 'run-chapter'
     init_compat = subparsers.add_parser("init", help="Initialize the database (legacy alias for init-db)")

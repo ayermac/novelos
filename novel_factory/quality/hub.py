@@ -65,6 +65,35 @@ class QualityHub:
         self.pass_score = self.config.get("pass_score", 60)
         self.ai_trace_fail_threshold = self.config.get("ai_trace_fail_threshold", 70)
         self.narrative_fail_threshold = self.config.get("narrative_fail_threshold", 30)  # Lowered for test compatibility
+
+    def _run_style_bible_check(
+        self, project_id: str, content: str
+    ) -> dict[str, Any] | None:
+        """Run StyleBibleChecker if a Style Bible exists for the project (v4.0).
+
+        Returns None if no Style Bible exists (skip silently).
+        """
+        try:
+            record = self.repo.get_style_bible(project_id)
+            if not record:
+                return None
+
+            bible_data = record.get("bible", {})
+            if not bible_data:
+                return None
+
+            from ..skills.style_bible_checker import StyleBibleCheckerSkill
+            checker = StyleBibleCheckerSkill()
+            result = checker.run({"text": content or "", "style_bible": bible_data})
+
+            return {
+                "skill": "style_bible_checker",
+                "ok": result.get("ok", False),
+                "data": result.get("data", {}),
+            }
+        except Exception:
+            # Style Bible check is optional — never break existing flow
+            return None
     
     def check_draft(
         self,
@@ -73,11 +102,12 @@ class QualityHub:
         content: str,
     ) -> dict[str, Any]:
         """检查草稿质量（Author输出后）
-        
+
         检查项：
         - death_penalty（critical强退）
         - plot_verifier（缺失伏笔警告）
         - state_verifier（状态一致性）
+        - style_bible_checker（风格合规，v4.0）
         
         Args:
             project_id: 项目ID
@@ -182,6 +212,18 @@ class QualityHub:
             warnings.extend([v.message for v in state_result.violations])
         
         quality_dimensions["state_consistency"] = 100 - len(state_result.violations) * 20
+
+        # 4. Style Bible check (v4.0)
+        style_result = self._run_style_bible_check(project_id, content)
+        if style_result is not None:
+            skill_results.append(style_result)
+            if style_result.get("ok"):
+                sb_data = style_result.get("data", {})
+                style_score = sb_data.get("score", 100)
+                quality_dimensions["style_bible"] = style_score
+                # Blocking issues from style bible are warnings, not blocking (v4.0 MVP)
+                if sb_data.get("blocking_issues", 0) > 0:
+                    warnings.append(f"Style Bible: {sb_data.get('blocking_issues', 0)} blocking issues found (score: {style_score:.1f})")
         
         # 计算总分
         overall_score = sum(quality_dimensions.values()) / len(quality_dimensions) if quality_dimensions else 0

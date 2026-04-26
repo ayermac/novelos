@@ -131,6 +131,13 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         required = {"serial_plans", "serial_plan_events"}
         return required.issubset(tables)
 
+    if name == "012_v4_0_style_bible":
+        # 012 adds style_bibles table
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='style_bibles'"
+        )
+        return cursor.fetchone() is not None
+
     return False
 
 
