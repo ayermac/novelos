@@ -738,6 +738,32 @@ constraints 支持：cost_tier 最大值、quality_tier 最小值、provider 白
 
 状态：已通过验收。
 
+## v4.1：Style Gate & Style Evolution
+
+目标：将 Style Bible 从"可检查"升级为"可治理"——支持可配置 Style Gate、结构化风格返修建议、Style Bible 版本记录，以及人工确认的风格演进建议。
+
+范围：
+
+- Style Gate：per-project 可配置 gate（off/warn/block），集成 QualityHub
+- Style Bible 版本记录：每次更新自动保存版本快照
+- 结构化返修建议：rule-based，不调用 LLM
+- Style Evolution Proposal：聚合历史风格问题生成提案，人工 approve/reject，不自动应用
+- DB 迁移 013：style_bible_versions + style_evolution_proposals 表
+- CLI 命令：style gate/gate-set/versions/version-show/propose/proposals/proposal-show/proposal-decide
+
+验收：
+
+- 默认配置不阻断旧流程（enabled=False, mode=warn）
+- mode=block 能阻断
+- proposal approve 不修改 Style Bible
+- Style Bible 更新时自动创建版本快照
+- 版本快照包含更新前数据
+- CLI 错误路径稳定 envelope，无 traceback
+- 无作者模仿字段
+- 全量测试通过
+
+状态：开发完成，待验收。
+
 ## v4+：多模型与生产治理
 
 目标：支持真实长期运行所需的模型、成本、可观测性和数据治理。

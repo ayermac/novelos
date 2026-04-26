@@ -92,10 +92,19 @@ class StyleBibleRepositoryMixin:
         self,
         project_id: str,
         bible_dict: dict[str, Any],
+        change_summary: str = "",
+        created_by: str = "system",
     ) -> bool:
         """Update an existing Style Bible.
 
+        Atomically saves a version snapshot before updating.
+        Both operations share the same transaction — if either fails,
+        the entire update is rolled back and the error is raised.
+
         Returns True if the record was updated, False if no matching project.
+
+        Raises:
+            RuntimeError: If version snapshot fails to save.
         """
         conn = self._conn()
         try:
@@ -105,6 +114,38 @@ class StyleBibleRepositoryMixin:
             target_platform = bible_dict.get("target_platform", "")
             target_audience = bible_dict.get("target_audience", "")
             version = bible_dict.get("version", "1.0.0")
+
+            # Get existing record for version snapshot
+            existing = conn.execute(
+                "SELECT id, bible_json FROM style_bibles WHERE project_id=?",
+                (project_id,),
+            ).fetchone()
+
+            if existing:
+                # Save version snapshot (v4.1) — atomic with the update
+                version_id = str(uuid.uuid4())
+                existing_json = existing["bible_json"]
+                cursor = conn.execute(
+                    "INSERT INTO style_bible_versions "
+                    "(id, project_id, style_bible_id, version, bible_json, "
+                    "change_summary, created_by, created_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (
+                        version_id,
+                        project_id,
+                        existing["id"],
+                        version,
+                        existing_json,
+                        change_summary or f"Updated to v{version}",
+                        created_by,
+                        now,
+                    ),
+                )
+                if cursor.rowcount == 0:
+                    raise RuntimeError(
+                        f"Failed to save version snapshot for project '{project_id}'; "
+                        "update aborted"
+                    )
 
             cursor = conn.execute(
                 "UPDATE style_bibles SET name=?, genre=?, target_platform=?, "
@@ -123,6 +164,9 @@ class StyleBibleRepositoryMixin:
             )
             conn.commit()
             return cursor.rowcount > 0
+        except Exception:
+            conn.rollback()
+            raise
         finally:
             conn.close()
 

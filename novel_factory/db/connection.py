@@ -138,6 +138,16 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         )
         return cursor.fetchone() is not None
 
+    if name == "013_v4_1_style_gate_evolution":
+        # 013 adds style_bible_versions and style_evolution_proposals tables
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+            "('style_bible_versions', 'style_evolution_proposals')"
+        )
+        tables = {row[0] for row in cursor.fetchall()}
+        required = {"style_bible_versions", "style_evolution_proposals"}
+        return required.issubset(tables)
+
     return False
 
 

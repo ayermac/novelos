@@ -104,6 +104,16 @@ from .commands.style_bible import (
     cmd_style_check,
     cmd_style_delete,
 )
+from .commands.style_gate import (
+    cmd_style_gate,
+    cmd_style_gate_set,
+    cmd_style_versions,
+    cmd_style_version_show,
+    cmd_style_propose,
+    cmd_style_proposals,
+    cmd_style_proposal_show,
+    cmd_style_proposal_decide,
+)
 
 
 # ── Argument parser ──────────────────────────────────────────────
@@ -641,6 +651,56 @@ def build_parser() -> argparse.ArgumentParser:
     style_delete.add_argument("--project-id", required=True, help="Project ID")
     style_delete.add_argument("--json", action="store_true", help="Output in JSON format")
     style_delete.set_defaults(func=cmd_style_delete)
+
+    # v4.1: style gate commands
+    style_gate = style_subparsers.add_parser("gate", help="Show Style Gate config")
+    style_gate.add_argument("--project-id", required=True, help="Project ID")
+    style_gate.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_gate.set_defaults(func=cmd_style_gate)
+
+    style_gate_set = style_subparsers.add_parser("gate-set", help="Configure Style Gate")
+    style_gate_set.add_argument("--project-id", required=True, help="Project ID")
+    style_gate_set.add_argument("--mode", choices=["off", "warn", "block"], help="Gate mode")
+    style_gate_set.add_argument("--threshold", type=int, help="Blocking score threshold")
+    style_gate_set.add_argument("--max-blocking", type=int, help="Max blocking issues (0=use threshold)")
+    style_gate_set.add_argument("--revision-target", choices=["author", "polisher"], help="Revision target on block")
+    style_gate_set.add_argument("--enabled", type=lambda x: x.lower() == "true", help="Enable/disable gate (true/false)")
+    style_gate_set.add_argument("--stages", help="Comma-separated stages (draft,polished,final_gate)")
+    style_gate_set.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_gate_set.set_defaults(func=cmd_style_gate_set)
+
+    style_versions = style_subparsers.add_parser("versions", help="List Style Bible versions")
+    style_versions.add_argument("--project-id", required=True, help="Project ID")
+    style_versions.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_versions.set_defaults(func=cmd_style_versions)
+
+    style_version_show = style_subparsers.add_parser("version-show", help="Show a specific Style Bible version")
+    style_version_show.add_argument("--version-id", required=True, help="Version ID")
+    style_version_show.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_version_show.set_defaults(func=cmd_style_version_show)
+
+    style_propose = style_subparsers.add_parser("propose", help="Generate style evolution proposals")
+    style_propose.add_argument("--project-id", required=True, help="Project ID")
+    style_propose.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_propose.set_defaults(func=cmd_style_propose)
+
+    style_proposals = style_subparsers.add_parser("proposals", help="List style evolution proposals")
+    style_proposals.add_argument("--project-id", required=True, help="Project ID")
+    style_proposals.add_argument("--status", choices=["pending", "approved", "rejected"], help="Filter by status")
+    style_proposals.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_proposals.set_defaults(func=cmd_style_proposals)
+
+    style_proposal_show = style_subparsers.add_parser("proposal-show", help="Show a style evolution proposal")
+    style_proposal_show.add_argument("--proposal-id", required=True, help="Proposal ID")
+    style_proposal_show.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_proposal_show.set_defaults(func=cmd_style_proposal_show)
+
+    style_proposal_decide = style_subparsers.add_parser("proposal-decide", help="Approve or reject a proposal")
+    style_proposal_decide.add_argument("--proposal-id", required=True, help="Proposal ID")
+    style_proposal_decide.add_argument("--decision", required=True, choices=["approve", "reject"], help="Decision")
+    style_proposal_decide.add_argument("--notes", help="Decision notes")
+    style_proposal_decide.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_proposal_decide.set_defaults(func=cmd_style_proposal_decide)
 
     # Legacy aliases: 'init' → 'init-db', 'run' → 'run-chapter'
     init_compat = subparsers.add_parser("init", help="Initialize the database (legacy alias for init-db)")

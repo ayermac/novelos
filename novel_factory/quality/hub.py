@@ -66,6 +66,103 @@ class QualityHub:
         self.ai_trace_fail_threshold = self.config.get("ai_trace_fail_threshold", 70)
         self.narrative_fail_threshold = self.config.get("narrative_fail_threshold", 30)  # Lowered for test compatibility
 
+    def _get_style_gate_config(self, project_id: str) -> dict[str, Any] | None:
+        """Read Style Gate config from the project's Style Bible (v4.1).
+
+        Returns None if no Style Bible or no gate config.
+        """
+        try:
+            return self.repo.get_style_gate_config(project_id)
+        except Exception:
+            return None
+
+    def _apply_style_gate(
+        self,
+        project_id: str,
+        content: str,
+        stage: str,
+        blocking_issues: list[dict],
+        warnings: list[str],
+        skill_results: list[dict],
+        quality_dimensions: dict[str, float],
+    ) -> None:
+        """Apply Style Gate logic based on the project's gate config (v4.1).
+
+        Modifies blocking_issues/warnings/skill_results in-place.
+        """
+        gate_config = self._get_style_gate_config(project_id)
+        if not gate_config:
+            return
+
+        from ..models.style_gate import StyleGateConfig, StyleGateMode, StyleGateStage
+
+        try:
+            config = StyleGateConfig.from_storage_dict(gate_config)
+        except Exception:
+            return
+
+        if not config.enabled:
+            return
+
+        # Check if this stage should be gated
+        if StyleGateStage(stage) not in config.apply_stages:
+            return
+
+        # Run Style Bible check
+        style_result = self._run_style_bible_check(project_id, content)
+        if style_result is None:
+            return
+
+        skill_results.append(style_result)
+
+        if not style_result.get("ok"):
+            return
+
+        sb_data = style_result.get("data", {})
+        style_score = sb_data.get("score", 100)
+        style_blocking = sb_data.get("blocking_issues", 0)
+        quality_dimensions["style_bible_gate"] = style_score
+
+        if config.mode == StyleGateMode.OFF:
+            # Just record, don't affect pass
+            pass
+        elif config.mode == StyleGateMode.WARN:
+            # Add warnings, don't block
+            if style_score < config.blocking_threshold:
+                warnings.append(
+                    f"Style Gate WARN: score {style_score:.1f} < threshold {config.blocking_threshold}"
+                )
+            if style_blocking > 0:
+                warnings.append(
+                    f"Style Gate WARN: {style_blocking} blocking style issues"
+                )
+        elif config.mode == StyleGateMode.BLOCK:
+            # Block on threshold breach
+            should_block = False
+            if style_score < config.blocking_threshold:
+                should_block = True
+            if config.max_blocking_issues > 0 and style_blocking > config.max_blocking_issues:
+                should_block = True
+
+            if should_block:
+                blocking_issues.append({
+                    "type": "style_gate_blocked",
+                    "severity": "high",
+                    "message": (
+                        f"Style Gate BLOCKED: score {style_score:.1f} < "
+                        f"threshold {config.blocking_threshold}"
+                    ),
+                    "style_score": style_score,
+                    "style_blocking_issues": style_blocking,
+                    "revision_target": config.revision_target,
+                })
+            else:
+                if style_score < config.blocking_threshold:
+                    warnings.append(
+                        f"Style Gate: score {style_score:.1f} < threshold "
+                        f"{config.blocking_threshold} but not blocked"
+                    )
+
     def _run_style_bible_check(
         self, project_id: str, content: str
     ) -> dict[str, Any] | None:
@@ -224,6 +321,12 @@ class QualityHub:
                 # Blocking issues from style bible are warnings, not blocking (v4.0 MVP)
                 if sb_data.get("blocking_issues", 0) > 0:
                     warnings.append(f"Style Bible: {sb_data.get('blocking_issues', 0)} blocking issues found (score: {style_score:.1f})")
+
+        # 5. Style Gate (v4.1)
+        self._apply_style_gate(
+            project_id, content, "draft",
+            blocking_issues, warnings, skill_results, quality_dimensions,
+        )
         
         # 计算总分
         overall_score = sum(quality_dimensions.values()) / len(quality_dimensions) if quality_dimensions else 0
@@ -366,6 +469,12 @@ class QualityHub:
                         "message": f"AI痕迹评分过高: {ai_score} > {self.ai_trace_fail_threshold}",
                         "ai_trace_score": ai_score,
                     })
+
+        # 4. Style Gate (v4.1)
+        self._apply_style_gate(
+            project_id, polished, "polished",
+            blocking_issues, warnings, skill_results, quality_dimensions,
+        )
         
         # 计算总分
         overall_score = sum(quality_dimensions.values()) / len(quality_dimensions) if quality_dimensions else 0
@@ -518,6 +627,12 @@ class QualityHub:
                         "message": "Editor审核未通过",
                         "editor_score": editor_score,
                     })
+
+        # 4. Style Gate (v4.1)
+        self._apply_style_gate(
+            project_id, content, "final_gate",
+            blocking_issues, warnings, skill_results, quality_dimensions,
+        )
         
         # 计算总分
         overall_score = sum(quality_dimensions.values()) / len(quality_dimensions) if quality_dimensions else 0
@@ -538,6 +653,9 @@ class QualityHub:
                     break
                 elif issue["type"] == "narrative_quality_low":
                     revision_target = "author"
+                    break
+                elif issue["type"] == "style_gate_blocked":
+                    revision_target = issue.get("revision_target", "polisher")
                     break
         
         return {
