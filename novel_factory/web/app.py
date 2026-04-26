@@ -37,7 +37,7 @@ def create_app(
     app = FastAPI(
         title="Novel Factory - Acceptance Console",
         description="Web UI for acceptance testing",
-        version="4.3.0",
+        version="4.5.0",
     )
 
     # Store configuration in app state
@@ -51,10 +51,11 @@ def create_app(
         app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
 
     # Register routes
-    from .routes import dashboard, projects, run, batch, queue, serial, review, style, config
+    from .routes import dashboard, projects, run, batch, queue, serial, review, style, config, onboarding
 
     app.include_router(dashboard.router, tags=["dashboard"])
     app.include_router(projects.router, prefix="/projects", tags=["projects"])
+    app.include_router(onboarding.router, prefix="/onboarding", tags=["onboarding"])
     app.include_router(run.router, prefix="/run", tags=["run"])
     app.include_router(batch.router, prefix="/batch", tags=["batch"])
     app.include_router(queue.router, prefix="/queue", tags=["queue"])

@@ -54,6 +54,119 @@ class ProjectRepositoryMixin:
         finally:
             conn.close()
 
+    def create_project(
+        self,
+        project_id: str,
+        name: str,
+        genre: str = "",
+        description: str = "",
+        total_chapters_planned: int = 500,
+        target_words: int = 1500000,
+        current_chapter: int = 1,
+    ) -> None:
+        """Create a new project.
+
+        Args:
+            project_id: Unique project identifier.
+            name: Project name.
+            genre: Genre (optional).
+            description: Project description (optional).
+            total_chapters_planned: Total chapters planned (default 500).
+            target_words: Target word count (default 1,500,000).
+            current_chapter: Current chapter number (default 1).
+
+        Raises:
+            sqlite3.IntegrityError: If project_id already exists.
+        """
+        conn = self._conn()
+        try:
+            now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+            conn.execute(
+                "INSERT INTO projects "
+                "(project_id, name, genre, description, total_chapters_planned, "
+                "target_words, current_chapter, status, is_current, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, 'active', 0, ?, ?)",
+                (
+                    project_id,
+                    name,
+                    genre,
+                    description,
+                    total_chapters_planned,
+                    target_words,
+                    current_chapter,
+                    now,
+                    now,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def add_world_setting(
+        self,
+        project_id: str,
+        category: str,
+        title: str,
+        content: str,
+    ) -> int:
+        """Add a world setting for a project.
+
+        Args:
+            project_id: Project identifier.
+            category: Setting category.
+            title: Setting title.
+            content: Setting content.
+
+        Returns:
+            The ID of the inserted setting.
+        """
+        conn = self._conn()
+        try:
+            cursor = conn.execute(
+                "INSERT INTO world_settings (project_id, category, title, content) "
+                "VALUES (?, ?, ?, ?)",
+                (project_id, category, title, content),
+            )
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def add_character(
+        self,
+        project_id: str,
+        name: str,
+        role: str,
+        description: str = "",
+        alias: str = "",
+        first_appearance: int | None = None,
+    ) -> int:
+        """Add a character for a project.
+
+        Args:
+            project_id: Project identifier.
+            name: Character name.
+            role: Character role (e.g., 'protagonist', 'antagonist', 'supporting').
+            description: Character description (optional).
+            alias: Character alias (optional).
+            first_appearance: First appearance chapter number (optional).
+
+        Returns:
+            The ID of the inserted character.
+        """
+        conn = self._conn()
+        try:
+            cursor = conn.execute(
+                "INSERT INTO characters "
+                "(project_id, name, alias, role, description, first_appearance, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, 'active')",
+                (project_id, name, alias, role, description, first_appearance),
+            )
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
     # ── Publish ───────────────────────────────────────────────
 
     def publish_chapter(

@@ -7,7 +7,7 @@
 | 文档 | 用途 | 读者 |
 | --- | --- | --- |
 | `novel-content-factory-architecture.md` | 总体架构、Agent 边界、数据流、质量治理、扩展能力 | 架构规划、长期维护 |
-| `novel-factory-roadmap.md` | v1 到 v3 的版本路线、每阶段目标和延后项 | 项目管理、迭代规划 |
+| `novel-factory-roadmap.md` | v1 到 v4+ 的版本路线、每阶段目标和延后项 | 项目管理、迭代规划 |
 | `novel-factory-v1-mvp-spec.md` | v1 当前开发规格、目录、接口、状态、验收标准 | 开发 Agent、代码实现 |
 | `novel-factory-v1-review-fix-spec.md` | v1 通过后的 review 返工项、测试要求、禁止越界范围 | 开发 Agent、质量验收 |
 | `novel-factory-v1.1-stability-spec.md` | v1.1 工程稳定性开发规范、幂等、追踪、超时、防覆盖要求 | 开发 Agent、质量验收 |
@@ -27,6 +27,15 @@
 | `novel-factory-v3.6-semi-auto-serial-mode-spec.md` | v3.6 半自动连载计划、分轮 enqueue、人工确认后推进 | 开发 Agent、质量验收 |
 | `novel-factory-v3.7-review-workbench-spec.md` | v3.7 人工 Review 工作台、审核包、时间线、版本差异、导出 | 开发 Agent、质量验收 |
 | `novel-factory-v3.8-skill-import-bridge-spec.md` | v3.8 skills.sh / Agent Skill 本地导入桥、受控转换为 Skill Package | 开发 Agent、质量验收 |
+| `novel-factory-v3.9-llm-model-catalog-spec.md` | v3.9 LLM 模型目录与 Agent 推荐、配置草案输出 | 架构规划、开发 Agent |
+| `novel-factory-v4.0-style-bible-mvp-spec.md` | v4.0 Style Bible MVP、项目级风格配置、规则检查 | 开发 Agent、质量验收 |
+| `novel-factory-v4.1-style-gate-evolution-spec.md` | v4.1 Style Gate、版本记录、人工确认的风格演进提案 | 开发 Agent、质量验收 |
+| `novel-factory-v4.2-style-sample-analyzer-spec.md` | v4.2 本地风格样本分析、校准与 proposal 生成 | 开发 Agent、质量验收 |
+| `novel-factory-v4.3-web-ui-acceptance-console-spec.md` | v4.3 Web UI 验收控制台 MVP、浏览器审核与管理入口 | 开发 Agent、质量验收 |
+| `novel-factory-v4.4-web-review-ux-hardening-spec.md` | v4.4 Web Review UX 硬化、批次/队列/连载/风格审核体验 | 开发 Agent、质量验收 |
+| `novel-factory-v4.5-personal-onboarding-spec.md` | v4.5 个人小说项目 Onboarding、从 Web 创建项目与初始资料 | 开发 Agent、质量验收 |
+| `novel-factory-v4.6-first-run-guided-workflow-spec.md` | v4.6 首次运行引导闭环、项目创建后运行第一章并进入审核 | 开发 Agent、质量验收 |
+| `novel-factory-v4.7-project-workspace-author-cockpit-spec.md` | v4.7 项目级作者工作台、聚合项目状态和下一步操作 | 开发 Agent、质量验收 |
 
 ## 使用方式
 
@@ -51,10 +60,19 @@
 - 开发 v3.6 半自动连载计划时，优先读 `novel-factory-v3.6-semi-auto-serial-mode-spec.md`。
 - 开发 v3.7 人工 Review 工作台时，优先读 `novel-factory-v3.7-review-workbench-spec.md`。
 - 开发 v3.8 Skill 导入桥时，优先读 `novel-factory-v3.8-skill-import-bridge-spec.md`。
+- 规划或开发 v3.9 LLM 模型目录与 Agent 推荐时，优先读 `novel-factory-v3.9-llm-model-catalog-spec.md`。
+- 开发 v4.0 Style Bible MVP 时，优先读 `novel-factory-v4.0-style-bible-mvp-spec.md`。
+- 开发 v4.1 Style Gate 与风格演进时，优先读 `novel-factory-v4.1-style-gate-evolution-spec.md`。
+- 开发 v4.2 风格样本分析与校准时，优先读 `novel-factory-v4.2-style-sample-analyzer-spec.md`。
+- 开发 v4.3 Web UI 验收控制台时，优先读 `novel-factory-v4.3-web-ui-acceptance-console-spec.md`。
+- 开发 v4.4 Web Review UX 硬化时，优先读 `novel-factory-v4.4-web-review-ux-hardening-spec.md`。
+- 开发 v4.5 个人小说项目 Onboarding 时，优先读 `novel-factory-v4.5-personal-onboarding-spec.md`。
+- 开发 v4.6 首次运行引导闭环时，优先读 `novel-factory-v4.6-first-run-guided-workflow-spec.md`。
+- 开发 v4.7 项目级作者工作台时，优先读 `novel-factory-v4.7-project-workspace-author-cockpit-spec.md`。
 
 ## 当前版本
 
-当前开发基线是 **v3.6 Semi-Auto Serial Mode 已通过，进入 v3.7 Review Workbench 规划与开发**。
+当前开发基线是 **v4.6 First Run Guided Workflow 已通过验收，测试基线 1254/1254**。
 
 v1 只实现：
 
@@ -76,5 +94,4 @@ v1 不实现：
 
 当前下一步：
 
-- 按 `novel-factory-v3.7-review-workbench-spec.md` 完成 review pack、chapter view、timeline、diff 与 export。
-- 全量测试通过后，提交给 Codex 做 v3.7 验收 review。
+- 按 `novel-factory-v4.7-project-workspace-author-cockpit-spec.md` 开发 Project Workspace / Author Cockpit。

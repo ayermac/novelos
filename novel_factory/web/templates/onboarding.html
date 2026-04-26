@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="page-header">
+    <h1>创建新小说项目</h1>
+    <p class="subtitle">通过表单快速创建项目、初始章节、风格指南和可选的连载计划</p>
+</div>
+
+{% if error %}
+<div class="alert alert-error">
+    <strong>错误:</strong> {{ error }}
+</div>
+{% endif %}
+
+<form method="POST" action="/onboarding/project" class="form-container">
+    <fieldset class="form-section">
+        <legend>项目基本信息</legend>
+        
+        <div class="form-group">
+            <label for="project_id">项目 ID *</label>
+            <input type="text" id="project_id" name="project_id" required
+                   value="{{ form_data.project_id if form_data else '' }}"
+                   placeholder="唯一标识符，如: my-novel-001">
+            <small>只能包含字母、数字、连字符和下划线</small>
+        </div>
+
+        <div class="form-group">
+            <label for="name">项目名称 *</label>
+            <input type="text" id="name" name="name" required
+                   value="{{ form_data.name if form_data else '' }}"
+                   placeholder="小说标题">
+        </div>
+
+        <div class="form-group">
+            <label for="genre">类型</label>
+            <input type="text" id="genre" name="genre"
+                   value="{{ form_data.genre if form_data else '' }}"
+                   placeholder="如: 都市、玄幻、言情">
+        </div>
+
+        <div class="form-group">
+            <label for="description">简介</label>
+            <textarea id="description" name="description" rows="3"
+                      placeholder="项目描述或小说简介">{{ form_data.description if form_data else '' }}</textarea>
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="total_chapters_planned">计划总章节数</label>
+                <input type="number" id="total_chapters_planned" name="total_chapters_planned"
+                       value="{{ form_data.total_chapters_planned if form_data else 500 }}" min="1">
+            </div>
+
+            <div class="form-group">
+                <label for="target_words">目标字数</label>
+                <input type="number" id="target_words" name="target_words"
+                       value="{{ form_data.target_words if form_data else 1500000 }}" min="1000">
+            </div>
+        </div>
+    </fieldset>
+
+    <fieldset class="form-section">
+        <legend>初始章节设置</legend>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="start_chapter">起始章节号</label>
+                <input type="number" id="start_chapter" name="start_chapter"
+                       value="{{ form_data.start_chapter if form_data else 1 }}" min="1">
+            </div>
+
+            <div class="form-group">
+                <label for="initial_chapter_count">初始章节数</label>
+                <input type="number" id="initial_chapter_count" name="initial_chapter_count"
+                       value="{{ form_data.initial_chapter_count if form_data else 10 }}" min="1">
+                <small>将创建 N 个占位章节，状态为 planned</small>
+            </div>
+        </div>
+
+        <div class="form-group">
+            <label for="opening_objective">首章目标</label>
+            <textarea id="opening_objective" name="opening_objective" rows="3"
+                      placeholder="第一章的写作目标，如: 介绍主角、建立世界观、设置悬念">{{ form_data.opening_objective if form_data else '' }}</textarea>
+        </div>
+    </fieldset>
+
+    <fieldset class="form-section">
+        <legend>风格设置</legend>
+
+        <div class="form-group">
+            <label for="style_template">风格模板</label>
+            <select id="style_template" name="style_template">
+                {% for template in style_templates %}
+                <option value="{{ template }}" 
+                        {% if form_data and form_data.style_template == template %}selected{% endif %}>
+                    {{ template }}
+                </option>
+                {% endfor %}
+            </select>
+            <small>选择预设风格模板，将自动初始化 Style Bible</small>
+        </div>
+    </fieldset>
+
+    <fieldset class="form-section">
+        <legend>可选设置</legend>
+
+        <div class="form-group">
+            <label for="world_setting">世界观设定</label>
+            <textarea id="world_setting" name="world_setting" rows="3"
+                      placeholder="基础世界观描述（可选）">{{ form_data.world_setting if form_data else '' }}</textarea>
+        </div>
+
+        <div class="form-group">
+            <label for="main_character_name">主角姓名</label>
+            <input type="text" id="main_character_name" name="main_character_name"
+                   value="{{ form_data.main_character_name if form_data else '' }}"
+                   placeholder="留空则不创建主角">
+        </div>
+
+        <div class="form-row">
+            <div class="form-group">
+                <label for="main_character_role">主角类型</label>
+                <select id="main_character_role" name="main_character_role">
+                    <option value="protagonist" 
+                            {% if not form_data or form_data.main_character_role == 'protagonist' %}selected{% endif %}>
+                        主角
+                    </option>
+                    <option value="antagonist"
+                            {% if form_data and form_data.main_character_role == 'antagonist' %}selected{% endif %}>
+                        反派
+                    </option>
+                    <option value="supporting"
+                            {% if form_data and form_data.main_character_role == 'supporting' %}selected{% endif %}>
+                        配角
+                    </option>
+                </select>
+            </div>
+
+            <div class="form-group">
+                <label for="main_character_description">主角描述</label>
+                <input type="text" id="main_character_description" name="main_character_description"
+                       value="{{ form_data.main_character_description if form_data else '' }}"
+                       placeholder="角色简介">
+            </div>
+        </div>
+    </fieldset>
+
+    <fieldset class="form-section">
+        <legend>连载计划（可选）</legend>
+
+        <div class="form-group checkbox-group">
+            <label class="checkbox-label">
+                <input type="checkbox" name="create_serial_plan"
+                       {% if form_data and form_data.create_serial_plan == 'on' %}checked{% endif %}>
+                创建连载计划
+            </label>
+            <small>将自动创建 Serial Plan，用于批量生产章节</small>
+        </div>
+
+        <div class="form-group">
+            <label for="serial_batch_size">批次大小</label>
+            <input type="number" id="serial_batch_size" name="serial_batch_size"
+                   value="{{ form_data.serial_batch_size if form_data else 5 }}" min="1">
+            <small>每批次生成的章节数</small>
+        </div>
+    </fieldset>
+
+    <div class="form-actions">
+        <button type="submit" class="btn btn-primary">创建项目</button>
+        <a href="/projects" class="btn btn-secondary">取消</a>
+    </div>
+</form>
+{% endblock %}

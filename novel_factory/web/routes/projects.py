@@ -15,7 +15,7 @@ async def list_projects(request: Request):
     try:
         repo = get_repo(request)
         projects = repo.list_projects()
-        return render(request, "projects.html", {"projects": projects})
+        return render(request, "projects.html", {"projects": projects, "show_onboarding": True})
     except Exception as e:
         return render(request, "projects.html", {"error": safe_error_message(e)})
 

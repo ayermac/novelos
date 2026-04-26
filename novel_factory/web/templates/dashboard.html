@@ -3,6 +3,12 @@
 {% block content %}
 <h1>Dashboard</h1>
 
+{% if show_onboarding %}
+<div class="action-bar">
+    <a href="/onboarding" class="btn btn-primary">+ 创建新小说项目</a>
+</div>
+{% endif %}
+
 <div class="stats-grid">
     <div class="stat-card">
         <h3>Projects</h3>

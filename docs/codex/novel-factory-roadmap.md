@@ -34,6 +34,11 @@ v4.0 Style Bible MVP
 v4.1 Style Gate & Style Evolution
 v4.2 Style Sample Analyzer & Calibration
 v4.3 Web UI Acceptance Console MVP
+v4.4 Web Review UX Hardening
+v4.5 Personal Novel Project Onboarding
+v4.6 First Run Guided Workflow
+v4.7 Project Workspace / Author Cockpit
+v4+  Multi-Model & Production Governance
 ```
 
 ## v1：章节生产 MVP
@@ -851,6 +856,85 @@ constraints 支持：cost_tier 最大值、quality_tier 最小值、provider 白
 - 不引入登录、权限、多用户、WebSocket、daemon、Redis/Celery/Kafka/PostgreSQL。
 
 状态：已通过验收，测试基线 1213/1213
+
+## v4.5：Personal Novel Project Onboarding
+
+目标：让个人作者可以通过 Web UI 从 0 创建小说项目，并一次性初始化初始章节、首章目标、世界观、主角、Style Bible 和可选 Serial Plan。
+
+范围：
+
+- Dashboard / Projects 页面提供 Onboarding 入口。
+- 新增 `/onboarding` 项目创建表单。
+- 新增 `/onboarding/project` 创建项目提交入口。
+- 创建 `projects`、planned chapters、可选 instruction、world setting、character。
+- 复用 v4.0 Style Bible 模板系统，默认模板为 `default_web_serial`。
+- 可选创建 Serial Plan。
+- 单一事务完成所有写入，失败 rollback。
+- 成功页提供 Run Chapter、Batch、Serial、Queue、Style、Review、项目详情等下一步入口。
+
+验收：
+
+- v4.5 Onboarding 测试通过（21/21）。
+- Web 测试通过（59/59）。
+- 文件体积策略通过（65/65）。
+- 全量测试通过（1234/1234）。
+- `total_chapters_planned` 必须覆盖初始章节范围。
+- 创建失败不留下半成品项目或关联数据。
+- Style Bible 来自 v4.0 模板系统，不使用硬编码模板。
+- 成功页包含开始创作和项目管理入口。
+- 不提交本地 `config/acceptance.yaml`、`stderr.txt` 或真实密钥。
+
+状态：已通过验收，测试基线 1234/1234。
+
+## v4.6：First Run Guided Workflow
+
+目标：承接 v4.5 Onboarding，让新项目创建成功后可以自然完成第一章运行、查看结果和进入审核的闭环。
+
+范围：
+
+- 成功页提供第一章 guided run 入口。
+- Run Chapter 页面识别新项目并自动带入 project/chapter。
+- 运行成功后跳转到 Review 或 Chapter 详情。
+- 运行失败时显示可操作错误，不泄露 traceback/API key。
+- stub 模式覆盖完整 Web E2E 验收。
+
+验收：
+
+- 从 Onboarding 成功页可以一键进入第一章运行。
+- stub 模式下第一章可以完成可验证的运行闭环。
+- 运行后的章节状态、run 记录和 review 入口可在 Web 中追踪。
+- 失败路径保留上下文并给出下一步操作。
+- 不引入登录、权限、多用户、后台 worker 或真实 LLM 测试。
+
+状态：**已通过验收**，测试基线 1254/1254。
+
+## v4.7：Project Workspace / Author Cockpit
+
+目标：将 `/projects/{project_id}` 升级为项目级作者工作台，聚合项目状态、章节进度、最近运行、Review 待办、Queue、Serial、Style 状态和下一步操作。
+
+范围：
+
+- Project Overview：项目基础信息、当前章节、计划章节、目标字数。
+- Next Best Action：根据阻塞、待审核、可运行章节、队列失败、Style proposal 等状态推荐下一步。
+- Chapter Progress：章节状态分组、最近章节列表、Run/Review 链接。
+- Recent Runs：最近 workflow_runs。
+- Review Queue：Review Workbench 入口和待审核摘要。
+- Production Queue：当前项目 queue items 摘要。
+- Serial Plan：当前项目 serial plans 摘要。
+- Style Health：Style Bible、Style Gate、pending proposals、samples 摘要。
+- Quick Actions：Run Chapter、Batch、Queue、Serial、Review、Style。
+
+验收：
+
+- `/projects/{project_id}` 展示项目工作台。
+- 页面展示项目基础信息、章节进度、最近 run。
+- 页面展示 Review、Queue、Serial、Style 状态或空状态。
+- 页面展示 Quick Actions。
+- seeded DB 中的 run/queue/serial/style 数据能在页面出现。
+- project 不存在时显示可读错误，不出现 traceback。
+- 不新增生产写入逻辑，不自动运行/approve/publish。
+
+状态：规划中。
 
 ## v4+：多模型与生产治理
 

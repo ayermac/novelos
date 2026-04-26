@@ -57,6 +57,7 @@ async def dashboard(request: Request):
                 "recent_samples": recent_samples[:5],
                 "recent_proposals": recent_proposals[:5],
                 "llm_status": llm_status,
+                "show_onboarding": True,
             },
         )
     except Exception as e:
