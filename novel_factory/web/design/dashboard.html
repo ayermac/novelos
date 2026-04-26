@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>创作控制台 - 小说工厂</title>
+  <link rel="stylesheet" href="design-system.css">
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar -->
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <h1>小说工厂</h1>
+        <div class="version">v5.0.1 作者工作台</div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">创作</div>
+          <a href="dashboard.html" class="nav-link active">
+            <span class="nav-icon">📊</span> 总览
+          </a>
+          <a href="project-workspace.html" class="nav-link">
+            <span class="nav-icon">📁</span> 项目
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">➕</span> 创建项目
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">生产</div>
+          <a href="run-chapter.html" class="nav-link">
+            <span class="nav-icon">▶️</span> 生成章节
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📦</span> 批量生产
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📋</span> 队列
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📚</span> 连载计划
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">质检</div>
+          <a href="review-workbench.html" class="nav-link">
+            <span class="nav-icon">📝</span> 审核
+          </a>
+          <a href="style.html" class="nav-link">
+            <span class="nav-icon">🎨</span> 风格
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">系统</div>
+          <a href="settings-config.html" class="nav-link">
+            <span class="nav-icon">⚙️</span> 配置
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">✓</span> 验收
+          </a>
+        </div>
+      </nav>
+      <div class="sidebar-footer">
+        <div>当前项目: <strong>demo-novel</strong></div>
+        <div style="margin-top:4px">数据库: novel_factory.db</div>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="main-content">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title">创作控制台</h1>
+        </div>
+        <div class="topbar-right">
+          <span class="status-pill stub">
+            <span class="dot"></span> 演示模式
+          </span>
+          <a href="settings-config.html" class="btn btn-ghost btn-sm">⚙️ 设置</a>
+        </div>
+      </header>
+
+      <main class="content-area">
+        <!-- Next Best Action -->
+        <div class="nba-card">
+          <div class="nba-content">
+            <div class="nba-label">下一步建议</div>
+            <div class="nba-title">第 3 章等待审核</div>
+            <div class="nba-desc">demo-novel 项目有 1 个章节已完成生成，建议进入审核工作台查看质量报告</div>
+          </div>
+          <div class="nba-actions">
+            <a href="review-workbench.html" class="btn btn-primary btn-lg">进入审核</a>
+            <a href="project-workspace.html" class="btn btn-secondary">查看项目</a>
+          </div>
+        </div>
+
+        <!-- Summary Cards -->
+        <div class="summary-grid">
+          <div class="summary-card primary">
+            <div class="label">项目数</div>
+            <div class="value">3</div>
+            <div class="hint">2 个活跃，1 个已完成</div>
+          </div>
+          <div class="summary-card warning">
+            <div class="label">待审核章节</div>
+            <div class="value">1</div>
+            <div class="hint">demo-novel 第 3 章</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">队列中任务</div>
+            <div class="value">0</div>
+            <div class="hint">无正在排队的批次</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">最近运行</div>
+            <div class="value">12</div>
+            <div class="hint">过去 7 天内</div>
+          </div>
+        </div>
+
+        <!-- Main Actions -->
+        <div class="action-bar">
+          <a href="#" class="btn btn-primary">➕ 创建新项目</a>
+          <a href="run-chapter.html" class="btn btn-secondary">▶️ 生成章节</a>
+          <a href="review-workbench.html" class="btn btn-secondary">📝 进入审核</a>
+        </div>
+
+        <!-- Recent Projects -->
+        <div class="page-section">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">最近项目</div>
+                <div class="card-subtitle">最近活跃的小说项目</div>
+              </div>
+              <a href="#" class="btn btn-ghost btn-sm">查看全部 →</a>
+            </div>
+            <div class="card-body compact">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>项目 ID</th>
+                    <th>名称</th>
+                    <th>类型</th>
+                    <th>章节进度</th>
+                    <th>状态</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><code>demo-novel</code></td>
+                    <td><strong>都市修仙传</strong></td>
+                    <td>都市玄幻</td>
+                    <td>
+                      <div class="progress-bar" style="width:120px;display:inline-block;vertical-align:middle;margin-right:8px">
+                        <div class="progress-fill" style="width:30%"></div>
+                      </div>
+                      <span style="font-size:12px;color:var(--text-muted)">3/10</span>
+                    </td>
+                    <td><span class="badge badge-active">活跃</span></td>
+                    <td>
+                      <a href="project-workspace.html" class="btn btn-sm btn-ghost">打开</a>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>romance-01</code></td>
+                    <td><strong>春日恋歌</strong></td>
+                    <td>现代言情</td>
+                    <td>
+                      <div class="progress-bar" style="width:120px;display:inline-block;vertical-align:middle;margin-right:8px">
+                        <div class="progress-fill" style="width:10%"></div>
+                      </div>
+                      <span style="font-size:12px;color:var(--text-muted)">1/10</span>
+                    </td>
+                    <td><span class="badge badge-active">活跃</span></td>
+                    <td>
+                      <a href="#" class="btn btn-sm btn-ghost">打开</a>
+                    </td>
+                  </tr>
+                  <tr>
+                    <td><code>xianxia-long</code></td>
+                    <td><strong>万古仙途</strong></td>
+                    <td>仙侠</td>
+                    <td>
+                      <div class="progress-bar" style="width:120px;display:inline-block;vertical-align:middle;margin-right:8px">
+                        <div class="progress-fill" style="width:100%"></div>
+                      </div>
+                      <span style="font-size:12px;color:var(--text-muted)">10/10</span>
+                    </td>
+                    <td><span class="badge badge-completed">已完成</span></td>
+                    <td>
+                      <a href="#" class="btn btn-sm btn-ghost">打开</a>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Recent Runs + Alerts -->
+        <div class="grid-2">
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">最近运行</div>
+                <div class="card-subtitle">章节生产运行记录</div>
+              </div>
+            </div>
+            <div class="card-body compact">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>章节</th>
+                    <th>项目</th>
+                    <th>状态</th>
+                    <th>时间</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>第 3 章</td>
+                    <td>demo-novel</td>
+                    <td><span class="badge badge-review">待审核</span></td>
+                    <td>10 分钟前</td>
+                  </tr>
+                  <tr>
+                    <td>第 2 章</td>
+                    <td>demo-novel</td>
+                    <td><span class="badge badge-published">已发布</span></td>
+                    <td>2 小时前</td>
+                  </tr>
+                  <tr>
+                    <td>第 1 章</td>
+                    <td>romance-01</td>
+                    <td><span class="badge badge-blocking">已阻塞</span></td>
+                    <td>昨天</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <div>
+            <!-- Alert Card -->
+            <div class="alert alert-warning" style="margin-bottom:16px">
+              <strong>⚠️ 注意</strong>
+              <div style="margin-top:4px">romance-01 项目第 1 章处于阻塞状态，需要人工介入处理</div>
+              <div style="margin-top:8px">
+                <a href="#" class="btn btn-sm btn-secondary">查看详情</a>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">系统状态</div>
+              </div>
+              <div class="card-body compact">
+                <div style="display:flex;flex-direction:column;gap:12px">
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span style="color:var(--text-secondary)">LLM 模式</span>
+                    <span class="badge badge-pending">演示模式 (stub)</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span style="color:var(--text-secondary)">默认模型</span>
+                    <span>default</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span style="color:var(--text-secondary)">数据库</span>
+                    <code>novel_factory.db</code>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span style="color:var(--text-secondary)">风格样本</span>
+                    <span>2 个</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>审核工作台 - 小说工厂</title>
+  <link rel="stylesheet" href="design-system.css">
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <h1>小说工厂</h1>
+        <div class="version">v5.0.1 作者工作台</div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">创作</div>
+          <a href="dashboard.html" class="nav-link">
+            <span class="nav-icon">📊</span> 总览
+          </a>
+          <a href="project-workspace.html" class="nav-link">
+            <span class="nav-icon">📁</span> 项目
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">➕</span> 创建项目
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">生产</div>
+          <a href="run-chapter.html" class="nav-link">
+            <span class="nav-icon">▶️</span> 生成章节
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📦</span> 批量生产
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📋</span> 队列
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📚</span> 连载计划
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">质检</div>
+          <a href="review-workbench.html" class="nav-link active">
+            <span class="nav-icon">📝</span> 审核
+          </a>
+          <a href="style.html" class="nav-link">
+            <span class="nav-icon">🎨</span> 风格
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">系统</div>
+          <a href="settings-config.html" class="nav-link">
+            <span class="nav-icon">⚙️</span> 配置
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">✓</span> 验收
+          </a>
+        </div>
+      </nav>
+      <div class="sidebar-footer">
+        <div>当前项目: <strong>demo-novel</strong></div>
+      </div>
+    </aside>
+
+    <div class="main-content">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title">审核工作台</h1>
+        </div>
+        <div class="topbar-right">
+          <select class="form-control" style="width:180px">
+            <option>demo-novel</option>
+            <option>romance-01</option>
+          </select>
+          <span class="status-pill stub"><span class="dot"></span> 演示模式</span>
+        </div>
+      </header>
+
+      <main class="content-area">
+        <!-- Filter Tabs -->
+        <div class="tabs">
+          <div class="tab active">全部</div>
+          <div class="tab">待审核 <span style="background:var(--color-warning-light);color:var(--color-warning);padding:1px 6px;border-radius:10px;font-size:11px;margin-left:4px">1</span></div>
+          <div class="tab">阻塞</div>
+          <div class="tab">已通过</div>
+          <div class="tab">需返修</div>
+        </div>
+
+        <!-- Summary Cards -->
+        <div class="summary-grid">
+          <div class="summary-card warning">
+            <div class="label">待审核</div>
+            <div class="value">1</div>
+          </div>
+          <div class="summary-card danger">
+            <div class="label">阻塞</div>
+            <div class="value">0</div>
+          </div>
+          <div class="summary-card primary">
+            <div class="label">可批准</div>
+            <div class="value">1</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">需返修</div>
+            <div class="value">0</div>
+          </div>
+        </div>
+
+        <!-- Main Review Queue -->
+        <div class="card">
+          <div class="card-header">
+            <div>
+              <div class="card-title">审核队列</div>
+              <div class="card-subtitle">demo-novel 项目等待审核的章节</div>
+            </div>
+            <div style="display:flex;gap:8px">
+              <button class="btn btn-secondary btn-sm">📥 导出审核包</button>
+              <button class="btn btn-primary btn-sm">✓ 批量批准</button>
+            </div>
+          </div>
+          <div class="card-body compact">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>章节</th>
+                  <th>状态</th>
+                  <th>质量分</th>
+                  <th>问题数</th>
+                  <th>最近运行</th>
+                  <th>建议动作</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><strong>第 3 章</strong></td>
+                  <td><span class="badge badge-review">待审核</span></td>
+                  <td><span style="color:var(--color-primary);font-weight:600">82</span></td>
+                  <td><span style="color:var(--text-muted)">2 个警告</span></td>
+                  <td><code>a3f7d2</code> · 10 分钟前</td>
+                  <td><span class="badge badge-active">建议批准</span></td>
+                  <td>
+                    <div style="display:flex;gap:4px">
+                      <button class="btn btn-sm btn-primary">查看</button>
+                      <button class="btn btn-sm btn-secondary">差异</button>
+                      <button class="btn btn-sm btn-ghost">时间线</button>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Decision Hint + Timeline -->
+        <div class="grid-2" style="margin-top:24px">
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">审核建议</div>
+            </div>
+            <div class="card-body">
+              <div style="padding:16px;background:var(--color-primary-light);border-radius:var(--border-radius);border:1px solid #a7f3d0;margin-bottom:16px">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+                  <span style="font-size:20px">✅</span>
+                  <strong style="color:#065f46">建议批准</strong>
+                </div>
+                <p style="color:#065f46;font-size:13px;margin:0">第 3 章质量评分 82 分，无阻塞性问题，连续性检查通过。存在 2 个轻微风格警告，建议批准后由编辑在后续章节统一处理。</p>
+              </div>
+              <div style="display:flex;gap:8px">
+                <button class="btn btn-primary">✓ 批准发布</button>
+                <button class="btn btn-secondary">📝 请求修改</button>
+                <button class="btn btn-ghost">🔍 查看详情</button>
+              </div>
+            </div>
+          </div>
+
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">最近时间线</div>
+            </div>
+            <div class="card-body compact">
+              <div style="display:flex;flex-direction:column;gap:12px">
+                <div style="display:flex;gap:12px">
+                  <div style="width:2px;background:var(--border-color);margin-left:6px"></div>
+                  <div>
+                    <div style="font-size:12px;color:var(--text-muted)">10 分钟前</div>
+                    <div style="font-size:13px">第 3 章生成完成，进入待审核</div>
+                  </div>
+                </div>
+                <div style="display:flex;gap:12px">
+                  <div style="width:2px;background:var(--border-color);margin-left:6px"></div>
+                  <div>
+                    <div style="font-size:12px;color:var(--text-muted)">2 小时前</div>
+                    <div style="font-size:13px">第 2 章审核通过，已发布</div>
+                  </div>
+                </div>
+                <div style="display:flex;gap:12px">
+                  <div style="width:2px;background:var(--border-color);margin-left:6px"></div>
+                  <div>
+                    <div style="font-size:12px;color:var(--text-muted)">昨天</div>
+                    <div style="font-size:13px">第 1 章审核通过，已发布</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Advanced Tools (Collapsible) -->
+        <div class="collapsible open" style="margin-top:24px">
+          <div class="collapsible-header">
+            <span style="font-weight:600">高级工具</span>
+            <span class="collapsible-toggle">▼</span>
+          </div>
+          <div class="collapsible-body">
+            <div class="grid-2">
+              <div>
+                <h4 style="font-size:14px;margin-bottom:12px">生成审核包</h4>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>运行 ID</label>
+                    <input type="text" class="form-control" placeholder="可选">
+                  </div>
+                  <div class="form-group">
+                    <label>连载计划 ID</label>
+                    <input type="text" class="form-control" placeholder="可选">
+                  </div>
+                </div>
+                <div class="form-row">
+                  <div class="form-group">
+                    <label>起始章节</label>
+                    <input type="number" class="form-control" value="1" min="1">
+                  </div>
+                  <div class="form-group">
+                    <label>结束章节</label>
+                    <input type="number" class="form-control" value="10" min="1">
+                  </div>
+                </div>
+                <button class="btn btn-secondary">生成审核包</button>
+              </div>
+              <div>
+                <h4 style="font-size:14px;margin-bottom:12px">查看指定章节</h4>
+                <div class="form-group">
+                  <label>项目 ID <span class="hint">项目标识符</span></label>
+                  <select class="form-control">
+                    <option>demo-novel</option>
+                    <option>romance-01</option>
+                  </select>
+                </div>
+                <div class="form-group">
+                  <label>章节号</label>
+                  <input type="number" class="form-control" value="3" min="1">
+                </div>
+                <button class="btn btn-secondary">查看章节</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Empty State Example (hidden by default, shown for design reference) -->
+        <div class="card" style="margin-top:24px;opacity:0.6">
+          <div class="card-header">
+            <div class="card-title">空状态示例</div>
+          </div>
+          <div class="card-body">
+            <div class="empty-state">
+              <div class="empty-icon">📝</div>
+              <div class="empty-title">当前没有待审核章节</div>
+              <div class="empty-hint">可以先生成新章节，或返回项目工作台查看所有章节状态</div>
+              <div style="display:flex;gap:8px;justify-content:center">
+                <a href="run-chapter.html" class="btn btn-primary">生成章节</a>
+                <a href="project-workspace.html" class="btn btn-secondary">返回项目</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

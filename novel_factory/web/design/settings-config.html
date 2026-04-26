@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>配置中心 - 小说工厂</title>
+  <link rel="stylesheet" href="design-system.css">
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <h1>小说工厂</h1>
+        <div class="version">v5.0.1 作者工作台</div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">创作</div>
+          <a href="dashboard.html" class="nav-link">
+            <span class="nav-icon">📊</span> 总览
+          </a>
+          <a href="project-workspace.html" class="nav-link">
+            <span class="nav-icon">📁</span> 项目
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">➕</span> 创建项目
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">生产</div>
+          <a href="run-chapter.html" class="nav-link">
+            <span class="nav-icon">▶️</span> 生成章节
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📦</span> 批量生产
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📋</span> 队列
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📚</span> 连载计划
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">质检</div>
+          <a href="review-workbench.html" class="nav-link">
+            <span class="nav-icon">📝</span> 审核
+          </a>
+          <a href="style.html" class="nav-link">
+            <span class="nav-icon">🎨</span> 风格
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">系统</div>
+          <a href="settings-config.html" class="nav-link active">
+            <span class="nav-icon">⚙️</span> 配置
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">✓</span> 验收
+          </a>
+        </div>
+      </nav>
+      <div class="sidebar-footer">
+        <div>当前项目: <strong>demo-novel</strong></div>
+      </div>
+    </aside>
+
+    <div class="main-content">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title">配置中心</h1>
+        </div>
+        <div class="topbar-right">
+          <span class="status-pill stub"><span class="dot"></span> 演示模式</span>
+        </div>
+      </header>
+
+      <main class="content-area">
+        <!-- Runtime Mode Banner -->
+        <div class="alert alert-info">
+          <strong>ℹ️ 当前运行模式：演示模式 (stub)</strong>
+          <div style="margin-top:4px">演示模式下所有 LLM 调用返回模拟数据，不消耗真实 API 额度。切换到真实模式前，请先完成 LLM 配置。</div>
+        </div>
+
+        <!-- Config Status Summary -->
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="label">LLM 模式</div>
+            <div class="value" style="font-size:18px">演示模式</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">默认 LLM</div>
+            <div class="value" style="font-size:18px">default</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">Provider</div>
+            <div class="value" style="font-size:18px">openai_compatible</div>
+          </div>
+          <div class="summary-card danger">
+            <div class="label">API Key</div>
+            <div class="value" style="font-size:18px">未配置</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <!-- LLM Profiles -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">LLM 配置档案</div>
+            </div>
+            <div class="card-body compact">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>名称</th>
+                    <th>Provider</th>
+                    <th>模型</th>
+                    <th>Base URL</th>
+                    <th>API Key</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td><strong>default</strong></td>
+                    <td>openai_compatible</td>
+                    <td>gpt-4o-mini</td>
+                    <td><span style="color:var(--text-muted)">未配置</span></td>
+                    <td><span style="color:var(--color-danger);font-weight:500">未配置</span></td>
+                    <td><span class="badge badge-failed">不完整</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Agent Routing -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">Agent 路由</div>
+            </div>
+            <div class="card-body compact">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Agent</th>
+                    <th>LLM 档案</th>
+                    <th>类型</th>
+                    <th>状态</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>planner</td>
+                    <td>default</td>
+                    <td><span style="color:var(--text-muted)">回退</span></td>
+                    <td><span class="badge badge-failed">档案不完整</span></td>
+                  </tr>
+                  <tr>
+                    <td>author</td>
+                    <td>default</td>
+                    <td><span style="color:var(--text-muted)">回退</span></td>
+                    <td><span class="badge badge-failed">档案不完整</span></td>
+                  </tr>
+                  <tr>
+                    <td>editor</td>
+                    <td>default</td>
+                    <td><span style="color:var(--text-muted)">回退</span></td>
+                    <td><span class="badge badge-failed">档案不完整</span></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Config Wizard -->
+        <div class="card" style="margin-top:24px">
+          <div class="card-header">
+            <div>
+              <div class="card-title">配置向导</div>
+              <div class="card-subtitle">生成 LLM 配置草案，默认不写入真实配置文件</div>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="wizard-step">
+              <div class="wizard-step-number">1</div>
+              <div class="wizard-step-content">
+                <div class="wizard-step-title">选择 Provider</div>
+                <div class="form-group">
+                  <select class="form-control">
+                    <option>openai_compatible</option>
+                    <option>openrouter</option>
+                    <option>anthropic</option>
+                  </select>
+                  <div style="font-size:12px;color:var(--text-muted);margin-top:4px">Provider 决定 API 调用格式，openai_compatible 兼容大多数国内中转服务</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="wizard-step">
+              <div class="wizard-step-number">2</div>
+              <div class="wizard-step-content">
+                <div class="wizard-step-title">设置 Base URL</div>
+                <div class="form-group">
+                  <input type="text" class="form-control" placeholder="https://api.openai.com/v1">
+                  <div style="font-size:12px;color:var(--text-muted);margin-top:4px">LLM API 的基础地址，如果使用 OpenRouter 请填写 https://openrouter.ai/api/v1</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="wizard-step">
+              <div class="wizard-step-number">3</div>
+              <div class="wizard-step-content">
+                <div class="wizard-step-title">选择模型</div>
+                <div class="form-group">
+                  <select class="form-control">
+                    <option>gpt-4o-mini</option>
+                    <option>gpt-4o</option>
+                    <option>claude-3-5-sonnet</option>
+                    <option>deepseek-chat</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="wizard-step">
+              <div class="wizard-step-number">4</div>
+              <div class="wizard-step-content">
+                <div class="wizard-step-title">输入 API Key</div>
+                <div class="form-group">
+                  <input type="password" class="form-control" placeholder="sk-...">
+                  <div style="font-size:12px;color:var(--text-muted);margin-top:4px">API Key 仅用于生成配置草案，不会被保存到页面或日志中</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="wizard-step">
+              <div class="wizard-step-number">5</div>
+              <div class="wizard-step-content">
+                <div class="wizard-step-title">设置默认 LLM</div>
+                <div class="form-group">
+                  <input type="text" class="form-control" value="default">
+                  <div style="font-size:12px;color:var(--text-muted);margin-top:4px">默认 LLM 档案名称，未单独配置的 Agent 将使用此档案</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="wizard-step">
+              <div class="wizard-step-number">6</div>
+              <div class="wizard-step-content">
+                <div class="wizard-step-title">Agent 路由（可选）</div>
+                <div class="form-row-3">
+                  <div class="form-group">
+                    <label>planner</label>
+                    <select class="form-control"><option>default</option></select>
+                  </div>
+                  <div class="form-group">
+                    <label>author</label>
+                    <select class="form-control"><option>default</option></select>
+                  </div>
+                  <div class="form-group">
+                    <label>editor</label>
+                    <select class="form-control"><option>default</option></select>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div style="display:flex;gap:8px;margin-top:8px;padding-top:16px;border-top:1px solid var(--border-color)">
+              <button class="btn btn-primary">📋 生成配置草案</button>
+              <button class="btn btn-secondary">📋 复制配置</button>
+              <button class="btn btn-secondary">💾 保存到本地配置</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Draft Preview -->
+        <div class="card" style="margin-top:24px">
+          <div class="card-header">
+            <div class="card-title">配置草案预览</div>
+            <span class="badge badge-pending">未保存</span>
+          </div>
+          <div class="card-body compact">
+            <div class="draft-preview">default_llm: default
+
+llm_profiles:
+  default:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: gpt-4o-mini
+
+agent_llm:
+  planner: default
+  screenwriter: default
+  author: default
+  polisher: default
+  editor: default</div>
+            <div style="margin-top:12px;display:flex;gap:8px">
+              <button class="btn btn-secondary btn-sm">📋 复制到剪贴板</button>
+              <button class="btn btn-ghost btn-sm">📝 手动编辑</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Diagnostics -->
+        <div class="card" style="margin-top:24px">
+          <div class="card-header">
+            <div class="card-title">配置诊断</div>
+          </div>
+          <div class="card-body compact">
+            <div class="alert alert-warning" style="margin-bottom:0">
+              <strong>⚠️ 警告</strong>
+              <ul style="margin-top:8px;margin-bottom:0;padding-left:20px">
+                <li>Profile 'default' 未配置 API Key（环境变量 OPENAI_API_KEY 缺失）</li>
+                <li>Profile 'default' 未配置 Base URL（环境变量 OPENAI_BASE_URL 缺失）</li>
+                <li>当前为演示模式，上述缺失不会阻止运行</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

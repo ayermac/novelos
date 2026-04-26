@@ -132,6 +132,7 @@ class ChapterDispatchMixin:
             self.repo.update_workflow_run(run_id, status="completed")
 
         return {
+            "run_id": run_id,
             "chapter_status": current_status,
             "steps": steps,
             "error": last_error,

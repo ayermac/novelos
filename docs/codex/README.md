@@ -39,6 +39,8 @@
 | `novel-factory-v4.8-web-acceptance-matrix-spec.md` | v4.8 Web 验收矩阵、展示系统能力覆盖情况 | 开发 Agent、质量验收 |
 | `novel-factory-v4.9-settings-llm-agent-ops-console-spec.md` | v4.9 Settings / LLM / Agent Ops Console、配置与运行状态控制台 | 开发 Agent、质量验收 |
 | `novel-factory-v5.0-implemented-features-webui-acceptance-spec.md` | v5.0 已实现功能整体验收与 WebUI 验收 | 开发 Agent、质量验收 |
+| `novel-factory-v5.0.1-webui-productization-chinese-ux-spec.md` | v5.0.1 WebUI 产品化与中文化 UX 规格 | 开发 Agent、质量验收 |
+| `novel-factory-v5.1-frontend-separation-api-backend-spec.md` | v5.1 前后端分离、FastAPI JSON API、React 前端 | 开发 Agent、质量验收 |
 
 ## 使用方式
 
@@ -78,7 +80,14 @@
 
 ## 当前版本
 
-当前开发基线是 **v5.0 Implemented Features & WebUI Acceptance 已通过验收，测试基线 1386/1386**。
+当前开发基线是 **v5.1 Frontend Separation & API Backend 已通过验收，测试基线 1218/1218**。
+
+**v5.1 核心变更:**
+- 废弃 Jinja WebUI,实现前后端分离架构
+- FastAPI JSON API 后端 (`/api` 路由前缀)
+- React + Vite + TypeScript 独立前端 (`frontend/` 目录)
+- 统一信封响应格式 `{ok, error, data}`
+- 完整中文本地化作者工作台
 
 v1 只实现：
 
@@ -93,11 +102,10 @@ v1 不实现：
 
 - 多 Provider 原生适配
 - Skill 热加载
-- Web UI / Web API
 - Scout / Architect / Secretary
 - ContinuityChecker 独立 Agent
 - SQLModel 全量 ORM 接管
 
 当前下一步：
 
-- 进入 v5.1+ 多模型与生产治理规划与开发。
+- 进入 v5.2+ 多模型与生产治理规划与开发。

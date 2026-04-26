@@ -1,0 +1,242 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>风格管理 - 小说工厂</title>
+  <link rel="stylesheet" href="design-system.css">
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <h1>小说工厂</h1>
+        <div class="version">v5.0.1 作者工作台</div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">创作</div>
+          <a href="dashboard.html" class="nav-link">
+            <span class="nav-icon">📊</span> 总览
+          </a>
+          <a href="project-workspace.html" class="nav-link">
+            <span class="nav-icon">📁</span> 项目
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">➕</span> 创建项目
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">生产</div>
+          <a href="run-chapter.html" class="nav-link">
+            <span class="nav-icon">▶️</span> 生成章节
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📦</span> 批量生产
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📋</span> 队列
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📚</span> 连载计划
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">质检</div>
+          <a href="review-workbench.html" class="nav-link">
+            <span class="nav-icon">📝</span> 审核
+          </a>
+          <a href="style.html" class="nav-link active">
+            <span class="nav-icon">🎨</span> 风格
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">系统</div>
+          <a href="settings-config.html" class="nav-link">
+            <span class="nav-icon">⚙️</span> 配置
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">✓</span> 验收
+          </a>
+        </div>
+      </nav>
+      <div class="sidebar-footer">
+        <div>当前项目: <strong>demo-novel</strong></div>
+      </div>
+    </aside>
+
+    <div class="main-content">
+      <header class="topbar">
+        <div class="topbar-left">
+          <h1 class="page-title">风格管理</h1>
+        </div>
+        <div class="topbar-right">
+          <select class="form-control" style="width:180px">
+            <option>demo-novel</option>
+            <option>romance-01</option>
+          </select>
+        </div>
+      </header>
+
+      <main class="content-area">
+        <!-- Style Health Summary -->
+        <div class="summary-grid">
+          <div class="summary-card primary">
+            <div class="label">风格圣经</div>
+            <div class="value" style="font-size:18px">✓ 已配置</div>
+            <div class="hint">default_web_serial 模板</div>
+          </div>
+          <div class="summary-card warning">
+            <div class="label">风格门禁</div>
+            <div class="value" style="font-size:18px">警告模式</div>
+            <div class="hint">阈值 70 分，不阻塞发布</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">风格样本</div>
+            <div class="value">2</div>
+            <div class="hint">已分析，可用于校准</div>
+          </div>
+          <div class="summary-card">
+            <div class="label">待处理提案</div>
+            <div class="value">0</div>
+            <div class="hint">无待审核的风格演进提案</div>
+          </div>
+        </div>
+
+        <!-- Main Actions -->
+        <div class="action-bar">
+          <button class="btn btn-primary">📖 初始化风格圣经</button>
+          <button class="btn btn-secondary">📤 上传风格样本</button>
+          <button class="btn btn-secondary">🔍 查看提案</button>
+          <button class="btn btn-secondary">⚙️ 更新风格设置</button>
+        </div>
+
+        <div class="grid-2">
+          <!-- Style Bible -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">风格圣经</div>
+              <span class="badge badge-active">已启用</span>
+            </div>
+            <div class="card-body compact">
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="color:var(--text-secondary)">名称</span>
+                  <span>default_web_serial</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="color:var(--text-secondary)">类型</span>
+                  <span>都市玄幻</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="color:var(--text-secondary)">视角</span>
+                  <span>第三人称有限</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="color:var(--text-secondary)">节奏</span>
+                  <span>快节奏，每章 3000 字</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="color:var(--text-secondary)">禁用表达</span>
+                  <span>12 条规则</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Style Gate -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">风格门禁</div>
+              <span class="badge badge-warn">警告</span>
+            </div>
+            <div class="card-body compact">
+              <div style="display:flex;flex-direction:column;gap:10px">
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="color:var(--text-secondary)">模式</span>
+                  <span>warn（警告，不阻塞）</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="color:var(--text-secondary)">阻塞阈值</span>
+                  <span>70 分</span>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:center">
+                  <span style="color:var(--text-secondary)">启用状态</span>
+                  <span>是</span>
+                </div>
+                <div style="margin-top:8px;padding:10px;background:var(--color-warning-light);border-radius:var(--border-radius);font-size:12px;color:#92400e">
+                  ⚠️ 当前为警告模式，风格不合规时只会记录警告，不会阻止章节发布。如需严格管控，可切换为 block 模式。
+                </div>
+              </div>
+              <div style="margin-top:12px">
+                <button class="btn btn-secondary btn-sm">修改门禁设置</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Style Samples -->
+        <div class="card" style="margin-top:24px">
+          <div class="card-header">
+            <div>
+              <div class="card-title">风格样本</div>
+              <div class="card-subtitle">导入的参考文本，用于风格分析和校准</div>
+            </div>
+            <button class="btn btn-primary btn-sm">📤 导入样本</button>
+          </div>
+          <div class="card-body compact">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>样本 ID</th>
+                  <th>名称</th>
+                  <th>状态</th>
+                  <th>字符数</th>
+                  <th>导入时间</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>a1b2c3d4</code></td>
+                  <td>参考样本一</td>
+                  <td><span class="badge badge-analyzed">已分析</span></td>
+                  <td>4,320</td>
+                  <td>2024-01-15</td>
+                  <td><button class="btn btn-sm btn-ghost">生成提案</button></td>
+                </tr>
+                <tr>
+                  <td><code>e5f6g7h8</code></td>
+                  <td>参考样本二</td>
+                  <td><span class="badge badge-analyzed">已分析</span></td>
+                  <td>3,890</td>
+                  <td>2024-01-16</td>
+                  <td><button class="btn btn-sm btn-ghost">生成提案</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Pending Proposals -->
+        <div class="card" style="margin-top:24px">
+          <div class="card-header">
+            <div>
+              <div class="card-title">风格演进提案</div>
+              <div class="card-subtitle">基于样本分析生成的风格优化建议</div>
+            </div>
+          </div>
+          <div class="card-body">
+            <div class="empty-state">
+              <div class="empty-icon">🎨</div>
+              <div class="empty-title">暂无待处理提案</div>
+              <div class="empty-hint">导入并分析风格样本后，系统会自动生成风格演进提案供您审核</div>
+              <button class="btn btn-secondary">导入风格样本</button>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

@@ -1041,7 +1041,116 @@ constraints 支持：cost_tier 最大值、quality_tier 最小值、provider 白
 
 状态：**已通过验收**，测试基线 1386/1386。
 
-## v4+：多模型与生产治理
+## v5.0.1：WebUI Productization & Chinese UX
+
+目标：将 v5.0 的"验收控制台"升级为"中文作者工作台"，让现有功能看起来统一、清晰、可日常使用。
+
+范围：
+
+- 全站中文界面（导航、标题、表单、按钮、状态、空状态）。
+- 左侧导航 + 顶部状态栏布局（专业 SaaS 风格）。
+- 设计系统：卡片、表格、按钮、表单、状态徽章、NBA 面板。
+- Review 页面重做：首屏展示审核队列，高级工具折叠。
+- Settings 配置中心：LLM 档案、Agent 路由、模型推荐、配置向导。
+- Config 页面改为只读诊断入口，引导到 Settings。
+- 配置向导：默认只生成配置草案（客户端 JavaScript），不写入真实配置。
+- API Key 输入框为 password 类型，页面只显示"已配置/未配置"。
+- 所有页面补中文空状态和下一步引导。
+- 不新增真实 LLM 调用，不自动 approve/publish。
+- 不引入登录、多用户、权限、WebSocket、Redis/Celery。
+
+验收：
+
+- 导航中文化测试通过。
+- Review 页面中文化测试通过。
+- Config/Settings 页面中文化测试通过。
+- 配置向导存在且为草案模式。
+- API key 不泄露。
+- 生成配置草案不写真实文件。
+- 空状态可读。
+- 页面无 traceback/raw JSON。
+- v5.0 专项测试通过。
+- WebUI 组合测试通过。
+- 全量测试通过。
+
+状态：**已通过验收**，测试基线 1420/1420。
+
+## v5.1：Frontend Separation & API Backend
+
+目标：废弃 Jinja WebUI，实现前后端分离架构，为后续扩展和部署灵活性打下基础。
+
+范围：
+
+- 删除/弃用 Jinja WebUI（templates、HTML routes、Jinja helpers）
+- 创建 FastAPI JSON API 后端（`/api` 路由前缀）
+- 创建 React + Vite + TypeScript 独立前端（`frontend/` 目录）
+- 保留 CLI、Repository、Dispatcher 和核心业务能力
+- API 和 CLI 共享核心服务（API 不通过 shell 调用 CLI）
+- 前端基于 v5.0.1 设计规范，面向中文作者工作台
+
+API 要求：
+
+- 统一信封格式：`{ok: bool, error: {code, message} | null, data: any | null}`
+- 标准化错误码和错误消息
+- 不暴露 traceback
+- 不暴露 API key/secret
+- Stub 模式安全（无真实 LLM 调用）
+
+API 端点：
+
+- `GET /api/health` - 健康检查
+- `GET /api/dashboard` - 总览数据
+- `GET /api/projects` - 项目列表
+- `GET /api/projects/{project_id}` - 单个项目
+- `GET /api/projects/{project_id}/workspace` - 项目工作台
+- `POST /api/onboarding/projects` - 创建项目
+- `POST /api/run/chapter` - 运行章节
+- `GET /api/review/workbench` - 审核工作台
+- `GET /api/review/pack` - 审核包
+- `GET /api/review/chapter` - 章节审核
+- `GET /api/review/timeline` - 时间线
+- `GET /api/review/diff` - 版本差异
+- `GET /api/style/console` - 风格控制台
+- `GET /api/settings` - 设置
+- `POST /api/config/plan` - 配置草案
+- `GET /api/acceptance` - 验收矩阵
+
+前端页面（9 个）：
+
+- `/` - 总览（Dashboard）
+- `/projects` - 项目列表
+- `/projects/:id` - 项目详情
+- `/onboarding` - 创建项目
+- `/run` - 运行章节
+- `/review` - 审核
+- `/style` - 风格
+- `/settings` - 配置
+- `/acceptance` - 验收
+
+禁止：
+
+- 不引入登录/多用户/权限
+- 不引入 Redis/Celery/WebSocket
+- 不新增真实 LLM 调用测试
+- 不提交 config/acceptance.yaml、stderr.txt、真实密钥
+- API 不返回 API key 到前端
+
+验收：
+
+- API 信封格式测试通过
+- API 错误处理测试通过
+- API 安全测试通过（无密钥泄露）
+- Stub 模式运行章节测试通过
+- CRUD 操作测试通过
+- 配置草案生成测试通过
+- 前端文件结构测试通过
+- 前端中文标签测试通过
+- 前端构建配置测试通过
+- 全量测试通过
+
+状态：**已通过验收**，测试基线 1218/1218。
+
+## v5.2+：多模型与生产治理
 
 目标：支持真实长期运行所需的模型、成本、可观测性和数据治理。
 

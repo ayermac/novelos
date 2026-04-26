@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>项目工作台 - 小说工厂</title>
+  <link rel="stylesheet" href="design-system.css">
+</head>
+<body>
+  <div class="app-layout">
+    <aside class="sidebar">
+      <div class="sidebar-brand">
+        <h1>小说工厂</h1>
+        <div class="version">v5.0.1 作者工作台</div>
+      </div>
+      <nav class="sidebar-nav">
+        <div class="nav-section">
+          <div class="nav-section-title">创作</div>
+          <a href="dashboard.html" class="nav-link">
+            <span class="nav-icon">📊</span> 总览
+          </a>
+          <a href="project-workspace.html" class="nav-link active">
+            <span class="nav-icon">📁</span> 项目
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">➕</span> 创建项目
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">生产</div>
+          <a href="run-chapter.html" class="nav-link">
+            <span class="nav-icon">▶️</span> 生成章节
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📦</span> 批量生产
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📋</span> 队列
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">📚</span> 连载计划
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">质检</div>
+          <a href="review-workbench.html" class="nav-link">
+            <span class="nav-icon">📝</span> 审核
+          </a>
+          <a href="style.html" class="nav-link">
+            <span class="nav-icon">🎨</span> 风格
+          </a>
+        </div>
+        <div class="nav-section">
+          <div class="nav-section-title">系统</div>
+          <a href="settings-config.html" class="nav-link">
+            <span class="nav-icon">⚙️</span> 配置
+          </a>
+          <a href="#" class="nav-link">
+            <span class="nav-icon">✓</span> 验收
+          </a>
+        </div>
+      </nav>
+      <div class="sidebar-footer">
+        <div>当前项目: <strong>demo-novel</strong></div>
+      </div>
+    </aside>
+
+    <div class="main-content">
+      <header class="topbar">
+        <div class="topbar-left">
+          <nav class="breadcrumb">
+            <a href="dashboard.html">总览</a> / <a href="#">项目</a> / <span>demo-novel</span>
+          </nav>
+        </div>
+        <div class="topbar-right">
+          <span class="status-pill stub"><span class="dot"></span> 演示模式</span>
+        </div>
+      </header>
+
+      <main class="content-area">
+        <!-- Project Header -->
+        <div style="margin-bottom:24px">
+          <h1 style="font-size:22px;font-weight:600;margin-bottom:8px">都市修仙传</h1>
+          <div style="display:flex;gap:16px;color:var(--text-secondary);font-size:13px">
+            <span>项目 ID: <code>demo-novel</code></span>
+            <span>类型: 都市玄幻</span>
+            <span>目标字数: 150 万</span>
+            <span>计划章节: 500 章</span>
+          </div>
+        </div>
+
+        <!-- Next Best Action -->
+        <div class="nba-card">
+          <div class="nba-content">
+            <div class="nba-label">下一步建议</div>
+            <div class="nba-title">第 3 章等待审核</div>
+            <div class="nba-desc">该章节已完成生成，质量评分 82 分，建议进入审核工作台确认后发布</div>
+          </div>
+          <div class="nba-actions">
+            <a href="review-workbench.html" class="btn btn-primary btn-lg">进入审核</a>
+            <a href="run-chapter.html" class="btn btn-secondary">重新生成</a>
+          </div>
+        </div>
+
+        <!-- Chapter Progress -->
+        <div class="grid-3" style="margin-bottom:24px">
+          <div class="summary-card">
+            <div class="label">总章节</div>
+            <div class="value">10</div>
+          </div>
+          <div class="summary-card primary">
+            <div class="label">已发布</div>
+            <div class="value">2</div>
+          </div>
+          <div class="summary-card warning">
+            <div class="label">待审核</div>
+            <div class="value">1</div>
+          </div>
+        </div>
+
+        <div class="grid-2">
+          <!-- Chapter List -->
+          <div class="card">
+            <div class="card-header">
+              <div class="card-title">章节进度</div>
+              <a href="run-chapter.html" class="btn btn-primary btn-sm">▶️ 生成新章节</a>
+            </div>
+            <div class="card-body compact">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>章节</th>
+                    <th>状态</th>
+                    <th>字数</th>
+                    <th>质量分</th>
+                    <th>操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>第 1 章</td>
+                    <td><span class="badge badge-published">已发布</span></td>
+                    <td>3,240</td>
+                    <td>85</td>
+                    <td><a href="#" class="btn btn-sm btn-ghost">查看</a></td>
+                  </tr>
+                  <tr>
+                    <td>第 2 章</td>
+                    <td><span class="badge badge-published">已发布</span></td>
+                    <td>2,890</td>
+                    <td>78</td>
+                    <td><a href="#" class="btn btn-sm btn-ghost">查看</a></td>
+                  </tr>
+                  <tr>
+                    <td>第 3 章</td>
+                    <td><span class="badge badge-review">待审核</span></td>
+                    <td>3,100</td>
+                    <td>82</td>
+                    <td><a href="review-workbench.html" class="btn btn-sm btn-primary">审核</a></td>
+                  </tr>
+                  <tr>
+                    <td>第 4 章</td>
+                    <td><span class="badge badge-polished">已润色</span></td>
+                    <td>—</td>
+                    <td>—</td>
+                    <td><a href="#" class="btn btn-sm btn-ghost">查看</a></td>
+                  </tr>
+                  <tr>
+                    <td>第 5 章</td>
+                    <td><span class="badge badge-drafted">已起草</span></td>
+                    <td>—</td>
+                    <td>—</td>
+                    <td><a href="#" class="btn btn-sm btn-ghost">查看</a></td>
+                  </tr>
+                  <tr>
+                    <td>第 6-10 章</td>
+                    <td><span class="badge badge-planned">已规划</span></td>
+                    <td>—</td>
+                    <td>—</td>
+                    <td>—</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Right Column -->
+          <div style="display:flex;flex-direction:column;gap:16px">
+            <!-- Recent Runs -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">最近运行</div>
+              </div>
+              <div class="card-body compact">
+                <div style="display:flex;flex-direction:column;gap:12px">
+                  <div style="padding:12px;background:var(--bg-subtle);border-radius:var(--border-radius)">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                      <strong>第 3 章</strong>
+                      <span class="badge badge-review">待审核</span>
+                    </div>
+                    <div style="font-size:12px;color:var(--text-muted)">10 分钟前 · 运行 ID: <code>a3f7d2</code></div>
+                  </div>
+                  <div style="padding:12px;background:var(--bg-subtle);border-radius:var(--border-radius)">
+                    <div style="display:flex;justify-content:space-between;margin-bottom:4px">
+                      <strong>第 2 章</strong>
+                      <span class="badge badge-published">已发布</span>
+                    </div>
+                    <div style="font-size:12px;color:var(--text-muted)">2 小时前 · 运行 ID: <code>b8e1a4</code></div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Style Health -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">风格健康</div>
+                <a href="style.html" class="btn btn-ghost btn-sm">管理 →</a>
+              </div>
+              <div class="card-body compact">
+                <div style="display:flex;flex-direction:column;gap:10px">
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span>风格圣经</span>
+                    <span style="color:var(--color-primary);font-weight:500">✓ 已配置</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span>风格门禁</span>
+                    <span style="color:var(--color-warning);font-weight:500">⚠ 警告模式</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span>风格样本</span>
+                    <span>2 个</span>
+                  </div>
+                  <div style="display:flex;justify-content:space-between;align-items:center">
+                    <span>待处理提案</span>
+                    <span style="color:var(--text-muted)">0 个</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Quick Actions -->
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title">快捷操作</div>
+              </div>
+              <div class="card-body compact">
+                <div style="display:flex;flex-wrap:wrap;gap:8px">
+                  <a href="run-chapter.html" class="btn btn-primary btn-sm">▶️ 生成章节</a>
+                  <a href="#" class="btn btn-secondary btn-sm">📦 批量生产</a>
+                  <a href="review-workbench.html" class="btn btn-secondary btn-sm">📝 审核</a>
+                  <a href="#" class="btn btn-secondary btn-sm">📋 队列</a>
+                  <a href="style.html" class="btn btn-secondary btn-sm">🎨 风格</a>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </main>
+    </div>
+  </div>
+</body>
+</html>

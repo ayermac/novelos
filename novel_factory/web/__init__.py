@@ -1,6 +1,9 @@
-"""v4.3 Web UI Acceptance Console MVP.
+"""v5.1 Web UI Design Prototypes.
 
-Provides a local web interface for acceptance testing of Novel Factory capabilities.
+Contains design prototypes and reference files for the new React frontend.
+The Jinja WebUI has been deprecated and replaced with:
+- novel_factory/api/ - FastAPI JSON API backend
+- frontend/ - React + Vite + TypeScript frontend
 """
 
-__all__ = ["create_app"]
+__all__ = []
