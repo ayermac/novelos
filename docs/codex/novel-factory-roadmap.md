@@ -31,6 +31,9 @@ v3.7.2 Modularity Baseline
 v3.8 Skill Import Bridge
 v3.9 LLM Model Catalog & Agent Recommendation
 v4.0 Style Bible MVP
+v4.1 Style Gate & Style Evolution
+v4.2 Style Sample Analyzer & Calibration
+v4.3 Web UI Acceptance Console MVP (预告)
 ```
 
 ## v1：章节生产 MVP
@@ -762,7 +765,59 @@ constraints 支持：cost_tier 最大值、quality_tier 最小值、provider 白
 - 无作者模仿字段
 - 全量测试通过
 
+状态：已通过验收，测试基线 1093/1093。
+
+## v4.2：Style Sample Analyzer & Calibration
+
+目标：实现"风格样本分析与校准"能力。用户可以导入本地样本文本，系统提取结构化风格特征，并基于样本特征生成 Style Bible 演进提案。
+
+范围：
+
+- Style Sample 数据模型（StyleSampleSource/Status/Metrics/Record）
+- DB 迁移 014：style_samples 表
+- StyleSampleRepositoryMixin：save/list/show/update/delete/get_by_ids
+- 纯规则风格样本分析器（sample_analyzer.py）：句长、对话比、动作/心理/描写比、AI 痕迹风险、氛围关键词、节奏描述
+- 基于样本的 Style Evolution Proposal 生成器（sample_proposal.py）：聚合指标 → 生成 pending proposals
+- CLI 命令：style sample-import/sample-analyze/sample-list/sample-show/sample-delete/sample-propose
+- QualityHub 轻集成：style_sample_alignment 维度 + 低对齐度 warning
+- 安全边界：不联网、不抓取、不模仿作者、不训练模型、不保存全文、不自动修改 Style Bible
+
+验收：
+
+- 样本导入自动分析，不保存全文只保存 preview + hash + metrics
+- 重复 content_hash 不重复导入
+- import 空文件/不存在/超大返回错误 envelope
+- propose 从样本生成 pending proposals
+- proposal approve 不修改 Style Bible
+- QualityHub 没有样本时不报错，有样本时加入 alignment 维度
+- 不出现作者模仿字段
+- 全量测试通过，0 skipped
+
 状态：开发完成，待验收。
+
+## v4.3：Web UI Acceptance Console MVP (预告)
+
+> 本节为预告，不在 v4.2 中实现。
+
+目标：提供本地验收台 Web UI，让用户通过浏览器查看和操作 Style Bible、Style Gate、Style Evolution Proposals 和 Style Samples。
+
+范围（预告）：
+
+- 本地 Flask/FastAPI 轻量 Web 服务
+- Style Bible 查看与编辑页面
+- Style Gate 配置页面
+- Style Evolution Proposals 列表与审批页面
+- Style Samples 查看页面
+- 不实现登录、权限、Redis、PostgreSQL
+- 只做本地验收台，不做生产级多用户后台
+
+禁止：
+
+- 不实现登录/权限系统
+- 不引入 Redis/PostgreSQL
+- 不做生产级多用户后台
+- 不实现真实 LLM 调用
+- 不实现自动化验收
 
 ## v4+：多模型与生产治理
 

@@ -163,6 +163,63 @@ class QualityHub:
                         f"{config.blocking_threshold} but not blocked"
                     )
 
+    def _apply_style_sample_alignment(
+        self,
+        project_id: str,
+        content: str,
+        warnings: list[str],
+        quality_dimensions: dict[str, float],
+    ) -> None:
+        """Light integration: compare content against style sample baseline (v4.2).
+
+        Adds a warning and quality dimension if content deviates significantly
+        from sample-derived baselines. Does NOT block. Silently skips if no samples.
+        """
+        try:
+            samples = self.repo.list_style_samples(project_id, status="analyzed")
+            if not samples:
+                return
+
+            # Aggregate baseline from analyzed samples
+            avg_sent_lengths = []
+            for s in samples:
+                metrics = s.get("metrics", {})
+                val = metrics.get("avg_sentence_length")
+                if isinstance(val, (int, float)):
+                    avg_sent_lengths.append(val)
+            if not avg_sent_lengths:
+                return
+
+            baseline_avg_sent = sum(avg_sent_lengths) / len(avg_sent_lengths)
+
+            # Analyze current content
+            from ..style_bible.sample_analyzer import analyze_style_sample_text
+            result = analyze_style_sample_text(content)
+            if not result.get("ok"):
+                return
+
+            current_metrics = result["data"]["metrics"]
+            current_avg_sent = current_metrics.get("avg_sentence_length", 0)
+
+            # Compute alignment score (100 = perfect, lower = more deviation)
+            if baseline_avg_sent > 0:
+                deviation = abs(current_avg_sent - baseline_avg_sent) / baseline_avg_sent
+                alignment = max(0, round(100 * (1 - deviation), 1))
+            else:
+                alignment = 100.0
+
+            quality_dimensions["style_sample_alignment"] = alignment
+
+            if alignment < 60:
+                warnings.append(
+                    f"Style Sample alignment: {alignment:.0f}/100 "
+                    f"(current avg_sent={current_avg_sent:.0f} vs "
+                    f"baseline={baseline_avg_sent:.0f})"
+                )
+        except Exception:
+            # Style sample alignment is optional — never break existing flow
+            pass
+
     def _run_style_bible_check(
         self, project_id: str, content: str
     ) -> dict[str, Any] | None:
@@ -326,6 +383,11 @@ class QualityHub:
         self._apply_style_gate(
             project_id, content, "draft",
             blocking_issues, warnings, skill_results, quality_dimensions,
+        )
+        
+        # 6. Style Sample alignment (v4.2)
+        self._apply_style_sample_alignment(
+            project_id, content, warnings, quality_dimensions,
         )
         
         # 计算总分

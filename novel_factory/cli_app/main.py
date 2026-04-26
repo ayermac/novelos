@@ -114,6 +114,14 @@ from .commands.style_gate import (
     cmd_style_proposal_show,
     cmd_style_proposal_decide,
 )
+from .commands.style_sample import (
+    cmd_style_sample_import,
+    cmd_style_sample_analyze,
+    cmd_style_sample_list,
+    cmd_style_sample_show,
+    cmd_style_sample_delete,
+    cmd_style_sample_propose,
+)
 
 
 # ── Argument parser ──────────────────────────────────────────────
@@ -701,6 +709,42 @@ def build_parser() -> argparse.ArgumentParser:
     style_proposal_decide.add_argument("--notes", help="Decision notes")
     style_proposal_decide.add_argument("--json", action="store_true", help="Output in JSON format")
     style_proposal_decide.set_defaults(func=cmd_style_proposal_decide)
+
+    # v4.2: style sample commands
+    style_sample_import = style_subparsers.add_parser("sample-import", help="Import a local text file as style sample")
+    style_sample_import.add_argument("--project-id", required=True, help="Project ID")
+    style_sample_import.add_argument("--name", help="Sample name (defaults to filename)")
+    style_sample_import.add_argument("--file", required=True, help="Path to local text file")
+    style_sample_import.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_sample_import.set_defaults(func=cmd_style_sample_import)
+
+    style_sample_analyze = style_subparsers.add_parser("sample-analyze", help="Show or re-analyze a style sample")
+    style_sample_analyze.add_argument("--sample-id", required=True, help="Sample ID")
+    style_sample_analyze.add_argument("--file", help="Path to original file for full-text re-analysis (verifies hash)")
+    style_sample_analyze.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_sample_analyze.set_defaults(func=cmd_style_sample_analyze)
+
+    style_sample_list = style_subparsers.add_parser("sample-list", help="List style samples for a project")
+    style_sample_list.add_argument("--project-id", required=True, help="Project ID")
+    style_sample_list.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_sample_list.set_defaults(func=cmd_style_sample_list)
+
+    style_sample_show = style_subparsers.add_parser("sample-show", help="Show style sample details")
+    style_sample_show.add_argument("--sample-id", required=True, help="Sample ID")
+    style_sample_show.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_sample_show.set_defaults(func=cmd_style_sample_show)
+
+    style_sample_delete = style_subparsers.add_parser("sample-delete", help="Delete a style sample")
+    style_sample_delete.add_argument("--sample-id", required=True, help="Sample ID")
+    style_sample_delete.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_sample_delete.set_defaults(func=cmd_style_sample_delete)
+
+    style_sample_propose = style_subparsers.add_parser("sample-propose", help="Generate proposals from style samples")
+    style_sample_propose.add_argument("--project-id", required=True, help="Project ID")
+    style_sample_propose.add_argument("--sample-id", help="Single sample ID")
+    style_sample_propose.add_argument("--sample-ids", help="Comma-separated sample IDs")
+    style_sample_propose.add_argument("--json", action="store_true", help="Output in JSON format")
+    style_sample_propose.set_defaults(func=cmd_style_sample_propose)
 
     # Legacy aliases: 'init' → 'init-db', 'run' → 'run-chapter'
     init_compat = subparsers.add_parser("init", help="Initialize the database (legacy alias for init-db)")

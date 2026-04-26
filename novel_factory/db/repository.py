@@ -23,6 +23,7 @@ from .repositories.serial import SerialRepositoryMixin
 from .repositories.review_workbench import ReviewWorkbenchRepositoryMixin
 from .repositories.style_bible import StyleBibleRepositoryMixin
 from .repositories.style_gate import StyleGateRepositoryMixin
+from .repositories.style_sample import StyleSampleRepositoryMixin
 
 # Backward-compatible re-exports
 from ..validators.chapter_checker import count_words  # noqa: F401
@@ -43,6 +44,7 @@ class Repository(
     ReviewWorkbenchRepositoryMixin,
     StyleBibleRepositoryMixin,
     StyleGateRepositoryMixin,
+    StyleSampleRepositoryMixin,
     BaseRepository,
 ):
     """Backward-compatible repository facade combining all domain mixins."""
