@@ -321,7 +321,61 @@ def get_dispatcher(request: Request, llm_mode: str = "stub") -> ChapterDispatche
 - [x] 前端文件结构测试通过
 - [x] 前端中文标签测试通过
 - [x] 前端构建配置测试通过
-- [x] 全量测试通过（1218/1218）
+- [x] 全量测试通过（1252/1252）
+
+## Post-Acceptance Hardening
+
+### Smoke 验收脚本
+
+运行完整验收测试：
+```bash
+./scripts/v51_smoke_acceptance.sh
+```
+
+该脚本会自动检查：
+- Python 导入和 CLI 命令
+- pytest 测试套件
+- 前端类型检查和构建
+- API 端点 smoke 测试
+- .gitignore 规则
+
+### 新增测试
+
+**API 端到端测试** (`test_v51_api_e2e_smoke.py`):
+- 17 个端到端 smoke 测试
+- 覆盖真实用户路径
+- 使用临时数据库，不依赖真实 LLM
+
+**前端质量检查** (`test_v51_frontend_quality.py`):
+- 8 个前端质量检查
+- 验证 API 客户端、导航、错误处理等
+
+**API 安全测试** (`test_v51_api_security.py`):
+- 9 个 API 安全测试
+- 验证不暴露 traceback、绝对路径、API 密钥等
+
+### 验收覆盖项
+
+**API 后端**:
+- ✅ 统一响应格式 `{ok, error, data}`
+- ✅ 中文错误消息
+- ✅ 不暴露 traceback、绝对路径、API 密钥
+- ✅ Stub 模式安全运行
+- ✅ 所有端点返回 envelope
+
+**前端**:
+- ✅ 9 个页面组件
+- ✅ 中文导航和标题
+- ✅ 错误和加载状态处理
+- ✅ 空状态提示
+- ✅ API 客户端正确处理 envelope
+
+**安全**:
+- ✅ 不暴露 API 密钥
+- ✅ 不暴露 traceback
+- ✅ 不暴露绝对路径
+- ✅ Config plan 不写文件
+- ✅ Stub 模式不调用真实 LLM
 
 ## 部署说明
 

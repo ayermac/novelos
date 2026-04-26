@@ -42,6 +42,74 @@
 | `novel-factory-v5.0.1-webui-productization-chinese-ux-spec.md` | v5.0.1 WebUI 产品化与中文化 UX 规格 | 开发 Agent、质量验收 |
 | `novel-factory-v5.1-frontend-separation-api-backend-spec.md` | v5.1 前后端分离、FastAPI JSON API、React 前端 | 开发 Agent、质量验收 |
 
+## v5.1 本地启动与验收
+
+### 快速启动
+
+**启动 API 后端**：
+```bash
+novelos api --host 127.0.0.1 --port 8765 --llm-mode stub
+```
+
+**启动前端开发服务器**：
+```bash
+cd frontend
+npm install  # 首次需要安装依赖
+npm run dev
+```
+
+访问 http://localhost:5173 即可使用。
+
+### 端口说明
+
+- **API 后端**: 默认 8765 端口
+- **前端开发服务器**: 默认 5173 端口
+
+### Smoke 验收脚本
+
+运行完整验收测试：
+```bash
+./scripts/v51_smoke_acceptance.sh
+```
+
+该脚本会自动检查：
+- Python 导入和 CLI 命令
+- pytest 测试套件
+- 前端类型检查和构建
+- API 端点 smoke 测试
+- .gitignore 规则
+
+### 测试基线
+
+- **当前测试基线**: 1252/1252 passed
+- **新增测试**:
+  - `test_v51_api_e2e_smoke.py`: 17 个端到端 smoke 测试
+  - `test_v51_frontend_quality.py`: 8 个前端质量检查
+  - `test_v51_api_security.py`: 9 个 API 安全测试
+
+### 验收覆盖项
+
+**API 后端**:
+- ✅ 统一响应格式 `{ok, error, data}`
+- ✅ 中文错误消息
+- ✅ 不暴露 traceback、绝对路径、API 密钥
+- ✅ Stub 模式安全运行
+- ✅ 所有端点返回 envelope
+
+**前端**:
+- ✅ 9 个页面组件
+- ✅ 中文导航和标题
+- ✅ 错误和加载状态处理
+- ✅ 空状态提示
+- ✅ API 客户端正确处理 envelope
+
+**安全**:
+- ✅ 不暴露 API 密钥
+- ✅ 不暴露 traceback
+- ✅ 不暴露绝对路径
+- ✅ Config plan 不写文件
+- ✅ Stub 模式不调用真实 LLM
+
 ## 使用方式
 
 - 做架构判断时，优先读 `novel-content-factory-architecture.md`。

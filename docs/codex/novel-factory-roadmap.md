@@ -1148,7 +1148,27 @@ API 端点：
 - 前端构建配置测试通过
 - 全量测试通过
 
-状态：**已通过验收**，测试基线 1218/1218。
+状态：**已通过验收**，测试基线 1252/1252。
+
+## Post-Acceptance Hardening
+
+v5.1 已完成 Post-Acceptance Hardening，新增：
+
+**Smoke 验收脚本**：
+- `scripts/v51_smoke_acceptance.sh` - 一键验收脚本
+
+**新增测试**：
+- `test_v51_api_e2e_smoke.py` - 17 个端到端 smoke 测试
+- `test_v51_frontend_quality.py` - 8 个前端质量检查
+- `test_v51_api_security.py` - 9 个 API 安全测试
+
+**验收覆盖**：
+- ✅ API 统一响应格式
+- ✅ 中文错误消息
+- ✅ 不暴露 traceback、绝对路径、API 密钥
+- ✅ Stub 模式安全运行
+- ✅ 前端中文导航和错误处理
+- ✅ Config plan 不写文件
 
 ## v5.2+：多模型与生产治理
 
