@@ -83,7 +83,7 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1255/1255 passed
+- **当前测试基线**: 1293/1293 passed
 - **新增测试**:
   - `test_v51_api_e2e_smoke.py`: 17 个端到端 smoke 测试
   - `test_v51_frontend_quality.py`: 8 个前端质量检查
@@ -132,7 +132,7 @@ npm run dev
 - ✅ Acceptance summary 包含 partial 计数
 
 **前端**:
-- ✅ 9 个页面组件
+- ✅ 10 个页面组件
 - ✅ 中文导航、标题、状态
 - ✅ StatusBadge 统一组件
 - ✅ EmptyState/ErrorState 统一组件
@@ -188,7 +188,21 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.1.2 Chapter & Status Model Alignment 已通过验收，测试基线 1264/1264**。
+当前开发基线是 **v5.1.3 Author Workflow Usability Closure 已通过验收，测试基线 1293/1293**。
+
+**v5.1.3 核心变更:**
+- 新增章节详情 API：`GET /api/projects/{id}/chapters/{num}` 返回正文内容
+- 新增 ChapterReader 页面：路由 `/projects/:id/chapters/:num`，阅读宽度排版
+- ProjectDetail 章节表新增"操作"列：有正文→"查看正文"，无正文→"生成本章"
+- Stub 内容按章节号区分：3 套故事模板 + 确定性动态生成，每章 ≥500 字
+- NextAction 只检查最近一次运行（不再被历史失败误导）
+- Run 结果页新增操作按钮：查看正文/生成下一章/重新运行
+- Settings 页改为配置草案生成器，Provider 切换自动更新字段
+- Review 空状态说明当前流程直接发布
+- Acceptance 卡片默认隐藏 capability_id
+- Onboarding 自动生成项目 ID（CJK 感知 slug）
+- i18n 新增 `blocked: '已阻塞'` 映射
+- 版本号统一更新至 v5.1.3
 
 **v5.1.2 核心变更:**
 - 统一章节状态模型：`chapter.status` vs `workflow_run.status` vs `queue.status` 明确区分

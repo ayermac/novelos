@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { get, post } from '../lib/api'
 import { tLlmMode } from '../lib/i18n'
-import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
@@ -161,9 +160,11 @@ export default function Settings() {
         </div>
         <div className="card-body">
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-            <StatusBadge status={data.llm_mode} />
+            <span className={`status-badge status-${data.llm_mode}`}>
+              {tLlmMode(data.llm_mode)}
+            </span>
             <span style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-              {isStub ? '演示模式 — 返回占位内容，不调用真实 LLM' : '真实 LLM — 将调用外部 API 生成内容'}
+              {isStub ? '返回占位内容，不调用真实 LLM' : '将调用外部 API 生成内容'}
             </span>
           </div>
           <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>

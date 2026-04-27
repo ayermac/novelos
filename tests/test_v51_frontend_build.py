@@ -125,10 +125,10 @@ class TestFrontendBuildConfig:
         assert '"name": "novel-factory-frontend"' in content
 
     def test_package_json_has_correct_version(self):
-        """package.json has v5.1.0 version."""
+        """package.json has v5.1.3 version."""
         package_json = Path(__file__).parent.parent / "frontend" / "package.json"
         content = package_json.read_text()
-        assert '"version": "5.1.0"' in content
+        assert '"version": "5.1.3"' in content
 
     def test_package_json_has_react_dependencies(self):
         """package.json has React dependencies."""

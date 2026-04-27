@@ -267,6 +267,20 @@ def test_api_smoke():
             print(f"✗ GET /api/acceptance: {e}")
             tests_failed += 1
         
+        # Chapter detail endpoint (v5.1.3)
+        try:
+            resp = client.get("/api/projects/smoke_test_project/chapters/1")
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["ok"] == True
+            assert "content" in data["data"]
+            assert data["data"]["chapter_number"] == 1
+            print("✓ GET /api/projects/{id}/chapters/{num}")
+            tests_passed += 1
+        except Exception as e:
+            print(f"✗ GET /api/projects/{id}/chapters/{num}: {e}")
+            tests_failed += 1
+        
         return tests_passed, tests_failed
         
     finally:
@@ -364,7 +378,7 @@ if [ $FAIL_COUNT -eq 0 ]; then
     echo ""
     echo -e "${GREEN}=== All smoke tests passed! ===${NC}"
     echo ""
-    echo "v5.1 is ready for acceptance."
+    echo "v5.1.3 is ready for acceptance."
     echo ""
     echo "Quick start:"
     echo "  API:      novelos api --host 127.0.0.1 --port 8765 --llm-mode stub"
