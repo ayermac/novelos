@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import { post, get } from '../lib/api'
 import { tLlmMode, tChapterStatus } from '../lib/i18n'
 import StatusBadge from '../components/StatusBadge'
@@ -49,6 +49,7 @@ function findDefaultChapter(chapters: Chapter[]): Chapter | null {
 }
 
 export default function Run() {
+  const [searchParams] = useSearchParams()
   const [projects, setProjects] = useState<Project[]>([])
   const [selectedProject, setSelectedProject] = useState<Project | null>(null)
   const [, setWorkspace] = useState<Workspace | null>(null)
@@ -61,14 +62,22 @@ export default function Run() {
   const [result, setResult] = useState<RunResult | null>(null)
   const [error, setError] = useState('')
 
+  // Read query params for pre-selection
+  const queryProjectId = searchParams.get('project_id')
+  const queryChapter = searchParams.get('chapter')
+
   // Load projects list
   useEffect(() => {
     get<Project[]>('/projects').then((res) => {
       if (res.ok && res.data && res.data.length > 0) {
         setProjects(res.data)
-        const first = res.data[0]
-        setSelectedProject(first)
-        loadWorkspace(first.project_id)
+        // Use query param project if valid, else first project
+        const targetId = queryProjectId && res.data.some(p => p.project_id === queryProjectId)
+          ? queryProjectId
+          : res.data[0].project_id
+        const target = res.data.find(p => p.project_id === targetId) || res.data[0]
+        setSelectedProject(target)
+        loadWorkspace(target.project_id)
       }
     })
   }, [])
@@ -80,10 +89,13 @@ export default function Run() {
         const chs = res.data.chapters || []
         setChapters(chs)
         const defaultCh = findDefaultChapter(chs)
+        // Use query param chapter if valid and runnable, else default
+        const qCh = queryChapter ? parseInt(queryChapter) : null
+        const useQueryChapter = qCh && chs.some(c => c.chapter_number === qCh && isRunnable(c))
         setForm((prev) => ({
           ...prev,
           project_id: projectId,
-          chapter: defaultCh ? defaultCh.chapter_number : 1,
+          chapter: useQueryChapter ? qCh : (defaultCh ? defaultCh.chapter_number : 1),
         }))
       }
     })
@@ -194,37 +206,39 @@ export default function Run() {
               {result.message}
             </div>
             <div className="flex gap-2">
+              {result.chapter_status === 'published' && (
+                <Link
+                  to={`/projects/${result.project_id}/chapters/${result.chapter}`}
+                  className="btn btn-primary"
+                >
+                  查看正文
+                </Link>
+              )}
+              {(result.chapter_status === 'review' || result.requires_human) && (
+                <Link to="/review" className="btn btn-primary">
+                  进入审核
+                </Link>
+              )}
+              {result.workflow_status === 'blocked' || result.workflow_status === 'failed' ? (
+                <button onClick={handleRetry} className="btn btn-secondary">
+                  重新运行
+                </button>
+              ) : result.chapter_status !== 'published' ? (
+                <Link to="/review" className="btn btn-secondary">
+                  进入审核
+                </Link>
+              ) : null}
+              {result.chapter_status === 'published' && (
+                <button onClick={handleRetry} className="btn btn-secondary">
+                  继续生成下一章
+                </button>
+              )}
               <Link
                 to={`/projects/${result.project_id}`}
-                className="btn btn-primary"
+                className="btn btn-secondary"
               >
                 查看项目
               </Link>
-              {result.workflow_status === 'blocked' || result.workflow_status === 'failed' ? (
-                <>
-                  <Link to="/review" className="btn btn-secondary">
-                    进入审核
-                  </Link>
-                  <button
-                    onClick={handleRetry}
-                    className="btn btn-secondary"
-                  >
-                    重新运行
-                  </button>
-                </>
-              ) : (
-                <>
-                  <Link to="/review" className="btn btn-secondary">
-                    进入审核
-                  </Link>
-                  <button
-                    onClick={handleRetry}
-                    className="btn btn-secondary"
-                  >
-                    重新生成
-                  </button>
-                </>
-              )}
             </div>
           </div>
         </div>

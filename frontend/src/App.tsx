@@ -3,6 +3,7 @@ import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Projects from './pages/Projects'
 import ProjectDetail from './pages/ProjectDetail'
+import ChapterReader from './pages/ChapterReader'
 import Onboarding from './pages/Onboarding'
 import Run from './pages/Run'
 import Review from './pages/Review'
@@ -18,6 +19,7 @@ function App() {
           <Route index element={<Dashboard />} />
           <Route path="projects" element={<Projects />} />
           <Route path="projects/:id" element={<ProjectDetail />} />
+          <Route path="projects/:projectId/chapters/:chapterNumber" element={<ChapterReader />} />
           <Route path="onboarding" element={<Onboarding />} />
           <Route path="run" element={<Run />} />
           <Route path="review" element={<Review />} />

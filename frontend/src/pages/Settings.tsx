@@ -35,11 +35,35 @@ interface SettingsData {
   diagnostics: Diagnostics
 }
 
+const PROVIDER_OPTIONS = [
+  { value: 'openai_compatible', label: 'OpenAI 兼容' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'anthropic', label: 'Anthropic' },
+  { value: 'deepseek', label: 'DeepSeek' },
+]
+
+const MODEL_OPTIONS = [
+  { value: 'gpt-4', label: 'GPT-4' },
+  { value: 'gpt-4o', label: 'GPT-4o' },
+  { value: 'gpt-3.5-turbo', label: 'GPT-3.5 Turbo' },
+  { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet' },
+  { value: 'deepseek-chat', label: 'DeepSeek Chat' },
+  { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner' },
+]
+
 export default function Settings() {
   const [data, setData] = useState<SettingsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [draft, setDraft] = useState<string | null>(null)
+  const [wizardForm, setWizardForm] = useState({
+    provider: 'openai_compatible',
+    base_url: 'https://api.openai.com/v1',
+    model: 'gpt-4',
+    api_key_env: 'OPENAI_API_KEY',
+    default_llm: 'default',
+    agent_llm: '',
+  })
 
   const load = () => {
     setLoading(true)
@@ -59,18 +83,35 @@ export default function Settings() {
   }, [])
 
   const handleGenerateDraft = async () => {
-    const res = await post('/config/plan', {
-      provider: 'openai',
-      model: 'gpt-4',
-      api_key_env: 'OPENAI_API_KEY',
-      default_llm: 'default',
-    })
+    const res = await post('/config/plan', wizardForm)
 
     if (res.ok && res.data) {
       setDraft((res.data as { draft: string }).draft)
     } else {
       setError(res.error?.message || '生成配置草案失败')
     }
+  }
+
+  // Update base_url when provider changes
+  const handleProviderChange = (provider: string) => {
+    const urlMap: Record<string, string> = {
+      openai_compatible: 'https://api.openai.com/v1',
+      openai: 'https://api.openai.com/v1',
+      anthropic: 'https://api.anthropic.com/v1',
+      deepseek: 'https://api.deepseek.com/v1',
+    }
+    const envMap: Record<string, string> = {
+      openai_compatible: 'OPENAI_API_KEY',
+      openai: 'OPENAI_API_KEY',
+      anthropic: 'ANTHROPIC_API_KEY',
+      deepseek: 'DEEPSEEK_API_KEY',
+    }
+    setWizardForm({
+      ...wizardForm,
+      provider,
+      base_url: urlMap[provider] || wizardForm.base_url,
+      api_key_env: envMap[provider] || wizardForm.api_key_env,
+    })
   }
 
   if (loading) {
@@ -108,7 +149,7 @@ export default function Settings() {
         <div className="alert alert-warn" style={{ marginBottom: '16px' }}>
           <strong>当前为演示模式</strong>
           <div style={{ marginTop: '4px', fontSize: '14px' }}>
-            未配置真实 LLM，所有生成操作使用占位符返回。如需真实生成，请配置 LLM Profile 并使用 --llm-mode real 启动。
+            未配置真实 LLM，所有生成操作使用占位符返回。如需真实生成，请使用下方配置草案生成器配置 LLM 并以 --llm-mode real 启动。
           </div>
         </div>
       )}
@@ -160,7 +201,7 @@ export default function Settings() {
           </div>
           {!data.diagnostics.has_profiles && (
             <div style={{ marginTop: '16px', padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-              提示：暂无 LLM 档案。使用下方「配置向导」生成草案，保存到 config/local.yaml 后重启服务即可启用真实 LLM。
+              提示：暂无 LLM 档案。使用下方「配置草案生成器」生成草案，保存到 config/local.yaml 后重启服务即可启用真实 LLM。
             </div>
           )}
         </div>
@@ -218,7 +259,7 @@ export default function Settings() {
           ) : (
             <EmptyState
               title="暂无 LLM 档案"
-              hint="使用配置向导生成档案草案，或手动编辑配置文件。"
+              hint="使用配置草案生成器创建档案，或手动编辑配置文件。"
             />
           )}
         </div>
@@ -253,21 +294,88 @@ export default function Settings() {
         </div>
       )}
 
-      {/* Config Wizard */}
+      {/* Config Draft Generator */}
       <div className="card">
         <div className="card-header">
-          <h3>配置向导</h3>
-          <span className="text-secondary">生成配置草案（仅预览，不写入文件）</span>
+          <h3>配置草案生成器</h3>
+          <span className="text-secondary">填写表单生成 YAML 草案（仅预览，不写入文件）</span>
         </div>
         <div className="card-body">
           <div style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-secondary)' }}>
-            向导会生成一份 YAML 配置草案。你需要：
+            根据表单生成配置草案，你需要：
             <ol style={{ marginTop: '8px', paddingLeft: '20px' }}>
               <li>将草案保存到 <code>config/local.yaml</code></li>
-              <li>设置环境变量 <code>export OPENAI_API_KEY=your-key</code></li>
+              <li>设置环境变量（如 <code>export OPENAI_API_KEY=your-key</code>）</li>
               <li>使用 <code>novelos api --config config/local.yaml --llm-mode real</code> 启动</li>
             </ol>
           </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+            <div className="form-group">
+              <label>提供商 (Provider)</label>
+              <select
+                className="form-control"
+                value={wizardForm.provider}
+                onChange={(e) => handleProviderChange(e.target.value)}
+              >
+                {PROVIDER_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>模型</label>
+              <select
+                className="form-control"
+                value={wizardForm.model}
+                onChange={(e) => setWizardForm({ ...wizardForm, model: e.target.value })}
+              >
+                {MODEL_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>{opt.label}</option>
+                ))}
+              </select>
+            </div>
+            <div className="form-group">
+              <label>Base URL</label>
+              <input
+                type="text"
+                className="form-control"
+                value={wizardForm.base_url}
+                onChange={(e) => setWizardForm({ ...wizardForm, base_url: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label>API Key 环境变量名</label>
+              <input
+                type="text"
+                className="form-control"
+                value={wizardForm.api_key_env}
+                onChange={(e) => setWizardForm({ ...wizardForm, api_key_env: e.target.value })}
+              />
+              <div className="hint">仅填写环境变量名，不要输入真实的 Key</div>
+            </div>
+            <div className="form-group">
+              <label>Profile 名称</label>
+              <input
+                type="text"
+                className="form-control"
+                value={wizardForm.default_llm}
+                onChange={(e) => setWizardForm({ ...wizardForm, default_llm: e.target.value })}
+              />
+            </div>
+            <div className="form-group">
+              <label>Agent 路由（可选）</label>
+              <input
+                type="text"
+                className="form-control"
+                value={wizardForm.agent_llm}
+                onChange={(e) => setWizardForm({ ...wizardForm, agent_llm: e.target.value })}
+                placeholder="author=default,editor=default"
+              />
+              <div className="hint">格式: agent名=profile名，逗号分隔</div>
+            </div>
+          </div>
+
           <button onClick={handleGenerateDraft} className="btn btn-primary">
             生成配置草案
           </button>

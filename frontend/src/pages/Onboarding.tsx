@@ -11,11 +11,29 @@ interface ProjectResult {
   chapters: Array<{ chapter_number: number }>
 }
 
+/** Generate a project ID from a Chinese/English name */
+function generateProjectId(name: string): string {
+  if (!name) return ''
+  // Use pinyin-like approach: extract ASCII chars, or transliterate
+  let id = name
+    .toLowerCase()
+    .replace(/[\u4e00-\u9fff]/g, '') // Remove CJK
+    .replace(/[^a-z0-9_]/g, '_') // Replace non-alphanumeric with underscore
+    .replace(/_+/g, '_') // Collapse multiple underscores
+    .replace(/^_|_$/g, '') // Trim leading/trailing underscores
+  // If all CJK (no ASCII), use a prefix + hash
+  if (!id) {
+    const hash = name.split('').reduce((a, c) => a + c.charCodeAt(0), 0)
+    id = `novel_${hash.toString(36)}`
+  }
+  return id
+}
+
 export default function Onboarding() {
   const [form, setForm] = useState({
     project_id: '',
     name: '',
-    genre: '',
+    genre: 'urban',
     description: '',
     total_chapters_planned: 500,
     target_words: 1500000,
@@ -26,6 +44,21 @@ export default function Onboarding() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<ProjectResult | null>(null)
+  const [idManuallyEdited, setIdManuallyEdited] = useState(false)
+
+  const handleNameChange = (name: string) => {
+    setForm((prev) => ({
+      ...prev,
+      name,
+      // Auto-generate ID if user hasn't manually edited it
+      project_id: idManuallyEdited ? prev.project_id : generateProjectId(name),
+    }))
+  }
+
+  const handleIdChange = (id: string) => {
+    setIdManuallyEdited(true)
+    setForm((prev) => ({ ...prev, project_id: id }))
+  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -37,7 +70,13 @@ export default function Onboarding() {
     if (res.ok && res.data) {
       setResult(res.data as ProjectResult)
     } else {
-      setError(res.error?.message || '创建失败')
+      const msg = res.error?.message || '创建失败'
+      // Translate known error codes
+      if (msg.includes('已存在')) {
+        setError(`项目 ID '${form.project_id}' 已被使用，请换一个项目 ID。`)
+      } else {
+        setError(msg)
+      }
     }
     setLoading(false)
   }
@@ -75,7 +114,10 @@ export default function Onboarding() {
               >
                 进入项目工作台
               </Link>
-              <Link to="/run" className="btn btn-secondary">
+              <Link
+                to={`/run?project_id=${result.project.project_id}&chapter=1`}
+                className="btn btn-secondary"
+              >
                 生成第一章
               </Link>
             </div>
@@ -103,39 +145,40 @@ export default function Onboarding() {
                 第一步：基础信息
               </div>
               <div className="form-group">
-                <label>项目 ID</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  value={form.project_id}
-                  onChange={(e) => setForm({ ...form, project_id: e.target.value })}
-                  placeholder="例如：my_xianxia_novel"
-                  required
-                />
-                <div className="hint">唯一标识符，只能包含字母、数字、下划线</div>
-              </div>
-
-              <div className="form-group">
                 <label>小说名称</label>
                 <input
                   type="text"
                   className="form-control"
                   value={form.name}
-                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  onChange={(e) => handleNameChange(e.target.value)}
+                  placeholder="例如：斗破苍穹"
                   required
                 />
               </div>
 
               <div className="form-group">
-                <label>类型 / 题材</label>
+                <label>项目 ID</label>
+                <input
+                  type="text"
+                  className="form-control"
+                  value={form.project_id}
+                  onChange={(e) => handleIdChange(e.target.value)}
+                  placeholder="根据名称自动生成，可手动修改"
+                  required
+                />
+                <div className="hint">唯一标识符，只能包含字母、数字、下划线（根据名称自动生成）</div>
+              </div>
+
+              <div className="form-group">
+                <label>类型 / 题材 <span style={{ color: 'var(--danger)' }}>*</span></label>
                 <select
                   className="form-control"
                   value={form.genre}
                   onChange={(e) => setForm({ ...form, genre: e.target.value })}
+                  required
                 >
-                  <option value="">请选择</option>
-                  <option value="fantasy">奇幻</option>
                   <option value="urban">都市</option>
+                  <option value="fantasy">奇幻</option>
                   <option value="sci-fi">科幻</option>
                   <option value="xianxia">仙侠</option>
                   <option value="romance">言情</option>

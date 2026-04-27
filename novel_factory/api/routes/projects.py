@@ -73,6 +73,47 @@ async def get_project(request: Request, project_id: str) -> EnvelopeResponse:
         return error_response("INTERNAL_ERROR", f"获取项目失败: {str(e)}")
 
 
+@router.get("/projects/{project_id}/chapters/{chapter_number}")
+async def get_chapter_detail(
+    request: Request, project_id: str, chapter_number: int
+) -> EnvelopeResponse:
+    """Get a single chapter's full detail including content.
+
+    This is the author reader endpoint — content is included.
+    """
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        # Verify project exists
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        # Get chapter
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+
+        # Return clean chapter data (no internal DB fields)
+        return envelope_response({
+            "project_id": project_id,
+            "project_name": project.get("name", ""),
+            "chapter_number": chapter.get("chapter_number", chapter_number),
+            "title": chapter.get("title", ""),
+            "status": chapter.get("status", ""),
+            "word_count": chapter.get("word_count", 0),
+            "quality_score": chapter.get("quality_score"),
+            "content": chapter.get("content", ""),
+            "created_at": chapter.get("created_at", ""),
+            "updated_at": chapter.get("updated_at", ""),
+        })
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"获取章节详情失败: {str(e)}")
+
+
 @router.get("/projects/{project_id}/workspace")
 async def get_project_workspace(request: Request, project_id: str) -> EnvelopeResponse:
     """Get project workspace with chapters and recent runs."""

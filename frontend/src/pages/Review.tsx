@@ -137,8 +137,8 @@ export default function Review() {
           ) : (
             <EmptyState
               title="当前没有待审核章节"
-              hint="可以先生成章节"
-              action={{ label: '去生成章节', to: '/run' }}
+              hint="当前流程下章节生成后会直接发布。已发布章节可在项目工作台查看正文。"
+              action={{ label: '查看项目列表', to: '/projects' }}
             />
           )}
         </div>

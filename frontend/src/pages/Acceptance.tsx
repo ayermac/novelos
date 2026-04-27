@@ -29,6 +29,7 @@ export default function Acceptance() {
   const [data, setData] = useState<AcceptanceData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const load = () => {
     setLoading(true)
@@ -73,7 +74,7 @@ export default function Acceptance() {
 
   return (
     <div>
-      <PageHeader title="开发验收矩阵" />
+      <PageHeader title="功能验收" />
 
       {/* Summary */}
       <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(5, 1fr)' }}>
@@ -120,6 +121,7 @@ export default function Acceptance() {
           >
             {data.capabilities.map((cap) => {
               const statusInfo = tAcceptanceStatus(cap.status)
+              const isExpanded = expandedId === cap.capability_id
               return (
                 <div
                   key={cap.capability_id}
@@ -147,15 +149,6 @@ export default function Acceptance() {
                   </div>
                   <div
                     style={{
-                      fontSize: '12px',
-                      color: 'var(--text-secondary)',
-                      marginBottom: '8px',
-                    }}
-                  >
-                    {cap.capability_id}
-                  </div>
-                  <div
-                    style={{
                       fontSize: '13px',
                       color: 'var(--text-primary)',
                       marginBottom: '8px',
@@ -164,25 +157,41 @@ export default function Acceptance() {
                   >
                     {tCapabilityNotes(cap.notes)}
                   </div>
-                  <div
+                  <button
+                    onClick={() => setExpandedId(isExpanded ? null : cap.capability_id)}
                     style={{
-                      display: 'flex',
-                      gap: '8px',
+                      background: 'none',
+                      border: 'none',
+                      color: 'var(--primary)',
+                      cursor: 'pointer',
                       fontSize: '12px',
-                      color: 'var(--text-secondary)',
-                      flexWrap: 'wrap',
+                      padding: 0,
                     }}
                   >
-                    {cap.web_route && (
-                      <span>
-                        Web:{' '}
-                        <Link to={cap.web_route} style={{ color: 'var(--primary)' }}>
-                          {cap.web_route}
-                        </Link>
-                      </span>
-                    )}
-                    {cap.cli_command && <span>CLI: {cap.cli_command}</span>}
-                  </div>
+                    {isExpanded ? '收起详情' : '查看详情'}
+                  </button>
+                  {isExpanded && (
+                    <div
+                      style={{
+                        marginTop: '8px',
+                        paddingTop: '8px',
+                        borderTop: '1px solid var(--border)',
+                        fontSize: '12px',
+                        color: 'var(--text-secondary)',
+                      }}
+                    >
+                      <div>技术 ID: {cap.capability_id}</div>
+                      {cap.web_route && (
+                        <div>
+                          Web 路由:{' '}
+                          <Link to={cap.web_route} style={{ color: 'var(--primary)' }}>
+                            {cap.web_route}
+                          </Link>
+                        </div>
+                      )}
+                      {cap.cli_command && <div>CLI 命令: {cap.cli_command}</div>}
+                    </div>
+                  )}
                 </div>
               )
             })}

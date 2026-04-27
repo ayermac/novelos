@@ -215,19 +215,43 @@ export default function ProjectDetail() {
                     <th>状态</th>
                     <th>字数</th>
                     <th>质量分</th>
+                    <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.chapters.slice(0, 20).map((chapter) => (
-                    <tr key={chapter.chapter_number}>
-                      <td>第 {chapter.chapter_number} 章</td>
-                      <td>
-                        <StatusBadge status={chapter.status} />
-                      </td>
-                      <td>{chapter.word_count}</td>
-                      <td>{chapter.quality_score ?? '-'}</td>
-                    </tr>
-                  ))}
+                  {data.chapters.slice(0, 20).map((chapter) => {
+                    const hasContent = (chapter.word_count || 0) > 0
+                    return (
+                      <tr key={chapter.chapter_number}>
+                        <td>第 {chapter.chapter_number} 章</td>
+                        <td>
+                          <StatusBadge status={chapter.status} />
+                        </td>
+                        <td>{chapter.word_count}</td>
+                        <td>{chapter.quality_score ?? '-'}</td>
+                        <td>
+                          {hasContent ? (
+                            <Link
+                              to={`/projects/${data.project.project_id}/chapters/${chapter.chapter_number}`}
+                              className="btn btn-secondary"
+                              style={{ fontSize: '13px', padding: '4px 12px' }}
+                            >
+                              查看正文
+                            </Link>
+                          ) : (
+                            <Link
+                              to={`/run?project_id=${data.project.project_id}&chapter=${chapter.chapter_number}`}
+                              className="btn btn-primary"
+                              style={{ fontSize: '13px', padding: '4px 12px' }}
+                            >
+                              生成本章
+                            </Link>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })
+                  }
                 </tbody>
               </table>
             </div>
