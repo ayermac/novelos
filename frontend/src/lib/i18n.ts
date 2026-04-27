@@ -13,6 +13,7 @@ export const STATUS_MAP: Record<string, string> = {
   pending: '等待中',
   running: '运行中',
   failed: '失败',
+  blocked: '已阻塞',
   partial: '迁移中',
   pass: '通过',
   error: '错误',

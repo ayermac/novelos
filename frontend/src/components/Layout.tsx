@@ -20,7 +20,7 @@ export default function Layout() {
         <div className="sidebar-brand">
           <Book size={20} />
           <span>小说工厂</span>
-          <span className="version">v5.1.1</span>
+          <span className="version">v5.1.2</span>
         </div>
 
         <nav className="sidebar-nav">

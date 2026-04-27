@@ -41,7 +41,10 @@ interface Workspace {
 function NextAction({ data }: { data: Workspace }) {
   const reviewCount = data.stats.status_counts['review'] || 0
   const blockingCount = data.stats.status_counts['blocking'] || 0
-  const failedRuns = data.recent_runs.filter((r) => r.status === 'failed')
+  // Only check the latest run (first in list, assumed sorted by time desc)
+  // Historical failed runs should not override a successful latest run
+  const latestRun = data.recent_runs.length > 0 ? data.recent_runs[0] : null
+  const latestRunFailed = latestRun !== null && (latestRun.status === 'failed' || latestRun.status === 'blocked')
 
   let title = ''
   let hint = ''
@@ -55,9 +58,11 @@ function NextAction({ data }: { data: Workspace }) {
     title = '有待审核章节'
     hint = `${reviewCount} 个章节等待审核。`
     action = { label: '进入审核', to: '/review' }
-  } else if (failedRuns.length > 0) {
-    title = '最近运行失败'
-    hint = '最近一次运行失败，建议检查配置后重试。'
+  } else if (latestRunFailed) {
+    title = latestRun!.status === 'blocked' ? '最近运行被阻塞' : '最近运行失败'
+    hint = latestRun!.status === 'blocked'
+      ? '最近一次运行被阻塞，建议检查章节状态后重试。'
+      : '最近一次运行失败，建议检查配置后重试。'
     action = { label: '重新生成', to: '/run' }
   } else if (data.chapters.length === 0) {
     title = '开始创作'

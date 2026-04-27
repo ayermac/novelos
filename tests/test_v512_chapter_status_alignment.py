@@ -10,6 +10,9 @@ Tests for:
 7. Run.tsx chapter selector is a <select>
 8. Run.tsx result panel shows workflow_status/chapter_status in Chinese
 9. ProjectDetail recent_runs shows fallback for blocked with no error_message
+10. NextAction only checks latest run, not any historical failed
+11. i18n STATUS_MAP covers blocked -> 已阻塞
+12. Layout sidebar version is v5.1.2
 """
 
 from __future__ import annotations
@@ -285,4 +288,73 @@ class TestFrontendProjectDetail:
         assert "blocked" in content, "Should handle blocked status"
         assert "工作流被阻塞" in content, (
             "Should show Chinese fallback for blocked without error_message"
+        )
+
+    def test_next_action_checks_latest_run_only(self):
+        """NextAction should only check the latest run, not any historical failed."""
+        frontend_src = Path(__file__).parent.parent / "frontend" / "src"
+        detail_file = frontend_src / "pages" / "ProjectDetail.tsx"
+        content = detail_file.read_text()
+
+        # Should NOT filter all historical failed runs
+        assert "data.recent_runs.filter" not in content, (
+            "NextAction should not filter all historical runs; use latestRun instead"
+        )
+        # Should check only the latest (first) run
+        assert "latestRun" in content, (
+            "NextAction should use latestRun (first element) instead of filtering all runs"
+        )
+        # Should reference recent_runs[0] for latest
+        assert "recent_runs[0]" in content or "latestRun" in content, (
+            "Should get the latest run as recent_runs[0]"
+        )
+
+
+class TestI18nBlockedMapping:
+    """i18n STATUS_MAP covers workflow_run.status blocked."""
+
+    def test_blocked_mapped_to_chinese(self):
+        """STATUS_MAP should map blocked -> 已阻塞."""
+        frontend_src = Path(__file__).parent.parent / "frontend" / "src"
+        i18n_file = frontend_src / "lib" / "i18n.ts"
+        assert i18n_file.exists()
+        content = i18n_file.read_text()
+
+        # Should have blocked mapping in STATUS_MAP
+        assert "blocked:" in content, "STATUS_MAP should contain 'blocked' key"
+        assert "已阻塞" in content, "STATUS_MAP should map blocked to 已阻塞"
+
+    def test_all_workflow_statuses_mapped(self):
+        """All workflow_run.status values should have Chinese mappings."""
+        frontend_src = Path(__file__).parent.parent / "frontend" / "src"
+        i18n_file = frontend_src / "lib" / "i18n.ts"
+        content = i18n_file.read_text()
+
+        required_mappings = {
+            "completed": "已完成",
+            "running": "运行中",
+            "failed": "失败",
+            "blocked": "已阻塞",
+        }
+        for key, value in required_mappings.items():
+            assert f"{key}:" in content and value in content, (
+                f"STATUS_MAP should map {key} -> {value}"
+            )
+
+
+class TestLayoutVersion:
+    """Layout sidebar shows correct version."""
+
+    def test_sidebar_version_is_v512(self):
+        """Sidebar version should display v5.1.2."""
+        frontend_src = Path(__file__).parent.parent / "frontend" / "src"
+        layout_file = frontend_src / "components" / "Layout.tsx"
+        assert layout_file.exists()
+        content = layout_file.read_text()
+
+        assert "v5.1.2" in content, (
+            "Layout sidebar should display v5.1.2, not older version"
+        )
+        assert "v5.1.1" not in content, (
+            "Layout sidebar should NOT still show v5.1.1"
         )
