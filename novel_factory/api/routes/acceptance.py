@@ -34,6 +34,7 @@ async def get_acceptance_matrix(request: Request) -> EnvelopeResponse:
         total = len(capabilities)
         passed = sum(1 for c in capabilities if c["status"] == "pass")
         failed = sum(1 for c in capabilities if c["status"] == "fail")
+        partial = sum(1 for c in capabilities if c["status"] == "partial")
 
         return envelope_response({
             "capabilities": capabilities,
@@ -41,6 +42,7 @@ async def get_acceptance_matrix(request: Request) -> EnvelopeResponse:
                 "total": total,
                 "passed": passed,
                 "failed": failed,
+                "partial": partial,
                 "pass_rate": f"{passed/total*100:.1f}%" if total > 0 else "0%",
             },
         })

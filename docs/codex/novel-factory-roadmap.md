@@ -1150,6 +1150,30 @@ API 端点：
 
 状态：**已通过验收**，测试基线 1252/1252。
 
+## v5.1.1：WebUI Product Reset
+
+目标：将 v5.1 React WebUI 从"API demo"升级为真正的"中文作者工作台"。
+
+范围：
+
+- 统一状态映射（completed→已完成, review→待审核, etc.）
+- 新增可复用组件（StatusBadge, EmptyState, ErrorState, PageHeader）
+- API 优雅降级（Style console 对缺失表返回 ok=true + 空数据）
+- 增强所有 9 个页面：
+  - Dashboard: 下一步建议卡片、快捷操作
+  - Projects: 中文类型标签
+  - ProjectDetail: NextAction 建议、章节进度统计
+  - Onboarding: Wizard 表单、成功结果面板
+  - Run: 项目信息展示、结构化结果面板
+  - Review: 统计概览、StatusBadge 中文
+  - Style: 优雅空状态、健康摘要
+  - Settings: 配置诊断、启动命令示例
+  - Acceptance: 卡片列表（防溢出）、partial 显示"迁移中"
+- 修复表格溢出：所有表格增加 overflowX: auto 容器
+- 完整 TypeScript 类型检查 + 生产构建
+
+状态：**已通过验收**，测试基线 1255/1255。
+
 ## Post-Acceptance Hardening
 
 v5.1 已完成 Post-Acceptance Hardening，新增：

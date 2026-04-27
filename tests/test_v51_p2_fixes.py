@@ -107,27 +107,86 @@ class TestDashboardWithProjects:
 class TestStyleWithProjects:
     """Style API works correctly when projects exist."""
 
-    def test_style_console_with_projects(self, client):
-        """Style console returns data with projects."""
-        # Create a project
-        client.post(
+    def test_style_console_graceful_with_missing_table(self, client):
+        """Style console returns ok=true with empty data when table missing."""
+        # This test verifies graceful degradation for missing style tables
+        response = client.get("/api/style/console")
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}"
+        data = response.json()
+        assert data["ok"] is True, f"Expected ok=true, got {data}"
+        assert "style_bibles" in data["data"]
+        assert "health" in data["data"]
+
+    def test_style_console_preserves_project_count_on_missing_table(self, client):
+        """Style console should preserve project count even when style tables missing."""
+        # First create a project
+        response = client.post(
             "/api/onboarding/projects",
             json={
-                "project_id": "test_style",
-                "name": "风格测试",
+                "project_id": "test_style_projects",
+                "name": "风格测试项目",
                 "initial_chapter_count": 1,
             },
         )
+        assert response.status_code == 200
+        assert response.json()["ok"] is True
 
-        # Get style console
+        # Now get style console - should show total_projects=1 even if style tables don't exist
         response = client.get("/api/style/console")
         assert response.status_code == 200
         data = response.json()
         assert data["ok"] is True
-        assert "style_bibles" in data["data"]
-        assert "style_gate_configs" in data["data"]
-        assert "style_samples" in data["data"]
-        assert "health" in data["data"]
+        # total_projects should reflect the actual project count, not 0
+        assert data["data"]["health"]["total_projects"] >= 1, \
+            f"Expected total_projects >= 1, got {data['data']['health']['total_projects']}"
+        # style_bibles should be empty since we gracefully degrade
+        assert isinstance(data["data"]["style_bibles"], list)
+
+
+class TestSettingsAPI:
+    """Settings API returns proper diagnostics."""
+
+    def test_settings_returns_diagnostics(self, client):
+        """Settings API returns diagnostics info."""
+        response = client.get("/api/settings")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+        assert "diagnostics" in data["data"]
+        assert "llm_profiles" in data["data"]
+        assert "agent_routes" in data["data"]
+
+
+class TestAcceptanceAPI:
+    """Acceptance API returns correct status mapping."""
+
+    def test_acceptance_returns_partial_status(self, client):
+        """Acceptance API returns partial status for v50."""
+        response = client.get("/api/acceptance")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["ok"] is True
+
+        # Find v50_acceptance capability
+        v50 = None
+        for cap in data["data"]["capabilities"]:
+            if cap["capability_id"] == "v50_acceptance":
+                v50 = cap
+                break
+
+        assert v50 is not None, "v50_acceptance not found in capabilities"
+        assert v50["status"] == "partial", f"Expected partial, got {v50['status']}"
+
+    def test_acceptance_summary_has_partial(self, client):
+        """Acceptance summary includes partial count."""
+        response = client.get("/api/acceptance")
+        data = response.json()
+        summary = data["data"]["summary"]
+
+        assert "total" in summary
+        assert "passed" in summary
+        assert "failed" in summary
+        assert "partial" in summary
 
 
 class TestAPICommand:

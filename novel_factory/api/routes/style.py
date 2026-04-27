@@ -77,4 +77,24 @@ async def get_style_console(request: Request) -> EnvelopeResponse:
         })
 
     except Exception as e:
+        err_msg = str(e).lower()
+        # Graceful degradation when style tables don't exist (old DB or empty DB)
+        if "no such table" in err_msg or "does not exist" in err_msg:
+            # Still get project count from repo (style tables don't affect projects)
+            try:
+                repo = get_repo(request)
+                projects = repo.list_projects()
+                total_projects = len(projects)
+            except Exception:
+                total_projects = 0
+            return envelope_response({
+                "style_bibles": [],
+                "style_gate_configs": [],
+                "style_samples": [],
+                "health": {
+                    "total_projects": total_projects,
+                    "projects_with_bible": 0,
+                    "gate_configs": 0,
+                },
+            })
         return error_response("INTERNAL_ERROR", f"获取风格管理数据失败: {str(e)}")

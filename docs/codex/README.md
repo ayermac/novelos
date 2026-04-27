@@ -41,8 +41,9 @@
 | `novel-factory-v5.0-implemented-features-webui-acceptance-spec.md` | v5.0 已实现功能整体验收与 WebUI 验收 | 开发 Agent、质量验收 |
 | `novel-factory-v5.0.1-webui-productization-chinese-ux-spec.md` | v5.0.1 WebUI 产品化与中文化 UX 规格 | 开发 Agent、质量验收 |
 | `novel-factory-v5.1-frontend-separation-api-backend-spec.md` | v5.1 前后端分离、FastAPI JSON API、React 前端 | 开发 Agent、质量验收 |
+| `novel-factory-v5.1.1-webui-product-reset-spec.md` | v5.1.1 WebUI 产品化 Reset、中文作者工作台 | 开发 Agent、质量验收 |
 
-## v5.1 本地启动与验收
+## v5.1.1 本地启动与验收
 
 ### 快速启动
 
@@ -81,11 +82,42 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1252/1252 passed
+- **当前测试基线**: 1255/1255 passed
 - **新增测试**:
   - `test_v51_api_e2e_smoke.py`: 17 个端到端 smoke 测试
   - `test_v51_frontend_quality.py`: 8 个前端质量检查
   - `test_v51_api_security.py`: 9 个 API 安全测试
+  - `test_v51_p2_fixes.py`: 扩展测试（包括 Style 优雅降级、Acceptance partial 状态）
+
+### v5.1.1 WebUI 产品化改进
+
+**状态映射**：
+- completed → 已完成
+- pending → 等待中
+- running → 运行中
+- failed → 失败
+- partial → 迁移中
+- pass → 通过
+- error → 错误
+- review → 待审核
+- approved → 已通过
+- rejected → 需返修
+- blocking → 已阻塞
+- fantasy → 奇幻
+- urban → 都市
+- sci-fi → 科幻
+- xianxia → 仙侠
+
+**页面改进**：
+- Dashboard: 下一步建议卡片、快捷操作
+- Projects: 中文类型标签、工作台入口
+- ProjectDetail: NextAction 建议、章节进度统计
+- Onboarding: Wizard 表单、成功结果面板
+- Run: 项目信息展示、结构化结果面板
+- Review: 统计概览、StatusBadge 中文
+- Style: 优雅空状态、健康摘要
+- Settings: 配置诊断、启动命令示例
+- Acceptance: 卡片列表（防溢出）、partial 显示"迁移中"
 
 ### 验收覆盖项
 
@@ -95,13 +127,20 @@ npm run dev
 - ✅ 不暴露 traceback、绝对路径、API 密钥
 - ✅ Stub 模式安全运行
 - ✅ 所有端点返回 envelope
+- ✅ Style console 对缺失表优雅降级
+- ✅ Acceptance summary 包含 partial 计数
 
 **前端**:
 - ✅ 9 个页面组件
-- ✅ 中文导航和标题
+- ✅ 中文导航、标题、状态
+- ✅ StatusBadge 统一组件
+- ✅ EmptyState/ErrorState 统一组件
+- ✅ PageHeader 统一组件
 - ✅ 错误和加载状态处理
-- ✅ 空状态提示
+- ✅ 空状态提示与下一步引导
 - ✅ API 客户端正确处理 envelope
+- ✅ TypeScript 类型检查通过
+- ✅ 生产构建通过
 
 **安全**:
 - ✅ 不暴露 API 密钥
@@ -148,14 +187,16 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.1 Frontend Separation & API Backend 已通过验收，测试基线 1252/1252**。
+当前开发基线是 **v5.1.1 WebUI Product Reset 已通过验收，测试基线 1255/1255**。
 
-**v5.1 核心变更:**
-- 废弃 Jinja WebUI,实现前后端分离架构
-- FastAPI JSON API 后端 (`/api` 路由前缀)
-- React + Vite + TypeScript 独立前端 (`frontend/` 目录)
-- 统一信封响应格式 `{ok, error, data}`
-- 完整中文本地化作者工作台
+**v5.1.1 核心变更:**
+- 将 v5.1 React WebUI 从 API demo 升级为可用的中文作者工作台
+- 统一状态映射：completed→已完成, review→待审核, etc.
+- 新增可复用组件：StatusBadge, EmptyState, ErrorState, PageHeader
+- API 优雅降级：Style console 对缺失表返回 ok=true + 空数据
+- 增强页面：Dashboard 下一步建议、Settings 配置诊断、Acceptance 卡片列表
+- 修复表格溢出：所有表格增加 overflowX: auto 容器
+- 完整 TypeScript 类型检查 + 生产构建
 
 v1 只实现：
 

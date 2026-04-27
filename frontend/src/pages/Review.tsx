@@ -1,5 +1,9 @@
 import { useEffect, useState } from 'react'
 import { get } from '../lib/api'
+import StatusBadge from '../components/StatusBadge'
+import EmptyState from '../components/EmptyState'
+import ErrorState from '../components/ErrorState'
+import PageHeader from '../components/PageHeader'
 
 interface ReviewItem {
   project_id: string
@@ -21,37 +25,55 @@ interface ReviewData {
   }
 }
 
-const statusLabels: Record<string, string> = {
-  review: '待审核',
-  blocking: '已阻塞',
-  approved: '已通过',
-  rejected: '需返修',
-}
-
 export default function Review() {
   const [data, setData] = useState<ReviewData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState('')
 
-  useEffect(() => {
+  const load = () => {
+    setLoading(true)
+    setError('')
     get<ReviewData>('/review/workbench').then((res) => {
       if (res.ok && res.data) {
         setData(res.data)
+      } else {
+        setError(res.error?.message || '获取审核工作台失败')
       }
       setLoading(false)
     })
+  }
+
+  useEffect(() => {
+    load()
   }, [])
 
   if (loading) {
     return <div>加载中...</div>
   }
 
+  if (error) {
+    return (
+      <ErrorState
+        title="加载失败"
+        message={error}
+        onRetry={load}
+      />
+    )
+  }
+
   if (!data) {
-    return <div>加载失败</div>
+    return (
+      <ErrorState
+        title="加载失败"
+        message="无法获取审核数据"
+        onRetry={load}
+      />
+    )
   }
 
   return (
     <div>
-      <h2 style={{ marginBottom: '24px' }}>审核工作台</h2>
+      <PageHeader title="审核工作台" />
 
       {/* Stats */}
       <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
@@ -86,37 +108,38 @@ export default function Review() {
         </div>
         <div className="card-body">
           {data.queue.length > 0 ? (
-            <table className="data-table">
-              <thead>
-                <tr>
-                  <th>章节</th>
-                  <th>项目</th>
-                  <th>状态</th>
-                  <th>质量分</th>
-                  <th>问题数</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.queue.map((item) => (
-                  <tr key={`${item.project_id}-${item.chapter_number}`}>
-                    <td>第 {item.chapter_number} 章</td>
-                    <td>{item.project_name}</td>
-                    <td>
-                      <span className={`status-badge status-${item.status}`}>
-                        {statusLabels[item.status] || item.status}
-                      </span>
-                    </td>
-                    <td>{item.quality_score || '-'}</td>
-                    <td>{item.issue_count}</td>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="data-table">
+                <thead>
+                  <tr>
+                    <th>章节</th>
+                    <th>项目</th>
+                    <th>状态</th>
+                    <th>质量分</th>
+                    <th>问题数</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          ) : (
-            <div className="empty-state">
-              <div className="empty-title">当前没有待审核章节</div>
-              <div className="empty-hint">可以先生成第一章</div>
+                </thead>
+                <tbody>
+                  {data.queue.map((item) => (
+                    <tr key={`${item.project_id}-${item.chapter_number}`}>
+                      <td>第 {item.chapter_number} 章</td>
+                      <td>{item.project_name}</td>
+                      <td>
+                        <StatusBadge status={item.status} />
+                      </td>
+                      <td>{item.quality_score ?? '-'}</td>
+                      <td>{item.issue_count}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
             </div>
+          ) : (
+            <EmptyState
+              title="当前没有待审核章节"
+              hint="可以先生成章节"
+              action={{ label: '去生成章节', to: '/run' }}
+            />
           )}
         </div>
       </div>
