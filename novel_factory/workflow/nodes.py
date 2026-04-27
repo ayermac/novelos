@@ -2,12 +2,13 @@
 
 Each node takes a FactoryState and returns a dict of updates to merge.
 v1.1: Nodes now track workflow_runs lifecycle and update current_node.
+v5.1.6: Added create_node_runners for LLMRouter-based dependency injection.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import Any, Callable
 
 from ..db.repository import Repository
 from ..llm.provider import LLMProvider
@@ -36,6 +37,96 @@ def _finalize_run(state: FactoryState, repo: Repository, status: str, error: str
     run_id = state.get("workflow_run_id")
     if run_id:
         repo.update_workflow_run(run_id, status=status, error_message=error)
+
+
+def _append_step(state: FactoryState, step_info: dict[str, Any]) -> None:
+    """Append a step record to state.steps (v5.1.6)."""
+    steps = state.get("steps", [])
+    steps.append(step_info)
+    state["steps"] = steps
+
+
+# ── v5.1.6: Node factory for LLMRouter-based injection ────────────────
+
+
+def create_node_runners(
+    settings: Any,
+    repo: Repository,
+    llm_router: Any,
+    skill_registry: Any | None = None,
+) -> dict[str, Callable[[FactoryState], dict[str, Any]]]:
+    """Create node functions with injected dependencies.
+
+    This factory creates closures that capture LLMRouter, Repository, and
+    skill_registry, aligning with Dispatcher._run_agent() logic.
+
+    Args:
+        settings: Application settings (for future use).
+        repo: Repository instance for database access.
+        llm_router: LLMRouter instance for agent-level LLM routing.
+        skill_registry: Optional SkillRegistry for polisher/editor.
+
+    Returns:
+        Dictionary mapping agent names to node functions.
+    """
+
+    def _run_agent_node(
+        agent_name: str,
+        agent_cls: type,
+        state: FactoryState,
+    ) -> dict[str, Any]:
+        """Generic agent runner with LLMRouter + error handling.
+
+        Equivalent to dispatch/chapter.py ChapterDispatchMixin._run_agent().
+        """
+        _update_run_node(state, repo, agent_name)
+
+        # Record step before running (for run_with_graph return value)
+        status_before = state.get("chapter_status", "")
+
+        # Get LLM for this agent
+        try:
+            llm = llm_router.for_agent(agent_name)
+        except ValueError as e:
+            logger.error(f"LLM configuration error for agent '{agent_name}': {e}")
+            _finalize_run(state, repo, "failed", str(e))
+            return {
+                "error": str(e),
+                "chapter_status": status_before,
+                "requires_human": True,
+            }
+
+        # Inject skill_registry for Polisher and Editor
+        if agent_name in ("polisher", "editor") and skill_registry is not None:
+            agent = agent_cls(repo, llm, skill_registry=skill_registry)
+        else:
+            agent = agent_cls(repo, llm)
+
+        result = agent.run(state)
+
+        # Handle error
+        if "error" in result:
+            _finalize_run(state, repo, "failed", result["error"])
+
+        # Record step after running
+        step_info = {
+            "agent": agent_name,
+            "status_before": status_before,
+            "status_after": result.get("chapter_status", status_before),
+            "error": result.get("error"),
+        }
+        _append_step(state, step_info)
+
+        return result
+
+    # Return dict of agent name -> node function
+    return {
+        "planner": lambda s: _run_agent_node("planner", PlannerAgent, s),
+        "screenwriter": lambda s: _run_agent_node("screenwriter", ScreenwriterAgent, s),
+        "author": lambda s: _run_agent_node("author", AuthorAgent, s),
+        "polisher": lambda s: _run_agent_node("polisher", PolisherAgent, s),
+        "editor": lambda s: _run_agent_node("editor", EditorAgent, s),
+    }
 
 
 # ── Node implementations ───────────────────────────────────────

@@ -93,19 +93,41 @@ export default function Style() {
     <div>
       <PageHeader title="风格管理" />
 
-      {/* Health Summary */}
-      <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
-        <div className="stat-card">
-          <h3>总项目</h3>
-          <div className="stat-value">{data.health.total_projects}</div>
+      {/* Info Banner */}
+      <div className="alert alert-info" style={{ marginBottom: 'var(--spacing-lg)' }}>
+        <strong>风格管理说明</strong>
+        <div style={{ marginTop: '4px', fontSize: '14px' }}>
+          风格圣经用于统一项目写作风格，包含词汇偏好、句式模板、叙事视角等。
+          生成章节时会自动提取风格特征。风格门禁可在生成前检查风格一致性。
         </div>
-        <div className="stat-card">
-          <h3>已建立风格圣经</h3>
-          <div className="stat-value">{data.health.projects_with_bible}</div>
+      </div>
+
+      {/* Capability Cards */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '16px', marginBottom: 'var(--spacing-lg)' }}>
+        <div className="card">
+          <div className="card-body" style={{ textAlign: 'center', padding: '20px' }}>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>总项目</div>
+            <div style={{ fontSize: '28px', fontWeight: 700, color: 'var(--text-primary)' }}>{data.health.total_projects}</div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>已创建的小说项目</div>
+          </div>
         </div>
-        <div className="stat-card">
-          <h3>风格门禁配置</h3>
-          <div className="stat-value">{data.health.gate_configs}</div>
+        <div className="card">
+          <div className="card-body" style={{ textAlign: 'center', padding: '20px' }}>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>风格圣经</div>
+            <div style={{ fontSize: '28px', fontWeight: 700, color: data.health.projects_with_bible > 0 ? 'var(--success)' : 'var(--text-muted)' }}>
+              {data.health.projects_with_bible}
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>已建立风格档案</div>
+          </div>
+        </div>
+        <div className="card">
+          <div className="card-body" style={{ textAlign: 'center', padding: '20px' }}>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: '4px' }}>风格门禁</div>
+            <div style={{ fontSize: '28px', fontWeight: 700, color: data.health.gate_configs > 0 ? 'var(--primary)' : 'var(--text-muted)' }}>
+              {data.health.gate_configs}
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '4px' }}>启用的门禁规则</div>
+          </div>
         </div>
       </div>
 
@@ -114,8 +136,11 @@ export default function Style() {
           <div className="card-body">
             <EmptyState
               title="暂无风格数据"
-              hint="生成章节或初始化风格后会出现数据。风格圣经用于统一项目写作风格。"
-              action={{ label: '去生成章节', to: '/run' }}
+              hint="风格圣经用于统一项目写作风格。生成章节时会自动提取风格特征。请先创建项目并生成章节，系统将自动建立风格档案。"
+              actions={[
+                { label: '查看项目列表', to: '/projects' },
+                { label: '创建新项目', to: '/onboarding' },
+              ]}
             />
           </div>
         </div>

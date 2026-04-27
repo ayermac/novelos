@@ -143,7 +143,7 @@ class TestLLMRouter:
         
         router = LLMRouter(config, llm_mode="real")
         
-        with pytest.raises(ValueError, match="profile.*not found"):
+        with pytest.raises(ValueError, match="档案.*不存在"):
             router.for_agent("author")
 
     def test_router_real_mode_missing_api_key(self):
@@ -159,16 +159,16 @@ class TestLLMRouter:
                 ),
             },
         )
-        
+
         def mock_getenv(name: str, default: Optional[str] = None) -> Optional[str]:
             if name == "TEST_BASE_URL":
                 return "https://test.example.com/v1"
             # MISSING_API_KEY returns None
             return None
-        
+
         router = LLMRouter(config, llm_mode="real", env_getter=mock_getenv)
-        
-        with pytest.raises(ValueError, match="API key not configured"):
+
+        with pytest.raises(ValueError, match="API Key 未配置"):
             router.for_agent("author")
 
     def test_router_real_mode_missing_base_url(self):
@@ -184,16 +184,16 @@ class TestLLMRouter:
                 ),
             },
         )
-        
+
         def mock_getenv(name: str, default: Optional[str] = None) -> Optional[str]:
             if name == "TEST_API_KEY":
                 return "sk-test-key"
             # MISSING_BASE_URL returns None
             return None
-        
+
         router = LLMRouter(config, llm_mode="real", env_getter=mock_getenv)
-        
-        with pytest.raises(ValueError, match="base_url not configured"):
+
+        with pytest.raises(ValueError, match="API 地址未配置"):
             router.for_agent("author")
 
     def test_router_unsupported_provider(self):
@@ -211,8 +211,8 @@ class TestLLMRouter:
         )
         
         router = LLMRouter(config, llm_mode="real")
-        
-        with pytest.raises(ValueError, match="Unsupported provider"):
+
+        with pytest.raises(ValueError, match="不支持的提供商"):
             router.for_agent("author")
 
     def test_get_route_info(self):

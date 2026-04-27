@@ -15,14 +15,14 @@ from pathlib import Path
 
 
 def test_all_pages_import_api_or_static():
-    """Test all 9 pages import API client or are static."""
+    """Test all 10 pages import API client or are static."""
     frontend_src = Path(__file__).parent.parent / "frontend" / "src"
     pages_dir = frontend_src / "pages"
 
     assert pages_dir.exists(), "pages directory should exist"
 
     page_files = list(pages_dir.glob("*.tsx"))
-    assert len(page_files) == 10, f"Should have 10 page files, found {len(page_files)}"
+    assert len(page_files) == 9, f"Should have 9 page files (Acceptance removed in v5.1.6), found {len(page_files)}"
 
     # Check each page
     for page_file in page_files:
@@ -47,16 +47,15 @@ def test_no_english_navigation():
 
     content = layout_file.read_text()
 
-    # Navigation labels should be Chinese
+    # Navigation labels should be Chinese (v5.1.6: "总览" renamed to "创作中心")
     chinese_labels = [
-        "总览",
+        "创作中心",
         "项目",
         "创建项目",
-        "生成章节",
+        "高级运行",
         "审核",
         "风格",
         "配置",
-        "验收",
     ]
 
     for label in chinese_labels:
@@ -171,7 +170,7 @@ def test_pages_have_chinese_titles():
 
     # Check a few key pages
     key_pages = {
-        "Dashboard.tsx": "总览",
+        "Dashboard.tsx": "创作中心",
         "Projects.tsx": "项目",
         "Onboarding.tsx": "创建",
         "Run.tsx": "生成",

@@ -131,15 +131,15 @@ class TestRunPageDemoMode:
 
 
 class TestChapterReaderDemoNotice:
-    """Test ChapterReader demo content notice."""
+    """Test ChapterReader demo content notice (now in ProjectDetail workspace)."""
 
     def test_chapter_reader_has_demo_notice(self):
-        """ChapterReader.tsx should contain demo content notice."""
+        """ProjectDetail.tsx should contain demo content notice in ContentTab."""
         frontend_src = Path(__file__).parent.parent / "frontend" / "src"
-        reader_file = frontend_src / "pages" / "ChapterReader.tsx"
-        content = reader_file.read_text()
+        detail_file = frontend_src / "pages" / "ProjectDetail.tsx"
+        content = detail_file.read_text()
 
-        # Should have demo content notice
+        # Should have demo content notice in ContentTab
         assert "演示正文" in content or "演示模式" in content
         assert "本地 Stub" in content or "Stub 模板" in content
 
@@ -153,9 +153,11 @@ class TestProjectDetailWorkflowLink:
         detail_file = frontend_src / "pages" / "ProjectDetail.tsx"
         content = detail_file.read_text()
 
-        # Should have workflow link
-        assert "查看工作流" in content
-        assert "/runs/${run.run_id}" in content or "runs/${run.run_id}" in content
+        # Should have workflow link via handleViewWorkflow
+        assert "查看工作流" in content, "Should have '查看工作流' button"
+        assert "onViewWorkflow" in content or "handleViewWorkflow" in content, (
+            "Should have workflow click handler"
+        )
 
 
 class TestRunDetailPage:
@@ -168,15 +170,16 @@ class TestRunDetailPage:
         assert detail_file.exists()
 
     def test_run_detail_has_five_steps(self):
-        """RunDetail.tsx should display 5 workflow steps."""
+        """RunDetail.tsx should display 5 workflow steps via WorkflowTimeline component."""
         frontend_src = Path(__file__).parent.parent / "frontend" / "src"
         detail_file = frontend_src / "pages" / "RunDetail.tsx"
         content = detail_file.read_text()
 
-        # Should render steps from API data
-        assert "data.steps.map" in content or "steps.map" in content
-        assert "step.label" in content
-        assert "step.description" in content
+        # RunDetail now uses WorkflowTimeline shared component
+        assert "WorkflowTimeline" in content, "Should use WorkflowTimeline component"
+        assert "steps={data.steps}" in content or "steps={runDetail.steps}" in content, (
+            "Should pass steps to WorkflowTimeline"
+        )
         assert "工作流步骤" in content
 
     def test_run_detail_route_registered(self):
@@ -202,12 +205,12 @@ class TestNoRawStatusInUI:
         assert "tLlmMode" in content or "tChapterStatus" in content
 
     def test_chapter_reader_uses_translated_status(self):
-        """ChapterReader should use translated status."""
+        """ProjectDetail workspace should use translated status."""
         frontend_src = Path(__file__).parent.parent / "frontend" / "src"
-        reader_file = frontend_src / "pages" / "ChapterReader.tsx"
-        content = reader_file.read_text()
+        detail_file = frontend_src / "pages" / "ProjectDetail.tsx"
+        content = detail_file.read_text()
 
-        assert "tChapterStatus" in content
+        assert "tWorkflowStatus" in content or "tChapterStatus" in content
 
 
 class TestNoDoubleApiPrefix:
@@ -250,11 +253,11 @@ class TestNoDoubleApiPrefix:
         api_calls = re.findall(r"get\s*[<(][^)]*[>`'\"](/api/health)", content)
         assert len(api_calls) == 0, f"Found get calls with /api/health: {api_calls}"
 
-    def test_chapter_reader_no_double_api(self):
-        """ChapterReader.tsx should not use get('/api/health')."""
+    def test_project_detail_no_double_api(self):
+        """ProjectDetail.tsx should not use get('/api/health')."""
         frontend_src = Path(__file__).parent.parent / "frontend" / "src"
-        reader_file = frontend_src / "pages" / "ChapterReader.tsx"
-        content = reader_file.read_text()
+        detail_file = frontend_src / "pages" / "ProjectDetail.tsx"
+        content = detail_file.read_text()
 
         # Should NOT have get with /api/health
         import re

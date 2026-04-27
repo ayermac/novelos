@@ -27,6 +27,7 @@ def route_by_chapter_status(state: FactoryState) -> str:
         ChapterStatus.POLISHED.value: "editor",
         ChapterStatus.REVIEW.value: "editor",
         ChapterStatus.REVIEWED.value: "publisher",
+        ChapterStatus.PUBLISHED.value: "archive",  # Terminal: already published
         ChapterStatus.BLOCKING.value: "human_review",
         ChapterStatus.REVISION.value: "revision_router",
     }

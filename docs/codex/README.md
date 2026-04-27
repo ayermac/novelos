@@ -1,6 +1,6 @@
 # Codex 架构文档索引
 
-本目录用于维护小说内容生产工厂的架构、版本路线和阶段规格。为了方便多个 LLM Agent 协作开发，文档拆分为“总架构 + 版本路线 + 当前版本规格”三层。
+本目录用于维护小说内容生产工厂的架构、版本路线和阶段规格。为了方便多个 LLM Agent 协作开发，文档拆分为"总架构 + 版本路线 + 当前版本规格"三层。
 
 ## 文档列表
 
@@ -45,6 +45,8 @@
 | `novel-factory-v5.1.2-chapter-status-model-alignment-spec.md` | v5.1.2 章节状态模型对齐、pending/planned 修复 | 开发 Agent、质量验收 |
 | `novel-factory-v5.1.3-author-workflow-usability-closure-spec.md` | v5.1.3 作者主流程闭环、章节阅读、Stub 差异化 | 开发 Agent、质量验收 |
 | `novel-factory-v5.1.4-workflow-visibility-interaction-polish-spec.md` | v5.1.4 工作流可视化、演示模式说明、交互优化 | 开发 Agent、质量验收 |
+| `novel-factory-v5.1.5-author-workspace-productization-plan.md` | v5.1.5 作者工作台产品化、三栏项目工作台、创作中心 | 产品规划、开发 Agent、质量验收 |
+| `novel-factory-v5.1.6-langgraph-activation-spec.md` | v5.1.6 LangGraph 编排激活 + 真实 LLM 首次生成 + 安全收口 | 产品规划、开发 Agent、质量验收 |
 
 ## v5.1.1 本地启动与验收
 
@@ -85,12 +87,14 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1293/1293 passed
+- **当前测试基线**: 1365/1365 passed
 - **新增测试**:
   - `test_v51_api_e2e_smoke.py`: 17 个端到端 smoke 测试
   - `test_v51_frontend_quality.py`: 8 个前端质量检查
   - `test_v51_api_security.py`: 9 个 API 安全测试
   - `test_v51_p2_fixes.py`: 扩展测试（包括 Style 优雅降级、Acceptance partial 状态）
+  - `test_v516_frontend_closure.py`: 9 个前端收口测试（导航分组、空状态、Acceptance 路由移除）
+  - `test_v516_langgraph_activation.py`: 12 个 LangGraph 激活测试（图编译、路由等价、published 短路、配置验证、安全）
 
 ### v5.1.1 WebUI 产品化改进
 
@@ -134,10 +138,10 @@ npm run dev
 - ✅ Acceptance summary 包含 partial 计数
 
 **前端**:
-- ✅ 10 个页面组件
+- ✅ 9 个页面组件（Acceptance 已移除）
 - ✅ 中文导航、标题、状态
 - ✅ StatusBadge 统一组件
-- ✅ EmptyState/ErrorState 统一组件
+- ✅ EmptyState 统一组件（支持 actions 多按钮）
 - ✅ PageHeader 统一组件
 - ✅ 错误和加载状态处理
 - ✅ 空状态提示与下一步引导
@@ -190,7 +194,32 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.1.4 Workflow Visibility & Interaction Polish 已通过验收，测试基线 1311/1311**。
+当前开发基线是 **v5.1.6 LangGraph 编排激活 + 安全收口，测试基线 1365/1365**。
+
+**v5.1.6 核心变更:**
+- LangGraph StateGraph 替代 Dispatcher while 循环作为唯一编排器（API 层已切换）
+- 新增 `run_with_graph()` 适配函数，返回值与 `Dispatcher.run_chapter()` 同构
+- 新增 `create_node_runners()` 闭包注入 LLMRouter / Repository / skill_registry
+- FactoryState 扩展 `steps` 字段
+- 修复 `published` 状态死循环 bug（路由到 `archive` 终端节点 + 短路返回）
+- Review/Style 空状态重构，消灭产品死胡同
+- 导航分组：创作 / 工具 / 开发
+- EmptyState 支持 `actions` 多按钮
+- Acceptance 页面移除
+- 配置验证端点 `POST /api/settings/validate`
+- Settings 验证按钮 + real 模式成本提示
+- LLMRouter 错误信息中文化
+- API Key 不泄露审计通过
+
+**v5.1.5 核心变更:**
+- `/projects/:id` 重构为三栏作者项目工作台：章节导航、章节内容区、上下文侧栏。
+- 日常生成入口回归项目工作台，`/run` 保留为高级运行入口。
+- 工作流步骤抽取为共享组件，并为 stub 模式补充结构化 Agent 产物。
+- Dashboard 重构为"创作中心"，主 CTA 导向项目工作台。
+- Settings 新增"生成记录健康度"，避免把历史成功率误称为 LLM 连通性。
+- Projects 页从表格改为卡片布局。
+- 旧路由 `/projects/:id/chapters/:num` 与 `/runs/:runId` 保持兼容。
+- 版本号统一更新至 v5.1.5。
 
 **v5.1.4 核心变更:**
 - 新增运行详情 API：`GET /api/runs/{run_id}` 返回工作流步骤时间线
@@ -254,4 +283,4 @@ v1 不实现：
 
 当前下一步：
 
-- 进入 v5.1.5 Real LLM Configuration & First Real Generation 规划与开发。
+- 完成 v5.1.6 浏览器验收与提交；之后进入 v5.2 LangGraph Checkpoint 持久化 + SSE Streaming + Dispatcher 退役。

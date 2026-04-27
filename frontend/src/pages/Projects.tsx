@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { BookOpen } from 'lucide-react'
 import { get } from '../lib/api'
 import { tGenre } from '../lib/i18n'
 import EmptyState from '../components/EmptyState'
@@ -13,6 +14,52 @@ interface Project {
   description?: string
   chapter_count: number
   created_at: string
+}
+
+function ProjectCard({ project }: { project: Project }) {
+  return (
+    <Link
+      to={`/projects/${project.project_id}`}
+      className="card project-card"
+      style={{
+        textDecoration: 'none',
+        transition: 'transform 0.15s, box-shadow 0.15s',
+      }}
+    >
+      <div className="card-body" style={{ padding: '20px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+          <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: 'var(--text-primary)' }}>
+            {project.name || project.project_id}
+          </h3>
+          {project.genre && (
+            <span
+              style={{
+                padding: '2px 8px',
+                background: 'var(--bg-tertiary)',
+                borderRadius: '4px',
+                fontSize: '12px',
+                color: 'var(--text-secondary)',
+              }}
+            >
+              {tGenre(project.genre)}
+            </span>
+          )}
+        </div>
+        {project.description && (
+          <p style={{ margin: '0 0 12px 0', fontSize: '13px', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+            {project.description.length > 80 ? project.description.slice(0, 80) + '...' : project.description}
+          </p>
+        )}
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '12px', color: 'var(--text-muted)' }}>
+          <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <BookOpen size={14} strokeWidth={1.5} />
+            {project.chapter_count} 章
+          </span>
+          <span>{project.created_at || '-'}</span>
+        </div>
+      </div>
+    </Link>
+  )
 }
 
 export default function Projects() {
@@ -38,16 +85,19 @@ export default function Projects() {
   }, [])
 
   if (loading) {
-    return <div>加载中...</div>
+    return <div><PageHeader title="项目列表" /><div className="card"><div className="card-body" style={{ textAlign: 'center', padding: '40px' }}>加载中...</div></div></div>
   }
 
   if (error) {
     return (
-      <ErrorState
-        title="加载失败"
-        message={error}
-        onRetry={load}
-      />
+      <div>
+        <PageHeader title="项目列表" />
+        <ErrorState
+          title="加载失败"
+          message={error}
+          onRetry={load}
+        />
+      </div>
     )
   }
 
@@ -63,42 +113,17 @@ export default function Projects() {
       />
 
       {projects.length > 0 ? (
-        <div className="card">
-          <div className="card-body">
-            <div style={{ overflowX: 'auto' }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>项目 ID</th>
-                    <th>名称</th>
-                    <th>类型</th>
-                    <th>章节数</th>
-                    <th>创建时间</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {projects.map((project) => (
-                    <tr key={project.project_id}>
-                      <td>{project.project_id}</td>
-                      <td>{project.name}</td>
-                      <td>{tGenre(project.genre)}</td>
-                      <td>{project.chapter_count}</td>
-                      <td className="text-secondary">{project.created_at}</td>
-                      <td>
-                        <Link
-                          to={`/projects/${project.project_id}`}
-                          className="btn btn-sm btn-secondary"
-                        >
-                          查看工作台
-                        </Link>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
+        <div
+          className="projects-grid"
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+            gap: '16px',
+          }}
+        >
+          {projects.map((project) => (
+            <ProjectCard key={project.project_id} project={project} />
+          ))}
         </div>
       ) : (
         <div className="card">

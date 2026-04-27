@@ -26,12 +26,21 @@ interface Diagnostics {
   has_default_llm: boolean
 }
 
+interface GenerationStats {
+  test_result: 'pending' | 'success' | 'failed'
+  success_rate: number
+  avg_duration_seconds: number
+  total_runs: number
+  last_run_at: string | null
+}
+
 interface SettingsData {
   llm_mode: string
   llm_profiles: LlmProfile[]
   agent_routes: AgentRoute[]
   default_llm: string | null
   diagnostics: Diagnostics
+  generation_stats: GenerationStats
 }
 
 const PROVIDER_OPTIONS = [
@@ -55,6 +64,12 @@ export default function Settings() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [draft, setDraft] = useState<string | null>(null)
+  const [validating, setValidating] = useState(false)
+  const [validateResult, setValidateResult] = useState<{
+    valid: boolean
+    message: string
+    error_code?: string
+  } | null>(null)
   const [wizardForm, setWizardForm] = useState({
     provider: 'openai_compatible',
     base_url: 'https://api.openai.com/v1',
@@ -88,6 +103,30 @@ export default function Settings() {
       setDraft((res.data as { draft: string }).draft)
     } else {
       setError(res.error?.message || '生成配置草案失败')
+    }
+  }
+
+  const handleValidateConfig = async () => {
+    setValidating(true)
+    setValidateResult(null)
+
+    const res = await post('/settings/validate', {
+      provider: wizardForm.provider,
+      base_url: wizardForm.base_url,
+      model: wizardForm.model,
+      api_key_env: wizardForm.api_key_env,
+    })
+
+    setValidating(false)
+
+    if (res.ok && res.data) {
+      const data = res.data as { valid: boolean; message: string; error_code?: string }
+      setValidateResult(data)
+    } else {
+      setValidateResult({
+        valid: false,
+        message: res.error?.message || '验证请求失败',
+      })
     }
   }
 
@@ -138,51 +177,37 @@ export default function Settings() {
   }
 
   const isStub = data.llm_mode === 'stub'
+  const generationStatusLabel = data.generation_stats.test_result === 'success'
+    ? '健康'
+    : data.generation_stats.test_result === 'failed'
+      ? '异常'
+      : data.generation_stats.total_runs > 0
+        ? '有记录'
+        : '无记录'
 
   return (
     <div>
       <PageHeader title="配置中心" />
 
-      {/* Diagnostics Banner */}
-      {isStub && (
-        <div className="alert alert-warn" style={{ marginBottom: '16px' }}>
-          <strong>当前为演示模式</strong>
-          <div style={{ marginTop: '4px', fontSize: '14px' }}>
-            未配置真实 LLM，所有生成操作使用占位符返回。如需真实生成，请使用下方配置草案生成器配置 LLM 并以 --llm-mode real 启动。
-          </div>
-        </div>
-      )}
-
-      {/* LLM Mode */}
+      {/* 能力诊断 - 合并运行模式 + 配置诊断 */}
       <div className="card" style={{ marginBottom: 'var(--spacing-lg)' }}>
         <div className="card-header">
-          <h3>运行模式</h3>
+          <h3>能力诊断</h3>
+          <span className={`status-badge status-${data.llm_mode}`}>
+            {tLlmMode(data.llm_mode)}
+          </span>
         </div>
         <div className="card-body">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '12px' }}>
-            <span className={`status-badge status-${data.llm_mode}`}>
-              {tLlmMode(data.llm_mode)}
-            </span>
-            <span style={{ color: 'var(--text-secondary)', fontSize: '14px' }}>
-              {isStub ? '返回占位内容，不调用真实 LLM' : '将调用外部 API 生成内容'}
-            </span>
-          </div>
-          <div style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
-            启动命令示例：
-            <code style={{ display: 'block', marginTop: '8px', padding: '12px', background: '#1f2937', color: '#f9fafb', borderRadius: '6px', fontSize: '12px', overflow: 'auto' }}>
-              novelos api --llm-mode real --config config/local.yaml
-            </code>
-          </div>
-        </div>
-      </div>
-
-      {/* Diagnostics */}
-      <div className="card" style={{ marginBottom: 'var(--spacing-lg)' }}>
-        <div className="card-header">
-          <h3>配置诊断</h3>
-        </div>
-        <div className="card-body">
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>运行模式</div>
+              <div style={{ fontWeight: 600, color: isStub ? 'var(--warning)' : 'var(--success)' }}>
+                {isStub ? '演示模式' : '真实模式'}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                {isStub ? '返回占位内容' : '调用外部 API'}
+              </div>
+            </div>
             <div>
               <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>LLM 档案</div>
               <div style={{ fontWeight: 600, color: data.diagnostics.has_profiles ? 'var(--success)' : 'var(--danger)' }}>
@@ -195,14 +220,74 @@ export default function Settings() {
                 {data.diagnostics.has_default_llm ? '已设置' : '未设置'}
               </div>
             </div>
+          </div>
+          {isStub && (
+            <div style={{ padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+              <strong>当前为演示模式</strong>
+              <div style={{ marginTop: '4px' }}>
+                未配置真实 LLM，所有生成操作使用占位符返回。如需真实生成，请使用下方配置草案生成器配置 LLM 并以 --llm-mode real 启动。
+              </div>
+            </div>
+          )}
+          {!data.diagnostics.has_profiles && !isStub && (
+            <div style={{ padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+              提示：暂无 LLM 档案。使用下方「配置草案生成器」生成草案，保存到 config/local.yaml 后重启服务即可启用真实 LLM。
+            </div>
+          )}
+          {!isStub && data.diagnostics.has_profiles && (
+            <div style={{ padding: '12px', background: '#dbeafe', borderRadius: '6px', fontSize: '13px', color: '#1e40af' }}>
+              <strong>真实模式提醒</strong>
+              <div style={{ marginTop: '4px' }}>
+                真实模式下每次生成会调用 LLM API，请关注用量和成本。建议在批量生成前先小规模测试。
+              </div>
+            </div>
+          )}
+          <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginTop: '12px' }}>
+            启动命令：<code style={{ padding: '2px 6px', background: '#1f2937', color: '#f9fafb', borderRadius: '4px', fontSize: '11px' }}>
+              novelos api --llm-mode real --config config/local.yaml
+            </code>
+          </div>
+        </div>
+      </div>
+
+      {/* Generation Capability Diagnostics */}
+      <div className="card" style={{ marginBottom: 'var(--spacing-lg)' }}>
+        <div className="card-header">
+          <h3>生成记录健康度</h3>
+        </div>
+        <div className="card-body">
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
             <div>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>运行模式</div>
-              <div style={{ fontWeight: 600 }}>{tLlmMode(data.diagnostics.llm_mode)}</div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>最近生成状态</div>
+              <div style={{ fontWeight: 600, color: data.generation_stats.test_result === 'success' ? 'var(--success)' : data.generation_stats.test_result === 'failed' ? 'var(--danger)' : 'var(--warning)' }}>
+                {generationStatusLabel}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>成功率 (近 30 次)</div>
+              <div style={{ fontWeight: 600 }}>{data.generation_stats.success_rate}%</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>平均生成时长</div>
+              <div style={{ fontWeight: 600 }}>
+                {data.generation_stats.avg_duration_seconds > 0
+                  ? `${Math.floor(data.generation_stats.avg_duration_seconds / 60)}分${Math.round(data.generation_stats.avg_duration_seconds % 60)}秒`
+                  : '-'}
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>总运行次数</div>
+              <div style={{ fontWeight: 600 }}>{data.generation_stats.total_runs}</div>
             </div>
           </div>
-          {!data.diagnostics.has_profiles && (
+          {data.generation_stats.test_result === 'pending' && !isStub && (
+            <div style={{ marginTop: '16px', padding: '12px', background: '#fef3c7', borderRadius: '6px', fontSize: '13px', color: '#92400e' }}>
+              尚无生成记录。运行一次章节生成后，此处将显示健康度统计。
+            </div>
+          )}
+          {isStub && (
             <div style={{ marginTop: '16px', padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', fontSize: '13px', color: 'var(--text-secondary)' }}>
-              提示：暂无 LLM 档案。使用下方「配置草案生成器」生成草案，保存到 config/local.yaml 后重启服务即可启用真实 LLM。
+              演示模式下的生成记录统计。切换到真实模式后将显示实际 LLM 调用情况。
             </div>
           )}
         </div>
@@ -380,6 +465,29 @@ export default function Settings() {
           <button onClick={handleGenerateDraft} className="btn btn-primary">
             生成配置草案
           </button>
+          <button
+            onClick={handleValidateConfig}
+            className="btn btn-secondary"
+            style={{ marginLeft: '8px' }}
+            disabled={validating}
+          >
+            {validating ? '验证中...' : '验证配置'}
+          </button>
+
+          {validateResult && (
+            <div
+              style={{
+                marginTop: '16px',
+                padding: '12px',
+                borderRadius: '6px',
+                background: validateResult.valid ? '#dcfce7' : '#fef2f2',
+                color: validateResult.valid ? '#166534' : '#991b1b',
+              }}
+            >
+              <strong>{validateResult.valid ? '✓ 验证成功' : `✗ ${validateResult.error_code || '验证失败'}`}</strong>
+              <div style={{ marginTop: '4px', fontSize: '13px' }}>{validateResult.message}</div>
+            </div>
+          )}
 
           {draft && (
             <div style={{ marginTop: '16px' }}>

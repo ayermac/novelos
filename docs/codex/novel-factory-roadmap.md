@@ -1256,27 +1256,90 @@ P1/P2 修复：
 
 状态：**已通过验收**，测试基线 1311/1311。
 
-## v5.1.5：Real LLM Configuration & First Real Generation
+## v5.1.5：Author Workspace Productization
 
-目标：实现真实 LLM 配置闭环，让用户可以配置真实 LLM API 并完成首次真实生成。
+目标：将 React WebUI 从页面集合推进为以项目为中心、以章节为主线、以工作流为辅助的作者创作工作台。
 
 范围：
 
-- 真实 LLM 配置验证
-- 首次真实生成
-- 质量对比验证
-- 成本控制
-- 错误处理增强
+- 项目详情重构为三栏作者工作台。
+- 章节导航、正文、工作流、产物、历史记录在项目内闭环。
+- Dashboard 重构为创作中心，主 CTA 导向项目工作台。
+- Projects 页卡片化。
+- Settings 增加生成记录健康度，避免误称 LLM 连通性。
+- Review / Style 保留为辅助工具，后续继续收口空状态。
 
 验收：
 
-- 真实 LLM 配置可验证
-- 首次真实生成成功
-- 质量对比可验证
-- 成本可统计
-- 错误处理清晰
+- `/projects/:id` 三栏工作台可用。
+- 作者可以在工作台内生成章节、查看正文、查看工作流、继续下一章。
+- `/run` 保留为高级运行入口，不再作为日常创作主入口。
+- 旧路由 `/projects/:id/chapters/:num` 与 `/runs/:runId` 兼容。
+- 全量测试、TypeScript、前端构建、smoke 验收通过。
 
-状态：**规划中**。
+状态：**已通过验收**，测试基线 1343/1343。
+
+## v5.1.6：LangGraph 编排激活 + 真实 LLM 首次生成 + 安全收口
+
+目标：激活 LangGraph StateGraph 作为唯一编排器，替代 Dispatcher while 循环；收口前端空状态；接入真实 LLM 配置验证；确保安全收口。
+
+范围：
+
+**Phase 0 — 前端收口**：
+- Review 空状态重构：说明横幅 + 多按钮引导
+- Style 空状态重构：能力卡片 + 空状态引导
+- 导航分组：创作 / 工具 / 开发
+- EmptyState 组件扩展 `actions` 多按钮支持
+- Acceptance 页面移除（路由 + 文件）
+
+**Phase A — 后端激活 LangGraph**：
+- FactoryState 扩展 `steps` 字段
+- 新增 `create_node_runners()` 闭包注入（LLMRouter / Repository / skill_registry）
+- `build_graph()` 新增 `llm_router` / `skill_registry` 参数
+- 新增 `run_with_graph()` 适配函数，返回值与 `Dispatcher.run_chapter()` 同构
+- 新增 `_build_llm_router()` 统一构建逻辑
+
+**Phase B — API 切换 + 配置验证**：
+- `/api/run/chapter` 改调 `run_with_graph()`
+- 新增 `POST /api/settings/validate` 配置校验端点
+- Settings 页面验证按钮 + real 模式成本提示
+
+**Phase C — 安全收口**：
+- API Key 不泄露审计
+- LLMRouter 错误信息中文化
+- stub/real 模式标签
+
+关键架构变更：
+
+```text
+之前: API → Dispatcher.run_chapter() → while 循环 → _run_agent() → Agent
+现在: API → run_with_graph() → LangGraph StateGraph → create_node_runners() → Agent 闭包
+```
+
+关键 Bug 修复：
+- `published` 状态在 `route_by_chapter_status` 中缺少路由，fallback 到 `planner` 导致死循环
+- 修复：routing 字典新增 `published → archive`，`runner.py` 新增 published 短路返回
+
+约束：
+- 不删 Dispatcher 代码（只不再被主路径调用）
+- 不改数据库 schema
+- 不实现 checkpoint 持久化（v5.2 做 SqliteSaver）
+- 不实现 streaming（v5.2 做 SSE）
+
+验收：
+- 全量测试 1365/1365 通过
+- TypeScript 检查通过
+- 前端构建通过
+- Review/Style 空状态有引导和出口
+- 导航三分组（创作/工具/开发）
+- `run_with_graph()` stub 模式行为与 Dispatcher 完全一致
+- `published` 章节不再死循环
+- 配置验证端点可用
+- API Key 不泄露
+- LLMRouter 错误中文化
+- Acceptance 路由已移除
+
+状态：**已通过验收**，测试基线 1365/1365。
 
 ## Post-Acceptance Hardening
 
@@ -1298,7 +1361,30 @@ v5.1 已完成 Post-Acceptance Hardening，新增：
 - ✅ 前端中文导航和错误处理
 - ✅ Config plan 不写文件
 
-## v5.2+：多模型与生产治理
+## v5.2：LangGraph Checkpoint 持久化 + SSE Streaming + Dispatcher 退役
+
+目标：让 LangGraph 编排具备生产级能力——checkpoint 持久化（崩溃可恢复）、SSE 实时推送（前端可见进度）、Dispatcher 退役（消除双系统维护成本）。
+
+范围：
+
+- LangGraph Checkpoint 持久化：MemorySaver → SqliteSaver / PostgresSaver
+- LangGraph SSE Streaming：`graph.stream()` → 前端 EventSource
+- Dispatcher 退役：删除 `dispatch/` 目录 + `dispatcher.py` 门面类
+- CLI 层切换：`novelos run` 命令改调 `run_with_graph()`
+- Batch/Serial/Queue/ReviewWorkbench mixin 迁移到 LangGraph
+- 真实 LLM 首次生成端到端验证
+
+验收：
+
+- 进程重启后可从 checkpoint 恢复未完成的章节
+- 前端实时显示 Agent 执行步骤（SSE）
+- `dispatch/` 目录已删除
+- CLI 命令使用 LangGraph 编排
+- 全量测试通过，不回归 v5.1.6
+
+状态：**待规划**。
+
+## v5.3+：多模型与生产治理
 
 目标：支持真实长期运行所需的模型、成本、可观测性和数据治理。
 

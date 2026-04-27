@@ -401,7 +401,7 @@ if [ $FAIL_COUNT -eq 0 ]; then
     echo ""
     echo -e "${GREEN}=== All smoke tests passed! ===${NC}"
     echo ""
-    echo "v5.1.3 is ready for acceptance."
+    echo "v5.1.5 is ready for acceptance."
     echo ""
     echo "Quick start:"
     echo "  API:      novelos api --host 127.0.0.1 --port 8765 --llm-mode stub"

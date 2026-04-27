@@ -65,14 +65,14 @@ class TestFrontendChineseLabels:
         if not layout_file.exists():
             return  # Skip if file doesn't exist yet
         content = layout_file.read_text()
-        assert "总览" in content
+        assert "创作中心" in content
         assert "项目" in content
         assert "创建项目" in content
-        assert "生成章节" in content
+        assert "高级运行" in content
         assert "审核" in content
         assert "风格" in content
         assert "配置" in content
-        assert "验收" in content
+        assert "作者工作台" in content
 
     def test_dashboard_has_chinese_labels(self):
         """Dashboard page has Chinese labels."""
@@ -80,7 +80,7 @@ class TestFrontendChineseLabels:
         if not dashboard_file.exists():
             return
         content = dashboard_file.read_text()
-        assert "总览" in content or "项目数" in content or "队列项" in content
+        assert "创作中心" in content or "最近活动" in content or "进入工作台" in content
 
     def test_projects_has_chinese_labels(self):
         """Projects page has Chinese labels."""
@@ -125,10 +125,10 @@ class TestFrontendBuildConfig:
         assert '"name": "novel-factory-frontend"' in content
 
     def test_package_json_has_correct_version(self):
-        """package.json has v5.1.3 version."""
+        """package.json has v5.1.5 version."""
         package_json = Path(__file__).parent.parent / "frontend" / "package.json"
         content = package_json.read_text()
-        assert '"version": "5.1.3"' in content
+        assert '"version": "5.1.5"' in content
 
     def test_package_json_has_react_dependencies(self):
         """package.json has React dependencies."""

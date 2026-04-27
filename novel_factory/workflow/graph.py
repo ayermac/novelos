@@ -2,6 +2,7 @@
 
 Builds and compiles the StateGraph that orchestrates all five agents.
 v1.1: Supports custom checkpointer injection for checkpoint recovery.
+v5.1.6: Supports LLMRouter-based agent routing via create_node_runners.
 """
 
 from __future__ import annotations
@@ -31,6 +32,8 @@ def build_graph(
     settings: Settings | None = None,
     repo: Repository | None = None,
     llm: LLMProvider | None = None,
+    llm_router: Any | None = None,
+    skill_registry: Any | None = None,
 ) -> StateGraph:
     """Build the chapter production workflow graph.
 
@@ -38,59 +41,87 @@ def build_graph(
         settings: Application settings. Loaded from default if not provided.
         repo: Repository instance. Created from settings if not provided.
         llm: LLM provider. Created from settings if not provided.
+               Used only if llm_router is None (legacy mode).
+        llm_router: LLMRouter instance for agent-level routing (v5.1.6).
+                    If provided, takes precedence over llm parameter.
+        skill_registry: Optional SkillRegistry for polisher/editor (v5.1.6).
 
     Returns:
         Compiled LangGraph StateGraph ready for execution.
     """
     settings = settings or load_settings()
     repo = repo or Repository(settings.db_path)
-    llm = llm or OpenAICompatibleProvider(settings.llm)
+
+    # v5.1.6: If llm_router provided, use create_node_runners
+    use_router_mode = llm_router is not None
+
+    if not use_router_mode:
+        # Legacy mode: use single llm provider
+        llm = llm or OpenAICompatibleProvider(settings.llm)
 
     # ── Create graph ──────────────────────────────────────────
     graph = StateGraph(FactoryState)
 
     # ── Add nodes ─────────────────────────────────────────────
-    graph.add_node(
-        "health_check",
-        lambda s: nodes.health_check_node(s, repo),
-    )
-    graph.add_node(
-        "task_discovery",
-        lambda s: nodes.task_discovery_node(s, repo),
-    )
-    graph.add_node(
-        "planner",
-        lambda s: nodes.planner_node(s, repo, llm),
-    )
-    graph.add_node(
-        "screenwriter",
-        lambda s: nodes.screenwriter_node(s, repo, llm),
-    )
-    graph.add_node(
-        "author",
-        lambda s: nodes.author_node(s, repo, llm),
-    )
-    graph.add_node(
-        "polisher",
-        lambda s: nodes.polisher_node(s, repo, llm),
-    )
-    graph.add_node(
-        "editor",
-        lambda s: nodes.editor_node(s, repo, llm),
-    )
-    graph.add_node(
-        "publisher",
-        lambda s: nodes.publisher_node(s, repo),
-    )
-    graph.add_node("revision_router", lambda s: nodes.revision_router_node(s))
-    graph.add_node(
-        "human_review",
-        lambda s: nodes.human_review_node(s, repo),
-    )
-    graph.add_node(
-        "archive",
-        lambda s: nodes.archive_node(s, repo),
-    )
+    if use_router_mode:
+        # v5.1.6: Use create_node_runners for LLMRouter-based routing
+        from .nodes import create_node_runners
+        runners = create_node_runners(settings, repo, llm_router, skill_registry)
+
+        graph.add_node("health_check", lambda s: nodes.health_check_node(s, repo))
+        graph.add_node("task_discovery", lambda s: nodes.task_discovery_node(s, repo))
+        graph.add_node("planner", runners["planner"])
+        graph.add_node("screenwriter", runners["screenwriter"])
+        graph.add_node("author", runners["author"])
+        graph.add_node("polisher", runners["polisher"])
+        graph.add_node("editor", runners["editor"])
+        graph.add_node("publisher", lambda s: nodes.publisher_node(s, repo))
+        graph.add_node("revision_router", lambda s: nodes.revision_router_node(s))
+        graph.add_node("human_review", lambda s: nodes.human_review_node(s, repo))
+        graph.add_node("archive", lambda s: nodes.archive_node(s, repo))
+    else:
+        # Legacy mode: use existing node functions with single llm
+        graph.add_node(
+            "health_check",
+            lambda s: nodes.health_check_node(s, repo),
+        )
+        graph.add_node(
+            "task_discovery",
+            lambda s: nodes.task_discovery_node(s, repo),
+        )
+        graph.add_node(
+            "planner",
+            lambda s: nodes.planner_node(s, repo, llm),
+        )
+        graph.add_node(
+            "screenwriter",
+            lambda s: nodes.screenwriter_node(s, repo, llm),
+        )
+        graph.add_node(
+            "author",
+            lambda s: nodes.author_node(s, repo, llm),
+        )
+        graph.add_node(
+            "polisher",
+            lambda s: nodes.polisher_node(s, repo, llm),
+        )
+        graph.add_node(
+            "editor",
+            lambda s: nodes.editor_node(s, repo, llm),
+        )
+        graph.add_node(
+            "publisher",
+            lambda s: nodes.publisher_node(s, repo),
+        )
+        graph.add_node("revision_router", lambda s: nodes.revision_router_node(s))
+        graph.add_node(
+            "human_review",
+            lambda s: nodes.human_review_node(s, repo),
+        )
+        graph.add_node(
+            "archive",
+            lambda s: nodes.archive_node(s, repo),
+        )
 
     # ── Set entry point ───────────────────────────────────────
     graph.set_entry_point("health_check")
@@ -108,6 +139,7 @@ def build_graph(
             "polisher": "polisher",
             "editor": "editor",
             "publisher": "publisher",
+            "archive": "archive",          # Terminal: already published
             "human_review": "human_review",
             "revision_router": "revision_router",
         },
@@ -153,6 +185,8 @@ def compile_graph(
     settings: Settings | None = None,
     repo: Repository | None = None,
     llm: LLMProvider | None = None,
+    llm_router: Any | None = None,
+    skill_registry: Any | None = None,
     checkpointer: Any | None = None,
     checkpoint: bool = True,
 ):
@@ -161,7 +195,9 @@ def compile_graph(
     Args:
         settings: Application settings.
         repo: Repository instance.
-        llm: LLM provider.
+        llm: LLM provider. Used only if llm_router is None (legacy mode).
+        llm_router: LLMRouter instance for agent-level routing (v5.1.6).
+        skill_registry: Optional SkillRegistry for polisher/editor (v5.1.6).
         checkpointer: Custom checkpointer instance (e.g. SqliteSaver).
                        If provided, takes precedence over the checkpoint flag.
         checkpoint: If True and no custom checkpointer is given, use MemorySaver.
@@ -171,7 +207,7 @@ def compile_graph(
     Returns:
         Compiled graph ready for .invoke() or .stream().
     """
-    graph = build_graph(settings, repo, llm)
+    graph = build_graph(settings, repo, llm, llm_router, skill_registry)
     if checkpointer is not None:
         cp = checkpointer
     elif checkpoint:

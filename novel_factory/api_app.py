@@ -37,7 +37,7 @@ def create_api_app(
     app = FastAPI(
         title="小说工厂 API",
         description="Novel Factory API v5.1",
-        version="5.1.4",
+        version="5.1.5",
         default_response_class=JSONResponse,
     )
 

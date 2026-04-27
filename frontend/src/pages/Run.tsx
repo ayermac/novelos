@@ -176,7 +176,10 @@ export default function Run() {
 
   return (
     <div>
-      <PageHeader title="生成章节" />
+      <PageHeader title="高级运行" />
+      <div style={{ marginTop: '-12px', marginBottom: '16px', fontSize: '13px', color: 'var(--text-muted)' }}>
+        调试与高级配置入口。日常生成请在项目工作台中完成。
+      </div>
 
       {/* Demo mode notice */}
       {isStub && (

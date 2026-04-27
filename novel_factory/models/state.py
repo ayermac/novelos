@@ -76,3 +76,5 @@ class FactoryState(TypedDict, total=False):
     max_retries: int
     requires_human: bool
     error: Optional[str]
+    # v5.1.6: Runtime context (not persisted, injected by node functions)
+    steps: list[dict[str, Any]]  # Step records for run_with_graph return value

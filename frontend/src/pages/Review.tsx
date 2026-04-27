@@ -75,8 +75,17 @@ export default function Review() {
     <div>
       <PageHeader title="审核工作台" />
 
+      {/* Info Banner */}
+      <div className="alert alert-info" style={{ marginBottom: 'var(--spacing-lg)' }}>
+        <strong>审核工作台说明</strong>
+        <div style={{ marginTop: '4px', fontSize: '14px' }}>
+          审核队列用于人工复核章节质量。当前流程下，章节生成后会直接发布，可在项目工作台查看正文。
+          如需启用人工审核流程，请在配置中心调整发布策略。
+        </div>
+      </div>
+
       {/* Stats */}
-      <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)' }}>
+      <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(4, 1fr)', marginBottom: 'var(--spacing-lg)' }}>
         <div className="stat-card">
           <h3>待审核</h3>
           <div className="stat-value">{data.stats.review}</div>
@@ -136,9 +145,12 @@ export default function Review() {
             </div>
           ) : (
             <EmptyState
-              title="当前没有待审核章节"
-              hint="当前流程下章节生成后会直接发布。已发布章节可在项目工作台查看正文。"
-              action={{ label: '查看项目列表', to: '/projects' }}
+              title="暂无待审核章节"
+              hint="当前流程下章节生成后会直接发布。已发布章节可在项目工作台查看正文和运行记录。如需启用人工审核流程，请在配置中心调整发布策略。"
+              actions={[
+                { label: '查看项目列表', to: '/projects' },
+                { label: '前往配置中心', to: '/settings' },
+              ]}
             />
           )}
         </div>

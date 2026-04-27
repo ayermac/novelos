@@ -23,11 +23,14 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
     """Run a single chapter production.
 
     In stub mode, returns mock result without real LLM calls.
+    v5.1.6: Uses LangGraph-based run_with_graph() instead of Dispatcher.
     """
-    from ..deps import get_repo, get_dispatcher, get_llm_mode
+    from ..deps import get_repo, get_settings, get_llm_mode
+    from ...workflow.runner import run_with_graph
 
     try:
         repo = get_repo(request)
+        settings = get_settings(request)
         llm_mode = body.llm_mode or get_llm_mode(request)
 
         # Verify project exists
@@ -35,23 +38,29 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{body.project_id}' 不存在")
 
-        # Verify chapter exists
+        # Verify chapter exists — auto-create if missing (sequential creation)
         chapter = repo.get_chapter(body.project_id, body.chapter)
         if not chapter:
-            return error_response("CHAPTER_NOT_FOUND", f"章节 {body.chapter} 不存在")
+            repo.add_chapter(
+                project_id=body.project_id,
+                chapter_number=body.chapter,
+                title=f"第 {body.chapter} 章",
+                status="planned",
+            )
+            chapter = repo.get_chapter(body.project_id, body.chapter)
 
         # Normalize legacy 'pending' status to 'planned' for compatibility
         # Old Web API created chapters with status='pending', but agents expect 'planned'
         if chapter.get("status") == "pending":
             repo.update_chapter_status(body.project_id, body.chapter, "planned")
 
-        # Build dispatcher
-        dispatcher = get_dispatcher(request, llm_mode=llm_mode)
-
-        # Run chapter (stub mode returns mock result)
-        result = dispatcher.run_chapter(
+        # Run chapter via LangGraph workflow
+        result = run_with_graph(
             project_id=body.project_id,
             chapter_number=body.chapter,
+            settings=settings,
+            repo=repo,
+            llm_mode=llm_mode,
         )
 
         # Determine workflow_status from dispatcher result

@@ -69,8 +69,8 @@ class LLMRouter:
         
         if profile is None:
             raise ValueError(
-                f"LLM profile '{profile_name}' for agent '{agent_id}' not found. "
-                f"Available profiles: {list(self.config.llm_profiles.keys())}"
+                f"LLM 档案 '{profile_name}' 不存在（Agent '{agent_id}'）。"
+                f"可用档案: {list(self.config.llm_profiles.keys())}"
             )
         
         # Check cache
@@ -99,23 +99,23 @@ class LLMRouter:
         base_url = profile.get_resolved_base_url(self.env_getter)
         if not base_url:
             raise ValueError(
-                f"base_url not configured for profile '{profile_name}'. "
-                f"Set base_url or {profile.base_url_env} environment variable."
+                f"API 地址未配置（档案 '{profile_name}'）。"
+                f"请设置 {profile.base_url_env} 环境变量。"
             )
-        
+
         # Resolve API key
         api_key = profile.get_resolved_api_key(self.env_getter)
         if not api_key:
             raise ValueError(
-                f"API key not configured for profile '{profile_name}'. "
-                f"Set api_key or {profile.api_key_env} environment variable."
+                f"API Key 未配置（档案 '{profile_name}'）。"
+                f"请设置 {profile.api_key_env} 环境变量。"
             )
-        
+
         # Create provider (currently only OpenAI-compatible)
         if profile.provider != "openai_compatible":
             raise ValueError(
-                f"Unsupported provider '{profile.provider}' for profile '{profile_name}'. "
-                f"Only 'openai_compatible' is supported."
+                f"不支持的提供商 '{profile.provider}'（档案 '{profile_name}'）。"
+                f"当前仅支持 'openai_compatible'。"
             )
         
         from .openai_compatible import OpenAICompatibleProvider
@@ -155,8 +155,7 @@ class LLMRouter:
         
         if profile is None:
             raise ValueError(
-                f"No profile found for agent '{agent_id}' "
-                f"(profile_name: '{profile_name}')"
+                f"Agent '{agent_id}' 未找到档案（档案名: '{profile_name}'）"
             )
         
         # Resolve values

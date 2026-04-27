@@ -286,8 +286,9 @@ class TestFrontendProjectDetail:
         content = detail_file.read_text()
 
         assert "blocked" in content, "Should handle blocked status"
-        assert "工作流被阻塞" in content, (
-            "Should show Chinese fallback for blocked without error_message"
+        # HistoryTab uses tWorkflowStatus function for translation
+        assert "tWorkflowStatus" in content, (
+            "Should use tWorkflowStatus function for status translation"
         )
 
     def test_next_action_checks_latest_run_only(self):
@@ -345,18 +346,18 @@ class TestI18nBlockedMapping:
 class TestLayoutVersion:
     """Layout sidebar shows correct version."""
 
-    def test_sidebar_version_is_v513(self):
-        """Sidebar version should display v5.1.3."""
+    def test_sidebar_version_is_v515(self):
+        """Sidebar version should display v5.1.5."""
         frontend_src = Path(__file__).parent.parent / "frontend" / "src"
         layout_file = frontend_src / "components" / "Layout.tsx"
         assert layout_file.exists()
         content = layout_file.read_text()
 
-        assert "v5.1.3" in content, (
-            "Layout sidebar should display v5.1.3, not older version"
+        assert "v5.1.5" in content, (
+            "Layout sidebar should display v5.1.5, not older version"
         )
-        assert "v5.1.2" not in content, (
-            "Layout sidebar should NOT still show v5.1.2"
+        assert "v5.1.4" not in content, (
+            "Layout sidebar should NOT still show v5.1.4"
         )
 
 

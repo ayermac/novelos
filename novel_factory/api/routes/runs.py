@@ -29,6 +29,69 @@ STATUS_TO_AGENT = {
 }
 
 
+def _generate_stub_artifacts(step_key: str, chapter_number: int) -> dict | None:
+    """Generate mock artifacts for stub mode.
+
+    Different chapters produce different content using chapter_number as seed.
+    """
+    # Scene templates for different chapters
+    scene_templates = [
+        ["修炼突破", "危机降临", "转机出现"],
+        ["故人重逢", "恩怨化解", "新的征程"],
+        ["探寻秘境", "意外收获", "暗流涌动"],
+        ["强敌来袭", "背水一战", "绝地反击"],
+        ["真相揭露", "命运抉择", "风云再起"],
+    ]
+
+    # Character names for variety
+    characters = ["萧炎", "林动", "牧尘", "唐三", "叶凡"]
+    char = characters[chapter_number % len(characters)]
+    scenes = scene_templates[chapter_number % len(scene_templates)]
+
+    base_word_count = 2800 + (chapter_number % 5) * 200  # 2800-3600 range
+
+    if step_key == "screenwriter":
+        return {
+            "summary": f"本章规划了 {len(scenes)} 个场景：{char}{scenes[0]}、{scenes[1]}、{scenes[2]}",
+            "scenes": len(scenes),
+            "word_count_hint": f"{base_word_count}-{base_word_count + 400}",
+            "output_preview": f"场景一：{char}{scenes[0]}…\n场景二：{scenes[1]}…\n场景三：{scenes[2]}…"
+        }
+    elif step_key == "author":
+        draft_words = base_word_count + (chapter_number % 3) * 100
+        return {
+            "summary": f"基于编剧大纲完成正文，初稿 {draft_words} 字",
+            "draft_word_count": draft_words,
+            "output_preview": f"第{chapter_number}章开篇，{char}正面临前所未有的挑战…"
+        }
+    elif step_key == "polisher":
+        polished_words = base_word_count + 150 + (chapter_number % 3) * 50
+        changes = 8 + (chapter_number % 8)
+        return {
+            "summary": f"润色后 {polished_words} 字，优化了 {changes} 处表达",
+            "polished_word_count": polished_words,
+            "changes": changes,
+            "output_preview": f"主要修改：1) 开篇节奏调整；2) 对话细节润色；3) 结尾情感升华"
+        }
+    elif step_key == "editor":
+        score = 80 + (chapter_number % 15)
+        return {
+            "summary": f"审核通过，质量评分 {score}/100",
+            "quality_score": score,
+            "issues_found": 0,
+            "output_preview": "角色一致性：✓\n情节连贯性：✓\n风格匹配度：✓"
+        }
+    elif step_key == "publish":
+        final_words = base_word_count + 150 + (chapter_number % 3) * 50
+        return {
+            "summary": f"章节已发布，最终字数 {final_words}",
+            "final_word_count": final_words,
+            "output_preview": f"第 {chapter_number} 章已发布到项目"
+        }
+
+    return None
+
+
 @router.get("/runs/{run_id}")
 async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
     """Get detailed information about a workflow run.
@@ -99,6 +162,7 @@ def _build_steps_timeline(
     workflow_status = run_data.get("status", "unknown")
     current_node = run_data.get("current_node")
     error_message = run_data.get("error_message")
+    chapter_number = run_data.get("chapter_number", 1)
 
     # Determine final chapter status
     final_status = chapter.get("status", "planned") if chapter else "planned"
@@ -147,6 +211,12 @@ def _build_steps_timeline(
         # Add error message for failed step
         if is_failed and error_message:
             step["error_message"] = error_message
+
+        # Add artifacts for completed steps in stub mode
+        if is_completed and llm_mode == "stub":
+            step["artifacts"] = _generate_stub_artifacts(key, chapter_number)
+        else:
+            step["artifacts"] = None
 
         steps.append(step)
 

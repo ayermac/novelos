@@ -1,17 +1,26 @@
 import { useEffect, useState } from 'react'
 import { Outlet, NavLink } from 'react-router-dom'
-import { Book, FolderPlus, Play, CheckSquare, Palette, Settings, CheckCircle, LayoutDashboard, FolderOpen } from 'lucide-react'
+import { Book, FolderPlus, Play, CheckSquare, Palette, Settings, LayoutDashboard, FolderOpen, LucideIcon } from 'lucide-react'
 import { get } from '../lib/api'
 
-const navItems = [
-  { to: '/', label: '总览', icon: LayoutDashboard },
+interface NavItem {
+  to: string
+  label: string
+  icon: LucideIcon | null
+  isSectionLabel?: boolean
+}
+
+const navItems: NavItem[] = [
+  { to: '', label: '创作', icon: null, isSectionLabel: true },
+  { to: '/', label: '创作中心', icon: LayoutDashboard },
   { to: '/projects', label: '项目', icon: FolderOpen },
   { to: '/onboarding', label: '创建项目', icon: FolderPlus },
-  { to: '/run', label: '生成章节', icon: Play },
+  { to: '', label: '工具', icon: null, isSectionLabel: true },
   { to: '/review', label: '审核', icon: CheckSquare },
   { to: '/style', label: '风格', icon: Palette },
   { to: '/settings', label: '配置', icon: Settings },
-  { to: '/acceptance', label: '验收', icon: CheckCircle },
+  { to: '', label: '开发', icon: null, isSectionLabel: true },
+  { to: '/run', label: '高级运行', icon: Play },
 ]
 
 export default function Layout() {
@@ -39,21 +48,41 @@ export default function Layout() {
         <div className="sidebar-brand">
           <Book size={20} />
           <span>小说工厂</span>
-          <span className="version">v5.1.4</span>
+          <span className="version">v5.1.5</span>
         </div>
 
         <nav className="sidebar-nav">
-          {navItems.map((item) => (
-            <NavLink
-              key={item.to}
-              to={item.to}
-              end={item.to === '/'}
-              className={({ isActive }) => (isActive ? 'active' : '')}
-            >
-              <item.icon size={18} />
-              {item.label}
-            </NavLink>
-          ))}
+          {navItems.map((item, index) => {
+            if (item.isSectionLabel) {
+              return (
+                <div
+                  key={`section-${index}`}
+                  style={{
+                    fontSize: '11px',
+                    color: 'var(--text-muted)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.05em',
+                    marginTop: index === 0 ? '0' : '16px',
+                    marginBottom: '4px',
+                    padding: '0 12px',
+                  }}
+                >
+                  {item.label}
+                </div>
+              )
+            }
+            return (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                end={item.to === '/'}
+                className={({ isActive }) => (isActive ? 'active' : '')}
+              >
+                {item.icon && <item.icon size={18} />}
+                {item.label}
+              </NavLink>
+            )
+          })}
         </nav>
 
         <div className="sidebar-footer">作者工作台</div>

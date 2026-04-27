@@ -115,10 +115,10 @@ export default function Onboarding() {
                 进入项目工作台
               </Link>
               <Link
-                to={`/run?project_id=${result.project.project_id}&chapter=1`}
+                to={`/projects/${result.project.project_id}?chapter=1`}
                 className="btn btn-secondary"
               >
-                生成第一章
+                进入工作台生成第一章
               </Link>
             </div>
           </div>
