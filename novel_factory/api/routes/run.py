@@ -40,6 +40,11 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
         if not chapter:
             return error_response("CHAPTER_NOT_FOUND", f"章节 {body.chapter} 不存在")
 
+        # Normalize legacy 'pending' status to 'planned' for compatibility
+        # Old Web API created chapters with status='pending', but agents expect 'planned'
+        if chapter.get("status") == "pending":
+            repo.update_chapter_status(body.project_id, body.chapter, "planned")
+
         # Build dispatcher
         dispatcher = get_dispatcher(request, llm_mode=llm_mode)
 

@@ -77,7 +77,7 @@ class TestPendingCompatibility:
     def test_pending_chapter_runs_without_blocked(self, client):
         """A chapter with pending status should run and not be blocked."""
         # Create project
-        client.post(
+        resp = client.post(
             "/api/onboarding/projects",
             json={
                 "project_id": "test_v512_002",
@@ -85,14 +85,50 @@ class TestPendingCompatibility:
                 "initial_chapter_count": 1,
             },
         )
+        assert resp.status_code == 200
 
         # Manually set chapter to pending (simulating old data)
+        # Get the DB path from the app state
         from novel_factory.db.connection import get_connection
-        from novel_factory.api_app import create_api_app
-        # We need to access the DB directly; use the same temp DB via a new connection
-        # But the fixture cleans up after yield. We'll do it through a workaround:
-        # Actually, let's just create a new client with direct DB manipulation.
-        pass
+        db_path = client.app.state.db_path
+        conn = get_connection(db_path)
+        try:
+            conn.execute(
+                "UPDATE chapters SET status='pending' "
+                "WHERE project_id='test_v512_002' AND chapter_number=1"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        # Verify chapter is now pending
+        resp = client.get("/api/projects/test_v512_002/workspace")
+        chapters = resp.json()["data"]["chapters"]
+        assert chapters[0]["status"] == "pending", "Chapter should be pending before run"
+
+        # Run the chapter - should normalize pending to planned and succeed
+        resp = client.post(
+            "/api/run/chapter",
+            json={"project_id": "test_v512_002", "chapter": 1},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True, f"Run should succeed, got: {data}"
+        result = data["data"]
+
+        # Should NOT be blocked or failed
+        assert result["workflow_status"] not in ("failed", "blocked"), (
+            f"workflow_status should not be failed/blocked, got: {result['workflow_status']}, "
+            f"error: {result.get('error')}"
+        )
+        assert result["error"] is None, f"error should be None, got: {result['error']}"
+
+        # Chapter status should no longer be pending
+        resp = client.get("/api/projects/test_v512_002/workspace")
+        chapters = resp.json()["data"]["chapters"]
+        assert chapters[0]["status"] != "pending", (
+            "Chapter status should be normalized from pending to planned (or later)"
+        )
 
     def test_pending_in_status_route(self):
         """STATUS_ROUTE should contain pending -> screenwriter mapping."""
