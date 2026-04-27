@@ -43,6 +43,8 @@
 | `novel-factory-v5.1-frontend-separation-api-backend-spec.md` | v5.1 前后端分离、FastAPI JSON API、React 前端 | 开发 Agent、质量验收 |
 | `novel-factory-v5.1.1-webui-product-reset-spec.md` | v5.1.1 WebUI 产品化 Reset、中文作者工作台 | 开发 Agent、质量验收 |
 | `novel-factory-v5.1.2-chapter-status-model-alignment-spec.md` | v5.1.2 章节状态模型对齐、pending/planned 修复 | 开发 Agent、质量验收 |
+| `novel-factory-v5.1.3-author-workflow-usability-closure-spec.md` | v5.1.3 作者主流程闭环、章节阅读、Stub 差异化 | 开发 Agent、质量验收 |
+| `novel-factory-v5.1.4-workflow-visibility-interaction-polish-spec.md` | v5.1.4 工作流可视化、演示模式说明、交互优化 | 开发 Agent、质量验收 |
 
 ## v5.1.1 本地启动与验收
 
@@ -188,7 +190,18 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.1.3 Author Workflow Usability Closure 已通过验收，测试基线 1293/1293**。
+当前开发基线是 **v5.1.4 Workflow Visibility & Interaction Polish 已通过验收，测试基线 1311/1311**。
+
+**v5.1.4 核心变更:**
+- 新增运行详情 API：`GET /api/runs/{run_id}` 返回工作流步骤时间线
+- 新增 RunDetail 页面：路由 `/runs/:runId`，显示 5 个 Agent 步骤
+- 演示模式说明强化：全局状态栏、Run 页面、ChapterReader 提示
+- 生成交互优化：loading skeleton、步骤状态、结果卡片、下一步引导
+- 章节阅读页交互优化：导航、正文样式、来源标签
+- 配置体验优化：复制反馈、切换指引
+- 修复 P1 问题：前端 API path 双 /api 问题
+- 新增测试覆盖：防止双 /api 前缀问题
+- 版本号统一更新至 v5.1.4
 
 **v5.1.3 核心变更:**
 - 新增章节详情 API：`GET /api/projects/{id}/chapters/{num}` 返回正文内容
@@ -241,4 +254,4 @@ v1 不实现：
 
 当前下一步：
 
-- 进入 v5.2+ 多模型与生产治理规划与开发。
+- 进入 v5.1.5 Real LLM Configuration & First Real Generation 规划与开发。

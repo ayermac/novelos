@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
 import { get } from '../lib/api'
-import StatusBadge from '../components/StatusBadge'
+import { tChapterStatus } from '../lib/i18n'
 import ErrorState from '../components/ErrorState'
 import EmptyState from '../components/EmptyState'
 import PageHeader from '../components/PageHeader'
@@ -19,12 +19,19 @@ interface ChapterData {
   updated_at: string
 }
 
+interface Workspace {
+  chapters: Array<{ chapter_number: number; status: string }>
+  recent_runs: Array<{ run_id: string; chapter_number: number; status: string }>
+}
+
 export default function ChapterReader() {
   const { projectId, chapterNumber } = useParams<{
     projectId: string
     chapterNumber: string
   }>()
   const [data, setData] = useState<ChapterData | null>(null)
+  const [workspace, setWorkspace] = useState<Workspace | null>(null)
+  const [llmMode, setLlmMode] = useState<string>('stub')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
 
@@ -32,6 +39,8 @@ export default function ChapterReader() {
     if (!projectId || !chapterNumber) return
     setLoading(true)
     setError('')
+    
+    // Load chapter data
     get<ChapterData>(`/projects/${projectId}/chapters/${chapterNumber}`).then((res) => {
       if (res.ok && res.data) {
         setData(res.data)
@@ -40,6 +49,20 @@ export default function ChapterReader() {
       }
       setLoading(false)
     })
+
+    // Load workspace for navigation
+    get<Workspace>(`/projects/${projectId}/workspace`).then((res) => {
+      if (res.ok && res.data) {
+        setWorkspace(res.data)
+      }
+    })
+
+    // Get LLM mode
+    get<{ llm_mode: string }>('/health').then((res) => {
+      if (res.ok && res.data) {
+        setLlmMode(res.data.llm_mode)
+      }
+    })
   }
 
   useEffect(() => {
@@ -47,7 +70,7 @@ export default function ChapterReader() {
   }, [projectId, chapterNumber])
 
   if (loading) {
-    return <div>加载中...</div>
+    return <div className="loading-state">加载中...</div>
   }
 
   if (error || !data) {
@@ -61,6 +84,14 @@ export default function ChapterReader() {
   }
 
   const hasContent = data.content && data.word_count > 0
+  const isStub = llmMode === 'stub'
+  const currentChapterNum = parseInt(chapterNumber || '1', 10)
+  const prevChapter = currentChapterNum > 1 ? currentChapterNum - 1 : null
+  const nextChapter = workspace?.chapters.find(c => c.chapter_number === currentChapterNum + 1)
+  const hasPrevChapter = workspace?.chapters.some(c => c.chapter_number === prevChapter)
+  
+  // Find recent run for this chapter
+  const recentRun = workspace?.recent_runs.find(r => r.chapter_number === currentChapterNum)
 
   return (
     <div>
@@ -69,7 +100,7 @@ export default function ChapterReader() {
         backTo={`/projects/${data.project_id}`}
         backLabel="返回项目"
         actions={
-          <div style={{ display: 'flex', gap: '8px' }}>
+          <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
             {!hasContent && (
               <Link
                 to={`/run?project_id=${data.project_id}&chapter=${data.chapter_number}`}
@@ -78,23 +109,52 @@ export default function ChapterReader() {
                 生成本章
               </Link>
             )}
-            {data.chapter_number > 1 && (
+            {hasContent && recentRun && (
               <Link
-                to={`/projects/${data.project_id}/chapters/${data.chapter_number - 1}`}
+                to={`/runs/${recentRun.run_id}`}
+                className="btn btn-secondary"
+              >
+                查看工作流
+              </Link>
+            )}
+            {hasPrevChapter && prevChapter && (
+              <Link
+                to={`/projects/${data.project_id}/chapters/${prevChapter}`}
                 className="btn btn-secondary"
               >
                 上一章
               </Link>
             )}
-            <Link
-              to={`/projects/${data.project_id}/chapters/${data.chapter_number + 1}`}
-              className="btn btn-secondary"
-            >
-              下一章
-            </Link>
+            {nextChapter ? (
+              nextChapter.status === 'published' ? (
+                <Link
+                  to={`/projects/${data.project_id}/chapters/${nextChapter.chapter_number}`}
+                  className="btn btn-secondary"
+                >
+                  下一章
+                </Link>
+              ) : (
+                <Link
+                  to={`/run?project_id=${data.project_id}&chapter=${nextChapter.chapter_number}`}
+                  className="btn btn-secondary"
+                >
+                  生成下一章
+                </Link>
+              )
+            ) : null}
           </div>
         }
       />
+
+      {/* Demo content notice */}
+      {hasContent && isStub && (
+        <div className="alert alert-info" style={{ marginBottom: '16px' }}>
+          <strong>演示正文</strong>
+          <div style={{ marginTop: '4px', fontSize: '14px' }}>
+            本章为演示模式生成内容，由本地 Stub 模板生成，不代表真实创作质量。
+          </div>
+        </div>
+      )}
 
       {/* Chapter Meta */}
       <div className="card" style={{ marginBottom: 'var(--spacing-lg)' }}>
@@ -116,7 +176,9 @@ export default function ChapterReader() {
             </div>
             <div>
               <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>状态</div>
-              <StatusBadge status={data.status} />
+              <span className={`status-badge status-${data.status}`}>
+                {tChapterStatus(data.status)}
+              </span>
             </div>
             <div>
               <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>字数</div>
@@ -128,6 +190,12 @@ export default function ChapterReader() {
                 <div style={{ fontWeight: 600 }}>{data.quality_score}</div>
               </div>
             )}
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>来源</div>
+              <span className={`status-badge status-${llmMode}`}>
+                {isStub ? '演示' : '真实'}
+              </span>
+            </div>
           </div>
         </div>
       </div>
@@ -135,13 +203,13 @@ export default function ChapterReader() {
       {/* Chapter Content */}
       <div className="card">
         <div className="card-header">
-          <h3>正文</h3>
+          <h3>{isStub ? '演示正文' : '正文'}</h3>
         </div>
         <div className="card-body">
           {hasContent ? (
             <div
               style={{
-                maxWidth: '680px',
+                maxWidth: '720px',
                 margin: '0 auto',
                 fontSize: '16px',
                 lineHeight: '1.9',
@@ -164,6 +232,23 @@ export default function ChapterReader() {
           )}
         </div>
       </div>
+
+      <style>{`
+        .loading-state {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 200px;
+          color: var(--text-secondary);
+        }
+        .alert-info {
+          background: #eff6ff;
+          border: 1px solid #bfdbfe;
+          padding: 12px 16px;
+          border-radius: 6px;
+          color: #1e40af;
+        }
+      `}</style>
     </div>
   )
 }

@@ -1193,6 +1193,91 @@ API 端点：
 
 状态：**已通过验收**，测试基线 1264/1264。
 
+## v5.1.3：Author Workflow Usability Closure
+
+目标：实现作者主流程闭环，用户可以生成章节、查看正文、继续下一章，并让 Stub 内容按章节区分。
+
+范围：
+
+- 新增章节详情 API：`GET /api/projects/{project_id}/chapters/{chapter_number}`
+- 新增 ChapterReader 页面：路由 `/projects/:projectId/chapters/:chapterNumber`
+- ProjectDetail 章节表新增"操作"列（查看正文/生成本章）
+- Run 成功后显示"查看正文"按钮
+- Run 支持 `?project_id=&chapter=` 预选参数
+- Onboarding 自动生成项目 ID、默认类型
+- Acceptance 页面默认隐藏内部 capability_id
+- StubLLM 根据 chapter_number 生成不同 title/content/word_count
+- NextAction 只检查最近一次运行
+- Settings 页改为配置草案生成器
+
+验收：
+
+- v5.1.3 专项测试通过（15 项）
+- 全量测试基线 1293/1293
+- TypeScript 检查通过
+- 前端构建通过
+- Smoke 测试通过
+- 浏览器验收：/projects/dpcq -> 查看正文 成功
+
+状态：**已通过验收**，测试基线 1293/1293。
+
+## v5.1.4：Workflow Visibility & Interaction Polish
+
+目标：让演示模式说明清楚、工作流可视化、生成交互优化，提升用户体验。
+
+范围：
+
+- 新增运行详情 API：`GET /api/runs/{run_id}`
+- 返回 run metadata + steps（编剧/执笔/润色/审核/发布）
+- 当前 timeline 由 workflow_run + chapter.status 推导
+- 新增 RunDetail 页面：路由 `/runs/:runId`
+- Run 结果增加"查看工作流"按钮
+- ProjectDetail 最近运行增加"查看工作流"
+- ChapterReader 增加"查看工作流"和演示正文提示
+- Layout 顶部演示模式提示
+- Run 页面 loading skeleton
+- 成功/失败/阻塞结果卡片
+- 继续生成下一章预选下一章
+- Settings 复制反馈、切换指引
+
+P1/P2 修复：
+
+- 修复前端 API path 双 /api 问题
+- 新增测试防止双 /api 前缀问题
+
+验收：
+
+- v5.1.4 专项测试通过（18/18）
+- 全量测试基线 1311/1311
+- TypeScript 检查通过
+- 前端构建通过
+- Smoke 测试通过
+- 浏览器验收：/run -> 生成 -> 查看工作流 -> 查看正文 成功
+
+状态：**已通过验收**，测试基线 1311/1311。
+
+## v5.1.5：Real LLM Configuration & First Real Generation
+
+目标：实现真实 LLM 配置闭环，让用户可以配置真实 LLM API 并完成首次真实生成。
+
+范围：
+
+- 真实 LLM 配置验证
+- 首次真实生成
+- 质量对比验证
+- 成本控制
+- 错误处理增强
+
+验收：
+
+- 真实 LLM 配置可验证
+- 首次真实生成成功
+- 质量对比可验证
+- 成本可统计
+- 错误处理清晰
+
+状态：**规划中**。
+
 ## Post-Acceptance Hardening
 
 v5.1 已完成 Post-Acceptance Hardening，新增：

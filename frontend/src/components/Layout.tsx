@@ -1,5 +1,7 @@
+import { useEffect, useState } from 'react'
 import { Outlet, NavLink } from 'react-router-dom'
 import { Book, FolderPlus, Play, CheckSquare, Palette, Settings, CheckCircle, LayoutDashboard, FolderOpen } from 'lucide-react'
+import { get } from '../lib/api'
 
 const navItems = [
   { to: '/', label: '总览', icon: LayoutDashboard },
@@ -13,6 +15,23 @@ const navItems = [
 ]
 
 export default function Layout() {
+  const [llmMode, setLlmMode] = useState<string>('stub')
+
+  useEffect(() => {
+    // Fetch LLM mode from health endpoint
+    get<{ llm_mode: string }>('/health')
+      .then((res) => {
+        if (res.ok && res.data) {
+          setLlmMode(res.data.llm_mode)
+        }
+      })
+      .catch(() => {
+        // Default to stub on error
+      })
+  }, [])
+
+  const isStub = llmMode === 'stub'
+
   return (
     <div className="app-layout">
       {/* Sidebar */}
@@ -20,7 +39,7 @@ export default function Layout() {
         <div className="sidebar-brand">
           <Book size={20} />
           <span>小说工厂</span>
-          <span className="version">v5.1.3</span>
+          <span className="version">v5.1.4</span>
         </div>
 
         <nav className="sidebar-nav">
@@ -47,7 +66,15 @@ export default function Layout() {
             <span className="topbar-title">作者工作台</span>
           </div>
           <div className="topbar-right">
-            <span className="status-badge status-stub">演示模式</span>
+            {isStub ? (
+              <span className="status-badge status-stub" title="不调用真实 LLM，内容由本地 Stub 模板生成">
+                演示模式
+              </span>
+            ) : (
+              <span className="status-badge status-real" title="调用真实 LLM API 生成内容">
+                真实模式
+              </span>
+            )}
           </div>
         </header>
 

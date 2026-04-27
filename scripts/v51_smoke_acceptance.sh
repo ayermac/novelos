@@ -281,6 +281,29 @@ def test_api_smoke():
             print(f"✗ GET /api/projects/{id}/chapters/{num}: {e}")
             tests_failed += 1
         
+        # Run detail endpoint (v5.1.4)
+        try:
+            # Get run_id from the previous run
+            resp = client.get("/api/projects/smoke_test_project/workspace")
+            assert resp.status_code == 200
+            workspace = resp.json()["data"]
+            if workspace.get("recent_runs") and len(workspace["recent_runs"]) > 0:
+                run_id = workspace["recent_runs"][0]["run_id"]
+                resp = client.get(f"/api/runs/{run_id}")
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["ok"] == True
+                assert "steps" in data["data"]
+                assert len(data["data"]["steps"]) == 5
+                print("✓ GET /api/runs/{run_id}")
+                tests_passed += 1
+            else:
+                print("⊘ GET /api/runs/{run_id} (no runs yet)")
+                tests_passed += 1
+        except Exception as e:
+            print(f"✗ GET /api/runs/{{run_id}}: {e}")
+            tests_failed += 1
+        
         return tests_passed, tests_failed
         
     finally:

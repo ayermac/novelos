@@ -37,7 +37,7 @@ def create_api_app(
     app = FastAPI(
         title="小说工厂 API",
         description="Novel Factory API v5.1",
-        version="5.1.3",
+        version="5.1.4",
         default_response_class=JSONResponse,
     )
 
@@ -62,6 +62,7 @@ def create_api_app(
         projects_router,
         onboarding_router,
         run_router,
+        runs_router,
         review_router,
         style_router,
         settings_router,
@@ -73,6 +74,7 @@ def create_api_app(
     app.include_router(projects_router, prefix="/api", tags=["projects"])
     app.include_router(onboarding_router, prefix="/api", tags=["onboarding"])
     app.include_router(run_router, prefix="/api", tags=["run"])
+    app.include_router(runs_router, prefix="/api", tags=["runs"])
     app.include_router(review_router, prefix="/api", tags=["review"])
     app.include_router(style_router, prefix="/api", tags=["style"])
     app.include_router(settings_router, prefix="/api", tags=["settings"])

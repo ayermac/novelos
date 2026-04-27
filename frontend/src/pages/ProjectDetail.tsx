@@ -280,6 +280,7 @@ export default function ProjectDetail() {
                     <th>状态</th>
                     <th>说明</th>
                     <th>时间</th>
+                    <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -296,6 +297,14 @@ export default function ProjectDetail() {
                         </td>
                         <td className="text-secondary">{blockedFallback}</td>
                         <td className="text-secondary">{run.created_at}</td>
+                        <td>
+                          <Link
+                            to={`/runs/${run.run_id}`}
+                            style={{ fontSize: '13px' }}
+                          >
+                            查看工作流
+                          </Link>
+                        </td>
                       </tr>
                     )
                   })}

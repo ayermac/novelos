@@ -6,6 +6,7 @@ import ProjectDetail from './pages/ProjectDetail'
 import ChapterReader from './pages/ChapterReader'
 import Onboarding from './pages/Onboarding'
 import Run from './pages/Run'
+import RunDetail from './pages/RunDetail'
 import Review from './pages/Review'
 import Style from './pages/Style'
 import Settings from './pages/Settings'
@@ -22,6 +23,7 @@ function App() {
           <Route path="projects/:projectId/chapters/:chapterNumber" element={<ChapterReader />} />
           <Route path="onboarding" element={<Onboarding />} />
           <Route path="run" element={<Run />} />
+          <Route path="runs/:runId" element={<RunDetail />} />
           <Route path="review" element={<Review />} />
           <Route path="style" element={<Style />} />
           <Route path="settings" element={<Settings />} />
