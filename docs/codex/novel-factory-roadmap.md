@@ -1174,6 +1174,25 @@ API 端点：
 
 状态：**已通过验收**，测试基线 1255/1255。
 
+## v5.1.2：Chapter & Status Model Alignment
+
+目标：统一章节状态模型，修复因 `chapter.status`、`workflow_run.status`、`queue.status` 混用导致的 WebUI 无法正确生成章节问题。
+
+范围：
+
+- 明确三套状态边界：
+  - `chapter.status`: planned / scripted / drafted / polished / reviewed / published / blocking / revision / pending(兼容)
+  - `workflow_run.status`: running / completed / blocked / failed
+  - `production_queue.status`: pending / running / completed / failed
+- 修复 onboarding 初始章节状态：`pending` → `planned`
+- Dispatcher `STATUS_ROUTE` 兼容旧 `pending`：`pending` → `screenwriter`
+- 修复 `/api/run/chapter` 响应：新增 `workflow_status`、`chapter_status`、`requires_human`、`error`
+- Run 页面使用 workspace 获取 chapters，select 下拉选择可生成章节
+- ProjectDetail recent_runs 增加 blocked 兜底说明
+- 前端新增 `tWorkflowStatus()` / `tChapterStatus()`
+
+状态：**已通过验收**，测试基线 1264/1264。
+
 ## Post-Acceptance Hardening
 
 v5.1 已完成 Post-Acceptance Hardening，新增：

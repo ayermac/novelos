@@ -19,6 +19,7 @@ interface Run {
   chapter_number: number
   status: string
   created_at: string
+  error_message?: string
 }
 
 interface Workspace {
@@ -248,19 +249,27 @@ export default function ProjectDetail() {
                   <tr>
                     <th>章节</th>
                     <th>状态</th>
+                    <th>说明</th>
                     <th>时间</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.recent_runs.slice(0, 10).map((run) => (
-                    <tr key={run.run_id}>
-                      <td>第 {run.chapter_number} 章</td>
-                      <td>
-                        <StatusBadge status={run.status} />
-                      </td>
-                      <td className="text-secondary">{run.created_at}</td>
-                    </tr>
-                  ))}
+                  {data.recent_runs.slice(0, 10).map((run) => {
+                    const blockedFallback =
+                      run.status === 'blocked' && !run.error_message
+                        ? '工作流被阻塞，请检查章节状态或重新运行。'
+                        : run.error_message || ''
+                    return (
+                      <tr key={run.run_id}>
+                        <td>第 {run.chapter_number} 章</td>
+                        <td>
+                          <StatusBadge status={run.status} />
+                        </td>
+                        <td className="text-secondary">{blockedFallback}</td>
+                        <td className="text-secondary">{run.created_at}</td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>

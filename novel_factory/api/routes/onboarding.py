@@ -68,7 +68,7 @@ async def create_project(request: Request, body: CreateProjectRequest) -> Envelo
                 project_id=body.project_id,
                 chapter_number=chapter_num,
                 title=f"第 {chapter_num} 章",
-                status="pending",
+                status="planned",
             )
             chapters.append({"chapter_number": chapter_num, "id": ch_id})
 

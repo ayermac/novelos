@@ -49,13 +49,35 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
             chapter_number=body.chapter,
         )
 
+        # Determine workflow_status from dispatcher result
+        chapter_status = result.get("chapter_status")
+        requires_human = result.get("requires_human", False)
+        error = result.get("error")
+
+        if error:
+            workflow_status = "failed"
+            message = "章节生成失败"
+        elif requires_human or chapter_status == "blocking":
+            workflow_status = "blocked"
+            message = "章节生成被阻塞，需要人工处理"
+        elif chapter_status == "published":
+            workflow_status = "completed"
+            message = "章节生成完成"
+        else:
+            workflow_status = "completed"
+            message = "章节生成完成" if llm_mode == "stub" else "章节已提交生成"
+
         return envelope_response({
             "run_id": result.get("run_id", ""),
             "project_id": body.project_id,
             "chapter": body.chapter,
-            "status": result.get("status", "completed"),
+            "workflow_status": workflow_status,
+            "chapter_status": chapter_status,
+            "status": workflow_status,  # backward compatibility
+            "requires_human": requires_human,
+            "error": error,
             "llm_mode": llm_mode,
-            "message": "章节生成完成" if llm_mode == "stub" else "章节已提交生成",
+            "message": message,
         })
 
     except Exception as e:

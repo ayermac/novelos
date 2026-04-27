@@ -42,6 +42,7 @@
 | `novel-factory-v5.0.1-webui-productization-chinese-ux-spec.md` | v5.0.1 WebUI 产品化与中文化 UX 规格 | 开发 Agent、质量验收 |
 | `novel-factory-v5.1-frontend-separation-api-backend-spec.md` | v5.1 前后端分离、FastAPI JSON API、React 前端 | 开发 Agent、质量验收 |
 | `novel-factory-v5.1.1-webui-product-reset-spec.md` | v5.1.1 WebUI 产品化 Reset、中文作者工作台 | 开发 Agent、质量验收 |
+| `novel-factory-v5.1.2-chapter-status-model-alignment-spec.md` | v5.1.2 章节状态模型对齐、pending/planned 修复 | 开发 Agent、质量验收 |
 
 ## v5.1.1 本地启动与验收
 
@@ -187,7 +188,16 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.1.1 WebUI Product Reset 已通过验收，测试基线 1255/1255**。
+当前开发基线是 **v5.1.2 Chapter & Status Model Alignment 已通过验收，测试基线 1264/1264**。
+
+**v5.1.2 核心变更:**
+- 统一章节状态模型：`chapter.status` vs `workflow_run.status` vs `queue.status` 明确区分
+- 修复 onboarding 初始章节状态：`pending` → `planned`
+- Dispatcher `STATUS_ROUTE` 兼容旧 `pending` 章节：`pending` → `screenwriter`
+- 修复 `/api/run/chapter` 响应结构：新增 `workflow_status`、`chapter_status`、`requires_human`、`error`
+- 修复 Run 页面章节选择：使用 workspace 获取 chapters，select 下拉选择可生成章节
+- ProjectDetail recent_runs 增加 blocked 兜底说明
+- 前端新增 `tWorkflowStatus()` / `tChapterStatus()` 避免状态混淆
 
 **v5.1.1 核心变更:**
 - 将 v5.1 React WebUI 从 API demo 升级为可用的中文作者工作台

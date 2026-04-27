@@ -27,6 +27,8 @@ STATUS_ROUTE: dict[str, str] = {
     "reviewed": "publisher",
     "published": "__end__",
     "blocking": "__stop__",
+    # Compatibility: old Web API initial status (v5.1.1 and earlier used "pending")
+    "pending": "screenwriter",
 }
 
 REVISION_ROUTE: dict[str, str] = {

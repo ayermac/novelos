@@ -154,7 +154,7 @@ class TestAPIE2ESmoke:
         data = resp.json()
         assert data["ok"] is True
         assert "run_id" in data["data"]
-        assert data["data"]["status"] in ["pending", "running", "completed"]
+        assert data["data"]["status"] in ["completed", "blocked", "failed"]
 
     def test_dashboard_recent_runs(self, test_client):
         """Test dashboard shows recent runs."""

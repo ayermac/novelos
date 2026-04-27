@@ -82,6 +82,10 @@ class WorkflowRepositoryMixin:
             project_id: Project identifier.
             chapter_number: Optional chapter filter.
             limit: Maximum number of runs to return.
+
+        Returns:
+            List of dicts with run_id (mapped from id), chapter_number, status,
+            created_at, error_message, etc.
         """
         conn = self._conn()
         try:
@@ -97,7 +101,13 @@ class WorkflowRepositoryMixin:
                     "ORDER BY started_at DESC LIMIT ?",
                     (project_id, limit),
                 ).fetchall()
-            return [row_to_dict(r) for r in rows]
+            results = []
+            for r in rows:
+                d = row_to_dict(r)
+                # Also expose run_id for API consistency while keeping id for internal use
+                d["run_id"] = d.get("id")
+                results.append(d)
+            return results
         finally:
             conn.close()
 

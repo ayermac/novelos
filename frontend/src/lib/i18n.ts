@@ -65,6 +65,24 @@ export function tStatus(status: string | undefined | null): string {
   return STATUS_MAP[status] || status
 }
 
+/**
+ * Translate workflow run status.
+ * workflow_run.status values: running, completed, blocked, failed
+ */
+export function tWorkflowStatus(status: string | undefined | null): string {
+  if (!status) return STATUS_MAP.unknown
+  return STATUS_MAP[status] || status
+}
+
+/**
+ * Translate chapter production status.
+ * chapter.status values: planned, pending, scripted, drafted, polished, reviewed, published, blocking, revision
+ */
+export function tChapterStatus(status: string | undefined | null): string {
+  if (!status) return STATUS_MAP.unknown
+  return STATUS_MAP[status] || status
+}
+
 export function tGenre(genre: string | undefined | null): string {
   if (!genre) return '-'
   return GENRE_MAP[genre] || genre
