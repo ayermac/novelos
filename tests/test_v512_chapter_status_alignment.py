@@ -358,3 +358,35 @@ class TestLayoutVersion:
         assert "v5.1.1" not in content, (
             "Layout sidebar should NOT still show v5.1.1"
         )
+
+
+class TestFrontendDashboard:
+    """Frontend Dashboard.tsx quality checks."""
+
+    def test_dashboard_next_action_checks_latest_run_only(self):
+        """Dashboard NextActionCard should only check the latest run."""
+        frontend_src = Path(__file__).parent.parent / "frontend" / "src"
+        dashboard_file = frontend_src / "pages" / "Dashboard.tsx"
+        assert dashboard_file.exists()
+        content = dashboard_file.read_text()
+
+        # Should NOT filter all historical failed runs
+        assert "data.recent_runs.filter" not in content, (
+            "Dashboard NextActionCard should not filter all historical runs; use latestRun instead"
+        )
+        # Should check only the latest (first) run
+        assert "latestRun" in content, (
+            "Dashboard NextActionCard should use latestRun (first element) instead of filtering all runs"
+        )
+
+    def test_dashboard_handles_blocked_status(self):
+        """Dashboard NextActionCard should show Chinese text for blocked latest run."""
+        frontend_src = Path(__file__).parent.parent / "frontend" / "src"
+        dashboard_file = frontend_src / "pages" / "Dashboard.tsx"
+        content = dashboard_file.read_text()
+
+        assert "被阻塞" in content, (
+            "Dashboard should show Chinese '被阻塞' for blocked latest run"
+        )
+        # Should NOT show English 'blocked' as user-visible text
+        # (StatusBadge handles i18n, but NextActionCard title/hint should be Chinese)

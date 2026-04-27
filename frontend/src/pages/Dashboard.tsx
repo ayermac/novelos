@@ -56,11 +56,17 @@ function NextActionCard({ data }: { data: DashboardData }) {
     hint = `当前有 ${data.review_count} 个章节等待审核，请及时处理。`
     action = { label: '进入审核', to: '/review' }
   } else {
-    const failed = data.recent_runs.filter((r) => r.status === 'failed')
-    if (failed.length > 0) {
-      title = '有失败运行'
-      hint = '最近有运行失败，请查看详情并排查问题。'
-      action = { label: '查看失败运行', to: '/run' }
+    // Only check the latest run (first in list, assumed sorted by time desc)
+    // Historical failed runs should not override a successful latest run
+    const latestRun = data.recent_runs[0]
+    if (latestRun.status === 'failed') {
+      title = '最近运行失败'
+      hint = '最近一次运行失败，请查看详情并排查问题。'
+      action = { label: '重新生成', to: '/run' }
+    } else if (latestRun.status === 'blocked') {
+      title = '最近运行被阻塞'
+      hint = '最近一次运行被阻塞，建议检查章节状态后重试。'
+      action = { label: '重新生成', to: '/run' }
     } else {
       title = '继续创作'
       hint = '一切正常，可以继续生成下一章。'
