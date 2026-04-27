@@ -23,12 +23,12 @@ FAIL_COUNT=0
 
 pass() {
     echo -e "${GREEN}✓ PASS${NC}: $1"
-    ((PASS_COUNT++))
+    PASS_COUNT=$((PASS_COUNT + 1))
 }
 
 fail() {
     echo -e "${RED}✗ FAIL${NC}: $1"
-    ((FAIL_COUNT++))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
 }
 
 warn() {
@@ -125,6 +125,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from fastapi.testclient import TestClient
 from novel_factory.api_app import create_api_app
+from novel_factory.db.connection import init_db
 
 def test_api_smoke():
     """Smoke test for API endpoints"""
@@ -132,6 +133,9 @@ def test_api_smoke():
         db_path = f.name
     
     try:
+        # Initialize database
+        init_db(db_path)
+        
         app = create_api_app(db_path=db_path, llm_mode="stub")
         client = TestClient(app)
         
@@ -156,7 +160,7 @@ def test_api_smoke():
             assert resp.status_code == 200
             data = resp.json()
             assert data["ok"] == True
-            assert "projects_count" in data["data"]
+            assert "project_count" in data["data"]
             print("✓ GET /api/dashboard")
             tests_passed += 1
         except Exception as e:
@@ -180,11 +184,10 @@ def test_api_smoke():
         try:
             resp = client.post("/api/onboarding/projects", json={
                 "project_id": "smoke_test_project",
-                "title": "Smoke Test Novel",
-                "author": "Test Author",
+                "name": "Smoke Test Novel",
                 "genre": "玄幻",
                 "target_words": 100000,
-                "chapters": 10,
+                "initial_chapter_count": 10,
             })
             assert resp.status_code == 200
             data = resp.json()

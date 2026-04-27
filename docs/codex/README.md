@@ -148,7 +148,7 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.1 Frontend Separation & API Backend 已通过验收，测试基线 1218/1218**。
+当前开发基线是 **v5.1 Frontend Separation & API Backend 已通过验收，测试基线 1252/1252**。
 
 **v5.1 核心变更:**
 - 废弃 Jinja WebUI,实现前后端分离架构
