@@ -247,7 +247,7 @@ class OutlineRepositoryMixin:
 - [x] 前端可查看和编辑世界观/角色/大纲
 - [x] 前端可删除项目和重置章节
 - [x] stub 模式种子数据包含世界观/角色/大纲示例
-- [x] 全量测试通过（1416/1416），不回归 v5.1.6
+- [x] 全量测试通过（1425/1425），不回归 v5.1.6
 
 ---
 
@@ -702,7 +702,7 @@ result = run_with_graph(...)
 - [x] LangGraph Checkpoint 持久化可用
 - [x] Dispatcher 保留兼容路径（未完全移除）
 - [x] CLI/Batch/Serial/Queue 使用 LangGraph 编排
-- [x] 全量测试通过（1416/1416），不回归 v5.1.6
+- [x] 全量测试通过（1425/1425），不回归 v5.1.6
 - [x] TypeScript 检查通过
 - [x] 前端构建通过
 

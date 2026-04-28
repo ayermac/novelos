@@ -246,11 +246,14 @@ async def validate_config(request: Request, body: ValidateConfigRequest) -> Enve
     Tests that the API key is valid and the endpoint is reachable.
     Does NOT save any configuration.
     """
-    import os
-
     try:
-        # Get API key from environment
-        api_key = os.getenv(body.api_key_env)
+        from ...config.env_loader import create_env_getter, load_dotenv
+
+        dotenv_vars = load_dotenv()
+        env_getter = create_env_getter(dotenv_vars)
+
+        # Get API key from OS environment first, then repo .env fallback.
+        api_key = env_getter(body.api_key_env)
         if not api_key:
             return envelope_response({
                 "valid": False,

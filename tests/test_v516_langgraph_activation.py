@@ -281,6 +281,38 @@ class TestSettingsValidateEndpoint:
             if os.path.exists(db_path):
                 os.unlink(db_path)
 
+    def test_validate_reads_dotenv_api_key(self, tmp_path, monkeypatch):
+        """Validate should read API keys from .env, same as CLI/workflow."""
+        from novel_factory.db.connection import init_db
+        from novel_factory.api_app import create_api_app
+
+        db_path = tmp_path / "settings_validate_dotenv.db"
+        init_db(db_path)
+        app = create_api_app(db_path=str(db_path), llm_mode="stub")
+        client = TestClient(app)
+
+        monkeypatch.delenv("TEST_DOTENV_API_KEY", raising=False)
+        monkeypatch.delenv("NOVEL_FACTORY_DISABLE_DOTENV", raising=False)
+        (tmp_path / "pyproject.toml").write_text("[project]\nname = 'dotenv-test'\n", encoding="utf-8")
+        (tmp_path / ".env").write_text(
+            "TEST_DOTENV_API_KEY=sk-placeholder-from-dotenv\n",
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(tmp_path)
+
+        resp = client.post("/api/settings/validate", json={
+            "provider": "openai",
+            "base_url": "https://api.openai.com/v1",
+            "model": "gpt-4",
+            "api_key_env": "TEST_DOTENV_API_KEY",
+        })
+
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["valid"] is False
+        assert data["data"]["error_code"] == "PLACEHOLDER_API_KEY"
+        assert data["data"]["details"]["has_key"] is True
+
 
 class TestAPIKeyMasking:
     """Test API key masking in /api/settings response."""

@@ -35,6 +35,8 @@ from novel_factory.skills.import_bridge import (
 
 # ── Helpers ────────────────────────────────────────────────────
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 # Track created packages for cleanup
 _CREATED_PACKAGES: list[str] = []
 
@@ -377,7 +379,7 @@ class TestCLIErrorPaths:
         result = subprocess.run(
             [sys.executable, "-m", "novel_factory.cli", "skills", "import-plan", "--json"],
             capture_output=True, text=True,
-            cwd="/Users/chenchao/Workspace/AI-Project/claw-novel",
+            cwd=REPO_ROOT,
         )
         # Should not traceback, just error
         assert "Traceback" not in result.stderr
@@ -386,7 +388,7 @@ class TestCLIErrorPaths:
         result = subprocess.run(
             [sys.executable, "-m", "novel_factory.cli", "skills", "import-apply", "--json"],
             capture_output=True, text=True,
-            cwd="/Users/chenchao/Workspace/AI-Project/claw-novel",
+            cwd=REPO_ROOT,
         )
         assert "Traceback" not in result.stderr
 

@@ -4,7 +4,7 @@
 
 Novelos 将 FastAPI 后端、LangGraph 章节工作流、SQLite 项目存储、React 作者工作台和 CLI 工具整合在一起，用于章节生成、审核、风格管理、项目上下文维护和运行诊断。
 
-当前基线：**v5.2.0**，已验证 **1416/1416 pytest 通过**，前端 TypeScript 检查通过，前端生产构建通过。
+当前基线：**v5.2.0**，已验证 **1425/1425 pytest 通过**，前端 TypeScript 检查通过，前端生产构建通过。
 
 ## 功能概览
 
@@ -263,7 +263,7 @@ npm run build
 当前已验证基线：
 
 ```text
-pytest: 1416/1416 passed
+pytest: 1425/1425 passed
 frontend typecheck: passed
 frontend build: passed
 ```

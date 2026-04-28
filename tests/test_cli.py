@@ -5,12 +5,16 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
 from novel_factory.cli import build_parser, main
 from novel_factory.db.connection import init_db
 from novel_factory.db.repository import Repository
+
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 @pytest.fixture
@@ -257,7 +261,7 @@ class TestCLILegacy:
         result = subprocess.run(
             [sys.executable, "-m", "novel_factory.cli", "--help"],
             capture_output=True, text=True,
-            cwd="/Users/chenchao/Workspace/AI-Project/claw-novel",
+            cwd=REPO_ROOT,
         )
         assert result.returncode == 0
         assert "novelos" in result.stdout or "novel-factory" in result.stdout
@@ -267,7 +271,7 @@ class TestCLILegacy:
         result = subprocess.run(
             [sys.executable, "-m", "novel_factory.cli", "--version"],
             capture_output=True, text=True,
-            cwd="/Users/chenchao/Workspace/AI-Project/claw-novel",
+            cwd=REPO_ROOT,
         )
         assert result.returncode == 0
         assert "novelos" in result.stdout
