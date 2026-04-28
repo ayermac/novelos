@@ -1,4 +1,6 @@
-import { tChapterStatus, tWorkflowStatus } from '../lib/i18n'
+import { tChapterStatusLabel, tWorkflowStatus } from '../lib/i18n'
+import { post } from '../lib/api'
+import { useState } from 'react'
 
 interface Chapter {
   chapter_number: number
@@ -22,11 +24,13 @@ interface Props {
   llmMode: string
   recentRuns: Run[]
   totalChapters: number
+  projectId: string
   onGenerate: () => void
   onViewWorkflow: (runId: string) => void
   onViewContent: () => void
   onGenerateNext: () => void
   onNavigateToRun: () => void
+  onPublish: () => void
 }
 
 export default function ContextSidebar({
@@ -35,17 +39,22 @@ export default function ContextSidebar({
   llmMode,
   recentRuns,
   totalChapters,
+  projectId,
   onGenerate,
   onViewWorkflow,
   onViewContent,
   onGenerateNext,
   onNavigateToRun,
+  onPublish,
 }: Props) {
   const isStub = llmMode === 'stub'
   const hasContent = (currentChapter?.word_count || 0) > 0
   const isPublished = currentChapter?.status === 'published'
+  const isReviewed = currentChapter?.status === 'reviewed'
+  const isAwaitingPublish = isReviewed && !isStub  // v5.3.0: Real mode reviewed = awaiting publish
   const latestRun = recentRuns.length > 0 ? recentRuns[0] : null
   const latestRunFailed = latestRun !== null && (latestRun.status === 'failed' || latestRun.status === 'blocked')
+  const [publishing, setPublishing] = useState(false)
 
   let nextTitle = ''
   let nextHint = ''
@@ -59,6 +68,10 @@ export default function ContextSidebar({
     nextTitle = '最近运行失败'
     nextHint = '建议检查后重试。'
     nextAction = { label: '重新生成本章', onClick: onGenerate }
+  } else if (isAwaitingPublish) {
+    nextTitle = '待人工发布'
+    nextHint = 'AI 审核已通过，请确认发布。'
+    nextAction = { label: '确认发布', onClick: () => handlePublish() }
   } else if (!hasContent) {
     nextTitle = '本章尚未生成'
     nextHint = '点击下方按钮开始生成。'
@@ -71,6 +84,20 @@ export default function ContextSidebar({
     nextTitle = '继续创作'
     nextHint = '返回创作流程'
     nextAction = { label: '生成本章', onClick: onGenerate }
+  }
+
+  const handlePublish = async () => {
+    setPublishing(true)
+    const res = await post('/publish/chapter', {
+      project_id: projectId,
+      chapter: chapterNumber,
+    })
+    if (res.ok) {
+      onPublish()
+    } else {
+      alert(res.error?.message || '发布失败')
+    }
+    setPublishing(false)
   }
 
   return (
@@ -107,7 +134,7 @@ export default function ContextSidebar({
         <div className="ctx-stat-row">
           <span className="ctx-stat-label">状态</span>
           <span className="ctx-stat-value">
-            {currentChapter ? tChapterStatus(currentChapter.status) : '未知'}
+            {currentChapter ? tChapterStatusLabel(currentChapter.status, isAwaitingPublish) : '未知'}
           </span>
         </div>
         <div className="ctx-stat-row">
@@ -132,7 +159,12 @@ export default function ContextSidebar({
       <div className="ctx-section">
         <div className="ctx-section-title">操作</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-          {!hasContent && (
+          {isAwaitingPublish && (
+            <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => handlePublish()} disabled={publishing}>
+              {publishing ? '发布中...' : '确认发布'}
+            </button>
+          )}
+          {!hasContent && !isAwaitingPublish && (
             <button className="btn btn-primary" style={{ width: '100%' }} onClick={onGenerate}>
               生成本章
             </button>

@@ -18,6 +18,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.conftest import seed_context_for_chapter
+
 
 @pytest.fixture
 def client():
@@ -52,6 +54,7 @@ class TestArtifactsAPI:
                 "initial_chapter_count": 1,
             },
         )
+        seed_context_for_chapter(client.app.state.db_path, "test_v515b_001", 1)
         resp = client.post(
             "/api/run/chapter",
             json={"project_id": "test_v515b_001", "chapter": 1},
@@ -79,6 +82,7 @@ class TestArtifactsAPI:
                 "initial_chapter_count": 1,
             },
         )
+        seed_context_for_chapter(client.app.state.db_path, "test_v515b_002", 1)
         resp = client.post(
             "/api/run/chapter",
             json={"project_id": "test_v515b_002", "chapter": 1},
@@ -107,6 +111,9 @@ class TestArtifactsAPI:
                 "initial_chapter_count": 3,
             },
         )
+
+        seed_context_for_chapter(client.app.state.db_path, "test_v515b_003", 1)
+        seed_context_for_chapter(client.app.state.db_path, "test_v515b_003", 2)
 
         # Run chapter 1
         resp1 = client.post(
@@ -146,6 +153,7 @@ class TestArtifactsAPI:
                 "initial_chapter_count": 1,
             },
         )
+        seed_context_for_chapter(client.app.state.db_path, "test_v515b_004", 1)
         resp = client.post(
             "/api/run/chapter",
             json={"project_id": "test_v515b_004", "chapter": 1},
@@ -176,6 +184,7 @@ class TestArtifactsAPI:
                 "initial_chapter_count": 1,
             },
         )
+        seed_context_for_chapter(client.app.state.db_path, "test_v515b_005", 1)
         resp = client.post(
             "/api/run/chapter",
             json={"project_id": "test_v515b_005", "chapter": 1},

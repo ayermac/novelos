@@ -8,6 +8,8 @@ from novel_factory.cli import cmd_batch_run, cmd_batch_status, cmd_batch_review,
 from novel_factory.db.connection import init_db
 from novel_factory.db.repository import Repository
 
+from tests.conftest import seed_context_for_chapter
+
 
 class TestV30CLI:
     """Test v3.0 CLI commands."""
@@ -23,7 +25,7 @@ class TestV30CLI:
         return Repository(tmp_db)
 
     def _seed_project(self, repo, project_id="demo", num_chapters=3):
-        """Seed a project with chapters."""
+        """Seed a project with chapters and full context."""
         conn = repo._conn()
         conn.execute(
             "INSERT INTO projects (project_id, name, genre, is_current) VALUES (?, ?, ?, 1)",
@@ -37,6 +39,9 @@ class TestV30CLI:
             )
         conn.commit()
         conn.close()
+        # v5.3.0: ensure context readiness gate passes
+        for i in range(1, num_chapters + 1):
+            seed_context_for_chapter(repo, project_id, i)
 
     def test_batch_run_json(self, tmp_db, repo, monkeypatch):
         """Test 'novelos batch run --json'."""

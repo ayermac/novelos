@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from tests.conftest import seed_context_for_chapter
+
 
 class TestRunDetailAPI:
     """Test GET /api/runs/{run_id} endpoint."""
@@ -45,6 +47,8 @@ class TestRunDetailAPI:
             "target_words": 100000,
             "initial_chapter_count": 5,
         })
+
+        seed_context_for_chapter(db_path, "test_v514", 1)
 
         resp = client.post("/api/run/chapter", json={
             "project_id": "test_v514",
@@ -89,6 +93,8 @@ class TestRunDetailAPI:
             "target_words": 100000,
             "initial_chapter_count": 5,
         })
+
+        seed_context_for_chapter(db_path, "test_meta", 1)
 
         resp = client.post("/api/run/chapter", json={
             "project_id": "test_meta",

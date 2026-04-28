@@ -147,10 +147,15 @@ class TestAuthorAgent:
     def test_author_writes_content(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
 
+        # v5.3.0: Content must meet word count threshold (85% of 2500 = 2125)
+        # Base content is 51 chars, need 43x to get 2193 chars > 2125
+        base_content = "这是一段测试正文内容，用于验证 Author Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = (base_content * 44)  # 2244 chars
+
         stub = StubLLMProvider([{
             "title": "第一章 测试",
-            "content": "这是一段测试正文内容，用于验证 Author Agent 的基本功能。" * 20,
-            "word_count": 640,
+            "content": long_content,
+            "word_count": 2244,
             "implemented_events": ["事件1"],
             "used_plot_refs": ["P001"],
         }])
@@ -183,12 +188,17 @@ class TestPolisherAgent:
     def test_polisher_polishes_content(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent
 
+        # v5.3.0: Content must meet word count threshold (85% of 2500 = 2125)
+        # Base content is 51 chars, need 44x to get 2244 chars > 2125
+        base_content = "这是一段测试正文内容，用于验证 Polisher Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = (base_content * 44)  # 2244 chars
+
         # Setup: chapter with content in 'drafted' status
-        seeded_repo.save_chapter_content("test_proj", 1, "草稿内容。", "第一章 测试")
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
         seeded_repo.update_chapter_status("test_proj", 1, "drafted")
 
         stub = StubLLMProvider([{
-            "content": "润色后的草稿内容。",
+            "content": long_content + "润色后。",
             "fact_change_risk": "none",
             "changed_scope": ["sentence"],
             "summary": "润色完成",
@@ -211,7 +221,11 @@ class TestPolisherAgent:
     def test_polisher_rejects_fact_change(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent
 
-        seeded_repo.save_chapter_content("test_proj", 1, "草稿内容。", "第一章 测试")
+        # v5.3.0: Content must meet word count threshold
+        base_content = "这是一段测试正文内容，用于验证 Polisher Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = (base_content * 35)  # ~2200 words
+
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
         seeded_repo.update_chapter_status("test_proj", 1, "drafted")
 
         stub = StubLLMProvider([{
@@ -241,8 +255,13 @@ class TestEditorAgent:
     def test_editor_pass(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent
 
+        # v5.3.0: Content must meet word count threshold (90% of 2500 = 2250)
+        # Base content is 51 chars, need 45x to get 2295 chars > 2250
+        base_content = "这是一段测试正文内容，用于验证 Editor Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = (base_content * 45)  # 2295 chars
+
         # Setup: chapter with content in 'polished' status
-        seeded_repo.save_chapter_content("test_proj", 1, "润色后的正文。", "第一章 测试")
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
         seeded_repo.update_chapter_status("test_proj", 1, "polished")
 
         stub = StubLLMProvider([{
@@ -273,7 +292,11 @@ class TestEditorAgent:
     def test_editor_fail_routes_to_revision(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent
 
-        seeded_repo.save_chapter_content("test_proj", 1, "有问题的正文。", "第一章 测试")
+        # v5.3.0: Content must meet word count threshold
+        base_content = "这是一段测试正文内容，用于验证 Editor Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = (base_content * 36)  # ~2300 words
+
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
         seeded_repo.update_chapter_status("test_proj", 1, "polished")
 
         stub = StubLLMProvider([{

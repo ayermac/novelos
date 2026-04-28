@@ -30,7 +30,7 @@ def test_client():
 
         app = create_api_app(db_path=db_path, llm_mode="stub")
         client = TestClient(app)
-        yield client
+        yield client, db_path  # Return both client and db_path for v5.3.0 context seeding
     finally:
         if os.path.exists(db_path):
             os.unlink(db_path)
@@ -41,7 +41,8 @@ class TestAPIE2ESmoke:
 
     def test_health_check(self, test_client):
         """Test health endpoint."""
-        resp = test_client.get("/api/health")
+        client, db_path = test_client  # v5.3.0
+        resp = client.get("/api/health")
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
@@ -49,7 +50,8 @@ class TestAPIE2ESmoke:
 
     def test_dashboard_empty(self, test_client):
         """Test dashboard with no projects."""
-        resp = test_client.get("/api/dashboard")
+        client, db_path = test_client  # v5.3.0
+        resp = client.get("/api/dashboard")
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
@@ -61,7 +63,8 @@ class TestAPIE2ESmoke:
 
     def test_projects_list_empty(self, test_client):
         """Test projects list when empty."""
-        resp = test_client.get("/api/projects")
+        client, db_path = test_client  # v5.3.0
+        resp = client.get("/api/projects")
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
@@ -70,7 +73,8 @@ class TestAPIE2ESmoke:
 
     def test_onboarding_create_project(self, test_client):
         """Test creating project via onboarding."""
-        resp = test_client.post(
+        client, db_path = test_client  # v5.3.0
+        resp = client.post(
             "/api/onboarding/projects",
             json={
                 "project_id": "test_novel_001",
@@ -87,8 +91,9 @@ class TestAPIE2ESmoke:
 
     def test_dashboard_with_project(self, test_client):
         """Test dashboard shows created project."""
+        client, db_path = test_client  # v5.3.0
         # Create project first
-        test_client.post(
+        client.post(
             "/api/onboarding/projects",
             json={
                 "project_id": "test_novel_002",
@@ -100,7 +105,7 @@ class TestAPIE2ESmoke:
         )
 
         # Check dashboard
-        resp = test_client.get("/api/dashboard")
+        resp = client.get("/api/dashboard")
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
@@ -108,8 +113,9 @@ class TestAPIE2ESmoke:
 
     def test_project_workspace(self, test_client):
         """Test project workspace shows chapters."""
+        client, db_path = test_client  # v5.3.0
         # Create project
-        test_client.post(
+        client.post(
             "/api/onboarding/projects",
             json={
                 "project_id": "test_novel_003",
@@ -121,7 +127,7 @@ class TestAPIE2ESmoke:
         )
 
         # Get workspace
-        resp = test_client.get("/api/projects/test_novel_003/workspace")
+        resp = client.get("/api/projects/test_novel_003/workspace")
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
@@ -130,8 +136,9 @@ class TestAPIE2ESmoke:
 
     def test_run_chapter_stub_mode(self, test_client):
         """Test running chapter in stub mode."""
+        client, db_path = test_client  # v5.3.0: unpack tuple
         # Create project
-        test_client.post(
+        client.post(
             "/api/onboarding/projects",
             json={
                 "project_id": "test_novel_004",
@@ -142,8 +149,12 @@ class TestAPIE2ESmoke:
             },
         )
 
+        # v5.3.0: Seed context for Context Readiness Gate
+        from conftest import seed_context_for_chapter
+        seed_context_for_chapter(db_path, "test_novel_004", 1)
+
         # Run chapter
-        resp = test_client.post(
+        resp = client.post(
             "/api/run/chapter",
             json={
                 "project_id": "test_novel_004",
@@ -158,8 +169,9 @@ class TestAPIE2ESmoke:
 
     def test_dashboard_recent_runs(self, test_client):
         """Test dashboard shows recent runs."""
+        client, db_path = test_client  # v5.3.0
         # Create project and run chapter
-        test_client.post(
+        client.post(
             "/api/onboarding/projects",
             json={
                 "project_id": "test_novel_005",
@@ -170,7 +182,7 @@ class TestAPIE2ESmoke:
             },
         )
 
-        test_client.post(
+        client.post(
             "/api/run/chapter",
             json={
                 "project_id": "test_novel_005",
@@ -179,7 +191,7 @@ class TestAPIE2ESmoke:
         )
 
         # Check dashboard for recent runs
-        resp = test_client.get("/api/dashboard")
+        resp = client.get("/api/dashboard")
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
@@ -188,7 +200,8 @@ class TestAPIE2ESmoke:
 
     def test_style_console(self, test_client):
         """Test style console endpoint."""
-        resp = test_client.get("/api/style/console")
+        client, db_path = test_client  # v5.3.0
+        resp = client.get("/api/style/console")
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
@@ -196,7 +209,8 @@ class TestAPIE2ESmoke:
 
     def test_settings_no_key_exposure(self, test_client):
         """Test settings endpoint doesn't expose API keys."""
-        resp = test_client.get("/api/settings")
+        client, db_path = test_client  # v5.3.0
+        resp = client.get("/api/settings")
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
@@ -218,7 +232,8 @@ class TestAPIE2ESmoke:
 
     def test_settings_no_traceback(self, test_client):
         """Test settings endpoint doesn't expose tracebacks."""
-        resp = test_client.get("/api/settings")
+        client, db_path = test_client  # v5.3.0
+        resp = client.get("/api/settings")
         assert resp.status_code == 200
         resp_text = resp.text.lower()
         assert "traceback" not in resp_text
@@ -227,7 +242,8 @@ class TestAPIE2ESmoke:
 
     def test_acceptance_matrix(self, test_client):
         """Test acceptance matrix endpoint."""
-        resp = test_client.get("/api/acceptance")
+        client, db_path = test_client  # v5.3.0
+        resp = client.get("/api/acceptance")
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
@@ -244,7 +260,8 @@ class TestAPIE2ESmoke:
 
     def test_project_not_found(self, test_client):
         """Test error for non-existent project."""
-        resp = test_client.get("/api/projects/nonexistent_project/workspace")
+        client, db_path = test_client  # v5.3.0
+        resp = client.get("/api/projects/nonexistent_project/workspace")
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is False
@@ -254,7 +271,8 @@ class TestAPIE2ESmoke:
 
     def test_run_chapter_project_not_found(self, test_client):
         """Test running chapter for non-existent project."""
-        resp = test_client.post(
+        client, db_path = test_client  # v5.3.0
+        resp = client.post(
             "/api/run/chapter",
             json={
                 "project_id": "nonexistent_project",
@@ -268,6 +286,7 @@ class TestAPIE2ESmoke:
 
     def test_envelope_format_consistency(self, test_client):
         """Test all responses follow envelope format {ok, error, data}."""
+        client, db_path = test_client  # v5.3.0
         endpoints = [
             "/api/health",
             "/api/dashboard",
@@ -278,7 +297,7 @@ class TestAPIE2ESmoke:
         ]
 
         for endpoint in endpoints:
-            resp = test_client.get(endpoint)
+            resp = client.get(endpoint)
             data = resp.json()
 
             # Must have ok field
@@ -296,8 +315,9 @@ class TestAPIE2ESmoke:
 
     def test_no_absolute_paths_in_errors(self, test_client):
         """Test error responses don't expose absolute paths."""
+        client, db_path = test_client  # v5.3.0
         # Try to access non-existent project
-        resp = test_client.get("/api/projects/nonexistent/workspace")
+        resp = client.get("/api/projects/nonexistent/workspace")
         resp_text = resp.text
 
         # Should not contain absolute paths
@@ -308,7 +328,8 @@ class TestAPIE2ESmoke:
 
     def test_config_plan_no_file_write(self, test_client):
         """Test config plan endpoint doesn't write files."""
-        resp = test_client.post(
+        client, db_path = test_client  # v5.3.0
+        resp = client.post(
             "/api/config/plan",
             json={
                 "project_id": "test_project",

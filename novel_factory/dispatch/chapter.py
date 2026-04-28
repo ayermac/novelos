@@ -120,6 +120,9 @@ class ChapterDispatchMixin:
             # Only mark as blocked if not in terminal state
             requires_human = True
             last_error = last_error or "max_steps exceeded"
+            if current_status != "blocking":
+                self.repo.update_chapter_status(project_id, chapter_number, "blocking")
+                current_status = "blocking"
             self.repo.update_workflow_run(run_id, status="blocked", error_message=last_error)
         elif requires_human or last_error:
             self.repo.update_workflow_run(

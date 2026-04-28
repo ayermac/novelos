@@ -47,6 +47,8 @@
 | `novel-factory-v5.1.4-workflow-visibility-interaction-polish-spec.md` | v5.1.4 工作流可视化、演示模式说明、交互优化 | 开发 Agent、质量验收 |
 | `novel-factory-v5.1.5-author-workspace-productization-plan.md` | v5.1.5 作者工作台产品化、三栏项目工作台、创作中心 | 产品规划、开发 Agent、质量验收 |
 | `novel-factory-v5.1.6-langgraph-activation-spec.md` | v5.1.6 LangGraph 编排激活 + 真实 LLM 首次生成 + 安全收口 | 产品规划、开发 Agent、质量验收 |
+| `novel-factory-v5.2-product-completion-real-llm-closure-spec.md` | v5.2 产品能力补齐、真实 LLM 闭环、LangGraph 持久化 | 产品规划、开发 Agent、质量验收 |
+| `novel-factory-v5.3-authoring-system-reset-plan.md` | v5.3 作者系统 Reset 规划：项目创世、可信生成链路、工作流透明化 | 产品规划、开发 Agent、质量验收 |
 
 ## v5.1.1 本地启动与验收
 
@@ -87,7 +89,7 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1425/1425 passed
+- **当前测试基线**: 1471/1471 passed
 - **新增测试**:
   - `test_v51_api_e2e_smoke.py`: 17 个端到端 smoke 测试
   - `test_v51_frontend_quality.py`: 8 个前端质量检查
@@ -194,7 +196,7 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.2 产品能力补齐 + 真实 LLM 闭环，测试基线 1425/1425**。
+当前开发基线是 **v5.3.0 Trusted Generation Chain，测试基线 1471/1471**。
 
 **v5.2 核心变更:**
 - LangGraph SqliteSaver checkpoint 持久化
@@ -207,6 +209,25 @@ npm run dev
 - Migration 幂等检测
 - Dispatcher 保留兼容路径（未删除）
 - 全量测试 1425/1425、TypeScript、前端构建通过
+
+**v5.3 规划方向:**
+- Project Genesis：从一句创意生成项目圣经，用户批准后才进入 active。
+- Context Readiness Gate：项目骨架不完整时禁止章节生成。
+- Planner 必经：无章节指令时先规划，再进入 Screenwriter。
+- 真实质量门：字数、指令覆盖、上下文完整性、风格和连续性进入硬审核。
+- 人工发布闸门：真实模式下 AI 审核通过后进入待人工确认，不自动发布。
+- 项目级作者工作台：世界观/角色/大纲/伏笔/章节指令等独立模块管理。
+- 工作流透明化：每个 Agent 的输入摘要、输出产物、校验结果、token、耗时、错误可查看。
+- 事实账本与连续性门禁：跨章数值、道具、时间线、伤势、关系、伏笔状态必须可继承、可审计，冲突不能静默发布。
+
+**v5.3.0 已验收能力:**
+- Context Readiness Gate 已接入 API 与 SSE 生成链路。
+- Planner 必经规则已生效：`planned + no instruction -> planner`。
+- Author/Polisher/Editor 字数硬质量门已接入。
+- 真实模式不自动发布，AI 审核通过后停在 `reviewed + awaiting_publish=true`。
+- Manual Publish API 已接入：`POST /api/publish/chapter`。
+- Checkpoint 文件跟随主 DB 路径，不再写 repo root。
+- 全量测试 1471/1471、TypeScript、前端构建通过。
 
 **v5.1.6 核心变更:**
 - LangGraph StateGraph 替代 Dispatcher while 循环作为唯一编排器（API 层已切换）
@@ -295,4 +316,4 @@ v1 不实现：
 
 当前下一步：
 
-- v5.2 已通过全量验收。后续可进入 v5.3 多模型与生产治理。
+- v5.3.1 Project-Level Author Workspace：补项目创世、项目级世界观/角色/大纲/伏笔/章节指令管理入口，并继续收口 WebUI 主创作路径。

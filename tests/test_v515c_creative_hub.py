@@ -17,6 +17,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.conftest import seed_context_for_chapter  # noqa: F401
+
 
 @pytest.fixture
 def client():
@@ -64,6 +66,10 @@ class TestDashboardCreativeHub:
                 "initial_chapter_count": 1,
             },
         )
+        # v5.3.0: Seed context to pass Context Readiness Gate
+        db_path = client.app.state.db_path
+        seed_context_for_chapter(db_path, "test_v515c_dash", 1)
+
         client.post(
             "/api/run/chapter",
             json={"project_id": "test_v515c_dash", "chapter": 1},
@@ -117,6 +123,11 @@ class TestSettingsGenerationStats:
                 "initial_chapter_count": 3,
             },
         )
+
+        # v5.3.0: Seed context to pass Context Readiness Gate
+        db_path = client.app.state.db_path
+        for i in range(1, 4):
+            seed_context_for_chapter(db_path, "test_v515c_stats", i)
 
         for i in range(1, 4):
             client.post(

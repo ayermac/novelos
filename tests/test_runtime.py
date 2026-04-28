@@ -15,6 +15,7 @@ from novel_factory.db.connection import init_db
 from novel_factory.db.repository import Repository
 from novel_factory.dispatcher import Dispatcher
 from novel_factory.llm.provider import LLMProvider
+from tests.conftest import LONG_CHAPTER_CONTENT
 
 
 # ── Fixtures ────────────────────────────────────────────────────
@@ -38,27 +39,27 @@ class StubLLM(LLMProvider):
         if "Screenwriter" in schema_name:
             return {"scene_beats": [{"sequence": 1, "scene_goal": "场景目标", "conflict": "冲突", "hook": "钩子"}]}
         if "Author" in schema_name:
-            # Generate more realistic content for narrative quality check
+            # v5.3.0: Content must meet 85% threshold (2125 chars for 2500 target)
             content = (
-                "林默走进房间，环顾四周。房间很安静，只有窗外的雨声。\n\n"
-                "他走到窗前，看着雨幕中的城市。突然，他注意到对面楼顶有一个黑影。\n\n"
-                "\"谁在那里？\"他低声问道，但没有回应。\n\n"
-                "黑影消失了，但林默知道，这只是一个开始。他必须做好准备，迎接即将到来的挑战。\n\n"
-                "然而，他不知道的是，更大的危机正在逼近。\n"
-            ) * 10
+                "林默走进房间，环顾四周。房间很安静，只有窗外的雨声。"
+                "他走到窗前，看着雨幕中的城市。突然，他注意到对面楼顶有一个黑影。"
+                "\"谁在那里？\"他低声问道，但没有回应。"
+                "黑影消失了，但林默知道，这只是一个开始。他必须做好准备，迎接即将到来的挑战。"
+                "然而，他不知道的是，更大的危机正在逼近。"
+            ) * 25  # ~2200 chars to pass quality gate
             return {
                 "title": "测试章", "content": content,
                 "word_count": len(content), "implemented_events": ["事件1"], "used_plot_refs": [],
             }
         if "Polisher" in schema_name:
-            # Generate more realistic content for narrative quality check
+            # v5.3.0: Content must meet 85% threshold (2125 chars for 2500 target)
             content = (
-                "林默走入房间，环顾四周。房间很安静，只有窗外的雨声。\n\n"
-                "他走到窗前，看着雨幕中的城市。突然，他注意到对面楼顶有一个黑影。\n\n"
-                "\"谁在那里？\"他低声问道，但没有回应。\n\n"
-                "黑影消失了，但林默知道，这只是一个开始。他必须做好准备，迎接即将到来的挑战。\n\n"
-                "然而，他不知道的是，更大的危机正在逼近。\n"
-            ) * 5
+                "林默走入房间，环顾四周。房间很安静，只有窗外的雨声。"
+                "他走到窗前，看着雨幕中的城市。突然，他注意到对面楼顶有一个黑影。"
+                "\"谁在那里？\"他低声问道，但没有回应。"
+                "黑影消失了，但林默知道，这只是一个开始。他必须做好准备，迎接即将到来的挑战。"
+                "然而，他不知道的是，更大的危机正在逼近。"
+            ) * 25  # ~2200 chars to pass quality gate
             return {
                 "content": content,
                 "fact_change_risk": "none", "changed_scope": ["sentence"], "summary": "微调",
@@ -151,7 +152,7 @@ class TestRuntimePipeline:
 
     def test_editor_rejection_creates_revision(self, repo):
         """When editor rejects, status should become revision."""
-        _seed_full_project(repo, status="polished", content="正文内容" * 30)
+        _seed_full_project(repo, status="polished", content=LONG_CHAPTER_CONTENT)
         d = Dispatcher(repo, StubLLM(editor_pass=False), max_retries=3)
         result = d.run_chapter("rt_proj", 1)
 

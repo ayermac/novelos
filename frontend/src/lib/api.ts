@@ -5,6 +5,11 @@ export interface EnvelopeResponse<T = unknown> {
   error?: {
     code: string
     message: string
+    details?: {
+      missing?: string[]
+      actions?: string[]
+      [key: string]: unknown
+    }
   }
   data?: T
 }

@@ -12,6 +12,8 @@ import pytest
 from novel_factory.db.connection import init_db
 from novel_factory.db.repository import Repository
 
+from tests.conftest import seed_context_for_chapter
+
 
 @pytest.fixture
 def tmp_db(tmp_path):
@@ -48,7 +50,10 @@ def test_llm_mode_stub_vs_real(tmp_path):
     )
     conn.commit()
     conn.close()
-    
+
+    # Seed v5.3 context gate fields
+    seed_context_for_chapter(str(db_path), "test_proj", 1)
+
     # Build clean environment for subprocess: disable .env and clear API keys
     import os
     env = os.environ.copy()

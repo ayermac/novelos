@@ -43,8 +43,11 @@ def cmd_seed_demo(args) -> None:
 
     # Create demo project
     conn.execute(
-        "INSERT INTO projects (project_id, name, genre, is_current) VALUES (?, ?, ?, 1)",
-        (project_id, f"{project_id.title()} Novel", "fantasy"),
+        "INSERT INTO projects (project_id, name, genre, is_current, description, "
+        "target_words, total_chapters_planned) VALUES (?, ?, ?, 1, ?, ?, ?)",
+        (project_id, f"{project_id.title()} Novel", "fantasy",
+         "平凡青年林默意外获得神秘力量，踏上一段充满危险与未知的冒险之旅。",
+         150000, 50),
     )
 
     # Create chapter 1
@@ -73,6 +76,26 @@ def cmd_seed_demo(args) -> None:
         "INSERT INTO plot_holes (project_id, code, title, status, planted_chapter, planned_resolve_chapter) "
         "VALUES (?, ?, ?, ?, ?, ?)",
         (project_id, "P001", "神秘力量来源", "planted", 1, 5),
+    )
+
+    # v5.3.0: Seed world setting (required by Context Readiness Gate)
+    conn.execute(
+        "INSERT INTO world_settings (project_id, category, title, content) "
+        "VALUES (?, ?, ?, ?)",
+        (project_id, "力量体系", "灵力觉醒",
+         "天地间存在一种被称为'灵力'的神秘力量。少数人天生拥有觉醒灵力的潜能，"
+         "觉醒后可感知超自然现象，掌握不可思议的能力。灵力分为金木水火土五行，"
+         "修炼者需循五行相生之道方可精进。"),
+    )
+
+    # v5.3.0: Seed chapter outline (required by Context Readiness Gate)
+    conn.execute(
+        "INSERT INTO outlines (project_id, level, sequence, title, content, chapters_range) "
+        "VALUES (?, ?, ?, ?, ?, ?)",
+        (project_id, "chapter", 1, "第一章：开端",
+         "平凡青年林默在一场意外中觉醒灵力，发现身边隐藏着不为人知的秘密力量。"
+         "初次遭遇敌人后，他被迫踏上修行之路。",
+         "1"),
     )
 
     conn.commit()

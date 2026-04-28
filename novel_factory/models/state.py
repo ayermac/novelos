@@ -83,3 +83,7 @@ class FactoryState(TypedDict, total=False):
     completion_tokens: int
     total_tokens: int
     duration_ms: int
+    # v5.3.0: Planner 必经 - instruction existence flag for routing
+    has_instruction: bool
+    # v5.3.0: Trusted Generation Chain - LLM mode for publish routing
+    llm_mode: str  # "stub" or "real"

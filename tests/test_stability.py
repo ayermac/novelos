@@ -24,6 +24,8 @@ from novel_factory.models.state import ChapterStatus, FactoryState
 from novel_factory.utils.hash import stable_json_hash
 from novel_factory.validators.chapter_checker import count_words
 
+from tests.conftest import LONG_CHAPTER_CONTENT
+
 
 class StubLLMProvider(LLMProvider):
     def __init__(self, responses: list[dict] | None = None):
@@ -558,7 +560,7 @@ class TestAgentStatusAdvanceGuard:
         from novel_factory.agents.editor import EditorAgent
 
         state = self._seed_and_spoof(repo, db_status="reviewed", state_status="polished")
-        repo.save_chapter_content("stab_proj", 1, "正文内容" * 20, "第一章")
+        repo.save_chapter_content("stab_proj", 1, LONG_CHAPTER_CONTENT, "第一章")
         repo.update_chapter_status("stab_proj", 1, "reviewed")
 
         stub = StubLLMProvider([{
@@ -588,7 +590,7 @@ class TestAgentStatusAdvanceGuard:
         from novel_factory.agents.editor import EditorAgent
 
         state = self._seed_and_spoof(repo, db_status="reviewed", state_status="polished")
-        repo.save_chapter_content("stab_proj", 1, "正文内容" * 20, "第一章")
+        repo.save_chapter_content("stab_proj", 1, LONG_CHAPTER_CONTENT, "第一章")
         repo.update_chapter_status("stab_proj", 1, "reviewed")
 
         stub = StubLLMProvider([{
@@ -826,7 +828,7 @@ class TestAgentWriteFailureCompensation:
         from novel_factory.agents.editor import EditorAgent
 
         _seed_project_chapter(repo, status="polished")
-        repo.save_chapter_content("stab_proj", 1, "正文内容" * 20, "第一章")
+        repo.save_chapter_content("stab_proj", 1, LONG_CHAPTER_CONTENT, "第一章")
         repo.update_chapter_status("stab_proj", 1, "polished")
         state = _make_state(chapter_status="polished")
 
@@ -856,7 +858,7 @@ class TestAgentWriteFailureCompensation:
         from novel_factory.agents.editor import EditorAgent
 
         _seed_project_chapter(repo, status="polished")
-        repo.save_chapter_content("stab_proj", 1, "正文内容" * 20, "第一章")
+        repo.save_chapter_content("stab_proj", 1, LONG_CHAPTER_CONTENT, "第一章")
         repo.update_chapter_status("stab_proj", 1, "polished")
         state = _make_state(chapter_status="polished")
 
@@ -886,7 +888,7 @@ class TestAgentWriteFailureCompensation:
         from novel_factory.agents.editor import EditorAgent
 
         _seed_project_chapter(repo, status="polished")
-        repo.save_chapter_content("stab_proj", 1, "正文内容" * 20, "第一章")
+        repo.save_chapter_content("stab_proj", 1, LONG_CHAPTER_CONTENT, "第一章")
         repo.update_chapter_status("stab_proj", 1, "polished")
         # Simulate max retries reached
         conn = repo._conn()
@@ -926,7 +928,7 @@ class TestAgentWriteFailureCompensation:
         from novel_factory.agents.editor import EditorAgent
 
         _seed_project_chapter(repo, status="polished")
-        repo.save_chapter_content("stab_proj", 1, "正文内容" * 20, "第一章")
+        repo.save_chapter_content("stab_proj", 1, LONG_CHAPTER_CONTENT, "第一章")
         repo.update_chapter_status("stab_proj", 1, "polished")
         state = _make_state(chapter_status="polished")
 

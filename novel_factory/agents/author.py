@@ -8,7 +8,7 @@ from typing import Any
 
 from ..models.schemas import AuthorOutput
 from ..models.state import ChapterStatus, FactoryState
-from ..validators.chapter_checker import validate_chapter_output
+from ..validators.chapter_checker import validate_chapter_output, check_word_count_quality_gate, derive_word_target
 from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_critical_violation
 from ..validators.plot_verifier import check_plot_coverage
 from .base import BaseAgent
@@ -123,6 +123,22 @@ class AuthorAgent(BaseAgent):
 
         self.validate_output(output.model_dump())
 
+        # v5.3.0: Word count quality gate
+        word_gate_passed, word_gate_msg = self._check_word_count_gate(state, output.content)
+        if not word_gate_passed:
+            logger.warning("Author: word count quality gate failed: %s", word_gate_msg)
+            # Do not advance status, return error for retry
+            return {
+                "error": f"字数质量门未通过: {word_gate_msg}",
+                "chapter_status": state.get("chapter_status"),
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": "author",
+                    "word_count_fail": True,
+                    "message": word_gate_msg,
+                },
+            }
+
         # Advance status FIRST to lock the transition; abort if stale
         # For revision, expect status to be revision; for normal flow, expect scripted
         expected_status = ChapterStatus.REVISION.value if is_revision else ChapterStatus.SCRIPTED.value
@@ -183,3 +199,19 @@ class AuthorAgent(BaseAgent):
             )
         if dp_result.violations:
             raise ValueError(f"Author 输出包含死刑红线词汇: {', '.join(dp_result.violations)}")
+
+    def _check_word_count_gate(self, state: FactoryState, content: str) -> tuple[bool, str]:
+        """v5.3.0: Check word count quality gate.
+
+        Returns:
+            Tuple of (passed, message).
+        """
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+
+        # Get word_target from instruction or project
+        instruction = self._get_instruction(state)
+        project = self.repo.get_project(project_id)
+        word_target = derive_word_target(instruction, project)
+
+        return check_word_count_quality_gate(content, word_target, "author")

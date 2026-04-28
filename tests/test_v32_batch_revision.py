@@ -16,6 +16,8 @@ from novel_factory.db.repository import Repository
 from novel_factory.dispatcher import Dispatcher
 from novel_factory.llm.provider import LLMProvider
 
+from tests.conftest import LONG_CHAPTER_CONTENT  # noqa: F401
+
 
 class StubLLM(LLMProvider):
     """Stub LLM for testing."""
@@ -44,13 +46,11 @@ class StubLLM(LLMProvider):
             # Return pass=True with high score to avoid revision loop
             return {"pass": True, "score": 95, "scores": {}, "issues": [], "suggestions": [], "state_card": {}}
         elif "润色以上草稿" in prompt_str or "润色" in prompt_str:
-            # Return content with enough length
-            content = "润色后的内容。" * 100  # ~700 chars
-            return {"content": content, "fact_change_risk": "none", "changed_scope": []}
+            # v5.3.0: Must be >= word_target * 0.85
+            return {"content": LONG_CHAPTER_CONTENT, "fact_change_risk": "none", "changed_scope": []}
         elif "创作" in prompt_str or "写作" in prompt_str:
-            # Return content with enough length and matching word_count
-            content = "这是测试内容，用于验证批量修订功能。" * 50  # ~1000 chars
-            return {"title": "测试章节", "content": content, "word_count": len(content)}
+            # v5.3.0: Must be >= word_target * 0.85 (word_target defaults to 3000)
+            return {"title": "测试章节", "content": LONG_CHAPTER_CONTENT, "word_count": len(LONG_CHAPTER_CONTENT)}
         elif "生成.*章的写作指令" in prompt_str or "规划" in prompt_str:
             return {"chapter_brief": {"summary": "测试摘要", "key_events": [], "characters": [], "word_count_target": 2000}}
         elif "拆解为场景" in prompt_str or "拆解" in prompt_str:

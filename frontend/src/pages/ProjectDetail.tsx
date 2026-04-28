@@ -144,6 +144,7 @@ export default function ProjectDetail() {
   const [chapterLoading, setChapterLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
   const [genError, setGenError] = useState('')
+  const [genErrorDetails, setGenErrorDetails] = useState<{ missing?: string[]; actions?: string[] } | null>(null)
   const [error, setError] = useState('')
 
   // World settings, characters, outlines
@@ -226,6 +227,7 @@ export default function ProjectDetail() {
   // SSE streaming hook for real-time generation progress
   const handleSSEComplete = useCallback((event: SSEEvent) => {
     setGenerating(false)
+    setGenErrorDetails(null)
     if (event.run_id) {
       loadRunDetail(event.run_id)
     }
@@ -237,9 +239,17 @@ export default function ProjectDetail() {
       })
   }, [id, currentChapter, loadWorkspace])
 
-  const handleSSEError = useCallback((error: string) => {
+  const handleSSEError = useCallback((error: string, event?: SSEEvent) => {
     setGenerating(false)
     setGenError(error)
+    if (event?.context_incomplete) {
+      setGenErrorDetails({
+        missing: event.missing || [],
+        actions: event.actions || [],
+      })
+    } else {
+      setGenErrorDetails(null)
+    }
   }, [])
 
   const { isStreaming, steps: sseHookSteps, startStream } = useSSEStream(
@@ -271,6 +281,7 @@ export default function ProjectDetail() {
     if (!id) return
     setGenerating(true)
     setGenError('')
+    setGenErrorDetails(null)
     setSseSteps({})
     setActiveTab('workflow')
 
@@ -291,6 +302,7 @@ export default function ProjectDetail() {
     if (!id) return
     setGenerating(true)
     setGenError('')
+    setGenErrorDetails(null)
     setSseSteps({})
     setActiveTab('workflow')
 
@@ -300,6 +312,15 @@ export default function ProjectDetail() {
 
   const handleNavigateToRun = () => {
     navigate(`/run?project_id=${id}&chapter=${currentChapter}`)
+  }
+
+  const handlePublishChapter = () => {
+    // Refresh workspace after publish
+    loadWorkspace()
+    get<ChapterDetail>(`/projects/${id}/chapters/${currentChapter}`)
+      .then((r) => {
+        if (r.ok && r.data) setChapterDetail(r.data)
+      })
   }
 
   const handleResetChapter = async (chapterNumber: number) => {
@@ -341,6 +362,7 @@ export default function ProjectDetail() {
             currentChapter={currentChapter}
             onSelect={handleSelectChapter}
             onReset={handleResetChapter}
+            llmMode={llmMode}
           />
         </div>
         <div className="ws-center">
@@ -350,6 +372,7 @@ export default function ProjectDetail() {
               activeTab={activeTab}
               generating={generating || isStreaming}
               genError={genError}
+              genErrorDetails={genErrorDetails}
               chapterLoading={chapterLoading}
               hasContent={hasContent}
               isStub={isStub}
@@ -377,11 +400,13 @@ export default function ProjectDetail() {
             llmMode={llmMode}
             recentRuns={workspace.recent_runs}
             totalChapters={workspace.project.total_chapters_planned}
+            projectId={id || ''}
             onGenerate={handleGenerate}
             onViewWorkflow={handleViewWorkflow}
             onViewContent={handleViewContent}
             onGenerateNext={handleGenerateNext}
             onNavigateToRun={handleNavigateToRun}
+            onPublish={handlePublishChapter}
           />
         </div>
       </div>
@@ -436,12 +461,13 @@ function TabBar({ activeTab, onTabChange, hasRuns }: {
   )
 }
 
-function TabContent({ activeTab, generating, genError, chapterLoading, hasContent, isStub,
+function TabContent({ activeTab, generating, genError, genErrorDetails, chapterLoading, hasContent, isStub,
   currentChapter, chapterDetail, runDetail, runsForChapter, onGenerate, onViewWorkflow,
   worldSettings, characters, outlines, dataLoading, onLoadData, projectId, sseSteps, isStreaming,
 }: {
-  activeTab: TabKey; generating: boolean; genError: string; chapterLoading: boolean
-  hasContent: boolean; isStub: boolean; currentChapter: number
+  activeTab: TabKey; generating: boolean; genError: string
+  genErrorDetails: { missing?: string[]; actions?: string[] } | null
+  chapterLoading: boolean; hasContent: boolean; isStub: boolean; currentChapter: number
   chapterDetail: ChapterDetail | null; runDetail: RunDetailData | null
   runsForChapter: Run[]; onGenerate: () => void; onViewWorkflow: (runId: string) => void
   worldSettings: WorldSetting[]; characters: Character[]; outlines: Outline[]
@@ -452,7 +478,7 @@ function TabContent({ activeTab, generating, genError, chapterLoading, hasConten
     case 'content':
       return (
         <ContentTab
-          generating={generating} genError={genError} chapterLoading={chapterLoading}
+          generating={generating} genError={genError} genErrorDetails={genErrorDetails} chapterLoading={chapterLoading}
           hasContent={hasContent} isStub={isStub} currentChapter={currentChapter}
           chapterDetail={chapterDetail} onGenerate={onGenerate}
           sseSteps={sseSteps}
@@ -475,11 +501,12 @@ function TabContent({ activeTab, generating, genError, chapterLoading, hasConten
   }
 }
 
-function ContentTab({ generating, genError, chapterLoading, hasContent, isStub,
+function ContentTab({ generating, genError, genErrorDetails, chapterLoading, hasContent, isStub,
   currentChapter, chapterDetail, onGenerate, sseSteps,
 }: {
-  generating: boolean; genError: string; chapterLoading: boolean; hasContent: boolean
-  isStub: boolean; currentChapter: number; chapterDetail: ChapterDetail | null
+  generating: boolean; genError: string
+  genErrorDetails: { missing?: string[]; actions?: string[] } | null
+  chapterLoading: boolean; hasContent: boolean; isStub: boolean; currentChapter: number; chapterDetail: ChapterDetail | null
   onGenerate: () => void; sseSteps: Record<string, StepStatus>
 }) {
   // Build real-time step display from SSE events
@@ -525,6 +552,26 @@ function ContentTab({ generating, genError, chapterLoading, hasContent, isStub,
         <div className="alert alert-error" style={{ marginBottom: '16px' }}>
           <strong>生成失败</strong>
           <div style={{ marginTop: '4px' }}>{genError}</div>
+          {genErrorDetails?.missing && genErrorDetails.missing.length > 0 && (
+            <div style={{ marginTop: '12px' }}>
+              <div style={{ fontWeight: 600, fontSize: '13px' }}>缺失项</div>
+              <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>
+                {genErrorDetails.missing.map((item, i) => (
+                  <li key={i}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {genErrorDetails?.actions && genErrorDetails.actions.length > 0 && (
+            <div style={{ marginTop: '12px' }}>
+              <div style={{ fontWeight: 600, fontSize: '13px' }}>建议操作</div>
+              <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>
+                {genErrorDetails.actions.map((action, i) => (
+                  <li key={i}>{action}</li>
+                ))}
+              </ul>
+            </div>
+          )}
         </div>
       )}
       {chapterLoading && !generating && (

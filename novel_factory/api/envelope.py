@@ -20,6 +20,7 @@ class APIError(BaseModel):
 
     code: str
     message: str
+    details: dict | None = None  # v5.3.0: Optional additional details
 
 
 class EnvelopeResponse(BaseModel):
@@ -35,9 +36,9 @@ def envelope_response(data: Any) -> EnvelopeResponse:
     return EnvelopeResponse(ok=True, error=None, data=data)
 
 
-def error_response(code: str, message: str) -> EnvelopeResponse:
+def error_response(code: str, message: str, details: dict | None = None) -> EnvelopeResponse:
     """Create an error response envelope."""
-    return EnvelopeResponse(ok=False, error=APIError(code=code, message=message), data=None)
+    return EnvelopeResponse(ok=False, error=APIError(code=code, message=message, details=details), data=None)
 
 
 # Standard error codes

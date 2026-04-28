@@ -9,6 +9,7 @@ from novel_factory.workflow.checkpoint import (
     get_checkpoint_thread_id,
     get_checkpoint_config,
     resume_from_checkpoint,
+    derive_checkpoint_db_path,
 )
 
 
@@ -30,7 +31,7 @@ class TestCheckpointHelpers:
         }
 
     def test_get_sqlite_checkpointer_default_path(self):
-        """Test SqliteSaver creation with default path."""
+        """Test SqliteSaver creation with default (in-memory) path."""
         checkpointer = get_sqlite_checkpointer()
         assert checkpointer is not None
         # Should be a context manager
@@ -47,6 +48,99 @@ class TestCheckpointHelpers:
 
 class TestCheckpointPersistence:
     """Test checkpoint persistence and recovery."""
+
+    def test_derive_checkpoint_db_path_from_repo(self):
+        """Checkpoint path should be derived from the main DB path."""
+        result = derive_checkpoint_db_path("/tmp/my_novel.db")
+        assert result == Path("/tmp/my_novel.checkpoints.db")
+
+    def test_derive_checkpoint_db_path_none_returns_none(self):
+        """No repo DB path means no persistent checkpoint (in-memory)."""
+        result = derive_checkpoint_db_path(None)
+        assert result is None
+
+    def test_derive_checkpoint_db_path_memory_returns_none(self):
+        """:memory: DB should use in-memory checkpoints, not a repo-root file."""
+        result = derive_checkpoint_db_path(":memory:")
+        assert result is None
+
+    def test_derive_checkpoint_db_path_nested(self):
+        """Checkpoint path works for nested directories."""
+        result = derive_checkpoint_db_path("/data/projects/abc/main.db")
+        assert result == Path("/data/projects/abc/main.checkpoints.db")
+
+    def test_temp_db_does_not_write_repo_root(self, tmp_path):
+        """When using a temp DB, checkpoint must NOT be written to the repo root."""
+        from novel_factory.workflow.runner import run_with_graph
+        from novel_factory.config.settings import load_settings
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        db_path = str(tmp_path / "temp_test.db")
+        repo = Repository(db_path)
+        init_db(db_path)
+
+        # Seed minimal project + context for Context Readiness Gate
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "INSERT INTO projects (project_id, name, genre, total_chapters_planned, description, target_words) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("test-no-repo-root", "Test", "fantasy", 10, "测试项目简介", 100000),
+            )
+            conn.execute(
+                "INSERT INTO chapters (project_id, chapter_number, status, title) "
+                "VALUES (?, ?, ?, ?)",
+                ("test-no-repo-root", 1, "planned", "Ch1"),
+            )
+            conn.execute(
+                "INSERT INTO world_settings (project_id, category, title, content) "
+                "VALUES (?, 'world', '世界观', '修仙世界')",
+                ("test-no-repo-root",),
+            )
+            conn.execute(
+                "INSERT INTO characters (project_id, name, role, description, status) "
+                "VALUES (?, '主角', 'protagonist', '主角描述', 'active')",
+                ("test-no-repo-root",),
+            )
+            conn.execute(
+                "INSERT INTO outlines (project_id, level, sequence, title, chapters_range, content) "
+                "VALUES (?, 'chapter', 1, '第一卷', '1-10', '大纲摘要')",
+                ("test-no-repo-root",),
+            )
+            conn.execute(
+                "INSERT INTO instructions (project_id, chapter_number, objective, key_events, "
+                "plots_to_plant, plots_to_resolve, ending_hook, word_target, status) "
+                "VALUES (?, ?, '测试目标', '[]', '[]', '[]', '悬念', 2500, 'active')",
+                ("test-no-repo-root", 1),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        settings = load_settings()
+        result = run_with_graph(
+            project_id="test-no-repo-root",
+            chapter_number=1,
+            settings=settings,
+            repo=repo,
+            llm_mode="stub",
+        )
+
+        # Workflow should succeed
+        assert result["error"] is None
+
+        # Checkpoint must be alongside the temp DB, NOT in repo root
+        repo_root = Path(__file__).resolve().parent.parent
+        assert not (repo_root / "checkpoints.db").exists(), (
+            "Checkpoint DB must NOT be created in the repo root"
+        )
+
+        # Checkpoint should be next to the temp DB
+        expected_cp = Path(db_path).parent / f"{Path(db_path).stem}.checkpoints.db"
+        assert expected_cp.exists(), (
+            f"Checkpoint DB should be at {expected_cp}"
+        )
 
     def test_checkpointer_basic_operations(self):
         """Test basic checkpointer put/get operations."""
@@ -87,16 +181,39 @@ class TestCheckpointIntegration:
         from novel_factory.db.connection import init_db
         init_db(db_path)
 
-        # Create test project and chapter using raw SQL (simpler for test setup)
+        # Create test project, chapter, and context for readiness gate
         conn = repo._conn()
         try:
             conn.execute(
-                "INSERT INTO projects (project_id, name, genre, total_chapters_planned) VALUES (?, ?, ?, ?)",
-                ("test-checkpoint-project", "Test Project", "fantasy", 10),
+                "INSERT INTO projects (project_id, name, genre, total_chapters_planned, description, target_words) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                ("test-checkpoint-project", "Test Project", "fantasy", 10, "测试简介", 100000),
             )
             conn.execute(
-                "INSERT INTO chapters (project_id, chapter_number, status, title) VALUES (?, ?, ?, ?)",
+                "INSERT INTO chapters (project_id, chapter_number, status, title) "
+                "VALUES (?, ?, ?, ?)",
                 ("test-checkpoint-project", 1, "planned", "Chapter 1"),
+            )
+            conn.execute(
+                "INSERT INTO world_settings (project_id, category, title, content) "
+                "VALUES (?, 'world', '世界观', '修仙世界')",
+                ("test-checkpoint-project",),
+            )
+            conn.execute(
+                "INSERT INTO characters (project_id, name, role, description, status) "
+                "VALUES (?, '主角', 'protagonist', '主角描述', 'active')",
+                ("test-checkpoint-project",),
+            )
+            conn.execute(
+                "INSERT INTO outlines (project_id, level, sequence, title, chapters_range, content) "
+                "VALUES (?, 'chapter', 1, '第一卷', '1-10', '大纲摘要')",
+                ("test-checkpoint-project",),
+            )
+            conn.execute(
+                "INSERT INTO instructions (project_id, chapter_number, objective, key_events, "
+                "plots_to_plant, plots_to_resolve, ending_hook, word_target, status) "
+                "VALUES (?, ?, '测试目标', '[]', '[]', '[]', '悬念', 2500, 'active')",
+                ("test-checkpoint-project", 1),
             )
             conn.commit()
         finally:
@@ -117,6 +234,10 @@ class TestCheckpointIntegration:
         assert result["chapter_status"] == "published"
         assert result["error"] is None
 
-        # Note: checkpoint database is created at default location (parent of novel_factory)
-        # This test verifies the workflow runs successfully with SqliteSaver
-        # The checkpoint persistence is verified by other tests
+        # Note: checkpoint database is created alongside the main DB
+        # (derived via derive_checkpoint_db_path), not in the repo root.
+        # Verify the checkpoint file exists next to the main DB.
+        checkpoint_path = Path(db_path).parent / f"{Path(db_path).stem}.checkpoints.db"
+        assert checkpoint_path.exists(), (
+            f"Checkpoint DB should be created at {checkpoint_path}, not in repo root"
+        )

@@ -37,6 +37,13 @@ def client(temp_db):
     return TestClient(app)
 
 
+@pytest.fixture
+def client_with_db(temp_db):
+    """Create a test client with stub mode and return (client, db_path) tuple."""
+    app = create_api_app(db_path=temp_db, config_path=None, llm_mode="stub")
+    return TestClient(app), temp_db
+
+
 # ── Section 1: API Envelope Format ───────────────────────────────
 
 class TestAPIEnvelope:
@@ -144,8 +151,9 @@ class TestRunChapterStubMode:
         assert data["ok"] is True
         assert data["data"]["project"]["project_id"] == "test_run_chapter"
 
-    def test_run_chapter_stub_mode(self, client):
+    def test_run_chapter_stub_mode(self, client_with_db):
         """Run chapter in stub mode returns mock result."""
+        client, db_path = client_with_db
         # Create project first
         client.post(
             "/api/onboarding/projects",
@@ -155,6 +163,10 @@ class TestRunChapterStubMode:
                 "initial_chapter_count": 1,
             },
         )
+
+        # v5.3.0: Seed context for Context Readiness Gate
+        from conftest import seed_context_for_chapter
+        seed_context_for_chapter(db_path, "test_run_stub", 1)
 
         # Run chapter
         response = client.post(

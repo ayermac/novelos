@@ -756,15 +756,20 @@ class TestQ8PolisherFactLockIntegration:
         from novel_factory.agents.polisher import PolisherAgent
         from novel_factory.llm.provider import LLMProvider
 
+        # v5.3.0: Content must meet 85% threshold (2125 chars for 2500 target)
+        # Base is 33 chars, need 65x to get 2145 > 2125
+        base = "他击败了Boss，获得了宝物，想起了P001。林默心中暗想下一步。"
+        long_content = base * 65  # 2145 chars
+
         self._seed_drafted_chapter(
             repo,
-            content="他击败了Boss，获得了宝物，想起了P001。林默心中暗想下一步。",
+            content=long_content,
         )
 
         class GoodPolishLLM(LLMProvider):
             def invoke_json(self, messages, schema=None, temperature=None):
                 return {
-                    "content": "他击败了Boss，获得了宝物，想起了P001。林默心中谋划下一步。",
+                    "content": long_content.replace("暗想", "谋划"),
                     "fact_change_risk": "none",
                     "changed_scope": ["sentence"],
                     "summary": "微调表达",

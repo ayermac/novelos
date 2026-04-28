@@ -32,7 +32,7 @@ def test_client():
         init_db(db_path)
         app = create_api_app(db_path=db_path, llm_mode="stub")
         client = TestClient(app)
-        yield client
+        yield client, db_path  # v5.3.0: Return both client and db_path
     finally:
         if os.path.exists(db_path):
             os.unlink(db_path)
@@ -43,8 +43,9 @@ class TestAPISecurity:
 
     def test_no_traceback_in_errors(self, test_client):
         """Test error responses don't expose tracebacks."""
+        client, db_path = test_client  # v5.3.0: unpack tuple
         # Try to access non-existent project
-        resp = test_client.get("/api/projects/nonexistent_project/workspace")
+        resp = client.get("/api/projects/nonexistent_project/workspace")
         resp_text = resp.text.lower()
 
         # Should not contain traceback indicators
@@ -54,7 +55,8 @@ class TestAPISecurity:
 
     def test_no_absolute_paths_in_errors(self, test_client):
         """Test error responses don't expose absolute paths."""
-        resp = test_client.get("/api/projects/nonexistent_project/workspace")
+        client, db_path = test_client  # v5.3.0: unpack tuple
+        resp = client.get("/api/projects/nonexistent_project/workspace")
         resp_text = resp.text
 
         # Should not contain absolute paths
@@ -65,7 +67,8 @@ class TestAPISecurity:
 
     def test_no_api_key_in_settings(self, test_client):
         """Test settings endpoint doesn't expose API keys."""
-        resp = test_client.get("/api/settings")
+        client, db_path = test_client  # v5.3.0: unpack tuple
+        resp = client.get("/api/settings")
         resp_text = resp.text
 
         # Should not contain API key patterns
@@ -86,8 +89,9 @@ class TestAPISecurity:
 
     def test_error_messages_in_chinese(self, test_client):
         """Test error messages are in Chinese."""
+        client, db_path = test_client  # v5.3.0: unpack tuple
         # Try to access non-existent project
-        resp = test_client.get("/api/projects/nonexistent_project/workspace")
+        resp = client.get("/api/projects/nonexistent_project/workspace")
         data = resp.json()
 
         assert data["ok"] is False
@@ -101,6 +105,7 @@ class TestAPISecurity:
 
     def test_config_plan_no_file_write(self, test_client):
         """Test config plan endpoint doesn't write files."""
+        client, db_path = test_client  # v5.3.0: unpack tuple
         import tempfile
         from pathlib import Path
 
@@ -112,7 +117,7 @@ class TestAPISecurity:
                 os.chdir(tmpdir)
 
                 # Call config plan
-                resp = test_client.post(
+                resp = client.post(
                     "/api/config/plan",
                     json={
                         "project_id": "test_project",
@@ -138,8 +143,9 @@ class TestAPISecurity:
 
     def test_run_chapter_stub_no_real_llm(self, test_client):
         """Test run chapter in stub mode doesn't call real LLM."""
+        client, db_path = test_client  # v5.3.0: unpack tuple
         # Create project
-        test_client.post(
+        client.post(
             "/api/onboarding/projects",
             json={
                 "project_id": "stub_test_project",
@@ -149,8 +155,12 @@ class TestAPISecurity:
             },
         )
 
+        # v5.3.0: Seed context for Context Readiness Gate
+        from conftest import seed_context_for_chapter
+        seed_context_for_chapter(db_path, "stub_test_project", 1)
+
         # Run chapter in stub mode
-        resp = test_client.post(
+        resp = client.post(
             "/api/run/chapter",
             json={
                 "project_id": "stub_test_project",
@@ -169,6 +179,7 @@ class TestAPISecurity:
 
     def test_all_routes_return_envelope(self, test_client):
         """Test all API routes return {ok, error, data} envelope."""
+        client, db_path = test_client  # v5.3.0: unpack tuple
         routes = [
             ("GET", "/api/health"),
             ("GET", "/api/dashboard"),
@@ -180,7 +191,7 @@ class TestAPISecurity:
 
         for method, route in routes:
             if method == "GET":
-                resp = test_client.get(route)
+                resp = client.get(route)
             else:
                 continue
 
@@ -201,7 +212,8 @@ class TestAPISecurity:
 
     def test_no_secrets_in_response_headers(self, test_client):
         """Test API responses don't leak secrets in headers."""
-        resp = test_client.get("/api/settings")
+        client, db_path = test_client  # v5.3.0: unpack tuple
+        resp = client.get("/api/settings")
 
         # Check headers don't contain secrets
         headers_str = str(resp.headers).lower()
@@ -212,15 +224,16 @@ class TestAPISecurity:
 
     def test_error_response_consistency(self, test_client):
         """Test error responses are consistent."""
+        client, db_path = test_client  # v5.3.0: unpack tuple
         # Test multiple error scenarios
         error_responses = []
 
         # Non-existent project
-        resp1 = test_client.get("/api/projects/nonexistent1/workspace")
+        resp1 = client.get("/api/projects/nonexistent1/workspace")
         error_responses.append(resp1.json())
 
         # Non-existent project for run
-        resp2 = test_client.post(
+        resp2 = client.post(
             "/api/run/chapter",
             json={"project_id": "nonexistent2", "chapter": 1},
         )

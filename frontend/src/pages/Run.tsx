@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
-import { post, get } from '../lib/api'
+import { post, get, EnvelopeResponse } from '../lib/api'
 import { tLlmMode, tChapterStatus } from '../lib/i18n'
 import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
@@ -30,6 +30,7 @@ interface RunResult {
   chapter_status: string
   status: string
   requires_human: boolean
+  awaiting_publish?: boolean
   error: string | null
   llm_mode: string
   message: string
@@ -69,6 +70,8 @@ export default function Run() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<RunResult | null>(null)
   const [error, setError] = useState('')
+  const [errorDetails, setErrorDetails] = useState<EnvelopeResponse['error'] | null>(null)
+  const [publishing, setPublishing] = useState(false)
 
   // Read query params for pre-selection
   const queryProjectId = searchParams.get('project_id')
@@ -132,6 +135,7 @@ export default function Run() {
     e.preventDefault()
     setLoading(true)
     setError('')
+    setErrorDetails(null)
     setResult(null)
 
     const res = await post('/run/chapter', form)
@@ -144,12 +148,16 @@ export default function Run() {
       }
     } else {
       setError(res.error?.message || '运行章节失败')
+      if (res.error?.details) {
+        setErrorDetails(res.error)
+      }
     }
     setLoading(false)
   }
 
   const handleRetry = () => {
     setError('')
+    setErrorDetails(null)
     setResult(null)
   }
 
@@ -168,6 +176,24 @@ export default function Run() {
     }
     setResult(null)
     setError('')
+  }
+
+  const handlePublish = async () => {
+    if (!result) return
+    setPublishing(true)
+    const res = await post('/publish/chapter', {
+      project_id: result.project_id,
+      chapter: result.chapter,
+    })
+    if (res.ok && res.data) {
+      setResult({ ...result, chapter_status: 'published', awaiting_publish: false, requires_human: false, message: '已发布' })
+      if (selectedProject) {
+        loadWorkspace(selectedProject.project_id)
+      }
+    } else {
+      setError(res.error?.message || '发布失败')
+    }
+    setPublishing(false)
   }
 
   const runnableCount = chapters.filter(isRunnable).length
@@ -216,19 +242,52 @@ export default function Run() {
       )}
 
       {error && !result && !loading && (
-        <ErrorState
-          title="运行失败"
-          message={error}
-          onRetry={handleRetry}
-        />
+        <div style={{ marginBottom: 'var(--spacing-lg)' }}>
+          <ErrorState
+            title="运行失败"
+            message={error}
+            onRetry={handleRetry}
+          />
+          {errorDetails?.details?.missing && errorDetails.details.missing.length > 0 && (
+            <div className="card" style={{ marginTop: '12px' }}>
+              <div className="card-header">
+                <h3>缺失项</h3>
+              </div>
+              <div className="card-body">
+                <ul style={{ margin: 0, paddingLeft: '20px' }}>
+                  {errorDetails.details.missing.map((item, i) => (
+                    <li key={i} style={{ marginBottom: '4px' }}>{item}</li>
+                  ))}
+                </ul>
+                {errorDetails.details.actions && errorDetails.details.actions.length > 0 && (
+                  <>
+                    <div style={{ marginTop: '12px', fontWeight: 600, fontSize: '14px' }}>建议操作</div>
+                    <ul style={{ marginTop: '4px', paddingLeft: '20px' }}>
+                      {errorDetails.details.actions.map((action, i) => (
+                        <li key={i} style={{ marginBottom: '4px', color: 'var(--text-secondary)', fontSize: '13px' }}>{action}</li>
+                      ))}
+                    </ul>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
       )}
 
       {result && !loading && (
         <div className={`card ${result.workflow_status === 'completed' ? 'border-success' : result.workflow_status === 'failed' ? 'border-danger' : 'border-warning'}`} style={{ marginBottom: 'var(--spacing-lg)' }}>
           <div className="card-header">
             <h3>
-              {result.workflow_status === 'completed' ? '演示生成完成' : 
-               result.workflow_status === 'failed' ? '生成失败' : '生成阻塞'}
+              {result.workflow_status === 'completed' && result.chapter_status === 'reviewed' && result.awaiting_publish
+                ? 'AI 审核通过，待人工发布'
+                : result.workflow_status === 'completed' && result.chapter_status === 'published'
+                ? '已发布'
+                : result.workflow_status === 'completed'
+                ? (isStub ? '演示生成完成' : '生成完成')
+                : result.workflow_status === 'failed'
+                ? '生成失败'
+                : '生成阻塞'}
             </h3>
           </div>
           <div className="card-body">
@@ -249,7 +308,9 @@ export default function Run() {
               </div>
               <div>
                 <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>章节状态</div>
-                <div style={{ fontWeight: 600 }}>{tChapterStatus(result.chapter_status)}</div>
+                <div style={{ fontWeight: 600 }}>
+                  {result.awaiting_publish ? '待人工发布' : tChapterStatus(result.chapter_status)}
+                </div>
               </div>
               <div>
                 <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>章节</div>
@@ -263,10 +324,33 @@ export default function Run() {
               </div>
             </div>
             <div style={{ color: 'var(--text-secondary)', marginBottom: '16px' }}>
-              {isStub ? '演示生成完成，内容为本地模拟。' : result.message}
+              {result.message}
             </div>
             <div className="flex gap-2">
-              {result.chapter_status === 'published' && (
+              {result.awaiting_publish && result.chapter_status === 'reviewed' && (
+                <>
+                  <button
+                    onClick={handlePublish}
+                    className="btn btn-primary"
+                    disabled={publishing}
+                  >
+                    {publishing ? '发布中...' : '确认发布'}
+                  </button>
+                  <Link
+                    to={`/runs/${result.run_id}`}
+                    className="btn btn-secondary"
+                  >
+                    查看工作流
+                  </Link>
+                  <Link
+                    to={`/projects/${result.project_id}`}
+                    className="btn btn-secondary"
+                  >
+                    返回项目
+                  </Link>
+                </>
+              )}
+              {result.chapter_status === 'published' && !result.awaiting_publish && (
                 <>
                   <Link
                     to={`/projects/${result.project_id}/chapters/${result.chapter}`}
@@ -285,7 +369,7 @@ export default function Run() {
                   </button>
                 </>
               )}
-              {(result.chapter_status === 'review' || result.requires_human) && (
+              {(result.chapter_status === 'review' || (result.requires_human && !result.awaiting_publish)) && (
                 <Link to="/review" className="btn btn-primary">
                   进入审核
                 </Link>
@@ -295,12 +379,14 @@ export default function Run() {
                   重新运行
                 </button>
               )}
-              <Link
-                to={`/projects/${result.project_id}`}
-                className="btn btn-secondary"
-              >
-                返回项目
-              </Link>
+              {!result.awaiting_publish && result.chapter_status !== 'published' && (
+                <Link
+                  to={`/projects/${result.project_id}`}
+                  className="btn btn-secondary"
+                >
+                  返回项目
+                </Link>
+              )}
             </div>
           </div>
         </div>

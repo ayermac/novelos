@@ -16,6 +16,7 @@ from novel_factory.config.settings import load_settings
 from novel_factory.db.connection import init_db
 from novel_factory.db.repository import Repository
 from novel_factory.workflow.runner import run_with_graph_stream
+from tests.conftest import seed_context_for_chapter
 
 
 class TestSSEStreaming(unittest.TestCase):
@@ -51,6 +52,7 @@ class TestSSEStreaming(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
+        seed_context_for_chapter(self.repo, "sse-test-1", 1)
 
         settings = load_settings()
         settings.db_path = self.db_path
@@ -75,6 +77,7 @@ class TestSSEStreaming(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
+        seed_context_for_chapter(self.repo, "sse-test-2", 1)
 
         settings = load_settings()
         settings.db_path = self.db_path
@@ -101,6 +104,7 @@ class TestSSEStreaming(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
+        seed_context_for_chapter(self.repo, "sse-test-3", 1)
 
         settings = load_settings()
         settings.db_path = self.db_path
@@ -128,6 +132,7 @@ class TestSSEStreaming(unittest.TestCase):
             conn.commit()
         finally:
             conn.close()
+        seed_context_for_chapter(self.repo, "sse-test-4", 1)
 
         settings = load_settings()
         settings.db_path = self.db_path
@@ -137,6 +142,52 @@ class TestSSEStreaming(unittest.TestCase):
         self.assertIsNotNone(run_complete)
         self.assertIn("chapter_status", run_complete)
         self.assertIn("run_id", run_complete)
+
+    def test_stream_respects_context_readiness_gate(self):
+        """SSE stream should reject incomplete context just like run_with_graph."""
+        self.repo.create_project("sse-test-missing", "Missing Context")
+        conn = self.repo._conn()
+        try:
+            conn.execute(
+                """INSERT INTO chapters
+                (project_id, chapter_number, title, status, word_count)
+                VALUES (?, ?, ?, ?, ?)""",
+                ("sse-test-missing", 1, "Test Chapter", "planned", 0),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        settings = load_settings()
+        settings.db_path = self.db_path
+        events = list(run_with_graph_stream("sse-test-missing", 1, settings, self.repo, "stub"))
+
+        self.assertEqual(events[0]["type"], "run_error")
+        self.assertTrue(events[0]["context_incomplete"])
+        self.assertIn("项目简介", events[0]["missing"])
+
+    def test_stream_returns_error_event_for_missing_real_mode_config(self):
+        """Real mode config errors should be structured SSE events."""
+        self.repo.create_project("sse-test-real-config", "SSE Real Config")
+        conn = self.repo._conn()
+        try:
+            conn.execute(
+                """INSERT INTO chapters
+                (project_id, chapter_number, title, status, word_count)
+                VALUES (?, ?, ?, ?, ?)""",
+                ("sse-test-real-config", 1, "Test Chapter", "planned", 0),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        seed_context_for_chapter(self.repo, "sse-test-real-config", 1)
+
+        settings = load_settings()
+        settings.db_path = self.db_path
+        events = list(run_with_graph_stream("sse-test-real-config", 1, settings, self.repo, "real"))
+
+        self.assertEqual(events[0]["type"], "run_error")
+        self.assertIn("API key", events[0]["error"])
 
 
 class TestProjectSettingsEdit(unittest.TestCase):

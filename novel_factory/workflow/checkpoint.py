@@ -13,26 +13,46 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 
+def derive_checkpoint_db_path(repo_db_path: str | Path | None) -> Path | None:
+    """Derive checkpoint DB path from the main repository DB path.
+
+    Places ``<stem>.checkpoints.db`` alongside the main database so that
+    checkpoints always follow the data they belong to — never in the repo root.
+
+    Args:
+        repo_db_path: Path to the main application database.
+
+    Returns:
+        Path to the checkpoint database, or None if repo_db_path is None
+        (caller should fall back to in-memory checkpointing).
+    """
+    if repo_db_path is None or str(repo_db_path) == ":memory:":
+        return None
+    main = Path(repo_db_path)
+    return main.parent / f"{main.stem}.checkpoints.db"
+
+
 def get_sqlite_checkpointer(db_path: str | Path | None = None) -> Any:
     """Get a SqliteSaver checkpointer instance.
 
     Args:
-        db_path: Path to the checkpoint database. If None, uses the default
-                 path alongside the main application database.
+        db_path: Path to the checkpoint database. If None, uses an in-memory
+                 SQLite database (safe for tests / ephemeral runs; *never*
+                 writes to the repo root).
 
     Returns:
         SqliteSaver instance (context manager).
 
     Usage:
-        with get_sqlite_checkpointer() as checkpointer:
-            graph = compile_graph(settings, repo, checkpointer=checkpointer)
+        with get_sqlite_checkpointer(db_path=derive_checkpoint_db_path(repo.db_path)) as cp:
+            graph = compile_graph(settings, repo, checkpointer=cp)
             result = graph.invoke(state, config={"configurable": {"thread_id": "..."}})
     """
     from langgraph.checkpoint.sqlite import SqliteSaver
 
     if db_path is None:
-        # Default to checkpoints.db in the same directory as the main DB
-        db_path = Path(__file__).parent.parent.parent / "checkpoints.db"
+        # In-memory checkpointing — safe default, no files written
+        return SqliteSaver.from_conn_string(":memory:")
 
     return SqliteSaver.from_conn_string(str(db_path))
 

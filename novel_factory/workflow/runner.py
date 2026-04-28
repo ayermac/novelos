@@ -16,7 +16,7 @@ from ..config.settings import Settings
 from ..db.repository import Repository
 from ..models.state import FactoryState
 from .graph import compile_graph
-from .checkpoint import get_sqlite_checkpointer, get_checkpoint_config
+from .checkpoint import get_sqlite_checkpointer, get_checkpoint_config, derive_checkpoint_db_path
 
 logger = logging.getLogger(__name__)
 
@@ -134,6 +134,52 @@ def _validate_llm_config(settings: Settings, llm_mode: str) -> None:
             )
 
 
+def _check_context_readiness_for_run(
+    repo: Repository,
+    project_id: str,
+    chapter_number: int,
+    chapter_status: str,
+) -> dict[str, Any] | None:
+    """Return a context-readiness error payload, or None if generation can run."""
+    from ..validators.context_readiness import check_context_readiness, format_readiness_error
+
+    project = repo.get_project(project_id)
+    if not project:
+        return {
+            "run_id": "",
+            "chapter_status": chapter_status,
+            "steps": [],
+            "error": "Project not found",
+            "requires_human": True,
+        }
+
+    readiness = check_context_readiness(
+        project=project,
+        world_settings=repo.get_world_settings(project_id),
+        characters=repo.get_characters(project_id),
+        outlines=repo.list_outlines(project_id),
+        instruction=repo.get_instruction(project_id, chapter_number),
+        chapter_number=chapter_number,
+        chapter_status=chapter_status,
+    )
+
+    if readiness.ready:
+        return None
+
+    error_info = format_readiness_error(readiness)
+    return {
+        "run_id": "",
+        "chapter_status": chapter_status,
+        "steps": [],
+        "error": error_info["message"],
+        "requires_human": True,
+        "context_incomplete": True,
+        "missing": readiness.missing,
+        "actions": readiness.actions,
+        "details": readiness.details,
+    }
+
+
 def run_with_graph(
     project_id: str,
     chapter_number: int,
@@ -162,6 +208,9 @@ def run_with_graph(
         - steps: List of step records.
         - error: Error message if any.
         - requires_human: True if human intervention needed.
+        - context_incomplete: (v5.3.0) True if context readiness gate failed.
+        - missing: (v5.3.0) List of missing context items.
+        - actions: (v5.3.0) List of suggested actions.
     """
     # Validate LLM configuration early (v5.2 Phase D)
     _validate_llm_config(settings, llm_mode)
@@ -193,6 +242,13 @@ def run_with_graph(
             "requires_human": False,
         }
 
+    # v5.3.0: Context Readiness Gate
+    readiness_error = _check_context_readiness_for_run(
+        repo, project_id, chapter_number, current_status
+    )
+    if readiness_error:
+        return readiness_error
+
     # Build initial state
     state: FactoryState = {
         "project_id": project_id,
@@ -203,6 +259,7 @@ def run_with_graph(
         "requires_human": False,
         "error": None,
         "steps": [],
+        "llm_mode": llm_mode,  # v5.3.0: Pass llm_mode for publish routing
     }
 
     # Build LLMRouter
@@ -215,9 +272,13 @@ def run_with_graph(
     # (will be populated by health_check_node)
     state["workflow_run_id"] = ""
 
+    # Derive checkpoint DB path from the main repository DB so checkpoints
+    # always follow the data they belong to — never in the repo root.
+    checkpoint_db_path = derive_checkpoint_db_path(repo.db_path)
+
     try:
         # Use SqliteSaver for persistent checkpointing (v5.2 Phase D)
-        with get_sqlite_checkpointer() as checkpointer:
+        with get_sqlite_checkpointer(db_path=checkpoint_db_path) as checkpointer:
             # Compile graph with persistent checkpointer
             graph = compile_graph(
                 settings=settings,
@@ -243,6 +304,7 @@ def run_with_graph(
         "steps": result_state.get("steps", []),
         "error": result_state.get("error"),
         "requires_human": result_state.get("requires_human", False),
+        "awaiting_publish": result_state.get("awaiting_publish", False),
     }
 
 
@@ -273,6 +335,19 @@ def run_with_graph_stream(
         - {"type": "run_complete", "chapter_status": str, "run_id": str}
         - {"type": "run_error", "error": str, "chapter_status": str}
     """
+    # Validate LLM configuration early (v5.2 Phase D). Because this function is
+    # a generator, convert setup failures into SSE error events instead of
+    # letting the stream disconnect without a structured payload.
+    try:
+        _validate_llm_config(settings, llm_mode)
+    except Exception as e:
+        yield {
+            "type": "run_error",
+            "error": str(e),
+            "chapter_status": None,
+        }
+        return
+
     # Verify chapter exists
     chapter = repo.get_chapter(project_id, chapter_number)
     if not chapter:
@@ -295,6 +370,23 @@ def run_with_graph_stream(
             "type": "run_complete",
             "chapter_status": "published",
             "run_id": "",
+            "awaiting_publish": False,
+        }
+        return
+
+    # v5.3.0: Context Readiness Gate must match non-streaming execution.
+    readiness_error = _check_context_readiness_for_run(
+        repo, project_id, chapter_number, current_status
+    )
+    if readiness_error:
+        yield {
+            "type": "run_error",
+            "error": readiness_error.get("error"),
+            "chapter_status": readiness_error.get("chapter_status"),
+            "context_incomplete": readiness_error.get("context_incomplete", False),
+            "missing": readiness_error.get("missing", []),
+            "actions": readiness_error.get("actions", []),
+            "details": readiness_error.get("details", {}),
         }
         return
 
@@ -309,10 +401,19 @@ def run_with_graph_stream(
         "error": None,
         "steps": [],
         "workflow_run_id": "",
+        "llm_mode": llm_mode,
     }
 
     # Build LLMRouter
-    llm_router = _build_llm_router(settings, llm_mode)
+    try:
+        llm_router = _build_llm_router(settings, llm_mode)
+    except Exception as e:
+        yield {
+            "type": "run_error",
+            "error": str(e),
+            "chapter_status": current_status,
+        }
+        return
 
     # Get checkpoint config for this chapter
     config = get_checkpoint_config(project_id, chapter_number)
@@ -321,9 +422,13 @@ def run_with_graph_stream(
     agent_start_times: dict[str, float] = {}
     current_agent: str | None = None
 
+    # Derive checkpoint DB path from the main repository DB so checkpoints
+    # always follow the data they belong to — never in the repo root.
+    checkpoint_db_path = derive_checkpoint_db_path(repo.db_path)
+
     try:
         # Use SqliteSaver for persistent checkpointing (v5.2 Phase D)
-        with get_sqlite_checkpointer() as checkpointer:
+        with get_sqlite_checkpointer(db_path=checkpoint_db_path) as checkpointer:
             # Compile graph with persistent checkpointer
             graph = compile_graph(
                 settings=settings,
@@ -380,6 +485,7 @@ def run_with_graph_stream(
             "type": "run_complete",
             "chapter_status": state.get("chapter_status"),
             "run_id": state.get("workflow_run_id", ""),
+            "awaiting_publish": state.get("awaiting_publish", False),
         }
 
     except Exception as e:

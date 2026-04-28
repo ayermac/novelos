@@ -10,7 +10,7 @@ from typing import Any
 from ..context.builder import ContextBuilder
 from ..models.schemas import PolisherOutput
 from ..models.state import ChapterStatus, FactoryState
-from ..validators.chapter_checker import validate_chapter_output
+from ..validators.chapter_checker import validate_chapter_output, check_word_count_quality_gate, derive_word_target
 from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_critical_violation
 from ..validators.fact_lock import check_fact_integrity, extract_fact_lock
 from ..skills.registry import SkillRegistry
@@ -159,6 +159,26 @@ class PolisherAgent(BaseAgent):
                     "chapter_status": state.get("chapter_status"),
                 }
 
+        # v5.3.0: Word count quality gate
+        instruction = self._get_instruction(state)
+        project = self.repo.get_project(project_id)
+        word_target = derive_word_target(instruction, project)
+        word_gate_passed, word_gate_msg = check_word_count_quality_gate(
+            polished_content, word_target, "polisher"
+        )
+        if not word_gate_passed:
+            logger.warning("Polisher: word count quality gate failed: %s", word_gate_msg)
+            return {
+                "error": f"字数质量门未通过: {word_gate_msg}",
+                "chapter_status": state.get("chapter_status"),
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": "polisher",
+                    "word_count_fail": True,
+                    "message": word_gate_msg,
+                },
+            }
+
         # Apply skills from config (before_save stage)
         if self.skill_registry:
             before_save_result = self.skill_registry.run_skills_for_agent(
@@ -209,13 +229,21 @@ class PolisherAgent(BaseAgent):
                             "chapter_status": state.get("chapter_status"),
                         }
 
-        # Advance status FIRST to lock the transition; abort if stale
+        # Advance status FIRST to lock the transition; abort if stale.
+        # Normal flow polishes a drafted chapter; revision flow polishes a
+        # chapter currently marked revision.
+        current_status = state.get("chapter_status")
+        expected_status = (
+            ChapterStatus.REVISION.value
+            if current_status == ChapterStatus.REVISION.value
+            else ChapterStatus.DRAFTED.value
+        )
         ok = self.repo.update_chapter_status(
             project_id, chapter_number, ChapterStatus.POLISHED.value,
-            expected_status=ChapterStatus.DRAFTED.value,
+            expected_status=expected_status,
         )
         if not ok:
-            logger.error("Polisher: status advance drafted→polished failed (stale state)")
+            logger.error("Polisher: status advance %s→polished failed (stale state)", expected_status)
             return {"error": "Polisher: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
 
         # Save polished content (only after status advance succeeds)
@@ -224,9 +252,9 @@ class PolisherAgent(BaseAgent):
             if not content_ok:
                 self._compensate_status(
                     project_id, chapter_number,
-                    ChapterStatus.POLISHED.value, ChapterStatus.DRAFTED.value,
+                    ChapterStatus.POLISHED.value, expected_status,
                 )
-                return {"error": "Polisher: save_chapter_content failed", "chapter_status": ChapterStatus.DRAFTED.value}
+                return {"error": "Polisher: save_chapter_content failed", "chapter_status": expected_status}
 
             # Save version
             self.repo.save_version(
@@ -252,9 +280,9 @@ class PolisherAgent(BaseAgent):
         except Exception as e:
             self._compensate_status(
                 project_id, chapter_number,
-                ChapterStatus.POLISHED.value, ChapterStatus.DRAFTED.value,
+                ChapterStatus.POLISHED.value, expected_status,
             )
-            return {"error": f"Polisher: write failed: {e}", "chapter_status": ChapterStatus.DRAFTED.value}
+            return {"error": f"Polisher: write failed: {e}", "chapter_status": expected_status}
 
         return {
             "chapter_status": ChapterStatus.POLISHED.value,

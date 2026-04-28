@@ -127,8 +127,8 @@ export default function Review() {
       <div className="alert alert-info" style={{ marginBottom: 'var(--spacing-lg)' }}>
         <strong>审核工作台说明</strong>
         <div style={{ marginTop: '4px', fontSize: '14px' }}>
-          审核队列用于人工复核章节质量。当前流程下，章节生成后会直接发布，可在项目工作台查看正文。
-          如需启用人工审核流程，请在配置中心调整发布策略。
+          真实模式下，AI 审核通过后会进入待人工发布。你可以在项目工作台或运行结果页确认发布，也可以退回修改。
+          演示模式可能自动发布模拟结果。
         </div>
       </div>
 
@@ -222,7 +222,7 @@ export default function Review() {
           ) : (
             <EmptyState
               title="暂无待审核章节"
-              hint="当前流程下章节生成后会直接发布。已发布章节可在项目工作台查看正文和运行记录。如需启用人工审核流程，请在配置中心调整发布策略。"
+              hint="真实模式下，AI 审核通过的章节需要人工确认发布。你可以在项目工作台查看已审核章节并确认发布。"
               actions={[
                 { label: '查看项目列表', to: '/projects' },
                 { label: '前往配置中心', to: '/settings' },

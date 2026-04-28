@@ -8,6 +8,7 @@ from typing import Any
 
 from ..models.schemas import EditorOutput
 from ..models.state import ChapterStatus, FactoryState
+from ..validators.chapter_checker import count_words, check_word_count_quality_gate, derive_word_target
 from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured
 from ..validators.revision_classifier import classify_issues
 from ..skills.registry import SkillRegistry
@@ -288,6 +289,21 @@ class EditorAgent(BaseAgent):
         # Q5: Write learned patterns when rejecting
         if not output.pass_:
             self._save_learned_patterns(project_id, chapter_number, output)
+
+        # v5.3.0: Word count quality gate (Editor threshold = 0.90)
+        # Check word count BEFORE advancing status
+        instruction = self._get_instruction(state)
+        project = self.repo.get_project(project_id)
+        word_target = derive_word_target(instruction, project)
+        word_gate_passed, word_gate_msg = check_word_count_quality_gate(
+            content, word_target, "editor"
+        )
+        if not word_gate_passed:
+            logger.warning("Editor: word count quality gate failed: %s", word_gate_msg)
+            # Force fail and set revision_target to polisher (word count issue)
+            output.pass_ = False
+            output.revision_target = "polisher"
+            output.issues = output.issues + [word_gate_msg]
 
         # Advance chapter status FIRST to lock the transition; abort if stale
         if output.pass_:

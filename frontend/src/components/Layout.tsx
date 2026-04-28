@@ -66,7 +66,7 @@ export default function Layout() {
             <span className="brand-name">墨流</span>
             <span className="brand-tagline">小说创作工作台</span>
           </div>
-          <span className="version">v5.2</span>
+          <span className="version">v5.3</span>
         </div>
 
         <nav className="sidebar-nav">

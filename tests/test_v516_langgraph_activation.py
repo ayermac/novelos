@@ -100,7 +100,9 @@ class TestRoutingEquivalence:
         test_cases = [
             ("idea", "planner"),
             ("outlined", "planner"),
-            ("planned", "screenwriter"),
+            # v5.3.0: planned without instruction → planner; with instruction → screenwriter
+            ("planned", "planner"),  # default: no instruction
+            ("planned", "screenwriter", {"has_instruction": True}),  # has instruction
             ("scripted", "author"),
             ("drafted", "polisher"),
             ("polished", "editor"),
@@ -111,8 +113,13 @@ class TestRoutingEquivalence:
             ("revision", "author"),          # default revision target
         ]
 
-        for status, expected_agent in test_cases:
-            state = {"chapter_status": status}
+        for test_case in test_cases:
+            if len(test_case) == 3:
+                status, expected_agent, extra_state = test_case
+                state = {"chapter_status": status, **extra_state}
+            else:
+                status, expected_agent = test_case
+                state = {"chapter_status": status}
             result = route_by_chapter_status(state)
             assert result == expected_agent, f"Status {status}: expected {expected_agent}, got {result}"
 

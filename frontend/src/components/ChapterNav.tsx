@@ -1,4 +1,4 @@
-import { tChapterStatus } from '../lib/i18n'
+import { tChapterStatusLabel } from '../lib/i18n'
 
 interface Chapter {
   chapter_number: number
@@ -12,6 +12,7 @@ interface Props {
   currentChapter: number
   onSelect: (chapterNumber: number) => void
   onReset?: (chapterNumber: number) => void
+  llmMode?: string
 }
 
 function chapterStatusIcon(status: string): string {
@@ -62,7 +63,7 @@ function chapterStatusColor(status: string): string {
   }
 }
 
-export default function ChapterNav({ chapters, currentChapter, onSelect, onReset }: Props) {
+export default function ChapterNav({ chapters, currentChapter, onSelect, onReset, llmMode }: Props) {
   if (chapters.length === 0) {
     return (
       <div style={{ padding: '16px', color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center' }}>
@@ -80,7 +81,8 @@ export default function ChapterNav({ chapters, currentChapter, onSelect, onReset
           const icon = chapterStatusIcon(ch.status)
           const color = chapterStatusColor(ch.status)
           const title = ch.title || `第 ${ch.chapter_number} 章`
-          const statusLabel = tChapterStatus(ch.status)
+          const isRealMode = llmMode === 'real'
+          const statusLabel = tChapterStatusLabel(ch.status, ch.status === 'reviewed' && isRealMode)
           const canReset = ch.status === 'blocking' || ch.status === 'revision'
 
           return (

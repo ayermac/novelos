@@ -201,6 +201,8 @@ def task_discovery_node(state: FactoryState, repo: Repository) -> dict[str, Any]
     Reads the current chapter status from DB (source of truth).
     If DB status differs from FactoryState, uses DB status.
     If chapter does not exist in DB, returns error with requires_human=True.
+
+    v5.3.0: Also checks if instruction exists for Planner 必经 routing.
     """
     _update_run_node(state, repo, "task_discovery")
 
@@ -215,15 +217,19 @@ def task_discovery_node(state: FactoryState, repo: Repository) -> dict[str, Any]
         _finalize_run(state, repo, "blocked", "Chapter not found in DB")
         return {"error": "Chapter not found in DB", "requires_human": True, "chapter_status": "blocking"}
 
+    # v5.3.0: Check if instruction exists for Planner 必经 routing
+    instruction = repo.get_instruction(project_id, chapter_number)
+    has_instruction = instruction is not None and bool(instruction.get("objective"))
+
     state_status = state.get("chapter_status", "")
     if db_status != state_status:
         logger.info(
             "task_discovery: DB status '%s' overrides state status '%s'",
             db_status, state_status,
         )
-        return {"chapter_status": db_status}
+        return {"chapter_status": db_status, "has_instruction": has_instruction}
 
-    return {}
+    return {"has_instruction": has_instruction}
 
 
 def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
@@ -330,6 +336,32 @@ def publisher_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
     return {
         "chapter_status": ChapterStatus.PUBLISHED.value,
         "current_stage": "published",
+    }
+
+
+def awaiting_publish_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
+    """v5.3.0: Real mode - stop at reviewed status, await manual publish confirmation.
+
+    This node is used when llm_mode == "real" to prevent auto-publishing.
+    The chapter stays in 'reviewed' status until manually published.
+    """
+    _update_run_node(state, repo, "awaiting_publish")
+
+    project_id = state.get("project_id", "")
+    chapter_number = state.get("chapter_number", 0)
+
+    logger.info(
+        "AwaitingPublish: project=%s chapter=%s reviewed, awaiting manual publish",
+        project_id, chapter_number,
+    )
+
+    # Mark workflow run as completed (review done, but not published)
+    _finalize_run(state, repo, "completed")
+
+    return {
+        "chapter_status": ChapterStatus.REVIEWED.value,
+        "current_stage": "reviewed",
+        "awaiting_publish": True,
     }
 
 

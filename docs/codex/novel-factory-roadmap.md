@@ -1485,7 +1485,86 @@ v5.2 整体验收：
 
 状态：**已通过验收**，测试基线 1425/1425。
 
-## v5.3+：多模型与生产治理
+## v5.3：Authoring System Reset
+
+规格文档：`novel-factory-v5.3-authoring-system-reset-plan.md`
+
+目标：把 v5.2 的“可运行章节生成链路”升级为可信的小说作者工作台。v5.3 聚焦项目创世、章节生产前置闸门、真实质量门、人工发布、项目级信息架构、工作流透明化，以及长篇小说事实/数值连续性。
+
+### v5.3.0 Trusted Generation Chain
+
+范围：
+
+- Project Genesis：从一句创作意图生成项目圣经草案。
+- 新项目默认进入 `draft/planning_generated`，用户批准后才 active。
+- Context Readiness Gate：缺简介、世界观、主角、大纲、章节指令、字数目标、风格指南时禁止生成章节。
+- Planner 必经：无 instruction 的章节必须先跑 Planner。
+- 字数硬闸门：低于目标阈值不能通过 Author/Editor。
+- 真实模式 AI 审核通过后进入 `reviewed + awaiting_publish=true`，不自动发布。
+- Checkpoint 文件跟随主 DB 路径，不写 repo root。
+
+验收：
+
+- 空骨架项目不能生成章节。
+- 新项目能生成并批准项目圣经。
+- 第 1 章工作流包含 Planner。
+- 1000 字章节不能通过 2500 字目标审核。
+- 真实模式生成后不是 `published`，而是 `reviewed + awaiting_publish=true`。
+- 全量 pytest、前端 typecheck、前端 build 通过。
+
+状态：**v5.3.0 已通过验收**，测试基线 1471/1471。
+
+### v5.3.1 Project-Level Author Workspace
+
+范围：
+
+- WebUI 重构为项目级模块：总览、章节、世界观、角色、势力、大纲、伏笔、章节指令、风格指南、审核、运行记录、设置。
+- 世界观/角色/大纲不再作为章节 Tab。
+- 新增或补齐 `factions / plot_holes / instructions / chapter_state / chapter_versions / quality_reports / continuity_reports / human_review_sessions / agent_artifacts` 的管理入口。
+- `/run` 从主导航移除，仅作为开发/调试入口保留。
+
+验收：
+
+- 用户能在项目级页面管理世界观、角色、大纲、伏笔、章节指令。
+- 章节页只展示章节相关内容、当前章指令、scene beats、版本、审核、工作流。
+- 高级运行不干扰主创作路径。
+
+### v5.3.2 Workflow Observability
+
+范围：
+
+- 新增或扩展 workflow step 明细记录。
+- 每个 Agent 记录输入上下文摘要、使用的 fragments、输出产物、校验结果、质量门结果、token、耗时、错误、人工介入原因。
+- 工作流页支持展开每个 Agent 节点。
+- Editor 节点展示字数门、上下文完整性门、指令覆盖门、风格门、连续性门。
+- CLI 增加 `runs show --detail` 等统一作者工作流命令。
+
+验收：
+
+- 工作流页不再只有流程灯。
+- 用户能看清每个 Agent 到底做了什么。
+- 每次通过/失败/待审都有可解释原因。
+
+### v5.3.3 Continuity & Fact Ledger
+
+范围：
+
+- 新增或完善事实账本，结构化追踪时间、倒计时、道具、资源、伤势、等级、地点、任务、关系、伏笔状态和世界规则。
+- 将 `chapter_state / fact_lock / state_verifier / ContinuityChecker` 从旁路能力整合为发布前连续性门禁。
+- 每章生成前继承有效事实，每个 Agent 输出事实使用和变更摘要。
+- 发布前检查事实冲突，真实模式下冲突必须阻止发布或要求人工覆盖。
+- WebUI 增加项目级“事实账本/连续性”模块，章节工作流展示本章继承事实、新增事实、修改事实和冲突原因。
+- CLI 增加 `facts list/show/history/reconcile` 与 `continuity check/approve-override`。
+
+验收：
+
+- 前章写入的倒计时、道具、地点、目标、伤势、关系等事实能在后章继承。
+- 无理由数值回退、道具重复出现、死亡角色复活、伏笔状态错乱等冲突不能静默发布。
+- 用户能在 WebUI 查看事实历史，并对必要覆盖填写原因。
+
+状态：**v5.3.0 已通过验收；v5.3.1-v5.3.3 规划中**。
+
+## v5.4+：多模型与生产治理
 
 目标：支持真实长期运行所需的模型、成本、可观测性和数据治理。
 
@@ -1494,11 +1573,9 @@ v5.2 整体验收：
 - 多 Provider 原生适配。
 - Agent 级模型路由。
 - fallback。
-- token 成本统计。
 - Provider 健康检查。
 - LangSmith 或自定义 trace。
 - 数据备份与恢复。
-- 人工审核 UI 或 CLI。
 
 验收：
 

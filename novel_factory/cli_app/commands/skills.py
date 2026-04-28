@@ -44,7 +44,15 @@ def cmd_skill_run(args) -> None:
     from ...skills.registry import SkillRegistry
 
     settings = _get_settings(args)
-    init_db(settings.db_path)
+
+    # Only init DB when the caller explicitly provides a DB path, or when the
+    # invocation actually needs project/chapter context. Text-only skills should
+    # not touch the default database.
+    explicit_db_path = getattr(args, "db_path", None)
+    project_id = getattr(args, "project_id", None)
+    chapter = getattr(args, "chapter", None)
+    if explicit_db_path or project_id or chapter:
+        init_db(settings.db_path)
 
     skill_id = getattr(args, "skill_id", "")
     text = getattr(args, "text", None)

@@ -1,4 +1,4 @@
-"""v5.2 API Application Factory.
+"""v5.3 API Application Factory.
 
 Creates a FastAPI app with:
 - JSON API routes under /api
@@ -36,8 +36,8 @@ def create_api_app(
     """
     app = FastAPI(
         title="小说工厂 API",
-        description="Novel Factory API v5.2",
-        version="5.2.0",
+        description="Novel Factory API v5.3",
+        version="5.3.0",
         default_response_class=JSONResponse,
     )
 

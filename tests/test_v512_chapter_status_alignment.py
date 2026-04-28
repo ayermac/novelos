@@ -38,7 +38,7 @@ def client():
         init_db(db_path)
         app = create_api_app(db_path=db_path, llm_mode="stub")
         test_client = TestClient(app)
-        yield test_client
+        yield test_client, db_path  # v5.3.0: Return both client and db_path
     finally:
         if os.path.exists(db_path):
             os.unlink(db_path)
@@ -49,6 +49,7 @@ class TestOnboardingInitialStatus:
 
     def test_new_project_chapters_are_planned(self, client):
         """New project chapters should have status=planned, not pending."""
+        client, db_path = client  # v5.3.0: unpack tuple
         resp = client.post(
             "/api/onboarding/projects",
             json={
@@ -79,6 +80,7 @@ class TestPendingCompatibility:
 
     def test_pending_chapter_runs_without_blocked(self, client):
         """A chapter with pending status should run and not be blocked."""
+        client, db_path = client  # v5.3.0: unpack tuple
         # Create project
         resp = client.post(
             "/api/onboarding/projects",
@@ -91,9 +93,7 @@ class TestPendingCompatibility:
         assert resp.status_code == 200
 
         # Manually set chapter to pending (simulating old data)
-        # Get the DB path from the app state
         from novel_factory.db.connection import get_connection
-        db_path = client.app.state.db_path
         conn = get_connection(db_path)
         try:
             conn.execute(
@@ -103,6 +103,10 @@ class TestPendingCompatibility:
             conn.commit()
         finally:
             conn.close()
+
+        # v5.3.0: Seed context for Context Readiness Gate
+        from conftest import seed_context_for_chapter
+        seed_context_for_chapter(db_path, "test_v512_002", 1)
 
         # Verify chapter is now pending
         resp = client.get("/api/projects/test_v512_002/workspace")
@@ -146,6 +150,7 @@ class TestRunChapterResponseStructure:
 
     def test_run_chapter_returns_workflow_status(self, client):
         """Run chapter should return workflow_status field."""
+        client, db_path = client  # v5.3.0: unpack tuple
         client.post(
             "/api/onboarding/projects",
             json={
@@ -154,6 +159,10 @@ class TestRunChapterResponseStructure:
                 "initial_chapter_count": 2,
             },
         )
+
+        # v5.3.0: Seed context for Context Readiness Gate
+        from conftest import seed_context_for_chapter
+        seed_context_for_chapter(db_path, "test_v512_003", 1)
 
         resp = client.post(
             "/api/run/chapter",
@@ -175,6 +184,7 @@ class TestRunChapterResponseStructure:
         """If workflow_status is blocked, message should not say completed."""
         # We can't easily force blocked in stub mode, but we can verify
         # that the response structure supports it.
+        client, db_path = client  # v5.3.0: unpack tuple
         client.post(
             "/api/onboarding/projects",
             json={
@@ -183,6 +193,10 @@ class TestRunChapterResponseStructure:
                 "initial_chapter_count": 1,
             },
         )
+
+        # v5.3.0: Seed context for Context Readiness Gate
+        from conftest import seed_context_for_chapter
+        seed_context_for_chapter(db_path, "test_v512_004", 1)
 
         resp = client.post(
             "/api/run/chapter",
@@ -204,6 +218,7 @@ class TestRunChapterResponseStructure:
 
     def test_workflow_run_status_matches_api_status(self, client):
         """workflow_run.status in DB should match API workflow_status."""
+        client, db_path = client  # v5.3.0: unpack tuple
         client.post(
             "/api/onboarding/projects",
             json={
@@ -212,6 +227,10 @@ class TestRunChapterResponseStructure:
                 "initial_chapter_count": 1,
             },
         )
+
+        # v5.3.0: Seed context for Context Readiness Gate
+        from conftest import seed_context_for_chapter
+        seed_context_for_chapter(db_path, "test_v512_005", 1)
 
         resp = client.post(
             "/api/run/chapter",
@@ -347,14 +366,14 @@ class TestLayoutVersion:
     """Layout sidebar shows correct version."""
 
     def test_sidebar_version_is_v52(self):
-        """Sidebar version should display v5.2."""
+        """Sidebar version should display v5.3."""
         frontend_src = Path(__file__).parent.parent / "frontend" / "src"
         layout_file = frontend_src / "components" / "Layout.tsx"
         assert layout_file.exists()
         content = layout_file.read_text()
 
-        assert "v5.2" in content, (
-            "Layout sidebar should display v5.2"
+        assert "v5.3" in content, (
+            "Layout sidebar should display v5.3"
         )
 
 

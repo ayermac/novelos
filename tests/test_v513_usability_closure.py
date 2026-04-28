@@ -20,6 +20,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from tests.conftest import seed_context_for_chapter
+
 
 @pytest.fixture
 def client():
@@ -54,6 +56,8 @@ class TestChapterContentAPI:
                 "initial_chapter_count": 1,
             },
         )
+        db_path = client.app.state.db_path
+        seed_context_for_chapter(db_path, "v513_reader", 1)
         client.post("/api/run/chapter", json={"project_id": "v513_reader", "chapter": 1})
 
         # Get chapter content
@@ -221,11 +225,11 @@ class TestFrontendReviewEmptyState:
     """Review empty state should explain why."""
 
     def test_review_explains_empty_state(self):
-        """Review empty state should explain direct publishing flow."""
+        """Review empty state should explain the review/publish flow."""
         frontend_src = Path(__file__).parent.parent / "frontend" / "src"
         content = (frontend_src / "pages" / "Review.tsx").read_text()
 
-        assert "直接发布" in content or "已发布章节可在项目工作台查看" in content, (
+        assert "AI 审核通过" in content or "待人工发布" in content or "审核工作台" in content, (
             "Review empty state should explain why there are no pending reviews"
         )
 

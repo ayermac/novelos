@@ -13,7 +13,12 @@ export interface SSEEvent {
   duration_ms?: number;
   chapter_status?: string;
   run_id?: string;
+  awaiting_publish?: boolean;
   error?: string;
+  context_incomplete?: boolean;
+  missing?: string[];
+  actions?: string[];
+  details?: Record<string, unknown>;
 }
 
 export interface StepStatus {
@@ -36,7 +41,7 @@ export interface UseSSEStreamResult {
  */
 export function useSSEStream(
   onComplete?: (event: SSEEvent) => void,
-  onError?: (error: string) => void
+  onError?: (error: string, event?: SSEEvent) => void
 ): UseSSEStreamResult {
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -106,7 +111,7 @@ export function useSSEStream(
             setError(event.error || '未知错误');
             setIsStreaming(false);
             eventSource.close();
-            onError?.(event.error || '未知错误');
+            onError?.(event.error || '未知错误', event);
             break;
         }
       } catch (err) {

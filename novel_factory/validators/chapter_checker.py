@@ -4,6 +4,10 @@ v1 implements:
 - Unified word count function (count_words)
 - Word count range check (min/max)
 - Non-empty content check
+
+v5.3.0 adds:
+- Quality gate word count enforcement (Author/Polisher < 0.85 = fail, Editor < 0.9 = no pass)
+- word_target derivation from instruction or project settings
 """
 
 from __future__ import annotations
@@ -15,13 +19,21 @@ from ..config.settings import Settings
 DEFAULT_MIN_WORDS = 500
 DEFAULT_MAX_WORDS = 8000
 
+# v5.3.0: Quality gate thresholds
+QUALITY_GATE_AUTHOR_THRESHOLD = 0.85  # Author/Polisher: content < word_target * 0.85 = fail
+QUALITY_GATE_EDITOR_THRESHOLD = 0.90  # Editor: content < word_target * 0.9 = no pass
 
-def count_words(text: str) -> int:
+
+def count_words(text: str | None) -> int:
     """Count words in text. For Chinese, uses character count as approximation.
 
     This is the single canonical word count function for the entire factory.
     All modules must use this function instead of len(content).
+
+    Returns 0 for None or empty content to avoid TypeError in error-path tests.
     """
+    if text is None:
+        return 0
     return len(text)
 
 
@@ -51,6 +63,79 @@ def check_word_count(
         violations.append(f"字数超标: {word_count} > {max_words}")
 
     return violations
+
+
+def check_word_count_quality_gate(
+    content: str,
+    word_target: int,
+    agent_type: str,
+) -> tuple[bool, str]:
+    """Check word count against quality gate threshold.
+
+    v5.3.0: Implements strict word count quality gates.
+
+    Args:
+        content: Chapter text content.
+        word_target: Target word count for this chapter.
+        agent_type: Agent type ("author", "polisher", or "editor").
+
+    Returns:
+        Tuple of (passed, message).
+        - passed: True if word count meets threshold.
+        - message: Description of the result.
+    """
+    word_count = count_words(content)
+
+    if word_count == 0:
+        return False, "内容为空"
+
+    # Determine threshold based on agent type
+    if agent_type in ("author", "polisher"):
+        threshold = QUALITY_GATE_AUTHOR_THRESHOLD
+    elif agent_type == "editor":
+        threshold = QUALITY_GATE_EDITOR_THRESHOLD
+    else:
+        # Unknown agent type, use strict threshold
+        threshold = QUALITY_GATE_EDITOR_THRESHOLD
+
+    minimum_required = int(word_target * threshold)
+
+    if word_count < minimum_required:
+        shortfall = minimum_required - word_count
+        return False, f"字数未达标: {word_count} < {minimum_required} (目标 {word_target} × {threshold:.0%})，差 {shortfall} 字"
+
+    return True, f"字数达标: {word_count} >= {minimum_required}"
+
+
+def derive_word_target(
+    instruction: dict | None,
+    project: dict,
+) -> int:
+    """Derive word_target from instruction or project settings.
+
+    v5.3.0: Provides word_target for quality gate checks.
+
+    Args:
+        instruction: Instruction dict for the chapter, or None.
+        project: Project dict with target_words and total_chapters_planned.
+
+    Returns:
+        Derived word_target, minimum 2000.
+    """
+    # First check if instruction has explicit word_target
+    if instruction and instruction.get("word_target"):
+        return max(instruction["word_target"], 2000)
+
+    # Derive from project settings
+    target_words = project.get("target_words", 0)
+    total_chapters = project.get("total_chapters_planned", 0)
+
+    if target_words and total_chapters:
+        derived = target_words // total_chapters
+        return max(derived, 2000)
+
+    # Default fallback
+    return 2500
 
 
 def validate_chapter_output(output: dict) -> list[str]:

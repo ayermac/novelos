@@ -20,6 +20,7 @@ export const STATUS_MAP: Record<string, string> = {
 
   // Chapter / review statuses
   review: '待审核',
+  reviewed: '待发布',
   approved: '已通过',
   rejected: '需返修',
   blocking: '已阻塞',
@@ -31,6 +32,9 @@ export const STATUS_MAP: Record<string, string> = {
   polished: '已润色',
   published: '已发布',
   revision: '返修中',
+
+  // v5.3.0: awaiting_publish semantic
+  awaiting_publish: '待人工发布',
 
   // Style / gate
   active: '已启用',
@@ -78,10 +82,22 @@ export function tWorkflowStatus(status: string | undefined | null): string {
 /**
  * Translate chapter production status.
  * chapter.status values: planned, pending, scripted, drafted, polished, reviewed, published, blocking, revision
+ *
+ * v5.3.0: "reviewed" maps to "待发布" by default.
+ * Use tChapterStatusLabel for context-aware labels (e.g. "待人工发布" when awaiting_publish=true).
  */
 export function tChapterStatus(status: string | undefined | null): string {
   if (!status) return STATUS_MAP.unknown
   return STATUS_MAP[status] || status
+}
+
+/**
+ * v5.3.0: Context-aware chapter status label.
+ * Returns "待人工发布" when chapter is reviewed and awaiting manual publish in real mode.
+ */
+export function tChapterStatusLabel(status: string | undefined | null, awaitingPublish?: boolean): string {
+  if (status === 'reviewed' && awaitingPublish) return '待人工发布'
+  return tChapterStatus(status)
 }
 
 export function tGenre(genre: string | undefined | null): string {

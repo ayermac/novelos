@@ -26,8 +26,17 @@ class TestRouteByChapterStatus:
         ],
     )
     def test_happy_path_routing(self, status, expected):
-        state = {"chapter_status": status}
+        # v5.3.0: planned status requires has_instruction=True to route to screenwriter
+        if status == "planned":
+            state = {"chapter_status": status, "has_instruction": True}
+        else:
+            state = {"chapter_status": status}
         assert route_by_chapter_status(state) == expected
+
+    def test_planned_without_instruction_routes_to_planner(self):
+        """v5.3.0: planned status without instruction should route to planner."""
+        state = {"chapter_status": "planned", "has_instruction": False}
+        assert route_by_chapter_status(state) == "planner"
 
     def test_revision_routes_to_author_by_default(self):
         state = {
@@ -52,7 +61,18 @@ class TestRouteByChapterStatus:
 
 
 class TestRouteByReviewResult:
-    def test_pass_goes_to_publish(self):
+    def test_pass_goes_to_publish_in_stub_mode(self):
+        """v5.3.0: Stub mode (default) routes to publish after pass."""
+        state = {"quality_gate": {"pass": True}, "retry_count": 0, "max_retries": 3, "llm_mode": "stub"}
+        assert route_by_review_result(state) == "publish"
+
+    def test_pass_goes_to_awaiting_publish_in_real_mode(self):
+        """v5.3.0: Real mode routes to awaiting_publish, not publish."""
+        state = {"quality_gate": {"pass": True}, "retry_count": 0, "max_retries": 3, "llm_mode": "real"}
+        assert route_by_review_result(state) == "awaiting_publish"
+
+    def test_pass_without_llm_mode_defaults_to_publish(self):
+        """Backward compatibility: no llm_mode defaults to stub behavior."""
         state = {"quality_gate": {"pass": True}, "retry_count": 0, "max_retries": 3}
         assert route_by_review_result(state) == "publish"
 

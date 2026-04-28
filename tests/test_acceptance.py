@@ -96,8 +96,11 @@ def _make_state(**overrides) -> FactoryState:
 
 
 # Helper: long enough content to pass word count validation
-_LONG_CONTENT = "这是一段验收测试用的正文内容，用于模拟 Author Agent 的输出。" * 20  # 640 chars
-_POLISHED_CONTENT = "润色后的正文内容，用于模拟 Polisher Agent 的输出。" * 20  # ~640 chars
+# v5.3.0: Author/Polisher need 85% of 2500 = 2125, Editor needs 90% of 2500 = 2250
+# Base content is 44 chars, need 49x for 2125, 52x for 2250
+_BASE_CONTENT = "这是一段验收测试用的正文内容，用于模拟 Agent 的输出。每次都需要确保内容充实完整。"
+_LONG_CONTENT = _BASE_CONTENT * 49  # 2156 chars > 2125 (85% threshold)
+_POLISHED_CONTENT = _BASE_CONTENT * 52  # 2288 chars > 2250 (90% threshold)
 
 
 # ── Test 1: Full happy path planned -> published ────────────────

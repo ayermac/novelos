@@ -19,6 +19,7 @@ from ..llm.openai_compatible import OpenAICompatibleProvider
 from ..llm.provider import LLMProvider
 from ..models.state import FactoryState
 from .conditions import (
+    route_after_agent,
     route_by_chapter_status,
     route_by_revision_type,
     route_by_review_result,
@@ -76,6 +77,7 @@ def build_graph(
         graph.add_node("polisher", runners["polisher"])
         graph.add_node("editor", runners["editor"])
         graph.add_node("publisher", lambda s: nodes.publisher_node(s, repo))
+        graph.add_node("awaiting_publish", lambda s: nodes.awaiting_publish_node(s, repo))  # v5.3.0
         graph.add_node("revision_router", lambda s: nodes.revision_router_node(s))
         graph.add_node("human_review", lambda s: nodes.human_review_node(s, repo))
         graph.add_node("archive", lambda s: nodes.archive_node(s, repo))
@@ -113,6 +115,10 @@ def build_graph(
             "publisher",
             lambda s: nodes.publisher_node(s, repo),
         )
+        graph.add_node(
+            "awaiting_publish",
+            lambda s: nodes.awaiting_publish_node(s, repo),
+        )  # v5.3.0
         graph.add_node("revision_router", lambda s: nodes.revision_router_node(s))
         graph.add_node(
             "human_review",
@@ -145,18 +151,37 @@ def build_graph(
         },
     )
 
-    # Linear happy path
-    graph.add_edge("planner", "screenwriter")
-    graph.add_edge("screenwriter", "author")
-    graph.add_edge("author", "polisher")
-    graph.add_edge("polisher", "editor")
+    # Linear happy path, with a safety stop after each agent. Agent nodes set
+    # requires_human on errors, so never flow into the next precondition blindly.
+    graph.add_conditional_edges(
+        "planner",
+        route_after_agent,
+        {"next": "screenwriter", "human_review": "human_review"},
+    )
+    graph.add_conditional_edges(
+        "screenwriter",
+        route_after_agent,
+        {"next": "author", "human_review": "human_review"},
+    )
+    graph.add_conditional_edges(
+        "author",
+        route_after_agent,
+        {"next": "polisher", "human_review": "human_review"},
+    )
+    graph.add_conditional_edges(
+        "polisher",
+        route_after_agent,
+        {"next": "editor", "human_review": "human_review"},
+    )
 
     # After editor: pass → publisher, fail → revise or human
+    # v5.3.0: Real mode → awaiting_publish (no auto-publish)
     graph.add_conditional_edges(
         "editor",
         route_by_review_result,
         {
             "publish": "publisher",
+            "awaiting_publish": "awaiting_publish",  # v5.3.0: Real mode stops here
             "revise": "revision_router",
             "human_review": "human_review",
         },
@@ -176,6 +201,7 @@ def build_graph(
     # Terminal nodes
     graph.add_edge("publisher", "archive")
     graph.add_edge("archive", END)
+    graph.add_edge("awaiting_publish", END)  # v5.3.0: Real mode terminal
     graph.add_edge("human_review", END)
 
     return graph
