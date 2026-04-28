@@ -36,6 +36,8 @@ def _finalize_run(state: FactoryState, repo: Repository, status: str, error: str
     """Finalize workflow run with given status and token usage."""
     run_id = state.get("workflow_run_id")
     if run_id:
+        # P1 fix: When status is 'completed', clear any stale error_message
+        clear_error = (status == "completed")
         repo.update_workflow_run(
             run_id,
             status=status,
@@ -44,6 +46,7 @@ def _finalize_run(state: FactoryState, repo: Repository, status: str, error: str
             completion_tokens=state.get("completion_tokens", 0),
             total_tokens=state.get("total_tokens", 0),
             duration_ms=state.get("duration_ms", 0),
+            clear_error=clear_error,
         )
 
 
@@ -139,9 +142,12 @@ def create_node_runners(
         if token_updates:
             result.update(token_updates)
 
-        # Handle error
+        # Handle error - set requires_human to stop downstream execution
         if "error" in result:
             _finalize_run(state, repo, "failed", result["error"])
+            # P1 fix: Ensure requires_human is set so route_by_chapter_status
+            # safety gate catches this and routes to human_review
+            result["requires_human"] = True
 
         # Record step after running
         step_info = {
@@ -231,6 +237,7 @@ def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dic
         result.update(token_updates)
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
+        result["requires_human"] = True  # P1 fix
     return result
 
 
@@ -245,6 +252,7 @@ def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider) -
         result.update(token_updates)
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
+        result["requires_human"] = True  # P1 fix
     return result
 
 
@@ -259,6 +267,7 @@ def author_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict
         result.update(token_updates)
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
+        result["requires_human"] = True  # P1 fix
     return result
 
 
@@ -280,6 +289,7 @@ def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill
         result.update(token_updates)
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
+        result["requires_human"] = True  # P1 fix
     return result
 
 
@@ -301,6 +311,7 @@ def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
         result.update(token_updates)
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
+        result["requires_human"] = True  # P1 fix
     return result
 
 
@@ -342,7 +353,8 @@ def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
 def archive_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
     """Archive after publishing. Marks workflow run as completed."""
     _update_run_node(state, repo, "archive")
-    _finalize_run(state, repo, "completed")
+    # P1 fix: Clear error_message when marking as completed
+    _finalize_run(state, repo, "completed", error=None)
     logger.info(
         "Archive: project=%s chapter=%s published",
         state.get("project_id"), state.get("chapter_number"),

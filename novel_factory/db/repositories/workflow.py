@@ -40,8 +40,14 @@ class WorkflowRepositoryMixin:
         completion_tokens: int | None = None,
         total_tokens: int | None = None,
         duration_ms: int | None = None,
+        clear_error: bool = False,
     ) -> bool:
         """Update workflow run status.
+
+        Args:
+            clear_error: If True, explicitly set error_message to NULL.
+                         Used when status transitions to 'completed' to ensure
+                         no stale error_message remains (P1 fix).
 
         Returns:
             True if the run was found and updated, False otherwise.
@@ -56,7 +62,10 @@ class WorkflowRepositoryMixin:
             if current_node:
                 parts.append("current_node=?")
                 params.append(current_node)
-            if error_message:
+            # P1 fix: Support clearing error_message explicitly
+            if clear_error:
+                parts.append("error_message=NULL")
+            elif error_message:
                 parts.append("error_message=?")
                 params.append(error_message)
             if prompt_tokens is not None:

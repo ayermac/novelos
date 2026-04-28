@@ -54,23 +54,38 @@ def cmd_run_chapter(args) -> dict:
 
     use_json = getattr(args, "json", False)
 
-    # v3.1: Check for LLM configuration errors (distinguished by specific error messages)
-    # Business logic errors (max_steps exceeded, requires_human) should NOT cause exit(1)
+    # v5.2 P1 fix: Distinguish between LLM config errors and business errors
+    # - LLM config errors: exit(1), ok=false
+    # - GraphRecursionError: exit(1), ok=false
+    # - Business blocking (requires_human): exit(0) by default, but ok=false if error present
+    # - Success: exit(0), ok=true
     error_msg = result.get("error") or ""
     is_llm_config_error = "LLM configuration error" in error_msg or "API key" in error_msg or "base_url" in error_msg
+    is_graph_recursion_error = "GraphRecursionError" in error_msg or "recursion limit" in error_msg.lower()
+    has_error = bool(error_msg)
+    requires_human = result.get("requires_human", False)
 
-    if is_llm_config_error:
+    # Determine if this is a failure that should return non-zero exit code
+    is_failure = is_llm_config_error or is_graph_recursion_error or (has_error and not requires_human)
+
+    if is_failure:
         if use_json:
-            # LLM config error: return error envelope
-            envelope = {"ok": False, "error": error_msg, "data": result}
+            envelope = {"ok": False, "error": error_msg or None, "data": result}
             print(json.dumps(envelope, ensure_ascii=False))
         else:
             _print_output(result, use_json)
         sys.exit(1)
-    else:
-        # Normal result (may include business errors like max_steps exceeded)
+    elif has_error and requires_human:
+        # Business blocking with error - ok=false but exit(0) for recoverable blocks
         if use_json:
-            envelope = {"ok": True, "error": error_msg or None, "data": result}
+            envelope = {"ok": False, "error": error_msg, "data": result}
+            print(json.dumps(envelope, ensure_ascii=False))
+        else:
+            _print_output(result, use_json)
+    else:
+        # Normal result (success)
+        if use_json:
+            envelope = {"ok": True, "error": None, "data": result}
             print(json.dumps(envelope, ensure_ascii=False))
         else:
             _print_output(result, use_json)
