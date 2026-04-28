@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { get } from '../lib/api'
+import { get, post } from '../lib/api'
 import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
@@ -42,6 +42,26 @@ export default function Style() {
   const [data, setData] = useState<StyleData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [initLoading, setInitLoading] = useState<string | null>(null)
+  const [initSuccess, setInitSuccess] = useState<string | null>(null)
+
+  const handleInitStyleBible = async (projectId: string) => {
+    setInitLoading(projectId)
+    setInitSuccess(null)
+    try {
+      const res = await post('/style/init', { project_id: projectId })
+      if (res.ok) {
+        setInitSuccess(projectId)
+        load()
+      } else {
+        setError(res.error?.message || '初始化 Style Bible 失败')
+      }
+    } catch {
+      setError('操作失败')
+    } finally {
+      setInitLoading(null)
+    }
+  }
 
   const load = () => {
     setLoading(true)
@@ -161,6 +181,7 @@ export default function Style() {
                         <th>状态</th>
                         <th>版本</th>
                         <th>更新时间</th>
+                        <th>操作</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -172,16 +193,38 @@ export default function Style() {
                           </td>
                           <td>v{bible.version}</td>
                           <td className="text-secondary">{bible.updated_at}</td>
+                          <td>
+                            <span className="text-secondary">已建立</span>
+                          </td>
                         </tr>
                       ))}
                     </tbody>
                   </table>
                 </div>
               ) : (
-                <EmptyState
-                  title="暂无风格圣经"
-                  hint="生成章节后自动建立风格圣经"
-                />
+                <div>
+                  <EmptyState
+                    title="暂无风格圣经"
+                    hint="点击下方按钮为项目初始化 Style Bible"
+                  />
+                  {initSuccess && (
+                    <div className="alert alert-success" style={{ marginTop: '12px' }}>
+                      Style Bible 初始化成功！
+                    </div>
+                  )}
+                  <div style={{ marginTop: '12px', textAlign: 'center' }}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => {
+                        const projectId = prompt('请输入项目 ID:')
+                        if (projectId) handleInitStyleBible(projectId)
+                      }}
+                      disabled={initLoading !== null}
+                    >
+                      {initLoading ? '初始化中...' : '初始化 Style Bible'}
+                    </button>
+                  </div>
+                </div>
               )}
             </div>
           </div>

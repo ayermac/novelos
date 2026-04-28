@@ -24,12 +24,18 @@ from .repositories.review_workbench import ReviewWorkbenchRepositoryMixin
 from .repositories.style_bible import StyleBibleRepositoryMixin
 from .repositories.style_gate import StyleGateRepositoryMixin
 from .repositories.style_sample import StyleSampleRepositoryMixin
+from .repositories.world_setting import WorldSettingRepositoryMixin
+from .repositories.character import CharacterRepositoryMixin
+from .repositories.outline import OutlineRepositoryMixin
 
 # Backward-compatible re-exports
 from ..validators.chapter_checker import count_words  # noqa: F401
 
 
 class Repository(
+    WorldSettingRepositoryMixin,
+    CharacterRepositoryMixin,
+    OutlineRepositoryMixin,
     ProjectRepositoryMixin,
     ChapterRepositoryMixin,
     WorkflowRepositoryMixin,

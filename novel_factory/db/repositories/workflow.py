@@ -36,6 +36,10 @@ class WorkflowRepositoryMixin:
         status: str | None = None,
         current_node: str | None = None,
         error_message: str | None = None,
+        prompt_tokens: int | None = None,
+        completion_tokens: int | None = None,
+        total_tokens: int | None = None,
+        duration_ms: int | None = None,
     ) -> bool:
         """Update workflow run status.
 
@@ -55,6 +59,18 @@ class WorkflowRepositoryMixin:
             if error_message:
                 parts.append("error_message=?")
                 params.append(error_message)
+            if prompt_tokens is not None:
+                parts.append("prompt_tokens=?")
+                params.append(prompt_tokens)
+            if completion_tokens is not None:
+                parts.append("completion_tokens=?")
+                params.append(completion_tokens)
+            if total_tokens is not None:
+                parts.append("total_tokens=?")
+                params.append(total_tokens)
+            if duration_ms is not None:
+                parts.append("duration_ms=?")
+                params.append(duration_ms)
             if status in ("completed", "failed", "blocked"):
                 parts.append("completed_at=datetime('now','+8 hours')")
             if not parts:

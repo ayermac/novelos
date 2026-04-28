@@ -155,6 +155,19 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         )
         return cursor.fetchone() is not None
 
+    if name == "020_v5_2_character_traits":
+        # 020 adds traits column to characters table
+        cursor = conn.execute("PRAGMA table_info(characters)")
+        columns = [row[1] for row in cursor.fetchall()]
+        return "traits" in columns
+
+    if name == "021_v5_2_token_tracking":
+        # 021 adds token tracking columns to workflow_runs table
+        cursor = conn.execute("PRAGMA table_info(workflow_runs)")
+        columns = [row[1] for row in cursor.fetchall()]
+        required = {"prompt_tokens", "completion_tokens", "total_tokens", "duration_ms"}
+        return required.issubset(set(columns))
+
     return False
 
 

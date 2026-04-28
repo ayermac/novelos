@@ -40,11 +40,18 @@ export default function Onboarding() {
     style_template: 'default_web_serial',
     start_chapter: 1,
     initial_chapter_count: 10,
+    // New fields for world/character/outline
+    world_setting: '',
+    main_character_name: '',
+    main_character_role: 'protagonist',
+    main_character_description: '',
+    main_character_traits: '',
   })
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<ProjectResult | null>(null)
   const [idManuallyEdited, setIdManuallyEdited] = useState(false)
+  const [showAdvanced, setShowAdvanced] = useState(false)
 
   const handleNameChange = (name: string) => {
     setForm((prev) => ({
@@ -85,42 +92,89 @@ export default function Onboarding() {
     return (
       <div>
         <PageHeader title="创建成功" />
-        <div className="card">
-          <div className="card-body" style={{ textAlign: 'center', padding: '48px' }}>
-            <div
+        <div style={{
+          background: 'var(--paper-surface)',
+          borderRadius: 'var(--radius-xl)',
+          boxShadow: 'var(--shadow-flat)',
+          border: '1px solid rgba(30, 58, 95, 0.06)',
+          padding: 'var(--space-10)',
+          textAlign: 'center',
+        }}>
+          <div
+            style={{
+              width: '64px',
+              height: '64px',
+              borderRadius: '50%',
+              background: 'var(--gradient-ink)',
+              color: 'white',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              fontSize: '32px',
+              margin: '0 auto var(--space-6)',
+              boxShadow: 'var(--shadow-md)',
+            }}
+          >
+            ✓
+          </div>
+          <h3 style={{ marginBottom: 'var(--space-2)', fontSize: 'var(--text-xl)', fontWeight: 'var(--font-semibold)' }}>项目创建成功</h3>
+          <p style={{ color: 'var(--text-charcoal)', marginBottom: 'var(--space-6)', fontSize: 'var(--text-base)' }}>
+            「{result.project.name}」已创建，共规划 {result.chapters.length} 个初始章节。
+          </p>
+          <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'center' }}>
+            <Link
+              to={`/projects/${result.project.project_id}`}
               style={{
-                width: '64px',
-                height: '64px',
-                borderRadius: '50%',
-                background: 'var(--success)',
-                color: 'white',
-                display: 'flex',
+                display: 'inline-flex',
                 alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: '32px',
-                margin: '0 auto 24px',
+                gap: 'var(--space-2)',
+                padding: 'var(--space-3) var(--space-5)',
+                background: 'var(--gradient-ink)',
+                color: 'white',
+                borderRadius: 'var(--radius-md)',
+                fontSize: 'var(--text-base)',
+                fontWeight: 'var(--font-medium)',
+                textDecoration: 'none',
+                transition: 'all var(--duration-fast) var(--ease-out)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.transform = 'translateY(-1px)'
+                e.currentTarget.style.boxShadow = 'var(--shadow-md)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.transform = ''
+                e.currentTarget.style.boxShadow = ''
               }}
             >
-              ✓
-            </div>
-            <h3 style={{ marginBottom: '8px' }}>项目创建成功</h3>
-            <p style={{ color: 'var(--text-secondary)', marginBottom: '24px' }}>
-              「{result.project.name}」已创建，共规划 {result.chapters.length} 个初始章节。
-            </p>
-            <div className="flex gap-2" style={{ justifyContent: 'center' }}>
-              <Link
-                to={`/projects/${result.project.project_id}`}
-                className="btn btn-primary"
-              >
-                进入项目工作台
-              </Link>
-              <Link
-                to={`/projects/${result.project.project_id}?chapter=1`}
-                className="btn btn-secondary"
-              >
-                进入工作台生成第一章
-              </Link>
-            </div>
+              进入项目工作台
+            </Link>
+            <Link
+              to={`/projects/${result.project.project_id}?chapter=1`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+                padding: 'var(--space-3) var(--space-5)',
+                background: 'var(--paper-surface)',
+                color: 'var(--text-ink)',
+                border: '1px solid rgba(30, 58, 95, 0.12)',
+                borderRadius: 'var(--radius-md)',
+                fontSize: 'var(--text-base)',
+                fontWeight: 'var(--font-medium)',
+                textDecoration: 'none',
+                transition: 'all var(--duration-fast) var(--ease-out)',
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.background = 'var(--paper-hover)'
+                e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.2)'
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.background = 'var(--paper-surface)'
+                e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)'
+              }}
+            >
+              进入工作台生成第一章
+            </Link>
           </div>
         </div>
       </div>
@@ -132,50 +186,141 @@ export default function Onboarding() {
       <PageHeader title="创建新项目" backTo="/projects" backLabel="返回列表" />
 
       {error && (
-        <div className="alert alert-error" style={{ marginBottom: '16px' }}>
+        <div style={{
+          marginBottom: 'var(--space-4)',
+          padding: 'var(--space-4)',
+          background: 'rgba(239, 68, 68, 0.08)',
+          color: '#991b1b',
+          borderRadius: 'var(--radius-md)',
+          fontSize: 'var(--text-sm)',
+        }}>
           {error}
         </div>
       )}
 
-      <div className="card">
-        <div className="card-body">
+      <div style={{
+        background: 'var(--paper-surface)',
+        borderRadius: 'var(--radius-lg)',
+        boxShadow: 'var(--shadow-flat)',
+        border: '1px solid rgba(30, 58, 95, 0.06)',
+        overflow: 'hidden',
+      }}>
+        <div style={{ padding: 'var(--space-5)' }}>
           <form onSubmit={handleSubmit}>
-            <div style={{ marginBottom: '24px' }}>
-              <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '16px', color: 'var(--primary)' }}>
-                第一步：基础信息
+            <div style={{ marginBottom: 'var(--space-6)' }}>
+              <div style={{
+                fontSize: 'var(--text-sm)',
+                fontWeight: 'var(--font-semibold)',
+                marginBottom: 'var(--space-4)',
+                color: 'var(--ink-accent)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+              }}>
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '20px',
+                  height: '20px',
+                  borderRadius: '50%',
+                  background: 'var(--gradient-ink)',
+                  color: 'white',
+                  fontSize: '12px',
+                  fontWeight: 'var(--font-bold)',
+                }}>1</span>
+                基础信息
               </div>
-              <div className="form-group">
-                <label>小说名称</label>
+              <div style={{ marginBottom: 'var(--space-4)' }}>
+                <label style={{
+                  display: 'block',
+                  marginBottom: 'var(--space-2)',
+                  fontWeight: 'var(--font-medium)',
+                  color: 'var(--text-ink)',
+                  fontSize: 'var(--text-sm)',
+                }}>小说名称</label>
                 <input
                   type="text"
-                  className="form-control"
                   value={form.name}
                   onChange={(e) => handleNameChange(e.target.value)}
                   placeholder="例如：斗破苍穹"
                   required
+                  style={{
+                    width: '100%',
+                    padding: 'var(--space-3)',
+                    border: '1px solid rgba(30, 58, 95, 0.12)',
+                    borderRadius: 'var(--radius-md)',
+                    fontSize: 'var(--text-base)',
+                    background: 'var(--paper-surface)',
+                    color: 'var(--text-ink)',
+                    transition: 'border-color var(--duration-fast) var(--ease-out)',
+                  }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                 />
               </div>
 
-              <div className="form-group">
-                <label>项目 ID</label>
+              <div style={{ marginBottom: 'var(--space-4)' }}>
+                <label style={{
+                  display: 'block',
+                  marginBottom: 'var(--space-2)',
+                  fontWeight: 'var(--font-medium)',
+                  color: 'var(--text-ink)',
+                  fontSize: 'var(--text-sm)',
+                }}>项目 ID</label>
                 <input
                   type="text"
-                  className="form-control"
                   value={form.project_id}
                   onChange={(e) => handleIdChange(e.target.value)}
                   placeholder="根据名称自动生成，可手动修改"
                   required
+                  style={{
+                    width: '100%',
+                    padding: 'var(--space-3)',
+                    border: '1px solid rgba(30, 58, 95, 0.12)',
+                    borderRadius: 'var(--radius-md)',
+                    fontSize: 'var(--text-base)',
+                    background: 'var(--paper-surface)',
+                    color: 'var(--text-ink)',
+                    transition: 'border-color var(--duration-fast) var(--ease-out)',
+                  }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                 />
-                <div className="hint">唯一标识符，只能包含字母、数字、下划线（根据名称自动生成）</div>
+                <div style={{
+                  marginTop: 'var(--space-1)',
+                  fontSize: 'var(--text-xs)',
+                  color: 'var(--text-gray)',
+                }}>唯一标识符，只能包含字母、数字、下划线（根据名称自动生成）</div>
               </div>
 
-              <div className="form-group">
-                <label>类型 / 题材 <span style={{ color: 'var(--danger)' }}>*</span></label>
+              <div style={{ marginBottom: 'var(--space-4)' }}>
+                <label style={{
+                  display: 'block',
+                  marginBottom: 'var(--space-2)',
+                  fontWeight: 'var(--font-medium)',
+                  color: 'var(--text-ink)',
+                  fontSize: 'var(--text-sm)',
+                }}>
+                  类型 / 题材 <span style={{ color: 'var(--status-danger)' }}>*</span>
+                </label>
                 <select
-                  className="form-control"
                   value={form.genre}
                   onChange={(e) => setForm({ ...form, genre: e.target.value })}
                   required
+                  style={{
+                    width: '100%',
+                    padding: 'var(--space-3)',
+                    border: '1px solid rgba(30, 58, 95, 0.12)',
+                    borderRadius: 'var(--radius-md)',
+                    fontSize: 'var(--text-base)',
+                    background: 'var(--paper-surface)',
+                    color: 'var(--text-ink)',
+                    transition: 'border-color var(--duration-fast) var(--ease-out)',
+                    cursor: 'pointer',
+                  }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                 >
                   <option value="urban">都市</option>
                   <option value="fantasy">奇幻</option>
@@ -186,85 +331,418 @@ export default function Onboarding() {
                 </select>
               </div>
 
-              <div className="form-group">
-                <label>简介</label>
+              <div style={{ marginBottom: 'var(--space-4)' }}>
+                <label style={{
+                  display: 'block',
+                  marginBottom: 'var(--space-2)',
+                  fontWeight: 'var(--font-medium)',
+                  color: 'var(--text-ink)',
+                  fontSize: 'var(--text-sm)',
+                }}>简介</label>
                 <textarea
-                  className="form-control"
                   rows={3}
                   value={form.description}
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
                   placeholder="简要描述故事背景和大纲"
+                  style={{
+                    width: '100%',
+                    padding: 'var(--space-3)',
+                    border: '1px solid rgba(30, 58, 95, 0.12)',
+                    borderRadius: 'var(--radius-md)',
+                    fontSize: 'var(--text-base)',
+                    background: 'var(--paper-surface)',
+                    color: 'var(--text-ink)',
+                    transition: 'border-color var(--duration-fast) var(--ease-out)',
+                    resize: 'vertical',
+                  }}
+                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
+                  onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                 />
               </div>
             </div>
 
-            <div style={{ marginBottom: '24px' }}>
-              <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '16px', color: 'var(--primary)' }}>
-                第二步：规模设置
+            <div style={{ marginBottom: 'var(--space-6)', paddingTop: 'var(--space-4)', borderTop: '1px solid rgba(30, 58, 95, 0.06)' }}>
+              <div style={{
+                fontSize: 'var(--text-sm)',
+                fontWeight: 'var(--font-semibold)',
+                marginBottom: 'var(--space-4)',
+                color: 'var(--ink-accent)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+              }}>
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '20px',
+                  height: '20px',
+                  borderRadius: '50%',
+                  background: 'var(--gradient-ink)',
+                  color: 'white',
+                  fontSize: '12px',
+                  fontWeight: 'var(--font-bold)',
+                }}>2</span>
+                规模设置
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <div className="form-group">
-                  <label>计划总章节数</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
+                <div style={{ marginBottom: 'var(--space-4)' }}>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: 'var(--space-2)',
+                    fontWeight: 'var(--font-medium)',
+                    color: 'var(--text-ink)',
+                    fontSize: 'var(--text-sm)',
+                  }}>计划总章节数</label>
                   <input
                     type="number"
-                    className="form-control"
                     value={form.total_chapters_planned}
                     onChange={(e) =>
                       setForm({ ...form, total_chapters_planned: parseInt(e.target.value) })
                     }
                     min={1}
+                    style={{
+                      width: '100%',
+                      padding: 'var(--space-3)',
+                      border: '1px solid rgba(30, 58, 95, 0.12)',
+                      borderRadius: 'var(--radius-md)',
+                      fontSize: 'var(--text-base)',
+                      background: 'var(--paper-surface)',
+                      color: 'var(--text-ink)',
+                      transition: 'border-color var(--duration-fast) var(--ease-out)',
+                    }}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                   />
                 </div>
-                <div className="form-group">
-                  <label>目标总字数</label>
+                <div style={{ marginBottom: 'var(--space-4)' }}>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: 'var(--space-2)',
+                    fontWeight: 'var(--font-medium)',
+                    color: 'var(--text-ink)',
+                    fontSize: 'var(--text-sm)',
+                  }}>目标总字数</label>
                   <input
                     type="number"
-                    className="form-control"
                     value={form.target_words}
                     onChange={(e) =>
                       setForm({ ...form, target_words: parseInt(e.target.value) })
                     }
                     min={1}
+                    style={{
+                      width: '100%',
+                      padding: 'var(--space-3)',
+                      border: '1px solid rgba(30, 58, 95, 0.12)',
+                      borderRadius: 'var(--radius-md)',
+                      fontSize: 'var(--text-base)',
+                      background: 'var(--paper-surface)',
+                      color: 'var(--text-ink)',
+                      transition: 'border-color var(--duration-fast) var(--ease-out)',
+                    }}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                   />
                 </div>
               </div>
             </div>
 
-            <div style={{ marginBottom: '24px' }}>
-              <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '16px', color: 'var(--primary)' }}>
-                第三步：初始章节
+            <div style={{ marginBottom: 'var(--space-6)', paddingTop: 'var(--space-4)', borderTop: '1px solid rgba(30, 58, 95, 0.06)' }}>
+              <div style={{
+                fontSize: 'var(--text-sm)',
+                fontWeight: 'var(--font-semibold)',
+                marginBottom: 'var(--space-4)',
+                color: 'var(--ink-accent)',
+                display: 'flex',
+                alignItems: 'center',
+                gap: 'var(--space-2)',
+              }}>
+                <span style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  width: '20px',
+                  height: '20px',
+                  borderRadius: '50%',
+                  background: 'var(--gradient-ink)',
+                  color: 'white',
+                  fontSize: '12px',
+                  fontWeight: 'var(--font-bold)',
+                }}>3</span>
+                初始章节
               </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
-                <div className="form-group">
-                  <label>起始章节号</label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 'var(--space-4)' }}>
+                <div style={{ marginBottom: 'var(--space-4)' }}>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: 'var(--space-2)',
+                    fontWeight: 'var(--font-medium)',
+                    color: 'var(--text-ink)',
+                    fontSize: 'var(--text-sm)',
+                  }}>起始章节号</label>
                   <input
                     type="number"
-                    className="form-control"
                     value={form.start_chapter}
                     onChange={(e) =>
                       setForm({ ...form, start_chapter: parseInt(e.target.value) })
                     }
                     min={1}
+                    style={{
+                      width: '100%',
+                      padding: 'var(--space-3)',
+                      border: '1px solid rgba(30, 58, 95, 0.12)',
+                      borderRadius: 'var(--radius-md)',
+                      fontSize: 'var(--text-base)',
+                      background: 'var(--paper-surface)',
+                      color: 'var(--text-ink)',
+                      transition: 'border-color var(--duration-fast) var(--ease-out)',
+                    }}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                   />
                 </div>
-                <div className="form-group">
-                  <label>初始章节数</label>
+                <div style={{ marginBottom: 'var(--space-4)' }}>
+                  <label style={{
+                    display: 'block',
+                    marginBottom: 'var(--space-2)',
+                    fontWeight: 'var(--font-medium)',
+                    color: 'var(--text-ink)',
+                    fontSize: 'var(--text-sm)',
+                  }}>初始章节数</label>
                   <input
                     type="number"
-                    className="form-control"
                     value={form.initial_chapter_count}
                     onChange={(e) =>
                       setForm({ ...form, initial_chapter_count: parseInt(e.target.value) })
                     }
                     min={1}
+                    style={{
+                      width: '100%',
+                      padding: 'var(--space-3)',
+                      border: '1px solid rgba(30, 58, 95, 0.12)',
+                      borderRadius: 'var(--radius-md)',
+                      fontSize: 'var(--text-base)',
+                      background: 'var(--paper-surface)',
+                      color: 'var(--text-ink)',
+                      transition: 'border-color var(--duration-fast) var(--ease-out)',
+                    }}
+                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
+                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                   />
-                  <div className="hint">创建项目时预生成的章节数量</div>
+                  <div style={{
+                    marginTop: 'var(--space-1)',
+                    fontSize: 'var(--text-xs)',
+                    color: 'var(--text-gray)',
+                  }}>创建项目时预生成的章节数量</div>
                 </div>
               </div>
             </div>
 
-            <div className="flex gap-2 mt-3">
-              <button type="submit" className="btn btn-primary" disabled={loading}>
+            <div style={{ marginBottom: 'var(--space-6)', paddingTop: 'var(--space-4)', borderTop: '1px solid rgba(30, 58, 95, 0.06)' }}>
+              <button
+                type="button"
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                style={{
+                  width: '100%',
+                  marginBottom: showAdvanced ? 'var(--space-4)' : 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 'var(--space-2)',
+                  padding: 'var(--space-3)',
+                  background: 'var(--paper-hover)',
+                  border: '1px solid rgba(30, 58, 95, 0.12)',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: 'var(--text-sm)',
+                  fontWeight: 'var(--font-medium)',
+                  color: 'var(--text-charcoal)',
+                  cursor: 'pointer',
+                  transition: 'all var(--duration-fast) var(--ease-out)',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.background = 'var(--paper-elevated)'
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.background = 'var(--paper-hover)'
+                }}
+              >
+                {showAdvanced ? '▼ 收起高级设置' : '▶ 展开高级设置（世界观与角色）'}
+              </button>
+
+              {showAdvanced && (
+                <div style={{
+                  border: '1px solid rgba(30, 58, 95, 0.08)',
+                  borderRadius: 'var(--radius-lg)',
+                  padding: 'var(--space-5)',
+                  background: 'var(--paper-bg)',
+                }}>
+                  <div style={{
+                    fontSize: 'var(--text-xs)',
+                    color: 'var(--text-gray)',
+                    marginBottom: 'var(--space-4)',
+                    padding: 'var(--space-3)',
+                    background: 'var(--paper-surface)',
+                    borderRadius: 'var(--radius-md)',
+                  }}>
+                    这些信息将帮助 AI 生成更符合你设想的小说内容。可以稍后在项目工作台补充。
+                  </div>
+
+                  <div style={{ marginBottom: 'var(--space-4)' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: 'var(--space-2)',
+                      fontWeight: 'var(--font-medium)',
+                      color: 'var(--text-ink)',
+                      fontSize: 'var(--text-sm)',
+                    }}>世界观设定</label>
+                    <textarea
+                      rows={3}
+                      value={form.world_setting}
+                      onChange={(e) => setForm({ ...form, world_setting: e.target.value })}
+                      placeholder="描述力量体系、社会结构等核心世界观...&#10;例如：斗气大陆以斗气为尊，修炼等级从斗之气到斗帝共十阶..."
+                      style={{
+                        width: '100%',
+                        padding: 'var(--space-3)',
+                        border: '1px solid rgba(30, 58, 95, 0.12)',
+                        borderRadius: 'var(--radius-md)',
+                        fontSize: 'var(--text-base)',
+                        background: 'var(--paper-surface)',
+                        color: 'var(--text-ink)',
+                        transition: 'border-color var(--duration-fast) var(--ease-out)',
+                        resize: 'vertical',
+                      }}
+                      onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
+                      onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
+                    />
+                  </div>
+
+                  <div style={{
+                    fontSize: 'var(--text-sm)',
+                    fontWeight: 'var(--font-semibold)',
+                    margin: 'var(--space-4) 0 var(--space-3)',
+                    color: 'var(--text-charcoal)',
+                  }}>
+                    主角设定
+                  </div>
+
+                  <div style={{ marginBottom: 'var(--space-4)' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: 'var(--space-2)',
+                      fontWeight: 'var(--font-medium)',
+                      color: 'var(--text-ink)',
+                      fontSize: 'var(--text-sm)',
+                    }}>主角名称</label>
+                    <input
+                      type="text"
+                      value={form.main_character_name}
+                      onChange={(e) => setForm({ ...form, main_character_name: e.target.value })}
+                      placeholder="例如：萧炎"
+                      style={{
+                        width: '100%',
+                        padding: 'var(--space-3)',
+                        border: '1px solid rgba(30, 58, 95, 0.12)',
+                        borderRadius: 'var(--radius-md)',
+                        fontSize: 'var(--text-base)',
+                        background: 'var(--paper-surface)',
+                        color: 'var(--text-ink)',
+                        transition: 'border-color var(--duration-fast) var(--ease-out)',
+                      }}
+                      onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
+                      onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: 'var(--space-4)' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: 'var(--space-2)',
+                      fontWeight: 'var(--font-medium)',
+                      color: 'var(--text-ink)',
+                      fontSize: 'var(--text-sm)',
+                    }}>主角简介</label>
+                    <textarea
+                      rows={2}
+                      value={form.main_character_description}
+                      onChange={(e) => setForm({ ...form, main_character_description: e.target.value })}
+                      placeholder="描述主角的背景、经历..."
+                      style={{
+                        width: '100%',
+                        padding: 'var(--space-3)',
+                        border: '1px solid rgba(30, 58, 95, 0.12)',
+                        borderRadius: 'var(--radius-md)',
+                        fontSize: 'var(--text-base)',
+                        background: 'var(--paper-surface)',
+                        color: 'var(--text-ink)',
+                        transition: 'border-color var(--duration-fast) var(--ease-out)',
+                        resize: 'vertical',
+                      }}
+                      onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
+                      onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: 'var(--space-4)' }}>
+                    <label style={{
+                      display: 'block',
+                      marginBottom: 'var(--space-2)',
+                      fontWeight: 'var(--font-medium)',
+                      color: 'var(--text-ink)',
+                      fontSize: 'var(--text-sm)',
+                    }}>性格特征</label>
+                    <input
+                      type="text"
+                      value={form.main_character_traits}
+                      onChange={(e) => setForm({ ...form, main_character_traits: e.target.value })}
+                      placeholder="用逗号分隔，例如：坚韧、重情义、不服输"
+                      style={{
+                        width: '100%',
+                        padding: 'var(--space-3)',
+                        border: '1px solid rgba(30, 58, 95, 0.12)',
+                        borderRadius: 'var(--radius-md)',
+                        fontSize: 'var(--text-base)',
+                        background: 'var(--paper-surface)',
+                        color: 'var(--text-ink)',
+                        transition: 'border-color var(--duration-fast) var(--ease-out)',
+                      }}
+                      onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
+                      onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', gap: 'var(--space-3)', marginTop: 'var(--space-4)', paddingTop: 'var(--space-4)', borderTop: '1px solid rgba(30, 58, 95, 0.06)' }}>
+              <button
+                type="submit"
+                disabled={loading}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 'var(--space-2)',
+                  padding: 'var(--space-3) var(--space-6)',
+                  background: loading ? 'var(--text-muted)' : 'var(--gradient-ink)',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: 'var(--radius-md)',
+                  fontSize: 'var(--text-base)',
+                  fontWeight: 'var(--font-medium)',
+                  cursor: loading ? 'not-allowed' : 'pointer',
+                  transition: 'all var(--duration-fast) var(--ease-out)',
+                }}
+                onMouseEnter={(e) => {
+                  if (!loading) {
+                    e.currentTarget.style.transform = 'translateY(-1px)'
+                    e.currentTarget.style.boxShadow = 'var(--shadow-md)'
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = ''
+                  e.currentTarget.style.boxShadow = ''
+                }}
+              >
                 {loading ? '创建中...' : '创建项目'}
               </button>
             </div>

@@ -1,4 +1,4 @@
-"""v5.1 API Application Factory.
+"""v5.2 API Application Factory.
 
 Creates a FastAPI app with:
 - JSON API routes under /api
@@ -36,8 +36,8 @@ def create_api_app(
     """
     app = FastAPI(
         title="小说工厂 API",
-        description="Novel Factory API v5.1",
-        version="5.1.5",
+        description="Novel Factory API v5.2",
+        version="5.2.0",
         default_response_class=JSONResponse,
     )
 
@@ -67,6 +67,9 @@ def create_api_app(
         style_router,
         settings_router,
         acceptance_router,
+        characters_router,
+        outlines_router,
+        world_settings_router,
     )
 
     app.include_router(health_router, prefix="/api", tags=["health"])
@@ -79,6 +82,9 @@ def create_api_app(
     app.include_router(style_router, prefix="/api", tags=["style"])
     app.include_router(settings_router, prefix="/api", tags=["settings"])
     app.include_router(acceptance_router, prefix="/api", tags=["acceptance"])
+    app.include_router(characters_router, prefix="/api", tags=["characters"])
+    app.include_router(outlines_router, prefix="/api", tags=["outlines"])
+    app.include_router(world_settings_router, prefix="/api", tags=["world-settings"])
 
     # Exception handler - never exposes traceback
     @app.exception_handler(Exception)

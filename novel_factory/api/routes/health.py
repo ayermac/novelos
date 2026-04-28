@@ -22,7 +22,7 @@ async def health_check(request: Request) -> EnvelopeResponse:
 
     return envelope_response({
         "status": "ok",
-        "version": "5.1.5",
+        "version": "5.2.0",
         "llm_mode": llm_mode,
         "db_connected": bool(db_path),
     })

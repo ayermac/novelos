@@ -72,7 +72,8 @@ class TestFrontendChineseLabels:
         assert "审核" in content
         assert "风格" in content
         assert "配置" in content
-        assert "作者工作台" in content
+        # v5.2: "创作" section label replaced "作者工作台"
+        assert "创作" in content
 
     def test_dashboard_has_chinese_labels(self):
         """Dashboard page has Chinese labels."""
@@ -125,10 +126,10 @@ class TestFrontendBuildConfig:
         assert '"name": "novel-factory-frontend"' in content
 
     def test_package_json_has_correct_version(self):
-        """package.json has v5.1.5 version."""
+        """package.json has v5.2.0 version."""
         package_json = Path(__file__).parent.parent / "frontend" / "package.json"
         content = package_json.read_text()
-        assert '"version": "5.1.5"' in content
+        assert '"version": "5.2.0"' in content
 
     def test_package_json_has_react_dependencies(self):
         """package.json has React dependencies."""

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { get } from '../lib/api'
+import { get, post } from '../lib/api'
 import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
@@ -29,6 +29,9 @@ export default function Review() {
   const [data, setData] = useState<ReviewData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [rejectModal, setRejectModal] = useState<ReviewItem | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
 
   const load = () => {
     setLoading(true)
@@ -41,6 +44,51 @@ export default function Review() {
       }
       setLoading(false)
     })
+  }
+
+  const handleApprove = async (item: ReviewItem) => {
+    const key = `${item.project_id}-${item.chapter_number}`
+    setActionLoading(key)
+    try {
+      const res = await post('/review/approve', {
+        project_id: item.project_id,
+        chapter_number: item.chapter_number,
+      })
+      if (res.ok) {
+        load()
+      } else {
+        setError(res.error?.message || '审核通过失败')
+      }
+    } catch {
+      setError('操作失败')
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleReject = async () => {
+    if (!rejectModal || !rejectReason.trim()) return
+    const key = `${rejectModal.project_id}-${rejectModal.chapter_number}`
+    setActionLoading(key)
+    try {
+      const res = await post('/review/reject', {
+        project_id: rejectModal.project_id,
+        chapter_number: rejectModal.chapter_number,
+        reason: rejectReason,
+        target: 'author',
+      })
+      if (res.ok) {
+        setRejectModal(null)
+        setRejectReason('')
+        load()
+      } else {
+        setError(res.error?.message || '驳回失败')
+      }
+    } catch {
+      setError('操作失败')
+    } finally {
+      setActionLoading(null)
+    }
   }
 
   useEffect(() => {
@@ -126,20 +174,48 @@ export default function Review() {
                     <th>状态</th>
                     <th>质量分</th>
                     <th>问题数</th>
+                    <th>操作</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.queue.map((item) => (
-                    <tr key={`${item.project_id}-${item.chapter_number}`}>
-                      <td>第 {item.chapter_number} 章</td>
-                      <td>{item.project_name}</td>
-                      <td>
-                        <StatusBadge status={item.status} />
-                      </td>
-                      <td>{item.quality_score ?? '-'}</td>
-                      <td>{item.issue_count}</td>
-                    </tr>
-                  ))}
+                  {data.queue.map((item) => {
+                    const actionKey = `${item.project_id}-${item.chapter_number}`
+                    const isActionLoading = actionLoading === actionKey
+                    const canAction = item.status === 'review'
+                    return (
+                      <tr key={actionKey}>
+                        <td>第 {item.chapter_number} 章</td>
+                        <td>{item.project_name}</td>
+                        <td>
+                          <StatusBadge status={item.status} />
+                        </td>
+                        <td>{item.quality_score ?? '-'}</td>
+                        <td>{item.issue_count}</td>
+                        <td>
+                          {canAction ? (
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <button
+                                className="btn btn-primary btn-sm"
+                                onClick={() => handleApprove(item)}
+                                disabled={isActionLoading}
+                              >
+                                {isActionLoading ? '处理中...' : '通过'}
+                              </button>
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => setRejectModal(item)}
+                                disabled={isActionLoading}
+                              >
+                                驳回
+                              </button>
+                            </div>
+                          ) : (
+                            <span className="text-secondary">-</span>
+                          )}
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -155,6 +231,60 @@ export default function Review() {
           )}
         </div>
       </div>
+
+      {/* Reject Modal */}
+      {rejectModal && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.5)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 1000,
+          }}
+          onClick={() => setRejectModal(null)}
+        >
+          <div
+            className="card"
+            style={{ width: '400px', maxWidth: '90%' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="card-header">
+              <h3>驳回章节</h3>
+            </div>
+            <div className="card-body">
+              <p style={{ marginBottom: '12px' }}>
+                驳回 <strong>{rejectModal.project_name}</strong> 第{' '}
+                <strong>{rejectModal.chapter_number}</strong> 章
+              </p>
+              <div className="form-group">
+                <label className="form-label">驳回原因</label>
+                <textarea
+                  className="form-input"
+                  rows={3}
+                  value={rejectReason}
+                  onChange={(e) => setRejectReason(e.target.value)}
+                  placeholder="请输入驳回原因，将发送给作者进行修改"
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
+                <button className="btn btn-secondary" onClick={() => setRejectModal(null)}>
+                  取消
+                </button>
+                <button
+                  className="btn btn-danger"
+                  onClick={handleReject}
+                  disabled={!rejectReason.trim() || actionLoading !== null}
+                >
+                  {actionLoading ? '处理中...' : '确认驳回'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

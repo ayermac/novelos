@@ -6,6 +6,7 @@ import hashlib
 import re
 
 from .provider import LLMProvider
+from .openai_compatible import TokenUsage
 
 # Per-chapter content templates — keyed by chapter number for variety
 _STORY_TEMPLATES = {
@@ -153,7 +154,19 @@ def _get_stub_chapter_content(messages: list | None = None) -> dict:
 class StubLLM(LLMProvider):
     """Stub LLM that returns minimal valid outputs for local tests and demos."""
 
+    def __init__(self):
+        """Initialize stub LLM with token usage tracking (v5.2)."""
+        self.last_token_usage: TokenUsage | None = None
+
     def invoke_json(self, messages, schema=None, temperature=None) -> dict:
+        # Set mock token usage for tracking (v5.2)
+        self.last_token_usage = TokenUsage(
+            prompt_tokens=100,
+            completion_tokens=200,
+            total_tokens=300,
+            duration_ms=50,
+        )
+
         schema_name = getattr(schema, "__name__", "") if schema else ""
         if "Planner" in schema_name:
             return {
@@ -252,4 +265,11 @@ class StubLLM(LLMProvider):
         return {}
 
     def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
+        # Set mock token usage for tracking (v5.2)
+        self.last_token_usage = TokenUsage(
+            prompt_tokens=50,
+            completion_tokens=100,
+            total_tokens=150,
+            duration_ms=30,
+        )
         return "{}"

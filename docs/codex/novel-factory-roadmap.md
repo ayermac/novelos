@@ -1361,28 +1361,129 @@ v5.1 已完成 Post-Acceptance Hardening，新增：
 - ✅ 前端中文导航和错误处理
 - ✅ Config plan 不写文件
 
-## v5.2：LangGraph Checkpoint 持久化 + SSE Streaming + Dispatcher 退役
+## v5.2：产品能力补齐 + 真实 LLM 闭环
 
-目标：让 LangGraph 编排具备生产级能力——checkpoint 持久化（崩溃可恢复）、SSE 实时推送（前端可见进度）、Dispatcher 退役（消除双系统维护成本）。
+目标：补齐世界观/角色/大纲等核心产品缺失，实现项目/章节管理闭环，完成真实 LLM 端到端验证，推进 LangGraph 生产级能力。
+
+### v5.2 Phase A — 数据 CRUD + 项目/章节管理
+
+目标：补齐世界观、角色、大纲的 CRUD 链路，以及项目删除和章节删除/重置能力。这是真实 LLM 生成有意义内容的前置条件。
 
 范围：
 
-- LangGraph Checkpoint 持久化：MemorySaver → SqliteSaver / PostgresSaver
+- 新增 WorldSettingRepositoryMixin（CRUD）
+- 新增 CharacterRepositoryMixin（CRUD）
+- 新增 OutlineRepositoryMixin（CRUD）
+- 新增 API 端点：
+  - `GET/POST /api/projects/{id}/world-settings`（列表/创建）
+  - `PUT/DELETE /api/projects/{id}/world-settings/{ws_id}`（更新/删除）
+  - `GET/POST /api/projects/{id}/characters`（列表/创建）
+  - `PUT/DELETE /api/projects/{id}/characters/{char_id}`（更新/删除）
+  - `GET/POST /api/projects/{id}/outlines`（列表/创建）
+  - `PUT/DELETE /api/projects/{id}/outlines/{outline_id}`（更新/删除）
+- 新增项目删除 API：`DELETE /api/projects/{id}`（级联删除关联数据）
+- 新增章节删除 API：`DELETE /api/projects/{id}/chapters/{num}`（仅限 planned 状态）
+- 新增章节重置 API：`POST /api/projects/{id}/chapters/{num}/reset`（回退到 planned）
+- 前端项目工作台新增 Tab：世界观 | 角色 | 大纲
+- 前端项目列表/工作台新增删除项目按钮（确认弹窗）
+- 前端章节表格新增删除/重置操作列
+- stub 模式种子数据包含世界观/角色/大纲示例
+
+预计变更：~500 行
+
+验收：
+
+- 世界观/角色/大纲 CRUD API 测试通过
+- 项目删除级联清理关联数据
+- 章节删除仅限 planned 状态，非 planned 返回错误
+- 章节重置将 blocking/revision 状态回退到 planned
+- 前端可查看和编辑世界观/角色/大纲
+- 前端可删除项目和重置章节
+- stub 模式有初始种子数据
+- 全量测试通过，不回归 v5.1.6
+
+### v5.2 Phase B — 真实 LLM 闭环 + Agent 上下文注入
+
+目标：配置 `.env` + `real` 模式跑通完整章节生成链路，并将世界观/角色/大纲注入 Agent 上下文，让真实 LLM 生成有意义的内容。
+
+范围：
+
+- Agent ContextBuilder 注入世界观/角色/大纲到 Planner/Author/Editor 上下文
+- Onboarding 增加世界观、主角、大纲输入步骤
+- `.env` → real 模式端到端验证流程
+- `run_with_graph()` + `real` 模式完整链路验证
+- 错误重试和超时处理（real 模式 LLM 调用可能失败）
+- LLM 调用 token 统计记录（写入 workflow_runs）
+
+预计变更：~300 行
+
+验收：
+
+- `--llm-mode real` 可完整生成一章（需配置有效 API key）
+- Agent 上下文包含世界观/角色/大纲数据
+- Onboarding 可选择输入世界观/角色/大纲
+- real 模式下 LLM 调用失败有清晰错误消息
+- stub 模式不受影响
+- 全量测试通过，不回归 Phase A
+
+### v5.2 Phase C — 实时反馈 + 交互补齐
+
+目标：前端生成过程可见实时进度，项目设置可编辑，审核和风格页面可操作。
+
+范围：
+
 - LangGraph SSE Streaming：`graph.stream()` → 前端 EventSource
-- Dispatcher 退役：删除 `dispatch/` 目录 + `dispatcher.py` 门面类
+- 前端工作台生成时显示 Agent 执行步骤实时流
+- 新增项目设置编辑 API：`PUT /api/projects/{id}`（名称/简介/目标字数等）
+- 前端项目工作台增加项目设置入口
+- Review 页面增加 approve/reject 操作按钮
+- Style 页面增加编辑入口（复用 API）
+
+预计变更：~400 行
+
+验收：
+
+- 前端生成章节时实时显示 Agent 执行步骤
+- 项目名称/简介/目标字数可在前端编辑
+- Review 页面可 approve/reject 章节
+- Style 页面可编辑 Style Bible
+- SSE 连接断开后有降级提示
+- 全量测试通过，不回归 Phase B
+
+### v5.2 Phase D — LangGraph 生产级 + Dispatcher 退役
+
+目标：LangGraph 编排具备生产级持久化能力，消除双系统维护成本。
+
+范围：
+
+- LangGraph Checkpoint 持久化：MemorySaver → SqliteSaver
+- 进程重启后可从 checkpoint 恢复未完成章节
+- Dispatcher 保留兼容路径（未删除）
 - CLI 层切换：`novelos run` 命令改调 `run_with_graph()`
-- Batch/Serial/Queue/ReviewWorkbench mixin 迁移到 LangGraph
-- 真实 LLM 首次生成端到端验证
+- Batch/Serial/Queue/ReviewWorkbench mixin 迁移到 LangGraph 编排
+
+预计变更：~250 行（新增 ~150 行 + 删除 ~100 行）
 
 验收：
 
 - 进程重启后可从 checkpoint 恢复未完成的章节
-- 前端实时显示 Agent 执行步骤（SSE）
-- `dispatch/` 目录已删除
 - CLI 命令使用 LangGraph 编排
-- 全量测试通过，不回归 v5.1.6
+- Batch/Serial/Queue 操作仍可正常运行
+- 全量测试通过，不回归 Phase C
 
-状态：**待规划**。
+v5.2 整体验收：
+
+- 世界观/角色/大纲 CRUD 完整可用
+- 项目和章节可删除/重置
+- 真实 LLM 端到端生成可用
+- Agent 上下文包含世界观/角色/大纲
+- 前端实时显示生成进度（SSE）
+- 项目设置、Review、Style 可操作
+- LangGraph Checkpoint 持久化可用
+- Dispatcher 保留兼容路径（未完全移除）
+- 全量测试通过（1416/1416），不回归 v5.1.6
+
+状态：**已通过验收**，测试基线 1416/1416。
 
 ## v5.3+：多模型与生产治理
 

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
+import json
+import time
+
 from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 
@@ -141,6 +145,11 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             "completed_at": run_data.get("completed_at", ""),
             "error_message": run_data.get("error_message"),
             "steps": steps,
+            # v5.2: Token usage statistics
+            "prompt_tokens": run_data.get("prompt_tokens", 0),
+            "completion_tokens": run_data.get("completion_tokens", 0),
+            "total_tokens": run_data.get("total_tokens", 0),
+            "duration_ms": run_data.get("duration_ms", 0),
         })
 
     except Exception as e:
@@ -221,3 +230,59 @@ def _build_steps_timeline(
         steps.append(step)
 
     return steps
+
+
+@router.get("/run/chapter/stream")
+async def run_chapter_stream(
+    request: Request,
+    project_id: str,
+    chapter: int,
+) -> StreamingResponse:
+    """Run chapter with SSE streaming (v5.2 Phase C).
+
+    Streams real-time progress events during chapter generation.
+
+    Event types:
+    - step_start: Agent started processing
+    - step_complete: Agent finished with timing info
+    - run_complete: Workflow finished successfully
+    - run_error: Workflow failed with error
+    """
+    from ..deps import get_repo, get_settings, get_llm_mode
+    from ...workflow.runner import run_with_graph_stream
+
+    try:
+        repo = get_repo(request)
+        settings = get_settings(request)
+        llm_mode = get_llm_mode(request)
+
+        async def event_generator():
+            """Generate SSE events from runner stream."""
+            for event in run_with_graph_stream(
+                project_id=project_id,
+                chapter_number=chapter,
+                settings=settings,
+                repo=repo,
+                llm_mode=llm_mode,
+            ):
+                yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            event_generator(),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",  # Disable nginx buffering
+            },
+        )
+
+    except Exception as e:
+        # For SSE, errors are returned as error events
+        async def error_event():
+            yield f"data: {json.dumps({'type': 'run_error', 'error': str(e)}, ensure_ascii=False)}\n\n"
+
+        return StreamingResponse(
+            error_event(),
+            media_type="text/event-stream",
+        )

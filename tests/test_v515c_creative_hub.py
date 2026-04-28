@@ -217,9 +217,10 @@ class TestDashboardComponent:
         dashboard_file = frontend_src / "pages" / "Dashboard.tsx"
         content = dashboard_file.read_text()
 
-        # Hero card with gradient background
+        # Hero card with gradient background (uses CSS variable or direct gradient)
         assert "hero-card" in content.lower() or "heroCard" in content
-        assert "linear-gradient" in content
+        # v5.2: Uses CSS variable --gradient-ink for gradient
+        assert "gradient" in content or "linear-gradient" in content
 
     def test_dashboard_has_activity_timeline(self):
         """Dashboard should have activity timeline (not table)."""

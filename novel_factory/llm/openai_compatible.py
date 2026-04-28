@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from typing import Any
 
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -19,12 +20,68 @@ from .provider import LLMProvider
 logger = logging.getLogger(__name__)
 
 
+# Custom exceptions with Chinese messages
+class LLMError(Exception):
+    """Base LLM error with Chinese message."""
+    pass
+
+
+class InvalidAPIKeyError(LLMError):
+    """API Key 无效或已过期."""
+    pass
+
+
+class InsufficientBalanceError(LLMError):
+    """API 余额不足."""
+    pass
+
+
+class LLMTimeoutError(LLMError):
+    """LLM 响应超时."""
+    pass
+
+
+class RateLimitError(LLMError):
+    """API 请求频率超限."""
+    pass
+
+
+class OutputValidationError(LLMError):
+    """LLM 输出校验失败."""
+    pass
+
+
+class TokenUsage:
+    """Token usage statistics."""
+
+    def __init__(
+        self,
+        prompt_tokens: int = 0,
+        completion_tokens: int = 0,
+        total_tokens: int = 0,
+        duration_ms: int = 0,
+    ):
+        self.prompt_tokens = prompt_tokens
+        self.completion_tokens = completion_tokens
+        self.total_tokens = total_tokens
+        self.duration_ms = duration_ms
+
+    def to_dict(self) -> dict:
+        return {
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "total_tokens": self.total_tokens,
+            "duration_ms": self.duration_ms,
+        }
+
+
 class OpenAICompatibleProvider(LLMProvider):
     """LLM provider using OpenAI-compatible API via LangChain."""
 
     def __init__(self, config: LLMConfig | None = None) -> None:
         self.config = config or LLMConfig()
         self._client: BaseChatModel | None = None
+        self.last_token_usage: TokenUsage | None = None
 
     @property
     def client(self) -> BaseChatModel:
@@ -36,6 +93,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 model=self.config.model,
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
+                request_timeout=60,  # 60 second timeout
             )
         return self._client
 
@@ -50,6 +108,76 @@ class OpenAICompatibleProvider(LLMProvider):
             else:
                 result.append(HumanMessage(content=content))
         return result
+
+    def _handle_api_error(self, error: Exception) -> None:
+        """Convert API errors to Chinese error messages."""
+        error_str = str(error).lower()
+
+        # Check for common error patterns
+        if "invalid" in error_str and "api" in error_str:
+            raise InvalidAPIKeyError("API Key 无效或已过期，请检查配置") from error
+        elif "unauthorized" in error_str or "401" in error_str:
+            raise InvalidAPIKeyError("API Key 无效或已过期，请检查配置") from error
+        elif "insufficient" in error_str or "quota" in error_str or "balance" in error_str:
+            raise InsufficientBalanceError("API 余额不足，请充值后重试") from error
+        elif "rate" in error_str or "limit" in error_str or "429" in error_str:
+            raise RateLimitError("API 请求频率超限，请稍后重试") from error
+        elif "timeout" in error_str or "timed out" in error_str:
+            raise LLMTimeoutError("LLM 响应超时（>60秒），请稍后重试") from error
+        else:
+            raise LLMError(f"LLM 调用失败: {error}") from error
+
+    def _invoke_with_retry(
+        self,
+        lc_messages: list,
+        max_retries: int = 1,
+        **kwargs,
+    ) -> Any:
+        """Invoke with automatic retry on rate limit or validation errors."""
+        last_error = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                start_time = time.time()
+                response = self.client.invoke(lc_messages, **kwargs)
+                duration_ms = int((time.time() - start_time) * 1000)
+
+                # Extract token usage if available
+                prompt_tokens = 0
+                completion_tokens = 0
+                total_tokens = 0
+
+                if hasattr(response, "usage_metadata") and response.usage_metadata:
+                    prompt_tokens = response.usage_metadata.get("input_tokens", 0)
+                    completion_tokens = response.usage_metadata.get("output_tokens", 0)
+                    total_tokens = prompt_tokens + completion_tokens
+                elif hasattr(response, "response_metadata"):
+                    usage = response.response_metadata.get("token_usage", {})
+                    prompt_tokens = usage.get("prompt_tokens", 0)
+                    completion_tokens = usage.get("completion_tokens", 0)
+                    total_tokens = usage.get("total_tokens", 0)
+
+                self.last_token_usage = TokenUsage(
+                    prompt_tokens=prompt_tokens,
+                    completion_tokens=completion_tokens,
+                    total_tokens=total_tokens,
+                    duration_ms=duration_ms,
+                )
+
+                return response
+
+            except RateLimitError:
+                # Retry rate limit errors
+                last_error = RateLimitError("API 请求频率超限，请稍后重试")
+                if attempt < max_retries:
+                    logger.warning("Rate limit hit, retrying... (attempt %d/%d)", attempt + 1, max_retries)
+                    time.sleep(2)  # Wait 2 seconds before retry
+                    continue
+                raise
+            except Exception as e:
+                self._handle_api_error(e)
+
+        raise last_error or LLMError("未知错误")
 
     def invoke_json(
         self,
@@ -73,14 +201,20 @@ class OpenAICompatibleProvider(LLMProvider):
             )
 
         try:
-            response = self.client.invoke(lc_messages, **kwargs)
+            response = self._invoke_with_retry(lc_messages, max_retries=1, **kwargs)
             text = response.content
             # Try to extract JSON from markdown code blocks
             json_str = self._extract_json(text)
             return json.loads(json_str)
         except json.JSONDecodeError as e:
             logger.error("Failed to parse LLM JSON output: %s\nRaw: %s", e, text[:500])
-            raise ValueError(f"LLM output is not valid JSON: {e}") from e
+            raise OutputValidationError(f"LLM 输出不是有效的 JSON 格式: {e}") from e
+        except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
+            raise
+        except LLMError:
+            raise
+        except Exception as e:
+            self._handle_api_error(e)
 
     def invoke_text(
         self,
@@ -97,8 +231,15 @@ class OpenAICompatibleProvider(LLMProvider):
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
 
-        response = self.client.invoke(lc_messages, **kwargs)
-        return response.content
+        try:
+            response = self._invoke_with_retry(lc_messages, max_retries=1, **kwargs)
+            return response.content
+        except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
+            raise
+        except LLMError:
+            raise
+        except Exception as e:
+            self._handle_api_error(e)
 
     @staticmethod
     def _extract_json(text: str) -> str:

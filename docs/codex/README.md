@@ -87,7 +87,7 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1365/1365 passed
+- **当前测试基线**: 1416/1416 passed
 - **新增测试**:
   - `test_v51_api_e2e_smoke.py`: 17 个端到端 smoke 测试
   - `test_v51_frontend_quality.py`: 8 个前端质量检查
@@ -194,7 +194,19 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.1.6 LangGraph 编排激活 + 安全收口，测试基线 1365/1365**。
+当前开发基线是 **v5.2 产品能力补齐 + 真实 LLM 闭环，测试基线 1416/1416**。
+
+**v5.2 核心变更:**
+- LangGraph SqliteSaver checkpoint 持久化
+- 世界观/角色/大纲 CRUD 完整链路
+- 项目删除和章节删除/重置能力
+- Agent 上下文注入世界观/角色/大纲
+- 真实 LLM 端到端验证闭环
+- Token 统计记录和健康度展示
+- CLI 错误信封格式增强
+- Migration 幂等检测
+- Dispatcher 保留兼容路径（未删除）
+- 全量测试 1416/1416、TypeScript、前端构建通过
 
 **v5.1.6 核心变更:**
 - LangGraph StateGraph 替代 Dispatcher while 循环作为唯一编排器（API 层已切换）
@@ -283,4 +295,4 @@ v1 不实现：
 
 当前下一步：
 
-- 完成 v5.1.6 浏览器验收与提交；之后进入 v5.2 LangGraph Checkpoint 持久化 + SSE Streaming + Dispatcher 退役。
+- v5.2 已通过全量验收。后续可进入 v5.3 多模型与生产治理。

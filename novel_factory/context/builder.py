@@ -154,6 +154,37 @@ class ContextBuilder:
         )
         return ContextFragment("world_rules", f"【世界观关键规则】\n{rules_str}", 6)
 
+    def _frag_outlines(self, project_id: str, chapter_number: int) -> ContextFragment:
+        """P6: Outline context for current chapter phase (v5.2)."""
+        outlines = self.repo.list_outlines(project_id)
+        if not outlines:
+            return ContextFragment("outlines", "", 6)
+
+        # Find outlines that cover this chapter
+        relevant = []
+        for o in outlines:
+            chapters_range = o.get("chapters_range", "")
+            if chapters_range:
+                # Parse range like "1-10" or "5-15"
+                try:
+                    parts = chapters_range.split("-")
+                    if len(parts) == 2:
+                        start, end = int(parts[0]), int(parts[1])
+                        if start <= chapter_number <= end:
+                            relevant.append(o)
+                except (ValueError, AttributeError):
+                    pass
+
+        if not relevant:
+            # Fall back to all outlines if none match the range
+            relevant = outlines[:3]
+
+        outline_str = "\n".join(
+            f"- [{o.get('level', '')}] {o.get('title', '')}: {o.get('content', '')[:300]}"
+            for o in relevant[:3]
+        )
+        return ContextFragment("outlines", f"【大纲阶段】\n{outline_str}", 6)
+
     def _frag_recent_summaries(self, project_id: str, chapter_number: int) -> ContextFragment:
         """P7: Recent chapter summaries."""
         summaries = self.repo.get_recent_chapter_summaries(project_id, chapter_number, limit=3)
@@ -329,7 +360,8 @@ class ContextBuilder:
 
     def build_for_author(self, project_id: str, chapter_number: int) -> str:
         """Build context for Author: instruction, scene_beats, state_card,
-        characters, plot requirements, death_penalty, review_notes (v3.2)."""
+        characters, plot requirements, death_penalty, review_notes (v3.2),
+        world_rules, outlines (v5.2)."""
         fragments = [
             self._frag_death_penalty(),        # P0
             self._frag_instruction(project_id, chapter_number),     # P1
@@ -339,6 +371,8 @@ class ContextBuilder:
             self._frag_scene_beats(project_id, chapter_number),     # P3
             self._frag_plot_requirements(project_id, chapter_number), # P4
             self._frag_characters(project_id),                      # P5
+            self._frag_world_rules(project_id),                     # P6 (v5.2)
+            self._frag_outlines(project_id, chapter_number),        # P6 (v5.2)
             self._frag_learned_patterns(project_id),                # P8
             self._frag_best_practices(project_id),                  # P9
         ]
@@ -398,7 +432,8 @@ class ContextBuilder:
 
     def build_for_planner(self, project_id: str, chapter_number: int) -> str:
         """Build context for Planner: state_card, characters, plots, messages,
-        market_report, continuity_warning, review_notes (v3.2)."""
+        market_report, continuity_warning, review_notes (v3.2),
+        world_rules, outlines (v5.2)."""
         fragments = [
             self._frag_review_notes(project_id, chapter_number),    # P2 (v3.2)
             self._frag_prev_state_card(project_id, chapter_number),  # P2
@@ -406,6 +441,8 @@ class ContextBuilder:
             self._frag_continuity_warning(project_id, chapter_number),  # P3 (v2)
             self._frag_plot_requirements(project_id, chapter_number), # P4
             self._frag_characters(project_id),                       # P5
+            self._frag_world_rules(project_id),                      # P6 (v5.2)
+            self._frag_outlines(project_id, chapter_number),         # P6 (v5.2)
             self._frag_market_report(project_id),                    # P6 (v2)
         ]
 

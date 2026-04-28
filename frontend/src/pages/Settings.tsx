@@ -153,7 +153,32 @@ export default function Settings() {
   }
 
   if (loading) {
-    return <div>加载中...</div>
+    return (
+      <div>
+        <PageHeader title="配置中心" />
+        <div style={{
+          background: 'var(--paper-surface)',
+          borderRadius: 'var(--radius-lg)',
+          boxShadow: 'var(--shadow-flat)',
+          border: '1px solid rgba(30, 58, 95, 0.06)',
+          padding: 'var(--space-10)',
+          textAlign: 'center',
+          color: 'var(--text-charcoal)',
+        }}>
+          <div style={{
+            width: '32px',
+            height: '32px',
+            border: '2px solid var(--paper-elevated)',
+            borderTopColor: 'var(--ink-accent)',
+            borderRadius: '50%',
+            animation: 'spin 1s linear infinite',
+            margin: '0 auto var(--space-3)',
+          }} />
+          加载中...
+        </div>
+        <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      </div>
+    )
   }
 
   if (error && !data) {
@@ -190,14 +215,48 @@ export default function Settings() {
       <PageHeader title="配置中心" />
 
       {/* 能力诊断 - 合并运行模式 + 配置诊断 */}
-      <div className="card" style={{ marginBottom: 'var(--spacing-lg)' }}>
-        <div className="card-header">
-          <h3>能力诊断</h3>
-          <span className={`status-badge status-${data.llm_mode}`}>
+      <div style={{
+        background: 'var(--paper-surface)',
+        borderRadius: 'var(--radius-lg)',
+        boxShadow: 'var(--shadow-flat)',
+        border: '1px solid rgba(30, 58, 95, 0.06)',
+        overflow: 'hidden',
+        marginBottom: 'var(--space-6)',
+      }}>
+        <div style={{
+          padding: 'var(--space-4) var(--space-5)',
+          borderBottom: '1px solid rgba(30, 58, 95, 0.04)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}>
+          <h3 style={{
+            fontFamily: 'var(--font-brand)',
+            fontSize: 'var(--text-md)',
+            fontWeight: 'var(--font-semibold)',
+            margin: 0,
+          }}>能力诊断</h3>
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 'var(--space-1)',
+            padding: 'var(--space-1) var(--space-3)',
+            fontSize: 'var(--text-xs)',
+            fontWeight: 'var(--font-medium)',
+            borderRadius: 'var(--radius-full)',
+            background: isStub ? 'rgba(245, 158, 11, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+            color: isStub ? '#92400e' : '#065f46',
+          }}>
+            <span style={{
+              width: '6px',
+              height: '6px',
+              borderRadius: '50%',
+              background: isStub ? 'var(--status-warning)' : 'var(--status-success)',
+            }} />
             {tLlmMode(data.llm_mode)}
           </span>
         </div>
-        <div className="card-body">
+        <div style={{ padding: 'var(--space-5)' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px', marginBottom: '16px' }}>
             <div>
               <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>运行模式</div>
@@ -251,11 +310,26 @@ export default function Settings() {
       </div>
 
       {/* Generation Capability Diagnostics */}
-      <div className="card" style={{ marginBottom: 'var(--spacing-lg)' }}>
-        <div className="card-header">
-          <h3>生成记录健康度</h3>
+      <div style={{
+        background: 'var(--paper-surface)',
+        borderRadius: 'var(--radius-lg)',
+        boxShadow: 'var(--shadow-flat)',
+        border: '1px solid rgba(30, 58, 95, 0.06)',
+        overflow: 'hidden',
+        marginBottom: 'var(--space-6)',
+      }}>
+        <div style={{
+          padding: 'var(--space-4) var(--space-5)',
+          borderBottom: '1px solid rgba(30, 58, 95, 0.04)',
+        }}>
+          <h3 style={{
+            fontFamily: 'var(--font-brand)',
+            fontSize: 'var(--text-md)',
+            fontWeight: 'var(--font-semibold)',
+            margin: 0,
+          }}>生成记录健康度</h3>
         </div>
-        <div className="card-body">
+        <div style={{ padding: 'var(--space-5)' }}>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '16px' }}>
             <div>
               <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>最近生成状态</div>
@@ -294,12 +368,32 @@ export default function Settings() {
       </div>
 
       {/* LLM Profiles */}
-      <div className="card" style={{ marginBottom: 'var(--spacing-lg)' }}>
-        <div className="card-header">
-          <h3>LLM 档案</h3>
-          <span className="text-secondary">默认: {data.default_llm || '未设置'}</span>
+      <div style={{
+        background: 'var(--paper-surface)',
+        borderRadius: 'var(--radius-lg)',
+        boxShadow: 'var(--shadow-flat)',
+        border: '1px solid rgba(30, 58, 95, 0.06)',
+        overflow: 'hidden',
+        marginBottom: 'var(--space-6)',
+      }}>
+        <div style={{
+          padding: 'var(--space-4) var(--space-5)',
+          borderBottom: '1px solid rgba(30, 58, 95, 0.04)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}>
+          <h3 style={{
+            fontFamily: 'var(--font-brand)',
+            fontSize: 'var(--text-md)',
+            fontWeight: 'var(--font-semibold)',
+            margin: 0,
+          }}>LLM 档案</h3>
+          <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-charcoal)' }}>
+            默认: {data.default_llm || '未设置'}
+          </span>
         </div>
-        <div className="card-body">
+        <div style={{ padding: 'var(--space-5)' }}>
           {data.llm_profiles.length > 0 ? (
             <div style={{ overflowX: 'auto' }}>
               <table className="data-table">
@@ -381,12 +475,29 @@ export default function Settings() {
       )}
 
       {/* Config Draft Generator */}
-      <div className="card">
-        <div className="card-header">
-          <h3>配置草案生成器</h3>
-          <span className="text-secondary">填写表单生成 YAML 草案（仅预览，不写入文件）</span>
+      <div style={{
+        background: 'var(--paper-surface)',
+        borderRadius: 'var(--radius-lg)',
+        boxShadow: 'var(--shadow-flat)',
+        border: '1px solid rgba(30, 58, 95, 0.06)',
+        overflow: 'hidden',
+      }}>
+        <div style={{
+          padding: 'var(--space-4) var(--space-5)',
+          borderBottom: '1px solid rgba(30, 58, 95, 0.04)',
+        }}>
+          <h3 style={{
+            fontFamily: 'var(--font-brand)',
+            fontSize: 'var(--text-md)',
+            fontWeight: 'var(--font-semibold)',
+            margin: 0,
+            marginBottom: 'var(--space-1)',
+          }}>配置草案生成器</h3>
+          <span style={{ fontSize: 'var(--text-sm)', color: 'var(--text-charcoal)' }}>
+            填写表单生成 YAML 草案（仅预览，不写入文件）
+          </span>
         </div>
-        <div className="card-body">
+        <div style={{ padding: 'var(--space-5)' }}>
           <div style={{ marginBottom: '16px', fontSize: '14px', color: 'var(--text-secondary)' }}>
             根据表单生成配置草案，你需要：
             <ol style={{ marginTop: '8px', paddingLeft: '20px' }}>

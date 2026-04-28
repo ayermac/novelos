@@ -10,6 +10,9 @@ from .review import router as review_router
 from .style import router as style_router
 from .settings import router as settings_router
 from .acceptance import router as acceptance_router
+from .characters import router as characters_router
+from .outlines import router as outlines_router
+from .world_settings import router as world_settings_router
 
 __all__ = [
     "health_router",
@@ -22,4 +25,7 @@ __all__ = [
     "style_router",
     "settings_router",
     "acceptance_router",
+    "characters_router",
+    "outlines_router",
+    "world_settings_router",
 ]

@@ -63,7 +63,7 @@ def print_llm_runtime_error(e: Exception, use_json: bool) -> None:
         print(json.dumps({
             "ok": False,
             "error": error_msg,
-            "data": {"error_type": type(e).__name__},
+            "data": {"error": str(e), "error_type": type(e).__name__},
         }, ensure_ascii=False))
     else:
         print(f"Error: {error_msg}")

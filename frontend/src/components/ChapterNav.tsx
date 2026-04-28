@@ -11,6 +11,7 @@ interface Props {
   chapters: Chapter[]
   currentChapter: number
   onSelect: (chapterNumber: number) => void
+  onReset?: (chapterNumber: number) => void
 }
 
 function chapterStatusIcon(status: string): string {
@@ -61,7 +62,7 @@ function chapterStatusColor(status: string): string {
   }
 }
 
-export default function ChapterNav({ chapters, currentChapter, onSelect }: Props) {
+export default function ChapterNav({ chapters, currentChapter, onSelect, onReset }: Props) {
   if (chapters.length === 0) {
     return (
       <div style={{ padding: '16px', color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center' }}>
@@ -80,18 +81,34 @@ export default function ChapterNav({ chapters, currentChapter, onSelect }: Props
           const color = chapterStatusColor(ch.status)
           const title = ch.title || `第 ${ch.chapter_number} 章`
           const statusLabel = tChapterStatus(ch.status)
+          const canReset = ch.status === 'blocking' || ch.status === 'revision'
 
           return (
-            <button
-              key={ch.chapter_number}
-              className={`chapter-nav-item${isActive ? ' active' : ''}`}
-              onClick={() => onSelect(ch.chapter_number)}
-              title={`${title} — ${statusLabel}`}
-            >
-              <span className="chapter-nav-icon" style={{ color }}>{icon}</span>
-              <span className="chapter-nav-label">{title}</span>
-              <span className="chapter-nav-status">{statusLabel}</span>
-            </button>
+            <div key={ch.chapter_number} style={{ position: 'relative' }}>
+              <button
+                className={`chapter-nav-item${isActive ? ' active' : ''}`}
+                onClick={() => onSelect(ch.chapter_number)}
+                title={`${title} — ${statusLabel}`}
+              >
+                <span className="chapter-nav-icon" style={{ color }}>{icon}</span>
+                <span className="chapter-nav-label">{title}</span>
+                <span className="chapter-nav-status">{statusLabel}</span>
+              </button>
+              {canReset && onReset && (
+                <button
+                  className="chapter-nav-reset"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    if (window.confirm(`确定要重置「${title}」吗？章节将重新生成。`)) {
+                      onReset(ch.chapter_number)
+                    }
+                  }}
+                  title="重置章节"
+                >
+                  ↻
+                </button>
+              )}
+            </div>
           )
         })}
       </div>
@@ -157,6 +174,29 @@ export default function ChapterNav({ chapters, currentChapter, onSelect }: Props
           flex-shrink: 0;
         }
         .chapter-nav-item.active .chapter-nav-status {
+          color: var(--primary);
+        }
+        .chapter-nav-reset {
+          position: absolute;
+          right: 4px;
+          top: 50%;
+          transform: translateY(-50%);
+          padding: 2px 6px;
+          background: transparent;
+          border: 1px solid var(--border-color);
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 12px;
+          color: var(--text-muted);
+          opacity: 0;
+          transition: opacity 0.15s, background 0.15s;
+        }
+        .chapter-nav-item:hover + .chapter-nav-reset,
+        .chapter-nav-reset:hover {
+          opacity: 1;
+        }
+        .chapter-nav-reset:hover {
+          background: var(--bg-tertiary);
           color: var(--primary);
         }
       `}</style>

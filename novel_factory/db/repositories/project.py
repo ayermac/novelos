@@ -102,6 +102,69 @@ class ProjectRepositoryMixin:
         finally:
             conn.close()
 
+    def update_project(
+        self,
+        project_id: str,
+        name: str | None = None,
+        description: str | None = None,
+        genre: str | None = None,
+        target_words: int | None = None,
+        total_chapters_planned: int | None = None,
+    ) -> dict | None:
+        """Update project settings (v5.2 Phase C).
+
+        Args:
+            project_id: Project identifier.
+            name: New project name (optional).
+            description: New description (optional).
+            genre: New genre (optional).
+            target_words: New target word count (optional).
+            total_chapters_planned: New total chapters planned (optional).
+
+        Returns:
+            Updated project dict or None if not found.
+        """
+        conn = self._conn()
+        try:
+            # Build update clause
+            fields = []
+            values = []
+            if name is not None:
+                fields.append("name=?")
+                values.append(name)
+            if description is not None:
+                fields.append("description=?")
+                values.append(description)
+            if genre is not None:
+                fields.append("genre=?")
+                values.append(genre)
+            if target_words is not None:
+                fields.append("target_words=?")
+                values.append(target_words)
+            if total_chapters_planned is not None:
+                fields.append("total_chapters_planned=?")
+                values.append(total_chapters_planned)
+
+            if not fields:
+                return self.get_project(project_id)
+
+            # Always update updated_at
+            fields.append("updated_at=datetime('now','+8 hours')")
+
+            values.append(project_id)
+            cursor = conn.execute(
+                f"UPDATE projects SET {', '.join(fields)} WHERE project_id=?",
+                values,
+            )
+            conn.commit()
+
+            if cursor.rowcount == 0:
+                return None
+
+            return self.get_project(project_id)
+        finally:
+            conn.close()
+
     def add_world_setting(
         self,
         project_id: str,
@@ -216,3 +279,70 @@ class ProjectRepositoryMixin:
             conn.close()
 
     # ── Learned patterns (Q5) ──────────────────────────────────
+
+    def delete_project(self, project_id: str) -> bool:
+        """Delete a project and all associated data (cascade delete).
+
+        Args:
+            project_id: Project identifier.
+
+        Returns:
+            True if project was deleted, False if not found.
+        """
+        conn = self._conn()
+        try:
+            # Check if project exists
+            existing = conn.execute(
+                "SELECT project_id FROM projects WHERE project_id=?",
+                (project_id,),
+            ).fetchone()
+            if not existing:
+                return False
+
+            # Delete from all related tables in single connection
+            # Only include tables that have project_id column
+            tables = [
+                "chapters",
+                "characters",
+                "outlines",
+                "world_settings",
+                "workflow_runs",
+                "instructions",
+                "scene_beats",
+                "chapter_state",
+                "chapter_versions",
+                "chapter_plots",
+                "chapter_review_notes",
+                "plot_holes",
+                "agent_artifacts",
+                "agent_messages",
+                "quality_reports",
+                "scout_reports",
+                "polish_reports",
+                "reviews",
+                "reports",
+                "batch_revision_runs",
+                "batch_continuity_gates",
+                "production_runs",
+                "production_queue",
+                "production_queue_events",
+                "serial_plans",
+                "serial_plan_events",
+                "state_history",
+                "human_review_sessions",
+                "production_run_items",
+                "batch_revision_items",
+            ]
+            for table in tables:
+                try:
+                    conn.execute(f"DELETE FROM {table} WHERE project_id=?", (project_id,))
+                except Exception:
+                    # Table may not exist in this schema
+                    pass
+
+            # Finally delete the project
+            conn.execute("DELETE FROM projects WHERE project_id=?", (project_id,))
+            conn.commit()
+            return True
+        finally:
+            conn.close()

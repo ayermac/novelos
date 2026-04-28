@@ -31,6 +31,11 @@ interface RunDetail {
   completed_at: string
   error_message?: string
   steps: Step[]
+  // v5.2: Token usage statistics
+  prompt_tokens?: number
+  completion_tokens?: number
+  total_tokens?: number
+  duration_ms?: number
 }
 
 export default function RunDetail() {
@@ -95,6 +100,24 @@ export default function RunDetail() {
           </div>
         </div>
       </div>
+      {/* v5.2: Token usage statistics - only show for real LLM mode */}
+      {!isStub && (data.total_tokens || data.duration_ms) && (
+        <div className="card" style={{ marginBottom: '16px' }}>
+          <div className="card-header"><h3>Token 统计</h3></div>
+          <div className="card-body">
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '16px' }}>
+              <div><div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '4px' }}>输入 Tokens</div>
+                <div style={{ fontSize: '18px', fontWeight: 600 }}>{(data.prompt_tokens || 0).toLocaleString()}</div></div>
+              <div><div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '4px' }}>输出 Tokens</div>
+                <div style={{ fontSize: '18px', fontWeight: 600 }}>{(data.completion_tokens || 0).toLocaleString()}</div></div>
+              <div><div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '4px' }}>总 Tokens</div>
+                <div style={{ fontSize: '18px', fontWeight: 600 }}>{(data.total_tokens || 0).toLocaleString()}</div></div>
+              <div><div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '4px' }}>耗时</div>
+                <div style={{ fontSize: '18px', fontWeight: 600 }}>{data.duration_ms ? `${(data.duration_ms / 1000).toFixed(1)}s` : '-'}</div></div>
+            </div>
+          </div>
+        </div>
+      )}
       <div className="card" style={{ marginBottom: '16px' }}>
         <div className="card-header"><h3>工作流步骤</h3></div>
         <div className="card-body">

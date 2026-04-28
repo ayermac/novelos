@@ -9,13 +9,13 @@ from pathlib import Path
 from ..common import (
     _get_settings,
     _get_effective_llm_mode,
-    _build_dispatcher,
     _StubLLM,
     init_db,
     Repository,
     Dispatcher,
 )
 from ..output import _print_output, print_llm_runtime_error
+from ...workflow.runner import run_with_graph
 
 
 def cmd_init_db(args) -> None:
@@ -41,18 +41,12 @@ def cmd_run_chapter(args) -> dict:
     llm_mode = _get_effective_llm_mode(args)
 
     try:
-        dispatcher = _build_dispatcher(repo, settings, llm_mode)
-    except ValueError as e:
-        if getattr(args, "json", False):
-            print(json.dumps({"ok": False, "error": str(e), "data": {"error": str(e)}}, ensure_ascii=False))
-        else:
-            print(f"Error: {e}")
-        sys.exit(1)
-
-    try:
-        result = dispatcher.run_chapter(
+        result = run_with_graph(
             project_id=args.project_id,
             chapter_number=args.chapter,
+            settings=settings,
+            repo=repo,
+            llm_mode=llm_mode,
             max_steps=args.max_steps,
         )
     except Exception as e:

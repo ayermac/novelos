@@ -1,0 +1,376 @@
+/* ==========================================================================
+   Novel Factory - 「墨流」Design System v2.0
+   简约科技 + 创意点缀
+   ========================================================================== */
+
+/* Google Fonts Import */
+@import url('https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Inter:wght@400;500;600&display=swap');
+
+/* --------------------------------------------------------------------------
+   1. Color Tokens - 墨水色系
+   -------------------------------------------------------------------------- */
+:root {
+  /* Ink Colors - 墨水 */
+  --ink-primary: #1e3a5f;
+  --ink-deep: #0f172a;
+  --ink-accent: #4f46e5;
+  --ink-glow: #818cf8;
+  --ink-soft: #6366f1;
+
+  /* Paper Colors - 纸张 */
+  --paper-bg: #faf8f5;
+  --paper-surface: #ffffff;
+  --paper-elevated: #f5f3ef;
+  --paper-hover: #f0ede8;
+
+  /* Text Colors */
+  --text-ink: #1a1a1a;
+  --text-charcoal: #475569;
+  --text-gray: #94a3b8;
+  --text-muted: #cbd5e1;
+
+  /* Status Colors - 保持可识别性 */
+  --status-success: #10b981;
+  --status-warning: #f59e0b;
+  --status-danger: #ef4444;
+  --status-info: #06b6d4;
+
+  /* Gradient Accents */
+  --gradient-ink: linear-gradient(135deg, #1e3a5f 0%, #3730a3 100%);
+  --gradient-glow: linear-gradient(135deg, #4f46e5 0%, #818cf8 100%);
+  --gradient-subtle: linear-gradient(180deg, #faf8f5 0%, #f5f3ef 100%);
+
+  /* --------------------------------------------------------------------------
+     2. Typography - 字体系统
+     -------------------------------------------------------------------------- */
+  --font-brand: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  --font-body: Inter, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Microsoft YaHei', sans-serif;
+
+  /* Font Sizes */
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 20px;
+  --text-2xl: 24px;
+
+  /* Font Weights */
+  --font-normal: 400;
+  --font-medium: 500;
+  --font-semibold: 600;
+  --font-bold: 700;
+
+  /* Line Heights */
+  --leading-tight: 1.25;
+  --leading-normal: 1.5;
+  --leading-relaxed: 1.75;
+
+  /* --------------------------------------------------------------------------
+     3. Spacing - 间距系统
+     -------------------------------------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  /* --------------------------------------------------------------------------
+     4. Layout - 布局
+     -------------------------------------------------------------------------- */
+  --sidebar-width: 240px;
+  --topbar-height: 64px;
+  --content-max-width: 1400px;
+
+  /* --------------------------------------------------------------------------
+     5. Shapes - 形状
+     -------------------------------------------------------------------------- */
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-full: 9999px;
+
+  /* --------------------------------------------------------------------------
+     6. Shadows - 阴影系统
+     -------------------------------------------------------------------------- */
+  --shadow-flat: 0 0 0 1px rgba(30, 58, 95, 0.06);
+  --shadow-sm: 0 1px 2px rgba(30, 58, 95, 0.04);
+  --shadow-md: 0 4px 12px rgba(30, 58, 95, 0.08);
+  --shadow-lg: 0 8px 24px rgba(30, 58, 95, 0.12);
+  --shadow-glow: 0 0 20px rgba(79, 70, 229, 0.3);
+
+  /* --------------------------------------------------------------------------
+     7. Motion - 动效
+     -------------------------------------------------------------------------- */
+  --ease-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+  --duration-fast: 150ms;
+  --duration-normal: 200ms;
+  --duration-slow: 300ms;
+
+  /* --------------------------------------------------------------------------
+     8. Z-Index Scale
+     -------------------------------------------------------------------------- */
+  --z-dropdown: 100;
+  --z-sticky: 200;
+  --z-modal: 300;
+  --z-tooltip: 400;
+}
+
+/* ==========================================================================
+   Typography
+   ========================================================================== */
+
+.font-brand {
+  font-family: var(--font-brand);
+}
+
+.text-brand {
+  font-family: var(--font-brand);
+  font-weight: var(--font-semibold);
+}
+
+/* ==========================================================================
+   Card Components - 核心视觉组件
+   ========================================================================== */
+
+.card {
+  background: var(--paper-surface);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-flat);
+  border: 1px solid rgba(30, 58, 95, 0.06);
+  transition: all var(--duration-normal) var(--ease-out);
+}
+
+.card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+
+.card-header {
+  padding: var(--space-4) var(--space-5);
+  border-bottom: 1px solid rgba(30, 58, 95, 0.06);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.card-header h3 {
+  font-family: var(--font-brand);
+  font-size: var(--text-md);
+  font-weight: var(--font-semibold);
+}
+
+.card-body {
+  padding: var(--space-5);
+}
+
+/* Card Variants */
+.card-elevated {
+  box-shadow: var(--shadow-md);
+}
+
+.card-ghost {
+  background: transparent;
+  box-shadow: none;
+  border: 1px solid rgba(30, 58, 95, 0.08);
+}
+
+.card-gradient {
+  background: var(--gradient-subtle);
+}
+
+/* ==========================================================================
+   Button Components
+   ========================================================================== */
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  font-family: var(--font-body);
+  font-size: var(--text-base);
+  font-weight: var(--font-medium);
+  line-height: 1.5;
+  border-radius: var(--radius-md);
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: all var(--duration-fast) var(--ease-out);
+  text-decoration: none;
+}
+
+.btn:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.2);
+}
+
+/* Primary Button */
+.btn-primary {
+  background: var(--gradient-ink);
+  color: white;
+  border: none;
+}
+
+.btn-primary:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
+/* Secondary Button */
+.btn-secondary {
+  background: var(--paper-surface);
+  color: var(--text-charcoal);
+  border: 1px solid rgba(30, 58, 95, 0.12);
+}
+
+.btn-secondary:hover {
+  background: var(--paper-hover);
+  border-color: rgba(30, 58, 95, 0.2);
+}
+
+/* Accent Button */
+.btn-accent {
+  background: var(--gradient-glow);
+  color: white;
+  border: none;
+}
+
+.btn-accent:hover {
+  box-shadow: var(--shadow-glow);
+  transform: translateY(-1px);
+}
+
+/* ==========================================================================
+   Status Badges
+   ========================================================================== */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-1) var(--space-3);
+  font-size: var(--text-xs);
+  font-weight: var(--font-medium);
+  border-radius: var(--radius-full);
+}
+
+.badge-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+
+.badge-success {
+  background: rgba(16, 185, 129, 0.1);
+  color: #065f46;
+}
+
+.badge-success .badge-dot {
+  background: var(--status-success);
+}
+
+.badge-warning {
+  background: rgba(245, 158, 11, 0.1);
+  color: #92400e;
+}
+
+.badge-warning .badge-dot {
+  background: var(--status-warning);
+}
+
+.badge-danger {
+  background: rgba(239, 68, 68, 0.1);
+  color: #991b1b;
+}
+
+.badge-danger .badge-dot {
+  background: var(--status-danger);
+}
+
+.badge-neutral {
+  background: rgba(148, 163, 184, 0.1);
+  color: var(--text-charcoal);
+}
+
+/* ==========================================================================
+   Animations - 创意动效
+   ========================================================================== */
+
+@keyframes pulse-soft {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.7; transform: scale(0.95); }
+}
+
+.pulse {
+  animation: pulse-soft 2s var(--ease-in-out) infinite;
+}
+
+@keyframes glow-pulse {
+  0%, 100% { box-shadow: 0 0 5px rgba(79, 70, 229, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(79, 70, 229, 0.5); }
+}
+
+.glow-pulse {
+  animation: glow-pulse 2s var(--ease-in-out) infinite;
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-4px); }
+}
+
+.float {
+  animation: float 4s var(--ease-in-out) infinite;
+}
+
+/* ==========================================================================
+   Responsive Adjustments
+   ========================================================================== */
+
+@media (max-width: 768px) {
+  :root {
+    --sidebar-width: 0px;
+  }
+}
+
+/* ==========================================================================
+   Legacy Compatibility - 兼容旧变量名
+   ========================================================================== */
+
+/* 映射旧设计系统变量到新系统 */
+:root {
+  --primary: var(--ink-accent);
+  --primary-dark: var(--ink-primary);
+  --secondary: var(--text-charcoal);
+  --success: var(--status-success);
+  --warning: var(--status-warning);
+  --danger: var(--status-danger);
+  --info: var(--status-info);
+
+  --bg-primary: var(--paper-surface);
+  --bg-secondary: var(--paper-bg);
+  --bg-tertiary: var(--paper-elevated);
+
+  --text-primary: var(--text-ink);
+  --text-secondary: var(--text-charcoal);
+  --text-muted: var(--text-gray);
+
+  --border-color: rgba(30, 58, 95, 0.08);
+  --border-radius: var(--radius-md);
+
+  --shadow-sm: var(--shadow-flat);
+  --shadow-md: var(--shadow-md);
+
+  --spacing-xs: var(--space-1);
+  --spacing-sm: var(--space-2);
+  --spacing-md: var(--space-4);
+  --spacing-lg: var(--space-6);
+  --spacing-xl: var(--space-8);
+}

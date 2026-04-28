@@ -3,10 +3,27 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
+from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 
 router = APIRouter()
+
+
+class ApproveRequest(BaseModel):
+    """Approve chapter request (v5.2 Phase C)."""
+
+    project_id: str
+    chapter_number: int
+
+
+class RejectRequest(BaseModel):
+    """Reject chapter request (v5.2 Phase C)."""
+
+    project_id: str
+    chapter_number: int
+    reason: str
+    target: str = "author"  # Which agent to send revision to: author, polisher, or planner
 
 
 @router.get("/review/workbench")
@@ -162,3 +179,111 @@ async def get_review_diff(
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取差异失败: {str(e)}")
+
+
+@router.post("/review/approve")
+async def approve_chapter(request: Request, body: ApproveRequest) -> EnvelopeResponse:
+    """Approve a chapter for publishing (v5.2 Phase C).
+
+    Changes chapter status from 'review' to 'reviewed'.
+    The chapter can then be published via the normal workflow.
+    """
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        # Verify project exists
+        project = repo.get_project(body.project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{body.project_id}' 不存在")
+
+        # Verify chapter exists
+        chapter = repo.get_chapter(body.project_id, body.chapter_number)
+        if not chapter:
+            return error_response("CHAPTER_NOT_FOUND", f"章节 {body.chapter_number} 不存在")
+
+        # Check if chapter is in review status
+        current_status = chapter.get("status", "")
+        if current_status != "review":
+            return error_response(
+                "INVALID_STATUS",
+                f"章节状态为 '{current_status}'，仅 'review' 状态可审核通过"
+            )
+
+        # Update status to reviewed
+        updated = repo.update_chapter_status(
+            body.project_id, body.chapter_number, "reviewed"
+        )
+        if not updated:
+            return error_response("UPDATE_FAILED", "更新章节状态失败")
+
+        return envelope_response({
+            "approved": True,
+            "project_id": body.project_id,
+            "chapter_number": body.chapter_number,
+            "previous_status": current_status,
+            "new_status": "reviewed",
+        })
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"审核通过失败: {str(e)}")
+
+
+@router.post("/review/reject")
+async def reject_chapter(request: Request, body: RejectRequest) -> EnvelopeResponse:
+    """Reject a chapter and send it for revision (v5.2 Phase C).
+
+    Changes chapter status from 'review' to 'revision' and records the reason.
+    """
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        # Verify project exists
+        project = repo.get_project(body.project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{body.project_id}' 不存在")
+
+        # Verify chapter exists
+        chapter = repo.get_chapter(body.project_id, body.chapter_number)
+        if not chapter:
+            return error_response("CHAPTER_NOT_FOUND", f"章节 {body.chapter_number} 不存在")
+
+        # Check if chapter is in review status
+        current_status = chapter.get("status", "")
+        if current_status != "review":
+            return error_response(
+                "INVALID_STATUS",
+                f"章节状态为 '{current_status}'，仅 'review' 状态可驳回"
+            )
+
+        # Record rejection reason
+        repo.save_chapter_review_note(
+            project_id=body.project_id,
+            chapter_number=body.chapter_number,
+            source_run_id=chapter.get("last_run_id", ""),
+            revision_run_id="",  # Will be populated when revision run starts
+            notes=f"[驳回] {body.reason}\n目标: {body.target}",
+        )
+
+        # Update status to revision
+        updated = repo.update_chapter_status(
+            body.project_id, body.chapter_number, "revision"
+        )
+        if not updated:
+            return error_response("UPDATE_FAILED", "更新章节状态失败")
+
+        return envelope_response({
+            "rejected": True,
+            "project_id": body.project_id,
+            "chapter_number": body.chapter_number,
+            "previous_status": current_status,
+            "new_status": "revision",
+            "reason": body.reason,
+            "target": body.target,
+        })
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"驳回失败: {str(e)}")

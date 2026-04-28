@@ -27,6 +27,7 @@ class CreateProjectRequest(BaseModel):
     main_character_name: str | None = None
     main_character_role: str = "protagonist"
     main_character_description: str | None = None
+    main_character_traits: str | None = None
     create_serial_plan: bool = False
     serial_batch_size: int = 5
 
@@ -84,9 +85,50 @@ async def create_project(request: Request, body: CreateProjectRequest) -> Envelo
                 total_chapters=body.total_chapters_planned,
             )
 
+        # Add seed data for stub mode demonstration
+        characters = []
+        outlines = []
+        world_settings = []
+
+        # Add main character if provided
+        if body.main_character_name:
+            char = repo.create_character(
+                project_id=body.project_id,
+                name=body.main_character_name,
+                role=body.main_character_role,
+                description=body.main_character_description or "",
+                traits=body.main_character_traits or "",
+                first_appearance=1,
+            )
+            characters.append(char)
+
+        # Add world setting if provided
+        if body.world_setting:
+            ws = repo.create_world_setting(
+                project_id=body.project_id,
+                category="世界观",
+                title="背景设定",
+                content=body.world_setting,
+            )
+            world_settings.append(ws)
+
+        # Add sample outline structure (volume 1)
+        outline = repo.create_outline(
+            project_id=body.project_id,
+            level="volume",
+            sequence=1,
+            title="第一卷",
+            content=f"{body.name} 第一卷：开局",
+            chapters_range=f"{body.start_chapter}-{body.start_chapter + 9}",
+        )
+        outlines.append(outline)
+
         return envelope_response({
             "project": project,
             "chapters": chapters,
+            "characters": characters,
+            "outlines": outlines,
+            "world_settings": world_settings,
             "serial_plan": serial_plan,
             "llm_mode": llm_mode,
         })

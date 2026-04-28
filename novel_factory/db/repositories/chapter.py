@@ -439,3 +439,57 @@ class ChapterRepositoryMixin:
     # ── v2 Sidecar Agents ────────────────────────────────────────
 
     # Scout Agent methods
+
+    def reset_chapter(self, project_id: str, chapter_number: int) -> bool:
+        """Reset a chapter to planned status for re-processing.
+
+        Reset rules:
+        - blocking → planned (user intervention required)
+        - revision → planned (needs rewrite)
+        - Other statuses: no change (return False)
+
+        Args:
+            project_id: Project identifier.
+            chapter_number: Chapter number.
+
+        Returns:
+            True if chapter was reset, False if status doesn't allow reset.
+        """
+        conn = self._conn()
+        try:
+            # Only reset blocking or revision status
+            cursor = conn.execute(
+                "UPDATE chapters SET status='planned', "
+                "updated_at=datetime('now','+8 hours') "
+                "WHERE project_id=? AND chapter_number=? "
+                "AND status IN ('blocking', 'revision')",
+                (project_id, chapter_number),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def delete_chapter(self, project_id: str, chapter_number: int) -> bool:
+        """Delete a chapter.
+
+        Only allowed for chapters in 'planned' status.
+        Caller should verify status before calling.
+
+        Args:
+            project_id: Project identifier.
+            chapter_number: Chapter number.
+
+        Returns:
+            True if chapter was deleted, False if not found.
+        """
+        conn = self._conn()
+        try:
+            cursor = conn.execute(
+                "DELETE FROM chapters WHERE project_id=? AND chapter_number=?",
+                (project_id, chapter_number),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()

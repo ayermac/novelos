@@ -78,3 +78,8 @@ class FactoryState(TypedDict, total=False):
     error: Optional[str]
     # v5.1.6: Runtime context (not persisted, injected by node functions)
     steps: list[dict[str, Any]]  # Step records for run_with_graph return value
+    # v5.2: Token usage tracking (accumulated across agents)
+    prompt_tokens: int
+    completion_tokens: int
+    total_tokens: int
+    duration_ms: int

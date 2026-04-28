@@ -346,18 +346,15 @@ class TestI18nBlockedMapping:
 class TestLayoutVersion:
     """Layout sidebar shows correct version."""
 
-    def test_sidebar_version_is_v515(self):
-        """Sidebar version should display v5.1.5."""
+    def test_sidebar_version_is_v52(self):
+        """Sidebar version should display v5.2."""
         frontend_src = Path(__file__).parent.parent / "frontend" / "src"
         layout_file = frontend_src / "components" / "Layout.tsx"
         assert layout_file.exists()
         content = layout_file.read_text()
 
-        assert "v5.1.5" in content, (
-            "Layout sidebar should display v5.1.5, not older version"
-        )
-        assert "v5.1.4" not in content, (
-            "Layout sidebar should NOT still show v5.1.4"
+        assert "v5.2" in content, (
+            "Layout sidebar should display v5.2"
         )
 
 

@@ -33,10 +33,18 @@ def _update_run_node(state: FactoryState, repo: Repository, node_name: str) -> N
 
 
 def _finalize_run(state: FactoryState, repo: Repository, status: str, error: str | None = None) -> None:
-    """Finalize workflow run with given status."""
+    """Finalize workflow run with given status and token usage."""
     run_id = state.get("workflow_run_id")
     if run_id:
-        repo.update_workflow_run(run_id, status=status, error_message=error)
+        repo.update_workflow_run(
+            run_id,
+            status=status,
+            error_message=error,
+            prompt_tokens=state.get("prompt_tokens", 0),
+            completion_tokens=state.get("completion_tokens", 0),
+            total_tokens=state.get("total_tokens", 0),
+            duration_ms=state.get("duration_ms", 0),
+        )
 
 
 def _append_step(state: FactoryState, step_info: dict[str, Any]) -> None:
@@ -44,6 +52,28 @@ def _append_step(state: FactoryState, step_info: dict[str, Any]) -> None:
     steps = state.get("steps", [])
     steps.append(step_info)
     state["steps"] = steps
+
+
+def _accumulate_tokens(state: FactoryState, llm: LLMProvider) -> dict[str, int]:
+    """Accumulate token usage from LLM provider into state (v5.2).
+
+    Returns the delta token usage for this call.
+    """
+    usage = getattr(llm, "last_token_usage", None)
+    if not usage:
+        return {}
+
+    current_prompt = state.get("prompt_tokens", 0)
+    current_completion = state.get("completion_tokens", 0)
+    current_total = state.get("total_tokens", 0)
+    current_duration = state.get("duration_ms", 0)
+
+    return {
+        "prompt_tokens": current_prompt + usage.prompt_tokens,
+        "completion_tokens": current_completion + usage.completion_tokens,
+        "total_tokens": current_total + usage.total_tokens,
+        "duration_ms": current_duration + usage.duration_ms,
+    }
 
 
 # ── v5.1.6: Node factory for LLMRouter-based injection ────────────────
@@ -103,6 +133,11 @@ def create_node_runners(
             agent = agent_cls(repo, llm)
 
         result = agent.run(state)
+
+        # v5.2: Accumulate token usage from LLM provider
+        token_updates = _accumulate_tokens(state, llm)
+        if token_updates:
+            result.update(token_updates)
 
         # Handle error
         if "error" in result:
@@ -190,6 +225,10 @@ def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dic
     _update_run_node(state, repo, "planner")
     agent = PlannerAgent(repo, llm)
     result = agent.run(state)
+    # v5.2: Accumulate token usage
+    token_updates = _accumulate_tokens(state, llm)
+    if token_updates:
+        result.update(token_updates)
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
     return result
@@ -200,6 +239,10 @@ def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider) -
     _update_run_node(state, repo, "screenwriter")
     agent = ScreenwriterAgent(repo, llm)
     result = agent.run(state)
+    # v5.2: Accumulate token usage
+    token_updates = _accumulate_tokens(state, llm)
+    if token_updates:
+        result.update(token_updates)
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
     return result
@@ -210,6 +253,10 @@ def author_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict
     _update_run_node(state, repo, "author")
     agent = AuthorAgent(repo, llm)
     result = agent.run(state)
+    # v5.2: Accumulate token usage
+    token_updates = _accumulate_tokens(state, llm)
+    if token_updates:
+        result.update(token_updates)
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
     return result
@@ -227,6 +274,10 @@ def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill
             logger.warning(f"Failed to create SkillRegistry: {e}")
     agent = PolisherAgent(repo, llm, skill_registry=skill_registry)
     result = agent.run(state)
+    # v5.2: Accumulate token usage
+    token_updates = _accumulate_tokens(state, llm)
+    if token_updates:
+        result.update(token_updates)
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
     return result
@@ -244,6 +295,10 @@ def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
             logger.warning(f"Failed to create SkillRegistry: {e}")
     agent = EditorAgent(repo, llm, skill_registry=skill_registry)
     result = agent.run(state)
+    # v5.2: Accumulate token usage
+    token_updates = _accumulate_tokens(state, llm)
+    if token_updates:
+        result.update(token_updates)
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
     return result
