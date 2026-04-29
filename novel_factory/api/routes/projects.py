@@ -313,3 +313,28 @@ async def delete_chapter(
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"删除章节失败: {str(e)}")
+
+
+@router.get("/projects/{project_id}/runs")
+async def get_project_runs(request: Request, project_id: str) -> EnvelopeResponse:
+    """Get all workflow runs for a project.
+
+    Returns run list with id, chapter_number, status, current_node,
+    error_message, token usage, duration, and timestamps.
+    """
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        # Verify project exists
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        runs = repo.get_workflow_runs_for_project(project_id, limit=50)
+
+        return envelope_response(runs)
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"获取运行记录失败: {str(e)}")

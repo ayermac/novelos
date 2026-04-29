@@ -51,11 +51,23 @@ async def get_dashboard(request: Request) -> EnvelopeResponse:
         queue_items = repo.list_queue_items(status="pending")
         queue_count = len(queue_items)
 
-        # Get review status (simplified)
+        # Get review status and attention items in a single pass
         review_count = 0
+        attention_items = []
         for p in projects:
             chapters = repo.list_chapters(p["project_id"])
+            blocked_failed = [
+                {"chapter_number": ch["chapter_number"], "status": ch["status"]}
+                for ch in chapters
+                if ch.get("status") in ("blocked", "failed")
+            ]
             review_count += sum(1 for ch in chapters if ch.get("status") == "review")
+            if blocked_failed:
+                attention_items.append({
+                    "project_id": p["project_id"],
+                    "project_name": p.get("name", ""),
+                    "chapters": blocked_failed,
+                })
 
         return envelope_response({
             "project_count": project_count,
@@ -63,6 +75,7 @@ async def get_dashboard(request: Request) -> EnvelopeResponse:
             "queue_count": queue_count,
             "review_count": review_count,
             "llm_mode": llm_mode,
+            "attention_items": attention_items,
         })
 
     except Exception as e:

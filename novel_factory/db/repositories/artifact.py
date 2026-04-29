@@ -76,4 +76,29 @@ class ArtifactRepositoryMixin:
         finally:
             conn.close()
 
+    def list_artifacts(
+        self, project_id: str, limit: int = 50
+    ) -> list[dict]:
+        """List all artifacts for a project.
+
+        Args:
+            project_id: Project identifier.
+            limit: Maximum number of artifacts to return.
+
+        Returns:
+            List of artifact metadata dicts.
+        """
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, chapter_number, agent_id, artifact_type, created_at "
+                "FROM agent_artifacts "
+                "WHERE project_id=? "
+                "ORDER BY created_at DESC LIMIT ?",
+                (project_id, limit),
+            ).fetchall()
+            return [row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+
     # ── Recent chapter summaries (Q1 context) ──────────────────

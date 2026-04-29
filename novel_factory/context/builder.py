@@ -225,6 +225,28 @@ class ContextBuilder:
         )
         return ContextFragment("best_practices", f"【最佳实践（参考）】\n{bp_str}", 9)
 
+    def _frag_story_facts(self, project_id: str) -> ContextFragment:
+        """P5: Accumulated story facts from memory curator (v5.3.2)."""
+        facts = self.repo.list_story_facts(project_id, status="active")
+        if not facts:
+            return ContextFragment("story_facts", "", 5)
+
+        fact_lines = []
+        for f in facts[:15]:  # Limit to avoid context overflow
+            subject = f.get("subject", "")
+            attribute = f.get("attribute", "")
+            value = f.get("value_json", "{}")
+            # Truncate long values
+            if len(value) > 100:
+                value = value[:100] + "..."
+            fact_lines.append(f"- {f['fact_key']}: {subject}.{attribute} = {value}")
+
+        return ContextFragment(
+            "story_facts",
+            f"【故事事实追踪】\n" + "\n".join(fact_lines),
+            5,
+        )
+
     # ── v2 Sidecar Agent fragments ───────────────────────────────
 
     def _frag_market_report(self, project_id: str) -> ContextFragment:
@@ -371,6 +393,7 @@ class ContextBuilder:
             self._frag_scene_beats(project_id, chapter_number),     # P3
             self._frag_plot_requirements(project_id, chapter_number), # P4
             self._frag_characters(project_id),                      # P5
+            self._frag_story_facts(project_id),                    # P5 (v5.3.2)
             self._frag_world_rules(project_id),                     # P6 (v5.2)
             self._frag_outlines(project_id, chapter_number),        # P6 (v5.2)
             self._frag_learned_patterns(project_id),                # P8
@@ -441,6 +464,7 @@ class ContextBuilder:
             self._frag_continuity_warning(project_id, chapter_number),  # P3 (v2)
             self._frag_plot_requirements(project_id, chapter_number), # P4
             self._frag_characters(project_id),                       # P5
+            self._frag_story_facts(project_id),                     # P5 (v5.3.2)
             self._frag_world_rules(project_id),                      # P6 (v5.2)
             self._frag_outlines(project_id, chapter_number),         # P6 (v5.2)
             self._frag_market_report(project_id),                    # P6 (v2)

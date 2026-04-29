@@ -46,6 +46,14 @@ def create_api_app(
     app.state.config_path = config_path
     app.state.llm_mode = llm_mode
 
+    # Auto-initialize database on startup
+    @app.on_event("startup")
+    async def _ensure_db_ready() -> None:
+        """Ensure database tables exist when API starts."""
+        from .db.connection import init_db
+        if db_path:
+            init_db(db_path)
+
     # CORS for frontend development
     app.add_middleware(
         CORSMiddleware,
@@ -70,6 +78,14 @@ def create_api_app(
         characters_router,
         outlines_router,
         world_settings_router,
+        factions_router,
+        plot_holes_router,
+        instructions_router,
+        context_router,
+        readonly_router,
+        genesis_router,
+        memory_updates_router,
+        story_facts_router,
     )
 
     app.include_router(health_router, prefix="/api", tags=["health"])
@@ -85,6 +101,14 @@ def create_api_app(
     app.include_router(characters_router, prefix="/api", tags=["characters"])
     app.include_router(outlines_router, prefix="/api", tags=["outlines"])
     app.include_router(world_settings_router, prefix="/api", tags=["world-settings"])
+    app.include_router(factions_router, prefix="/api", tags=["factions"])
+    app.include_router(plot_holes_router, prefix="/api", tags=["plot-holes"])
+    app.include_router(instructions_router, prefix="/api", tags=["instructions"])
+    app.include_router(context_router, prefix="/api", tags=["context"])
+    app.include_router(readonly_router, prefix="/api", tags=["readonly"])
+    app.include_router(genesis_router, prefix="/api", tags=["genesis"])
+    app.include_router(memory_updates_router, prefix="/api", tags=["memory-updates"])
+    app.include_router(story_facts_router, prefix="/api", tags=["story-facts"])
 
     # Exception handler - never exposes traceback
     @app.exception_handler(Exception)

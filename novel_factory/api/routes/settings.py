@@ -118,13 +118,15 @@ async def get_settings(request: Request) -> EnvelopeResponse:
         # Build LLM profiles (without API keys)
         llm_profiles = []
         if hasattr(settings, "llm_profiles") and settings.llm_profiles:
-            import os
+            from ...config.env_loader import create_env_getter, load_dotenv
+
+            env_getter = create_env_getter(load_dotenv())
             for name, profile in settings.llm_profiles.items():
                 # Check if API key is configured (via env or direct)
                 has_key = False
                 api_key_env = getattr(profile, "api_key_env", None)
                 if api_key_env:
-                    has_key = bool(os.getenv(api_key_env))
+                    has_key = bool(env_getter(api_key_env))
                 elif getattr(profile, "api_key", None):
                     has_key = True
 
@@ -132,7 +134,7 @@ async def get_settings(request: Request) -> EnvelopeResponse:
                 has_base_url = False
                 base_url_env = getattr(profile, "base_url_env", None)
                 if base_url_env:
-                    has_base_url = bool(os.getenv(base_url_env))
+                    has_base_url = bool(env_getter(base_url_env))
                 elif getattr(profile, "base_url", None):
                     has_base_url = True
 

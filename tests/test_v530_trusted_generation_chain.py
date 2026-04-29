@@ -396,7 +396,7 @@ class TestRealModeAutoPublishBlocking:
     """Tests for blocking auto-publish in real mode."""
 
     def test_stub_mode_auto_publish(self):
-        """Stub mode should route to publisher after pass."""
+        """v5.3.2: After pass, routes to memory_curator (then publish)."""
         state: FactoryState = {
             "project_id": "test",
             "chapter_number": 1,
@@ -406,10 +406,10 @@ class TestRealModeAutoPublishBlocking:
         }
 
         result = route_by_review_result(state)
-        assert result == "publish"
+        assert result == "memory_curator"
 
     def test_real_mode_no_auto_publish(self):
-        """Real mode should route to awaiting_publish, not publish."""
+        """v5.3.2: After pass, routes to memory_curator (then awaiting_publish)."""
         state: FactoryState = {
             "project_id": "test",
             "chapter_number": 1,
@@ -419,7 +419,7 @@ class TestRealModeAutoPublishBlocking:
         }
 
         result = route_by_review_result(state)
-        assert result == "awaiting_publish"
+        assert result == "memory_curator"
 
     def test_failed_review_routes_to_revise(self):
         """Failed review should route to revise regardless of mode."""
@@ -484,12 +484,12 @@ class TestIntegration:
         # Should route to screenwriter (has instruction)
         assert route_by_chapter_status(state) == "screenwriter"
 
-        # After pass, should route to publish
+        # After pass, should route to memory_curator (then publish)
         state["quality_gate"] = {"pass": True}
-        assert route_by_review_result(state) == "publish"
+        assert route_by_review_result(state) == "memory_curator"
 
     def test_full_workflow_real_mode(self):
-        """Test that real mode workflow stops at reviewed."""
+        """Test that real mode workflow routes through memory_curator."""
         state: FactoryState = {
             "project_id": "test",
             "chapter_number": 1,
@@ -504,9 +504,9 @@ class TestIntegration:
         # Should route to screenwriter (has instruction)
         assert route_by_chapter_status(state) == "screenwriter"
 
-        # After pass, should route to awaiting_publish (NOT publish)
+        # After pass, should route to memory_curator (then awaiting_publish)
         state["quality_gate"] = {"pass": True}
-        assert route_by_review_result(state) == "awaiting_publish"
+        assert route_by_review_result(state) == "memory_curator"
 
 
 # ── 6. API Integration Tests ──────────────────────────────────────────────────

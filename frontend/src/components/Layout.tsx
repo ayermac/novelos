@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Outlet, NavLink, useLocation } from 'react-router-dom'
-import { FolderPlus, Play, CheckSquare, Palette, Settings, LayoutDashboard, FolderOpen, LucideIcon, Feather, Menu, X } from 'lucide-react'
+import { FolderPlus, CheckSquare, Palette, Settings, LayoutDashboard, FolderOpen, LucideIcon, Feather, Menu, X } from 'lucide-react'
 import { get } from '../lib/api'
 
 interface NavItem {
@@ -19,8 +19,6 @@ const navItems: NavItem[] = [
   { to: '/review', label: '审核', icon: CheckSquare },
   { to: '/style', label: '风格', icon: Palette },
   { to: '/settings', label: '配置', icon: Settings },
-  { to: '', label: '开发', icon: null, isSectionLabel: true },
-  { to: '/run', label: '高级运行', icon: Play },
 ]
 
 export default function Layout() {

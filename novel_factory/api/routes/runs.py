@@ -130,8 +130,8 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
         # Get chapter info
         chapter = repo.get_chapter(run_data["project_id"], run_data["chapter_number"])
 
-        # Build steps timeline
-        steps = _build_steps_timeline(run_data, chapter, llm_mode)
+        # Build steps timeline (with observability data from task_status and agent_artifacts)
+        steps = _build_steps_timeline(run_data, chapter, llm_mode, repo=repo)
 
         return envelope_response({
             "run_id": run_id,
@@ -160,6 +160,7 @@ def _build_steps_timeline(
     run_data: dict,
     chapter: dict | None,
     llm_mode: str,
+    repo=None,
 ) -> list[dict]:
     """Build steps timeline from run data and chapter status.
 
@@ -167,14 +168,50 @@ def _build_steps_timeline(
     1. workflow_runs.current_node (last running agent)
     2. chapter.status (final status)
     3. STATUS_ROUTE (expected flow)
+    4. task_status table (per-agent error messages)
+    5. agent_artifacts table (per-agent artifact summaries)
     """
     workflow_status = run_data.get("status", "unknown")
     current_node = run_data.get("current_node")
     error_message = run_data.get("error_message")
     chapter_number = run_data.get("chapter_number", 1)
+    project_id = run_data.get("project_id", "")
 
     # Determine final chapter status
     final_status = chapter.get("status", "planned") if chapter else "planned"
+
+    # Fetch task_status for per-agent error info
+    task_errors: dict[str, str] = {}
+    if repo:
+        try:
+            conn = repo._conn()
+            try:
+                rows = conn.execute(
+                    "SELECT agent_id, status, error_message FROM task_status "
+                    "WHERE project_id=? AND chapter_number=? AND status='failed'",
+                    (project_id, chapter_number),
+                ).fetchall()
+                for r in rows:
+                    agent_id = r["agent_id"]
+                    if r["error_message"]:
+                        task_errors[agent_id] = r["error_message"]
+            finally:
+                conn.close()
+        except Exception:
+            pass  # Graceful degradation
+
+    # Fetch agent_artifacts for per-agent artifact summaries
+    agent_artifacts: dict[str, list[dict]] = {}
+    if repo:
+        try:
+            artifacts = repo.get_artifacts_for_chapter(project_id, chapter_number)
+            for a in artifacts:
+                aid = a.get("agent_id", "")
+                if aid not in agent_artifacts:
+                    agent_artifacts[aid] = []
+                agent_artifacts[aid].append(a)
+        except Exception:
+            pass  # Graceful degradation
 
     # Determine which steps completed
     # Based on STATUS_ROUTE: planned -> screenwriter -> author -> polisher -> editor -> publish
@@ -215,15 +252,31 @@ def _build_steps_timeline(
             "label": step_config["label"],
             "description": step_config["description"],
             "status": step_status,
+            "agent_id": key,
         }
 
         # Add error message for failed step
         if is_failed and error_message:
             step["error_message"] = error_message
+        elif key in task_errors:
+            step["error_message"] = task_errors[key]
 
-        # Add artifacts for completed steps in stub mode
+        # Add artifacts for completed steps
         if is_completed and llm_mode == "stub":
             step["artifacts"] = _generate_stub_artifacts(key, chapter_number)
+        elif key in agent_artifacts and agent_artifacts[key]:
+            # Build artifacts summary from DB
+            artifacts_list = agent_artifacts[key]
+            summary_parts = []
+            for a in artifacts_list:
+                atype = a.get("artifact_type", "")
+                aid = a.get("agent_id", "")
+                summary_parts.append(f"{atype} ({aid})")
+            step["artifacts"] = {
+                "summary": ", ".join(summary_parts) if summary_parts else "Agent 产物",
+                "artifact_count": len(artifacts_list),
+                "artifact_types": [a.get("artifact_type", "") for a in artifacts_list],
+            }
         else:
             step["artifacts"] = None
 
