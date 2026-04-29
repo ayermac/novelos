@@ -240,4 +240,8 @@ frontend/design-preview.html
 
 # Local config and logs
 config/acceptance.yaml
+config/local.yaml
 stderr.txt
+
+# GSD planning workflow
+.planning/
