@@ -49,6 +49,9 @@
 | `novel-factory-v5.1.6-langgraph-activation-spec.md` | v5.1.6 LangGraph 编排激活 + 真实 LLM 首次生成 + 安全收口 | 产品规划、开发 Agent、质量验收 |
 | `novel-factory-v5.2-product-completion-real-llm-closure-spec.md` | v5.2 产品能力补齐、真实 LLM 闭环、LangGraph 持久化 | 产品规划、开发 Agent、质量验收 |
 | `novel-factory-v5.3-authoring-system-reset-plan.md` | v5.3 作者系统 Reset 规划：项目创世、可信生成链路、工作流透明化 | 产品规划、开发 Agent、质量验收 |
+| `novel-factory-v5.3.1-project-level-author-workspace-spec.md` | v5.3.1 项目级作者工作台：项目资料模块、章节工作区、主路径收口 | 开发 Agent、质量验收 |
+| `novel-factory-v5.3.2-project-genesis-memory-loop-spec.md` | v5.3.2 项目创世与创作记忆循环：自动生成项目骨架、章节后自动维护资料与事实 | 开发 Agent、质量验收 |
+| `novel-factory-api-contract-guidelines.md` | API 设计规范：Resource API / Action API 边界、POST body-style、兼容迁移策略 | 开发 Agent、代码评审、API 验收 |
 
 ## v5.1.1 本地启动与验收
 
@@ -89,7 +92,7 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1471/1471 passed
+- **当前测试基线**: 1564/1564 passed
 - **新增测试**:
   - `test_v51_api_e2e_smoke.py`: 17 个端到端 smoke 测试
   - `test_v51_frontend_quality.py`: 8 个前端质量检查
@@ -97,6 +100,11 @@ npm run dev
   - `test_v51_p2_fixes.py`: 扩展测试（包括 Style 优雅降级、Acceptance partial 状态）
   - `test_v516_frontend_closure.py`: 9 个前端收口测试（导航分组、空状态、Acceptance 路由移除）
   - `test_v516_langgraph_activation.py`: 12 个 LangGraph 激活测试（图编译、路由等价、published 短路、配置验证、安全）
+  - `test_v530_trusted_generation_chain.py`: 29 个可信生成链路测试
+  - `test_v531_project_workspace.py`: 项目级工作台测试
+  - `test_v532_project_genesis.py`: 项目创世测试
+  - `test_v532_memory_loop.py`: 记忆循环测试
+  - `test_v532_fact_ledger.py`: 事实账本测试
 
 ### v5.1.1 WebUI 产品化改进
 
@@ -196,7 +204,20 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.3.0 Trusted Generation Chain，测试基线 1471/1471**。
+当前开发基线是 **v5.3.x**，测试基线 **1564/1564 passed**。
+
+**v5.3 已实现能力**（部分，进行中）：
+
+- v5.3.0 可信生成链路：Context Readiness Gate、Planner 必经路由、字数硬质量门、真实模式人工发布闸门。
+- v5.3.1 项目级作者工作台（部分）：项目模块导航、世界观/角色/势力/大纲/伏笔/章节指令 CRUD、项目上下文状态、章节重置/删除。
+- v5.3.2 项目创世与记忆循环（部分）：创世生成/批准/拒绝、记忆更新批次、事实账本 CRUD 与事件。
+
+**v5.3 未收口项**：
+
+- 完整工作流可观测性（每步 Agent 输入/输出、Token、耗时、错误详情）。
+- 连续性门禁与完整事实账本跨章强制执行。
+- 章节工作流中的 Memory Curator 节点。
+- v5.3 命令的完整 CLI 对齐。
 
 **v5.2 核心变更:**
 - LangGraph SqliteSaver checkpoint 持久化
@@ -212,6 +233,7 @@ npm run dev
 
 **v5.3 规划方向:**
 - Project Genesis：从一句创意生成项目圣经，用户批准后才进入 active。
+- Project Memory Loop：章节生成后自动提出世界观、角色、大纲、势力、伏笔、章节指令和事实账本更新。
 - Context Readiness Gate：项目骨架不完整时禁止章节生成。
 - Planner 必经：无章节指令时先规划，再进入 Screenwriter。
 - 真实质量门：字数、指令覆盖、上下文完整性、风格和连续性进入硬审核。

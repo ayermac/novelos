@@ -4,7 +4,7 @@ AI-powered novel production workbench for long-form fiction projects.
 
 Novelos combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.2.0**, with **1425/1425 pytest passing**, frontend typecheck passing, and frontend production build passing.
+Current baseline: **v5.3.x**, with **1564/1564 pytest passing**, frontend typecheck passing, and frontend production build passing.
 
 ## What It Does
 
@@ -260,10 +260,23 @@ npm run typecheck
 npm run build
 ```
 
+**v5.3 已实现能力**（部分，进行中）：
+
+- v5.3.0 可信生成链路：上下文完整性门禁、Planner 必经路由、字数硬质量门、真实模式人工发布闸门。
+- v5.3.1 项目级作者工作台（部分）：项目模块导航、世界观/角色/势力/大纲/伏笔/章节指令 CRUD、项目上下文状态、章节重置/删除。
+- v5.3.2 项目创世与记忆循环（部分）：创世生成/批准/拒绝、记忆更新批次、事实账本 CRUD 与事件。
+
+**v5.3 未收口项**：
+
+- 完整工作流可观测性（每步 Agent 输入/输出、Token、耗时、错误详情）。
+- 连续性门禁与完整事实账本跨章强制执行。
+- 章节工作流中的 Memory Curator 节点。
+- v5.3 命令的完整 CLI 对齐。
+
 Current verified baseline:
 
 ```text
-pytest: 1425/1425 passed
+pytest: 1564/1564 passed
 frontend typecheck: passed
 frontend build: passed
 ```
