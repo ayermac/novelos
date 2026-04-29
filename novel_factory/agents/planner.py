@@ -102,8 +102,11 @@ class PlannerAgent(BaseAgent):
 
         self.validate_output(output.model_dump())
 
-        # Save instruction to DB
+        # Save instruction to DB, preserving word_target if one already exists
         brief = output.chapter_brief
+        existing = self.repo.get_instruction(project_id, chapter_number)
+        word_target = existing.get("word_target") if existing else None
+
         self.repo.create_instruction(
             project_id=project_id,
             chapter_number=chapter_number,
@@ -112,6 +115,7 @@ class PlannerAgent(BaseAgent):
             plots_to_plant=json.dumps(brief.plots_to_plant, ensure_ascii=False),
             plots_to_resolve=json.dumps(brief.plots_to_resolve, ensure_ascii=False),
             ending_hook=brief.ending_hook,
+            word_target=word_target,
         )
 
         # Update chapter status

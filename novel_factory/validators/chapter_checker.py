@@ -37,6 +37,20 @@ def count_words(text: str | None) -> int:
     return len(text)
 
 
+def normalize_declared_word_count(output: dict) -> dict:
+    """Return output with word_count recomputed from content.
+
+    Real LLMs often return a guessed ``word_count`` that is far from the
+    actual generated text length. The system should treat the text as the
+    source of truth and keep the mismatch validator for external/raw payloads.
+    """
+    normalized = dict(output)
+    content = normalized.get("content")
+    if content is not None:
+        normalized["word_count"] = count_words(content)
+    return normalized
+
+
 def check_word_count(
     content: str,
     min_words: int = DEFAULT_MIN_WORDS,

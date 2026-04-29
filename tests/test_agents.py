@@ -183,6 +183,93 @@ class TestAuthorAgent:
         chapter = seeded_repo.get_chapter("test_proj", 1)
         assert chapter["content"] is not None
 
+    def test_author_recomputes_llm_declared_word_count(self, seeded_repo):
+        """LLM word_count guesses should not block otherwise valid content."""
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.validators.chapter_checker import count_words
+
+        base_content = "这是一段测试正文内容，用于验证 Author Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 44
+
+        stub = StubLLMProvider([{
+            "title": "第一章 测试",
+            "content": long_content,
+            "word_count": 3000,
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        state: FactoryState = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        }
+
+        result = agent.run(state)
+
+        assert "word_count 不匹配" not in result.get("error", "")
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["word_count"] == count_words(long_content)
+
+    def test_author_real_mode_expands_short_valid_draft_once(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        short_content = "短正文" * 200  # 600 chars: valid payload, too short for gate.
+        long_content = "扩写后的正文内容" * 300  # 2400 chars: passes 2500 * 85%.
+
+        stub = StubLLMProvider([
+            {
+                "title": "第一章 测试",
+                "content": short_content,
+                "word_count": 3000,
+                "implemented_events": ["事件1"],
+                "used_plot_refs": ["P001"],
+            },
+            {
+                "title": "第一章 测试",
+                "content": long_content,
+                "word_count": 3000,
+                "implemented_events": ["事件1"],
+                "used_plot_refs": ["P001"],
+            },
+        ])
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        state: FactoryState = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        }
+
+        result = agent.run(state)
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        assert stub._call_count == 2
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["content"] == long_content
+
 
 class TestPolisherAgent:
     def test_polisher_polishes_content(self, seeded_repo):

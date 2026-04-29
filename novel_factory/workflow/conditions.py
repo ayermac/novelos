@@ -64,13 +64,8 @@ def route_by_review_result(state: FactoryState) -> str:
     passed = gate.get("pass", False)
 
     if passed:
-        # v5.3.0: Check llm_mode for auto-publish decision
-        llm_mode = state.get("llm_mode", "stub")
-        if llm_mode == "real":
-            # Real mode: do NOT auto-publish, stop at reviewed status
-            return "awaiting_publish"
-        # Stub mode: auto-publish is allowed
-        return "publish"
+        # v5.3.2: Route to memory_curator for fact extraction after review passes
+        return "memory_curator"
 
     retry_count = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 3)
@@ -86,6 +81,21 @@ def route_after_agent(state: FactoryState) -> str:
     if state.get("requires_human") or state.get("error"):
         return "human_review"
     return "next"
+
+
+def route_after_memory_curator(state: FactoryState) -> str:
+    """Route after memory curator: publish (stub) or awaiting_publish (real).
+
+    v5.3.2 closure: In real mode, memory curator failure blocks publish.
+    """
+    # If memory curator failed in real mode, route to human_review
+    if state.get("requires_human") or state.get("error"):
+        return "human_review"
+
+    llm_mode = state.get("llm_mode", "stub")
+    if llm_mode == "real":
+        return "awaiting_publish"
+    return "publish"
 
 
 def route_by_revision_type(state: FactoryState) -> str:

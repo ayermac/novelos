@@ -18,6 +18,7 @@ from ..agents.screenwriter import ScreenwriterAgent
 from ..agents.author import AuthorAgent
 from ..agents.polisher import PolisherAgent
 from ..agents.editor import EditorAgent
+from ..agents.memory_curator import MemoryCuratorAgent
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,7 @@ def create_node_runners(
         "author": lambda s: _run_agent_node("author", AuthorAgent, s),
         "polisher": lambda s: _run_agent_node("polisher", PolisherAgent, s),
         "editor": lambda s: _run_agent_node("editor", EditorAgent, s),
+        "memory_curator": lambda s: _run_agent_node("memory_curator", MemoryCuratorAgent, s),
     }
 
 
@@ -318,6 +320,34 @@ def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
+    return result
+
+
+def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
+    """Run the Memory Curator agent to extract story facts from reviewed chapter.
+
+    v5.3.2 closure: In real mode, failure is blocking (requires_human=True).
+    In stub mode, failure is non-blocking (log and continue).
+    """
+    _update_run_node(state, repo, "memory_curator")
+    agent = MemoryCuratorAgent(repo, llm)
+    result = agent.run(state)
+    # Accumulate token usage
+    token_updates = _accumulate_tokens(state, llm)
+    if token_updates:
+        result.update(token_updates)
+    if "error" in result:
+        llm_mode = state.get("llm_mode", "stub")
+        if llm_mode == "real":
+            # Real mode: memory extraction failure blocks publish
+            logger.error("MemoryCurator failed (real mode): %s", result["error"])
+            _finalize_run(state, repo, "failed", result["error"])
+            result["requires_human"] = True
+        else:
+            # Stub mode: non-blocking, log and continue
+            logger.warning("MemoryCurator failed (stub mode): %s", result["error"])
+            result.pop("error", None)
+            result["requires_human"] = False
     return result
 
 

@@ -20,6 +20,7 @@ from ..llm.provider import LLMProvider
 from ..models.state import FactoryState
 from .conditions import (
     route_after_agent,
+    route_after_memory_curator,
     route_by_chapter_status,
     route_by_revision_type,
     route_by_review_result,
@@ -76,6 +77,7 @@ def build_graph(
         graph.add_node("author", runners["author"])
         graph.add_node("polisher", runners["polisher"])
         graph.add_node("editor", runners["editor"])
+        graph.add_node("memory_curator", runners["memory_curator"])
         graph.add_node("publisher", lambda s: nodes.publisher_node(s, repo))
         graph.add_node("awaiting_publish", lambda s: nodes.awaiting_publish_node(s, repo))  # v5.3.0
         graph.add_node("revision_router", lambda s: nodes.revision_router_node(s))
@@ -110,6 +112,10 @@ def build_graph(
         graph.add_node(
             "editor",
             lambda s: nodes.editor_node(s, repo, llm),
+        )
+        graph.add_node(
+            "memory_curator",
+            lambda s: nodes.memory_curator_node(s, repo, llm),
         )
         graph.add_node(
             "publisher",
@@ -174,16 +180,25 @@ def build_graph(
         {"next": "editor", "human_review": "human_review"},
     )
 
-    # After editor: pass → publisher, fail → revise or human
-    # v5.3.0: Real mode → awaiting_publish (no auto-publish)
+    # After editor: pass → memory_curator, fail → revise or human
+    # v5.3.2: Memory curator extracts facts before publish decision
     graph.add_conditional_edges(
         "editor",
         route_by_review_result,
         {
-            "publish": "publisher",
-            "awaiting_publish": "awaiting_publish",  # v5.3.0: Real mode stops here
+            "memory_curator": "memory_curator",  # v5.3.2: fact extraction
             "revise": "revision_router",
             "human_review": "human_review",
+        },
+    )
+
+    # After memory_curator: stub → publish, real → awaiting_publish
+    graph.add_conditional_edges(
+        "memory_curator",
+        route_after_memory_curator,
+        {
+            "publish": "publisher",
+            "awaiting_publish": "awaiting_publish",
         },
     )
 

@@ -8,7 +8,12 @@ from typing import Any
 
 from ..models.schemas import AuthorOutput
 from ..models.state import ChapterStatus, FactoryState
-from ..validators.chapter_checker import validate_chapter_output, check_word_count_quality_gate, derive_word_target
+from ..validators.chapter_checker import (
+    validate_chapter_output,
+    check_word_count_quality_gate,
+    derive_word_target,
+    normalize_declared_word_count,
+)
 from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_critical_violation
 from ..validators.plot_verifier import check_plot_coverage
 from .base import BaseAgent
@@ -119,12 +124,18 @@ class AuthorAgent(BaseAgent):
         ]
 
         raw = self.llm.invoke_json(messages, schema=AuthorOutput)
-        output = AuthorOutput(**raw)
+        output = AuthorOutput(**normalize_declared_word_count(raw))
 
         self.validate_output(output.model_dump())
 
         # v5.3.0: Word count quality gate
         word_gate_passed, word_gate_msg = self._check_word_count_gate(state, output.content)
+        if not word_gate_passed and state.get("llm_mode") == "real":
+            expanded = self._try_expand_short_output(state, output, word_gate_msg)
+            if expanded is not None:
+                output = expanded
+                word_gate_passed, word_gate_msg = self._check_word_count_gate(state, output.content)
+
         if not word_gate_passed:
             logger.warning("Author: word count quality gate failed: %s", word_gate_msg)
             # Do not advance status, return error for retry
@@ -199,6 +210,51 @@ class AuthorAgent(BaseAgent):
             )
         if dp_result.violations:
             raise ValueError(f"Author 输出包含死刑红线词汇: {', '.join(dp_result.violations)}")
+
+    def _try_expand_short_output(
+        self,
+        state: FactoryState,
+        output: AuthorOutput,
+        word_gate_msg: str,
+    ) -> AuthorOutput | None:
+        """Ask the LLM once to expand a valid-but-short draft.
+
+        This only runs in real mode. Stub mode stays deterministic for tests
+        and demos, while real model output gets one chance to satisfy the hard
+        word-count gate before the chapter escalates to human review.
+        """
+        instruction = self._get_instruction(state)
+        project = self.repo.get_project(state["project_id"])
+        word_target = derive_word_target(instruction, project)
+        minimum_required = int(word_target * 0.85)
+
+        messages = [
+            {"role": "system", "content": AUTHOR_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"第{state['chapter_number']}章正文未达到字数硬闸门：{word_gate_msg}。\n"
+                    f"请在不改变已实现关键事件、伏笔和事实的前提下扩写正文，"
+                    f"至少达到 {minimum_required} 字符，目标约 {word_target} 字符。\n"
+                    "必须返回完整 JSON，字段仍为 title/content/word_count/"
+                    "implemented_events/used_plot_refs。word_count 可填写估算值，"
+                    "系统会以 content 实际长度为准。\n\n"
+                    f"【当前标题】\n{output.title}\n\n"
+                    f"【当前正文】\n{output.content}\n\n"
+                    f"【已实现事件】\n{json.dumps(output.implemented_events, ensure_ascii=False)}\n"
+                    f"【已使用伏笔】\n{json.dumps(output.used_plot_refs, ensure_ascii=False)}"
+                ),
+            },
+        ]
+
+        try:
+            raw = self.llm.invoke_json(messages, schema=AuthorOutput)
+            expanded = AuthorOutput(**normalize_declared_word_count(raw))
+            self.validate_output(expanded.model_dump())
+            return expanded
+        except Exception as e:
+            logger.warning("Author: expand-short-output retry failed: %s", e)
+            return None
 
     def _check_word_count_gate(self, state: FactoryState, content: str) -> tuple[bool, str]:
         """v5.3.0: Check word count quality gate.
