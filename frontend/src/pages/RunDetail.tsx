@@ -67,6 +67,8 @@ export default function RunDetail() {
 
   const isStub = data.llm_mode === 'stub'
   const workspaceHref = `/projects/${data.project_id}?chapter=${data.chapter_number}`
+  const workflowHref = `/projects/${data.project_id}?module=chapters&chapter=${data.chapter_number}&view=workflow`
+  const hasRunError = Boolean(data.error_message)
 
   return (
     <div>
@@ -76,6 +78,17 @@ export default function RunDetail() {
           <strong>演示模式</strong>
           <div style={{ marginTop: '4px', fontSize: '14px' }}>
             当前为演示模式，内容由本地 Stub 模板生成，不代表真实创作质量。
+          </div>
+        </div>
+      )}
+      {hasRunError && (
+        <div className="alert alert-error" style={{ marginBottom: '16px' }}>
+          <strong>运行失败原因</strong>
+          <div style={{ marginTop: '6px', fontSize: '14px', whiteSpace: 'pre-wrap' }}>
+            {data.error_message}
+          </div>
+          <div style={{ marginTop: '12px' }}>
+            <Link to={workflowHref} className="btn btn-secondary">返回本章工作流</Link>
           </div>
         </div>
       )}

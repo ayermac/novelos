@@ -329,10 +329,12 @@ class EditorAgent(BaseAgent):
                         )
                         return {"error": "Editor: save_chapter_state failed", "chapter_status": ChapterStatus.POLISHED.value}
 
-                # Save artifact
+                # Save artifact (bind to workflow run for isolation)
+                workflow_run_id = state.get("workflow_run_id")
                 self.repo.save_artifact(
                     project_id, chapter_number, "editor", "review",
                     content_json=output.model_dump(),
+                    workflow_run_id=workflow_run_id,
                 )
             except Exception as e:
                 self._compensate_status(
@@ -364,10 +366,12 @@ class EditorAgent(BaseAgent):
                         {"reason": f"Chapter {chapter_number} reached max retries ({retry_count})"},
                         priority="urgent", chapter_number=chapter_number,
                     )
-                    # Save artifact
+                    # Save artifact (bind to workflow run for isolation)
+                    workflow_run_id = state.get("workflow_run_id")
                     self.repo.save_artifact(
                         project_id, chapter_number, "editor", "review",
                         content_json=output.model_dump(),
+                        workflow_run_id=workflow_run_id,
                     )
                 except Exception as e:
                     self._compensate_status(
@@ -379,6 +383,7 @@ class EditorAgent(BaseAgent):
                 new_status = ChapterStatus.BLOCKING.value
                 new_stage = "blocking"
             else:
+                retry_agent = output.revision_target or "author"
                 ok = self.repo.update_chapter_status(
                     project_id, chapter_number, ChapterStatus.REVISION.value,
                     expected_status=ChapterStatus.POLISHED.value,
@@ -388,17 +393,26 @@ class EditorAgent(BaseAgent):
                     return {"error": "Editor: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
 
                 try:
+                    revise_task_id = self.repo.start_task(
+                        project_id,
+                        chapter_number,
+                        "revise",
+                        retry_agent,
+                    )
+                    self.repo.complete_task(revise_task_id, success=True)
                     # Send message to responsible agent if not author
-                    if output.revision_target and output.revision_target != "author":
+                    if retry_agent != "author":
                         self.repo.send_message(
-                            project_id, "editor", output.revision_target, "FLAG_ISSUE",
+                            project_id, "editor", retry_agent, "FLAG_ISSUE",
                             {"issues": output.issues[:3], "chapter": chapter_number},
                             chapter_number=chapter_number,
                         )
-                    # Save artifact
+                    # Save artifact (bind to workflow run for isolation)
+                    workflow_run_id = state.get("workflow_run_id")
                     self.repo.save_artifact(
                         project_id, chapter_number, "editor", "review",
                         content_json=output.model_dump(),
+                        workflow_run_id=workflow_run_id,
                     )
                 except Exception as e:
                     self._compensate_status(
@@ -409,10 +423,13 @@ class EditorAgent(BaseAgent):
 
                 new_status = ChapterStatus.REVISION.value
                 new_stage = "revision"
+                retry_count = retry_count + 1
 
         return {
             "chapter_status": new_status,
             "current_stage": new_stage,
+            "retry_count": retry_count if not output.pass_ else state.get("retry_count", 0),
+            "requires_human": new_status == ChapterStatus.BLOCKING.value,
             "quality_gate": {
                 "pass": output.pass_,
                 "score": output.score,

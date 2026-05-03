@@ -124,10 +124,12 @@ class PlannerAgent(BaseAgent):
             expected_status=ChapterStatus.PLANNED.value,
         )
 
-        # Save artifact
+        # Save artifact (bind to workflow run for isolation)
+        workflow_run_id = state.get("workflow_run_id")
         self.repo.save_artifact(
             project_id, chapter_number, "planner", "chapter_brief",
             content_json=output.model_dump(),
+            workflow_run_id=workflow_run_id,
         )
 
         return {

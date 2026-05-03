@@ -93,10 +93,12 @@ class ScreenwriterAgent(BaseAgent):
             beats_data = [b.model_dump() for b in output.scene_beats]
             self.repo.save_scene_beats(project_id, chapter_number, beats_data)
 
-            # Save artifact
+            # Save artifact (bind to workflow run for isolation)
+            workflow_run_id = state.get("workflow_run_id")
             self.repo.save_artifact(
                 project_id, chapter_number, "screenwriter", "scene_plan",
                 content_json=output.model_dump(),
+                workflow_run_id=workflow_run_id,
             )
         except Exception as e:
             self._compensate_status(

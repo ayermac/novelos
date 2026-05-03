@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import asyncio
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -129,6 +130,10 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
 
         # Get chapter info
         chapter = repo.get_chapter(run_data["project_id"], run_data["chapter_number"])
+        error_message = _resolve_run_error_message(repo, run_data, chapter)
+        if error_message and not run_data.get("error_message"):
+            run_data = dict(run_data)
+            run_data["error_message"] = error_message
 
         # Build steps timeline (with observability data from task_status and agent_artifacts)
         steps = _build_steps_timeline(run_data, chapter, llm_mode, repo=repo)
@@ -143,7 +148,7 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             "llm_mode": llm_mode,
             "started_at": run_data.get("started_at", ""),
             "completed_at": run_data.get("completed_at", ""),
-            "error_message": run_data.get("error_message"),
+            "error_message": error_message,
             "steps": steps,
             # v5.2: Token usage statistics
             "prompt_tokens": run_data.get("prompt_tokens", 0),
@@ -154,6 +159,48 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取运行详情失败: {str(e)}")
+
+
+def _resolve_run_error_message(repo, run_data: dict, chapter: dict | None) -> str | None:
+    """Resolve a user-facing error for historical blocked runs with empty errors."""
+    error_message = run_data.get("error_message")
+    if error_message:
+        return error_message
+
+    if run_data.get("status") != "blocked":
+        return None
+
+    chapter_status = chapter.get("status") if chapter else None
+    if chapter_status != "blocking":
+        return None
+
+    project_id = run_data.get("project_id", "")
+    chapter_number = run_data.get("chapter_number", 0)
+    started_at = run_data.get("started_at", "")
+
+    previous_error = None
+    try:
+        conn = repo._conn()
+        try:
+            row = conn.execute(
+                "SELECT error_message FROM workflow_runs "
+                "WHERE project_id=? AND chapter_number=? "
+                "AND error_message IS NOT NULL AND error_message != '' "
+                "AND started_at <= ? AND id != ? "
+                "ORDER BY started_at DESC LIMIT 1",
+                (project_id, chapter_number, started_at, run_data.get("id")),
+            ).fetchone()
+            if row:
+                previous_error = row["error_message"]
+        finally:
+            conn.close()
+    except Exception:
+        previous_error = None
+
+    message = "章节已处于阻塞状态，请先解除阻塞后再重新执行工作流。"
+    if previous_error:
+        message += f" 历史阻塞原因: {previous_error}"
+    return message
 
 
 def _build_steps_timeline(
@@ -201,10 +248,23 @@ def _build_steps_timeline(
             pass  # Graceful degradation
 
     # Fetch agent_artifacts for per-agent artifact summaries
+    # P1 fix: Prefer run-level isolation; fallback to chapter-level for legacy data
     agent_artifacts: dict[str, list[dict]] = {}
+    artifacts_source = "run"  # 'run' | 'chapter_fallback'
     if repo:
         try:
-            artifacts = repo.get_artifacts_for_chapter(project_id, chapter_number)
+            run_id = run_data.get("id")
+            if run_id:
+                artifacts = repo.get_artifacts_for_chapter(
+                    project_id, chapter_number, workflow_run_id=run_id
+                )
+                if not artifacts:
+                    # Fallback: legacy artifacts without run_id
+                    artifacts = repo.get_artifacts_for_chapter(project_id, chapter_number)
+                    artifacts_source = "chapter_fallback"
+            else:
+                artifacts = repo.get_artifacts_for_chapter(project_id, chapter_number)
+                artifacts_source = "chapter_fallback"
             for a in artifacts:
                 aid = a.get("agent_id", "")
                 if aid not in agent_artifacts:
@@ -226,6 +286,20 @@ def _build_steps_timeline(
         completed_agents.append("editor")
     if final_status == "published":
         completed_agents.append("publish")
+    for key in ("screenwriter", "author", "polisher", "editor", "publish"):
+        if key in agent_artifacts and key not in completed_agents:
+            completed_agents.append(key)
+
+    blocked_agent = current_node
+    if workflow_status == "blocked" and current_node == "human_review":
+        if "editor" in agent_artifacts or final_status in ("blocking", "revision"):
+            blocked_agent = "editor"
+        elif "polisher" in agent_artifacts:
+            blocked_agent = "polisher"
+        elif "author" in agent_artifacts:
+            blocked_agent = "author"
+        elif "screenwriter" in agent_artifacts:
+            blocked_agent = "screenwriter"
 
     # Build steps
     steps = []
@@ -234,7 +308,7 @@ def _build_steps_timeline(
         is_completed = key in completed_agents
         is_running = (current_node == key) and workflow_status == "running"
         is_failed = (current_node == key) and workflow_status == "failed"
-        is_blocked = (current_node == key) and workflow_status == "blocked"
+        is_blocked = (blocked_agent == key) and workflow_status == "blocked"
 
         if is_failed:
             step_status = "failed"
@@ -256,7 +330,7 @@ def _build_steps_timeline(
         }
 
         # Add error message for failed step
-        if is_failed and error_message:
+        if (is_failed or is_blocked) and error_message:
             step["error_message"] = error_message
         elif key in task_errors:
             step["error_message"] = task_errors[key]
@@ -276,6 +350,8 @@ def _build_steps_timeline(
                 "summary": ", ".join(summary_parts) if summary_parts else "Agent 产物",
                 "artifact_count": len(artifacts_list),
                 "artifact_types": [a.get("artifact_type", "") for a in artifacts_list],
+                # P1: indicate if artifacts came from legacy fallback (not run-isolated)
+                "is_legacy_fallback": artifacts_source == "chapter_fallback",
             }
         else:
             step["artifacts"] = None
@@ -309,15 +385,25 @@ async def run_chapter_stream(
         settings = get_settings(request)
         llm_mode = get_llm_mode(request)
 
+        def next_stream_event(iterator):
+            try:
+                return False, next(iterator)
+            except StopIteration:
+                return True, None
+
         async def event_generator():
             """Generate SSE events from runner stream."""
-            for event in run_with_graph_stream(
+            iterator = run_with_graph_stream(
                 project_id=project_id,
                 chapter_number=chapter,
                 settings=settings,
                 repo=repo,
                 llm_mode=llm_mode,
-            ):
+            )
+            while True:
+                done, event = await asyncio.to_thread(next_stream_event, iterator)
+                if done:
+                    break
                 yield f"data: {json.dumps(event, ensure_ascii=False)}\n\n"
 
         return StreamingResponse(

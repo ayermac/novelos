@@ -198,7 +198,24 @@ class WorkflowRepositoryMixin:
             conn.close()
 
     def get_chapter_retry_count(self, project_id: str, chapter_number: int) -> int:
-        """Get the number of revision tasks for a chapter (circuit breaker)."""
+        """Get revision attempts since the last manual reset for a chapter."""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM task_status "
+                "WHERE project_id=? AND chapter_number=? AND task_type='revise' "
+                "AND id > COALESCE(( "
+                "  SELECT MAX(id) FROM task_status "
+                "  WHERE project_id=? AND chapter_number=? AND task_type='reset' "
+                "), 0)",
+                (project_id, chapter_number, project_id, chapter_number),
+            ).fetchone()
+            return row["cnt"] if row else 0
+        finally:
+            conn.close()
+
+    def get_chapter_total_retry_count(self, project_id: str, chapter_number: int) -> int:
+        """Get all historical revision attempts for a chapter."""
         conn = self._conn()
         try:
             row = conn.execute(

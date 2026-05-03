@@ -139,6 +139,9 @@ class AuthorAgent(BaseAgent):
         if not word_gate_passed:
             logger.warning("Author: word count quality gate failed: %s", word_gate_msg)
             # Do not advance status, return error for retry
+            # P1: Record actual word count and target for traceability
+            from ..validators.chapter_checker import count_words
+            actual_wc = count_words(output.content)
             return {
                 "error": f"字数质量门未通过: {word_gate_msg}",
                 "chapter_status": state.get("chapter_status"),
@@ -147,6 +150,10 @@ class AuthorAgent(BaseAgent):
                     "revision_target": "author",
                     "word_count_fail": True,
                     "message": word_gate_msg,
+                    "actual_word_count": actual_wc,
+                    "word_target": word_target,
+                    "agent": "author",
+                    "workflow_run_id": state.get("workflow_run_id"),
                 },
             }
 
@@ -179,10 +186,12 @@ class AuthorAgent(BaseAgent):
                 created_by="author" if not is_revision else "revision",
             )
 
-            # Save artifact
+            # Save artifact (bind to workflow run for isolation)
+            workflow_run_id = state.get("workflow_run_id")
             self.repo.save_artifact(
                 project_id, chapter_number, "author", "draft",
                 content_json=output.model_dump(),
+                workflow_run_id=workflow_run_id,
             )
         except Exception as e:
             self._compensate_status(

@@ -98,6 +98,9 @@ class BaseAgent:
         except ValueError as e:
             logger.error("Agent '%s' validation failed: %s", self.agent_id, e)
             return {"error": str(e), "chapter_status": state.get("chapter_status")}
+        except Exception as e:
+            logger.exception("Agent '%s' execution failed", self.agent_id)
+            return {"error": str(e), "chapter_status": state.get("chapter_status")}
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         """Internal execution method. Subclasses must implement this."""

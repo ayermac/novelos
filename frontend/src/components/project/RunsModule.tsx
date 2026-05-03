@@ -102,7 +102,7 @@ export default function RunsModule({ projectId }: Props) {
                   </td>
                   <td style={{ padding: '8px 10px' }}>
                     <a
-                      href={`/run?run_id=${run.run_id || run.id}`}
+                      href={`/runs/${run.run_id || run.id}`}
                       style={{ color: 'var(--primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
                     >
                       详情 <ExternalLink size={12} />

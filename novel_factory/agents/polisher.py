@@ -168,6 +168,9 @@ class PolisherAgent(BaseAgent):
         )
         if not word_gate_passed:
             logger.warning("Polisher: word count quality gate failed: %s", word_gate_msg)
+            # P1: Record actual word count and target for traceability
+            from ..validators.chapter_checker import count_words
+            actual_wc = count_words(polished_content)
             return {
                 "error": f"字数质量门未通过: {word_gate_msg}",
                 "chapter_status": state.get("chapter_status"),
@@ -176,6 +179,10 @@ class PolisherAgent(BaseAgent):
                     "revision_target": "polisher",
                     "word_count_fail": True,
                     "message": word_gate_msg,
+                    "actual_word_count": actual_wc,
+                    "word_target": word_target,
+                    "agent": "polisher",
+                    "workflow_run_id": state.get("workflow_run_id"),
                 },
             }
 
@@ -272,10 +279,12 @@ class PolisherAgent(BaseAgent):
                 summary=output.summary,
             )
 
-            # Save artifact
+            # Save artifact (bind to workflow run for isolation)
+            workflow_run_id = state.get("workflow_run_id")
             self.repo.save_artifact(
                 project_id, chapter_number, "polisher", "polished_draft",
                 content_json=output.model_dump(),
+                workflow_run_id=workflow_run_id,
             )
         except Exception as e:
             self._compensate_status(

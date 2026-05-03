@@ -168,6 +168,19 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         required = {"prompt_tokens", "completion_tokens", "total_tokens", "duration_ms"}
         return required.issubset(set(columns))
 
+    if name == "022_v5_3_2_genesis_memory":
+        # 022 adds genesis_memories table
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='genesis_memories'"
+        )
+        return cursor.fetchone() is not None
+
+    if name == "023_v5_3_artifact_run_id":
+        # 023 adds workflow_run_id column to agent_artifacts
+        cursor = conn.execute("PRAGMA table_info(agent_artifacts)")
+        columns = [row[1] for row in cursor.fetchall()]
+        return "workflow_run_id" in columns
+
     return False
 
 
