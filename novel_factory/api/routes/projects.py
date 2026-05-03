@@ -258,15 +258,27 @@ async def reset_chapter(
                 f"章节状态为 '{current_status}'，仅 'blocking' 或 'revision' 状态可重置"
             )
 
-        # Reset the chapter
+        retry_count_before = repo.get_chapter_retry_count(project_id, chapter_number)
+
+        # Reset the chapter and mark a new retry window.
         reset = repo.reset_chapter(project_id, chapter_number)
         if not reset:
             return error_response("RESET_FAILED", "重置章节失败")
+
+        from ...workflow.checkpoint import delete_checkpoint_thread
+        checkpoint_cleared = delete_checkpoint_thread(
+            repo.db_path, project_id, chapter_number
+        )
+        retry_count_after = repo.get_chapter_retry_count(project_id, chapter_number)
 
         return envelope_response({
             "reset": True,
             "previous_status": current_status,
             "new_status": "planned",
+            "retry_count_before": retry_count_before,
+            "retry_count_after": retry_count_after,
+            "retries_cleared": max(0, retry_count_before - retry_count_after),
+            "checkpoint_cleared": checkpoint_cleared,
         })
 
     except Exception as e:

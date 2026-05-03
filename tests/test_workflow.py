@@ -60,6 +60,34 @@ class TestRouteByChapterStatus:
         }
         assert route_by_chapter_status(state) == "planner"
 
+    # P1: Safety gate tests — error/requires_human always routes to human_review
+    @pytest.mark.parametrize("status", ["planned", "scripted", "drafted", "polished", "reviewed", "revision"])
+    def test_requires_human_routes_to_human_review(self, status):
+        state = {"chapter_status": status, "requires_human": True}
+        assert route_by_chapter_status(state) == "human_review"
+
+    @pytest.mark.parametrize("status", ["planned", "scripted", "drafted", "polished", "reviewed", "revision"])
+    def test_error_routes_to_human_review(self, status):
+        state = {"chapter_status": status, "error": "some failure"}
+        assert route_by_chapter_status(state) == "human_review"
+
+    # P1: Stale checkpoint recovery — DB status overrides stale state
+    def test_drafted_with_stale_revision_gate_routes_to_polisher(self):
+        """If checkpoint says revision but DB says drafted, must go to polisher."""
+        state = {
+            "chapter_status": "drafted",
+            "quality_gate": {"revision_target": "author"},  # stale gate from old run
+        }
+        assert route_by_chapter_status(state) == "polisher"
+
+    def test_polished_with_stale_revision_gate_routes_to_editor(self):
+        """If checkpoint says revision but DB says polished, must go to editor."""
+        state = {
+            "chapter_status": "polished",
+            "quality_gate": {"revision_target": "planner"},  # stale gate from old run
+        }
+        assert route_by_chapter_status(state) == "editor"
+
 
 class TestRouteByReviewResult:
     def test_pass_goes_to_memory_curator_in_stub_mode(self):
@@ -102,6 +130,44 @@ class TestRouteByRevisionType:
     def test_default_routes_to_author(self):
         state = {"quality_gate": {}}
         assert route_by_revision_type(state) == "author"
+
+    # P1: Full stale-revision-gate matrix — when DB status != REVISION, ignore gate
+    @pytest.mark.parametrize(
+        "db_status,expected",
+        [
+            (ChapterStatus.IDEA.value, "planner"),
+            (ChapterStatus.OUTLINED.value, "planner"),
+            (ChapterStatus.PLANNED.value, "planner"),
+            (ChapterStatus.SCRIPTED.value, "author"),
+            (ChapterStatus.DRAFTED.value, "polisher"),
+            (ChapterStatus.POLISHED.value, "editor"),
+            (ChapterStatus.REVIEW.value, "editor"),
+            (ChapterStatus.REVIEWED.value, "publisher"),
+            (ChapterStatus.PUBLISHED.value, "archive"),
+            (ChapterStatus.BLOCKING.value, "human_review"),
+        ],
+    )
+    def test_stale_revision_gate_routes_by_db_status(self, db_status, expected):
+        """Stale revision gate must never override actual DB status."""
+        state = {
+            "chapter_status": db_status,
+            "quality_gate": {"revision_target": "author"},  # stale gate
+        }
+        assert route_by_revision_type(state) == expected
+
+    def test_stale_revision_gate_respects_drafted_status(self):
+        state = {
+            "chapter_status": ChapterStatus.DRAFTED.value,
+            "quality_gate": {"revision_target": "author"},
+        }
+        assert route_by_revision_type(state) == "polisher"
+
+    def test_stale_revision_gate_respects_polished_status(self):
+        state = {
+            "chapter_status": ChapterStatus.POLISHED.value,
+            "quality_gate": {"revision_target": "planner"},
+        }
+        assert route_by_revision_type(state) == "editor"
 
 
 class TestRouteAfterMemoryCurator:

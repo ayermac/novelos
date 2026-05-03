@@ -541,8 +541,22 @@ class ChapterRepositoryMixin:
                 "AND status IN ('blocking', 'revision')",
                 (project_id, chapter_number),
             )
+            reset = cursor.rowcount > 0
+            if reset:
+                conn.execute(
+                    "INSERT INTO task_status "
+                    "(project_id, chapter_number, task_type, agent_id, status, "
+                    "started_at, completed_at, error_message) "
+                    "VALUES (?, ?, 'reset', 'human', 'completed', "
+                    "datetime('now','+8 hours'), datetime('now','+8 hours'), ?)",
+                    (
+                        project_id,
+                        chapter_number,
+                        "人工重置章节：解除阻塞并清空本轮返修计数。",
+                    ),
+                )
             conn.commit()
-            return cursor.rowcount > 0
+            return reset
         finally:
             conn.close()
 

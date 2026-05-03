@@ -162,22 +162,22 @@ def build_graph(
     graph.add_conditional_edges(
         "planner",
         route_after_agent,
-        {"next": "screenwriter", "human_review": "human_review"},
+        {"next": "screenwriter", "human_review": "human_review", "revision_router": "revision_router"},
     )
     graph.add_conditional_edges(
         "screenwriter",
         route_after_agent,
-        {"next": "author", "human_review": "human_review"},
+        {"next": "author", "human_review": "human_review", "revision_router": "revision_router"},
     )
     graph.add_conditional_edges(
         "author",
         route_after_agent,
-        {"next": "polisher", "human_review": "human_review"},
+        {"next": "polisher", "human_review": "human_review", "revision_router": "revision_router"},
     )
     graph.add_conditional_edges(
         "polisher",
         route_after_agent,
-        {"next": "editor", "human_review": "human_review"},
+        {"next": "editor", "human_review": "human_review", "revision_router": "revision_router"},
     )
 
     # After editor: pass → memory_curator, fail → revise or human
@@ -210,6 +210,10 @@ def build_graph(
             "author": "author",
             "polisher": "polisher",
             "planner": "planner",
+            "editor": "editor",
+            "publisher": "publisher",
+            "archive": "archive",
+            "human_review": "human_review",
         },
     )
 

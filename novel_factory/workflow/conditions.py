@@ -60,6 +60,12 @@ def route_by_review_result(state: FactoryState) -> str:
 
     v5.3.0: In real mode, do NOT auto-publish. Route to 'awaiting_publish' instead.
     """
+    if state.get("requires_human") or state.get("error"):
+        return "human_review"
+
+    if state.get("chapter_status") == ChapterStatus.BLOCKING.value:
+        return "human_review"
+
     gate = state.get("quality_gate", {})
     passed = gate.get("pass", False)
 
@@ -80,6 +86,9 @@ def route_after_agent(state: FactoryState) -> str:
     """Continue to the next node unless the agent returned an error/human flag."""
     if state.get("requires_human") or state.get("error"):
         return "human_review"
+    gate = state.get("quality_gate", {})
+    if gate.get("word_count_fail") and gate.get("pass") is False:
+        return "revision_router"
     return "next"
 
 
@@ -100,6 +109,22 @@ def route_after_memory_curator(state: FactoryState) -> str:
 
 def route_by_revision_type(state: FactoryState) -> str:
     """Route revision to the appropriate agent based on revision_target."""
+    status = state.get("chapter_status", "")
+    if status and status != ChapterStatus.REVISION.value:
+        routing_by_status = {
+            ChapterStatus.IDEA.value: "planner",
+            ChapterStatus.OUTLINED.value: "planner",
+            ChapterStatus.PLANNED.value: "planner",
+            ChapterStatus.SCRIPTED.value: "author",
+            ChapterStatus.DRAFTED.value: "polisher",
+            ChapterStatus.POLISHED.value: "editor",
+            ChapterStatus.REVIEW.value: "editor",
+            ChapterStatus.REVIEWED.value: "publisher",
+            ChapterStatus.PUBLISHED.value: "archive",
+            ChapterStatus.BLOCKING.value: "human_review",
+        }
+        return routing_by_status.get(status, "human_review")
+
     gate = state.get("quality_gate", {})
     target = gate.get("revision_target", "author")
 

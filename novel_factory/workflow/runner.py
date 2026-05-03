@@ -21,6 +21,16 @@ from .checkpoint import get_sqlite_checkpointer, get_checkpoint_config, derive_c
 logger = logging.getLogger(__name__)
 
 
+def _mark_run_failed(repo: Repository, run_id: str | None, error: str) -> None:
+    """Best-effort workflow run failure finalization."""
+    if not run_id:
+        return
+    try:
+        repo.update_workflow_run(run_id, status="failed", error_message=error)
+    except Exception:
+        logger.warning("Failed to mark workflow run %s as failed", run_id, exc_info=True)
+
+
 def _build_llm_router(settings: Settings, llm_mode: str = "stub"):
     """Build LLMRouter from settings and llm_mode.
 
@@ -289,6 +299,7 @@ def run_with_graph(
             result_state = graph.invoke(state, config=config)
     except Exception as e:
         logger.exception("LangGraph execution failed")
+        _mark_run_failed(repo, state.get("workflow_run_id"), str(e))
         return {
             "run_id": state.get("workflow_run_id", ""),
             "chapter_status": current_status,
@@ -490,8 +501,10 @@ def run_with_graph_stream(
 
     except Exception as e:
         logger.exception("LangGraph streaming failed")
+        _mark_run_failed(repo, state.get("workflow_run_id"), str(e))
         yield {
             "type": "run_error",
+            "run_id": state.get("workflow_run_id", ""),
             "error": str(e),
             "chapter_status": state.get("chapter_status", current_status),
         }

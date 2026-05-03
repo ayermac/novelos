@@ -81,10 +81,41 @@ def get_checkpoint_config(project_id: str, chapter_number: int) -> dict:
         Config dict for use with graph.invoke() or graph.stream().
     """
     return {
+        "recursion_limit": 50,
         "configurable": {
             "thread_id": get_checkpoint_thread_id(project_id, chapter_number),
         }
     }
+
+
+def delete_checkpoint_thread(
+    repo_db_path: str | Path | None,
+    project_id: str,
+    chapter_number: int,
+) -> bool:
+    """Delete persisted LangGraph checkpoints for a chapter.
+
+    Manual chapter reset starts a new generation attempt. Keeping the old
+    checkpoint can resume mid-graph with stale state, so reset must clear the
+    thread while preserving workflow_runs/task_status history in the main DB.
+    """
+    checkpoint_db_path = derive_checkpoint_db_path(repo_db_path)
+    if checkpoint_db_path is None or not checkpoint_db_path.exists():
+        return False
+
+    thread_id = get_checkpoint_thread_id(project_id, chapter_number)
+    try:
+        with get_sqlite_checkpointer(db_path=checkpoint_db_path) as checkpointer:
+            checkpointer.delete_thread(thread_id)
+        return True
+    except Exception as e:
+        logger.warning(
+            "Failed to delete checkpoint thread %s from %s: %s",
+            thread_id,
+            checkpoint_db_path,
+            e,
+        )
+        return False
 
 
 def resume_from_checkpoint(

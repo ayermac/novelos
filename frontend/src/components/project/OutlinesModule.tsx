@@ -6,11 +6,10 @@ interface Outline {
   id: number
   project_id: string
   level: string
-  phase?: string
-  chapters?: string
-  summary?: string
-  key_events?: string
-  notes?: string
+  sequence?: number
+  title?: string
+  content?: string
+  chapters_range?: string
 }
 
 interface Props {
@@ -22,7 +21,7 @@ export default function OutlinesModule({ projectId }: Props) {
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
   const [editingItem, setEditingItem] = useState<Outline | null>(null)
-  const [form, setForm] = useState({ level: 'volume', phase: '', chapters: '', summary: '', key_events: '', notes: '' })
+  const [form, setForm] = useState({ level: 'volume', sequence: 1, title: '', chapters_range: '', content: '' })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -41,7 +40,7 @@ export default function OutlinesModule({ projectId }: Props) {
     if (res.ok) {
       setShowModal(false)
       setEditingItem(null)
-      setForm({ level: 'volume', phase: '', chapters: '', summary: '', key_events: '', notes: '' })
+      setForm({ level: 'volume', sequence: 1, title: '', chapters_range: '', content: '' })
       load()
     }
   }
@@ -55,15 +54,18 @@ export default function OutlinesModule({ projectId }: Props) {
   const openEdit = (item: Outline) => {
     setEditingItem(item)
     setForm({
-      level: item.level, phase: item.phase || '', chapters: item.chapters || '',
-      summary: item.summary || '', key_events: item.key_events || '', notes: item.notes || '',
+      level: item.level,
+      sequence: item.sequence || 1,
+      title: item.title || '',
+      chapters_range: item.chapters_range || '',
+      content: item.content || '',
     })
     setShowModal(true)
   }
 
   const openAdd = () => {
     setEditingItem(null)
-    setForm({ level: 'volume', phase: '', chapters: '', summary: '', key_events: '', notes: '' })
+    setForm({ level: 'volume', sequence: 1, title: '', chapters_range: '', content: '' })
     setShowModal(true)
   }
 
@@ -88,15 +90,14 @@ export default function OutlinesModule({ projectId }: Props) {
             <div key={o.id} className="data-card">
               <div className="data-card-header">
                 <span className="data-card-badge">{o.level === 'volume' ? '卷' : o.level === 'arc' ? '篇章' : '章节'}</span>
-                {o.chapters && <span className="data-card-range">第 {o.chapters} 章</span>}
+                {o.chapters_range && <span className="data-card-range">第 {o.chapters_range} 章</span>}
                 <div className="data-card-actions">
                   <button className="btn-icon" onClick={() => openEdit(o)}><Pencil size={14} /></button>
                   <button className="btn-icon btn-icon-danger" onClick={() => handleDelete(o.id)}><Trash2 size={14} /></button>
                 </div>
               </div>
-              {o.phase && <div className="data-card-title">{o.phase}</div>}
-              {o.summary && <div className="data-card-content">{o.summary}</div>}
-              {o.key_events && <div className="data-card-traits">关键事件: {o.key_events}</div>}
+              {o.title && <div className="data-card-title">{o.title}</div>}
+              {o.content && <div className="data-card-content">{o.content}</div>}
             </div>
           ))}
         </div>
@@ -114,20 +115,20 @@ export default function OutlinesModule({ projectId }: Props) {
               </select>
             </div>
             <div className="form-group">
-              <label>阶段名称</label>
-              <input type="text" value={form.phase} onChange={(e) => setForm({ ...form, phase: e.target.value })} placeholder="如：第一卷 起源" />
+              <label>标题</label>
+              <input type="text" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="如：第一卷 起源" />
+            </div>
+            <div className="form-group">
+              <label>顺序</label>
+              <input type="number" value={form.sequence} onChange={(e) => setForm({ ...form, sequence: Number(e.target.value) || 1 })} min={1} />
             </div>
             <div className="form-group">
               <label>章节范围</label>
-              <input type="text" value={form.chapters} onChange={(e) => setForm({ ...form, chapters: e.target.value })} placeholder="如：1-10" />
+              <input type="text" value={form.chapters_range} onChange={(e) => setForm({ ...form, chapters_range: e.target.value })} placeholder="如：1-10" />
             </div>
             <div className="form-group">
               <label>概要</label>
-              <textarea value={form.summary} onChange={(e) => setForm({ ...form, summary: e.target.value })} placeholder="本段落主要内容" rows={3} />
-            </div>
-            <div className="form-group">
-              <label>关键事件</label>
-              <textarea value={form.key_events} onChange={(e) => setForm({ ...form, key_events: e.target.value })} placeholder="重要事件节点" rows={2} />
+              <textarea value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} placeholder="本段落主要内容" rows={4} />
             </div>
             <div className="form-actions">
               <button className="btn btn-secondary" onClick={() => setShowModal(false)}>取消</button>

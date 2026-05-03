@@ -124,7 +124,7 @@ export default function ReviewModule({ projectId }: Props) {
                 </div>
               )}
               <div className="data-card-content">
-                章节生成过程中遇到问题，需要人工处理。可在章节工作区中查看错误详情并重置。
+                章节生成过程中遇到问题，需要人工处理。重置会解除阻塞、清空本轮返修计数，并允许重新执行工作流。
               </div>
               <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
                 <a
