@@ -86,6 +86,7 @@ def create_api_app(
         genesis_router,
         memory_updates_router,
         story_facts_router,
+        skills_router,
     )
 
     app.include_router(health_router, prefix="/api", tags=["health"])
@@ -109,6 +110,7 @@ def create_api_app(
     app.include_router(genesis_router, prefix="/api", tags=["genesis"])
     app.include_router(memory_updates_router, prefix="/api", tags=["memory-updates"])
     app.include_router(story_facts_router, prefix="/api", tags=["story-facts"])
+    app.include_router(skills_router, prefix="/api", tags=["skills"])
 
     # Exception handler - never exposes traceback
     @app.exception_handler(Exception)

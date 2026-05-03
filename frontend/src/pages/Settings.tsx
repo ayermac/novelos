@@ -4,6 +4,7 @@ import { tLlmMode } from '../lib/i18n'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
+import SkillVisibilityPanel from '../components/settings/SkillVisibilityPanel'
 
 interface LlmProfile {
   name: string
@@ -503,6 +504,29 @@ export default function Settings() {
             />
           )}
         </div>
+      </div>
+
+      {/* Skill Visibility */}
+      <div style={{
+        background: 'var(--paper-surface)',
+        borderRadius: 'var(--radius-lg)',
+        boxShadow: 'var(--shadow-flat)',
+        border: '1px solid rgba(30, 58, 95, 0.06)',
+        overflow: 'hidden',
+        marginBottom: 'var(--space-6)',
+      }}>
+        <div style={{
+          padding: 'var(--space-4) var(--space-5)',
+          borderBottom: '1px solid rgba(30, 58, 95, 0.04)',
+        }}>
+          <h3 style={{
+            fontFamily: 'var(--font-brand)',
+            fontSize: 'var(--text-md)',
+            fontWeight: 'var(--font-semibold)',
+            margin: 0,
+          }}>Skill 管理</h3>
+        </div>
+        <SkillVisibilityPanel />
       </div>
 
       {/* Agent Routes */}

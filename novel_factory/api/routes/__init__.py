@@ -21,6 +21,7 @@ from .chapter_readonly import router as readonly_router
 from .genesis import router as genesis_router
 from .memory_updates import router as memory_updates_router
 from .story_facts import router as story_facts_router
+from .skills import router as skills_router
 
 __all__ = [
     "health_router",
@@ -44,4 +45,5 @@ __all__ = [
     "genesis_router",
     "memory_updates_router",
     "story_facts_router",
+    "skills_router",
 ]
