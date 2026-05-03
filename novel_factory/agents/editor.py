@@ -258,7 +258,31 @@ class EditorAgent(BaseAgent):
                 except Exception as e:
                     logger.warning("Editor: failed to save quality report: %s", e)
 
-        # Save review AFTER final_gate decision
+        # v5.3.0: Word count quality gate (Editor threshold = 0.90)
+        # Apply BEFORE save_review so persisted review matches the gate decision
+        instruction = self._get_instruction(state)
+        project = self.repo.get_project(project_id)
+        word_target = derive_word_target(instruction, project)
+        word_gate_passed, word_gate_msg = check_word_count_quality_gate(
+            content, word_target, "editor"
+        )
+        word_gate_details = {}
+        if not word_gate_passed:
+            logger.warning("Editor: word count quality gate failed: %s", word_gate_msg)
+            # Force fail and set revision_target to polisher (word count issue)
+            output.pass_ = False
+            output.revision_target = "polisher"
+            output.issues = output.issues + [word_gate_msg]
+            word_gate_details = {
+                "word_count_fail": True,
+                "message": word_gate_msg,
+                "actual_word_count": count_words(content),
+                "word_target": word_target,
+                "agent": "editor",
+                "workflow_run_id": state.get("workflow_run_id"),
+            }
+
+        # Save review AFTER all gates have mutated output
         review_id = self.repo.save_review(
             project_id=project_id,
             chapter_id=chapter["id"],
@@ -289,21 +313,6 @@ class EditorAgent(BaseAgent):
         # Q5: Write learned patterns when rejecting
         if not output.pass_:
             self._save_learned_patterns(project_id, chapter_number, output)
-
-        # v5.3.0: Word count quality gate (Editor threshold = 0.90)
-        # Check word count BEFORE advancing status
-        instruction = self._get_instruction(state)
-        project = self.repo.get_project(project_id)
-        word_target = derive_word_target(instruction, project)
-        word_gate_passed, word_gate_msg = check_word_count_quality_gate(
-            content, word_target, "editor"
-        )
-        if not word_gate_passed:
-            logger.warning("Editor: word count quality gate failed: %s", word_gate_msg)
-            # Force fail and set revision_target to polisher (word count issue)
-            output.pass_ = False
-            output.revision_target = "polisher"
-            output.issues = output.issues + [word_gate_msg]
 
         # Advance chapter status FIRST to lock the transition; abort if stale
         if output.pass_:
@@ -434,6 +443,7 @@ class EditorAgent(BaseAgent):
                 "pass": output.pass_,
                 "score": output.score,
                 "revision_target": output.revision_target,
+                **word_gate_details,
             },
         }
 
