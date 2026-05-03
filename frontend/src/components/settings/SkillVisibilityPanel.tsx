@@ -48,6 +48,8 @@ interface TestAllResult {
   total: number
   passed: number
   failed: number
+  skipped: number
+  skipped_ids: string[]
   results: Record<string, TestSkillResult>
 }
 
@@ -66,11 +68,14 @@ export default function SkillVisibilityPanel() {
 
   const [testingAll, setTestingAll] = useState(false)
   const [testAllResult, setTestAllResult] = useState<TestAllResult | null>(null)
+  const [testAllError, setTestAllError] = useState('')
   const [testingSkill, setTestingSkill] = useState<string | null>(null)
   const [testSingleResult, setTestSingleResult] = useState<Record<string, TestSkillResult>>({})
 
   const [runSkillId, setRunSkillId] = useState('')
   const [runText, setRunText] = useState('')
+  const [runPayload, setRunPayload] = useState('')
+  const [runPayloadError, setRunPayloadError] = useState('')
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState<RunResult | null>(null)
 
@@ -117,6 +122,7 @@ export default function SkillVisibilityPanel() {
   const handleTestAll = async () => {
     setTestingAll(true)
     setTestAllResult(null)
+    setTestAllError('')
 
     const res = await post<TestAllResult>('/skills/test', { all: true })
     setTestingAll(false)
@@ -124,8 +130,8 @@ export default function SkillVisibilityPanel() {
     if (res.ok && res.data) {
       setTestAllResult(res.data)
     } else {
-      setTestAllResult({ total: 0, passed: 0, failed: 0, results: {} })
-      setError(res.error?.message || '测试全部 Skill 失败')
+      setTestAllResult({ total: 0, passed: 0, failed: 0, skipped: 0, skipped_ids: [], results: {} })
+      setTestAllError(res.error?.message || '测试全部 Package Skill 失败')
     }
   }
 
@@ -150,13 +156,38 @@ export default function SkillVisibilityPanel() {
 
   const handleRun = async () => {
     if (!runSkillId) return
+    setRunPayloadError('')
+
+    const hasText = runText.trim().length > 0
+    const hasPayload = runPayload.trim().length > 0
+    if (!hasText && !hasPayload) {
+      setRunResult({
+        skill_id: runSkillId,
+        result: { ok: false, error: '请输入文本或 payload' },
+      })
+      return
+    }
+
+    let customPayload: Record<string, unknown> | undefined
+    if (hasPayload) {
+      try {
+        customPayload = JSON.parse(runPayload) as Record<string, unknown>
+      } catch {
+        setRunPayloadError('JSON 格式错误，请检查输入')
+        return
+      }
+    }
+
     setRunning(true)
     setRunResult(null)
 
-    const res = await post<RunResult>('/skills/run', {
+    const reqBody: { skill_id: string; text?: string; payload?: Record<string, unknown> } = {
       skill_id: runSkillId,
-      text: runText || undefined,
-    })
+    }
+    if (hasText) reqBody.text = runText
+    if (customPayload) reqBody.payload = customPayload
+
+    const res = await post<RunResult>('/skills/run', reqBody)
 
     setRunning(false)
 
@@ -308,17 +339,19 @@ export default function SkillVisibilityPanel() {
         </h4>
         <div style={{ marginBottom: 'var(--space-3)' }}>
           <button onClick={handleTestAll} className="btn btn-secondary" disabled={testingAll}>
-            {testingAll ? '测试中...' : '测试全部 Skill'}
+            {testingAll ? '测试中...' : '测试全部 Package Skill'}
           </button>
           {testAllResult && (
             <span style={{ marginLeft: 12, fontSize: '13px', fontWeight: 500 }}>
               {testAllResult.failed === 0 ? (
                 <span style={{ color: 'var(--success)' }}>
                   {testAllResult.passed}/{testAllResult.total} 通过
+                  {testAllResult.skipped > 0 && `，${testAllResult.skipped} 个跳过`}
                 </span>
               ) : (
                 <span style={{ color: 'var(--danger)' }}>
                   {testAllResult.passed}/{testAllResult.total} 通过，{testAllResult.failed} 失败
+                  {testAllResult.skipped > 0 && `，${testAllResult.skipped} 个跳过`}
                 </span>
               )}
             </span>
@@ -343,6 +376,21 @@ export default function SkillVisibilityPanel() {
                   <strong>{sid}</strong>: {r.error || '未知错误'}
                 </div>
               ))}
+          </div>
+        )}
+
+        {testAllError && (
+          <div
+            style={{
+              marginBottom: 'var(--space-3)',
+              padding: '12px',
+              borderRadius: '6px',
+              background: '#fef2f2',
+              color: '#991b1b',
+              fontSize: '13px',
+            }}
+          >
+            {testAllError}
           </div>
         )}
 
@@ -376,14 +424,26 @@ export default function SkillVisibilityPanel() {
                     </span>
                   )}
                 </div>
-                <button
-                  onClick={() => handleTestSingle(skill.id)}
-                  className="btn btn-secondary"
-                  disabled={testingSkill === skill.id}
-                  style={{ fontSize: '12px', padding: '4px 10px' }}
-                >
-                  {testingSkill === skill.id ? '测试中...' : '测试'}
-                </button>
+                {skill.package ? (
+                  <button
+                    onClick={() => handleTestSingle(skill.id)}
+                    className="btn btn-secondary"
+                    disabled={testingSkill === skill.id}
+                    style={{ fontSize: '12px', padding: '4px 10px' }}
+                  >
+                    {testingSkill === skill.id ? '测试中...' : '测试'}
+                  </button>
+                ) : (
+                  <span
+                    style={{
+                      fontSize: '12px',
+                      color: 'var(--text-muted)',
+                      padding: '4px 10px',
+                    }}
+                  >
+                    无 fixtures
+                  </span>
+                )}
               </div>
             )
           })}
@@ -436,8 +496,23 @@ export default function SkillVisibilityPanel() {
               placeholder="输入要测试的文本..."
             />
           </div>
+          <div className="form-group">
+            <label>Custom Payload (JSON)</label>
+            <textarea
+              className="form-control"
+              rows={4}
+              value={runPayload}
+              onChange={(e) => { setRunPayload(e.target.value); setRunPayloadError('') }}
+              placeholder={'例如: {\n  "style_bible": {\n    "tone": "正式"\n  }\n}'}
+            />
+            {runPayloadError && (
+              <div style={{ color: 'var(--danger)', fontSize: '12px', marginTop: 4 }}>
+                {runPayloadError}
+              </div>
+            )}
+          </div>
         </div>
-        <button onClick={handleRun} className="btn btn-primary" disabled={running || !runSkillId}>
+        <button onClick={handleRun} className="btn btn-primary" disabled={running || !runSkillId || (!runText.trim() && !runPayload.trim())}>
           {running ? '运行中...' : '试运行'}
         </button>
 

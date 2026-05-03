@@ -191,6 +191,7 @@ async def test_skills(body: SkillTestRequest) -> EnvelopeResponse:
         if body.all:
             skills = registry.list_skills()
             package_skills = [s for s in skills if s.get("package")]
+            skipped = [s["id"] for s in skills if not s.get("package")]
 
             all_results: dict[str, dict] = {}
             total_passed = 0
@@ -209,6 +210,8 @@ async def test_skills(body: SkillTestRequest) -> EnvelopeResponse:
                 "total": len(package_skills),
                 "passed": total_passed,
                 "failed": total_failed,
+                "skipped": len(skipped),
+                "skipped_ids": skipped,
                 "results": all_results,
             })
 
@@ -242,10 +245,19 @@ async def run_skill(body: SkillRunRequest) -> EnvelopeResponse:
                 f"Skill 不存在: {body.skill_id}",
             )
 
+        has_text = body.text is not None and body.text.strip()
+        has_payload = body.payload is not None and bool(body.payload)
+
+        if not has_text and not has_payload:
+            return error_response(
+                "VALIDATION_ERROR",
+                "请提供有效的 text 或 payload",
+            )
+
         payload: dict[str, Any] = {}
-        if body.text is not None:
+        if has_text:
             payload["text"] = body.text
-        if body.payload is not None:
+        if has_payload:
             payload.update(body.payload)
 
         result = registry.run_skill(

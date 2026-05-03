@@ -158,6 +158,8 @@ class TestTestSkills:
         assert "total" in result
         assert "passed" in result
         assert "failed" in result
+        assert "skipped" in result
+        assert "skipped_ids" in result
         assert "results" in result
 
     def test_single_skill_returns_ok(self, test_client):
@@ -210,7 +212,56 @@ class TestRunSkill:
         })
         assert resp.status_code == 200
         data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_run_empty_string_text(self, test_client):
+        resp = test_client.post("/api/skills/run", json={
+            "skill_id": "humanizer-zh",
+            "text": "",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_run_whitespace_text(self, test_client):
+        resp = test_client.post("/api/skills/run", json={
+            "skill_id": "humanizer-zh",
+            "text": "   ",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_run_empty_payload(self, test_client):
+        resp = test_client.post("/api/skills/run", json={
+            "skill_id": "humanizer-zh",
+            "payload": {},
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_run_text_and_payload_merged(self, test_client):
+        resp = test_client.post("/api/skills/run", json={
+            "skill_id": "humanizer-zh",
+            "text": "合并测试",
+            "payload": {"extra": "value"},
+        })
+        assert resp.status_code == 200
+        data = resp.json()
         assert data["ok"] is True
         result = data["data"]
         assert result["skill_id"] == "humanizer-zh"
         assert "result" in result
+
+    def test_run_all_skips_non_package_skills(self, test_client):
+        resp = test_client.post("/api/skills/test", json={"all": True})
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert "skipped" in data
+        assert "skipped_ids" in data
+        assert "style-bible-checker" in data["skipped_ids"]
