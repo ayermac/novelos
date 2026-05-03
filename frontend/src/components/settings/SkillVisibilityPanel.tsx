@@ -33,6 +33,29 @@ interface MountMap {
   }
 }
 
+interface TestSkillResult {
+  ok: boolean
+  error?: string | null
+  data?: {
+    passed?: number
+    failed?: number
+    total?: number
+    cases?: unknown[]
+  }
+}
+
+interface TestAllResult {
+  total: number
+  passed: number
+  failed: number
+  results: Record<string, TestSkillResult>
+}
+
+interface RunResult {
+  skill_id: string
+  result: TestSkillResult
+}
+
 export default function SkillVisibilityPanel() {
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [mounts, setMounts] = useState<MountMap>({})
@@ -40,6 +63,16 @@ export default function SkillVisibilityPanel() {
   const [error, setError] = useState('')
   const [validating, setValidating] = useState(false)
   const [validateResult, setValidateResult] = useState<ValidateResult | null>(null)
+
+  const [testingAll, setTestingAll] = useState(false)
+  const [testAllResult, setTestAllResult] = useState<TestAllResult | null>(null)
+  const [testingSkill, setTestingSkill] = useState<string | null>(null)
+  const [testSingleResult, setTestSingleResult] = useState<Record<string, TestSkillResult>>({})
+
+  const [runSkillId, setRunSkillId] = useState('')
+  const [runText, setRunText] = useState('')
+  const [running, setRunning] = useState(false)
+  const [runResult, setRunResult] = useState<RunResult | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -78,6 +111,62 @@ export default function SkillVisibilityPanel() {
       setValidateResult(res.data)
     } else {
       setValidateResult({ ok: false, errors: [res.error?.message || '验证请求失败'], warnings: [] })
+    }
+  }
+
+  const handleTestAll = async () => {
+    setTestingAll(true)
+    setTestAllResult(null)
+
+    const res = await post<TestAllResult>('/skills/test', { all: true })
+    setTestingAll(false)
+
+    if (res.ok && res.data) {
+      setTestAllResult(res.data)
+    } else {
+      setTestAllResult({ total: 0, passed: 0, failed: 0, results: {} })
+      setError(res.error?.message || '测试全部 Skill 失败')
+    }
+  }
+
+  const handleTestSingle = async (skillId: string) => {
+    setTestingSkill(skillId)
+
+    const res = await post<{ skill_id: string; result: TestSkillResult }>('/skills/test', {
+      skill_id: skillId,
+    })
+
+    setTestingSkill(null)
+
+    if (res.ok && res.data) {
+      setTestSingleResult((prev) => ({ ...prev, [skillId]: res.data!.result }))
+    } else {
+      setTestSingleResult((prev) => ({
+        ...prev,
+        [skillId]: { ok: false, error: res.error?.message || '测试失败' },
+      }))
+    }
+  }
+
+  const handleRun = async () => {
+    if (!runSkillId) return
+    setRunning(true)
+    setRunResult(null)
+
+    const res = await post<RunResult>('/skills/run', {
+      skill_id: runSkillId,
+      text: runText || undefined,
+    })
+
+    setRunning(false)
+
+    if (res.ok && res.data) {
+      setRunResult(res.data)
+    } else {
+      setRunResult({
+        skill_id: runSkillId,
+        result: { ok: false, error: res.error?.message || '运行失败' },
+      })
     }
   }
 
@@ -196,6 +285,197 @@ export default function SkillVisibilityPanel() {
           </div>
         </div>
       )}
+
+      {/* Fixtures Test Bench */}
+      <div
+        style={{
+          marginBottom: 'var(--space-4)',
+          padding: 'var(--space-4)',
+          borderRadius: 'var(--radius-md)',
+          background: 'var(--bg-secondary)',
+          border: '1px solid rgba(30, 58, 95, 0.06)',
+        }}
+      >
+        <h4
+          style={{
+            fontSize: 'var(--text-sm)',
+            fontWeight: 'var(--font-semibold)',
+            margin: '0 0 var(--space-3) 0',
+            color: 'var(--text-primary)',
+          }}
+        >
+          Fixtures 测试
+        </h4>
+        <div style={{ marginBottom: 'var(--space-3)' }}>
+          <button onClick={handleTestAll} className="btn btn-secondary" disabled={testingAll}>
+            {testingAll ? '测试中...' : '测试全部 Skill'}
+          </button>
+          {testAllResult && (
+            <span style={{ marginLeft: 12, fontSize: '13px', fontWeight: 500 }}>
+              {testAllResult.failed === 0 ? (
+                <span style={{ color: 'var(--success)' }}>
+                  {testAllResult.passed}/{testAllResult.total} 通过
+                </span>
+              ) : (
+                <span style={{ color: 'var(--danger)' }}>
+                  {testAllResult.passed}/{testAllResult.total} 通过，{testAllResult.failed} 失败
+                </span>
+              )}
+            </span>
+          )}
+        </div>
+
+        {testAllResult && testAllResult.failed > 0 && (
+          <div
+            style={{
+              marginBottom: 'var(--space-3)',
+              padding: '12px',
+              borderRadius: '6px',
+              background: '#fef2f2',
+              color: '#991b1b',
+              fontSize: '13px',
+            }}
+          >
+            {Object.entries(testAllResult.results)
+              .filter(([, r]) => !r.ok)
+              .map(([sid, r]) => (
+                <div key={sid} style={{ marginBottom: 4 }}>
+                  <strong>{sid}</strong>: {r.error || '未知错误'}
+                </div>
+              ))}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+          {skills.map((skill) => {
+            const singleRes = testSingleResult[skill.id]
+            return (
+              <div
+                key={`test-${skill.id}`}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  padding: '8px 12px',
+                  borderRadius: '6px',
+                  background: 'var(--paper-surface)',
+                  border: '1px solid rgba(30, 58, 95, 0.06)',
+                }}
+              >
+                <div style={{ fontSize: '13px' }}>
+                  <code>{skill.id}</code>
+                  {singleRes && (
+                    <span style={{ marginLeft: 8, fontSize: '12px' }}>
+                      {singleRes.ok ? (
+                        <span style={{ color: 'var(--success)' }}>
+                          {singleRes.data?.passed ?? 0}/{singleRes.data?.total ?? 0} 通过
+                        </span>
+                      ) : (
+                        <span style={{ color: 'var(--danger)' }}>{singleRes.error || '失败'}</span>
+                      )}
+                    </span>
+                  )}
+                </div>
+                <button
+                  onClick={() => handleTestSingle(skill.id)}
+                  className="btn btn-secondary"
+                  disabled={testingSkill === skill.id}
+                  style={{ fontSize: '12px', padding: '4px 10px' }}
+                >
+                  {testingSkill === skill.id ? '测试中...' : '测试'}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Manual Run Bench */}
+      <div
+        style={{
+          marginBottom: 'var(--space-4)',
+          padding: 'var(--space-4)',
+          borderRadius: 'var(--radius-md)',
+          background: 'var(--bg-secondary)',
+          border: '1px solid rgba(30, 58, 95, 0.06)',
+        }}
+      >
+        <h4
+          style={{
+            fontSize: 'var(--text-sm)',
+            fontWeight: 'var(--font-semibold)',
+            margin: '0 0 var(--space-3) 0',
+            color: 'var(--text-primary)',
+          }}
+        >
+          手动试运行
+        </h4>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px', marginBottom: '12px' }}>
+          <div className="form-group">
+            <label>选择 Skill</label>
+            <select
+              className="form-control"
+              value={runSkillId}
+              onChange={(e) => setRunSkillId(e.target.value)}
+            >
+              <option value="">-- 请选择 --</option>
+              {skills.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.id}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="form-group">
+            <label>输入文本</label>
+            <textarea
+              className="form-control"
+              rows={4}
+              value={runText}
+              onChange={(e) => setRunText(e.target.value)}
+              placeholder="输入要测试的文本..."
+            />
+          </div>
+        </div>
+        <button onClick={handleRun} className="btn btn-primary" disabled={running || !runSkillId}>
+          {running ? '运行中...' : '试运行'}
+        </button>
+
+        {runResult && (
+          <div style={{ marginTop: 'var(--space-3)' }}>
+            <div
+              style={{
+                padding: '12px',
+                borderRadius: '6px',
+                background: runResult.result.ok ? '#dcfce7' : '#fef2f2',
+                color: runResult.result.ok ? '#166534' : '#991b1b',
+                fontSize: '13px',
+                marginBottom: 'var(--space-2)',
+              }}
+            >
+              <strong>{runResult.result.ok ? '运行成功' : '运行失败'}</strong>
+              {runResult.result.error && (
+                <div style={{ marginTop: 4 }}>{runResult.result.error}</div>
+              )}
+            </div>
+            {runResult.result.data && (
+              <pre
+                style={{
+                  background: '#1f2937',
+                  color: '#f9fafb',
+                  padding: '12px',
+                  borderRadius: '6px',
+                  fontSize: '12px',
+                  overflow: 'auto',
+                  maxHeight: 300,
+                }}
+              >
+                {JSON.stringify(runResult.result.data, null, 2)}
+              </pre>
+            )}
+          </div>
+        )}
+      </div>
 
       {/* Mount relationships */}
       {Object.keys(mounts).length > 0 && (

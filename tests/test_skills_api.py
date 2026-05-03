@@ -143,3 +143,74 @@ class TestValidateSkills:
         assert "warnings" in data
         assert isinstance(data["errors"], list)
         assert isinstance(data["warnings"], list)
+
+
+class TestTestSkills:
+    """Test POST /api/skills/test."""
+
+    def test_all_returns_envelope_and_results(self, test_client):
+        resp = test_client.post("/api/skills/test", json={"all": True})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert "data" in data
+        result = data["data"]
+        assert "total" in result
+        assert "passed" in result
+        assert "failed" in result
+        assert "results" in result
+
+    def test_single_skill_returns_ok(self, test_client):
+        resp = test_client.post("/api/skills/test", json={"skill_id": "humanizer-zh"})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert "data" in data
+        result = data["data"]
+        assert result["skill_id"] == "humanizer-zh"
+        assert "result" in result
+
+    def test_empty_request_returns_validation_error(self, test_client):
+        resp = test_client.post("/api/skills/test", json={})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+
+class TestRunSkill:
+    """Test POST /api/skills/run."""
+
+    def test_run_humanizer_zh_with_text(self, test_client):
+        resp = test_client.post("/api/skills/run", json={
+            "skill_id": "humanizer-zh",
+            "text": "这是一个测试文本。",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert "data" in data
+        result = data["data"]
+        assert result["skill_id"] == "humanizer-zh"
+        assert "result" in result
+
+    def test_run_unknown_skill(self, test_client):
+        resp = test_client.post("/api/skills/run", json={
+            "skill_id": "unknown-skill",
+            "text": "test",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "RESOURCE_NOT_FOUND"
+
+    def test_run_without_text_or_payload(self, test_client):
+        resp = test_client.post("/api/skills/run", json={
+            "skill_id": "humanizer-zh",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        result = data["data"]
+        assert result["skill_id"] == "humanizer-zh"
+        assert "result" in result

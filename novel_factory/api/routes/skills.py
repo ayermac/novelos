@@ -2,15 +2,34 @@
 
 v5.3.3: Read-only skill visibility — no config writes, no enable/disable,
 no import, no run/test.
+v5.3.4: Add test bench endpoints for fixtures testing and manual skill runs.
 """
 
 from __future__ import annotations
 
+from typing import Any
+
 from fastapi import APIRouter
+from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 
 router = APIRouter()
+
+
+class SkillTestRequest(BaseModel):
+    """Skill test request."""
+
+    skill_id: str | None = None
+    all: bool = False
+
+
+class SkillRunRequest(BaseModel):
+    """Skill run request."""
+
+    skill_id: str
+    text: str | None = None
+    payload: dict[str, Any] | None = None
 
 
 def _get_registry():
@@ -148,3 +167,98 @@ async def validate_skills() -> EnvelopeResponse:
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"验证 Skill 配置失败: {str(e)}")
+
+
+@router.post("/skills/test")
+async def test_skills(body: SkillTestRequest) -> EnvelopeResponse:
+    """Run fixtures tests for skills.
+
+    Args:
+        body: SkillTestRequest with skill_id or all flag.
+
+    Returns:
+        Envelope with total/passed/failed and per-skill results.
+    """
+    try:
+        registry = _get_registry()
+
+        if not body.all and not body.skill_id:
+            return error_response(
+                "VALIDATION_ERROR",
+                "请提供 skill_id 或设置 all=true",
+            )
+
+        if body.all:
+            skills = registry.list_skills()
+            package_skills = [s for s in skills if s.get("package")]
+
+            all_results: dict[str, dict] = {}
+            total_passed = 0
+            total_failed = 0
+
+            for skill_info in package_skills:
+                sid = skill_info["id"]
+                result = registry.test_skill(sid)
+                all_results[sid] = result
+                if result.get("ok"):
+                    total_passed += 1
+                else:
+                    total_failed += 1
+
+            return envelope_response({
+                "total": len(package_skills),
+                "passed": total_passed,
+                "failed": total_failed,
+                "results": all_results,
+            })
+
+        # Single skill test
+        sid = body.skill_id
+        if sid not in registry.skills_config:
+            return error_response("RESOURCE_NOT_FOUND", f"Skill 不存在: {sid}")
+
+        result = registry.test_skill(sid)
+        return envelope_response({
+            "skill_id": sid,
+            "result": result,
+        })
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"Skill 测试失败: {str(e)}")
+
+
+@router.post("/skills/run")
+async def run_skill(body: SkillRunRequest) -> EnvelopeResponse:
+    """Run a skill manually with text or custom payload.
+
+    Does NOT write to the database. Does NOT expose secrets.
+    """
+    try:
+        registry = _get_registry()
+
+        if body.skill_id not in registry.skills_config:
+            return error_response(
+                "RESOURCE_NOT_FOUND",
+                f"Skill 不存在: {body.skill_id}",
+            )
+
+        payload: dict[str, Any] = {}
+        if body.text is not None:
+            payload["text"] = body.text
+        if body.payload is not None:
+            payload.update(body.payload)
+
+        result = registry.run_skill(
+            body.skill_id,
+            payload,
+            agent="manual",
+            stage="manual",
+        )
+
+        return envelope_response({
+            "skill_id": body.skill_id,
+            "result": result,
+        })
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"Skill 运行失败: {str(e)}")
