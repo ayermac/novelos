@@ -61,6 +61,8 @@ export default function ProjectModuleNav({ activeModule, onModuleChange }: Proje
           border-bottom: 1px solid var(--border, #e5e7eb);
           overflow-x: auto;
           scrollbar-width: none;
+          max-width: 100vw;
+          box-sizing: border-box;
         }
         .project-module-nav::-webkit-scrollbar { display: none; }
         .module-tab {

@@ -20,8 +20,16 @@ _MISSING_TO_MODULE = {
 
 
 @router.get("/projects/{project_id}/context-status")
-async def get_context_status(request: Request, project_id: str) -> EnvelopeResponse:
+async def get_context_status(
+    request: Request,
+    project_id: str,
+    chapter: int | None = None,
+) -> EnvelopeResponse:
     """Get project context readiness status.
+
+    Args:
+        chapter: Optional chapter number to check readiness for.
+                 Defaults to chapter 1 for backward compatibility.
 
     Returns readiness score, missing items, and actionable suggestions.
     Uses the same logic as the Context Readiness Gate (validators/context_readiness.py).
@@ -36,10 +44,12 @@ async def get_context_status(request: Request, project_id: str) -> EnvelopeRespo
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
+        chapter_number = chapter if chapter is not None else 1
+
         world_settings = repo.list_world_settings(project_id)
         characters = repo.list_characters(project_id, include_inactive=True)
         outlines = repo.list_outlines(project_id)
-        instruction = repo.get_instruction_by_chapter(project_id, 1)
+        instruction = repo.get_instruction_by_chapter(project_id, chapter_number)
 
         result = check_context_readiness(
             project=project,
@@ -47,7 +57,7 @@ async def get_context_status(request: Request, project_id: str) -> EnvelopeRespo
             characters=characters,
             outlines=outlines,
             instruction=instruction,
-            chapter_number=1,
+            chapter_number=chapter_number,
             chapter_status=None,
         )
 
@@ -63,9 +73,15 @@ async def get_context_status(request: Request, project_id: str) -> EnvelopeRespo
             if module is None:
                 module = "settings"
 
+            # P2: Include current chapter in action path when relevant
+            if module == "instructions":
+                path = f"/projects/{project_id}?module={module}&chapter={chapter_number}"
+            else:
+                path = f"/projects/{project_id}?module={module}"
+
             actions.append({
                 "label": item,
-                "path": f"/projects/{project_id}?module={module}",
+                "path": path,
             })
 
         total_checks = 6
@@ -78,6 +94,7 @@ async def get_context_status(request: Request, project_id: str) -> EnvelopeRespo
             "missing": result.missing,
             "actions": actions,
             "details": result.details,
+            "chapter_number": chapter_number,
         })
 
     except Exception as e:

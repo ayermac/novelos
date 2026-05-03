@@ -306,3 +306,50 @@ class TestRunsModule:
         data = resp.json()
         assert data["ok"] is True
         assert "error_message" in data["data"]
+        assert data["data"]["error_message"] == "Test error message"
+
+    def test_run_detail_explains_empty_blocked_run(self, test_client):
+        """Blocked run detail should explain already-blocked chapters even for legacy empty errors."""
+        client, db_path = test_client
+        repo = Repository(db_path)
+
+        resp = client.post("/api/onboarding/projects", json={
+            "project_id": "test-empty-blocked-run",
+            "name": "Test Project",
+            "genre": "fantasy",
+            "target_words": 100000,
+            "total_chapters_planned": 50,
+        })
+        assert resp.status_code == 200
+        project_id = resp.json()["data"]["project"]["project_id"]
+
+        previous_run_id = repo.create_workflow_run(project_id, 1)
+        repo.update_workflow_run(
+            previous_run_id,
+            status="blocked",
+            current_node="human_review",
+            error_message="LLM provider overloaded",
+        )
+
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "UPDATE chapters SET status='blocking' WHERE project_id=? AND chapter_number=1",
+                (project_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        run_id = repo.create_workflow_run(project_id, 1)
+        repo.update_workflow_run(run_id, status="blocked", current_node="human_review")
+
+        resp = client.get(f"/api/runs/{run_id}")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert "已处于阻塞状态" in data["data"]["error_message"]
+        assert "LLM provider overloaded" in data["data"]["error_message"]
+        blocked_steps = [s for s in data["data"]["steps"] if s["status"] == "blocked"]
+        assert blocked_steps
+        assert "已处于阻塞状态" in blocked_steps[0]["error_message"]

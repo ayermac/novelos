@@ -28,18 +28,20 @@ interface ContextStatus {
 interface Props {
   project: ProjectSummary
   stats: WorkspaceStats
+  chapterNumber?: number
 }
 
-export default function ProjectOverviewModule({ project, stats }: Props) {
+export default function ProjectOverviewModule({ project, stats, chapterNumber }: Props) {
   const [contextStatus, setContextStatus] = useState<ContextStatus | null>(null)
   const [loading, setLoading] = useState(true)
 
   const load = useCallback(async () => {
     setLoading(true)
-    const res = await get<ContextStatus>(`/projects/${project.project_id}/context-status`)
+    const chapterParam = chapterNumber && chapterNumber > 1 ? `?chapter=${chapterNumber}` : ''
+    const res = await get<ContextStatus>(`/projects/${project.project_id}/context-status${chapterParam}`)
     if (res.ok && res.data) setContextStatus(res.data)
     setLoading(false)
-  }, [project.project_id])
+  }, [project.project_id, chapterNumber])
 
   useEffect(() => { load() }, [load])
 
@@ -97,9 +99,9 @@ export default function ProjectOverviewModule({ project, stats }: Props) {
             <div className="data-card-content">
               生成前还需要补齐这些资料：
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, maxWidth: '100%', overflow: 'hidden' }}>
               {(contextStatus?.actions || []).map((action) => (
-                <Link key={`${action.label}-${action.path}`} className="btn btn-secondary btn-sm" to={action.path}>
+                <Link key={`${action.label}-${action.path}`} className="btn btn-secondary btn-sm" to={action.path} style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                   <FileText size={14} />
                   {action.label}
                 </Link>

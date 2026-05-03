@@ -103,13 +103,22 @@ def _get_generation_stats(request: Request) -> dict:
         }
 
 
+def _source_for_resolved_value(direct_value, env_name: str | None, env_getter) -> str:
+    """Return a safe display source for a resolved config value."""
+    if direct_value:
+        return "config"
+    if env_name and env_getter(env_name):
+        return env_name
+    return "missing"
+
+
 @router.get("/settings")
 async def get_settings(request: Request) -> EnvelopeResponse:
     """Get current settings.
 
     Never returns API keys or secrets.
     """
-    from ..deps import get_settings, get_llm_mode
+    from ..deps import get_config_path, get_db_path, get_settings, get_llm_mode
 
     try:
         settings = get_settings(request)
@@ -117,26 +126,21 @@ async def get_settings(request: Request) -> EnvelopeResponse:
 
         # Build LLM profiles (without API keys)
         llm_profiles = []
-        if hasattr(settings, "llm_profiles") and settings.llm_profiles:
-            from ...config.env_loader import create_env_getter, load_dotenv
+        from ...config.env_loader import create_env_getter, load_dotenv
+        env_getter = create_env_getter(load_dotenv())
 
-            env_getter = create_env_getter(load_dotenv())
+        if hasattr(settings, "llm_profiles") and settings.llm_profiles:
             for name, profile in settings.llm_profiles.items():
                 # Check if API key is configured (via env or direct)
-                has_key = False
                 api_key_env = getattr(profile, "api_key_env", None)
-                if api_key_env:
-                    has_key = bool(env_getter(api_key_env))
-                elif getattr(profile, "api_key", None):
-                    has_key = True
+                direct_api_key = getattr(profile, "api_key", None)
+                has_key = bool(direct_api_key) or bool(api_key_env and env_getter(api_key_env))
 
                 # Check if base_url is configured (via env or direct)
-                has_base_url = False
                 base_url_env = getattr(profile, "base_url_env", None)
-                if base_url_env:
-                    has_base_url = bool(env_getter(base_url_env))
-                elif getattr(profile, "base_url", None):
-                    has_base_url = True
+                direct_base_url = getattr(profile, "base_url", None)
+                resolved_base_url = profile.get_resolved_base_url(env_getter)
+                has_base_url = bool(resolved_base_url)
 
                 llm_profiles.append({
                     "name": name,
@@ -146,7 +150,36 @@ async def get_settings(request: Request) -> EnvelopeResponse:
                     "has_base_url": has_base_url,
                     "api_key_env": api_key_env,  # Show env var name, not value
                     "base_url_env": base_url_env,  # Show env var name, not value
+                    "resolved_base_url": resolved_base_url,
+                    "base_url_source": _source_for_resolved_value(
+                        direct_base_url, base_url_env, env_getter
+                    ),
+                    "api_key_source": (
+                        "config" if direct_api_key
+                        else api_key_env if api_key_env and env_getter(api_key_env)
+                        else "missing"
+                    ),
+                    "temperature": getattr(profile, "temperature", 0.7),
+                    "max_tokens": getattr(profile, "max_tokens", 4096),
                 })
+        else:
+            # Legacy single-LLM config is still a real runtime route. Expose it
+            # as a display profile so the Settings page reflects what generation
+            # will actually use when no llm_profiles are configured.
+            llm_profiles.append({
+                "name": "default",
+                "provider": getattr(settings.llm, "provider", "unknown"),
+                "model": getattr(settings.llm, "model", "unknown"),
+                "has_key": bool(getattr(settings.llm, "api_key", None)) or bool(env_getter("OPENAI_API_KEY")),
+                "has_base_url": bool(getattr(settings.llm, "base_url", None)),
+                "api_key_env": "OPENAI_API_KEY",
+                "base_url_env": None,
+                "resolved_base_url": getattr(settings.llm, "base_url", None),
+                "base_url_source": "config",
+                "api_key_source": "config" if getattr(settings.llm, "api_key", None) else ("OPENAI_API_KEY" if env_getter("OPENAI_API_KEY") else "missing"),
+                "temperature": getattr(settings.llm, "temperature", 0.7),
+                "max_tokens": getattr(settings.llm, "max_tokens", 4096),
+            })
 
         # Build agent routes
         agent_routes = []
@@ -169,6 +202,8 @@ async def get_settings(request: Request) -> EnvelopeResponse:
 
         return envelope_response({
             "llm_mode": llm_mode,
+            "config_path": get_config_path(request),
+            "db_path": get_db_path(request),
             "llm_profiles": llm_profiles,
             "agent_routes": agent_routes,
             "default_llm": getattr(settings, "default_llm", None),

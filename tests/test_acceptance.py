@@ -209,6 +209,7 @@ class TestEditorRevisionRouting:
         result = editor.run(_make_state(chapter_status="polished"))
         assert result["chapter_status"] == ChapterStatus.REVISION.value
         assert result["quality_gate"]["revision_target"] == "author"
+        assert repo.get_chapter_retry_count("acc_proj", 1) == 1
 
     def test_editor_rejects_to_polisher(self, repo):
         """Editor fails, revision_target=polisher -> chapter goes to revision."""
@@ -230,6 +231,7 @@ class TestEditorRevisionRouting:
         result = editor.run(_make_state(chapter_status="polished"))
         assert result["chapter_status"] == ChapterStatus.REVISION.value
         assert result["quality_gate"]["revision_target"] == "polisher"
+        assert repo.get_chapter_retry_count("acc_proj", 1) == 1
 
 
 # ── Test 4: Consecutive rejections trigger blocking ─────────────

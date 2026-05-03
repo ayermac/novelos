@@ -13,6 +13,11 @@ interface LlmProfile {
   has_base_url: boolean
   api_key_env: string | null
   base_url_env: string | null
+  resolved_base_url?: string | null
+  base_url_source?: string
+  api_key_source?: string
+  temperature?: number
+  max_tokens?: number
 }
 
 interface AgentRoute {
@@ -36,6 +41,8 @@ interface GenerationStats {
 
 interface SettingsData {
   llm_mode: string
+  config_path?: string | null
+  db_path?: string | null
   llm_profiles: LlmProfile[]
   agent_routes: AgentRoute[]
   default_llm: string | null
@@ -57,6 +64,7 @@ const MODEL_OPTIONS = [
   { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet' },
   { value: 'deepseek-chat', label: 'DeepSeek Chat' },
   { value: 'deepseek-reasoner', label: 'DeepSeek Reasoner' },
+  { value: 'custom', label: '自定义模型' },
 ]
 
 export default function Settings() {
@@ -74,10 +82,15 @@ export default function Settings() {
     provider: 'openai_compatible',
     base_url: 'https://api.openai.com/v1',
     model: 'gpt-4',
+    custom_model: '',
     api_key_env: 'OPENAI_API_KEY',
     default_llm: 'default',
     agent_llm: '',
   })
+
+  const effectiveModel = wizardForm.model === 'custom'
+    ? wizardForm.custom_model.trim()
+    : wizardForm.model
 
   const load = () => {
     setLoading(true)
@@ -97,7 +110,15 @@ export default function Settings() {
   }, [])
 
   const handleGenerateDraft = async () => {
-    const res = await post('/config/plan', wizardForm)
+    if (!effectiveModel) {
+      setError('请填写自定义模型名')
+      return
+    }
+
+    const res = await post('/config/plan', {
+      ...wizardForm,
+      model: effectiveModel,
+    })
 
     if (res.ok && res.data) {
       setDraft((res.data as { draft: string }).draft)
@@ -113,7 +134,7 @@ export default function Settings() {
     const res = await post('/settings/validate', {
       provider: wizardForm.provider,
       base_url: wizardForm.base_url,
-      model: wizardForm.model,
+      model: effectiveModel || wizardForm.model,
       api_key_env: wizardForm.api_key_env,
     })
 
@@ -279,6 +300,21 @@ export default function Settings() {
                 {data.diagnostics.has_default_llm ? '已设置' : '未设置'}
               </div>
             </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>配置文件</div>
+              <div style={{ fontWeight: 600 }}>
+                {data.config_path || '未指定'}
+              </div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px' }}>
+                当前 API 进程实际加载
+              </div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>数据库</div>
+              <div style={{ fontWeight: 600 }}>
+                {data.db_path || '-'}
+              </div>
+            </div>
           </div>
           {isStub && (
             <div style={{ padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', fontSize: '13px', color: 'var(--text-secondary)' }}>
@@ -404,6 +440,7 @@ export default function Settings() {
                     <th>模型</th>
                     <th>API Key</th>
                     <th>Base URL</th>
+                    <th>参数</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -423,6 +460,11 @@ export default function Settings() {
                             变量: {profile.api_key_env}
                           </div>
                         )}
+                        {profile.api_key_source && (
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                            来源: {profile.api_key_source}
+                          </div>
+                        )}
                       </td>
                       <td>
                         {profile.has_base_url ? (
@@ -430,6 +472,24 @@ export default function Settings() {
                         ) : (
                           <span className="text-danger">未配置</span>
                         )}
+                        {profile.resolved_base_url && (
+                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', maxWidth: 260, wordBreak: 'break-all' }}>
+                            {profile.resolved_base_url}
+                          </div>
+                        )}
+                        {profile.base_url_source && (
+                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
+                            来源: {profile.base_url_source}
+                          </div>
+                        )}
+                      </td>
+                      <td>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                          temperature: {profile.temperature ?? '-'}
+                        </div>
+                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                          max_tokens: {profile.max_tokens ?? '-'}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -531,6 +591,19 @@ export default function Settings() {
                   <option key={opt.value} value={opt.value}>{opt.label}</option>
                 ))}
               </select>
+              {wizardForm.model === 'custom' && (
+                <>
+                  <input
+                    type="text"
+                    className="form-control"
+                    value={wizardForm.custom_model}
+                    onChange={(e) => setWizardForm({ ...wizardForm, custom_model: e.target.value })}
+                    placeholder="例如：Kimi-K2-Turbo"
+                    style={{ marginTop: '8px' }}
+                  />
+                  <div className="hint">填写服务商实际支持的模型 ID，会写入配置草案的 model 字段</div>
+                </>
+              )}
             </div>
             <div className="form-group">
               <label>Base URL</label>
@@ -602,7 +675,38 @@ export default function Settings() {
 
           {draft && (
             <div style={{ marginTop: '16px' }}>
-              <h4 style={{ marginBottom: '8px' }}>配置草案预览</h4>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                marginBottom: '8px',
+              }}>
+                <h4 style={{ margin: 0 }}>配置草案预览</h4>
+                <span style={{
+                  fontSize: '12px',
+                  padding: '2px 8px',
+                  borderRadius: '4px',
+                  background: '#fef3c7',
+                  color: '#92400e',
+                  fontWeight: 500,
+                }}>
+                  未应用
+                </span>
+              </div>
+              <div style={{
+                padding: '10px 12px',
+                background: '#fffbeb',
+                borderRadius: '6px',
+                fontSize: '13px',
+                color: '#92400e',
+                marginBottom: '12px',
+                border: '1px solid #fcd34d',
+              }}>
+                <strong>此草案尚未写入配置文件。</strong>
+                <div style={{ marginTop: '4px' }}>
+                  如需生效，请将草案保存到 <code>config/local.yaml</code>，然后重启 API 服务。
+                </div>
+              </div>
               <pre
                 style={{
                   background: '#1f2937',

@@ -1,4 +1,4 @@
-import { useEffect, useState, useCallback } from 'react'
+import { useEffect, useState, useCallback, useRef } from 'react'
 import { useParams, useSearchParams, useNavigate, Link } from 'react-router-dom'
 import { get, post } from '../lib/api'
 import ChapterNav from '../components/ChapterNav'
@@ -138,13 +138,30 @@ export default function ProjectDetail() {
   const [loading, setLoading] = useState(true)
   const [chapterLoading, setChapterLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
+  const [generatingChapter, setGeneratingChapter] = useState<number | null>(null)
   const [genError, setGenError] = useState('')
   const [genErrorDetails, setGenErrorDetails] = useState<{ missing?: string[]; actions?: string[] } | null>(null)
   const [error, setError] = useState('')
   const [sseSteps, setSseSteps] = useState<Record<string, StepStatus>>({})
+  const currentChapterRef = useRef<number>(1)
+  const streamingChapterRef = useRef<number | null>(null)
 
   const currentChapter = parseInt(searchParams.get('chapter') || '1', 10)
   const activeModule: ProjectModule = (searchParams.get('module') as ProjectModule) || 'chapters'
+  const requestedView = searchParams.get('view') as TabKey | null
+
+  useEffect(() => {
+    currentChapterRef.current = currentChapter
+  }, [currentChapter])
+
+  useEffect(() => {
+    if (activeModule !== 'chapters') return
+    if (requestedView && ['content', 'workflow', 'artifacts', 'history'].includes(requestedView)) {
+      setActiveTab(requestedView)
+    } else if (!requestedView) {
+      setActiveTab('content')
+    }
+  }, [activeModule, requestedView])
 
   const loadWorkspace = useCallback(() => {
     if (!id) return
@@ -154,10 +171,12 @@ export default function ProjectDetail() {
       .then((res) => {
         if (res.ok && res.data) setWorkspace(res.data)
         else setError(res.error?.message || '获取项目工作台失败')
-        setLoading(false)
       })
+      .catch(() => setError('获取项目工作台失败'))
+      .finally(() => setLoading(false))
     get<{ llm_mode: string }>('/health')
       .then((res) => { if (res.ok && res.data) setLlmMode(res.data.llm_mode) })
+      .catch(() => undefined)
   }, [id])
 
   useEffect(() => { loadWorkspace() }, [loadWorkspace])
@@ -179,42 +198,74 @@ export default function ProjectDetail() {
     get<ChapterDetail>(`/projects/${id}/chapters/${currentChapter}`)
       .then((res) => {
         if (res.ok && res.data) setChapterDetail(res.data)
-        setChapterLoading(false)
+        else setGenError(res.error?.message || '获取章节详情失败')
       })
+      .catch(() => setGenError('获取章节详情失败'))
+      .finally(() => setChapterLoading(false))
   }, [id, currentChapter, activeModule])
 
-  const loadRunDetail = (runId: string) => {
+  const loadRunDetail = useCallback((runId: string) => {
+    setRunDetail(null)
     get<RunDetailData>(`/runs/${runId}`)
-      .then((res) => { if (res.ok && res.data) setRunDetail(res.data) })
-  }
+      .then((res) => {
+        if (res.ok && res.data) setRunDetail(res.data)
+        else setGenError(res.error?.message || '获取运行详情失败')
+      })
+      .catch(() => setGenError('获取运行详情失败'))
+  }, [])
+
+  useEffect(() => {
+    if (activeModule !== 'chapters') return
+    if (activeTab !== 'workflow' && activeTab !== 'artifacts') return
+
+    const runsForCurrentChapter = (workspace?.recent_runs || [])
+      .filter((r) => r.chapter_number === currentChapter)
+    const latestRun = runsForCurrentChapter.length > 0 ? runsForCurrentChapter[0] : null
+    if (latestRun) loadRunDetail(latestRun.run_id)
+    else setRunDetail(null)
+  }, [activeModule, activeTab, currentChapter, workspace?.recent_runs, loadRunDetail])
 
   // SSE streaming hook for real-time generation progress
   const handleSSEComplete = useCallback((event: SSEEvent) => {
+    const completedChapter = streamingChapterRef.current
+    const visibleChapter = currentChapterRef.current
     setGenerating(false)
+    setGeneratingChapter(null)
+    streamingChapterRef.current = null
     setGenErrorDetails(null)
-    if (event.run_id) {
+    if (event.run_id && completedChapter === visibleChapter) {
       loadRunDetail(event.run_id)
     }
     loadWorkspace()
-    get<ChapterDetail>(`/projects/${id}/chapters/${currentChapter}`)
-      .then((r) => {
-        if (r.ok && r.data) setChapterDetail(r.data)
-        setActiveTab('content')
-      })
-  }, [id, currentChapter, loadWorkspace])
+    if (completedChapter === visibleChapter) {
+      get<ChapterDetail>(`/projects/${id}/chapters/${visibleChapter}`)
+        .then((r) => {
+          if (r.ok && r.data) setChapterDetail(r.data)
+          setActiveTab('content')
+        })
+        .catch(() => setGenError('获取章节详情失败'))
+    }
+  }, [id, loadRunDetail, loadWorkspace])
 
   const handleSSEError = useCallback((error: string, event?: SSEEvent) => {
+    const failedChapter = streamingChapterRef.current
+    const visibleChapter = currentChapterRef.current
     setGenerating(false)
-    setGenError(error)
-    if (event?.context_incomplete) {
-      setGenErrorDetails({
-        missing: event.missing || [],
-        actions: event.actions || [],
-      })
-    } else {
-      setGenErrorDetails(null)
+    setGeneratingChapter(null)
+    streamingChapterRef.current = null
+    loadWorkspace()
+    if (failedChapter === visibleChapter) {
+      setGenError(error)
+      if (event?.context_incomplete) {
+        setGenErrorDetails({
+          missing: event.missing || [],
+          actions: event.actions || [],
+        })
+      } else {
+        setGenErrorDetails(null)
+      }
     }
-  }, [])
+  }, [loadWorkspace])
 
   const { isStreaming, steps: sseHookSteps, startStream } = useSSEStream(
     handleSSEComplete,
@@ -233,6 +284,11 @@ export default function ProjectDetail() {
 
   const handleTabChange = (tab: TabKey) => {
     setActiveTab(tab)
+    setSearchParams({
+      module: 'chapters',
+      chapter: String(currentChapter),
+      ...(tab === 'content' ? {} : { view: tab }),
+    }, { replace: true })
     if (tab === 'workflow' || tab === 'artifacts') {
       const runsForChapter = (workspace?.recent_runs || [])
         .filter((r) => r.chapter_number === currentChapter)
@@ -244,30 +300,54 @@ export default function ProjectDetail() {
   const handleGenerate = () => {
     if (!id) return
     setGenerating(true)
+    setGeneratingChapter(currentChapter)
+    streamingChapterRef.current = currentChapter
     setGenError('')
     setGenErrorDetails(null)
     setSseSteps({})
     setActiveTab('workflow')
+    setSearchParams({
+      module: 'chapters',
+      chapter: String(currentChapter),
+      view: 'workflow',
+    }, { replace: true })
     startStream(id, currentChapter)
   }
 
   const handleViewWorkflow = (runId: string) => {
     loadRunDetail(runId)
     setActiveTab('workflow')
+    setSearchParams({
+      module: 'chapters',
+      chapter: String(currentChapter),
+      view: 'workflow',
+    }, { replace: true })
   }
 
-  const handleViewContent = () => setActiveTab('content')
+  const handleViewContent = () => {
+    setActiveTab('content')
+    setSearchParams({
+      module: 'chapters',
+      chapter: String(currentChapter),
+    }, { replace: true })
+  }
 
   const handleGenerateNext = () => {
     const next = getNextGeneratableChapter(workspace?.chapters || [], currentChapter)
     if (!next) return
-    setSearchParams({ chapter: String(next), module: 'chapters' }, { replace: true })
     if (!id) return
     setGenerating(true)
+    setGeneratingChapter(next)
+    streamingChapterRef.current = next
     setGenError('')
     setGenErrorDetails(null)
     setSseSteps({})
     setActiveTab('workflow')
+    setSearchParams({
+      module: 'chapters',
+      chapter: String(next),
+      view: 'workflow',
+    }, { replace: true })
     startStream(id, next)
   }
 
@@ -285,7 +365,14 @@ export default function ProjectDetail() {
 
   const handleResetChapter = async (chapterNumber: number) => {
     if (!id) return
-    const res = await post<{ reset: boolean; previous_status: string; new_status: string }>(
+    const res = await post<{
+      reset: boolean
+      previous_status: string
+      new_status: string
+      retry_count_before?: number
+      retry_count_after?: number
+      retries_cleared?: number
+    }>(
       `/projects/${id}/chapters/${chapterNumber}/reset`
     )
     if (res.ok && res.data) {
@@ -311,6 +398,8 @@ export default function ProjectDetail() {
   const isStub = llmMode === 'stub'
   const runsForChapter = workspace.recent_runs.filter((r) => r.chapter_number === currentChapter)
   const nextGeneratableChapter = getNextGeneratableChapter(workspace.chapters, currentChapter)
+  const isCurrentChapterGenerating = (generating || isStreaming) && generatingChapter === currentChapter
+  const currentChapterSseSteps = isCurrentChapterGenerating ? sseSteps : {}
 
   return (
     <div className="workspace-layout">
@@ -337,7 +426,7 @@ export default function ProjectDetail() {
             <div className="ws-tab-content">
               <ChapterTabContent
                 activeTab={activeTab}
-                generating={generating || isStreaming}
+                generating={isCurrentChapterGenerating}
                 genError={genError}
                 genErrorDetails={genErrorDetails}
                 chapterLoading={chapterLoading}
@@ -349,8 +438,8 @@ export default function ProjectDetail() {
                 runsForChapter={runsForChapter}
                 onGenerate={handleGenerate}
                 onViewWorkflow={handleViewWorkflow}
-                sseSteps={sseSteps}
-                isStreaming={isStreaming}
+                sseSteps={currentChapterSseSteps}
+                isStreaming={isCurrentChapterGenerating}
                 projectId={id || ''}
               />
             </div>
@@ -374,14 +463,17 @@ export default function ProjectDetail() {
           </div>
         </div>
       ) : (
-        <div className="ws-module-content">
-          <ModuleRouter
-            module={activeModule}
-            projectId={id || ''}
-            project={workspace.project}
-            stats={workspace.stats}
-            onWorkspaceChange={loadWorkspace}
-          />
+        <div className="ws-body">
+          <div className="ws-module-content">
+            <ModuleRouter
+              module={activeModule}
+              projectId={id || ''}
+              project={workspace.project}
+              stats={workspace.stats}
+              onWorkspaceChange={loadWorkspace}
+              currentChapter={currentChapter}
+            />
+          </div>
         </div>
       )}
       <WorkspaceStyles />
@@ -395,16 +487,18 @@ function ModuleRouter({
   project,
   stats,
   onWorkspaceChange,
+  currentChapter,
 }: {
   module: ProjectModule
   projectId: string
   project: Workspace['project']
   stats: Workspace['stats']
   onWorkspaceChange: () => void
+  currentChapter: number
 }) {
   switch (module) {
     case 'overview':
-      return <ProjectOverviewModule project={project} stats={stats} />
+      return <ProjectOverviewModule project={project} stats={stats} chapterNumber={currentChapter} />
     case 'genesis':
       return <GenesisModule projectId={projectId} />
     case 'worldview':
@@ -789,7 +883,7 @@ function HistoryTab({ runsForChapter, onViewWorkflow, currentChapter }: {
 function WorkspaceStyles() {
   return (
     <style>{`
-      .workspace-layout { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height)); margin: calc(-1 * var(--spacing-lg)); }
+      .workspace-layout { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height)); margin: calc(-1 * var(--spacing-lg)); overflow-x: hidden; width: 100%; box-sizing: border-box; }
       .ws-topbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color); min-height: 44px; }
       .ws-topbar-left { display: flex; align-items: center; gap: 16px; }
       .ws-back-link { color: var(--text-secondary); text-decoration: none; font-size: 13px; }
@@ -797,11 +891,22 @@ function WorkspaceStyles() {
       .ws-project-name { font-weight: 600; font-size: 15px; }
       .ws-chapter-info { font-size: 13px; color: var(--text-muted); }
       .ws-topbar-right { display: flex; align-items: center; gap: 8px; }
-      .ws-body { display: flex; flex: 1; overflow: hidden; }
+      .ws-body { display: flex; flex: 1; overflow: hidden; min-width: 0; }
       .ws-left { width: 220px; flex-shrink: 0; overflow-y: auto; }
       .ws-center { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
       .ws-right { width: 260px; flex-shrink: 0; overflow-y: auto; }
-      .ws-module-content { flex: 1; overflow-y: auto; padding: 20px 24px; }
+      .ws-module-content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px 24px; max-width: 100%; min-width: 0; }
+      @media (max-width: 768px) {
+        .ws-body { flex-direction: column; }
+        .ws-left { width: 100%; max-height: 200px; border-right: none; border-bottom: 1px solid var(--border-color); }
+        .ws-right { width: 100%; max-height: 200px; border-left: none; border-top: 1px solid var(--border-color); }
+        .ws-module-content { padding: 16px; }
+        .ws-topbar-left { flex-wrap: wrap; gap: 8px; }
+        .ws-project-name { font-size: 14px; }
+        .ws-chapter-info { font-size: 12px; }
+        .data-grid { grid-template-columns: 1fr; }
+        .project-module { max-width: 100%; }
+      }
       .ws-tabs { display: flex; border-bottom: 1px solid var(--border-color); background: var(--bg-primary); padding: 0 16px; }
       .ws-tab { padding: 10px 16px; border: none; background: none; cursor: pointer; font-size: 14px; color: var(--text-secondary); border-bottom: 2px solid transparent; transition: all 0.15s; }
       .ws-tab:hover { color: var(--text-primary); }
@@ -845,7 +950,7 @@ function WorkspaceStyles() {
       .history-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 6px; background: var(--bg-secondary); margin-bottom: 6px; }
       .history-item-left { display: flex; align-items: center; gap: 12px; }
       .history-item-time { font-size: 12px; color: var(--text-muted); }
-      .project-module { max-width: 960px; }
+      .project-module { max-width: 960px; width: 100%; box-sizing: border-box; }
       .module-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
       .module-header h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; font-weight: 600; }
       .module-loading { padding: 40px; text-align: center; color: var(--text-muted); }
@@ -853,7 +958,7 @@ function WorkspaceStyles() {
       .data-empty-icon { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: var(--bg-tertiary); color: var(--text-muted); margin-bottom: 16px; }
       .data-empty-title { font-size: 16px; font-weight: 500; margin-bottom: 8px; }
       .data-empty-desc { font-size: 14px; color: var(--text-muted); }
-      .data-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+      .data-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 12px; }
       .data-card { padding: 14px; border-radius: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); }
       .data-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
       .data-card-category { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-secondary); }
