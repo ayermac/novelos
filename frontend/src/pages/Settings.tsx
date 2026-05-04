@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { Link, useSearchParams } from 'react-router-dom'
 import { get, post } from '../lib/api'
 import { tLlmMode } from '../lib/i18n'
 import EmptyState from '../components/EmptyState'
@@ -68,7 +69,17 @@ const MODEL_OPTIONS = [
   { value: 'custom', label: '自定义模型' },
 ]
 
+const SETTINGS_SECTIONS = [
+  { key: 'overview', label: '概览诊断', hint: '运行模式与生成健康度' },
+  { key: 'llm', label: 'LLM 配置', hint: '档案与 Agent 路由' },
+  { key: 'skills', label: 'Skill 管理', hint: '挂载、测试与试运行' },
+  { key: 'draft', label: '配置草案', hint: '生成本地配置草案' },
+] as const
+
+type SettingsSection = typeof SETTINGS_SECTIONS[number]['key']
+
 export default function Settings() {
+  const [searchParams] = useSearchParams()
   const [data, setData] = useState<SettingsData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -92,6 +103,10 @@ export default function Settings() {
   const effectiveModel = wizardForm.model === 'custom'
     ? wizardForm.custom_model.trim()
     : wizardForm.model
+  const requestedSection = searchParams.get('section') as SettingsSection | null
+  const activeSection: SettingsSection = SETTINGS_SECTIONS.some((section) => section.key === requestedSection)
+    ? requestedSection!
+    : 'overview'
 
   const load = () => {
     setLoading(true)
@@ -236,6 +251,46 @@ export default function Settings() {
     <div>
       <PageHeader title="配置中心" />
 
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+        gap: '10px',
+        marginBottom: 'var(--space-6)',
+      }}>
+        {SETTINGS_SECTIONS.map((section) => {
+          const active = section.key === activeSection
+          return (
+            <Link
+              key={section.key}
+              to={`/settings?section=${section.key}`}
+              style={{
+                display: 'block',
+                padding: '12px 14px',
+                borderRadius: 'var(--radius-md)',
+                border: active ? '1px solid rgba(37, 99, 235, 0.45)' : '1px solid rgba(30, 58, 95, 0.08)',
+                background: active ? 'rgba(59, 130, 246, 0.08)' : 'var(--paper-surface)',
+                boxShadow: 'var(--shadow-flat)',
+                textDecoration: 'none',
+              }}
+            >
+              <div style={{
+                fontSize: '14px',
+                fontWeight: 600,
+                color: active ? '#1d4ed8' : 'var(--text-primary)',
+                marginBottom: '3px',
+              }}>
+                {section.label}
+              </div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+                {section.hint}
+              </div>
+            </Link>
+          )
+        })}
+      </div>
+
+      {activeSection === 'overview' && (
+        <>
       {/* 能力诊断 - 合并运行模式 + 配置诊断 */}
       <div style={{
         background: 'var(--paper-surface)',
@@ -403,7 +458,11 @@ export default function Settings() {
           )}
         </div>
       </div>
+        </>
+      )}
 
+      {activeSection === 'llm' && (
+        <>
       {/* LLM Profiles */}
       <div style={{
         background: 'var(--paper-surface)',
@@ -505,7 +564,11 @@ export default function Settings() {
           )}
         </div>
       </div>
+        </>
+      )}
 
+      {activeSection === 'skills' && (
+        <>
       {/* Skill Visibility */}
       <div style={{
         background: 'var(--paper-surface)',
@@ -528,9 +591,11 @@ export default function Settings() {
         </div>
         <SkillVisibilityPanel />
       </div>
+        </>
+      )}
 
       {/* Agent Routes */}
-      {data.agent_routes.length > 0 && (
+      {activeSection === 'llm' && data.agent_routes.length > 0 && (
         <div className="card" style={{ marginBottom: 'var(--spacing-lg)' }}>
           <div className="card-header">
             <h3>Agent 路由</h3>
@@ -558,6 +623,8 @@ export default function Settings() {
         </div>
       )}
 
+      {activeSection === 'draft' && (
+        <>
       {/* Config Draft Generator */}
       <div style={{
         background: 'var(--paper-surface)',
@@ -754,6 +821,8 @@ export default function Settings() {
           )}
         </div>
       </div>
+        </>
+      )}
     </div>
   )
 }
