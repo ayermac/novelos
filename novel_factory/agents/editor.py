@@ -131,10 +131,20 @@ class EditorAgent(BaseAgent):
 
         # Apply skills from config (before_review stage)
         if self.skill_registry:
+            # v5.3.7: Inject style_bible into payload so style-bible-checker
+            # can run against the project's style rules instead of silently skipping.
+            skill_payload: dict[str, Any] = {"text": content, "chapter_number": chapter_number}
+            try:
+                bible_record = self.repo.get_style_bible(project_id)
+                if bible_record:
+                    skill_payload["style_bible"] = bible_record.get("bible", {})
+            except Exception:
+                logger.warning("Editor: failed to load style_bible for skill payload", exc_info=True)
+
             before_review_result = self.skill_registry.run_skills_for_agent(
                 agent="editor",
                 stage="before_review",
-                payload={"text": content, "chapter_number": chapter_number},
+                payload=skill_payload,
             )
             
             # Process skill results

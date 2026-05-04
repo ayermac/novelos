@@ -453,7 +453,12 @@ def run_with_graph_stream(
                 # Parse LangGraph stream event
                 # Event format: {node_name: {output_state}}
                 for node_name, node_output in event.items():
-                    # Skip internal nodes
+                    # Always merge state updates so workflow_run_id and tokens
+                    # set by health_check/internal nodes are preserved.
+                    if isinstance(node_output, dict):
+                        state.update(node_output)
+
+                    # Skip internal nodes for SSE events
                     if node_name in ("health_check", "task_discovery", "revision_router", "archive"):
                         continue
 
