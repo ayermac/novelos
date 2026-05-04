@@ -187,6 +187,12 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         columns = [row[1] for row in cursor.fetchall()]
         return "error_message" in columns
 
+    if name == "025_v5_3_6_task_status_run_id":
+        # 025 adds workflow_run_id column to task_status
+        cursor = conn.execute("PRAGMA table_info(task_status)")
+        columns = [row[1] for row in cursor.fetchall()]
+        return "workflow_run_id" in columns
+
     return False
 
 

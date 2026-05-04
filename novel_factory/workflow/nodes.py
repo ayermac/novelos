@@ -115,7 +115,10 @@ def _handle_retryable_quality_gate(
     ):
         repo.update_chapter_status(project_id, chapter_number, ChapterStatus.REVISION.value)
 
-    task_id = repo.start_task(project_id, chapter_number, "revise", revision_target)
+    task_id = repo.start_task(
+        project_id, chapter_number, "revise", revision_target,
+        workflow_run_id=state.get("workflow_run_id"),
+    )
     repo.complete_task(task_id, success=True)
 
     updated = dict(result)

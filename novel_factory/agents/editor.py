@@ -407,6 +407,7 @@ class EditorAgent(BaseAgent):
                         chapter_number,
                         "revise",
                         retry_agent,
+                        workflow_run_id=state.get("workflow_run_id"),
                     )
                     self.repo.complete_task(revise_task_id, success=True)
                     # Send message to responsible agent if not author

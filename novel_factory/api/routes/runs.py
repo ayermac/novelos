@@ -228,20 +228,37 @@ def _build_steps_timeline(
     final_status = chapter.get("status", "planned") if chapter else "planned"
 
     # Fetch task_status for per-agent error info
+    # P1: Prefer run-isolated rows; fallback to chapter-level for legacy data.
     task_errors: dict[str, str] = {}
+    task_errors_legacy: dict[str, str] = {}
     if repo:
         try:
             conn = repo._conn()
             try:
-                rows = conn.execute(
+                run_id = run_data.get("id")
+                # Try run-isolated query first
+                if run_id:
+                    rows = conn.execute(
+                        "SELECT agent_id, status, error_message FROM task_status "
+                        "WHERE project_id=? AND chapter_number=? AND status='failed' "
+                        "AND workflow_run_id=?",
+                        (project_id, chapter_number, run_id),
+                    ).fetchall()
+                    for r in rows:
+                        agent_id = r["agent_id"]
+                        if r["error_message"]:
+                            task_errors[agent_id] = r["error_message"]
+                # Legacy fallback: rows without workflow_run_id
+                legacy_rows = conn.execute(
                     "SELECT agent_id, status, error_message FROM task_status "
-                    "WHERE project_id=? AND chapter_number=? AND status='failed'",
+                    "WHERE project_id=? AND chapter_number=? AND status='failed' "
+                    "AND workflow_run_id IS NULL",
                     (project_id, chapter_number),
                 ).fetchall()
-                for r in rows:
+                for r in legacy_rows:
                     agent_id = r["agent_id"]
                     if r["error_message"]:
-                        task_errors[agent_id] = r["error_message"]
+                        task_errors_legacy[agent_id] = r["error_message"]
             finally:
                 conn.close()
         except Exception:
@@ -334,6 +351,9 @@ def _build_steps_timeline(
             step["error_message"] = error_message
         elif key in task_errors:
             step["error_message"] = task_errors[key]
+        elif key in task_errors_legacy:
+            step["error_message"] = task_errors_legacy[key]
+            step["error_is_legacy"] = True
 
         # Add artifacts for completed steps
         if is_completed and llm_mode == "stub":

@@ -142,15 +142,16 @@ class WorkflowRepositoryMixin:
         chapter_number: int,
         task_type: str,
         agent_id: str,
+        workflow_run_id: str | None = None,
     ) -> int:
         """Start a new task. Returns task id."""
         conn = self._conn()
         try:
             cursor = conn.execute(
                 "INSERT INTO task_status "
-                "(project_id, chapter_number, task_type, agent_id, status, started_at) "
-                "VALUES (?, ?, ?, ?, 'running', datetime('now','+8 hours'))",
-                (project_id, chapter_number, task_type, agent_id),
+                "(project_id, chapter_number, task_type, agent_id, status, started_at, workflow_run_id) "
+                "VALUES (?, ?, ?, ?, 'running', datetime('now','+8 hours'), ?)",
+                (project_id, chapter_number, task_type, agent_id, workflow_run_id),
             )
             conn.commit()
             return cursor.lastrowid
