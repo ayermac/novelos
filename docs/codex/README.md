@@ -92,7 +92,7 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1627/1627 passed
+- **当前测试基线**: 1653/1653 passed
 - **新增测试**:
   - `test_v51_api_e2e_smoke.py`: 17 个端到端 smoke 测试
   - `test_v51_frontend_quality.py`: 8 个前端质量检查
@@ -105,6 +105,8 @@ npm run dev
   - `test_v532_project_genesis.py`: 项目创世测试
   - `test_v532_memory_loop.py`: 记忆循环测试
   - `test_v532_fact_ledger.py`: 事实账本测试
+  - `test_v53_project_modules.py`: 项目模块闭包测试
+  - `test_skills_api.py`: Skill 可视化与测试台 API 测试
 
 ### v5.1.1 WebUI 产品化改进
 
@@ -204,19 +206,19 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.3.x RC**，测试基线 **1633/1633 passed**。
+当前开发基线是 **v5.3.x RC**，测试基线 **1653/1653 passed**。
 
 **v5.3 已实现能力**（部分，进行中）：
 
 - v5.3.0 可信生成链路：Context Readiness Gate、Planner 必经路由、字数硬质量门、真实模式人工发布闸门。
 - v5.3.1 项目级作者工作台（部分）：项目模块导航、世界观/角色/势力/大纲/伏笔/章节指令 CRUD、项目上下文状态、章节重置/删除。
 - v5.3.2 项目创世与记忆循环（部分）：创世生成/批准/拒绝、记忆更新批次、事实账本 CRUD 与事件。
+- v5.3.3-v5.3.4 Skill 可视化与测试台：Skill 列表、挂载关系、配置验证、fixtures 测试、手动试运行。
+- v5.3.5 记忆可靠性：结构化字段应用、失败原因可见、失败项重试、批次状态重算。
 
 **v5.3 未收口项**：
 
-- 完整工作流可观测性（每步 Agent 输入/输出、Token、耗时、错误详情）。
 - 连续性门禁与完整事实账本跨章强制执行。
-- 章节工作流中的 Memory Curator 节点。
 - v5.3 命令的完整 CLI 对齐。
 
 **v5.2 核心变更:**
