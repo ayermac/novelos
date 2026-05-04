@@ -593,6 +593,99 @@ class SkillRegistry:
             return False
         return self.skills_config[skill_id].get("enabled", True)
 
+    def save_config(self) -> None:
+        """Save current skills_config and agent_skills back to config file.
+
+        Preserves existing file structure and comments is not supported
+        by PyYAML; this writes a clean YAML file.
+        """
+        config = {
+            "skills": self.skills_config,
+            "agent_skills": self.agent_skills,
+        }
+        try:
+            with open(self.config_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(config, f, allow_unicode=True, sort_keys=False)
+            logger.info(f"Saved skill config to {self.config_path}")
+        except Exception as e:
+            logger.error(f"Failed to save skill config: {e}")
+            raise
+
+    def mount_skill(self, agent: str, stage: str, skill_id: str) -> tuple[bool, str]:
+        """Mount a skill to an agent/stage.
+
+        Args:
+            agent: Agent name
+            stage: Stage name
+            skill_id: Skill identifier
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        if skill_id not in self.skills_config:
+            return False, f"Skill not found: {skill_id}"
+
+        if agent not in self.agent_skills:
+            self.agent_skills[agent] = {}
+
+        if stage not in self.agent_skills[agent]:
+            self.agent_skills[agent][stage] = []
+
+        if skill_id in self.agent_skills[agent][stage]:
+            return False, f"Skill '{skill_id}' is already mounted to {agent}/{stage}"
+
+        self.agent_skills[agent][stage].append(skill_id)
+        return True, ""
+
+    def unmount_skill(self, agent: str, stage: str, skill_id: str) -> tuple[bool, str]:
+        """Unmount a skill from an agent/stage.
+
+        Args:
+            agent: Agent name
+            stage: Stage name
+            skill_id: Skill identifier
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        if agent not in self.agent_skills:
+            return False, f"Agent '{agent}' has no mounted skills"
+
+        if stage not in self.agent_skills[agent]:
+            return False, f"Stage '{stage}' has no mounted skills for agent '{agent}'"
+
+        if skill_id not in self.agent_skills[agent][stage]:
+            return False, f"Skill '{skill_id}' is not mounted to {agent}/{stage}"
+
+        self.agent_skills[agent][stage].remove(skill_id)
+        # Clean up empty lists
+        if not self.agent_skills[agent][stage]:
+            del self.agent_skills[agent][stage]
+        if not self.agent_skills[agent]:
+            del self.agent_skills[agent]
+        return True, ""
+
+    def reorder_skills(self, agent: str, stage: str, skill_ids: list[str]) -> tuple[bool, str]:
+        """Reorder skills for an agent/stage.
+
+        Args:
+            agent: Agent name
+            stage: Stage name
+            skill_ids: New ordered list of skill IDs
+
+        Returns:
+            Tuple of (success, error_message)
+        """
+        if agent not in self.agent_skills or stage not in self.agent_skills.get(agent, {}):
+            return False, f"No skills mounted to {agent}/{stage}"
+
+        current = self.agent_skills[agent][stage]
+        if set(current) != set(skill_ids):
+            return False, "skill_ids must match current mounted skills exactly"
+
+        self.agent_skills[agent][stage] = list(skill_ids)
+        return True, ""
+
     def validate_all(self) -> dict[str, Any]:
         """Validate all skills and manifests.
 

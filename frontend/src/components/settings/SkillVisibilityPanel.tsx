@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
-import { get, post } from '../../lib/api'
+import { get, post, del } from '../../lib/api'
 
 interface SkillMount {
   agent: string
@@ -87,6 +87,28 @@ interface RunResult {
   result: TestSkillResult
 }
 
+interface ConfigSkill {
+  id: string
+  name: string
+  enabled: boolean
+  kind?: string | null
+  package?: string | null
+  legacy: boolean
+  class_name?: string | null
+}
+
+interface SkillConfig {
+  agents: string[]
+  stages: Record<string, string[]>
+  agent_skills: MountMap
+  available_skills: ConfigSkill[]
+  missing_skills: { id: string; agent: string; stage: string }[]
+  disabled_skills: { id: string; name: string }[]
+  config_path: string
+  total_skills: number
+  total_mounted: number
+}
+
 const panelStyle: CSSProperties = {
   marginBottom: 'var(--space-4)',
   padding: 'var(--space-4)',
@@ -139,10 +161,21 @@ function matrixSkillChipStyle(skill: MatrixSkill): CSSProperties {
   }
 }
 
+function configSkillChipStyle(skill: { missing?: boolean; enabled?: boolean; legacy?: boolean }): CSSProperties {
+  if (skill.missing) return statusChipStyle('danger')
+  if (skill.enabled === false) return statusChipStyle('muted')
+  return {
+    ...statusChipStyle('ok'),
+    background: 'rgba(59, 130, 246, 0.1)',
+    color: '#1e40af',
+  }
+}
+
 export default function SkillVisibilityPanel() {
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [mounts, setMounts] = useState<MountMap>({})
   const [agentMatrix, setAgentMatrix] = useState<AgentMatrix | null>(null)
+  const [skillConfig, setSkillConfig] = useState<SkillConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [validating, setValidating] = useState(false)
@@ -161,14 +194,20 @@ export default function SkillVisibilityPanel() {
   const [running, setRunning] = useState(false)
   const [runResult, setRunResult] = useState<RunResult | null>(null)
 
+  // Mount editor state
+  const [savingMount, setSavingMount] = useState(false)
+  const [mountError, setMountError] = useState('')
+  const [selectedAddSkill, setSelectedAddSkill] = useState<Record<string, string>>({})
+
   const load = async () => {
     setLoading(true)
     setError('')
 
-    const [skillsRes, mountsRes, matrixRes] = await Promise.all([
+    const [skillsRes, mountsRes, matrixRes, configRes] = await Promise.all([
       get<{ skills: SkillInfo[] }>('/skills'),
       get<MountMap>('/skills/mounts'),
       get<AgentMatrix>('/skills/agent-matrix'),
+      get<SkillConfig>('/skills/config'),
     ])
 
     if (skillsRes.ok && skillsRes.data) {
@@ -183,6 +222,10 @@ export default function SkillVisibilityPanel() {
 
     if (matrixRes.ok && matrixRes.data) {
       setAgentMatrix(matrixRes.data)
+    }
+
+    if (configRes.ok && configRes.data) {
+      setSkillConfig(configRes.data)
     }
 
     setLoading(false)
@@ -288,6 +331,77 @@ export default function SkillVisibilityPanel() {
     }
   }
 
+  // Mount editor handlers
+  const handleMount = async (agent: string, stage: string, skillId: string) => {
+    if (!skillId) return
+    setSavingMount(true)
+    setMountError('')
+
+    const res = await post<{ agent: string; stage: string; skill_id: string }>('/skills/mount', {
+      agent,
+      stage,
+      skill_id: skillId,
+    })
+
+    setSavingMount(false)
+
+    if (res.ok && res.data) {
+      setSelectedAddSkill((prev) => ({ ...prev, [`${agent}-${stage}`]: '' }))
+      await load()
+    } else {
+      setMountError(res.error?.message || '挂载失败')
+    }
+  }
+
+  const handleUnmount = async (agent: string, stage: string, skillId: string) => {
+    setSavingMount(true)
+    setMountError('')
+
+    const res = await del<{ agent: string; stage: string; skill_id: string }>('/skills/mount', {
+      agent,
+      stage,
+      skill_id: skillId,
+    })
+
+    setSavingMount(false)
+
+    if (res.ok && res.data) {
+      await load()
+    } else {
+      setMountError(res.error?.message || '卸载失败')
+    }
+  }
+
+  const handleMove = async (agent: string, stage: string, skillId: string, direction: 'up' | 'down') => {
+    const current = skillConfig?.agent_skills[agent]?.[stage] || []
+    const idx = current.indexOf(skillId)
+    if (idx === -1) return
+    const newIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (newIdx < 0 || newIdx >= current.length) return
+
+    const reordered = [...current]
+    const temp = reordered[idx]
+    reordered[idx] = reordered[newIdx]
+    reordered[newIdx] = temp
+
+    setSavingMount(true)
+    setMountError('')
+
+    const res = await post<{ agent: string; stage: string; skill_ids: string[] }>('/skills/reorder', {
+      agent,
+      stage,
+      skill_ids: reordered,
+    })
+
+    setSavingMount(false)
+
+    if (res.ok && res.data) {
+      await load()
+    } else {
+      setMountError(res.error?.message || '排序失败')
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ padding: 'var(--space-5)', textAlign: 'center', color: 'var(--text-charcoal)' }}>
@@ -325,6 +439,13 @@ export default function SkillVisibilityPanel() {
         ),
       }
     : null
+
+  // Build available skills for each agent/stage from config
+  const getAvailableSkillsForStage = (agent: string, stage: string) => {
+    if (!skillConfig) return []
+    const mountedSet = new Set(skillConfig.agent_skills[agent]?.[stage] || [])
+    return skillConfig.available_skills.filter((s) => !mountedSet.has(s.id))
+  }
 
   return (
     <div style={{ padding: 'var(--space-5)' }}>
@@ -529,6 +650,198 @@ export default function SkillVisibilityPanel() {
           </div>
         </div>
       )}
+
+      {/* Mount Editor */}
+      <div style={panelStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
+          <h4 style={{ ...sectionTitleStyle, marginBottom: 0 }}>挂载编辑器 / Mount Editor</h4>
+          <button onClick={load} className="btn btn-secondary" disabled={savingMount} style={{ fontSize: '12px', padding: '4px 10px' }}>
+            刷新
+          </button>
+        </div>
+
+        {mountError && (
+          <div
+            style={{
+              marginBottom: 'var(--space-3)',
+              padding: '10px 12px',
+              borderRadius: '6px',
+              background: '#fef2f2',
+              color: '#991b1b',
+              fontSize: '13px',
+            }}
+          >
+            {mountError}
+            <button
+              onClick={() => setMountError('')}
+              style={{ marginLeft: 8, fontSize: '12px', background: 'none', border: 'none', color: '#991b1b', cursor: 'pointer', textDecoration: 'underline' }}
+            >
+              清除
+            </button>
+          </div>
+        )}
+
+        {savingMount && (
+          <div style={{ marginBottom: 'var(--space-3)', fontSize: '13px', color: 'var(--text-secondary)' }}>
+            保存中...
+          </div>
+        )}
+
+        {/* OpenClaw / skill count explanation */}
+        <div
+          style={{
+            marginBottom: 'var(--space-3)',
+            padding: '10px 12px',
+            borderRadius: '6px',
+            background: '#eff6ff',
+            color: '#1e40af',
+            fontSize: '13px',
+          }}
+        >
+          <strong>关于 Skill 数量</strong>
+          <div style={{ marginTop: 4 }}>
+            当前仅展示已被 Novelos SkillRegistry 加载的 Skill（共 {skillConfig?.total_skills ?? 0} 个）。OpenClaw legacy skill 需要导入/注册后才会出现在这里。
+            {skillConfig && skillConfig.available_skills.filter((s) => !s.enabled).length > 0 && (
+              <span> 另有 {skillConfig.available_skills.filter((s) => !s.enabled).length} 个已禁用 Skill。</span>
+            )}
+          </div>
+        </div>
+
+        {skillConfig && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: '12px' }}>
+            {skillConfig.agents.map((agent) => {
+              const stages = skillConfig.stages[agent] || []
+              const agentMounts = skillConfig.agent_skills[agent] || {}
+              return (
+                <div
+                  key={agent}
+                  style={{
+                    padding: '12px',
+                    borderRadius: '8px',
+                    background: 'var(--paper-surface)',
+                    border: '1px solid rgba(30, 58, 95, 0.06)',
+                    minWidth: 0,
+                  }}
+                >
+                  <div style={{ fontWeight: 600, marginBottom: 10, textTransform: 'capitalize' }}>
+                    {agent}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                    {stages.map((stage) => {
+                      const mountedSkills = agentMounts[stage] || []
+                      const available = getAvailableSkillsForStage(agent, stage)
+                      const selectKey = `${agent}-${stage}`
+                      return (
+                        <div key={selectKey} style={{ minWidth: 0 }}>
+                          <div
+                            style={{
+                              fontSize: '12px',
+                              color: 'var(--text-secondary)',
+                              fontFamily: 'monospace',
+                              marginBottom: 6,
+                              overflowWrap: 'anywhere',
+                            }}
+                          >
+                            {stage}
+                          </div>
+                          {mountedSkills.length > 0 ? (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
+                              {mountedSkills.map((skillId, idx) => {
+                                const skillInfo = skillConfig.available_skills.find((s) => s.id === skillId)
+                                const chipSkill = skillInfo
+                                  ? { missing: false, enabled: skillInfo.enabled, legacy: skillInfo.legacy }
+                                  : { missing: true, enabled: false, legacy: false }
+                                return (
+                                  <div
+                                    key={skillId}
+                                    style={{
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: 6,
+                                      flexWrap: 'wrap',
+                                      minWidth: 0,
+                                    }}
+                                  >
+                                    <span style={configSkillChipStyle(chipSkill)}>
+                                      {skillId}
+                                      {chipSkill.missing && ' · missing'}
+                                      {!chipSkill.missing && !chipSkill.enabled && ' · disabled'}
+                                      {!chipSkill.missing && chipSkill.legacy && ' · legacy'}
+                                    </span>
+                                    <div style={{ display: 'flex', gap: 4 }}>
+                                      <button
+                                        onClick={() => handleMove(agent, stage, skillId, 'up')}
+                                        disabled={savingMount || idx === 0}
+                                        className="btn btn-secondary"
+                                        style={{ fontSize: '11px', padding: '2px 6px' }}
+                                        title="上移"
+                                      >
+                                        ↑
+                                      </button>
+                                      <button
+                                        onClick={() => handleMove(agent, stage, skillId, 'down')}
+                                        disabled={savingMount || idx === mountedSkills.length - 1}
+                                        className="btn btn-secondary"
+                                        style={{ fontSize: '11px', padding: '2px 6px' }}
+                                        title="下移"
+                                      >
+                                        ↓
+                                      </button>
+                                      <button
+                                        onClick={() => handleUnmount(agent, stage, skillId)}
+                                        disabled={savingMount}
+                                        className="btn btn-secondary"
+                                        style={{ fontSize: '11px', padding: '2px 6px', color: '#991b1b' }}
+                                        title="移除"
+                                      >
+                                        ×
+                                      </button>
+                                    </div>
+                                  </div>
+                                )
+                              })}
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: 8 }}>
+                              未挂载
+                            </div>
+                          )}
+                          {available.length > 0 && (
+                            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                              <select
+                                className="form-control"
+                                value={selectedAddSkill[selectKey] || ''}
+                                onChange={(e) => setSelectedAddSkill((prev) => ({ ...prev, [selectKey]: e.target.value }))}
+                                disabled={savingMount}
+                                style={{ fontSize: '12px', padding: '4px 8px', minWidth: 120, flex: 1 }}
+                              >
+                                <option value="">-- 选择 Skill --</option>
+                                {available.map((s) => (
+                                  <option key={s.id} value={s.id}>
+                                    {s.id}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                onClick={() => handleMount(agent, stage, selectedAddSkill[selectKey] || '')}
+                                disabled={savingMount || !selectedAddSkill[selectKey]}
+                                className="btn btn-secondary"
+                                style={{ fontSize: '12px', padding: '4px 10px' }}
+                              >
+                                添加
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Fixtures Test Bench */}
       <div style={panelStyle}>

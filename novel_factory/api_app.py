@@ -23,6 +23,7 @@ def create_api_app(
     db_path: str | None = None,
     config_path: str | None = None,
     llm_mode: str = "stub",
+    skills_config_path: str | None = None,
 ) -> FastAPI:
     """Create and configure the API application.
 
@@ -30,6 +31,7 @@ def create_api_app(
         db_path: Path to SQLite database file
         config_path: Path to config YAML file
         llm_mode: LLM mode ('stub' or 'real'), defaults to 'stub'
+        skills_config_path: Path to skills YAML config file
 
     Returns:
         Configured FastAPI application
@@ -45,6 +47,7 @@ def create_api_app(
     app.state.db_path = db_path
     app.state.config_path = config_path
     app.state.llm_mode = llm_mode
+    app.state.skills_config_path = skills_config_path
 
     # Auto-initialize database on startup
     @app.on_event("startup")

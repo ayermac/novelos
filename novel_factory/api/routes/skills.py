@@ -3,13 +3,14 @@
 v5.3.3: Read-only skill visibility — no config writes, no enable/disable,
 no import, no run/test.
 v5.3.4: Add test bench endpoints for fixtures testing and manual skill runs.
+v5.4.6: Add skill mount configuration console endpoints.
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
@@ -32,10 +33,41 @@ class SkillRunRequest(BaseModel):
     payload: dict[str, Any] | None = None
 
 
-def _get_registry():
-    """Get a fresh SkillRegistry instance."""
+class MountSkillRequest(BaseModel):
+    """Mount skill request."""
+
+    agent: str
+    stage: str
+    skill_id: str
+    position: int | None = None
+
+
+class UnmountSkillRequest(BaseModel):
+    """Unmount skill request."""
+
+    agent: str
+    stage: str
+    skill_id: str
+
+
+class ReorderSkillsRequest(BaseModel):
+    """Reorder skills request."""
+
+    agent: str
+    stage: str
+    skill_ids: list[str]
+
+
+def _get_registry(request: Request):
+    """Get a fresh SkillRegistry instance.
+
+    Uses app.state.skills_config_path if available for safe test isolation.
+    """
     from ...skills.registry import SkillRegistry
 
+    config_path = getattr(request.app.state, "skills_config_path", None)
+    if config_path:
+        return SkillRegistry(config_path=config_path)
     return SkillRegistry()
 
 
@@ -186,11 +218,70 @@ def _build_agent_matrix(registry) -> dict[str, Any]:
     }
 
 
+def _build_config_view(registry) -> dict[str, Any]:
+    """Build the skill configuration view for the config endpoint."""
+    skills = registry.list_skills()
+    skill_by_id = {s["id"]: s for s in skills}
+    mounted_lookup = _build_mounted_lookup(registry.agent_skills)
+
+    # Determine source info for each skill
+    available_skills = []
+    for skill in skills:
+        info = {
+            "id": skill["id"],
+            "name": skill.get("name") or skill.get("description") or skill["id"],
+            "enabled": skill.get("enabled", True),
+            "kind": skill.get("kind") or skill.get("type"),
+            "package": skill.get("package"),
+            "legacy": not bool(skill.get("package")),
+            "class_name": skill.get("class_name") or skill.get("class"),
+        }
+        available_skills.append(info)
+
+    # Find missing configured skills
+    missing_skills = []
+    for agent, stages in registry.agent_skills.items():
+        for stage, skill_ids in stages.items():
+            for skill_id in skill_ids:
+                if skill_id not in skill_by_id:
+                    missing_skills.append({
+                        "id": skill_id,
+                        "agent": agent,
+                        "stage": stage,
+                    })
+
+    # Find disabled skills
+    disabled_skills = [
+        {
+            "id": skill["id"],
+            "name": skill.get("name") or skill.get("description") or skill["id"],
+        }
+        for skill in skills
+        if not skill.get("enabled", True)
+    ]
+
+    return {
+        "agents": list(KNOWN_AGENT_STAGES.keys()),
+        "stages": KNOWN_AGENT_STAGES,
+        "agent_skills": registry.agent_skills,
+        "available_skills": available_skills,
+        "missing_skills": missing_skills,
+        "disabled_skills": disabled_skills,
+        "config_path": str(registry.config_path),
+        "total_skills": len(skills),
+        "total_mounted": sum(
+            len(skill_ids)
+            for stages in registry.agent_skills.values()
+            for skill_ids in stages.values()
+        ),
+    }
+
+
 @router.get("/skills")
-async def list_skills() -> EnvelopeResponse:
+async def list_skills(request: Request) -> EnvelopeResponse:
     """List all configured skills with manifest and mount info."""
     try:
-        registry = _get_registry()
+        registry = _get_registry(request)
         skills = registry.list_skills()
         mounted_lookup = _build_mounted_lookup(registry.agent_skills)
 
@@ -204,31 +295,41 @@ async def list_skills() -> EnvelopeResponse:
         return error_response("INTERNAL_ERROR", f"获取 Skill 列表失败: {str(e)}")
 
 
+@router.get("/skills/config")
+async def get_skill_config(request: Request) -> EnvelopeResponse:
+    """Get current skill configuration view with mount state."""
+    try:
+        registry = _get_registry(request)
+        return envelope_response(_build_config_view(registry))
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"获取 Skill 配置失败: {str(e)}")
+
+
 @router.get("/skills/mounts")
-async def get_skill_mounts() -> EnvelopeResponse:
+async def get_skill_mounts(request: Request) -> EnvelopeResponse:
     """Get structured agent/stage skill mount relationships."""
     try:
-        registry = _get_registry()
+        registry = _get_registry(request)
         return envelope_response(registry.agent_skills)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取挂载关系失败: {str(e)}")
 
 
 @router.get("/skills/agent-matrix")
-async def get_agent_skill_matrix() -> EnvelopeResponse:
+async def get_agent_skill_matrix(request: Request) -> EnvelopeResponse:
     """Get read-only agent/stage skill matrix with validation hints."""
     try:
-        registry = _get_registry()
+        registry = _get_registry(request)
         return envelope_response(_build_agent_matrix(registry))
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取 Agent Skill Matrix 失败: {str(e)}")
 
 
 @router.get("/skills/{skill_id}")
-async def get_skill(skill_id: str) -> EnvelopeResponse:
+async def get_skill(skill_id: str, request: Request) -> EnvelopeResponse:
     """Get single skill detail including manifest and mount info."""
     try:
-        registry = _get_registry()
+        registry = _get_registry(request)
 
         if skill_id not in registry.skills_config:
             return error_response("RESOURCE_NOT_FOUND", f"Skill 不存在: {skill_id}")
@@ -294,11 +395,92 @@ async def get_skill(skill_id: str) -> EnvelopeResponse:
         return error_response("INTERNAL_ERROR", f"获取 Skill 详情失败: {str(e)}")
 
 
+@router.post("/skills/mount")
+async def mount_skill(body: MountSkillRequest, request: Request) -> EnvelopeResponse:
+    """Mount a skill to an agent/stage."""
+    try:
+        registry = _get_registry(request)
+
+        # Validate agent/stage existence (allow dynamic agents if configured)
+        if body.agent not in KNOWN_AGENT_STAGES and body.agent not in registry.agent_skills:
+            return error_response(
+                "VALIDATION_ERROR",
+                f"Agent '{body.agent}' 不是已知 agent，且尚未有任何挂载配置",
+            )
+
+        ok, msg = registry.mount_skill(body.agent, body.stage, body.skill_id)
+        if not ok:
+            return error_response("VALIDATION_ERROR", msg)
+
+        # Handle optional position
+        if body.position is not None:
+            stage_skills = registry.agent_skills.get(body.agent, {}).get(body.stage, [])
+            if body.skill_id in stage_skills:
+                stage_skills.remove(body.skill_id)
+                pos = max(0, min(body.position, len(stage_skills)))
+                stage_skills.insert(pos, body.skill_id)
+
+        registry.save_config()
+
+        return envelope_response({
+            "agent": body.agent,
+            "stage": body.stage,
+            "skill_id": body.skill_id,
+            "source": str(registry.config_path),
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"挂载 Skill 失败: {str(e)}")
+
+
+@router.delete("/skills/mount")
+async def unmount_skill(body: UnmountSkillRequest, request: Request) -> EnvelopeResponse:
+    """Unmount a skill from an agent/stage."""
+    try:
+        registry = _get_registry(request)
+
+        ok, msg = registry.unmount_skill(body.agent, body.stage, body.skill_id)
+        if not ok:
+            return error_response("VALIDATION_ERROR", msg)
+
+        registry.save_config()
+
+        return envelope_response({
+            "agent": body.agent,
+            "stage": body.stage,
+            "skill_id": body.skill_id,
+            "source": str(registry.config_path),
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"卸载 Skill 失败: {str(e)}")
+
+
+@router.post("/skills/reorder")
+async def reorder_skills(body: ReorderSkillsRequest, request: Request) -> EnvelopeResponse:
+    """Reorder skills for an agent/stage."""
+    try:
+        registry = _get_registry(request)
+
+        ok, msg = registry.reorder_skills(body.agent, body.stage, body.skill_ids)
+        if not ok:
+            return error_response("VALIDATION_ERROR", msg)
+
+        registry.save_config()
+
+        return envelope_response({
+            "agent": body.agent,
+            "stage": body.stage,
+            "skill_ids": registry.agent_skills.get(body.agent, {}).get(body.stage, []),
+            "source": str(registry.config_path),
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"重排 Skill 失败: {str(e)}")
+
+
 @router.post("/skills/validate")
-async def validate_skills() -> EnvelopeResponse:
+async def validate_skills(request: Request) -> EnvelopeResponse:
     """Validate all skill configurations."""
     try:
-        registry = _get_registry()
+        registry = _get_registry(request)
         result = registry.validate_all()
 
         return envelope_response({
@@ -311,7 +493,7 @@ async def validate_skills() -> EnvelopeResponse:
 
 
 @router.post("/skills/test")
-async def test_skills(body: SkillTestRequest) -> EnvelopeResponse:
+async def test_skills(body: SkillTestRequest, request: Request) -> EnvelopeResponse:
     """Run fixtures tests for skills.
 
     Args:
@@ -321,7 +503,7 @@ async def test_skills(body: SkillTestRequest) -> EnvelopeResponse:
         Envelope with total/passed/failed and per-skill results.
     """
     try:
-        registry = _get_registry()
+        registry = _get_registry(request)
 
         if not body.all and not body.skill_id:
             return error_response(
@@ -372,13 +554,13 @@ async def test_skills(body: SkillTestRequest) -> EnvelopeResponse:
 
 
 @router.post("/skills/run")
-async def run_skill(body: SkillRunRequest) -> EnvelopeResponse:
+async def run_skill(body: SkillRunRequest, request: Request) -> EnvelopeResponse:
     """Run a skill manually with text or custom payload.
 
     Does NOT write to the database. Does NOT expose secrets.
     """
     try:
-        registry = _get_registry()
+        registry = _get_registry(request)
 
         if body.skill_id not in registry.skills_config:
             return error_response(

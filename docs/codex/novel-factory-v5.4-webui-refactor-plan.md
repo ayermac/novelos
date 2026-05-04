@@ -267,6 +267,46 @@ Success criteria:
 - Skill management remains functionally equivalent.
 - Long operational labels wrap inside their panels instead of forcing horizontal overflow.
 
+### v5.4.6 Agent Skill Configuration Console
+
+Upgrade Settings > Skill 管理页从"只读可视化"升级为"可理解、可配置、可保存"的 Skill 工作台。
+
+Scope:
+
+- 后端 Skill Mount 配置 API：
+  - `GET /api/skills/config` — 返回配置视图（agents, stages, mounted, available, missing, disabled）
+  - `POST /api/skills/mount` — 挂载 skill 到 agent/stage
+  - `DELETE /api/skills/mount` — 卸载 skill
+  - `POST /api/skills/reorder` — 重排某个 agent/stage 的挂载顺序
+  - 保持现有 `/api/skills/*` 端点不破坏
+- 前端 Agent/Stage Skill Mount Editor：
+  - 按 Agent 分组、Stage 分行的挂载编辑器
+  - Chip 显示 skill id + enabled/disabled/missing/legacy 状态
+  - 每个 Stage 支持添加（select + 按钮）、移除、上移、下移
+  - 操作后局部 loading，成功后刷新 config + matrix + mounts
+  - 错误只显示在 Mount Editor 局部
+- Skill 来源/状态说明更清楚：
+  - 显示当前 registry 实际加载的 skill 数量
+  - 显示 enabled 但未挂载、配置里引用但缺失、已禁用 skill
+  - 显示 OpenClaw legacy skill 提示（不伪造未加载的 skill）
+
+Out of scope:
+
+- 章节工作流执行语义变更（只改配置读写，不改运行时）
+- Project-specific skill overrides
+- OpenClaw bulk skill migration
+- Skill enable/disable toggle（仍通过配置文件管理）
+- Skill import/registration UI
+
+Success criteria:
+
+- `test_skills_api.py` 新增测试全部通过（≥13 个新用例）
+- 全量 pytest 不下降
+- Frontend typecheck / lint / build 通过
+- API 使用 envelope_response/error_response，不暴露 secrets
+- UI 操作失败时局部显示错误，不导致整页崩溃
+- 长 skill id / stage 不会撑爆容器
+
 ## Implementation Rules
 
 - Do not redesign the product as a landing page.

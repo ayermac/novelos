@@ -1,14 +1,19 @@
-"""Tests for v5.3.3 Skill Visibility API.
+"""Tests for v5.3.3 Skill Visibility API and v5.4.6 Mount Configuration API.
 
 Covers:
 - GET /api/skills
+- GET /api/skills/config
 - GET /api/skills/{skill_id}
 - GET /api/skills/mounts
+- POST /api/skills/mount
+- DELETE /api/skills/mount
+- POST /api/skills/reorder
 - POST /api/skills/validate
 """
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 from pathlib import Path
 
@@ -19,13 +24,25 @@ from novel_factory.api_app import create_api_app
 from novel_factory.db.connection import init_db
 
 
+DEFAULT_SKILLS_PATH = Path(__file__).parent.parent / "novel_factory" / "config" / "skills.yaml"
+
+
 @pytest.fixture
 def test_client():
-    """Create test client with isolated database."""
+    """Create test client with isolated database and skills config."""
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "test.db"
         init_db(str(db_path))
-        app = create_api_app(db_path=str(db_path), llm_mode="stub")
+
+        # Copy default skills.yaml to temp dir for safe writes
+        skills_path = Path(tmpdir) / "skills.yaml"
+        shutil.copy(str(DEFAULT_SKILLS_PATH), str(skills_path))
+
+        app = create_api_app(
+            db_path=str(db_path),
+            llm_mode="stub",
+            skills_config_path=str(skills_path),
+        )
         client = TestClient(app)
         yield client
 
@@ -68,6 +85,41 @@ class TestListSkills:
         assert sbc["enabled"] is True
         assert sbc["is_mounted"] is True
         assert {"agent": "editor", "stage": "before_review"} in sbc["mounted_to"]
+
+
+class TestGetSkillConfig:
+    """Test GET /api/skills/config."""
+
+    def test_returns_envelope(self, test_client):
+        resp = test_client.get("/api/skills/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert "data" in data
+
+    def test_has_required_fields(self, test_client):
+        resp = test_client.get("/api/skills/config")
+        data = resp.json()["data"]
+        assert "agents" in data
+        assert "stages" in data
+        assert "agent_skills" in data
+        assert "available_skills" in data
+        assert "missing_skills" in data
+        assert "disabled_skills" in data
+        assert "config_path" in data
+        assert "total_skills" in data
+        assert "total_mounted" in data
+
+    def test_available_skills_match_registry(self, test_client):
+        resp = test_client.get("/api/skills/config")
+        data = resp.json()["data"]
+        available_ids = {s["id"] for s in data["available_skills"]}
+        assert available_ids == {"humanizer-zh", "ai-style-detector", "narrative-quality", "style-bible-checker"}
+
+    def test_config_path_is_skills_yaml(self, test_client):
+        resp = test_client.get("/api/skills/config")
+        data = resp.json()["data"]
+        assert "skills.yaml" in data["config_path"]
 
 
 class TestGetSkillDetail:
@@ -124,6 +176,137 @@ class TestGetSkillMounts:
         assert "ai-style-detector" in data["editor"]["before_review"]
         assert "narrative-quality" in data["editor"]["before_review"]
         assert "style-bible-checker" in data["editor"]["before_review"]
+
+
+class TestMountSkill:
+    """Test POST /api/skills/mount."""
+
+    def test_mount_skill_success(self, test_client):
+        resp = test_client.post("/api/skills/mount", json={
+            "agent": "polisher",
+            "stage": "after_llm",
+            "skill_id": "narrative-quality",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["agent"] == "polisher"
+        assert data["data"]["skill_id"] == "narrative-quality"
+
+    def test_mount_duplicate_skill_rejected(self, test_client):
+        # style-bible-checker is already mounted to editor/before_review
+        resp = test_client.post("/api/skills/mount", json={
+            "agent": "editor",
+            "stage": "before_review",
+            "skill_id": "style-bible-checker",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_mount_unknown_skill_rejected(self, test_client):
+        resp = test_client.post("/api/skills/mount", json={
+            "agent": "polisher",
+            "stage": "after_llm",
+            "skill_id": "unknown-skill",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_mount_unknown_agent_rejected(self, test_client):
+        resp = test_client.post("/api/skills/mount", json={
+            "agent": "nonexistent-agent",
+            "stage": "after_llm",
+            "skill_id": "humanizer-zh",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_mount_refreshes_agent_matrix(self, test_client):
+        # Mount narrative-quality to polisher/after_llm
+        test_client.post("/api/skills/mount", json={
+            "agent": "polisher",
+            "stage": "after_llm",
+            "skill_id": "narrative-quality",
+        })
+        resp = test_client.get("/api/skills/agent-matrix")
+        data = resp.json()["data"]
+        polisher = next(a for a in data["agents"] if a["agent"] == "polisher")
+        after_llm = next(s for s in polisher["stages"] if s["stage"] == "after_llm")
+        skill_ids = [s["id"] for s in after_llm["skills"]]
+        assert "narrative-quality" in skill_ids
+
+
+class TestUnmountSkill:
+    """Test DELETE /api/skills/mount."""
+
+    def test_unmount_skill_success(self, test_client):
+        resp = test_client.request("DELETE", "/api/skills/mount", json={
+            "agent": "editor",
+            "stage": "before_review",
+            "skill_id": "style-bible-checker",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["skill_id"] == "style-bible-checker"
+
+    def test_unmount_missing_skill_behavior(self, test_client):
+        # narrative-quality is not mounted to polisher/after_llm initially
+        resp = test_client.request("DELETE", "/api/skills/mount", json={
+            "agent": "polisher",
+            "stage": "after_llm",
+            "skill_id": "narrative-quality",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+
+class TestReorderSkills:
+    """Test POST /api/skills/reorder."""
+
+    def test_reorder_skill_success(self, test_client):
+        resp = test_client.post("/api/skills/reorder", json={
+            "agent": "editor",
+            "stage": "before_review",
+            "skill_ids": ["style-bible-checker", "narrative-quality", "ai-style-detector"],
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["skill_ids"] == [
+            "style-bible-checker", "narrative-quality", "ai-style-detector"
+        ]
+
+    def test_reorder_rejects_missing_or_extra_ids(self, test_client):
+        # Missing style-bible-checker
+        resp = test_client.post("/api/skills/reorder", json={
+            "agent": "editor",
+            "stage": "before_review",
+            "skill_ids": ["narrative-quality", "ai-style-detector"],
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+        # Extra unknown skill
+        resp2 = test_client.post("/api/skills/reorder", json={
+            "agent": "editor",
+            "stage": "before_review",
+            "skill_ids": ["style-bible-checker", "narrative-quality", "ai-style-detector", "unknown"],
+        })
+        assert resp2.status_code == 200
+        data2 = resp2.json()
+        assert data2["ok"] is False
+        assert data2["error"]["code"] == "VALIDATION_ERROR"
 
 
 class TestGetAgentSkillMatrix:
