@@ -64,3 +64,4 @@ agent_skills:
     before_review:
       - ai-style-detector
       - narrative-quality
+      - style-bible-checker

@@ -59,15 +59,15 @@ class TestListSkills:
             assert "mounted_to" in skill
             assert "is_mounted" in skill
 
-    def test_style_bible_checker_is_enabled_but_unmounted(self, test_client):
+    def test_style_bible_checker_is_enabled_and_mounted_to_editor(self, test_client):
         resp = test_client.get("/api/skills")
         data = resp.json()
         skills = data["data"]["skills"]
         sbc = next((s for s in skills if s["id"] == "style-bible-checker"), None)
         assert sbc is not None
         assert sbc["enabled"] is True
-        assert sbc["is_mounted"] is False
-        assert sbc["mounted_to"] == []
+        assert sbc["is_mounted"] is True
+        assert {"agent": "editor", "stage": "before_review"} in sbc["mounted_to"]
 
 
 class TestGetSkillDetail:
@@ -123,6 +123,7 @@ class TestGetSkillMounts:
         assert "ai-style-detector" in data["polisher"]["before_save"]
         assert "ai-style-detector" in data["editor"]["before_review"]
         assert "narrative-quality" in data["editor"]["before_review"]
+        assert "style-bible-checker" in data["editor"]["before_review"]
 
 
 class TestValidateSkills:
