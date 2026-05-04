@@ -306,6 +306,11 @@ async def apply_memory_batch(
             )
 
         items = repo.list_memory_items(batch_id, status="pending")
+        if not items:
+            return error_response(
+                "NO_PENDING_MEMORY_ITEMS",
+                "该批次没有待应用的记忆项，请刷新后查看最新状态",
+            )
         results = []
 
         for item in items:
@@ -436,6 +441,11 @@ async def apply_memory_batch_canonical(
             )
 
         items = repo.list_memory_items(body.batch_id, status="pending")
+        if not items:
+            return error_response(
+                "NO_PENDING_MEMORY_ITEMS",
+                "该批次没有待应用的记忆项，请刷新后查看最新状态",
+            )
         results = []
 
         for item in items:

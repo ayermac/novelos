@@ -34,6 +34,20 @@ class TestPlannerOutput:
         output = PlannerOutput(chapter_brief=ChapterBrief(objective="目标"))
         assert output.chapter_brief.required_events == []
 
+    def test_flat_real_llm_output_is_wrapped(self):
+        output = PlannerOutput(**{
+            "objective": "【状态卡】第九章继续沿梯推进",
+            "key_events": ["发现线索", "遭遇阻碍"],
+            "plots_to_plant": ["P009"],
+            "plots_to_resolve": [],
+            "ending_hook": "门后传来脚步声",
+            "constraints": ["禁止冷笑"],
+        })
+
+        assert output.chapter_brief.objective.startswith("【状态卡】")
+        assert output.chapter_brief.required_events == ["发现线索", "遭遇阻碍"]
+        assert output.chapter_brief.plots_to_plant == ["P009"]
+
 
 class TestScreenwriterOutput:
     def test_valid_output(self):
@@ -108,6 +122,20 @@ class TestEditorOutput:
         output = EditorOutput(**data)
         assert output.pass_ is False
         assert output.revision_target == "author"
+
+    def test_null_state_card_normalizes_to_empty_dict(self):
+        """Real LLMs may return null when no state card is extracted."""
+        data = {
+            "pass": True,
+            "score": 88,
+            "scores": {"setting": 20, "logic": 18, "poison": 18, "text": 16, "pacing": 16},
+            "issues": [],
+            "suggestions": [],
+            "revision_target": None,
+            "state_card": None,
+        }
+        output = EditorOutput(**data)
+        assert output.state_card == {}
 
     def test_invalid_revision_target(self):
         """revision_target must be author/polisher/planner/null."""

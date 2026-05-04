@@ -360,6 +360,38 @@ class TestMemoryApplyCanonical:
         body = resp.json()
         assert body["ok"] is False
 
+    def test_apply_partial_batch_without_pending_items_returns_refresh_error(self, client, project_id):
+        """Partial batches with no pending items should not become applied by an empty apply."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(
+            project_id=project_id,
+            chapter_number=1,
+            summary="No pending items",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="characters",
+            operation="create",
+            after_json=json.dumps({"name": "已失败角色"}, ensure_ascii=False),
+        )
+        items = repo.list_memory_items(batch["id"])
+        repo.update_memory_item(items[0]["id"], {"status": "failed"})
+        repo.update_memory_batch(batch["id"], {"status": "partial"})
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["error"]["code"] == "NO_PENDING_MEMORY_ITEMS"
+        assert repo.get_memory_batch(batch["id"])["status"] == "partial"
+
 
 class TestMemoryIgnoreCanonical:
     """v5.3.2: Memory ignore uses canonical body-style route."""

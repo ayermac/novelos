@@ -8,6 +8,7 @@ from typing import Any
 
 from ..models.schemas import PlannerOutput
 from ..models.state import ChapterStatus, FactoryState
+from ..validators.chapter_checker import derive_word_target
 from .base import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -105,7 +106,10 @@ class PlannerAgent(BaseAgent):
         # Save instruction to DB, preserving word_target if one already exists
         brief = output.chapter_brief
         existing = self.repo.get_instruction(project_id, chapter_number)
+        project = self.repo.get_project(project_id)
         word_target = existing.get("word_target") if existing else None
+        if not word_target:
+            word_target = derive_word_target(existing, project)
 
         self.repo.create_instruction(
             project_id=project_id,

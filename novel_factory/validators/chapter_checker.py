@@ -55,6 +55,8 @@ def check_word_count(
     content: str,
     min_words: int = DEFAULT_MIN_WORDS,
     max_words: int = DEFAULT_MAX_WORDS,
+    check_min: bool = True,
+    check_max: bool = True,
 ) -> list[str]:
     """Check if content word count is within acceptable range.
 
@@ -62,6 +64,8 @@ def check_word_count(
         content: Chapter text content.
         min_words: Minimum acceptable word count.
         max_words: Maximum acceptable word count.
+        check_min: Whether to enforce the minimum word count.
+        check_max: Whether to enforce the maximum word count.
 
     Returns:
         List of violation messages. Empty list means no violations.
@@ -71,9 +75,9 @@ def check_word_count(
 
     if word_count == 0:
         violations.append("内容为空")
-    elif word_count < min_words:
+    elif check_min and word_count < min_words:
         violations.append(f"字数不足: {word_count} < {min_words}")
-    elif word_count > max_words:
+    elif check_max and word_count > max_words:
         violations.append(f"字数超标: {word_count} > {max_words}")
 
     return violations
@@ -152,13 +156,17 @@ def derive_word_target(
     return 2500
 
 
-def validate_chapter_output(output: dict) -> list[str]:
+def validate_chapter_output(
+    output: dict,
+    check_min_words: bool = True,
+    check_max_words: bool = True,
+) -> list[str]:
     """Validate Author/Polisher output for chapter-level constraints.
 
     Checks:
     - content is non-empty
     - word_count matches actual content length (if provided)
-    - word count within range
+    - word count within range (controlled by check_min_words/check_max_words)
 
     Returns:
         List of violation messages.
@@ -180,7 +188,8 @@ def validate_chapter_output(output: dict) -> list[str]:
                 f"word_count 不匹配: 声明 {declared_wc}, 实际 {actual_wc}"
             )
 
-    # Word count range check
-    violations.extend(check_word_count(content))
+    # Word count range check (skip min when quality gate handles it separately)
+    if check_min_words or check_max_words:
+        violations.extend(check_word_count(content, check_min=check_min_words, check_max=check_max_words))
 
     return violations

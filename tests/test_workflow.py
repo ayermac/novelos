@@ -8,6 +8,7 @@ from novel_factory.workflow.conditions import (
     route_by_review_result,
     route_after_memory_curator,
     route_by_revision_type,
+    route_after_agent,
 )
 
 
@@ -108,6 +109,16 @@ class TestRouteByReviewResult:
     def test_fail_goes_to_revise(self):
         state = {"quality_gate": {"pass": False}, "retry_count": 1, "max_retries": 3}
         assert route_by_review_result(state) == "revise"
+
+    def test_death_penalty_gate_after_agent_goes_to_revision(self):
+        state = {
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "author",
+                "death_penalty_fail": True,
+            }
+        }
+        assert route_after_agent(state) == "revision_router"
 
     def test_max_retries_goes_to_human(self):
         state = {"quality_gate": {"pass": False}, "retry_count": 3, "max_retries": 3}

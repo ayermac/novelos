@@ -5,7 +5,7 @@ v1 Agent output contracts per architecture doc section 17.4.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 # ── Planner output ─────────────────────────────────────────────
@@ -26,6 +26,30 @@ class PlannerOutput(BaseModel):
     """Planner structured output."""
 
     chapter_brief: ChapterBrief
+
+    @model_validator(mode="before")
+    @classmethod
+    def accept_flat_chapter_brief(cls, data):
+        """Accept real LLMs that return the brief fields without a wrapper."""
+        if not isinstance(data, dict) or "chapter_brief" in data:
+            return data
+
+        brief_keys = {
+            "objective",
+            "required_events",
+            "key_events",
+            "plots_to_plant",
+            "plots_to_resolve",
+            "ending_hook",
+            "constraints",
+        }
+        if not any(key in data for key in brief_keys):
+            return data
+
+        brief = dict(data)
+        if "required_events" not in brief and "key_events" in brief:
+            brief["required_events"] = brief.pop("key_events")
+        return {"chapter_brief": brief}
 
 
 # ── Screenwriter output ────────────────────────────────────────
@@ -98,3 +122,11 @@ class EditorOutput(BaseModel):
     state_card: dict = Field(default_factory=dict)
 
     model_config = {"populate_by_name": True}
+
+    @field_validator("state_card", mode="before")
+    @classmethod
+    def normalize_state_card(cls, value):
+        """Treat LLM null state_card as an empty state card."""
+        if value is None:
+            return {}
+        return value

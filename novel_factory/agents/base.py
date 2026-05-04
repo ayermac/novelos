@@ -96,8 +96,22 @@ class BaseAgent:
             self.check_precondition(state)
             return self._execute(state)
         except ValueError as e:
-            logger.error("Agent '%s' validation failed: %s", self.agent_id, e)
-            return {"error": str(e), "chapter_status": state.get("chapter_status")}
+            message = str(e)
+            logger.error("Agent '%s' validation failed: %s", self.agent_id, message)
+            if "死刑红线" in message:
+                return {
+                    "error": message,
+                    "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": self.agent_id if self.agent_id in ("author", "polisher") else "author",
+                        "death_penalty_fail": True,
+                        "message": message,
+                        "agent": self.agent_id,
+                        "workflow_run_id": state.get("workflow_run_id"),
+                    },
+                }
+            return {"error": message, "chapter_status": state.get("chapter_status")}
         except Exception as e:
             logger.exception("Agent '%s' execution failed", self.agent_id)
             return {"error": str(e), "chapter_status": state.get("chapter_status")}

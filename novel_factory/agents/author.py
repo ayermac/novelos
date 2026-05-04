@@ -57,11 +57,15 @@ class AuthorAgent(BaseAgent):
         # Writing instruction
         instruction = self._get_instruction(state)
         if instruction:
+            word_target = self._get_word_target(state)
+            minimum_required = int(word_target * 0.85)
+            recommended_target = max(word_target, minimum_required + 500)
             parts.append(f"【写作指令】\n目标: {instruction.get('objective', '')}\n"
                          f"关键事件: {instruction.get('key_events', '')}\n"
                          f"情绪基调: {instruction.get('emotion_tone', '')}\n"
                          f"章末钩子: {instruction.get('ending_hook', '')}\n"
-                         f"字数目标: {instruction.get('word_target', 2500)}")
+                         f"字数硬要求: 正文 content 至少 {minimum_required} 字符，"
+                         f"建议写到 {recommended_target} 字符左右，低于硬要求会自动返修。")
 
         # R3: Review notes from human review sessions (v3.2)
         project_id = state["project_id"]
@@ -129,12 +133,17 @@ class AuthorAgent(BaseAgent):
         self.validate_output(output.model_dump())
 
         # v5.3.0: Word count quality gate
-        word_gate_passed, word_gate_msg = self._check_word_count_gate(state, output.content)
+        word_target = self._get_word_target(state)
+        word_gate_passed, word_gate_msg = check_word_count_quality_gate(
+            output.content, word_target, "author"
+        )
         if not word_gate_passed and state.get("llm_mode") == "real":
             expanded = self._try_expand_short_output(state, output, word_gate_msg)
             if expanded is not None:
                 output = expanded
-                word_gate_passed, word_gate_msg = self._check_word_count_gate(state, output.content)
+                word_gate_passed, word_gate_msg = check_word_count_quality_gate(
+                    output.content, word_target, "author"
+                )
 
         if not word_gate_passed:
             logger.warning("Author: word count quality gate failed: %s", word_gate_msg)
@@ -207,8 +216,10 @@ class AuthorAgent(BaseAgent):
 
     def validate_output(self, output: dict) -> None:
         AuthorOutput(**output)
-        # Hard validation: word count and death penalty
-        violations = validate_chapter_output(output)
+        # Hard validation: schema, word_count match, death penalty.
+        # Skip word-count range here — the retryable quality gate handles it
+        # so short drafts route to revision instead of blocking.
+        violations = validate_chapter_output(output, check_min_words=False, check_max_words=True)
         if violations:
             raise ValueError(f"Author 输出校验失败: {'; '.join(violations)}")
         # Q2: Enhanced death penalty with severity
@@ -236,6 +247,7 @@ class AuthorAgent(BaseAgent):
         project = self.repo.get_project(state["project_id"])
         word_target = derive_word_target(instruction, project)
         minimum_required = int(word_target * 0.85)
+        expansion_target = max(word_target + 300, minimum_required + 700)
 
         messages = [
             {"role": "system", "content": AUTHOR_SYSTEM_PROMPT},
@@ -244,7 +256,8 @@ class AuthorAgent(BaseAgent):
                 "content": (
                     f"第{state['chapter_number']}章正文未达到字数硬闸门：{word_gate_msg}。\n"
                     f"请在不改变已实现关键事件、伏笔和事实的前提下扩写正文，"
-                    f"至少达到 {minimum_required} 字符，目标约 {word_target} 字符。\n"
+                    f"至少达到 {minimum_required} 字符，建议扩到 {expansion_target} 字符，"
+                    "不要只补几十字或一小段。\n"
                     "必须返回完整 JSON，字段仍为 title/content/word_count/"
                     "implemented_events/used_plot_refs。word_count 可填写估算值，"
                     "系统会以 content 实际长度为准。\n\n"
@@ -265,18 +278,19 @@ class AuthorAgent(BaseAgent):
             logger.warning("Author: expand-short-output retry failed: %s", e)
             return None
 
+    def _get_word_target(self, state: FactoryState) -> int:
+        """Derive the active word target for this chapter."""
+        project_id = state["project_id"]
+        instruction = self._get_instruction(state)
+        project = self.repo.get_project(project_id)
+        return derive_word_target(instruction, project)
+
     def _check_word_count_gate(self, state: FactoryState, content: str) -> tuple[bool, str]:
         """v5.3.0: Check word count quality gate.
 
         Returns:
             Tuple of (passed, message).
         """
-        project_id = state["project_id"]
-        chapter_number = state["chapter_number"]
-
-        # Get word_target from instruction or project
-        instruction = self._get_instruction(state)
-        project = self.repo.get_project(project_id)
-        word_target = derive_word_target(instruction, project)
+        word_target = self._get_word_target(state)
 
         return check_word_count_quality_gate(content, word_target, "author")

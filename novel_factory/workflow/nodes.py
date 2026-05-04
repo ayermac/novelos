@@ -87,12 +87,14 @@ def _handle_retryable_quality_gate(
 ) -> dict[str, Any]:
     """Convert retryable quality gate failures into revision routing.
 
-    Author/Polisher word-count failures are expected recoverable defects. They
-    should consume a revision attempt and route back to the responsible agent
-    until the chapter-level retry cap is reached. Other errors remain blocking.
+    Author/Polisher word-count failures and death-penalty red-line failures
+    are expected recoverable defects. They should consume a revision attempt
+    and route back to the responsible agent until the chapter-level retry cap
+    is reached. Other errors remain blocking.
     """
     gate = result.get("quality_gate") or {}
-    if not result.get("error") or not gate.get("word_count_fail"):
+    retryable_gate = gate.get("word_count_fail") or gate.get("death_penalty_fail")
+    if not result.get("error") or not retryable_gate:
         return result
 
     project_id = state.get("project_id", "")

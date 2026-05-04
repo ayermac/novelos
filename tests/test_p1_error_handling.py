@@ -42,8 +42,8 @@ class TestAuthorValidationFailure:
         """Create repository instance."""
         return Repository(temp_db)
 
-    def test_author_validation_failure_sets_requires_human(self, settings, repo):
-        """When Author validation fails, requires_human should be set."""
+    def test_author_word_gate_records_target_without_name_error(self, settings, repo):
+        """Author word-count failures should carry target details for retry routing."""
         # Create a test project and chapter
         project_id = "test_p1_author_fail"
         repo.create_project(
@@ -66,12 +66,14 @@ class TestAuthorValidationFailure:
             "workflow_run_id": "",
         }
 
-        # Create mock LLM that returns invalid output (word_count mismatch)
+        # Create mock LLM that returns structurally valid output that fails the
+        # word-count quality gate. This specifically covers the traceability
+        # path that records word_target.
         mock_llm = MagicMock()
         mock_llm.invoke_json.return_value = {
             "title": "Test Chapter",
-            "content": "Short",  # Too short for word_count
-            "word_count": 1000,  # Mismatch - content is much shorter
+            "content": "短正文" * 200,
+            "word_count": 600,
             "implemented_events": [],
             "used_plot_refs": [],
         }
@@ -80,10 +82,132 @@ class TestAuthorValidationFailure:
         # Run author_node
         result = author_node(state, repo, mock_llm)
 
-        # Verify error is set
-        assert "error" in result
-        assert "requires_human" in result
-        assert result["requires_human"] is True, "P1 fix: requires_human must be True when validation fails"
+        assert result["requires_human"] is False
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert result["quality_gate"]["actual_word_count"] == 600
+        assert result["quality_gate"]["word_target"] == 3000
+
+    def test_author_very_short_content_routes_to_revision(self, settings, repo):
+        """Content shorter than hard min (500) must go through retryable quality gate."""
+        project_id = "test_p1_author_short"
+        repo.create_project(
+            project_id=project_id,
+            name="Test Project",
+            genre="fantasy",
+        )
+        repo.add_chapter(project_id, 1, title="Chapter 1", status=ChapterStatus.SCRIPTED.value)
+
+        state: FactoryState = {
+            "project_id": project_id,
+            "chapter_number": 1,
+            "chapter_status": ChapterStatus.SCRIPTED.value,
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "steps": [],
+            "workflow_run_id": "",
+        }
+
+        mock_llm = MagicMock()
+        mock_llm.invoke_json.return_value = {
+            "title": "Test Chapter",
+            "content": "短" * 400,  # 400 chars, below both 500 hard min and quality gate threshold
+            "word_count": 400,
+            "implemented_events": [],
+            "used_plot_refs": [],
+        }
+        mock_llm.last_token_usage = None
+
+        result = author_node(state, repo, mock_llm)
+
+        assert result["requires_human"] is False
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert result["quality_gate"]["actual_word_count"] == 400
+
+    def test_author_oversized_content_routes_to_human_review(self, settings, repo):
+        """Content exceeding DEFAULT_MAX_WORDS must trigger hard validation error, not quality gate."""
+        from novel_factory.validators.chapter_checker import DEFAULT_MAX_WORDS
+
+        project_id = "test_p1_author_oversized"
+        repo.create_project(
+            project_id=project_id,
+            name="Test Project",
+            genre="fantasy",
+        )
+        repo.add_chapter(project_id, 1, title="Chapter 1", status=ChapterStatus.SCRIPTED.value)
+
+        state: FactoryState = {
+            "project_id": project_id,
+            "chapter_number": 1,
+            "chapter_status": ChapterStatus.SCRIPTED.value,
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "steps": [],
+            "workflow_run_id": "",
+        }
+
+        oversized_content = "长" * (DEFAULT_MAX_WORDS + 1)
+        mock_llm = MagicMock()
+        mock_llm.invoke_json.return_value = {
+            "title": "Test Chapter",
+            "content": oversized_content,
+            "word_count": DEFAULT_MAX_WORDS + 1,
+            "implemented_events": [],
+            "used_plot_refs": [],
+        }
+        mock_llm.last_token_usage = None
+
+        result = author_node(state, repo, mock_llm)
+
+        # Oversized content should be a hard validation error, not a retryable quality gate
+        assert result["requires_human"] is True
+        assert result["chapter_status"] == ChapterStatus.SCRIPTED.value
+        assert "字数超标" in result["error"]
+
+    def test_author_death_penalty_routes_to_revision(self, settings, repo):
+        """Author death-penalty red lines should be retryable, not immediate blocking."""
+        project_id = "test_p1_author_death_penalty"
+        repo.create_project(
+            project_id=project_id,
+            name="Test Project",
+            genre="fantasy",
+        )
+        repo.add_chapter(project_id, 1, title="Chapter 1", status=ChapterStatus.SCRIPTED.value)
+
+        state: FactoryState = {
+            "project_id": project_id,
+            "chapter_number": 1,
+            "chapter_status": ChapterStatus.SCRIPTED.value,
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "steps": [],
+            "workflow_run_id": "",
+        }
+
+        mock_llm = MagicMock()
+        mock_llm.invoke_json.return_value = {
+            "title": "Test Chapter",
+            "content": "他冷笑了一声。" + ("正常内容填充" * 400),
+            "word_count": 2407,
+            "implemented_events": [],
+            "used_plot_refs": [],
+        }
+        mock_llm.last_token_usage = None
+
+        result = author_node(state, repo, mock_llm)
+
+        assert result["requires_human"] is False
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"]["death_penalty_fail"] is True
+        assert result["quality_gate"]["revision_target"] == "author"
+        assert "冷笑" in result["quality_gate"]["message"]
 
     def test_author_llm_exception_sets_requires_human_and_failed_run(self, settings, repo):
         """Provider exceptions should be captured instead of leaving runs hanging."""

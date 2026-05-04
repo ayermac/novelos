@@ -111,9 +111,16 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
     const res = await post('/memory/apply', { project_id: projectId, batch_id: batchId })
     if (res.ok) {
       setMessage({ type: 'success', text: '批次已应用' })
-      loadBatches()
+      await loadBatches()
       if (expandedBatchId === batchId) {
-        loadBatchDetail(batchId)
+        await loadBatchDetail(batchId)
+      }
+    } else if (res.error?.code === 'NO_PENDING_MEMORY_ITEMS') {
+      // Stale partial batch — refresh UI just like success so user sees current state
+      setMessage({ type: 'error', text: res.error?.message || '无待处理项' })
+      await loadBatches()
+      if (expandedBatchId === batchId) {
+        await loadBatchDetail(batchId)
       }
     } else {
       setMessage({ type: 'error', text: res.error?.message || '应用失败' })
@@ -128,9 +135,9 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
     if (res.ok) {
       setMessage({ type: 'success', text: '已忽略' })
       if (expandedBatchId) {
-        loadBatchDetail(expandedBatchId)
+        await loadBatchDetail(expandedBatchId)
       }
-      loadBatches()
+      await loadBatches()
     } else {
       setMessage({ type: 'error', text: res.error?.message || '忽略失败' })
     }

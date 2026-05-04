@@ -87,7 +87,9 @@ def route_after_agent(state: FactoryState) -> str:
     if state.get("requires_human") or state.get("error"):
         return "human_review"
     gate = state.get("quality_gate", {})
-    if gate.get("word_count_fail") and gate.get("pass") is False:
+    if gate.get("pass") is False and (
+        gate.get("word_count_fail") or gate.get("death_penalty_fail")
+    ):
         return "revision_router"
     return "next"
 
