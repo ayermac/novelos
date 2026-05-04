@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import ChapterNav from '../ChapterNav'
 import ContextSidebar from '../ContextSidebar'
 import WorkflowTimeline from '../WorkflowTimeline'
+import AttentionPanel, { ActionHintList } from '../AttentionPanel'
 import { StepStatus } from '../../hooks/useSSEStream'
 import { tWorkflowStatus } from '../../lib/i18n'
 
@@ -304,37 +305,30 @@ function ContentTab({ generating, genError, genErrorDetails, chapterLoading, has
         </div>
       )}
       {genError && (
-        <div className="alert alert-error" style={{ marginBottom: '16px' }}>
-          <strong>生成失败</strong>
-          <div style={{ marginTop: '4px' }}>{genError}</div>
+        <AttentionPanel title="生成失败" tone="error" style={{ marginBottom: '16px' }}>
+          <div>{genError}</div>
           {genErrorDetails?.missing && genErrorDetails.missing.length > 0 && (
-            <div style={{ marginTop: '12px' }}>
-              <div style={{ fontWeight: 600, fontSize: '13px' }}>缺失项</div>
-              <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>
-                {genErrorDetails.missing.map((item, i) => (
-                  <li key={i}>
-                    <Link
-                      to={`/projects/${projectId}?module=${getModuleForMissing(item)}`}
-                      style={{ color: 'var(--primary)', textDecoration: 'underline' }}
-                    >
-                      {item}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
+            <ActionHintList title="缺失项">
+              {genErrorDetails.missing.map((item, i) => (
+                <li key={i}>
+                  <Link
+                    to={`/projects/${projectId}?module=${getModuleForMissing(item)}`}
+                    style={{ color: 'var(--primary)', textDecoration: 'underline' }}
+                  >
+                    {item}
+                  </Link>
+                </li>
+              ))}
+            </ActionHintList>
           )}
           {genErrorDetails?.actions && genErrorDetails.actions.length > 0 && (
-            <div style={{ marginTop: '12px' }}>
-              <div style={{ fontWeight: 600, fontSize: '13px' }}>建议操作</div>
-              <ul style={{ margin: '6px 0 0', paddingLeft: '18px' }}>
-                {genErrorDetails.actions.map((action, i) => (
-                  <li key={i}>{action}</li>
-                ))}
-              </ul>
-            </div>
+            <ActionHintList title="建议操作">
+              {genErrorDetails.actions.map((action, i) => (
+                <li key={i}>{action}</li>
+              ))}
+            </ActionHintList>
           )}
-        </div>
+        </AttentionPanel>
       )}
       {chapterLoading && !generating && (
         <div style={{ padding: '40px', textAlign: 'center', color: 'var(--text-muted)' }}>加载中...</div>

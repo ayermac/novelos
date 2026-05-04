@@ -492,6 +492,12 @@ body {
   border: 1px solid #fcd34d;
 }
 
+.alert-info {
+  background: #dbeafe;
+  color: #1e40af;
+  border: 1px solid #93c5fd;
+}
+
 /* Utilities */
 .flex {
   display: flex;
