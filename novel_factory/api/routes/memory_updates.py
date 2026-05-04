@@ -35,6 +35,13 @@ class MemoryIgnoreRequest(BaseModel):
     item_id: str
 
 
+class MemoryRetryRequest(BaseModel):
+    """Canonical body for memory retry-failed action."""
+
+    project_id: str
+    batch_id: str
+
+
 def _json_text(value) -> str:
     """Normalize structured memory values for text columns."""
     if value is None:
@@ -68,13 +75,13 @@ def _apply_memory_item(
     operation = item.get("operation", "")
     target_id = item.get("target_id")
     after_data = {}
+    result = {"target_table": target_table, "operation": operation, "success": False}
 
     try:
         after_data = json.loads(item.get("after_json", "{}"))
-    except (json.JSONDecodeError, TypeError):
-        pass
-
-    result = {"target_table": target_table, "operation": operation, "success": False}
+    except (json.JSONDecodeError, TypeError) as e:
+        result["error"] = f"after_json 解析失败: {str(e)[:100]}"
+        return result
 
     try:
         if target_table == "world_settings":
@@ -267,6 +274,34 @@ def _apply_memory_item(
     return result
 
 
+def _compute_batch_status(batch_id: str, repo) -> str:
+    """Recalculate batch status from all item statuses.
+
+    Rules:
+    - partial: any failed items exist
+    - pending: has pending items and no failed items
+    - applied: all items are applied (no pending/failed/ignored)
+    - ignored: all items are ignored (no pending/failed/applied)
+    - mixed: has applied + ignored, no pending/failed
+    """
+    all_items = repo.list_memory_items(batch_id)
+    if not all_items:
+        return "pending"
+
+    statuses = {item["status"] for item in all_items}
+
+    if "failed" in statuses:
+        return "partial"
+    if "pending" in statuses:
+        return "pending"
+    if statuses == {"applied"}:
+        return "applied"
+    if statuses == {"ignored"}:
+        return "ignored"
+    # Mixed: applied + ignored only
+    return "mixed"
+
+
 @router.get("/projects/{project_id}/memory-batches")
 async def list_memory_batches(
     request: Request, project_id: str, status: str | None = None
@@ -354,15 +389,14 @@ async def apply_memory_batch(
                 chapter_number=batch.get("chapter_number", 0),
                 batch_id=batch_id,
             )
-            if apply_result["success"]:
-                repo.update_memory_item(item["id"], {"status": "applied"})
-            else:
-                repo.update_memory_item(item["id"], {"status": "failed"})
+            update_data = {"status": "applied" if apply_result["success"] else "failed"}
+            if not apply_result["success"] and apply_result.get("error"):
+                update_data["error_message"] = apply_result["error"]
+            repo.update_memory_item(item["id"], update_data)
             results.append({**apply_result, "item_id": item["id"]})
 
-        # Update batch status
-        all_success = all(r["success"] for r in results)
-        new_status = "applied" if all_success else "partial"
+        # Recalculate batch status from all items
+        new_status = _compute_batch_status(batch_id, repo)
         repo.update_memory_batch(batch_id, {"status": new_status})
 
         return envelope_response({
@@ -489,14 +523,13 @@ async def apply_memory_batch_canonical(
                 chapter_number=batch.get("chapter_number", 0),
                 batch_id=body.batch_id,
             )
-            if apply_result["success"]:
-                repo.update_memory_item(item["id"], {"status": "applied"})
-            else:
-                repo.update_memory_item(item["id"], {"status": "failed"})
+            update_data = {"status": "applied" if apply_result["success"] else "failed"}
+            if not apply_result["success"] and apply_result.get("error"):
+                update_data["error_message"] = apply_result["error"]
+            repo.update_memory_item(item["id"], update_data)
             results.append({**apply_result, "item_id": item["id"]})
 
-        all_success = all(r["success"] for r in results)
-        new_status = "applied" if all_success else "partial"
+        new_status = _compute_batch_status(body.batch_id, repo)
         repo.update_memory_batch(body.batch_id, {"status": new_status})
 
         return envelope_response({
@@ -536,3 +569,57 @@ async def ignore_memory_item_canonical(
         return envelope_response(updated)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"忽略更新项失败: {str(e)}")
+
+
+@router.post("/memory/retry-failed")
+async def retry_failed_memory_items(
+    request: Request, body: MemoryRetryRequest
+) -> EnvelopeResponse:
+    """Reset all failed items in a batch to pending so they can be re-applied."""
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        project = repo.get_project(body.project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{body.project_id}' 不存在")
+
+        batch = repo.get_memory_batch(body.batch_id)
+        if not batch:
+            return error_response("BATCH_NOT_FOUND", f"批次 {body.batch_id} 不存在")
+
+        if batch["project_id"] != body.project_id:
+            return error_response("BATCH_NOT_FOUND", "批次不属于该项目")
+
+        if batch["status"] not in ("partial",):
+            return error_response(
+                "INVALID_BATCH_STATUS",
+                f"只能重试 partial 批次，当前状态: {batch['status']}",
+            )
+
+        failed_items = repo.list_memory_items(body.batch_id, status="failed")
+        if not failed_items:
+            return error_response(
+                "NO_FAILED_MEMORY_ITEMS",
+                "该批次没有失败项",
+            )
+
+        reset_count = 0
+        for item in failed_items:
+            repo.update_memory_item(
+                item["id"],
+                {"status": "pending", "error_message": ""},
+            )
+            reset_count += 1
+
+        new_status = _compute_batch_status(body.batch_id, repo)
+        repo.update_memory_batch(body.batch_id, {"status": new_status})
+
+        return envelope_response({
+            "batch_id": body.batch_id,
+            "status": new_status,
+            "reset_count": reset_count,
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"重试失败项失败: {str(e)}")

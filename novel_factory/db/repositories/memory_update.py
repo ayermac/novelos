@@ -206,7 +206,7 @@ class MemoryUpdateRepositoryMixin:
         try:
             fields = []
             values = []
-            for key in ("status", "after_json", "rationale", "evidence_text"):
+            for key in ("status", "after_json", "rationale", "evidence_text", "error_message"):
                 if key in data:
                     fields.append(f"{key}=?")
                     values.append(data[key])

@@ -181,6 +181,12 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         columns = [row[1] for row in cursor.fetchall()]
         return "workflow_run_id" in columns
 
+    if name == "024_v5_3_5_memory_item_error":
+        # 024 adds error_message column to memory_update_items
+        cursor = conn.execute("PRAGMA table_info(memory_update_items)")
+        columns = [row[1] for row in cursor.fetchall()]
+        return "error_message" in columns
+
     return False
 
 
