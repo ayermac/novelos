@@ -325,6 +325,69 @@ class TestMemoryApplyCanonical:
         assert updated_instruction["id"] != existing_instruction_id
         assert updated_instruction["objective"] == "更新后的目标"
 
+    def test_apply_structured_character_traits_and_instruction_events(self, client, project_id):
+        """Structured LLM memory fields should be serialized for text DB columns."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        character = repo.create_character(
+            project_id,
+            name="林砾",
+            role="protagonist",
+            description="旧描述",
+            traits="旧特征",
+        )
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=4,
+            summary="结构化字段测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="characters",
+            target_id=str(character["id"]),
+            operation="update",
+            after_json=json.dumps({
+                "traits": ["右掌冻裂至前臂", "骨腔序列血钥持有者"],
+            }, ensure_ascii=False),
+            confidence=0.98,
+            evidence_text="身体变化",
+            rationale="角色状态更新",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="instructions",
+            operation="create",
+            after_json=json.dumps({
+                "chapter_number": 5,
+                "objective": "制造迫降与被捕的二选一张力",
+                "key_events": ["燃料耗尽", "回收网逼近"],
+                "word_target": 2800,
+            }, ensure_ascii=False),
+            confidence=0.94,
+            evidence_text="推进器燃料3%",
+            rationale="下一章承接",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+        assert all(item["success"] is True for item in body["data"]["results"])
+
+        updated_character = repo.get_character(project_id, character["id"])
+        assert "右掌冻裂至前臂" in updated_character["traits"]
+        instruction = repo.get_instruction_by_chapter(project_id, 5)
+        assert instruction["objective"] == "制造迫降与被捕的二选一张力"
+        assert "燃料耗尽" in instruction["key_events"]
+
     def test_apply_nonexistent_batch(self, client, project_id):
         resp = client.post("/api/memory/apply", json={
             "project_id": project_id,

@@ -35,6 +35,24 @@ class MemoryIgnoreRequest(BaseModel):
     item_id: str
 
 
+def _json_text(value) -> str:
+    """Normalize structured memory values for text columns."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def _normalize_text_fields(data: dict, fields: tuple[str, ...]) -> dict:
+    """Return a copy with structured fields serialized for DB text columns."""
+    normalized = dict(data)
+    for field in fields:
+        if field in normalized:
+            normalized[field] = _json_text(normalized[field])
+    return normalized
+
+
 def _apply_memory_item(
     repo,
     project_id: str,
@@ -74,18 +92,21 @@ def _apply_memory_item(
                 result["success"] = True
 
         elif target_table == "characters":
+            character_data = _normalize_text_fields(
+                after_data, ("traits", "description", "alias", "role", "status")
+            )
             if operation == "create":
                 ch = repo.create_character(
                     project_id,
-                    name=after_data.get("name", ""),
-                    role=after_data.get("role", "supporting"),
-                    description=after_data.get("description", ""),
-                    traits=after_data.get("traits", ""),
+                    name=character_data.get("name", ""),
+                    role=character_data.get("role", "supporting"),
+                    description=character_data.get("description", ""),
+                    traits=character_data.get("traits", ""),
                 )
                 result["success"] = True
                 result["created_id"] = ch["id"] if ch else None
             elif operation == "update" and target_id:
-                repo.update_character(project_id, target_id, after_data)
+                repo.update_character(project_id, target_id, character_data)
                 result["success"] = True
 
         elif target_table == "factions":
@@ -155,19 +176,33 @@ def _apply_memory_item(
                 result["success"] = True
 
         elif target_table == "instructions":
+            instruction_data = _normalize_text_fields(
+                after_data,
+                (
+                    "key_events",
+                    "plots_to_resolve",
+                    "plots_to_plant",
+                    "emotion_tone",
+                    "ending_hook",
+                    "objective",
+                ),
+            )
             if operation == "create":
                 inst = repo.create_instruction(
                     project_id,
-                    chapter_number=after_data.get("chapter_number", 0),
-                    objective=after_data.get("objective", ""),
-                    key_events=after_data.get("key_events", ""),
-                    emotion_tone=after_data.get("emotion_tone", ""),
-                    word_target=after_data.get("word_target"),
+                    chapter_number=instruction_data.get("chapter_number", 0),
+                    objective=instruction_data.get("objective", ""),
+                    key_events=instruction_data.get("key_events", ""),
+                    plots_to_resolve=instruction_data.get("plots_to_resolve", ""),
+                    plots_to_plant=instruction_data.get("plots_to_plant", ""),
+                    emotion_tone=instruction_data.get("emotion_tone", ""),
+                    ending_hook=instruction_data.get("ending_hook", ""),
+                    word_target=instruction_data.get("word_target"),
                 )
                 result["success"] = True
                 result["created_id"] = inst
             elif operation == "update" and target_id:
-                repo.update_instruction(project_id, target_id, after_data)
+                repo.update_instruction(project_id, target_id, instruction_data)
                 result["success"] = True
 
         elif target_table == "story_facts":
