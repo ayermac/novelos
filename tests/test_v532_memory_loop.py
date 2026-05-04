@@ -511,6 +511,248 @@ class TestMemoryIgnoreCanonical:
         assert body["ok"] is False  # Cannot ignore non-pending items
 
 
+class TestMemoryErrorVisibility:
+    """v5.3.5: Failed memory items should expose error_message."""
+
+    def test_apply_invalid_after_json_records_error_message(self, client, project_id):
+        """Invalid after_json should produce a failed item with visible error."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=1,
+            summary="Invalid JSON test",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="characters",
+            operation="create",
+            after_json="not valid json",
+            confidence=0.9,
+            evidence_text="broken",
+            rationale="should fail",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "partial"
+
+        results = body["data"]["results"]
+        assert len(results) == 1
+        assert results[0]["success"] is False
+        assert "error" in results[0]
+
+        # error_message should be persisted on the item
+        item = repo.get_memory_item(results[0]["item_id"])
+        assert item["status"] == "failed"
+        assert item["error_message"] is not None
+        assert len(item["error_message"]) > 0
+
+
+class TestMemoryBatchStatusRecalculation:
+    """v5.3.5: Batch status must reflect all items, not just the latest apply."""
+
+    def test_batch_all_applied(self, client, project_id):
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="All applied")
+        item1 = repo.create_memory_item(
+            batch_id=batch["id"], project_id=project_id,
+            target_table="characters", operation="create",
+            after_json=json.dumps({"name": "A", "role": "supporting"}, ensure_ascii=False),
+        )
+        item2 = repo.create_memory_item(
+            batch_id=batch["id"], project_id=project_id,
+            target_table="characters", operation="create",
+            after_json=json.dumps({"name": "B", "role": "supporting"}, ensure_ascii=False),
+        )
+        repo.update_memory_item(item1["id"], {"status": "applied"})
+        repo.update_memory_item(item2["id"], {"status": "applied"})
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id, "batch_id": batch["id"],
+        })
+        assert resp.status_code == 200
+        assert resp.json()["error"]["code"] == "NO_PENDING_MEMORY_ITEMS"
+        # Status recalculation via helper should be applied
+        from novel_factory.api.routes.memory_updates import _compute_batch_status
+        assert _compute_batch_status(batch["id"], repo) == "applied"
+
+    def test_batch_partial_with_failed(self, client, project_id):
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="Has failed")
+        item1 = repo.create_memory_item(
+            batch_id=batch["id"], project_id=project_id,
+            target_table="characters", operation="create",
+            after_json=json.dumps({"name": "A", "role": "supporting"}, ensure_ascii=False),
+        )
+        item2 = repo.create_memory_item(
+            batch_id=batch["id"], project_id=project_id,
+            target_table="characters", operation="create",
+            after_json="bad json",
+        )
+        repo.update_memory_item(item1["id"], {"status": "applied"})
+        repo.update_memory_item(item2["id"], {"status": "failed"})
+
+        from novel_factory.api.routes.memory_updates import _compute_batch_status
+        assert _compute_batch_status(batch["id"], repo) == "partial"
+
+    def test_batch_ignored(self, client, project_id):
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="All ignored")
+        item1 = repo.create_memory_item(
+            batch_id=batch["id"], project_id=project_id,
+            target_table="characters", operation="create",
+            after_json=json.dumps({"name": "A", "role": "supporting"}, ensure_ascii=False),
+        )
+        repo.update_memory_item(item1["id"], {"status": "ignored"})
+
+        from novel_factory.api.routes.memory_updates import _compute_batch_status
+        assert _compute_batch_status(batch["id"], repo) == "ignored"
+
+    def test_batch_mixed_applied_ignored(self, client, project_id):
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="Mixed")
+        item1 = repo.create_memory_item(
+            batch_id=batch["id"], project_id=project_id,
+            target_table="characters", operation="create",
+            after_json=json.dumps({"name": "A", "role": "supporting"}, ensure_ascii=False),
+        )
+        item2 = repo.create_memory_item(
+            batch_id=batch["id"], project_id=project_id,
+            target_table="characters", operation="create",
+            after_json=json.dumps({"name": "B", "role": "supporting"}, ensure_ascii=False),
+        )
+        repo.update_memory_item(item1["id"], {"status": "applied"})
+        repo.update_memory_item(item2["id"], {"status": "ignored"})
+
+        from novel_factory.api.routes.memory_updates import _compute_batch_status
+        assert _compute_batch_status(batch["id"], repo) == "mixed"
+
+
+class TestMemoryRetryFailed:
+    """v5.3.5: Retry-failed should reset failed items to pending."""
+
+    def test_retry_failed_resets_items_and_status(self, client, project_id):
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="Retry test")
+        item = repo.create_memory_item(
+            batch_id=batch["id"], project_id=project_id,
+            target_table="characters", operation="create",
+            after_json="bad json",
+        )
+        repo.update_memory_item(item["id"], {"status": "failed", "error_message": "oops"})
+        repo.update_memory_batch(batch["id"], {"status": "partial"})
+
+        resp = client.post("/api/memory/retry-failed", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["reset_count"] == 1
+        assert body["data"]["status"] == "pending"
+
+        updated_item = repo.get_memory_item(item["id"])
+        assert updated_item["status"] == "pending"
+        assert updated_item["error_message"] == ""
+
+    def test_retry_non_partial_batch_rejected(self, client, project_id):
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="Applied batch")
+        repo.update_memory_batch(batch["id"], {"status": "applied"})
+
+        resp = client.post("/api/memory/retry-failed", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["error"]["code"] == "INVALID_BATCH_STATUS"
+
+    def test_retry_no_failed_items_returns_error(self, client, project_id):
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="No failed")
+        item = repo.create_memory_item(
+            batch_id=batch["id"], project_id=project_id,
+            target_table="characters", operation="create",
+            after_json=json.dumps({"name": "A"}, ensure_ascii=False),
+        )
+        repo.update_memory_item(item["id"], {"status": "pending"})
+        repo.update_memory_batch(batch["id"], {"status": "partial"})
+
+        resp = client.post("/api/memory/retry-failed", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["error"]["code"] == "NO_FAILED_MEMORY_ITEMS"
+
+
+class TestMemoryStructuredFieldNormalization:
+    """v5.3.5: Structured fields must be serialized before DB writes."""
+
+    def test_apply_plots_to_plant_and_resolve_lists(self, client, project_id):
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=3, summary="Plots list test")
+        repo.create_memory_item(
+            batch_id=batch["id"], project_id=project_id,
+            target_table="instructions", operation="create",
+            after_json=json.dumps({
+                "chapter_number": 4,
+                "objective": "推进剧情",
+                "plots_to_plant": ["伏笔A", "伏笔B"],
+                "plots_to_resolve": ["旧伏笔1"],
+                "key_events": ["事件1"],
+                "word_target": 2500,
+            }, ensure_ascii=False),
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id, "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+
+        instruction = repo.get_instruction_by_chapter(project_id, 4)
+        assert instruction is not None
+        assert "伏笔A" in instruction["plots_to_plant"]
+        assert "旧伏笔1" in instruction["plots_to_resolve"]
+
+
 class TestMemoryCuratorRouting:
     """v5.3.2: Memory curator failure routing in workflow conditions."""
 

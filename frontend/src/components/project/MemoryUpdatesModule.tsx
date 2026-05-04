@@ -29,6 +29,7 @@ interface MemoryItem {
   evidence_text: string
   rationale: string
   status: string
+  error_message: string | null
   created_at: string
 }
 
@@ -73,6 +74,7 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
   const [detailLoading, setDetailLoading] = useState(false)
   const [applying, setApplying] = useState<string | null>(null)
   const [ignoring, setIgnoring] = useState<string | null>(null)
+  const [retrying, setRetrying] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   const loadBatches = useCallback(async () => {
@@ -144,6 +146,23 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
     setIgnoring(null)
   }
 
+  const handleRetry = async (batchId: string) => {
+    setRetrying(batchId)
+    setMessage(null)
+    const res = await post('/memory/retry-failed', { project_id: projectId, batch_id: batchId })
+    if (res.ok) {
+      const retryData = res.data as { reset_count?: number } | undefined
+      setMessage({ type: 'success', text: `已重置 ${retryData?.reset_count || 0} 个失败项` })
+      await loadBatches()
+      if (expandedBatchId === batchId) {
+        await loadBatchDetail(batchId)
+      }
+    } else {
+      setMessage({ type: 'error', text: res.error?.message || '重试失败' })
+    }
+    setRetrying(null)
+  }
+
   if (loading) return <div className="module-loading">加载中...</div>
 
   const pendingBatches = batches.filter((b) => b.status === 'pending' || b.status === 'partial')
@@ -184,8 +203,10 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
                   onExpand={handleExpand}
                   onApply={handleApply}
                   onIgnore={handleIgnore}
+                  onRetry={handleRetry}
                   applying={applying === batch.id}
                   ignoring={ignoring}
+                  retrying={retrying === batch.id}
                 />
               ))}
             </div>
@@ -204,8 +225,10 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
                   onExpand={handleExpand}
                   onApply={handleApply}
                   onIgnore={handleIgnore}
+                  onRetry={handleRetry}
                   applying={applying === batch.id}
                   ignoring={ignoring}
+                  retrying={retrying === batch.id}
                 />
               ))}
             </div>
@@ -252,6 +275,8 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
         .item-rationale { font-size: 13px; color: var(--text-secondary, #374151); margin-bottom: 4px; }
         .item-evidence { font-size: 12px; color: var(--text-muted, #9ca3af); line-height: 1.5; }
         .item-evidence-label { font-weight: 500; }
+        .item-error { font-size: 12px; color: #991b1b; line-height: 1.5; margin-top: 4px; background: #fef2f2; padding: 6px 8px; border-radius: 4px; }
+        .item-error-label { font-weight: 500; }
         .item-actions { display: flex; gap: 6px; margin-top: 8px; }
         .btn-xs { padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border, #d1d5db); background: var(--bg-primary, #fff); color: var(--text-secondary, #374151); cursor: pointer; transition: all 0.15s; }
         .btn-xs:hover { background: var(--bg-hover, #f9fafb); }
@@ -263,7 +288,7 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
 }
 
 function BatchCard({
-  batch, expanded, detail, detailLoading, onExpand, onApply, onIgnore, applying, ignoring,
+  batch, expanded, detail, detailLoading, onExpand, onApply, onIgnore, onRetry, applying, ignoring, retrying,
 }: {
   batch: MemoryBatch
   expanded: boolean
@@ -272,10 +297,13 @@ function BatchCard({
   onExpand: (id: string) => void
   onApply: (id: string) => void
   onIgnore: (itemId: string) => void
+  onRetry: (id: string) => void
   applying: boolean
   ignoring: string | null
+  retrying: boolean
 }) {
   const canApply = batch.status === 'pending' || batch.status === 'partial'
+  const failedCount = detail?.items?.filter((i) => i.status === 'failed').length ?? 0
 
   return (
     <div className="batch-card">
@@ -288,10 +316,21 @@ function BatchCard({
           <span className="batch-chapter">第{batch.chapter_number}章</span>
           <span className={`batch-status batch-status-${batch.status}`}>
             {STATUS_LABELS[batch.status] || batch.status}
+            {failedCount > 0 && ` (${failedCount}项失败)`}
           </span>
         </div>
         {canApply && (
           <div className="batch-actions">
+            {batch.status === 'partial' && failedCount > 0 && (
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={(e) => { e.stopPropagation(); onRetry(batch.id) }}
+                disabled={retrying}
+              >
+                {retrying ? <Loader2 size={12} className="spin" /> : <AlertCircle size={12} />}
+                {retrying ? '重置中...' : '重试失败项'}
+              </button>
+            )}
             <button
               className="btn btn-primary btn-sm"
               onClick={(e) => { e.stopPropagation(); onApply(batch.id) }}
@@ -330,6 +369,12 @@ function BatchCard({
                   <div className="item-evidence">
                     <span className="item-evidence-label">证据: </span>
                     {item.evidence_text}
+                  </div>
+                )}
+                {item.error_message && (
+                  <div className="item-error">
+                    <span className="item-error-label">失败原因: </span>
+                    {item.error_message}
                   </div>
                 )}
                 {item.status === 'pending' && (
