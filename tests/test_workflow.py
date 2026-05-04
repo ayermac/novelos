@@ -120,6 +120,21 @@ class TestRouteByReviewResult:
         }
         assert route_after_agent(state) == "revision_router"
 
+    def test_stale_quality_gate_ignored_when_status_advanced(self):
+        """A stale quality_gate from a previous failed attempt must not cause
+        route_after_agent to send a successful agent run back to revision_router.
+        """
+        for status in ("drafted", "polished", "reviewed"):
+            state = {
+                "chapter_status": status,
+                "quality_gate": {
+                    "pass": False,
+                    "word_count_fail": True,
+                    "revision_target": "author",
+                },
+            }
+            assert route_after_agent(state) == "next", f"stale gate should be ignored for status={status}"
+
     def test_max_retries_goes_to_human(self):
         state = {"quality_gate": {"pass": False}, "retry_count": 3, "max_retries": 3}
         assert route_by_review_result(state) == "human_review"

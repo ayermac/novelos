@@ -86,9 +86,19 @@ def route_after_agent(state: FactoryState) -> str:
     """Continue to the next node unless the agent returned an error/human flag."""
     if state.get("requires_human") or state.get("error"):
         return "human_review"
-    gate = state.get("quality_gate", {})
-    if gate.get("pass") is False and (
-        gate.get("word_count_fail") or gate.get("death_penalty_fail")
+    gate = state.get("quality_gate", {}) or {}
+    current_status = state.get("chapter_status", "")
+    # Only trust the quality_gate if the chapter is still in an upstream status.
+    # If the agent has already advanced the status (e.g. drafted, polished),
+    # the gate is stale from a previous failed attempt that was retried.
+    if (
+        gate.get("pass") is False
+        and (gate.get("word_count_fail") or gate.get("death_penalty_fail"))
+        and current_status not in (
+            ChapterStatus.DRAFTED.value,
+            ChapterStatus.POLISHED.value,
+            ChapterStatus.REVIEWED.value,
+        )
     ):
         return "revision_router"
     return "next"

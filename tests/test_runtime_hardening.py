@@ -69,14 +69,14 @@ def test_llm_mode_stub_vs_real(tmp_path):
          "--project-id", "test_proj",
          "--chapter", "1",
          "--llm-mode", "stub",
-         "--max-steps", "1"],
+         "--max-steps", "50"],
         capture_output=True,
         text=True,
         cwd=Path(__file__).parent.parent,
         env=env,
     )
     assert result.returncode == 0, f"Stub mode failed: {result.stderr}"
-    
+
     # Test real mode without API key should fail
     result = subprocess.run(
         [sys.executable, "-m", "novel_factory.cli",
@@ -85,7 +85,7 @@ def test_llm_mode_stub_vs_real(tmp_path):
          "--project-id", "test_proj",
          "--chapter", "1",
          "--llm-mode", "real",
-         "--max-steps", "1"],
+         "--max-steps", "50"],
         capture_output=True,
         text=True,
         cwd=Path(__file__).parent.parent,
@@ -257,7 +257,7 @@ def test_workflow_run_shows_llm_mode(tmp_path):
          "--project-id", "demo",
          "--chapter", "1",
          "--llm-mode", "stub",
-         "--max-steps", "1"],
+         "--max-steps", "50"],
         capture_output=True,
         text=True,
         cwd=Path(__file__).parent.parent,

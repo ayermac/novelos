@@ -196,7 +196,7 @@ def run_with_graph(
     settings: Settings,
     repo: Repository,
     llm_mode: str = "stub",
-    max_steps: int = 20,
+    max_steps: int = 50,
 ) -> dict[str, Any]:
     """Run chapter production via LangGraph.
 
@@ -209,7 +209,7 @@ def run_with_graph(
         settings: Application settings.
         repo: Repository instance for database access.
         llm_mode: "stub" for demo mode, "real" for actual LLM calls.
-        max_steps: Maximum workflow steps (not currently enforced by LangGraph).
+        max_steps: Maximum graph recursion limit (steps). Defaults to 50.
 
     Returns:
         Dict with the same shape as Dispatcher.run_chapter():
@@ -276,7 +276,7 @@ def run_with_graph(
     llm_router = _build_llm_router(settings, llm_mode)
 
     # Get checkpoint config for this chapter
-    config = get_checkpoint_config(project_id, chapter_number)
+    config = get_checkpoint_config(project_id, chapter_number, recursion_limit=max_steps)
 
     # Build initial state with workflow_run_id placeholder
     # (will be populated by health_check_node)
@@ -325,7 +325,7 @@ def run_with_graph_stream(
     settings: Settings,
     repo: Repository,
     llm_mode: str = "stub",
-    max_steps: int = 20,
+    max_steps: int = 50,
 ) -> Generator[dict[str, Any], None, None]:
     """Run chapter production with streaming events (v5.2 Phase C).
 
@@ -337,7 +337,7 @@ def run_with_graph_stream(
         settings: Application settings.
         repo: Repository instance for database access.
         llm_mode: "stub" for demo mode, "real" for actual LLM calls.
-        max_steps: Maximum workflow steps (not currently enforced).
+        max_steps: Maximum graph recursion limit (steps). Defaults to 50.
 
     Yields:
         Event dicts with format:
@@ -427,7 +427,7 @@ def run_with_graph_stream(
         return
 
     # Get checkpoint config for this chapter
-    config = get_checkpoint_config(project_id, chapter_number)
+    config = get_checkpoint_config(project_id, chapter_number, recursion_limit=max_steps)
 
     # Track timing per agent
     agent_start_times: dict[str, float] = {}

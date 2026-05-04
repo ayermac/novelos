@@ -70,18 +70,21 @@ def get_checkpoint_thread_id(project_id: str, chapter_number: int) -> str:
     return f"{project_id}-chapter-{chapter_number}"
 
 
-def get_checkpoint_config(project_id: str, chapter_number: int) -> dict:
+def get_checkpoint_config(
+    project_id: str, chapter_number: int, recursion_limit: int = 50
+) -> dict:
     """Get checkpoint config for a chapter.
 
     Args:
         project_id: Project identifier.
         chapter_number: Chapter number.
+        recursion_limit: Maximum graph recursion limit (steps).
 
     Returns:
         Config dict for use with graph.invoke() or graph.stream().
     """
     return {
-        "recursion_limit": 50,
+        "recursion_limit": recursion_limit,
         "configurable": {
             "thread_id": get_checkpoint_thread_id(project_id, chapter_number),
         }
