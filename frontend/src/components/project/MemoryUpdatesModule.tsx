@@ -64,6 +64,7 @@ const STATUS_LABELS: Record<string, string> = {
   applied: '已应用',
   ignored: '已忽略',
   failed: '失败',
+  mixed: '混合',
 }
 
 export default function MemoryUpdatesModule({ projectId }: Props) {
