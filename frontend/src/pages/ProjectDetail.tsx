@@ -7,7 +7,8 @@ import ContextSidebar from '../components/ContextSidebar'
 import ErrorState from '../components/ErrorState'
 import { tWorkflowStatus } from '../lib/i18n'
 import { useSSEStream, SSEEvent, StepStatus } from '../hooks/useSSEStream'
-import ProjectModuleNav, { ProjectModule } from '../components/project/ProjectModuleNav'
+import type { ProjectModule } from '../components/project/ProjectModuleNav'
+import ProjectShell from '../components/project/ProjectShell'
 import WorldSettingsModule from '../components/project/WorldSettingsModule'
 import CharactersModule from '../components/project/CharactersModule'
 import FactionsModule from '../components/project/FactionsModule'
@@ -402,14 +403,15 @@ export default function ProjectDetail() {
   const currentChapterSseSteps = isCurrentChapterGenerating ? sseSteps : {}
 
   return (
-    <div className="workspace-layout">
-      <WorkspaceTopbar
-        projectName={workspace.project.name}
-        currentChapter={currentChapter}
-        publishedCount={workspace.stats.status_counts?.published || 0}
-        isStub={isStub}
-      />
-      <ProjectModuleNav activeModule={activeModule} onModuleChange={handleModuleChange} />
+    <ProjectShell
+      activeModule={activeModule}
+      onModuleChange={handleModuleChange}
+      currentChapter={currentChapter}
+      projectName={workspace.project.name}
+      publishedCount={workspace.stats.status_counts?.published || 0}
+      isStub={isStub}
+    >
+      <div className="workspace-layout">
       {activeModule === 'chapters' ? (
         <div className="ws-body">
           <div className="ws-left">
@@ -477,7 +479,8 @@ export default function ProjectDetail() {
         </div>
       )}
       <WorkspaceStyles />
-    </div>
+      </div>
+    </ProjectShell>
   )
 }
 
@@ -528,25 +531,6 @@ function ModuleRouter({
     default:
       return null
   }
-}
-
-function WorkspaceTopbar({ projectName, currentChapter, publishedCount, isStub }: {
-  projectName: string; currentChapter: number; publishedCount: number; isStub: boolean
-}) {
-  return (
-    <div className="ws-topbar">
-      <div className="ws-topbar-left">
-        <a href="/projects" className="ws-back-link">&larr; 返回项目列表</a>
-        <span className="ws-project-name">{projectName}</span>
-        <span className="ws-chapter-info">第 {currentChapter} 章 &middot; 已发布 {publishedCount} 章</span>
-      </div>
-      <div className="ws-topbar-right">
-        <span className={`status-badge ${isStub ? 'status-stub' : 'status-real'}`}>
-          {isStub ? '演示模式' : '真实 LLM'}
-        </span>
-      </div>
-    </div>
-  )
 }
 
 function ChapterTabBar({ activeTab, onTabChange, hasRuns }: {
@@ -883,27 +867,43 @@ function HistoryTab({ runsForChapter, onViewWorkflow, currentChapter }: {
 function WorkspaceStyles() {
   return (
     <style>{`
-      .workspace-layout { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height)); margin: calc(-1 * var(--spacing-lg)); overflow-x: hidden; width: 100%; box-sizing: border-box; }
-      .ws-topbar { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color); min-height: 44px; }
-      .ws-topbar-left { display: flex; align-items: center; gap: 16px; }
-      .ws-back-link { color: var(--text-secondary); text-decoration: none; font-size: 13px; }
-      .ws-back-link:hover { color: var(--primary); }
-      .ws-project-name { font-weight: 600; font-size: 15px; }
-      .ws-chapter-info { font-size: 13px; color: var(--text-muted); }
-      .ws-topbar-right { display: flex; align-items: center; gap: 8px; }
+      .project-shell { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height)); margin: calc(-1 * var(--spacing-lg)); overflow: hidden; background: var(--bg-secondary); }
+      .project-header { min-height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 18px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color); }
+      .project-header-main { display: flex; align-items: center; gap: 18px; min-width: 0; }
+      .project-header-back { color: var(--text-secondary); text-decoration: none; font-size: 13px; white-space: nowrap; }
+      .project-header-back:hover { color: var(--primary); }
+      .project-header h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary); line-height: 1.3; }
+      .project-header-meta { display: flex; gap: 12px; margin-top: 2px; font-size: 12px; color: var(--text-muted); }
+      .project-shell-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
+      .project-side-nav { width: 184px; flex-shrink: 0; overflow-y: auto; padding: 14px 10px; background: var(--bg-primary); border-right: 1px solid var(--border-color); }
+      .project-side-nav-group + .project-side-nav-group { margin-top: 18px; }
+      .project-side-nav-label { padding: 0 10px 6px; font-size: 11px; font-weight: 600; color: var(--text-muted); letter-spacing: 0; }
+      .project-side-nav-items { display: flex; flex-direction: column; gap: 2px; }
+      .project-side-nav-item { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s, color 0.15s, border-color 0.15s; }
+      .project-side-nav-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+      .project-side-nav-item:focus-visible { outline: 2px solid rgba(59, 130, 246, 0.45); outline-offset: 2px; }
+      .project-side-nav-item.active { background: #eff6ff; color: var(--primary); border-color: #bfdbfe; font-weight: 500; }
+      .project-shell-main { flex: 1; min-width: 0; overflow: hidden; }
+      .workspace-layout { display: flex; flex-direction: column; height: 100%; overflow-x: hidden; width: 100%; box-sizing: border-box; }
       .ws-body { display: flex; flex: 1; overflow: hidden; min-width: 0; }
       .ws-left { width: 220px; flex-shrink: 0; overflow-y: auto; }
       .ws-center { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
       .ws-right { width: 260px; flex-shrink: 0; overflow-y: auto; }
       .ws-module-content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px 24px; max-width: 100%; min-width: 0; }
       @media (max-width: 768px) {
+        .project-shell { height: calc(100vh - var(--topbar-height)); }
+        .project-header { align-items: flex-start; flex-direction: column; padding: 10px 14px; }
+        .project-header-main { width: 100%; flex-wrap: wrap; gap: 8px; }
+        .project-shell-body { flex-direction: column; }
+        .project-side-nav { width: 100%; display: flex; gap: 14px; overflow-x: auto; overflow-y: hidden; padding: 10px 12px; border-right: none; border-bottom: 1px solid var(--border-color); }
+        .project-side-nav-group { min-width: max-content; }
+        .project-side-nav-group + .project-side-nav-group { margin-top: 0; }
+        .project-side-nav-items { flex-direction: row; }
+        .project-side-nav-item { width: auto; white-space: nowrap; }
         .ws-body { flex-direction: column; }
         .ws-left { width: 100%; max-height: 200px; border-right: none; border-bottom: 1px solid var(--border-color); }
         .ws-right { width: 100%; max-height: 200px; border-left: none; border-top: 1px solid var(--border-color); }
         .ws-module-content { padding: 16px; }
-        .ws-topbar-left { flex-wrap: wrap; gap: 8px; }
-        .ws-project-name { font-size: 14px; }
-        .ws-chapter-info { font-size: 12px; }
         .data-grid { grid-template-columns: 1fr; }
         .project-module { max-width: 100%; }
       }
