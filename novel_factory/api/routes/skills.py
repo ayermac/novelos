@@ -55,6 +55,137 @@ def _build_mounted_lookup(agent_skills: dict) -> dict[str, list[dict]]:
     return mounted
 
 
+KNOWN_AGENT_STAGES = {
+    "planner": ["before_llm", "after_llm", "before_save"],
+    "screenwriter": ["before_llm", "after_llm", "before_save"],
+    "author": ["before_llm", "after_llm", "before_save"],
+    "polisher": ["after_llm", "before_save"],
+    "editor": ["before_review"],
+    "memory_curator": ["before_extract", "after_extract", "before_save"],
+}
+
+
+def _skill_summary(skill: dict[str, Any] | None, skill_id: str) -> dict[str, Any]:
+    """Return compact skill metadata for matrix cells."""
+    if not skill:
+        return {
+            "id": skill_id,
+            "name": None,
+            "enabled": False,
+            "missing": True,
+            "package": None,
+            "legacy": False,
+            "kind": None,
+        }
+
+    return {
+        "id": skill_id,
+        "name": skill.get("name") or skill.get("description") or skill_id,
+        "enabled": skill.get("enabled", True),
+        "missing": False,
+        "package": skill.get("package"),
+        "legacy": not bool(skill.get("package")),
+        "kind": skill.get("kind") or skill.get("type"),
+    }
+
+
+def _build_agent_matrix(registry) -> dict[str, Any]:
+    """Build read-only agent/stage skill matrix with validation hints."""
+    skills = registry.list_skills()
+    skill_by_id = {s["id"]: s for s in skills}
+    mounted_lookup = _build_mounted_lookup(registry.agent_skills)
+    warnings: list[dict[str, Any]] = []
+    agents: list[dict[str, Any]] = []
+
+    configured_agents = set(registry.agent_skills.keys())
+    known_agents = list(KNOWN_AGENT_STAGES.keys())
+    extra_agents = sorted(configured_agents - set(known_agents))
+
+    for agent in known_agents + extra_agents:
+        configured_stages = registry.agent_skills.get(agent, {})
+        known_stages = KNOWN_AGENT_STAGES.get(agent, [])
+        stage_names = list(dict.fromkeys([*known_stages, *configured_stages.keys()]))
+        stage_rows: list[dict[str, Any]] = []
+
+        if agent in configured_agents and agent not in KNOWN_AGENT_STAGES:
+            warnings.append({
+                "code": "UNKNOWN_AGENT",
+                "agent": agent,
+                "message": f"未知 Agent 挂载配置: {agent}",
+            })
+
+        for stage in stage_names:
+            skill_ids = configured_stages.get(stage, [])
+            stage_warnings: list[dict[str, Any]] = []
+
+            if known_stages and stage not in known_stages:
+                warning = {
+                    "code": "UNKNOWN_STAGE",
+                    "agent": agent,
+                    "stage": stage,
+                    "message": f"{agent}.{stage} 不是已知 stage",
+                }
+                stage_warnings.append(warning)
+                warnings.append(warning)
+
+            skill_rows = []
+            for skill_id in skill_ids:
+                skill = skill_by_id.get(skill_id)
+                summary = _skill_summary(skill, skill_id)
+                skill_rows.append(summary)
+
+                if summary["missing"]:
+                    warning = {
+                        "code": "MISSING_SKILL",
+                        "agent": agent,
+                        "stage": stage,
+                        "skill_id": skill_id,
+                        "message": f"{agent}.{stage} 挂载了不存在的 Skill: {skill_id}",
+                    }
+                    stage_warnings.append(warning)
+                    warnings.append(warning)
+                elif not summary["enabled"]:
+                    warning = {
+                        "code": "MOUNTED_DISABLED_SKILL",
+                        "agent": agent,
+                        "stage": stage,
+                        "skill_id": skill_id,
+                        "message": f"{agent}.{stage} 挂载了已禁用 Skill: {skill_id}",
+                    }
+                    stage_warnings.append(warning)
+                    warnings.append(warning)
+
+            stage_rows.append({
+                "stage": stage,
+                "skill_ids": skill_ids,
+                "skills": skill_rows,
+                "warnings": stage_warnings,
+            })
+
+        agents.append({
+            "agent": agent,
+            "stages": stage_rows,
+        })
+
+    unmounted_enabled = [
+        _skill_summary(skill, skill["id"])
+        for skill in skills
+        if skill.get("enabled", True) and skill["id"] not in mounted_lookup
+    ]
+    for skill in unmounted_enabled:
+        warnings.append({
+            "code": "ENABLED_UNMOUNTED_SKILL",
+            "skill_id": skill["id"],
+            "message": f"Skill 已启用但未挂载: {skill['id']}",
+        })
+
+    return {
+        "agents": agents,
+        "unmounted_enabled_skills": unmounted_enabled,
+        "warnings": warnings,
+    }
+
+
 @router.get("/skills")
 async def list_skills() -> EnvelopeResponse:
     """List all configured skills with manifest and mount info."""
@@ -81,6 +212,16 @@ async def get_skill_mounts() -> EnvelopeResponse:
         return envelope_response(registry.agent_skills)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取挂载关系失败: {str(e)}")
+
+
+@router.get("/skills/agent-matrix")
+async def get_agent_skill_matrix() -> EnvelopeResponse:
+    """Get read-only agent/stage skill matrix with validation hints."""
+    try:
+        registry = _get_registry()
+        return envelope_response(_build_agent_matrix(registry))
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"获取 Agent Skill Matrix 失败: {str(e)}")
 
 
 @router.get("/skills/{skill_id}")

@@ -126,6 +126,38 @@ class TestGetSkillMounts:
         assert "style-bible-checker" in data["editor"]["before_review"]
 
 
+class TestGetAgentSkillMatrix:
+    """Test GET /api/skills/agent-matrix."""
+
+    def test_returns_agent_matrix_envelope(self, test_client):
+        resp = test_client.get("/api/skills/agent-matrix")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert "agents" in data["data"]
+        assert "warnings" in data["data"]
+        assert "unmounted_enabled_skills" in data["data"]
+
+    def test_includes_editor_style_bible_mount(self, test_client):
+        resp = test_client.get("/api/skills/agent-matrix")
+        matrix = resp.json()["data"]
+        editor = next(a for a in matrix["agents"] if a["agent"] == "editor")
+        before_review = next(s for s in editor["stages"] if s["stage"] == "before_review")
+        skill_ids = [s["id"] for s in before_review["skills"]]
+        assert "ai-style-detector" in skill_ids
+        assert "narrative-quality" in skill_ids
+        assert "style-bible-checker" in skill_ids
+
+    def test_style_bible_checker_marked_legacy(self, test_client):
+        resp = test_client.get("/api/skills/agent-matrix")
+        matrix = resp.json()["data"]
+        editor = next(a for a in matrix["agents"] if a["agent"] == "editor")
+        before_review = next(s for s in editor["stages"] if s["stage"] == "before_review")
+        style_bible = next(s for s in before_review["skills"] if s["id"] == "style-bible-checker")
+        assert style_bible["legacy"] is True
+        assert style_bible["package"] is None
+
+
 class TestValidateSkills:
     """Test POST /api/skills/validate."""
 

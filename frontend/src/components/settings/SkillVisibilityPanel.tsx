@@ -33,6 +33,34 @@ interface MountMap {
   }
 }
 
+interface MatrixSkill {
+  id: string
+  name?: string | null
+  enabled: boolean
+  missing: boolean
+  package?: string | null
+  legacy: boolean
+  kind?: string | null
+}
+
+interface MatrixStage {
+  stage: string
+  skill_ids: string[]
+  skills: MatrixSkill[]
+  warnings: { code: string; message: string }[]
+}
+
+interface MatrixAgent {
+  agent: string
+  stages: MatrixStage[]
+}
+
+interface AgentMatrix {
+  agents: MatrixAgent[]
+  unmounted_enabled_skills: MatrixSkill[]
+  warnings: { code: string; message: string; skill_id?: string }[]
+}
+
 interface TestSkillResult {
   ok: boolean
   error?: string | null
@@ -61,6 +89,7 @@ interface RunResult {
 export default function SkillVisibilityPanel() {
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [mounts, setMounts] = useState<MountMap>({})
+  const [agentMatrix, setAgentMatrix] = useState<AgentMatrix | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [validating, setValidating] = useState(false)
@@ -83,9 +112,10 @@ export default function SkillVisibilityPanel() {
     setLoading(true)
     setError('')
 
-    const [skillsRes, mountsRes] = await Promise.all([
+    const [skillsRes, mountsRes, matrixRes] = await Promise.all([
       get<{ skills: SkillInfo[] }>('/skills'),
       get<MountMap>('/skills/mounts'),
+      get<AgentMatrix>('/skills/agent-matrix'),
     ])
 
     if (skillsRes.ok && skillsRes.data) {
@@ -96,6 +126,10 @@ export default function SkillVisibilityPanel() {
 
     if (mountsRes.ok && mountsRes.data) {
       setMounts(mountsRes.data)
+    }
+
+    if (matrixRes.ok && matrixRes.data) {
+      setAgentMatrix(matrixRes.data)
     }
 
     setLoading(false)
@@ -312,6 +346,101 @@ export default function SkillVisibilityPanel() {
               >
                 {s.id}
               </span>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {agentMatrix && (
+        <div
+          style={{
+            marginBottom: 'var(--space-4)',
+            padding: 'var(--space-4)',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-secondary)',
+            border: '1px solid rgba(30, 58, 95, 0.06)',
+          }}
+        >
+          <h4
+            style={{
+              fontSize: 'var(--text-sm)',
+              fontWeight: 'var(--font-semibold)',
+              margin: '0 0 var(--space-3) 0',
+              color: 'var(--text-primary)',
+            }}
+          >
+            Agent Skill Matrix
+          </h4>
+          {agentMatrix.warnings.length > 0 && (
+            <div
+              style={{
+                marginBottom: 'var(--space-3)',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                background: '#fef3c7',
+                color: '#92400e',
+                fontSize: '13px',
+              }}
+            >
+              {agentMatrix.warnings.map((warning, index) => (
+                <div key={`${warning.code}-${index}`}>{warning.message}</div>
+              ))}
+            </div>
+          )}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
+            {agentMatrix.agents.map((agent) => (
+              <div
+                key={agent.agent}
+                style={{
+                  padding: '12px',
+                  borderRadius: '8px',
+                  background: 'var(--paper-surface)',
+                  border: '1px solid rgba(30, 58, 95, 0.06)',
+                }}
+              >
+                <div style={{ fontWeight: 600, marginBottom: 8, textTransform: 'capitalize' }}>
+                  {agent.agent}
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {agent.stages.map((stage) => (
+                    <div key={`${agent.agent}-${stage.stage}`}>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: 'monospace', marginBottom: 4 }}>
+                        {stage.stage}
+                      </div>
+                      {stage.skills.length > 0 ? (
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                          {stage.skills.map((skill) => (
+                            <span
+                              key={skill.id}
+                              title={skill.name || skill.id}
+                              style={{
+                                padding: '2px 8px',
+                                borderRadius: '4px',
+                                background: skill.missing
+                                  ? '#fee2e2'
+                                  : skill.enabled
+                                    ? 'rgba(59, 130, 246, 0.1)'
+                                    : '#e5e7eb',
+                                color: skill.missing
+                                  ? '#991b1b'
+                                  : skill.enabled
+                                    ? '#1e40af'
+                                    : '#6b7280',
+                                fontSize: '12px',
+                                fontWeight: 500,
+                              }}
+                            >
+                              {skill.id}{skill.legacy ? ' · legacy' : ''}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>未挂载</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </div>
