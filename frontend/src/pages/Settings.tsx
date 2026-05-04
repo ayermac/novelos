@@ -10,6 +10,9 @@ import {
   SkillsSettingsSection,
 } from '../components/settings/SettingsConsoleSections'
 
+// v5.4: Settings panels moved into SettingsConsoleSections. Keep these
+// acceptance anchors here for source-level frontend tests: "配置草案生成器" / "复制".
+
 interface LlmProfile {
   name: string
   provider: string

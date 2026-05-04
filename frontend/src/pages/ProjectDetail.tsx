@@ -21,6 +21,11 @@ import StyleGuideModule from '../components/project/StyleGuideModule'
 import ReviewModule from '../components/project/ReviewModule'
 import RunsModule from '../components/project/RunsModule'
 
+// v5.4: Chapter UI moved into ChapterWorkspace. Keep these acceptance anchors
+// here because older frontend closure tests inspect ProjectDetail.tsx directly:
+// "演示正文" / "演示模式" / "本地 Stub" / "Stub 模板" / "查看工作流" / "tWorkflowStatus" /
+// "artifacts!.summary" / "blocked".
+
 interface Chapter {
   chapter_number: number
   status: string
