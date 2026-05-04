@@ -19,7 +19,7 @@ export default function ProjectHeader({
         <Link to="/projects" className="project-header-back">
           返回项目列表
         </Link>
-        <div>
+        <div className="project-header-title">
           <h1>{projectName}</h1>
           <div className="project-header-meta">
             <span>第 {currentChapter} 章</span>

@@ -242,6 +242,31 @@ Out of scope for first pass:
 - Project-specific skill overrides.
 - OpenClaw bulk skill migration.
 
+### v5.4.5 WebUI Visual QA and Polish
+
+Close the first refactor pass with source-level visual QA focused on narrow, dense workbench panels.
+
+Scope:
+
+- Tighten Settings section navigation wrapping.
+- Make the Skill management panel easier to scan without removing operational detail.
+- Summarize Agent Skill Matrix counts and cap long warning blocks.
+- Prevent long project names, skill IDs, packages, classes, and stage names from overflowing their containers.
+- Preserve existing query-param navigation and frontend acceptance anchors.
+
+Out of scope:
+
+- New backend APIs.
+- Editable skill mounting.
+- Broad design-system migration.
+- Browser-driven screenshot automation when the local automation toolchain is unavailable.
+
+Success criteria:
+
+- Frontend typecheck, lint, and production build pass.
+- Skill management remains functionally equivalent.
+- Long operational labels wrap inside their panels instead of forcing horizontal overflow.
+
 ## Implementation Rules
 
 - Do not redesign the product as a landing page.
@@ -364,4 +389,3 @@ Verification:
 - npm run build
 - Manual browser checks for chapter content, workflow, artifacts, history, and generation error states.
 ```
-

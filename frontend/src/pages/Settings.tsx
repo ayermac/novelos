@@ -283,7 +283,7 @@ function SettingsSectionNav({ activeSection }: { activeSection: SettingsSection 
   return (
     <div style={{
       display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
       gap: '10px',
       marginBottom: 'var(--space-6)',
     }}>
@@ -301,6 +301,7 @@ function SettingsSectionNav({ activeSection }: { activeSection: SettingsSection 
               background: active ? 'rgba(59, 130, 246, 0.08)' : 'var(--paper-surface)',
               boxShadow: 'var(--shadow-flat)',
               textDecoration: 'none',
+              minWidth: 0,
             }}
           >
             <div style={{
@@ -308,10 +309,11 @@ function SettingsSectionNav({ activeSection }: { activeSection: SettingsSection 
               fontWeight: 600,
               color: active ? '#1d4ed8' : 'var(--text-primary)',
               marginBottom: '3px',
+              overflowWrap: 'anywhere',
             }}>
               {section.label}
             </div>
-            <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+            <div style={{ fontSize: '12px', color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}>
               {section.hint}
             </div>
           </Link>

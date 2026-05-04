@@ -511,14 +511,16 @@ function WorkspaceStyles() {
       .project-header-main { display: flex; align-items: center; gap: 18px; min-width: 0; }
       .project-header-back { color: var(--text-secondary); text-decoration: none; font-size: 13px; white-space: nowrap; }
       .project-header-back:hover { color: var(--primary); }
-      .project-header h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary); line-height: 1.3; }
-      .project-header-meta { display: flex; gap: 12px; margin-top: 2px; font-size: 12px; color: var(--text-muted); }
+      .project-header-title { min-width: 0; }
+      .project-header h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary); line-height: 1.3; overflow-wrap: anywhere; }
+      .project-header-meta { display: flex; gap: 12px; margin-top: 2px; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; }
       .project-shell-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
       .project-side-nav { width: 184px; flex-shrink: 0; overflow-y: auto; padding: 14px 10px; background: var(--bg-primary); border-right: 1px solid var(--border-color); }
       .project-side-nav-group + .project-side-nav-group { margin-top: 18px; }
       .project-side-nav-label { padding: 0 10px 6px; font-size: 11px; font-weight: 600; color: var(--text-muted); letter-spacing: 0; }
       .project-side-nav-items { display: flex; flex-direction: column; gap: 2px; }
       .project-side-nav-item { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s, color 0.15s, border-color 0.15s; }
+      .project-side-nav-item span { min-width: 0; overflow-wrap: anywhere; }
       .project-side-nav-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
       .project-side-nav-item:focus-visible { outline: 2px solid rgba(59, 130, 246, 0.45); outline-offset: 2px; }
       .project-side-nav-item.active { background: #eff6ff; color: var(--primary); border-color: #bfdbfe; font-weight: 500; }

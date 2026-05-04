@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import type { CSSProperties } from 'react'
 import { get, post } from '../../lib/api'
 
 interface SkillMount {
@@ -84,6 +85,58 @@ interface TestAllResult {
 interface RunResult {
   skill_id: string
   result: TestSkillResult
+}
+
+const panelStyle: CSSProperties = {
+  marginBottom: 'var(--space-4)',
+  padding: 'var(--space-4)',
+  borderRadius: 'var(--radius-md)',
+  background: 'var(--bg-secondary)',
+  border: '1px solid rgba(30, 58, 95, 0.06)',
+}
+
+const sectionTitleStyle: CSSProperties = {
+  fontSize: 'var(--text-sm)',
+  fontWeight: 'var(--font-semibold)',
+  margin: '0 0 var(--space-3) 0',
+  color: 'var(--text-primary)',
+}
+
+const compactCodeStyle: CSSProperties = {
+  fontSize: '12px',
+  whiteSpace: 'normal',
+  overflowWrap: 'anywhere',
+}
+
+function statusChipStyle(kind: 'ok' | 'warn' | 'danger' | 'muted' = 'ok'): CSSProperties {
+  const palette = {
+    ok: { background: 'rgba(34, 197, 94, 0.12)', color: '#166534' },
+    warn: { background: '#fef3c7', color: '#92400e' },
+    danger: { background: '#fee2e2', color: '#991b1b' },
+    muted: { background: '#e5e7eb', color: '#6b7280' },
+  }[kind]
+
+  return {
+    ...palette,
+    display: 'inline-flex',
+    alignItems: 'center',
+    maxWidth: '100%',
+    padding: '2px 8px',
+    borderRadius: '4px',
+    fontSize: '12px',
+    fontWeight: 500,
+    overflowWrap: 'anywhere',
+  }
+}
+
+function matrixSkillChipStyle(skill: MatrixSkill): CSSProperties {
+  if (skill.missing) return statusChipStyle('danger')
+  if (!skill.enabled) return statusChipStyle('muted')
+  return {
+    ...statusChipStyle('ok'),
+    background: 'rgba(59, 130, 246, 0.1)',
+    color: '#1e40af',
+  }
 }
 
 export default function SkillVisibilityPanel() {
@@ -255,11 +308,28 @@ export default function SkillVisibilityPanel() {
   }
 
   const enabledUnmounted = skills.filter((s) => s.enabled && !s.is_mounted)
+  const matrixStats = agentMatrix
+    ? {
+        agents: agentMatrix.agents.length,
+        stages: agentMatrix.agents.reduce((total, agent) => total + agent.stages.length, 0),
+        mounted: agentMatrix.agents.reduce(
+          (total, agent) => total + agent.stages.reduce((stageTotal, stage) => stageTotal + stage.skills.length, 0),
+          0,
+        ),
+        missing: agentMatrix.agents.reduce(
+          (total, agent) => total + agent.stages.reduce(
+            (stageTotal, stage) => stageTotal + stage.skills.filter((skill) => skill.missing).length,
+            0,
+          ),
+          0,
+        ),
+      }
+    : null
 
   return (
     <div style={{ padding: 'var(--space-5)' }}>
       {/* Validate button */}
-      <div style={{ marginBottom: 'var(--space-4)', display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ marginBottom: 'var(--space-4)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
         <button onClick={handleValidate} className="btn btn-secondary" disabled={validating}>
           {validating ? '验证中...' : '验证 Skill 配置'}
         </button>
@@ -337,11 +407,8 @@ export default function SkillVisibilityPanel() {
               <span
                 key={s.id}
                 style={{
-                  padding: '2px 8px',
-                  borderRadius: '4px',
+                  ...statusChipStyle('warn'),
                   background: '#fde68a',
-                  fontSize: '12px',
-                  fontWeight: 500,
                 }}
               >
                 {s.id}
@@ -352,25 +419,33 @@ export default function SkillVisibilityPanel() {
       )}
 
       {agentMatrix && (
-        <div
-          style={{
-            marginBottom: 'var(--space-4)',
-            padding: 'var(--space-4)',
-            borderRadius: 'var(--radius-md)',
-            background: 'var(--bg-secondary)',
-            border: '1px solid rgba(30, 58, 95, 0.06)',
-          }}
-        >
-          <h4
+        <div style={panelStyle}>
+          <div
             style={{
-              fontSize: 'var(--text-sm)',
-              fontWeight: 'var(--font-semibold)',
-              margin: '0 0 var(--space-3) 0',
-              color: 'var(--text-primary)',
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: '12px',
+              marginBottom: 'var(--space-3)',
+              flexWrap: 'wrap',
             }}
           >
-            Agent Skill Matrix
-          </h4>
+            <h4 style={{ ...sectionTitleStyle, marginBottom: 0 }}>
+              Agent Skill Matrix
+            </h4>
+            {matrixStats && (
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <span style={statusChipStyle('muted')}>{matrixStats.agents} agents</span>
+                <span style={statusChipStyle('muted')}>{matrixStats.stages} stages</span>
+                <span style={statusChipStyle(matrixStats.missing > 0 ? 'warn' : 'ok')}>
+                  {matrixStats.mounted} mounted
+                </span>
+                {matrixStats.missing > 0 && (
+                  <span style={statusChipStyle('danger')}>{matrixStats.missing} missing</span>
+                )}
+              </div>
+            )}
+          </div>
           {agentMatrix.warnings.length > 0 && (
             <div
               style={{
@@ -382,12 +457,19 @@ export default function SkillVisibilityPanel() {
                 fontSize: '13px',
               }}
             >
-              {agentMatrix.warnings.map((warning, index) => (
-                <div key={`${warning.code}-${index}`}>{warning.message}</div>
+              {agentMatrix.warnings.slice(0, 4).map((warning, index) => (
+                <div key={`${warning.code}-${index}`} style={{ overflowWrap: 'anywhere' }}>
+                  {warning.message}
+                </div>
               ))}
+              {agentMatrix.warnings.length > 4 && (
+                <div style={{ marginTop: 4, color: '#78350f' }}>
+                  另有 {agentMatrix.warnings.length - 4} 条警告，请在 Skill 列表中继续排查。
+                </div>
+              )}
             </div>
           )}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '12px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: '12px' }}>
             {agentMatrix.agents.map((agent) => (
               <div
                 key={agent.agent}
@@ -396,39 +478,41 @@ export default function SkillVisibilityPanel() {
                   borderRadius: '8px',
                   background: 'var(--paper-surface)',
                   border: '1px solid rgba(30, 58, 95, 0.06)',
+                  minWidth: 0,
                 }}
               >
-                <div style={{ fontWeight: 600, marginBottom: 8, textTransform: 'capitalize' }}>
+                <div style={{ fontWeight: 600, marginBottom: 10, textTransform: 'capitalize' }}>
                   {agent.agent}
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {agent.stages.map((stage) => (
-                    <div key={`${agent.agent}-${stage.stage}`}>
-                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)', fontFamily: 'monospace', marginBottom: 4 }}>
+                    <div
+                      key={`${agent.agent}-${stage.stage}`}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(88px, 0.35fr) minmax(0, 1fr)',
+                        gap: 8,
+                        alignItems: 'start',
+                        minWidth: 0,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: '12px',
+                          color: 'var(--text-secondary)',
+                          fontFamily: 'monospace',
+                          overflowWrap: 'anywhere',
+                        }}
+                      >
                         {stage.stage}
                       </div>
                       {stage.skills.length > 0 ? (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
                           {stage.skills.map((skill) => (
                             <span
                               key={skill.id}
                               title={skill.name || skill.id}
-                              style={{
-                                padding: '2px 8px',
-                                borderRadius: '4px',
-                                background: skill.missing
-                                  ? '#fee2e2'
-                                  : skill.enabled
-                                    ? 'rgba(59, 130, 246, 0.1)'
-                                    : '#e5e7eb',
-                                color: skill.missing
-                                  ? '#991b1b'
-                                  : skill.enabled
-                                    ? '#1e40af'
-                                    : '#6b7280',
-                                fontSize: '12px',
-                                fontWeight: 500,
-                              }}
+                              style={matrixSkillChipStyle(skill)}
                             >
                               {skill.id}{skill.legacy ? ' · legacy' : ''}
                             </span>
@@ -447,31 +531,22 @@ export default function SkillVisibilityPanel() {
       )}
 
       {/* Fixtures Test Bench */}
-      <div
-        style={{
-          marginBottom: 'var(--space-4)',
-          padding: 'var(--space-4)',
-          borderRadius: 'var(--radius-md)',
-          background: 'var(--bg-secondary)',
-          border: '1px solid rgba(30, 58, 95, 0.06)',
-        }}
-      >
-        <h4
+      <div style={panelStyle}>
+        <h4 style={sectionTitleStyle}>Fixtures 测试</h4>
+        <div
           style={{
-            fontSize: 'var(--text-sm)',
-            fontWeight: 'var(--font-semibold)',
-            margin: '0 0 var(--space-3) 0',
-            color: 'var(--text-primary)',
+            marginBottom: 'var(--space-3)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 12,
+            flexWrap: 'wrap',
           }}
         >
-          Fixtures 测试
-        </h4>
-        <div style={{ marginBottom: 'var(--space-3)' }}>
           <button onClick={handleTestAll} className="btn btn-secondary" disabled={testingAll}>
             {testingAll ? '测试中...' : '测试全部 Package Skill'}
           </button>
           {testAllResult && (
-            <span style={{ marginLeft: 12, fontSize: '13px', fontWeight: 500 }}>
+            <span style={{ fontSize: '13px', fontWeight: 500 }}>
               {testAllResult.failed === 0 ? (
                 <span style={{ color: 'var(--success)' }}>
                   {testAllResult.passed}/{testAllResult.total} 通过
@@ -523,7 +598,7 @@ export default function SkillVisibilityPanel() {
           </div>
         )}
 
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-2)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: 'var(--space-2)' }}>
           {skills.map((skill) => {
             const singleRes = testSingleResult[skill.id]
             return (
@@ -533,16 +608,18 @@ export default function SkillVisibilityPanel() {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'space-between',
+                  gap: 10,
                   padding: '8px 12px',
                   borderRadius: '6px',
                   background: 'var(--paper-surface)',
                   border: '1px solid rgba(30, 58, 95, 0.06)',
+                  minWidth: 0,
                 }}
               >
-                <div style={{ fontSize: '13px' }}>
-                  <code>{skill.id}</code>
+                <div style={{ fontSize: '13px', minWidth: 0 }}>
+                  <code style={compactCodeStyle}>{skill.id}</code>
                   {singleRes && (
-                    <span style={{ marginLeft: 8, fontSize: '12px' }}>
+                    <span style={{ display: 'block', marginTop: 3, fontSize: '12px', overflowWrap: 'anywhere' }}>
                       {singleRes.ok ? (
                         <span style={{ color: 'var(--success)' }}>
                           {singleRes.data?.passed ?? 0}/{singleRes.data?.total ?? 0} 通过
@@ -580,26 +657,9 @@ export default function SkillVisibilityPanel() {
       </div>
 
       {/* Manual Run Bench */}
-      <div
-        style={{
-          marginBottom: 'var(--space-4)',
-          padding: 'var(--space-4)',
-          borderRadius: 'var(--radius-md)',
-          background: 'var(--bg-secondary)',
-          border: '1px solid rgba(30, 58, 95, 0.06)',
-        }}
-      >
-        <h4
-          style={{
-            fontSize: 'var(--text-sm)',
-            fontWeight: 'var(--font-semibold)',
-            margin: '0 0 var(--space-3) 0',
-            color: 'var(--text-primary)',
-          }}
-        >
-          手动试运行
-        </h4>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '12px', marginBottom: '12px' }}>
+      <div style={panelStyle}>
+        <h4 style={sectionTitleStyle}>手动试运行</h4>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: '12px', marginBottom: '12px' }}>
           <div className="form-group">
             <label>选择 Skill</label>
             <select
@@ -625,7 +685,7 @@ export default function SkillVisibilityPanel() {
               placeholder="输入要测试的文本..."
             />
           </div>
-          <div className="form-group">
+          <div className="form-group" style={{ gridColumn: '1 / -1' }}>
             <label>Custom Payload (JSON)</label>
             <textarea
               className="form-control"
@@ -641,7 +701,11 @@ export default function SkillVisibilityPanel() {
             )}
           </div>
         </div>
-        <button onClick={handleRun} className="btn btn-primary" disabled={running || !runSkillId || (!runText.trim() && !runPayload.trim())}>
+        <button
+          onClick={handleRun}
+          className="btn btn-primary"
+          disabled={running || !runSkillId || (!runText.trim() && !runPayload.trim())}
+        >
           {running ? '运行中...' : '试运行'}
         </button>
 
@@ -684,16 +748,7 @@ export default function SkillVisibilityPanel() {
       {/* Mount relationships */}
       {Object.keys(mounts).length > 0 && (
         <div style={{ marginBottom: 'var(--space-4)' }}>
-          <h4
-            style={{
-              fontSize: 'var(--text-sm)',
-              fontWeight: 'var(--font-semibold)',
-              margin: '0 0 var(--space-3) 0',
-              color: 'var(--text-primary)',
-            }}
-          >
-            挂载关系
-          </h4>
+          <h4 style={sectionTitleStyle}>挂载关系</h4>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
             {Object.entries(mounts).map(([agent, stages]) => (
               <div
@@ -703,6 +758,7 @@ export default function SkillVisibilityPanel() {
                   borderRadius: 'var(--radius-md)',
                   background: 'var(--bg-secondary)',
                   border: '1px solid rgba(30, 58, 95, 0.06)',
+                  minWidth: 0,
                 }}
               >
                 <div
@@ -717,13 +773,21 @@ export default function SkillVisibilityPanel() {
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {Object.entries(stages).map(([stage, skillIds]) => (
-                    <div key={stage} style={{ display: 'flex', alignItems: 'baseline', gap: 8 }}>
+                    <div
+                      key={stage}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(92px, 0.25fr) minmax(0, 1fr)',
+                        gap: 8,
+                        alignItems: 'baseline',
+                      }}
+                    >
                       <span
                         style={{
                           fontSize: '12px',
                           color: 'var(--text-secondary)',
-                          minWidth: 100,
                           fontFamily: 'monospace',
+                          overflowWrap: 'anywhere',
                         }}
                       >
                         {stage}
@@ -733,12 +797,9 @@ export default function SkillVisibilityPanel() {
                           <span
                             key={id}
                             style={{
-                              padding: '2px 8px',
-                              borderRadius: '4px',
+                              ...statusChipStyle('ok'),
                               background: 'rgba(59, 130, 246, 0.1)',
                               color: '#1e40af',
-                              fontSize: '12px',
-                              fontWeight: 500,
                             }}
                           >
                             {id}
@@ -757,12 +818,7 @@ export default function SkillVisibilityPanel() {
       {/* Skill list table */}
       <div>
         <h4
-          style={{
-            fontSize: 'var(--text-sm)',
-            fontWeight: 'var(--font-semibold)',
-            margin: '0 0 var(--space-3) 0',
-            color: 'var(--text-primary)',
-          }}
+          style={sectionTitleStyle}
         >
           Skill 列表
         </h4>
@@ -783,16 +839,16 @@ export default function SkillVisibilityPanel() {
               {skills.map((skill) => (
                 <tr key={skill.id}>
                   <td>
-                    <code style={{ fontSize: '12px' }}>{skill.id}</code>
+                    <code style={compactCodeStyle}>{skill.id}</code>
                   </td>
                   <td>{skill.name || '-'}</td>
                   <td>{skill.kind || skill.type || '-'}</td>
                   <td>{skill.version || '-'}</td>
                   <td>
-                    <code style={{ fontSize: '11px' }}>{skill.package || '-'}</code>
+                    <code style={{ ...compactCodeStyle, fontSize: '11px' }}>{skill.package || '-'}</code>
                   </td>
                   <td>
-                    <code style={{ fontSize: '11px' }}>{skill.class_name || skill.class || '-'}</code>
+                    <code style={{ ...compactCodeStyle, fontSize: '11px' }}>{skill.class_name || skill.class || '-'}</code>
                   </td>
                   <td>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -811,12 +867,9 @@ export default function SkillVisibilityPanel() {
                       {skill.enabled && !skill.is_mounted && (
                         <span
                           style={{
-                            fontSize: '11px',
+                            ...statusChipStyle('warn'),
                             padding: '1px 6px',
-                            borderRadius: '4px',
-                            background: '#fde68a',
-                            color: '#92400e',
-                            fontWeight: 500,
+                            fontSize: '11px',
                           }}
                         >
                           未挂载
