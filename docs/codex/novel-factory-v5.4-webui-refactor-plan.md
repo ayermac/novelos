@@ -421,7 +421,7 @@ Success criteria:
 - Unknown Skill IDs return validation errors.
 - Skill API tests, frontend typecheck/lint/build, and full pytest pass.
 
-### v5.4.11 Skill Safety Review / Activation Guard
+### v5.4.12 Skill Mount Guidance
 
 Prevent the Skill console from creating configurations that look valid but will never execute, or that bypass manifest safety constraints.
 
