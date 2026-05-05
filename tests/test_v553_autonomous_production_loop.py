@@ -354,6 +354,55 @@ class TestProductionNextAPI:
         assert data["next_action"].get("target_chapter") == 2
         os.unlink(db_path)
 
+    def test_same_second_runs_use_latest(self, client, project_id):
+        """10. Same-second runs should still pick the latest (higher id) run."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "same-sec-test", "name": "Same Sec Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 10, "target_words": 30000,
+        })
+        tc.post("/api/projects/same-sec-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
+        })
+        gid = tc.get("/api/projects/same-sec-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/same-sec-test/genesis/{gid}/approve")
+        tc.post("/api/projects/same-sec-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        # Insert two runs with the exact same started_at timestamp.
+        same_time = "2024-01-01 10:00:00"
+        conn = repo._conn()
+        conn.execute(
+            "INSERT INTO workflow_runs (id, project_id, chapter_number, graph_name, status, started_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("run-old", "same-sec-test", 1, "chapter_production", "failed", same_time),
+        )
+        conn.execute(
+            "INSERT INTO workflow_runs (id, project_id, chapter_number, graph_name, status, started_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("run-new", "same-sec-test", 1, "chapter_production", "completed", same_time),
+        )
+        conn.commit()
+        conn.close()
+
+        resp = tc.get("/api/projects/same-sec-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        # Higher-id run is completed, so old failed run should be ignored
+        assert data["health"]["has_stuck_run"] is False
+        assert data["next_action"]["key"] == "generate_chapter"
+        os.unlink(db_path)
+
 
 class TestAutoFillAPI:
     """POST /api/projects/{id}/production/auto-fill."""

@@ -117,13 +117,13 @@ class WorkflowRepositoryMixin:
             if chapter_number is not None:
                 rows = conn.execute(
                     "SELECT * FROM workflow_runs WHERE project_id=? AND chapter_number=? "
-                    "ORDER BY started_at DESC LIMIT ?",
+                    "ORDER BY started_at DESC, rowid DESC LIMIT ?",
                     (project_id, chapter_number, limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
                     "SELECT * FROM workflow_runs WHERE project_id=? "
-                    "ORDER BY started_at DESC LIMIT ?",
+                    "ORDER BY started_at DESC, rowid DESC LIMIT ?",
                     (project_id, limit),
                 ).fetchall()
             results = []

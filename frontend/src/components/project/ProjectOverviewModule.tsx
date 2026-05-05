@@ -172,6 +172,16 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     }
     if (action.key === 'recover_blocked_run') {
       const ch = action.target_chapter || productionNext.current_chapter
+      setFilling(true)
+      setFillResult('')
+      const res = await post<{ message: string }>(action.action_url, {})
+      setFilling(false)
+      if (res.ok && res.data) {
+        setFillResult(res.data.message || `第 ${ch} 章已重置`)
+        load()
+      } else {
+        setFillResult(res.error?.message || '重置失败')
+      }
       navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
       return
     }
