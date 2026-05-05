@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Novelos is an AI-powered novel production workbench for long-form fiction projects. It combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.5.2 Run Health Dashboard**, with **1725/1725 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
+Current baseline: **v5.5.3 Autonomous Production Loop**, with **1740/1740 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
 
 ## Architecture
 
@@ -164,6 +164,11 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 - **router.py**: LLM routing for agent-level configuration
 - **profiles.py**: LLM profile management
 
+### Autonomous Production Loop (`novel_factory/api/routes/production.py`)
+- **production-next**: GET endpoint returning the next recommended production action for a project
+- **auto-fill**: POST endpoint for AI auto-filling missing project context (world settings, characters, outlines, instructions)
+- **arc-plan**: POST endpoint for generating arc-level outlines and chapter instructions for a batch of chapters
+
 ## Configuration
 
 Configuration is loaded from:
@@ -180,7 +185,7 @@ Key configuration files:
 ### Python Tests
 - Test location: `tests/`
 - Framework: pytest
-- Current baseline: 1725/1725 passing
+- Current baseline: 1740/1740 passing
 - Run full suite: `python3 -m pytest -q`
 - Run specific test: `python3 -m pytest tests/test_file.py::test_name -q`
 

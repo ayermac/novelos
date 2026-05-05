@@ -1,11 +1,13 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
+import { Sparkles, Loader2 } from 'lucide-react'
 import ChapterNav from '../ChapterNav'
 import ContextSidebar from '../ContextSidebar'
 import WorkflowTimeline from '../WorkflowTimeline'
 import AttentionPanel, { ActionHintList } from '../AttentionPanel'
 import { StepStatus } from '../../hooks/useSSEStream'
 import { tWorkflowStatus } from '../../lib/i18n'
+import { post } from '../../lib/api'
 
 interface Chapter {
   chapter_number: number
@@ -267,6 +269,25 @@ function ContentTab({ generating, genError, genErrorDetails, chapterLoading, has
   chapterLoading: boolean; hasContent: boolean; isStub: boolean; currentChapter: number; chapterDetail: ChapterDetail | null
   onGenerate: () => void; sseSteps: Record<string, StepStatus>; projectId: string
 }) {
+  const [filling, setFilling] = useState(false)
+  const [fillMsg, setFillMsg] = useState('')
+
+  const handleAutoFill = async () => {
+    setFilling(true)
+    setFillMsg('')
+    const res = await post<{ filled: boolean; created: Record<string, number>; warnings: string[] }>(
+      `/projects/${projectId}/production/auto-fill`,
+      { scope: 'missing_context', chapter_start: 1, chapter_end: 10, confirm: true }
+    )
+    if (res.ok && res.data) {
+      const total = Object.values(res.data.created).reduce((a, b) => a + b, 0)
+      setFillMsg(`已自动补齐 ${total} 项资料，请刷新页面查看。`)
+    } else {
+      setFillMsg(res.error?.message || '补齐失败')
+    }
+    setFilling(false)
+  }
+
   const getStepStatusText = (status: StepStatus, index: number): string => {
     if (status.status === 'running') return '处理中...'
     if (status.status === 'completed') return `完成 (${status.duration_ms || 0}ms)`
@@ -320,6 +341,18 @@ function ContentTab({ generating, genError, genErrorDetails, chapterLoading, has
                 </li>
               ))}
             </ActionHintList>
+          )}
+          {genErrorDetails?.missing && genErrorDetails.missing.length > 0 && (
+            <div style={{ marginTop: 10 }}>
+              <button className="btn btn-primary btn-sm" onClick={handleAutoFill} disabled={filling}>
+                {filling ? <><Loader2 size={12} className="spin" /> 补齐中...</> : <><Sparkles size={12} /> 让 AI 补齐缺失资料</>}
+              </button>
+              {fillMsg && (
+                <div style={{ marginTop: 6, fontSize: 12, color: fillMsg.includes('失败') ? '#dc2626' : '#16a34a' }}>
+                  {fillMsg}
+                </div>
+              )}
+            </div>
           )}
           {genErrorDetails?.actions && genErrorDetails.actions.length > 0 && (
             <ActionHintList title="建议操作">

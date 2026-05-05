@@ -23,6 +23,7 @@ from .memory_updates import router as memory_updates_router
 from .story_facts import router as story_facts_router
 from .skills import router as skills_router
 from .project_skill_overrides import router as project_skill_overrides_router
+from .production import router as production_router
 
 __all__ = [
     "health_router",
@@ -48,4 +49,5 @@ __all__ = [
     "story_facts_router",
     "skills_router",
     "project_skill_overrides_router",
+    "production_router",
 ]

@@ -139,7 +139,7 @@ export default function GenesisModule({ projectId }: Props) {
   return (
     <div className="project-module">
       <div className="module-header">
-        <h3><Sparkles size={18} /> 项目创世</h3>
+        <h3><Sparkles size={18} /> 项目初始化（创世）</h3>
         {canGenerate && (
           <button
             className="btn btn-primary btn-sm"
@@ -234,8 +234,8 @@ export default function GenesisModule({ projectId }: Props) {
       {!genesis && !showForm && (
         <div className="data-empty">
           <div className="data-empty-icon"><Sparkles size={32} /></div>
-          <div className="data-empty-title">尚未生成项目设定</div>
-          <div className="data-empty-desc">使用 AI 一键生成世界观、角色、大纲等项目圣经</div>
+          <div className="data-empty-title">项目初始化</div>
+          <div className="data-empty-desc">创世只需一次，生成整本书的底盘设定（世界观、角色、大纲等）。<br />后续章节通过「章节批次规划」延续。</div>
           <button className="btn btn-primary" onClick={() => setShowForm(true)} style={{ marginTop: 12 }}>
             <Sparkles size={14} /> 生成项目设定
           </button>
