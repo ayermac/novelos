@@ -494,15 +494,20 @@ class TestMountSkill:
     """Test POST /api/skills/mount."""
 
     def test_mount_skill_success(self, test_client):
+        test_client.request("DELETE", "/api/skills/mount", json={
+            "agent": "editor",
+            "stage": "before_review",
+            "skill_id": "narrative-quality",
+        })
         resp = test_client.post("/api/skills/mount", json={
-            "agent": "polisher",
-            "stage": "after_llm",
+            "agent": "editor",
+            "stage": "before_review",
             "skill_id": "narrative-quality",
         })
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
-        assert data["data"]["agent"] == "polisher"
+        assert data["data"]["agent"] == "editor"
         assert data["data"]["skill_id"] == "narrative-quality"
 
     def test_mount_duplicate_skill_rejected(self, test_client):
@@ -551,18 +556,84 @@ class TestMountSkill:
         assert data["error"]["code"] == "VALIDATION_ERROR"
         assert "before_review" in data["error"]["message"]
 
-    def test_mount_refreshes_agent_matrix(self, test_client):
-        # Mount narrative-quality to polisher/after_llm
-        test_client.post("/api/skills/mount", json={
+    def test_mount_disabled_skill_rejected_by_safety_guard(self, test_client):
+        test_client.post("/api/skills/enabled", json={
+            "skill_id": "humanizer-zh",
+            "enabled": False,
+        })
+        resp = test_client.post("/api/skills/mount", json={
             "agent": "polisher",
             "stage": "after_llm",
+            "skill_id": "humanizer-zh",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+        assert data["error"]["details"]["review"]["verdict"] == "block"
+        assert any(
+            finding["code"] == "SKILL_DISABLED"
+            for finding in data["error"]["details"]["review"]["findings"]
+        )
+
+    def test_mount_manual_only_imported_skill_rejected_by_safety_guard(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "openclaw-agents"
+            _write_openclaw_skill(root, "planner", "worldbuilding", "Instruction-only skill.")
+
+            db_path = Path(tmpdir) / "test.db"
+            init_db(str(db_path))
+            config_dir = Path(tmpdir) / "config"
+            config_dir.mkdir()
+            skills_path = config_dir / "skills.yaml"
+            shutil.copy(str(DEFAULT_SKILLS_PATH), str(skills_path))
+
+            app = create_api_app(
+                db_path=str(db_path),
+                llm_mode="stub",
+                skills_config_path=str(skills_path),
+                openclaw_root_path=str(root),
+            )
+            client = TestClient(app)
+
+            assert client.post("/api/skills/import-apply", json={
+                "source_type": "openclaw",
+                "source_path": "planner/workspace/skills/worldbuilding",
+            }).json()["ok"] is True
+            assert client.post("/api/skills/enabled", json={
+                "skill_id": "imported-worldbuilding",
+                "enabled": True,
+            }).json()["ok"] is True
+
+            resp = client.post("/api/skills/mount", json={
+                "agent": "planner",
+                "stage": "before_llm",
+                "skill_id": "imported-worldbuilding",
+            })
+            data = resp.json()
+            assert data["ok"] is False
+            assert data["error"]["code"] == "VALIDATION_ERROR"
+            review = data["error"]["details"]["review"]
+            assert review["verdict"] == "block"
+            assert any(f["code"] == "AGENT_STAGE_NOT_ALLOWED" for f in review["findings"])
+
+    def test_mount_refreshes_agent_matrix(self, test_client):
+        # Re-mount narrative-quality to its allowed editor/before_review target
+        test_client.request("DELETE", "/api/skills/mount", json={
+            "agent": "editor",
+            "stage": "before_review",
+            "skill_id": "narrative-quality",
+        })
+        test_client.post("/api/skills/mount", json={
+            "agent": "editor",
+            "stage": "before_review",
             "skill_id": "narrative-quality",
         })
         resp = test_client.get("/api/skills/agent-matrix")
         data = resp.json()["data"]
-        polisher = next(a for a in data["agents"] if a["agent"] == "polisher")
-        after_llm = next(s for s in polisher["stages"] if s["stage"] == "after_llm")
-        skill_ids = [s["id"] for s in after_llm["skills"]]
+        editor = next(a for a in data["agents"] if a["agent"] == "editor")
+        before_review = next(s for s in editor["stages"] if s["stage"] == "before_review")
+        skill_ids = [s["id"] for s in before_review["skills"]]
         assert "narrative-quality" in skill_ids
 
 
@@ -690,6 +761,53 @@ class TestSkillEnabled:
         matrix = test_client.get("/api/skills/agent-matrix").json()["data"]
         warning_codes = [warning["code"] for warning in matrix["warnings"]]
         assert "MOUNTED_DISABLED_SKILL" in warning_codes
+
+
+class TestSkillReview:
+    """Test POST /api/skills/review."""
+
+    def test_review_allowed_skill_for_target_passes(self, test_client):
+        resp = test_client.post("/api/skills/review", json={
+            "skill_id": "humanizer-zh",
+            "agent": "polisher",
+            "stage": "after_llm",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["verdict"] == "pass"
+        assert data["data"]["findings"] == []
+
+    def test_review_disabled_skill_warns_without_target(self, test_client):
+        test_client.post("/api/skills/enabled", json={
+            "skill_id": "humanizer-zh",
+            "enabled": False,
+        })
+        resp = test_client.post("/api/skills/review", json={
+            "skill_id": "humanizer-zh",
+        })
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["verdict"] == "warn"
+        assert any(f["code"] == "SKILL_DISABLED" for f in data["data"]["findings"])
+
+    def test_review_rejects_partial_target(self, test_client):
+        resp = test_client.post("/api/skills/review", json={
+            "skill_id": "humanizer-zh",
+            "agent": "polisher",
+        })
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_review_unknown_skill_blocks(self, test_client):
+        resp = test_client.post("/api/skills/review", json={
+            "skill_id": "unknown-skill",
+        })
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["verdict"] == "block"
+        assert data["data"]["findings"][0]["code"] == "SKILL_NOT_FOUND"
 
 
 class TestGetAgentSkillMatrix:

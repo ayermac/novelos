@@ -8,6 +8,7 @@ v5.4.7: Add read-only OpenClaw legacy Skill import readiness endpoint.
 v5.4.8: Add universal Skill import readiness and plan preview endpoints.
 v5.4.9: Add safe universal Skill import apply endpoint.
 v5.4.10: Add skill enable/disable configuration endpoint.
+v5.4.11: Add skill safety review and mount activation guard.
 """
 
 from __future__ import annotations
@@ -67,6 +68,14 @@ class SkillEnabledRequest(BaseModel):
 
     skill_id: str
     enabled: bool
+
+
+class SkillReviewRequest(BaseModel):
+    """Skill safety review request."""
+
+    skill_id: str
+    agent: str | None = None
+    stage: str | None = None
 
 
 class SkillImportPlanRequest(BaseModel):
@@ -307,6 +316,117 @@ def _build_config_view(registry) -> dict[str, Any]:
             for stages in registry.agent_skills.values()
             for skill_ids in stages.values()
         ),
+    }
+
+
+def _finding(severity: str, code: str, message: str) -> dict[str, str]:
+    """Build a compact skill safety finding."""
+    return {
+        "severity": severity,
+        "code": code,
+        "message": message,
+    }
+
+
+def _skill_safety_review(
+    registry,
+    skill_id: str,
+    agent: str | None = None,
+    stage: str | None = None,
+) -> dict[str, Any]:
+    """Review whether a skill is safe to enable or mount."""
+    findings: list[dict[str, str]] = []
+    recommended_actions: list[str] = []
+
+    skill_config = registry.skills_config.get(skill_id)
+    if not skill_config:
+        return {
+            "skill_id": skill_id,
+            "agent": agent,
+            "stage": stage,
+            "verdict": "block",
+            "findings": [_finding("block", "SKILL_NOT_FOUND", f"Skill 不存在: {skill_id}")],
+            "recommended_actions": ["确认 skill_id 是否正确，或先导入/register 该 Skill。"],
+        }
+
+    enabled = skill_config.get("enabled", True)
+    package_path = skill_config.get("package")
+    is_imported = bool(skill_config.get("_imported") or skill_config.get("class") == "ImportedInstructionSkill")
+    manifest = registry.get_manifest(skill_id)
+
+    if not enabled:
+        severity = "block" if agent and stage else "warn"
+        findings.append(_finding(severity, "SKILL_DISABLED", f"Skill 已禁用: {skill_id}"))
+        recommended_actions.append("先启用 Skill，再挂载到工作流。")
+
+    if package_path:
+        manifest_path = registry._resolve_package_manifest_path(package_path)
+        if not manifest_path:
+            findings.append(_finding("block", "INVALID_PACKAGE_PATH", f"Skill package path 无效: {package_path}"))
+            recommended_actions.append("修复 skills.yaml 中的 package 路径，或重新导入该 Skill。")
+        else:
+            package_dir = manifest_path.parent
+            if not (package_dir / "handler.py").exists():
+                findings.append(_finding("block", "MISSING_HANDLER", "Skill package 缺少 handler.py"))
+                recommended_actions.append("重新生成 Skill package，或补齐 handler.py。")
+            if not (package_dir / "tests" / "fixtures.yaml").exists():
+                findings.append(_finding("warn", "MISSING_FIXTURES", "Skill package 缺少 fixtures 测试"))
+                recommended_actions.append("补齐 fixtures 后再将该 Skill 用于生产工作流。")
+    else:
+        findings.append(_finding("warn", "LEGACY_SKILL", "Skill 未使用 package manifest，安全信息不完整"))
+        recommended_actions.append("优先迁移为 package Skill，以便执行 manifest 权限和 stage 校验。")
+
+    if not manifest:
+        if package_path:
+            findings.append(_finding("block", "MISSING_MANIFEST", "Skill package manifest 无法加载"))
+            recommended_actions.append("修复 manifest.yaml，或重新导入该 Skill。")
+    else:
+        if is_imported:
+            findings.append(_finding("warn", "IMPORTED_SKILL", "导入 Skill 默认只适合手动审阅/测试"))
+            recommended_actions.append("如需进入生产工作流，请先审查 handler、permissions 和 allowed_agents/stages。")
+
+        permissions = manifest.permissions
+        risky_permissions = []
+        if permissions.call_network:
+            risky_permissions.append("call_network")
+        if permissions.call_llm:
+            risky_permissions.append("call_llm")
+        if permissions.write_chapter_content:
+            risky_permissions.append("write_chapter_content")
+        if permissions.update_chapter_status:
+            risky_permissions.append("update_chapter_status")
+        if risky_permissions:
+            findings.append(_finding("block", "RISKY_PERMISSIONS", f"Skill 声明高风险权限: {', '.join(risky_permissions)}"))
+            recommended_actions.append("移除高风险权限，或为该 Skill 增加专门沙箱/审批流程。")
+
+        if agent and stage:
+            allowed, msg = registry.validate_skill_for_agent(skill_id, agent, stage)
+            if not allowed:
+                findings.append(_finding("block", "AGENT_STAGE_NOT_ALLOWED", msg))
+                recommended_actions.append("选择 manifest 允许的 agent/stage，或先更新并审查 manifest。")
+
+    severities = {finding["severity"] for finding in findings}
+    if "block" in severities:
+        verdict = "block"
+    elif "warn" in severities:
+        verdict = "warn"
+    else:
+        verdict = "pass"
+
+    if not recommended_actions:
+        recommended_actions.append("可以继续启用或挂载。")
+
+    return {
+        "skill_id": skill_id,
+        "agent": agent,
+        "stage": stage,
+        "verdict": verdict,
+        "enabled": enabled,
+        "package": package_path,
+        "imported": is_imported,
+        "manifest": bool(manifest),
+        "findings": findings,
+        "recommended_actions": list(dict.fromkeys(recommended_actions)),
     }
 
 
@@ -577,6 +697,41 @@ async def set_skill_enabled(body: SkillEnabledRequest, request: Request) -> Enve
         return error_response("INTERNAL_ERROR", f"更新 Skill 启用状态失败: {str(e)}")
 
 
+@router.post("/skills/review")
+async def review_skill(body: SkillReviewRequest, request: Request) -> EnvelopeResponse:
+    """Review skill safety before enabling or mounting."""
+    try:
+        registry = _get_registry(request)
+
+        if (body.agent and not body.stage) or (body.stage and not body.agent):
+            return error_response("VALIDATION_ERROR", "agent 和 stage 必须同时提供")
+
+        if body.agent in KNOWN_AGENT_STAGES and body.stage not in KNOWN_AGENT_STAGES[body.agent]:
+            known = ", ".join(KNOWN_AGENT_STAGES[body.agent])
+            return envelope_response({
+                "skill_id": body.skill_id,
+                "agent": body.agent,
+                "stage": body.stage,
+                "verdict": "block",
+                "enabled": registry.is_skill_enabled(body.skill_id),
+                "package": registry.skills_config.get(body.skill_id, {}).get("package"),
+                "imported": bool(registry.skills_config.get(body.skill_id, {}).get("_imported")),
+                "manifest": bool(registry.get_manifest(body.skill_id)) if body.skill_id in registry.skills_config else False,
+                "findings": [
+                    _finding(
+                        "block",
+                        "UNKNOWN_STAGE",
+                        f"Stage '{body.stage}' 不是 agent '{body.agent}' 的已知 stage。已知: {known}",
+                    )
+                ],
+                "recommended_actions": ["选择已知 stage，避免生成不会执行的死配置。"],
+            })
+
+        return envelope_response(_skill_safety_review(registry, body.skill_id, body.agent, body.stage))
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"审查 Skill 失败: {str(e)}")
+
+
 @router.post("/skills/mount")
 async def mount_skill(body: MountSkillRequest, request: Request) -> EnvelopeResponse:
     """Mount a skill to an agent/stage."""
@@ -596,6 +751,15 @@ async def mount_skill(body: MountSkillRequest, request: Request) -> EnvelopeResp
             return error_response(
                 "VALIDATION_ERROR",
                 f"Stage '{body.stage}' 不是 agent '{body.agent}' 的已知 stage。已知: {known}",
+            )
+
+        review = _skill_safety_review(registry, body.skill_id, body.agent, body.stage)
+        if review["verdict"] == "block":
+            finding_messages = [finding["message"] for finding in review["findings"] if finding["severity"] == "block"]
+            return error_response(
+                "VALIDATION_ERROR",
+                finding_messages[0] if finding_messages else "Skill 安全审查未通过",
+                details={"review": review},
             )
 
         ok, msg = registry.mount_skill(body.agent, body.stage, body.skill_id)

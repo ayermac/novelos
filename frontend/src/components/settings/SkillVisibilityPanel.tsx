@@ -186,6 +186,25 @@ interface SkillEnabledResult {
   is_mounted: boolean
 }
 
+interface SkillReviewFinding {
+  severity: 'pass' | 'warn' | 'block'
+  code: string
+  message: string
+}
+
+interface SkillReviewResult {
+  skill_id: string
+  agent?: string | null
+  stage?: string | null
+  verdict: 'pass' | 'warn' | 'block'
+  enabled: boolean
+  package?: string | null
+  imported: boolean
+  manifest: boolean
+  findings: SkillReviewFinding[]
+  recommended_actions: string[]
+}
+
 const panelStyle: CSSProperties = {
   marginBottom: 'var(--space-4)',
   padding: 'var(--space-4)',
@@ -299,6 +318,9 @@ export default function SkillVisibilityPanel() {
   // Skill enabled state
   const [togglingSkill, setTogglingSkill] = useState<string | null>(null)
   const [skillEnableError, setSkillEnableError] = useState('')
+  const [reviewingSkill, setReviewingSkill] = useState<string | null>(null)
+  const [skillReviewError, setSkillReviewError] = useState('')
+  const [skillReviewResults, setSkillReviewResults] = useState<Record<string, SkillReviewResult>>({})
 
   // Skill import plan preview state
   const [planningSkillImport, setPlanningSkillImport] = useState<string | null>(null)
@@ -535,6 +557,23 @@ export default function SkillVisibilityPanel() {
     }
   }
 
+  const handleSkillReview = async (skillId: string) => {
+    setReviewingSkill(skillId)
+    setSkillReviewError('')
+
+    const res = await post<SkillReviewResult>('/skills/review', {
+      skill_id: skillId,
+    })
+
+    setReviewingSkill(null)
+
+    if (res.ok && res.data) {
+      setSkillReviewResults((prev) => ({ ...prev, [skillId]: res.data! }))
+    } else {
+      setSkillReviewError(res.error?.message || 'Skill 安全审查失败')
+    }
+  }
+
   const handleSkillImportPlan = async (candidate: SkillImportCandidate) => {
     setPlanningSkillImport(candidate.id)
     setSkillImportPlanError('')
@@ -624,6 +663,11 @@ export default function SkillVisibilityPanel() {
     candidate.status === 'import_ready' || candidate.status === 'manual_ready'
   )
   const skillMountById = new Map(skills.map((skill) => [skill.id, skill]))
+  const reviewStatusKind = (verdict: SkillReviewResult['verdict']): 'ok' | 'warn' | 'danger' => {
+    if (verdict === 'pass') return 'ok'
+    if (verdict === 'warn') return 'warn'
+    return 'danger'
+  }
 
   return (
     <div style={{ padding: 'var(--space-5)' }}>
@@ -746,18 +790,36 @@ export default function SkillVisibilityPanel() {
             </div>
           )}
 
+          {skillReviewError && (
+            <div
+              style={{
+                marginBottom: 'var(--space-3)',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                background: '#fef2f2',
+                color: '#991b1b',
+                fontSize: '13px',
+              }}
+            >
+              {skillReviewError}
+              <button
+                onClick={() => setSkillReviewError('')}
+                style={{ marginLeft: 8, fontSize: '12px', background: 'none', border: 'none', color: '#991b1b', cursor: 'pointer', textDecoration: 'underline' }}
+              >
+                清除
+              </button>
+            </div>
+          )}
+
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: 'var(--space-2)' }}>
             {skillConfig.available_skills.map((skill) => {
               const mountInfo = skillMountById.get(skill.id)
               const isMounted = mountInfo?.is_mounted || false
+              const review = skillReviewResults[skill.id]
               return (
                 <div
                   key={`enabled-${skill.id}`}
                   style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 10,
                     padding: '8px 12px',
                     borderRadius: '6px',
                     background: 'var(--paper-surface)',
@@ -765,27 +827,72 @@ export default function SkillVisibilityPanel() {
                     minWidth: 0,
                   }}
                 >
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                      <code style={compactCodeStyle}>{skill.id}</code>
-                      <span style={statusChipStyle(skill.enabled ? 'ok' : 'muted')}>
-                        {skill.enabled ? '已启用' : '已禁用'}
-                      </span>
-                      {isMounted && <span style={statusChipStyle(skill.enabled ? 'ok' : 'warn')}>已挂载</span>}
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, minWidth: 0 }}>
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                        <code style={compactCodeStyle}>{skill.id}</code>
+                        <span style={statusChipStyle(skill.enabled ? 'ok' : 'muted')}>
+                          {skill.enabled ? '已启用' : '已禁用'}
+                        </span>
+                        {isMounted && <span style={statusChipStyle(skill.enabled ? 'ok' : 'warn')}>已挂载</span>}
+                      </div>
+                      <div style={{ marginTop: 3, fontSize: '12px', color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>
+                        {skill.package ? skill.package : 'legacy'}
+                      </div>
                     </div>
-                    <div style={{ marginTop: 3, fontSize: '12px', color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>
-                      {skill.package ? skill.package : 'legacy'}
+                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                      <button
+                        onClick={() => handleSkillReview(skill.id)}
+                        className="btn btn-secondary"
+                        disabled={reviewingSkill === skill.id}
+                        style={{ fontSize: '12px', padding: '4px 10px' }}
+                        title="审查 manifest、权限、package 和挂载安全性"
+                      >
+                        {reviewingSkill === skill.id ? '审查中...' : '安全审查'}
+                      </button>
+                      <button
+                        onClick={() => handleSkillEnabled(skill.id, !skill.enabled)}
+                        className="btn btn-secondary"
+                        disabled={togglingSkill === skill.id}
+                        style={{ fontSize: '12px', padding: '4px 10px' }}
+                        title={skill.enabled ? '禁用 Skill；不会自动卸载' : '启用 Skill；不会自动挂载'}
+                      >
+                        {togglingSkill === skill.id ? '保存中...' : skill.enabled ? '禁用' : '启用'}
+                      </button>
                     </div>
                   </div>
-                  <button
-                    onClick={() => handleSkillEnabled(skill.id, !skill.enabled)}
-                    className="btn btn-secondary"
-                    disabled={togglingSkill === skill.id}
-                    style={{ fontSize: '12px', padding: '4px 10px' }}
-                    title={skill.enabled ? '禁用 Skill；不会自动卸载' : '启用 Skill；不会自动挂载'}
-                  >
-                    {togglingSkill === skill.id ? '保存中...' : skill.enabled ? '禁用' : '启用'}
-                  </button>
+                  {review && (
+                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(30, 58, 95, 0.06)' }}>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
+                        <span style={statusChipStyle(reviewStatusKind(review.verdict))}>
+                          {review.verdict === 'pass' ? '审查通过' : review.verdict === 'warn' ? '需要注意' : '阻止挂载'}
+                        </span>
+                        {review.imported && <span style={statusChipStyle('warn')}>imported</span>}
+                        {!review.manifest && <span style={statusChipStyle('warn')}>no manifest</span>}
+                      </div>
+                      {review.findings.length > 0 && (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                          {review.findings.slice(0, 3).map((finding) => (
+                            <span
+                              key={`${skill.id}-${finding.code}`}
+                              style={{
+                                fontSize: '12px',
+                                color: finding.severity === 'block' ? '#991b1b' : '#92400e',
+                                overflowWrap: 'anywhere',
+                              }}
+                            >
+                              {finding.message}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {review.recommended_actions.length > 0 && (
+                        <div style={{ marginTop: 6, fontSize: '12px', color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>
+                          {review.recommended_actions[0]}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )
             })}

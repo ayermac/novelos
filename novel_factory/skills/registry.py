@@ -149,22 +149,30 @@ class SkillRegistry:
             logger.error(f"Package path contains directory traversal: {package_path}")
             return None
         
-        # Resolve full path
-        full_path = self.config_path.parent.parent / package_path / "manifest.yaml"
-        
-        # Security: ensure path is within repository
-        try:
-            full_path.resolve().relative_to(self.config_path.parent.parent.resolve())
-        except ValueError:
-            logger.error(f"Package path outside repository: {package_path}")
-            return None
-        
-        # Check if manifest exists
-        if not full_path.exists():
-            logger.warning(f"Package manifest not found: {full_path}")
-            return None
-        
-        return full_path
+        roots = [
+            self.config_path.parent.parent,
+            Path(__file__).parent.parent,
+        ]
+
+        for root in roots:
+            full_path = root / package_path / "manifest.yaml"
+
+            # Security: ensure path stays under the intended root
+            try:
+                full_path.resolve().relative_to(root.resolve())
+            except ValueError:
+                logger.error(f"Package path outside repository: {package_path}")
+                continue
+
+            if full_path.exists():
+                return full_path
+
+        logger.warning(
+            "Package manifest not found for %s under roots: %s",
+            package_path,
+            [str(root) for root in roots],
+        )
+        return None
     
     def get_manifest(self, skill_id: str) -> Optional[SkillManifest]:
         """Get manifest for a skill.

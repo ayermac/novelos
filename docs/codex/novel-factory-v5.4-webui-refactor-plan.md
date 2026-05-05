@@ -421,6 +421,35 @@ Success criteria:
 - Unknown Skill IDs return validation errors.
 - Skill API tests, frontend typecheck/lint/build, and full pytest pass.
 
+### v5.4.11 Skill Safety Review / Activation Guard
+
+Prevent the Skill console from creating configurations that look valid but will never execute, or that bypass manifest safety constraints.
+
+Scope:
+
+- Add `POST /api/skills/review`.
+- Return `verdict: pass | warn | block`, structured findings, and recommended actions.
+- Review skill existence, enabled flag, package/manifest presence, risky permissions, imported status, and optional agent/stage compatibility.
+- Make `POST /api/skills/mount` reuse the safety review and reject `block` verdicts.
+- Add a Settings > Skill 管理 safety review button per Skill.
+- Keep legacy Skills visible with warnings rather than hiding them.
+- Resolve built-in package Skills from the package root when a writable user `skills.yaml` is used.
+
+Out of scope:
+
+- Auto-fixing manifests.
+- Auto-enabling or auto-mounting reviewed Skills.
+- Executing Skill code during review.
+- Sandboxing third-party script execution.
+
+Success criteria:
+
+- Disabled Skills cannot be mounted.
+- Manual-only imported Skills cannot be mounted to production agent/stage targets.
+- Valid package Skills can still be mounted to manifest-allowed targets.
+- Users can inspect safety findings before enabling or mounting.
+- Skill API tests, frontend typecheck/lint/build, and full pytest pass.
+
 ## Implementation Rules
 
 - Do not redesign the product as a landing page.
