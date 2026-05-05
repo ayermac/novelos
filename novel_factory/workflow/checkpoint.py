@@ -121,6 +121,33 @@ def delete_checkpoint_thread(
         return False
 
 
+def checkpoint_thread_exists(
+    repo_db_path: str | Path | None,
+    project_id: str,
+    chapter_number: int,
+) -> bool:
+    """Return whether a persisted checkpoint thread currently exists."""
+    checkpoint_db_path = derive_checkpoint_db_path(repo_db_path)
+    if checkpoint_db_path is None or not checkpoint_db_path.exists():
+        return False
+
+    thread_id = get_checkpoint_thread_id(project_id, chapter_number)
+    try:
+        with get_sqlite_checkpointer(db_path=checkpoint_db_path) as checkpointer:
+            state = checkpointer.get({
+                "configurable": {"thread_id": thread_id, "checkpoint_ns": ""}
+            })
+        return state is not None
+    except Exception as e:
+        logger.warning(
+            "Failed to inspect checkpoint thread %s from %s: %s",
+            thread_id,
+            checkpoint_db_path,
+            e,
+        )
+        return False
+
+
 def resume_from_checkpoint(
     graph: Any,
     project_id: str,

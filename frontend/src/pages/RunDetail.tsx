@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { get } from '../lib/api'
+import { get, post } from '../lib/api'
 import { tWorkflowStatus, tChapterStatus, tLlmMode } from '../lib/i18n'
 import WorkflowTimeline from '../components/WorkflowTimeline'
 import ErrorState from '../components/ErrorState'
@@ -38,20 +38,67 @@ interface RunDetail {
   duration_ms?: number
 }
 
+interface RunRecovery {
+  run_id: string
+  project_id: string
+  chapter_number: number
+  workflow_status: string
+  chapter_status: string
+  error_message?: string
+  retry_count: number
+  max_retries: number
+  checkpoint_exists: boolean
+  can_reset: boolean
+  actions: {
+    reset_to_planned: {
+      enabled: boolean
+      label: string
+      reason: string
+    }
+  }
+}
+
+interface RunRecoveryResetResult {
+  recovered: boolean
+  previous_status: string
+  new_status: string
+  retry_count_before: number
+  retry_count_after: number
+  retries_cleared: number
+  checkpoint_before: boolean
+  checkpoint_cleared: boolean
+  recovery: RunRecovery
+}
+
 export default function RunDetail() {
   const { runId } = useParams<{ runId: string }>()
   const [data, setData] = useState<RunDetail | null>(null)
+  const [recovery, setRecovery] = useState<RunRecovery | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [recoveryError, setRecoveryError] = useState<string | null>(null)
+  const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null)
+  const [recovering, setRecovering] = useState(false)
 
   const load = async () => {
     if (!runId) return
     setLoading(true)
     setError(null)
+    setRecoveryError(null)
     try {
-      const result = await get<RunDetail>(`/runs/${runId}`)
+      const [result, recoveryResult] = await Promise.all([
+        get<RunDetail>(`/runs/${runId}`),
+        get<RunRecovery>(`/runs/${runId}/recovery`),
+      ])
       if (result.ok && result.data) setData(result.data)
       else setError(result.error?.message || '获取运行详情失败')
+
+      if (recoveryResult.ok && recoveryResult.data) {
+        setRecovery(recoveryResult.data)
+      } else {
+        setRecovery(null)
+        setRecoveryError(recoveryResult.error?.message || '获取恢复状态失败')
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : '网络错误')
     } finally {
@@ -60,6 +107,28 @@ export default function RunDetail() {
   }
 
   useEffect(() => { load() }, [runId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleResetRecovery = async () => {
+    if (!runId || !recovery?.can_reset) return
+    const ok = window.confirm('确认清除本章阻塞/返修状态并回到 planned？正文、运行记录和 artifacts 会保留。')
+    if (!ok) return
+
+    setRecovering(true)
+    setRecoveryError(null)
+    setRecoveryMessage(null)
+    const result = await post<RunRecoveryResetResult>(`/runs/${runId}/recovery/reset`, { confirm: true })
+    setRecovering(false)
+
+    if (result.ok && result.data) {
+      setRecovery(result.data.recovery)
+      setRecoveryMessage(
+        `已恢复：${result.data.previous_status} → ${result.data.new_status}，清除 ${result.data.retries_cleared} 次返修计数`
+      )
+      await load()
+    } else {
+      setRecoveryError(result.error?.message || '恢复失败')
+    }
+  }
 
   if (loading) return <div><PageHeader title="运行详情" /><div className="card"><div className="card-body" style={{ textAlign: 'center', padding: '40px' }}>加载中...</div></div></div>
   if (error && !data) return <div><PageHeader title="运行详情" /><ErrorState title="加载失败" message={error} onRetry={load} /></div>
@@ -111,6 +180,58 @@ export default function RunDetail() {
             <div><div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '4px' }}>完成时间</div>
               <div>{data.completed_at || '-'}</div></div>
           </div>
+        </div>
+      </div>
+      <div className="card" style={{ marginBottom: '16px' }}>
+        <div className="card-header"><h3>运行恢复</h3></div>
+        <div className="card-body">
+          {recovery ? (
+            <>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '16px', marginBottom: '14px' }}>
+                <div>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '4px' }}>返修计数</div>
+                  <div style={{ fontWeight: 600 }}>{recovery.retry_count} / {recovery.max_retries}</div>
+                </div>
+                <div>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '4px' }}>Checkpoint</div>
+                  <div style={{ fontWeight: 600 }}>{recovery.checkpoint_exists ? '存在' : '无'}</div>
+                </div>
+                <div>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '4px' }}>恢复状态</div>
+                  <div style={{ fontWeight: 600, color: recovery.can_reset ? 'var(--warning)' : 'var(--success)' }}>
+                    {recovery.can_reset ? '可恢复' : '无需恢复'}
+                  </div>
+                </div>
+              </div>
+              <div style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '12px', whiteSpace: 'pre-wrap' }}>
+                {recovery.actions.reset_to_planned.reason}
+              </div>
+              {recoveryMessage && (
+                <div className="alert alert-success" style={{ marginBottom: '12px' }}>
+                  {recoveryMessage}
+                </div>
+              )}
+              {recoveryError && (
+                <div className="alert alert-error" style={{ marginBottom: '12px' }}>
+                  {recoveryError}
+                </div>
+              )}
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleResetRecovery}
+                  disabled={!recovery.actions.reset_to_planned.enabled || recovering}
+                >
+                  {recovering ? '恢复中...' : recovery.actions.reset_to_planned.label}
+                </button>
+                <Link to={workflowHref} className="btn btn-secondary">打开章节工作流</Link>
+              </div>
+            </>
+          ) : (
+            <div style={{ color: 'var(--text-secondary)' }}>
+              {recoveryError || '暂无恢复信息'}
+            </div>
+          )}
         </div>
       </div>
       {/* v5.2: Token usage statistics - only show for real LLM mode */}

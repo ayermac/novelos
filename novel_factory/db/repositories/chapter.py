@@ -516,7 +516,12 @@ class ChapterRepositoryMixin:
 
     # Scout Agent methods
 
-    def reset_chapter(self, project_id: str, chapter_number: int) -> bool:
+    def reset_chapter(
+        self,
+        project_id: str,
+        chapter_number: int,
+        workflow_run_id: str | None = None,
+    ) -> bool:
         """Reset a chapter to planned status for re-processing.
 
         Reset rules:
@@ -527,6 +532,7 @@ class ChapterRepositoryMixin:
         Args:
             project_id: Project identifier.
             chapter_number: Chapter number.
+            workflow_run_id: Optional run id for recovery audit isolation.
 
         Returns:
             True if chapter was reset, False if status doesn't allow reset.
@@ -546,13 +552,14 @@ class ChapterRepositoryMixin:
                 conn.execute(
                     "INSERT INTO task_status "
                     "(project_id, chapter_number, task_type, agent_id, status, "
-                    "started_at, completed_at, error_message) "
+                    "started_at, completed_at, error_message, workflow_run_id) "
                     "VALUES (?, ?, 'reset', 'human', 'completed', "
-                    "datetime('now','+8 hours'), datetime('now','+8 hours'), ?)",
+                    "datetime('now','+8 hours'), datetime('now','+8 hours'), ?, ?)",
                     (
                         project_id,
                         chapter_number,
                         "人工重置章节：解除阻塞并清空本轮返修计数。",
+                        workflow_run_id,
                     ),
                 )
             conn.commit()

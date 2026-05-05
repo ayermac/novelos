@@ -8,10 +8,17 @@ import asyncio
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 
 router = APIRouter()
+
+
+class RunRecoveryResetRequest(BaseModel):
+    """Run recovery reset request."""
+
+    confirm: bool = False
 
 
 # Agent step configuration
@@ -159,6 +166,160 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取运行详情失败: {str(e)}")
+
+
+@router.get("/runs/{run_id}/recovery")
+async def get_run_recovery(request: Request, run_id: str) -> EnvelopeResponse:
+    """Return safe recovery options for a workflow run."""
+    from ..deps import get_repo, get_settings
+
+    try:
+        repo = get_repo(request)
+        settings = get_settings(request)
+        run_data = _get_run_by_id(repo, run_id)
+        if not run_data:
+            return error_response("RUN_NOT_FOUND", f"运行记录 '{run_id}' 不存在")
+
+        return envelope_response(_build_recovery_state(
+            repo,
+            run_data,
+            max_retries=settings.quality_gate.max_retries,
+        ))
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"获取运行恢复状态失败: {str(e)}")
+
+
+@router.post("/runs/{run_id}/recovery/reset")
+async def reset_run_chapter(
+    request: Request,
+    run_id: str,
+    body: RunRecoveryResetRequest,
+) -> EnvelopeResponse:
+    """Reset a blocked/revision chapter from a run detail page.
+
+    This is a run-scoped facade over chapter reset. It never deletes content or
+    artifacts; it only moves the chapter back to planned, inserts an audit task,
+    and clears stale LangGraph checkpoints.
+    """
+    from ..deps import get_repo, get_settings
+    from ...workflow.checkpoint import delete_checkpoint_thread
+
+    try:
+        if not body.confirm:
+            return error_response("CONFIRM_REQUIRED", "请确认恢复操作")
+
+        repo = get_repo(request)
+        settings = get_settings(request)
+        run_data = _get_run_by_id(repo, run_id)
+        if not run_data:
+            return error_response("RUN_NOT_FOUND", f"运行记录 '{run_id}' 不存在")
+
+        project_id = run_data["project_id"]
+        chapter_number = run_data["chapter_number"]
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+
+        current_status = chapter.get("status", "")
+        if current_status not in ("blocking", "revision"):
+            return error_response(
+                "INVALID_STATUS",
+                f"章节状态为 '{current_status}'，仅 'blocking' 或 'revision' 状态可恢复",
+                details={"current_status": current_status},
+            )
+
+        retry_count_before = repo.get_chapter_retry_count(project_id, chapter_number)
+        checkpoint_before = _checkpoint_exists(repo, project_id, chapter_number)
+
+        reset = repo.reset_chapter(project_id, chapter_number, workflow_run_id=run_id)
+        if not reset:
+            return error_response("RESET_FAILED", "恢复章节失败")
+
+        checkpoint_cleared = delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
+        retry_count_after = repo.get_chapter_retry_count(project_id, chapter_number)
+        recovery = _build_recovery_state(
+            repo,
+            run_data,
+            max_retries=settings.quality_gate.max_retries,
+        )
+
+        return envelope_response({
+            "recovered": True,
+            "run_id": run_id,
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "previous_status": current_status,
+            "new_status": "planned",
+            "retry_count_before": retry_count_before,
+            "retry_count_after": retry_count_after,
+            "retries_cleared": max(0, retry_count_before - retry_count_after),
+            "checkpoint_before": checkpoint_before,
+            "checkpoint_cleared": checkpoint_cleared,
+            "recovery": recovery,
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"恢复运行失败: {str(e)}")
+
+
+def _get_run_by_id(repo, run_id: str) -> dict | None:
+    """Fetch workflow_run by id."""
+    conn = repo._conn()
+    try:
+        row = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def _checkpoint_exists(repo, project_id: str, chapter_number: int) -> bool:
+    """Best-effort checkpoint existence probe."""
+    try:
+        from ...workflow.checkpoint import checkpoint_thread_exists
+
+        return checkpoint_thread_exists(repo.db_path, project_id, chapter_number)
+    except Exception:
+        return False
+
+
+def _build_recovery_state(repo, run_data: dict, max_retries: int = 3) -> dict:
+    """Build user-facing recovery state for a run."""
+    project_id = run_data["project_id"]
+    chapter_number = run_data["chapter_number"]
+    chapter = repo.get_chapter(project_id, chapter_number)
+    chapter_status = chapter.get("status", "unknown") if chapter else "unknown"
+    retry_count = repo.get_chapter_retry_count(project_id, chapter_number)
+    can_reset = chapter_status in ("blocking", "revision")
+    reason = None
+    if not chapter:
+        reason = "章节不存在"
+    elif can_reset:
+        reason = "可清除阻塞/返修状态并回到 planned，重新开始工作流。"
+    else:
+        reason = f"章节状态为 '{chapter_status}'，无需或不可执行恢复。"
+
+    return {
+        "run_id": run_data.get("id"),
+        "project_id": project_id,
+        "chapter_number": chapter_number,
+        "workflow_status": run_data.get("status", "unknown"),
+        "chapter_status": chapter_status,
+        "error_message": _resolve_run_error_message(repo, run_data, chapter),
+        "retry_count": retry_count,
+        "max_retries": max_retries,
+        "checkpoint_exists": _checkpoint_exists(repo, project_id, chapter_number),
+        "can_reset": can_reset,
+        "actions": {
+            "reset_to_planned": {
+                "enabled": can_reset,
+                "label": "清除阻塞并回到 planned",
+                "reason": reason,
+            }
+        },
+    }
 
 
 def _resolve_run_error_message(repo, run_data: dict, chapter: dict | None) -> str | None:
