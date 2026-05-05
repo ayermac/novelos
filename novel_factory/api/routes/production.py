@@ -889,6 +889,21 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
                 final_next_action = next_action
                 break
 
+            # P2-1: Range-aware target selection — stop if target chapter is outside requested range
+            action_target_chapter = next_action.get("target_chapter")
+            if action_target_chapter is not None and (action_target_chapter < ch_start or action_target_chapter > ch_end):
+                stop_reason = STOP_REASON_COMPLETED
+                final_next_action = next_action
+                steps.append({
+                    "step": step_count + 1,
+                    "action": next_action["key"],
+                    "label": next_action["label"],
+                    "target_chapter": action_target_chapter,
+                    "result": "skipped",
+                    "warnings": [f"目标章节 {action_target_chapter} 超出请求范围 {ch_start}-{ch_end}"],
+                })
+                break
+
             # Dry run: just record the action, don't execute
             if body.dry_run:
                 steps.append({
@@ -914,8 +929,10 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
                 request, repo, settings, llm_mode, project_id, next_action, ch_start, ch_end
             )
 
+            step_count += 1  # Count attempted steps consistently
+
             steps.append({
-                "step": step_count + 1,
+                "step": step_count,
                 "action": next_action["key"],
                 "label": next_action["label"],
                 "target_chapter": next_action.get("target_chapter"),
@@ -927,11 +944,20 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
             if step_result.get("target_chapter"):
                 chapters_touched.add(step_result["target_chapter"])
 
-            # Check for step failure
+            # Check for step failure — P2-3: return AUTO_RUN_STEP_FAILED error
             if step_result.get("result") == "failed":
-                stop_reason = STOP_REASON_FAILED
-                final_next_action = next_action
-                break
+                return error_response(
+                    "AUTO_RUN_STEP_FAILED",
+                    f"第 {step_count} 步执行失败: {step_result.get('error', '未知错误')}",
+                    details={
+                        "step": step_count,
+                        "action": next_action["key"],
+                        "steps": steps,
+                        "chapters_touched": sorted(list(chapters_touched)),
+                        "stop_reason": STOP_REASON_FAILED,
+                        "steps_executed": step_count,
+                    },
+                )
 
             # Check for unsupported action
             if step_result.get("result") == "unsupported":
@@ -953,13 +979,9 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
                 # Update project current_chapter
                 repo.update_project(project_id, current_chapter=current_chapter)
 
-            step_count += 1
-
         # Determine final status
         if body.dry_run:
             status = "dry_run"
-        elif stop_reason == STOP_REASON_FAILED:
-            status = "failed"
         elif stop_reason in (STOP_REASON_REVIEW, STOP_REASON_BLOCKED, STOP_REASON_UNSUPPORTED):
             status = "stopped"
         else:
@@ -984,6 +1006,25 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"自动生产运行失败: {str(e)}")
+
+
+def _normalize_llm_warnings(created: dict, warnings: list[str]) -> tuple[str, str | None]:
+    """Normalize LLM warnings into (status, error_message) for run-auto steps.
+
+    Reuses the same error detection logic as the standalone auto-fill/arc-plan routes.
+    Returns ("success", None) if no error, ("failed", error_message) otherwise.
+    """
+    _llm_error_keywords = ("调用失败", "校验失败", "非对象")
+    if any(k in w for w in warnings for k in _llm_error_keywords):
+        return "failed", "LLM 生成内容解析失败，未写入任何资料"
+
+    total_created = sum(created.values())
+    _idempotent_keywords = ("已存在", "已忽略", "跳过", "已有")
+    has_idempotent_skip = any(k in w for w in warnings for k in _idempotent_keywords)
+    if total_created == 0 and not has_idempotent_skip:
+        return "failed", "LLM 未生成任何有效资料"
+
+    return "success", None
 
 
 async def _execute_auto_step(
@@ -1017,7 +1058,11 @@ async def _execute_auto_step(
                 llm = get_llm_provider(request)
                 created, warnings, _ = execute_autofill(repo, llm, project_id, ch_start, ch_end)
 
-            result["result"] = "success"
+            # P2-2: Normalize LLM failures same as standalone route
+            status, error_msg = _normalize_llm_warnings(created, warnings)
+            result["result"] = status
+            if error_msg:
+                result["error"] = error_msg
             result["warnings"] = warnings
             result["created"] = created
             return result
@@ -1028,14 +1073,19 @@ async def _execute_auto_step(
             next_ch = target_chapter or (repo.get_project(project_id).get("current_chapter", 1) + 1)
             if llm_mode == "stub":
                 created = _stub_arc_plan(repo, project, project_id, next_ch, next_ch + 9)
+                warnings: list[str] = []
             else:
                 from ..deps import get_llm_provider
                 from ...agents.autonomous_planner import execute_arc_plan
                 llm = get_llm_provider(request)
                 created, warnings = execute_arc_plan(repo, llm, project_id, next_ch, next_ch + 9)
-                result["warnings"] = warnings
 
-            result["result"] = "success"
+            # P2-2: Normalize LLM failures same as standalone route
+            status, error_msg = _normalize_llm_warnings(created, warnings)
+            result["result"] = status
+            if error_msg:
+                result["error"] = error_msg
+            result["warnings"] = warnings
             result["created"] = created
             return result
 

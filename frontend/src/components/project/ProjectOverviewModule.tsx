@@ -103,6 +103,18 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     stopOnReview: true,
   })
 
+  // P2-4: Sync autoConfig chapter range from productionNext.current_chapter once loaded
+  useEffect(() => {
+    if (productionNext) {
+      const current = productionNext.current_chapter || 1
+      setAutoConfig(prev => ({
+        ...prev,
+        chapterStart: current,
+        chapterEnd: current + 9,
+      }))
+    }
+  }, [productionNext])
+
   const load = useCallback(async () => {
     setLoading(true)
     const chapterParam = chapterNumber && chapterNumber > 1 ? `?chapter=${chapterNumber}` : ''
