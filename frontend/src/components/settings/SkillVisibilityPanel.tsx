@@ -95,6 +95,8 @@ interface ConfigSkill {
   package?: string | null
   legacy: boolean
   class_name?: string | null
+  allowed_targets?: SkillMount[]
+  mountable_targets?: SkillMount[]
 }
 
 interface SkillConfig {
@@ -203,6 +205,8 @@ interface SkillReviewResult {
   manifest: boolean
   findings: SkillReviewFinding[]
   recommended_actions: string[]
+  allowed_targets: SkillMount[]
+  mountable_targets: SkillMount[]
 }
 
 const panelStyle: CSSProperties = {
@@ -656,7 +660,13 @@ export default function SkillVisibilityPanel() {
   const getAvailableSkillsForStage = (agent: string, stage: string) => {
     if (!skillConfig) return []
     const mountedSet = new Set(skillConfig.agent_skills[agent]?.[stage] || [])
-    return skillConfig.available_skills.filter((s) => !mountedSet.has(s.id))
+    return skillConfig.available_skills.filter((s) => {
+      if (mountedSet.has(s.id)) return false
+      if (!s.enabled) return false
+      const targetKey = `${agent}:${stage}`
+      const mountableTargets = (s.mountable_targets || []).map((target) => `${target.agent}:${target.stage}`)
+      return mountableTargets.includes(targetKey)
+    })
   }
 
   const canApplySkillImport = (candidate: SkillImportCandidate) => (
@@ -882,6 +892,15 @@ export default function SkillVisibilityPanel() {
                               }}
                             >
                               {finding.message}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      {review.mountable_targets.length > 0 && (
+                        <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                          {review.mountable_targets.slice(0, 4).map((target) => (
+                            <span key={`${skill.id}-${target.agent}-${target.stage}`} style={statusChipStyle('muted')}>
+                              {target.agent}.{target.stage}
                             </span>
                           ))}
                         </div>
@@ -1177,9 +1196,10 @@ export default function SkillVisibilityPanel() {
                                 style={{ fontSize: '12px', padding: '4px 8px', minWidth: 120, flex: 1 }}
                               >
                                 <option value="">-- 选择 Skill --</option>
-                                {available.map((s) => (
+                              {available.map((s) => (
                                   <option key={s.id} value={s.id}>
                                     {s.id}
+                                    {s.mountable_targets?.length ? ` (${s.mountable_targets.map((t) => `${t.agent}.${t.stage}`).join(', ')})` : ''}
                                   </option>
                                 ))}
                               </select>

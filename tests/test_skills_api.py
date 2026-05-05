@@ -128,6 +128,13 @@ class TestGetSkillConfig:
         assert "total_skills" in data
         assert "total_mounted" in data
 
+    def test_available_skills_include_mountable_targets(self, test_client):
+        resp = test_client.get("/api/skills/config")
+        data = resp.json()["data"]
+        by_id = {skill["id"]: skill for skill in data["available_skills"]}
+        assert {"agent": "polisher", "stage": "after_llm"} in by_id["humanizer-zh"]["mountable_targets"]
+        assert {"agent": "editor", "stage": "before_review"} in by_id["narrative-quality"]["mountable_targets"]
+
     def test_available_skills_match_registry(self, test_client):
         resp = test_client.get("/api/skills/config")
         data = resp.json()["data"]
@@ -378,6 +385,8 @@ class TestOpenClawReadiness:
             config = config_resp.json()["data"]
             imported = next(s for s in config["available_skills"] if s["id"] == "imported-worldbuilding")
             assert imported["enabled"] is False
+            assert {"agent": "manual", "stage": "manual"} in imported["allowed_targets"]
+            assert {"agent": "manual", "stage": "manual"} in imported["mountable_targets"]
             assert "imported-worldbuilding" not in config["agent_skills"].get("planner", {}).get("before_llm", [])
 
     def test_universal_import_apply_duplicate_rejected_without_force(self):
@@ -777,6 +786,8 @@ class TestSkillReview:
         assert data["ok"] is True
         assert data["data"]["verdict"] == "pass"
         assert data["data"]["findings"] == []
+        assert {"agent": "polisher", "stage": "after_llm"} in data["data"]["allowed_targets"]
+        assert {"agent": "polisher", "stage": "after_llm"} in data["data"]["mountable_targets"]
 
     def test_review_disabled_skill_warns_without_target(self, test_client):
         test_client.post("/api/skills/enabled", json={
@@ -790,6 +801,7 @@ class TestSkillReview:
         assert data["ok"] is True
         assert data["data"]["verdict"] == "warn"
         assert any(f["code"] == "SKILL_DISABLED" for f in data["data"]["findings"])
+        assert data["data"]["mountable_targets"] == [{"agent": "manual", "stage": "manual"}]
 
     def test_review_rejects_partial_target(self, test_client):
         resp = test_client.post("/api/skills/review", json={

@@ -264,11 +264,11 @@ def _build_config_view(registry) -> dict[str, Any]:
     """Build the skill configuration view for the config endpoint."""
     skills = registry.list_skills()
     skill_by_id = {s["id"]: s for s in skills}
-    mounted_lookup = _build_mounted_lookup(registry.agent_skills)
 
     # Determine source info for each skill
     available_skills = []
     for skill in skills:
+        allowed_targets = _skill_allowed_targets(registry, skill["id"])
         info = {
             "id": skill["id"],
             "name": skill.get("name") or skill.get("description") or skill["id"],
@@ -277,6 +277,8 @@ def _build_config_view(registry) -> dict[str, Any]:
             "package": skill.get("package"),
             "legacy": not bool(skill.get("package")),
             "class_name": skill.get("class_name") or skill.get("class"),
+            "allowed_targets": allowed_targets,
+            "mountable_targets": _skill_mountable_targets(registry, skill["id"], allowed_targets),
         }
         available_skills.append(info)
 
@@ -328,13 +330,62 @@ def _finding(severity: str, code: str, message: str) -> dict[str, str]:
     }
 
 
-def _skill_safety_review(
+def _all_known_mount_targets() -> list[dict[str, str]]:
+    """Return all production targets known to the WebUI mount console."""
+    return [
+        {"agent": agent, "stage": stage}
+        for agent, stages in KNOWN_AGENT_STAGES.items()
+        for stage in stages
+    ]
+
+
+def _skill_allowed_targets(registry, skill_id: str) -> list[dict[str, str]]:
+    """Return manifest-declared allowed mount targets for a skill."""
+    if skill_id not in registry.skills_config:
+        return []
+
+    manifest = registry.get_manifest(skill_id)
+    if not manifest:
+        # Legacy skills have no manifest constraints. Keep them available, but
+        # the safety review will warn that their metadata is incomplete.
+        return _all_known_mount_targets()
+
+    targets = [
+        target
+        for target in _all_known_mount_targets()
+        if target["agent"] in manifest.allowed_agents
+        and target["stage"] in manifest.allowed_stages
+    ]
+    if "manual" in manifest.allowed_agents and "manual" in manifest.allowed_stages:
+        targets.append({"agent": "manual", "stage": "manual"})
+    return targets
+
+
+def _skill_mountable_targets(
+    registry,
+    skill_id: str,
+    allowed_targets: list[dict[str, str]] | None = None,
+) -> list[dict[str, str]]:
+    """Return currently mountable production targets after safety review."""
+    targets = allowed_targets if allowed_targets is not None else _skill_allowed_targets(registry, skill_id)
+    mountable = []
+    for target in targets:
+        if target["agent"] == "manual" and target["stage"] == "manual":
+            mountable.append(target)
+            continue
+        review = _evaluate_skill_safety(registry, skill_id, target["agent"], target["stage"])
+        if review["verdict"] != "block":
+            mountable.append(target)
+    return mountable
+
+
+def _evaluate_skill_safety(
     registry,
     skill_id: str,
     agent: str | None = None,
     stage: str | None = None,
 ) -> dict[str, Any]:
-    """Review whether a skill is safe to enable or mount."""
+    """Evaluate safety for a skill against an optional target."""
     findings: list[dict[str, str]] = []
     recommended_actions: list[str] = []
 
@@ -345,6 +396,8 @@ def _skill_safety_review(
             "agent": agent,
             "stage": stage,
             "verdict": "block",
+            "allowed_targets": [],
+            "mountable_targets": [],
             "findings": [_finding("block", "SKILL_NOT_FOUND", f"Skill 不存在: {skill_id}")],
             "recommended_actions": ["确认 skill_id 是否正确，或先导入/register 该 Skill。"],
         }
@@ -353,7 +406,6 @@ def _skill_safety_review(
     package_path = skill_config.get("package")
     is_imported = bool(skill_config.get("_imported") or skill_config.get("class") == "ImportedInstructionSkill")
     manifest = registry.get_manifest(skill_id)
-
     if not enabled:
         severity = "block" if agent and stage else "warn"
         findings.append(_finding(severity, "SKILL_DISABLED", f"Skill 已禁用: {skill_id}"))
@@ -428,6 +480,23 @@ def _skill_safety_review(
         "findings": findings,
         "recommended_actions": list(dict.fromkeys(recommended_actions)),
     }
+
+
+def _skill_safety_review(
+    registry,
+    skill_id: str,
+    agent: str | None = None,
+    stage: str | None = None,
+) -> dict[str, Any]:
+    """Review whether a skill is safe to enable or mount."""
+    review = _evaluate_skill_safety(registry, skill_id, agent, stage)
+    review["allowed_targets"] = _skill_allowed_targets(registry, skill_id)
+    review["mountable_targets"] = _skill_mountable_targets(
+        registry,
+        skill_id,
+        review["allowed_targets"],
+    )
+    return review
 
 
 @router.get("/skills")
@@ -717,6 +786,8 @@ async def review_skill(body: SkillReviewRequest, request: Request) -> EnvelopeRe
                 "package": registry.skills_config.get(body.skill_id, {}).get("package"),
                 "imported": bool(registry.skills_config.get(body.skill_id, {}).get("_imported")),
                 "manifest": bool(registry.get_manifest(body.skill_id)) if body.skill_id in registry.skills_config else False,
+                "allowed_targets": [],
+                "mountable_targets": [],
                 "findings": [
                     _finding(
                         "block",
