@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Novelos is an AI-powered novel production workbench for long-form fiction projects. It combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.5.1 Stuck Run Detection**, with **1716/1716 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
+Current baseline: **v5.5.2 Run Health Dashboard**, with **1723/1723 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
 
 ## Architecture
 
@@ -180,7 +180,7 @@ Key configuration files:
 ### Python Tests
 - Test location: `tests/`
 - Framework: pytest
-- Current baseline: 1716/1716 passing
+- Current baseline: 1723/1723 passing
 - Run full suite: `python3 -m pytest -q`
 - Run specific test: `python3 -m pytest tests/test_file.py::test_name -q`
 

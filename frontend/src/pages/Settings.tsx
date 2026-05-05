@@ -9,6 +9,7 @@ import {
   SettingsOverviewSection,
   SkillsSettingsSection,
 } from '../components/settings/SettingsConsoleSections'
+import RunHealthPanel from '../components/settings/RunHealthPanel'
 
 // v5.4: Settings panels moved into SettingsConsoleSections. Keep these
 // acceptance anchors here for source-level frontend tests: "配置草案生成器" / "复制".
@@ -87,6 +88,7 @@ const MODEL_OPTIONS = [
 
 const SETTINGS_SECTIONS = [
   { key: 'overview', label: '概览诊断', hint: '运行模式与生成健康度' },
+  { key: 'health', label: '运行健康', hint: '卡住运行与恢复运营' },
   { key: 'llm', label: 'LLM 配置', hint: '档案与 Agent 路由' },
   { key: 'skills', label: 'Skill 管理', hint: '挂载、测试与试运行' },
   { key: 'draft', label: '配置草案', hint: '生成本地配置草案' },
@@ -259,6 +261,7 @@ export default function Settings() {
       <SettingsSectionNav activeSection={activeSection} />
 
       {activeSection === 'overview' && <SettingsOverviewSection data={data} />}
+      {activeSection === 'health' && <RunHealthPanel />}
       {activeSection === 'llm' && <LlmSettingsSection data={data} />}
       {activeSection === 'skills' && <SkillsSettingsSection />}
       {activeSection === 'draft' && (

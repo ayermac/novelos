@@ -28,6 +28,13 @@ class RunRecoveryMarkStuckRequest(BaseModel):
     confirm: bool = False
 
 
+class RunHealthMarkStuckRequest(BaseModel):
+    """Batch mark stuck workflow runs as blocked."""
+
+    run_ids: list[str]
+    confirm: bool = False
+
+
 # Agent step configuration
 AGENT_STEPS = [
     {"key": "screenwriter", "label": "编剧", "description": "规划章节场景和情节"},
@@ -46,6 +53,86 @@ STATUS_TO_AGENT = {
     "reviewed": "editor",
     "published": "publish",
 }
+
+
+@router.get("/runs/health")
+async def get_runs_health(
+    request: Request,
+    project_id: str | None = None,
+    limit: int = 50,
+) -> EnvelopeResponse:
+    """Return production run health with stuck-run detection."""
+    from ..deps import get_repo, get_settings
+
+    try:
+        repo = get_repo(request)
+        settings = get_settings(request)
+        timeout_minutes = settings.workflow.task_timeout_minutes
+        safe_limit = max(1, min(limit, 200))
+        rows = _list_run_health_rows(repo, project_id=project_id, limit=safe_limit)
+        items = [
+            _build_run_health_item(repo, row, timeout_minutes=timeout_minutes)
+            for row in rows
+        ]
+
+        stuck_count = sum(1 for item in items if item["stuck"])
+        total_running = sum(1 for item in items if item["workflow_status"] == "running")
+        blocked_count = sum(1 for item in items if item["workflow_status"] == "blocked")
+        failed_count = sum(1 for item in items if item["workflow_status"] == "failed")
+
+        return envelope_response({
+            "timeout_minutes": timeout_minutes,
+            "project_id": project_id,
+            "limit": safe_limit,
+            "summary": {
+                "total": len(items),
+                "total_running": total_running,
+                "healthy_running": max(0, total_running - stuck_count),
+                "stuck": stuck_count,
+                "blocked": blocked_count,
+                "failed": failed_count,
+                "actionable": sum(1 for item in items if item["actions"]["mark_stuck_blocked"]["enabled"]),
+            },
+            "runs": items,
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"获取运行健康状态失败: {str(e)}")
+
+
+@router.post("/runs/health/mark-stuck")
+async def mark_stuck_runs_from_health(
+    request: Request,
+    body: RunHealthMarkStuckRequest,
+) -> EnvelopeResponse:
+    """Batch mark confirmed stuck runs as blocked from the health dashboard."""
+    from ..deps import get_repo, get_settings
+
+    try:
+        if not body.confirm:
+            return error_response("CONFIRM_REQUIRED", "请确认批量标记卡住运行")
+        if not body.run_ids:
+            return error_response("NO_RUNS_SELECTED", "请选择需要标记的运行")
+        if len(body.run_ids) > 50:
+            return error_response("TOO_MANY_RUNS", "一次最多处理 50 条运行")
+
+        repo = get_repo(request)
+        settings = get_settings(request)
+        results = []
+        marked = 0
+        for run_id in body.run_ids:
+            result = _mark_stuck_run_for_recovery(repo, settings, run_id)
+            if result["ok"]:
+                marked += 1
+            results.append(result)
+
+        return envelope_response({
+            "requested": len(body.run_ids),
+            "marked": marked,
+            "failed": len(body.run_ids) - marked,
+            "results": results,
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"批量标记卡住运行失败: {str(e)}")
 
 
 def _generate_stub_artifacts(step_key: str, chapter_number: int) -> dict | None:
@@ -294,82 +381,14 @@ async def mark_stuck_run(
 
         repo = get_repo(request)
         settings = get_settings(request)
-        timeout_minutes = settings.workflow.task_timeout_minutes
-        run_data = _get_run_by_id(repo, run_id)
-        if not run_data:
-            return error_response("RUN_NOT_FOUND", f"运行记录 '{run_id}' 不存在")
-
-        recovery = _build_recovery_state(
-            repo,
-            run_data,
-            max_retries=settings.quality_gate.max_retries,
-            timeout_minutes=timeout_minutes,
-        )
-        if not recovery.get("stuck", False):
+        result = _mark_stuck_run_for_recovery(repo, settings, run_id)
+        if not result["ok"]:
             return error_response(
-                "RUN_NOT_STUCK",
-                "运行尚未超过卡住阈值，不能标记为阻塞",
-                details={
-                    "elapsed_minutes": recovery.get("elapsed_minutes"),
-                    "timeout_minutes": timeout_minutes,
-                },
+                result["error_code"],
+                result["message"],
+                details=result.get("details"),
             )
-
-        project_id = run_data["project_id"]
-        chapter_number = run_data["chapter_number"]
-        chapter = repo.get_chapter(project_id, chapter_number)
-        if not chapter:
-            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
-        current_status = chapter.get("status", "") if chapter else ""
-        if current_status in ("reviewed", "published"):
-            return error_response(
-                "INVALID_STATUS",
-                f"章节状态为 '{current_status}'，不能从卡住运行标记为阻塞",
-                details={"current_status": current_status},
-            )
-
-        message = (
-            f"运行疑似卡住：超过 {timeout_minutes} 分钟仍为 running。"
-            f" current_node={run_data.get('current_node') or '-'}"
-        )
-
-        repo.update_workflow_run(run_id, status="blocked", error_message=message)
-        closed_running_tasks = _fail_running_tasks_for_run(
-            repo,
-            project_id,
-            chapter_number,
-            workflow_run_id=run_id,
-            message=message,
-        )
-        _set_chapter_status_unchecked(repo, project_id, chapter_number, "blocking")
-        _insert_recovery_audit(
-            repo,
-            project_id,
-            chapter_number,
-            workflow_run_id=run_id,
-            message=message,
-            task_type="recover",
-            agent_id="system",
-        )
-
-        refreshed = _get_run_by_id(repo, run_id) or run_data
-        return envelope_response({
-            "marked": True,
-            "run_id": run_id,
-            "project_id": project_id,
-            "chapter_number": chapter_number,
-            "previous_chapter_status": current_status,
-            "new_chapter_status": "blocking",
-            "workflow_status": "blocked",
-            "message": message,
-            "closed_running_tasks": closed_running_tasks,
-            "recovery": _build_recovery_state(
-                repo,
-                refreshed,
-                max_retries=settings.quality_gate.max_retries,
-                timeout_minutes=timeout_minutes,
-            ),
-        })
+        return envelope_response(result["data"])
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"标记卡住运行失败: {str(e)}")
 
@@ -392,6 +411,166 @@ def _checkpoint_exists(repo, project_id: str, chapter_number: int) -> bool:
         return checkpoint_thread_exists(repo.db_path, project_id, chapter_number)
     except Exception:
         return False
+
+
+def _list_run_health_rows(repo, project_id: str | None, limit: int) -> list[dict]:
+    """List recent issue-bearing runs for the health dashboard."""
+    conn = repo._conn()
+    try:
+        where = "WHERE wr.status IN ('running', 'blocked', 'failed')"
+        params: list[object] = []
+        if project_id:
+            where += " AND wr.project_id=?"
+            params.append(project_id)
+        params.append(limit)
+        rows = conn.execute(
+            "SELECT wr.*, p.name AS project_name, c.status AS chapter_status "
+            "FROM workflow_runs wr "
+            "LEFT JOIN projects p ON p.project_id = wr.project_id "
+            "LEFT JOIN chapters c ON c.project_id = wr.project_id "
+            "AND c.chapter_number = wr.chapter_number "
+            f"{where} "
+            "ORDER BY wr.started_at DESC LIMIT ?",
+            params,
+        ).fetchall()
+        return [dict(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def _build_run_health_item(repo, run_data: dict, timeout_minutes: int) -> dict:
+    """Build a single run health row."""
+    stuck_info = _detect_stuck_run(repo, run_data, timeout_minutes)
+    chapter_status = run_data.get("chapter_status") or "unknown"
+    can_mark_stuck = bool(stuck_info.get("stuck")) and chapter_status not in (
+        "reviewed",
+        "published",
+        "unknown",
+    )
+    return {
+        "run_id": run_data.get("id"),
+        "project_id": run_data.get("project_id"),
+        "project_name": run_data.get("project_name") or run_data.get("project_id"),
+        "chapter_number": run_data.get("chapter_number"),
+        "workflow_status": run_data.get("status", "unknown"),
+        "chapter_status": chapter_status,
+        "current_node": run_data.get("current_node"),
+        "started_at": run_data.get("started_at"),
+        "completed_at": run_data.get("completed_at"),
+        "error_message": run_data.get("error_message"),
+        "elapsed_minutes": stuck_info.get("elapsed_minutes"),
+        "stuck": bool(stuck_info.get("stuck", False)),
+        "stuck_reason": stuck_info.get("reason"),
+        "running_tasks": stuck_info.get("running_tasks", []),
+        "actions": {
+            "mark_stuck_blocked": {
+                "enabled": can_mark_stuck,
+                "reason": (
+                    stuck_info.get("reason")
+                    if can_mark_stuck
+                    else "运行未达到卡住阈值或章节状态不可标记。"
+                ),
+            },
+        },
+    }
+
+
+def _mark_stuck_run_for_recovery(repo, settings, run_id: str) -> dict:
+    """Shared implementation for single and batch mark-stuck actions."""
+    timeout_minutes = settings.workflow.task_timeout_minutes
+    run_data = _get_run_by_id(repo, run_id)
+    if not run_data:
+        return {
+            "ok": False,
+            "run_id": run_id,
+            "error_code": "RUN_NOT_FOUND",
+            "message": f"运行记录 '{run_id}' 不存在",
+        }
+
+    recovery = _build_recovery_state(
+        repo,
+        run_data,
+        max_retries=settings.quality_gate.max_retries,
+        timeout_minutes=timeout_minutes,
+    )
+    if not recovery.get("stuck", False):
+        return {
+            "ok": False,
+            "run_id": run_id,
+            "error_code": "RUN_NOT_STUCK",
+            "message": "运行尚未超过卡住阈值，不能标记为阻塞",
+            "details": {
+                "elapsed_minutes": recovery.get("elapsed_minutes"),
+                "timeout_minutes": timeout_minutes,
+            },
+        }
+
+    project_id = run_data["project_id"]
+    chapter_number = run_data["chapter_number"]
+    chapter = repo.get_chapter(project_id, chapter_number)
+    if not chapter:
+        return {
+            "ok": False,
+            "run_id": run_id,
+            "error_code": "CHAPTER_NOT_FOUND",
+            "message": f"章节 {chapter_number} 不存在",
+        }
+
+    current_status = chapter.get("status", "")
+    if current_status in ("reviewed", "published"):
+        return {
+            "ok": False,
+            "run_id": run_id,
+            "error_code": "INVALID_STATUS",
+            "message": f"章节状态为 '{current_status}'，不能从卡住运行标记为阻塞",
+            "details": {"current_status": current_status},
+        }
+
+    message = (
+        f"运行疑似卡住：超过 {timeout_minutes} 分钟仍为 running。"
+        f" current_node={run_data.get('current_node') or '-'}"
+    )
+    repo.update_workflow_run(run_id, status="blocked", error_message=message)
+    closed_running_tasks = _fail_running_tasks_for_run(
+        repo,
+        project_id,
+        chapter_number,
+        workflow_run_id=run_id,
+        message=message,
+    )
+    _set_chapter_status_unchecked(repo, project_id, chapter_number, "blocking")
+    _insert_recovery_audit(
+        repo,
+        project_id,
+        chapter_number,
+        workflow_run_id=run_id,
+        message=message,
+        task_type="recover",
+        agent_id="system",
+    )
+
+    refreshed = _get_run_by_id(repo, run_id) or run_data
+    return {
+        "ok": True,
+        "run_id": run_id,
+        "data": {
+            "marked": True,
+            "run_id": run_id,
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "previous_chapter_status": current_status,
+            "new_chapter_status": "blocking",
+            "workflow_status": "blocked",
+            "message": message,
+            "closed_running_tasks": closed_running_tasks,
+            "recovery": _build_recovery_state(
+                repo,
+                refreshed,
+                max_retries=settings.quality_gate.max_retries,
+                timeout_minutes=timeout_minutes,
+            ),
+        },
+    }
 
 
 def _build_recovery_state(

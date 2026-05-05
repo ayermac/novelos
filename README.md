@@ -4,7 +4,7 @@ AI-powered novel production workbench for long-form fiction projects.
 
 Novelos combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.5.1 Stuck Run Detection**, with **1716/1716 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
+Current baseline: **v5.5.2 Run Health Dashboard**, with **1723/1723 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
 
 ## What It Does
 
@@ -270,6 +270,7 @@ npm run build
 - v5.4.0-v5.4.13 WebUI 重构：ProjectShell 分组导航、章节工作区拆分、Settings Console 拆分、Attention Panel、Agent Skill Matrix、视觉 QA polish、Agent Skill Configuration Console、文件夹导入桥、启用状态管理与安全审查、挂载引导、项目级 Skill 覆盖层。
 - v5.5.0 运行恢复控制台：Run Detail 恢复状态、retry/checkpoint 可见、安全 reset、run 级 audit。
 - v5.5.1 卡住运行检测：running 超时识别、run-scoped running task 可见、标记阻塞、system recovery audit。
+- v5.5.2 运行健康面板：全局异常运行总览、项目过滤、批量 mark-stuck、部分失败可见。
 
 **v5.3 未收口项**：
 
@@ -279,7 +280,7 @@ npm run build
 Current verified baseline:
 
 ```text
-pytest: 1716/1716 passed
+pytest: 1723/1723 passed
 frontend typecheck: passed
 frontend lint: passed
 frontend build: passed
