@@ -227,6 +227,18 @@ class TestMountSkill:
         assert data["ok"] is False
         assert data["error"]["code"] == "VALIDATION_ERROR"
 
+    def test_mount_unknown_stage_rejected(self, test_client):
+        resp = test_client.post("/api/skills/mount", json={
+            "agent": "editor",
+            "stage": "before_reveiw",
+            "skill_id": "humanizer-zh",
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+        assert "before_review" in data["error"]["message"]
+
     def test_mount_refreshes_agent_matrix(self, test_client):
         # Mount narrative-quality to polisher/after_llm
         test_client.post("/api/skills/mount", json={
@@ -481,3 +493,41 @@ class TestRunSkill:
         assert "skipped" in data
         assert "skipped_ids" in data
         assert "style-bible-checker" in data["skipped_ids"]
+
+
+class TestSaveConfig:
+    """Test SkillRegistry.save_config preserves top-level keys."""
+
+    def test_save_config_preserves_top_level_keys(self):
+        import tempfile
+        import yaml
+        from novel_factory.skills.registry import SkillRegistry
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            skills_path = Path(tmpdir) / "skills.yaml"
+            # Write a file with extra top-level metadata
+            original = {
+                "_schema_version": "1.0",
+                "skills": {
+                    "humanizer-zh": {
+                        "enabled": True,
+                        "class": "HumanizerZhSkill",
+                        "description": "Humanizer",
+                    }
+                },
+                "agent_skills": {},
+            }
+            with open(skills_path, "w", encoding="utf-8") as f:
+                yaml.safe_dump(original, f, allow_unicode=True, sort_keys=False)
+
+            registry = SkillRegistry(config_path=str(skills_path))
+            registry.mount_skill("editor", "before_review", "humanizer-zh")
+            registry.save_config()
+
+            with open(skills_path, "r", encoding="utf-8") as f:
+                saved = yaml.safe_load(f)
+
+            assert saved.get("_schema_version") == "1.0"
+            assert "skills" in saved
+            assert "agent_skills" in saved
+            assert saved["agent_skills"]["editor"]["before_review"] == ["humanizer-zh"]

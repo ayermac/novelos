@@ -596,13 +596,23 @@ class SkillRegistry:
     def save_config(self) -> None:
         """Save current skills_config and agent_skills back to config file.
 
-        Preserves existing file structure and comments is not supported
-        by PyYAML; this writes a clean YAML file.
+        Preserves any existing top-level keys (e.g., schema version,
+        import provenance, settings) by loading the current file and
+        only replacing the two owned keys before dumping.
         """
-        config = {
-            "skills": self.skills_config,
-            "agent_skills": self.agent_skills,
-        }
+        config: dict[str, Any] = {}
+        if self.config_path.exists():
+            try:
+                with open(self.config_path, "r", encoding="utf-8") as f:
+                    loaded = yaml.safe_load(f)
+                if isinstance(loaded, dict):
+                    config = loaded
+            except Exception:
+                pass
+
+        config["skills"] = self.skills_config
+        config["agent_skills"] = self.agent_skills
+
         try:
             with open(self.config_path, "w", encoding="utf-8") as f:
                 yaml.safe_dump(config, f, allow_unicode=True, sort_keys=False)

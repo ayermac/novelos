@@ -408,6 +408,14 @@ async def mount_skill(body: MountSkillRequest, request: Request) -> EnvelopeResp
                 f"Agent '{body.agent}' 不是已知 agent，且尚未有任何挂载配置",
             )
 
+        # Validate stage for known agents to prevent dead config
+        if body.agent in KNOWN_AGENT_STAGES and body.stage not in KNOWN_AGENT_STAGES[body.agent]:
+            known = ", ".join(KNOWN_AGENT_STAGES[body.agent])
+            return error_response(
+                "VALIDATION_ERROR",
+                f"Stage '{body.stage}' 不是 agent '{body.agent}' 的已知 stage。已知: {known}",
+            )
+
         ok, msg = registry.mount_skill(body.agent, body.stage, body.skill_id)
         if not ok:
             return error_response("VALIDATION_ERROR", msg)
