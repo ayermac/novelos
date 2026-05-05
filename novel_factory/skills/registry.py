@@ -621,6 +621,40 @@ class SkillRegistry:
             logger.error(f"Failed to save skill config: {e}")
             raise
 
+    def can_register_imported_skill(self, skill_id: str, force: bool = False) -> tuple[bool, str]:
+        """Check whether an imported skill config entry can be registered."""
+        existing = self.skills_config.get(skill_id)
+        if not existing:
+            return True, ""
+        if not force:
+            return False, f"Skill '{skill_id}' already exists"
+        if not existing.get("_imported") and existing.get("class") != "ImportedInstructionSkill":
+            return False, f"Skill '{skill_id}' exists and is not an imported skill"
+        return True, ""
+
+    def register_imported_skill(
+        self,
+        skill_id: str,
+        package_path: str,
+        description: str = "",
+        force: bool = False,
+    ) -> tuple[bool, str]:
+        """Register an imported package skill as disabled and unmounted."""
+        ok, msg = self.can_register_imported_skill(skill_id, force=force)
+        if not ok:
+            return ok, msg
+
+        self.skills_config[skill_id] = {
+            "enabled": False,
+            "package": package_path,
+            "type": "context",
+            "class": "ImportedInstructionSkill",
+            "description": description or "Imported instruction skill",
+            "config": {},
+            "_imported": True,
+        }
+        return True, ""
+
     def mount_skill(self, agent: str, stage: str, skill_id: str) -> tuple[bool, str]:
         """Mount a skill to an agent/stage.
 

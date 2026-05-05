@@ -339,6 +339,100 @@ class TestOpenClawReadiness:
             assert data["ok"] is False
             assert data["error"]["code"] == "VALIDATION_ERROR"
 
+    def test_universal_import_apply_registers_disabled_unmounted_skill(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "openclaw-agents"
+            _write_openclaw_skill(root, "planner", "worldbuilding", "Instruction-only skill.")
+
+            db_path = Path(tmpdir) / "test.db"
+            init_db(str(db_path))
+            config_dir = Path(tmpdir) / "config"
+            config_dir.mkdir()
+            skills_path = config_dir / "skills.yaml"
+            shutil.copy(str(DEFAULT_SKILLS_PATH), str(skills_path))
+
+            app = create_api_app(
+                db_path=str(db_path),
+                llm_mode="stub",
+                skills_config_path=str(skills_path),
+                openclaw_root_path=str(root),
+            )
+            client = TestClient(app)
+
+            resp = client.post("/api/skills/import-apply", json={
+                "source_type": "openclaw",
+                "source_path": "planner/workspace/skills/worldbuilding",
+            })
+            assert resp.status_code == 200
+            envelope = resp.json()
+            assert envelope["ok"] is True
+            data = envelope["data"]
+            assert data["skill_id"] == "imported-worldbuilding"
+            assert data["registered"] is True
+            assert data["enabled"] is False
+            assert data["mounted"] is False
+            assert data["package"] == "skill_packages/imported_worldbuilding"
+            assert (Path(tmpdir) / "skill_packages" / "imported_worldbuilding" / "manifest.yaml").exists()
+
+            config_resp = client.get("/api/skills/config")
+            config = config_resp.json()["data"]
+            imported = next(s for s in config["available_skills"] if s["id"] == "imported-worldbuilding")
+            assert imported["enabled"] is False
+            assert "imported-worldbuilding" not in config["agent_skills"].get("planner", {}).get("before_llm", [])
+
+    def test_universal_import_apply_duplicate_rejected_without_force(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "openclaw-agents"
+            _write_openclaw_skill(root, "planner", "worldbuilding", "Instruction-only skill.")
+
+            db_path = Path(tmpdir) / "test.db"
+            init_db(str(db_path))
+            config_dir = Path(tmpdir) / "config"
+            config_dir.mkdir()
+            skills_path = config_dir / "skills.yaml"
+            shutil.copy(str(DEFAULT_SKILLS_PATH), str(skills_path))
+
+            app = create_api_app(
+                db_path=str(db_path),
+                llm_mode="stub",
+                skills_config_path=str(skills_path),
+                openclaw_root_path=str(root),
+            )
+            client = TestClient(app)
+
+            body = {
+                "source_type": "openclaw",
+                "source_path": "planner/workspace/skills/worldbuilding",
+            }
+            assert client.post("/api/skills/import-apply", json=body).json()["ok"] is True
+            second = client.post("/api/skills/import-apply", json=body).json()
+            assert second["ok"] is False
+            assert second["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_universal_import_apply_rejects_unknown_source_type(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            init_db(str(db_path))
+            config_dir = Path(tmpdir) / "config"
+            config_dir.mkdir()
+            skills_path = config_dir / "skills.yaml"
+            shutil.copy(str(DEFAULT_SKILLS_PATH), str(skills_path))
+
+            app = create_api_app(
+                db_path=str(db_path),
+                llm_mode="stub",
+                skills_config_path=str(skills_path),
+            )
+            client = TestClient(app)
+
+            resp = client.post("/api/skills/import-apply", json={
+                "source_type": "unknown",
+                "source_path": "anything",
+            })
+            data = resp.json()
+            assert data["ok"] is False
+            assert data["error"]["code"] == "VALIDATION_ERROR"
+
 
 class TestGetSkillDetail:
     """Test GET /api/skills/{skill_id}."""

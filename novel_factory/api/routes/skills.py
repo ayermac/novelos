@@ -6,6 +6,7 @@ v5.3.4: Add test bench endpoints for fixtures testing and manual skill runs.
 v5.4.6: Add skill mount configuration console endpoints.
 v5.4.7: Add read-only OpenClaw legacy Skill import readiness endpoint.
 v5.4.8: Add universal Skill import readiness and plan preview endpoints.
+v5.4.9: Add safe universal Skill import apply endpoint.
 """
 
 from __future__ import annotations
@@ -65,6 +66,15 @@ class SkillImportPlanRequest(BaseModel):
 
     source_type: str
     source_path: str
+
+
+class SkillImportApplyRequest(BaseModel):
+    """Universal skill import apply request."""
+
+    source_type: str
+    source_path: str
+    skill_id: str | None = None
+    force: bool = False
 
 
 class OpenClawImportPlanRequest(BaseModel):
@@ -363,6 +373,71 @@ async def get_import_plan(body: SkillImportPlanRequest, request: Request) -> Env
         return envelope_response(plan.get("data", {}))
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"生成 Skill 导入计划失败: {str(e)}")
+
+
+@router.post("/skills/import-apply")
+async def apply_import(body: SkillImportApplyRequest, request: Request) -> EnvelopeResponse:
+    """Safely import a local Skill candidate as disabled and unmounted."""
+    try:
+        from pathlib import Path
+
+        from ...skills.openclaw_readiness import apply_import_candidate, build_import_plan_preview
+
+        registry = _get_registry(request)
+        root = getattr(request.app.state, "openclaw_root_path", None)
+        package_root = registry.config_path.parent.parent / "skill_packages"
+
+        plan = build_import_plan_preview(body.source_type, body.source_path, openclaw_root=root)
+        if not plan.get("ok"):
+            return error_response("VALIDATION_ERROR", str(plan.get("error") or "生成导入计划失败"))
+
+        plan_data = plan.get("data", {})
+        target = plan_data.get("target", {}) if isinstance(plan_data, dict) else {}
+        skill_id = body.skill_id or target.get("skill_id")
+        if not skill_id:
+            return error_response("VALIDATION_ERROR", "skill_id is required")
+
+        ok, msg = registry.can_register_imported_skill(skill_id, force=body.force)
+        if not ok:
+            return error_response("VALIDATION_ERROR", msg)
+
+        result = apply_import_candidate(
+            source_type=body.source_type,
+            source_path=body.source_path,
+            skill_id=skill_id,
+            force=body.force,
+            openclaw_root=root,
+            package_root=package_root,
+        )
+        if not result.get("ok"):
+            return error_response("VALIDATION_ERROR", str(result.get("error") or "导入 Skill 失败"))
+
+        data = result.get("data", {})
+        package_dir = Path(data.get("package_dir", ""))
+        package_path = f"skill_packages/{package_dir.name}"
+        description = ""
+        detected = plan_data.get("detected", {}) if isinstance(plan_data, dict) else {}
+        if isinstance(detected, dict):
+            description = str(detected.get("description") or "")
+
+        ok, msg = registry.register_imported_skill(
+            skill_id=skill_id,
+            package_path=package_path,
+            description=description,
+            force=body.force,
+        )
+        if not ok:
+            return error_response("VALIDATION_ERROR", msg)
+        registry.save_config()
+
+        data["package"] = package_path
+        data["registered"] = True
+        data["enabled"] = False
+        data["mounted"] = False
+        data["config_path"] = str(registry.config_path)
+        return envelope_response(data)
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"导入 Skill 失败: {str(e)}")
 
 
 @router.post("/skills/openclaw-import-plan")

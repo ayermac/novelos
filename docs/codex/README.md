@@ -92,7 +92,7 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1687/1687 passed
+- **当前测试基线**: 1690/1690 passed
 - **新增测试**:
   - `test_v51_api_e2e_smoke.py`: 17 个端到端 smoke 测试
   - `test_v51_frontend_quality.py`: 8 个前端质量检查
@@ -206,7 +206,7 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.3.x RC**，测试基线 **1687/1687 passed**。
+当前开发基线是 **v5.3.x RC**，测试基线 **1690/1690 passed**。
 
 **v5.3 已实现能力**（部分，进行中）：
 
@@ -215,7 +215,7 @@ npm run dev
 - v5.3.2 项目创世与记忆循环（部分）：创世生成/批准/拒绝、记忆更新批次、事实账本 CRUD 与事件。
 - v5.3.3-v5.3.4 Skill 可视化与测试台：Skill 列表、挂载关系、配置验证、fixtures 测试、手动试运行。
 - v5.3.5 记忆可靠性：结构化字段应用、失败原因可见、失败项重试、批次状态重算。
-- v5.4.0-v5.4.8 WebUI 重构：ProjectShell 分组导航、章节工作区拆分、Settings Console 拆分、Attention Panel、Agent Skill Matrix、视觉 QA polish、Agent Skill Configuration Console、通用 Skill 导入候选与计划预览。
+- v5.4.0-v5.4.9 WebUI 重构：ProjectShell 分组导航、章节工作区拆分、Settings Console 拆分、Attention Panel、Agent Skill Matrix、视觉 QA polish、Agent Skill Configuration Console、通用 Skill 导入候选、计划预览与安全导入。
 
 **v5.3 未收口项**：
 

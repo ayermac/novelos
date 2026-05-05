@@ -171,6 +171,14 @@ interface SkillImportPlan {
   warnings: string[]
 }
 
+interface SkillImportApplyResult {
+  skill_id: string
+  package: string
+  registered: boolean
+  enabled: boolean
+  mounted: boolean
+}
+
 const panelStyle: CSSProperties = {
   marginBottom: 'var(--space-4)',
   padding: 'var(--space-4)',
@@ -283,8 +291,10 @@ export default function SkillVisibilityPanel() {
 
   // Skill import plan preview state
   const [planningSkillImport, setPlanningSkillImport] = useState<string | null>(null)
+  const [applyingSkillImport, setApplyingSkillImport] = useState<string | null>(null)
   const [skillImportPlanError, setSkillImportPlanError] = useState('')
   const [skillImportPlan, setSkillImportPlan] = useState<SkillImportPlan | null>(null)
+  const [skillImportApplyResult, setSkillImportApplyResult] = useState<SkillImportApplyResult | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -515,6 +525,27 @@ export default function SkillVisibilityPanel() {
     }
   }
 
+  const handleSkillImportApply = async (candidate: SkillImportCandidate) => {
+    setApplyingSkillImport(candidate.id)
+    setSkillImportPlanError('')
+    setSkillImportApplyResult(null)
+
+    const res = await post<SkillImportApplyResult>('/skills/import-apply', {
+      source_type: candidate.source_type,
+      source_path: candidate.source_path,
+    })
+
+    setApplyingSkillImport(null)
+
+    if (res.ok && res.data) {
+      setSkillImportApplyResult(res.data)
+      setSkillImportPlan(null)
+      await load()
+    } else {
+      setSkillImportPlanError(res.error?.message || '导入 Skill 失败')
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ padding: 'var(--space-5)', textAlign: 'center', color: 'var(--text-charcoal)' }}>
@@ -559,6 +590,10 @@ export default function SkillVisibilityPanel() {
     const mountedSet = new Set(skillConfig.agent_skills[agent]?.[stage] || [])
     return skillConfig.available_skills.filter((s) => !mountedSet.has(s.id))
   }
+
+  const canApplySkillImport = (candidate: SkillImportCandidate) => (
+    candidate.status === 'import_ready' || candidate.status === 'manual_ready'
+  )
 
   return (
     <div style={{ padding: 'var(--space-5)' }}>
@@ -974,7 +1009,7 @@ export default function SkillVisibilityPanel() {
                 Skill 导入候选
               </h4>
               <div style={{ fontSize: '12px', color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}>
-                只读扫描：不复制、不启用、不挂载。OpenClaw、Codex 和本地 Agent Skill 都只是候选来源。
+                扫描不改变配置；导入只复制为禁用 package skill，不启用、不挂载、不执行外部脚本。
               </div>
             </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
@@ -1023,6 +1058,22 @@ export default function SkillVisibilityPanel() {
               >
                 清除
               </button>
+            </div>
+          )}
+
+          {skillImportApplyResult && (
+            <div
+              style={{
+                marginBottom: 'var(--space-3)',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                background: '#ecfdf5',
+                color: '#166534',
+                fontSize: '13px',
+              }}
+            >
+              已导入 <code style={compactCodeStyle}>{skillImportApplyResult.skill_id}</code>
+              {' '}为禁用 Skill，未挂载到任何工作流。
             </div>
           )}
 
@@ -1106,14 +1157,25 @@ export default function SkillVisibilityPanel() {
                       )}
                     </div>
                   )}
-                  <button
-                    onClick={() => handleSkillImportPlan(candidate)}
-                    className="btn btn-secondary"
-                    disabled={planningSkillImport === candidate.id || candidate.status === 'invalid'}
-                    style={{ marginTop: 10, fontSize: '12px', padding: '4px 10px' }}
-                  >
-                    {planningSkillImport === candidate.id ? '生成中...' : '预览导入计划'}
-                  </button>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
+                    <button
+                      onClick={() => handleSkillImportPlan(candidate)}
+                      className="btn btn-secondary"
+                      disabled={planningSkillImport === candidate.id || candidate.status === 'invalid'}
+                      style={{ fontSize: '12px', padding: '4px 10px' }}
+                    >
+                      {planningSkillImport === candidate.id ? '生成中...' : '预览导入计划'}
+                    </button>
+                    <button
+                      onClick={() => handleSkillImportApply(candidate)}
+                      className="btn btn-secondary"
+                      disabled={applyingSkillImport === candidate.id || !canApplySkillImport(candidate)}
+                      style={{ fontSize: '12px', padding: '4px 10px' }}
+                      title={canApplySkillImport(candidate) ? '导入为禁用 Skill，不启用、不挂载' : '该候选暂不可直接导入'}
+                    >
+                      {applyingSkillImport === candidate.id ? '导入中...' : '导入为禁用 Skill'}
+                    </button>
+                  </div>
                 </div>
               ))}
             </div>

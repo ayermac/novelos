@@ -364,6 +364,36 @@ Success criteria:
 - Users can preview candidate import shape before deciding whether a later import/apply flow is safe.
 - Skill API tests, frontend typecheck/lint/build pass.
 
+### v5.4.9 Universal Skill Import Apply
+
+Turn the v5.4.8 read-only preview into a safe apply path for universal `SKILL.md` candidates.
+
+Scope:
+
+- Add `POST /api/skills/import-apply`.
+- Accept a readiness candidate `source_type` + `source_path`, with optional `skill_id` and `force`.
+- Generate a package under the runtime skill package root.
+- Register the imported skill in the active `skills.yaml` as disabled.
+- Keep the imported skill unmounted.
+- Preserve generic Skill support across OpenClaw, Codex user skills, and Agent user skills.
+- Add a Settings > Skill 管理 button to import eligible candidates as disabled skills.
+
+Out of scope:
+
+- Auto-enabling imported skills.
+- Auto-mounting imported skills to any agent/stage.
+- Executing external scripts or shell commands.
+- Bulk import/migration.
+- Project-specific skill overrides.
+
+Success criteria:
+
+- Imported candidates appear in Skill config as `enabled: false`.
+- Imported candidates are not mounted to any workflow stage.
+- Duplicate imports are rejected unless explicitly forced.
+- Unknown source types and path escapes return validation errors.
+- Skill API tests, frontend typecheck/lint/build, and full pytest pass.
+
 ## Implementation Rules
 
 - Do not redesign the product as a landing page.

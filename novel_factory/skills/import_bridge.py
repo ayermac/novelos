@@ -345,6 +345,7 @@ def apply_import_plan(
     source: str | Path,
     skill_id: str,
     force: bool = False,
+    package_root: str | Path | None = None,
 ) -> dict[str, Any]:
     """Apply an import plan, generating the skill package.
 
@@ -352,6 +353,7 @@ def apply_import_plan(
         source: Path to source skill directory.
         skill_id: Target skill ID (must match VALID_ID_PATTERN).
         force: If True, overwrite existing package directory.
+        package_root: Optional package root for tests/custom runtime config.
 
     Returns:
         Envelope: {ok, error, data} with generated file list.
@@ -373,7 +375,8 @@ def apply_import_plan(
     source_path = data["source"]
 
     # Resolve package directory
-    package_root = Path(__file__).parent.parent / "skill_packages"
+    default_package_root = Path(__file__).parent.parent / "skill_packages"
+    package_root = Path(package_root) if package_root else default_package_root
     package_dir_name = skill_id.replace("-", "_")
     package_dir = package_root / package_dir_name
 
@@ -491,7 +494,7 @@ def apply_import_plan(
         return {"ok": False, "error": f"Import failed: {e}", "data": {}}
 
     # v3.8: Auto-validate the generated package
-    validation_result = validate_imported_package(skill_id)
+    validation_result = validate_imported_package(skill_id, package_root=package_root)
 
     return {
         "ok": True,
@@ -508,11 +511,12 @@ def apply_import_plan(
 
 # ── Validate Imported Package ──────────────────────────────────
 
-def validate_imported_package(skill_id: str) -> dict[str, Any]:
+def validate_imported_package(skill_id: str, package_root: str | Path | None = None) -> dict[str, Any]:
     """Validate an imported skill package.
 
     Args:
         skill_id: Skill identifier to validate.
+        package_root: Optional package root for tests/custom runtime config.
 
     Returns:
         Envelope: {ok, error, data} with validation results.
@@ -522,7 +526,8 @@ def validate_imported_package(skill_id: str) -> dict[str, Any]:
     if id_error:
         return {"ok": False, "error": id_error, "data": {}}
 
-    package_root = Path(__file__).parent.parent / "skill_packages"
+    default_package_root = Path(__file__).parent.parent / "skill_packages"
+    package_root = Path(package_root) if package_root else default_package_root
     package_dir_name = skill_id.replace("-", "_")
     package_dir = package_root / package_dir_name
 
@@ -577,6 +582,8 @@ def validate_imported_package(skill_id: str) -> dict[str, Any]:
     handler_path = package_dir / "handler.py"
     if not handler_path.exists():
         errors.append("handler.py not found")
+    elif package_root.resolve() != default_package_root.resolve():
+        warnings.append("handler import check skipped for custom package_root")
     else:
         try:
             # Try to import and check it's a BaseSkill subclass

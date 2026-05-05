@@ -11,6 +11,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from .import_bridge import apply_import_plan
 from .import_models import build_import_plan, parse_skill_md
 
 
@@ -235,6 +236,45 @@ def build_import_plan_preview(
         plan["data"]["root"] = str(root)
         plan["data"]["read_only"] = True
     return plan
+
+
+def apply_import_candidate(
+    source_type: str,
+    source_path: str,
+    skill_id: str | None = None,
+    force: bool = False,
+    openclaw_root: str | Path | None = None,
+    package_root: str | Path | None = None,
+) -> dict[str, Any]:
+    """Apply a scanned Skill candidate into a disabled package directory.
+
+    This creates package files only. Registering in ``skills.yaml`` is handled
+    by the API layer so it can use the active SkillRegistry safely.
+    """
+    plan = build_import_plan_preview(source_type, source_path, openclaw_root=openclaw_root)
+    if not plan.get("ok"):
+        return plan
+
+    data = plan.get("data", {})
+    target = data.get("target", {}) if isinstance(data, dict) else {}
+    resolved_skill_id = skill_id or target.get("skill_id")
+    if not resolved_skill_id:
+        return {"ok": False, "error": "skill_id is required", "data": {}}
+
+    apply_result = apply_import_plan(
+        source=data["source"],
+        skill_id=resolved_skill_id,
+        force=force,
+        package_root=package_root,
+    )
+    if apply_result.get("ok") and isinstance(apply_result.get("data"), dict):
+        apply_result["data"]["source_type"] = source_type
+        apply_result["data"]["source_label"] = SOURCE_LABELS[source_type]
+        apply_result["data"]["source_path"] = source_path
+        apply_result["data"]["read_only"] = False
+        apply_result["data"]["enabled"] = False
+        apply_result["data"]["mounted"] = False
+    return apply_result
 
 
 def build_openclaw_import_plan(source_path: str, root: str | Path | None = None) -> dict[str, Any]:
