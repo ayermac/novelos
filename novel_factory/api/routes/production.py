@@ -68,13 +68,17 @@ def _get_blocking_chapter(repo, project_id: str) -> dict | None:
 def _get_stuck_run(repo, project_id: str, current_chapter: int) -> dict | None:
     """Find a stuck workflow run for the current chapter (failed/blocked status).
 
-    Only considers runs for the current chapter to avoid old failures permanently
+    Only considers the *latest* run for the current chapter. If the latest run
+    succeeded, old failures are ignored to prevent them from permanently
     hijacking production-next.
     """
-    runs = repo.get_workflow_runs_for_project(project_id, limit=20)
-    for run in runs:
-        if run.get("chapter_number") == current_chapter and run.get("status") in ("failed", "blocked"):
-            return run
+    runs = repo.get_workflow_runs_for_project(project_id, chapter_number=current_chapter, limit=20)
+    if not runs:
+        return None
+    # runs are ordered by started_at DESC (most recent first)
+    latest = runs[0]
+    if latest.get("status") in ("failed", "blocked"):
+        return latest
     return None
 
 
@@ -197,6 +201,7 @@ def _determine_next_action(repo, project_id: str, health: dict, current_chapter:
             "action_url": f"/api/projects/{project_id}/chapters/{ch_num}/reset",
             "method": "POST",
             "requires_confirmation": True,
+            "target_chapter": ch_num,
         }
 
     if stuck_run:
@@ -209,6 +214,7 @@ def _determine_next_action(repo, project_id: str, health: dict, current_chapter:
             "action_url": f"/api/projects/{project_id}/chapters/{ch_num}/reset",
             "method": "POST",
             "requires_confirmation": True,
+            "target_chapter": ch_num,
         }
 
     # 2. Genesis flow
@@ -316,6 +322,7 @@ def _determine_next_action(repo, project_id: str, health: dict, current_chapter:
             "action_url": f"/api/run/chapter",
             "method": "POST",
             "requires_confirmation": True,
+            "target_chapter": next_ch,
         }
 
     return {

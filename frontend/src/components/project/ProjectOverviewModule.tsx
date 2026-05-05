@@ -33,6 +33,7 @@ interface ProductionNextAction {
   action_url: string
   method: string
   requires_confirmation: boolean
+  target_chapter?: number
 }
 
 interface ProductionHealth {
@@ -127,20 +128,38 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       await handleAutoFill()
       return
     }
-    if (action.key === 'generate_chapter' || action.key === 'continue_next_chapter') {
+    if (action.key === 'generate_chapter') {
       setFilling(true)
       setFillResult('')
+      const ch = productionNext.current_chapter
       const res = await post<{ workflow_status: string; message: string }>(
         '/run/chapter',
-        { project_id: project.project_id, chapter: productionNext.current_chapter }
+        { project_id: project.project_id, chapter: ch }
       )
       setFilling(false)
       if (res.ok && res.data) {
-        setFillResult(res.data.message || `第 ${productionNext.current_chapter} 章生成已触发`)
+        setFillResult(res.data.message || `第 ${ch} 章生成已触发`)
       } else {
         setFillResult(res.error?.message || '生成触发失败')
       }
-      navigate(`/projects/${project.project_id}?module=chapters&chapter=${productionNext.current_chapter}`)
+      navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
+      return
+    }
+    if (action.key === 'continue_next_chapter') {
+      setFilling(true)
+      setFillResult('')
+      const ch = action.target_chapter || productionNext.current_chapter + 1
+      const res = await post<{ workflow_status: string; message: string }>(
+        '/run/chapter',
+        { project_id: project.project_id, chapter: ch }
+      )
+      setFilling(false)
+      if (res.ok && res.data) {
+        setFillResult(res.data.message || `第 ${ch} 章生成已触发`)
+      } else {
+        setFillResult(res.error?.message || '生成触发失败')
+      }
+      navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
       return
     }
     if (action.key === 'review_chapter') {
@@ -152,7 +171,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       return
     }
     if (action.key === 'recover_blocked_run') {
-      navigate(`/projects/${project.project_id}?module=chapters&chapter=${productionNext.current_chapter}`)
+      const ch = action.target_chapter || productionNext.current_chapter
+      navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
       return
     }
     if (action.key === 'generate_arc_plan') {

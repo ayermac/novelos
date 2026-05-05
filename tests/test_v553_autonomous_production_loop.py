@@ -234,6 +234,126 @@ class TestProductionNextAPI:
         assert data["next_action"]["key"] == "apply_memory_updates"
         os.unlink(db_path)
 
+    def test_old_failure_after_success_ignored(self, client, project_id):
+        """7. Same-chapter old failure after later success should NOT suggest recovery."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "old-fail-test", "name": "Old Fail Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 10, "target_words": 30000,
+        })
+        tc.post("/api/projects/old-fail-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
+        })
+        gid = tc.get("/api/projects/old-fail-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/old-fail-test/genesis/{gid}/approve")
+        tc.post("/api/projects/old-fail-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        # Create an old failed run for chapter 1
+        run1 = repo.create_workflow_run("old-fail-test", 1)
+        repo.update_workflow_run(run1, status="failed", error_message="old error")
+        # Create a newer completed run for chapter 1
+        run2 = repo.create_workflow_run("old-fail-test", 1)
+        repo.update_workflow_run(run2, status="completed")
+
+        resp = tc.get("/api/projects/old-fail-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        # Latest run is completed, so no recovery needed
+        assert data["health"]["has_stuck_run"] is False
+        assert data["next_action"]["key"] == "generate_chapter"
+        os.unlink(db_path)
+
+    def test_published_chapter_returns_continue_next_with_target(self, client, project_id):
+        """8. Published chapter should suggest continue_next_chapter with target_chapter=2."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "pub-test", "name": "Pub Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 10, "target_words": 30000,
+        })
+        tc.post("/api/projects/pub-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
+        })
+        gid = tc.get("/api/projects/pub-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/pub-test/genesis/{gid}/approve")
+        tc.post("/api/projects/pub-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        # Chapter 1 already exists from auto-fill; set it to reviewed then publish
+        repo.update_chapter_status("pub-test", 1, "reviewed")
+        repo.publish_chapter("pub-test", 1, expected_status="reviewed")
+        # Ensure chapter 2 exists
+        if repo.get_chapter("pub-test", 2) is None:
+            repo.add_chapter("pub-test", 2, "第 2 章", status="planned")
+
+        resp = tc.get("/api/projects/pub-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "continue_next_chapter"
+        assert data["next_action"].get("target_chapter") == 2
+        os.unlink(db_path)
+
+    def test_blocking_non_current_chapter_returns_correct_target(self, client, project_id):
+        """9. Blocking chapter 2 while current_chapter=9 should target chapter 2."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "non-curr-test", "name": "Non Curr Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 20, "target_words": 60000,
+        })
+        tc.post("/api/projects/non-curr-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 20, "target_words": 60000,
+        })
+        gid = tc.get("/api/projects/non-curr-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/non-curr-test/genesis/{gid}/approve")
+        tc.post("/api/projects/non-curr-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        # Set current_chapter to 9
+        repo.update_chapter_status("non-curr-test", 9, "planned")
+        conn = repo._conn()
+        conn.execute("UPDATE projects SET current_chapter=? WHERE project_id=?", (9, "non-curr-test"))
+        conn.commit()
+        conn.close()
+        # Block chapter 2
+        repo.update_chapter_status("non-curr-test", 2, "blocking")
+
+        resp = tc.get("/api/projects/non-curr-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "recover_blocked_run"
+        assert data["next_action"].get("target_chapter") == 2
+        os.unlink(db_path)
+
 
 class TestAutoFillAPI:
     """POST /api/projects/{id}/production/auto-fill."""
