@@ -633,6 +633,65 @@ class TestReorderSkills:
         assert data2["error"]["code"] == "VALIDATION_ERROR"
 
 
+class TestSkillEnabled:
+    """Test POST /api/skills/enabled."""
+
+    def test_disable_and_enable_skill_success(self, test_client):
+        disable = test_client.post("/api/skills/enabled", json={
+            "skill_id": "humanizer-zh",
+            "enabled": False,
+        })
+        assert disable.status_code == 200
+        disable_data = disable.json()
+        assert disable_data["ok"] is True
+        assert disable_data["data"]["skill_id"] == "humanizer-zh"
+        assert disable_data["data"]["enabled"] is False
+
+        config = test_client.get("/api/skills/config").json()["data"]
+        humanizer = next(s for s in config["available_skills"] if s["id"] == "humanizer-zh")
+        assert humanizer["enabled"] is False
+        assert any(s["id"] == "humanizer-zh" for s in config["disabled_skills"])
+
+        enable = test_client.post("/api/skills/enabled", json={
+            "skill_id": "humanizer-zh",
+            "enabled": True,
+        })
+        assert enable.status_code == 200
+        assert enable.json()["ok"] is True
+
+        refreshed = test_client.get("/api/skills/config").json()["data"]
+        humanizer = next(s for s in refreshed["available_skills"] if s["id"] == "humanizer-zh")
+        assert humanizer["enabled"] is True
+
+    def test_set_enabled_unknown_skill_rejected(self, test_client):
+        resp = test_client.post("/api/skills/enabled", json={
+            "skill_id": "unknown-skill",
+            "enabled": True,
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_disabling_mounted_skill_preserves_mount_and_matrix_warning(self, test_client):
+        resp = test_client.post("/api/skills/enabled", json={
+            "skill_id": "style-bible-checker",
+            "enabled": False,
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["is_mounted"] is True
+        assert {"agent": "editor", "stage": "before_review"} in data["data"]["mounted_to"]
+
+        mounts = test_client.get("/api/skills/mounts").json()["data"]
+        assert "style-bible-checker" in mounts["editor"]["before_review"]
+
+        matrix = test_client.get("/api/skills/agent-matrix").json()["data"]
+        warning_codes = [warning["code"] for warning in matrix["warnings"]]
+        assert "MOUNTED_DISABLED_SKILL" in warning_codes
+
+
 class TestGetAgentSkillMatrix:
     """Test GET /api/skills/agent-matrix."""
 

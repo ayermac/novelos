@@ -655,6 +655,14 @@ class SkillRegistry:
         }
         return True, ""
 
+    def set_skill_enabled(self, skill_id: str, enabled: bool) -> tuple[bool, str]:
+        """Set a skill's enabled flag without changing mounts."""
+        if skill_id not in self.skills_config:
+            return False, f"Skill not found: {skill_id}"
+
+        self.skills_config[skill_id]["enabled"] = enabled
+        return True, ""
+
     def mount_skill(self, agent: str, stage: str, skill_id: str) -> tuple[bool, str]:
         """Mount a skill to an agent/stage.
 

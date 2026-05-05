@@ -7,6 +7,7 @@ v5.4.6: Add skill mount configuration console endpoints.
 v5.4.7: Add read-only OpenClaw legacy Skill import readiness endpoint.
 v5.4.8: Add universal Skill import readiness and plan preview endpoints.
 v5.4.9: Add safe universal Skill import apply endpoint.
+v5.4.10: Add skill enable/disable configuration endpoint.
 """
 
 from __future__ import annotations
@@ -59,6 +60,13 @@ class ReorderSkillsRequest(BaseModel):
     agent: str
     stage: str
     skill_ids: list[str]
+
+
+class SkillEnabledRequest(BaseModel):
+    """Skill enabled flag update request."""
+
+    skill_id: str
+    enabled: bool
 
 
 class SkillImportPlanRequest(BaseModel):
@@ -543,6 +551,30 @@ async def get_skill(skill_id: str, request: Request) -> EnvelopeResponse:
         return envelope_response(data)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取 Skill 详情失败: {str(e)}")
+
+
+@router.post("/skills/enabled")
+async def set_skill_enabled(body: SkillEnabledRequest, request: Request) -> EnvelopeResponse:
+    """Enable or disable a skill without changing mounts."""
+    try:
+        registry = _get_registry(request)
+
+        ok, msg = registry.set_skill_enabled(body.skill_id, body.enabled)
+        if not ok:
+            return error_response("VALIDATION_ERROR", msg)
+
+        registry.save_config()
+
+        mounted_lookup = _build_mounted_lookup(registry.agent_skills)
+        return envelope_response({
+            "skill_id": body.skill_id,
+            "enabled": body.enabled,
+            "mounted_to": mounted_lookup.get(body.skill_id, []),
+            "is_mounted": body.skill_id in mounted_lookup,
+            "source": str(registry.config_path),
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"更新 Skill 启用状态失败: {str(e)}")
 
 
 @router.post("/skills/mount")

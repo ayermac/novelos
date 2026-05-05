@@ -179,6 +179,13 @@ interface SkillImportApplyResult {
   mounted: boolean
 }
 
+interface SkillEnabledResult {
+  skill_id: string
+  enabled: boolean
+  mounted_to: SkillMount[]
+  is_mounted: boolean
+}
+
 const panelStyle: CSSProperties = {
   marginBottom: 'var(--space-4)',
   padding: 'var(--space-4)',
@@ -288,6 +295,10 @@ export default function SkillVisibilityPanel() {
   const [savingMount, setSavingMount] = useState(false)
   const [mountError, setMountError] = useState('')
   const [selectedAddSkill, setSelectedAddSkill] = useState<Record<string, string>>({})
+
+  // Skill enabled state
+  const [togglingSkill, setTogglingSkill] = useState<string | null>(null)
+  const [skillEnableError, setSkillEnableError] = useState('')
 
   // Skill import plan preview state
   const [planningSkillImport, setPlanningSkillImport] = useState<string | null>(null)
@@ -506,6 +517,24 @@ export default function SkillVisibilityPanel() {
     }
   }
 
+  const handleSkillEnabled = async (skillId: string, enabled: boolean) => {
+    setTogglingSkill(skillId)
+    setSkillEnableError('')
+
+    const res = await post<SkillEnabledResult>('/skills/enabled', {
+      skill_id: skillId,
+      enabled,
+    })
+
+    setTogglingSkill(null)
+
+    if (res.ok && res.data) {
+      await load()
+    } else {
+      setSkillEnableError(res.error?.message || '更新 Skill 启用状态失败')
+    }
+  }
+
   const handleSkillImportPlan = async (candidate: SkillImportCandidate) => {
     setPlanningSkillImport(candidate.id)
     setSkillImportPlanError('')
@@ -594,6 +623,7 @@ export default function SkillVisibilityPanel() {
   const canApplySkillImport = (candidate: SkillImportCandidate) => (
     candidate.status === 'import_ready' || candidate.status === 'manual_ready'
   )
+  const skillMountById = new Map(skills.map((skill) => [skill.id, skill]))
 
   return (
     <div style={{ padding: 'var(--space-5)' }}>
@@ -683,6 +713,82 @@ export default function SkillVisibilityPanel() {
                 {s.id}
               </span>
             ))}
+          </div>
+        </div>
+      )}
+
+      {/* Skill Enable Console */}
+      {skillConfig && (
+        <div style={panelStyle}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
+            <h4 style={{ ...sectionTitleStyle, marginBottom: 0 }}>Skill 启用状态</h4>
+            <span style={statusChipStyle('muted')}>{skillConfig.disabled_skills.length} disabled</span>
+          </div>
+
+          {skillEnableError && (
+            <div
+              style={{
+                marginBottom: 'var(--space-3)',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                background: '#fef2f2',
+                color: '#991b1b',
+                fontSize: '13px',
+              }}
+            >
+              {skillEnableError}
+              <button
+                onClick={() => setSkillEnableError('')}
+                style={{ marginLeft: 8, fontSize: '12px', background: 'none', border: 'none', color: '#991b1b', cursor: 'pointer', textDecoration: 'underline' }}
+              >
+                清除
+              </button>
+            </div>
+          )}
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: 'var(--space-2)' }}>
+            {skillConfig.available_skills.map((skill) => {
+              const mountInfo = skillMountById.get(skill.id)
+              const isMounted = mountInfo?.is_mounted || false
+              return (
+                <div
+                  key={`enabled-${skill.id}`}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 10,
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    background: 'var(--paper-surface)',
+                    border: '1px solid rgba(30, 58, 95, 0.06)',
+                    minWidth: 0,
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+                      <code style={compactCodeStyle}>{skill.id}</code>
+                      <span style={statusChipStyle(skill.enabled ? 'ok' : 'muted')}>
+                        {skill.enabled ? '已启用' : '已禁用'}
+                      </span>
+                      {isMounted && <span style={statusChipStyle(skill.enabled ? 'ok' : 'warn')}>已挂载</span>}
+                    </div>
+                    <div style={{ marginTop: 3, fontSize: '12px', color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>
+                      {skill.package ? skill.package : 'legacy'}
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => handleSkillEnabled(skill.id, !skill.enabled)}
+                    className="btn btn-secondary"
+                    disabled={togglingSkill === skill.id}
+                    style={{ fontSize: '12px', padding: '4px 10px' }}
+                    title={skill.enabled ? '禁用 Skill；不会自动卸载' : '启用 Skill；不会自动挂载'}
+                  >
+                    {togglingSkill === skill.id ? '保存中...' : skill.enabled ? '禁用' : '启用'}
+                  </button>
+                </div>
+              )
+            })}
           </div>
         </div>
       )}

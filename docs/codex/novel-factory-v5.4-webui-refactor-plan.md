@@ -394,6 +394,33 @@ Success criteria:
 - Unknown source types and path escapes return validation errors.
 - Skill API tests, frontend typecheck/lint/build, and full pytest pass.
 
+### v5.4.10 Skill Enable Console
+
+Close the remaining manual YAML step after v5.4.9 imports by letting users enable or disable registered Skills from Settings.
+
+Scope:
+
+- Add `POST /api/skills/enabled`.
+- Persist the `enabled` flag to the active `skills.yaml`.
+- Show a Settings > Skill 管理 section for toggling Skill enabled state.
+- Keep existing mount configuration unchanged when toggling.
+- Surface mounted-disabled Skills through the existing Agent Skill Matrix warnings.
+
+Out of scope:
+
+- Auto-mounting enabled Skills.
+- Auto-unmounting disabled Skills.
+- Running imported Skills immediately after enabling.
+- Project-specific Skill overrides.
+
+Success criteria:
+
+- Users can enable an imported disabled Skill without editing YAML.
+- Users can disable a mounted Skill without losing its mount config.
+- Matrix warnings identify disabled Skills that are still mounted.
+- Unknown Skill IDs return validation errors.
+- Skill API tests, frontend typecheck/lint/build, and full pytest pass.
+
 ## Implementation Rules
 
 - Do not redesign the product as a landing page.
