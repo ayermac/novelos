@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Save, Settings } from 'lucide-react'
 import { get, put } from '../../lib/api'
+import ProjectSkillOverridesModule from './ProjectSkillOverridesModule'
 
 interface ProjectSettings {
   project_id: string
@@ -119,6 +120,8 @@ export default function ProjectSettingsModule({ projectId, onSaved }: Props) {
           </div>
         </div>
       </div>
+
+      <ProjectSkillOverridesModule projectId={projectId} />
     </div>
   )
 }

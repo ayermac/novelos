@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from .repositories.base import BaseRepository
 from .repositories.project import ProjectRepositoryMixin
+from .repositories.project_skill_override import ProjectSkillOverrideRepositoryMixin
 from .repositories.chapter import ChapterRepositoryMixin
 from .repositories.workflow import WorkflowRepositoryMixin
 from .repositories.artifact import ArtifactRepositoryMixin
@@ -46,6 +47,7 @@ class Repository(
     PlotHoleRepositoryMixin,
     InstructionRepositoryMixin,
     ProjectRepositoryMixin,
+    ProjectSkillOverrideRepositoryMixin,
     ChapterRepositoryMixin,
     WorkflowRepositoryMixin,
     ArtifactRepositoryMixin,

@@ -141,10 +141,13 @@ class EditorAgent(BaseAgent):
             except Exception:
                 logger.warning("Editor: failed to load style_bible for skill payload", exc_info=True)
 
+            project_skill_overrides = self._get_project_skill_overrides(project_id)
+
             before_review_result = self.skill_registry.run_skills_for_agent(
                 agent="editor",
                 stage="before_review",
                 payload=skill_payload,
+                project_overrides=project_skill_overrides,
             )
             
             # Process skill results

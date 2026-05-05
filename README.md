@@ -4,7 +4,7 @@ AI-powered novel production workbench for long-form fiction projects.
 
 Novelos combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.3.x RC**, with **1700/1700 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
+Current baseline: **v5.3.x RC**, with **1704/1704 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
 
 ## What It Does
 
@@ -267,7 +267,7 @@ npm run build
 - v5.3.2 项目创世与记忆循环（部分）：创世生成/批准/拒绝、记忆更新批次、事实账本 CRUD 与事件。
 - v5.3.3-v5.3.4 Skill 可视化与测试台：Skill 列表、挂载关系、配置验证、fixtures 测试、手动试运行。
 - v5.3.5 记忆可靠性：结构化字段应用、失败原因可见、失败项重试、批次状态重算。
-- v5.4.0-v5.4.12 WebUI 重构：ProjectShell 分组导航、章节工作区拆分、Settings Console 拆分、Attention Panel、Agent Skill Matrix、视觉 QA polish、Agent Skill Configuration Console、通用 Skill 导入候选、计划预览、安全导入、启用状态管理与安全审查、挂载引导。
+- v5.4.0-v5.4.13 WebUI 重构：ProjectShell 分组导航、章节工作区拆分、Settings Console 拆分、Attention Panel、Agent Skill Matrix、视觉 QA polish、Agent Skill Configuration Console、通用 Skill 导入候选、计划预览、安全导入、启用状态管理与安全审查、挂载引导、项目级 Skill 覆盖层。
 
 **v5.3 未收口项**：
 
@@ -277,7 +277,7 @@ npm run build
 Current verified baseline:
 
 ```text
-pytest: 1700/1700 passed
+pytest: 1704/1704 passed
 frontend typecheck: passed
 frontend lint: passed
 frontend build: passed

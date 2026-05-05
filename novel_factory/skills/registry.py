@@ -239,7 +239,12 @@ class SkillRegistry:
         logger.debug(f"Skill {skill_id} has no manifest (v2.1 compatibility)")
         return None
     
-    def get_skill(self, skill_id: str) -> Optional[BaseSkill]:
+    def get_skill(
+        self,
+        skill_id: str,
+        allow_disabled: bool = False,
+        config_override: dict[str, Any] | None = None,
+    ) -> Optional[BaseSkill]:
         """Get a skill instance by ID.
 
         Args:
@@ -256,12 +261,13 @@ class SkillRegistry:
         skill_config = self.skills_config[skill_id]
 
         # Check if skill is enabled
-        if not skill_config.get("enabled", True):
+        if not skill_config.get("enabled", True) and not allow_disabled:
             logger.info(f"Skill {skill_id} is disabled")
             return None
 
-        # Check cache
-        if skill_id in self._skill_cache:
+        # Check cache only for the global/default config path.
+        # Project-specific config overrides must not share instances across projects.
+        if not config_override and skill_id in self._skill_cache:
             return self._skill_cache[skill_id]
 
         # Get manifest
@@ -269,6 +275,9 @@ class SkillRegistry:
         
         # v2.3: If package is configured, it's the ONLY loading path (no fallback)
         package_path = skill_config.get("package")
+        merged_config = dict(skill_config.get("config", {}))
+        if isinstance(config_override, dict) and config_override:
+            merged_config.update(config_override)
         if package_path:
             # Package is configured - must load from package handler
             if not manifest or not manifest.package:
@@ -284,8 +293,9 @@ class SkillRegistry:
                 return None
             
             try:
-                skill_instance = skill_class(config=skill_config.get("config", {}))
-                self._skill_cache[skill_id] = skill_instance
+                skill_instance = skill_class(config=merged_config)
+                if not config_override:
+                    self._skill_cache[skill_id] = skill_instance
                 logger.info(f"Instantiated skill from package: {skill_id}")
                 return skill_instance
             except Exception as e:
@@ -313,14 +323,29 @@ class SkillRegistry:
 
         # Import and instantiate
         try:
-            skill_instance = skill_class(config=skill_config.get("config", {}))
-            self._skill_cache[skill_id] = skill_instance
+            skill_instance = skill_class(config=merged_config)
+            if not config_override:
+                self._skill_cache[skill_id] = skill_instance
 
             logger.info(f"Instantiated skill: {skill_id}")
             return skill_instance
         except Exception as e:
             logger.error(f"Failed to instantiate skill {skill_id}: {e}")
             return None
+
+    def _get_project_skill_override(
+        self,
+        project_overrides: dict[str, Any] | None,
+        skill_id: str,
+    ) -> dict[str, Any]:
+        """Return a per-project override entry for a skill."""
+        if not isinstance(project_overrides, dict):
+            return {}
+        skills = project_overrides.get("skills", {})
+        if not isinstance(skills, dict):
+            return {}
+        entry = skills.get(skill_id, {})
+        return entry if isinstance(entry, dict) else {}
     
     def _load_skill_from_package(
         self, 
@@ -387,6 +412,7 @@ class SkillRegistry:
         payload: dict[str, Any],
         agent: str = "manual",
         stage: str = "manual",
+        project_overrides: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """Run a skill by ID with manifest validation.
 
@@ -408,9 +434,17 @@ class SkillRegistry:
             }
 
         skill_config = self.skills_config[skill_id]
+        project_override = self._get_project_skill_override(project_overrides, skill_id)
+
+        if "enabled" in project_override and not project_override.get("enabled", True):
+            return {
+                "ok": False,
+                "error": f"Skill is disabled for project override: {skill_id}",
+                "data": {},
+            }
 
         # Check if skill is enabled
-        if not skill_config.get("enabled", True):
+        if not skill_config.get("enabled", True) and not project_override.get("enabled", False):
             return {
                 "ok": False,
                 "error": f"Skill is disabled: {skill_id}",
@@ -431,7 +465,15 @@ class SkillRegistry:
                 }
 
         # Get skill instance
-        skill = self.get_skill(skill_id)
+        skill = self.get_skill(
+            skill_id,
+            allow_disabled=bool(project_override.get("enabled", False)),
+            config_override=(
+                project_override.get("config")
+                if isinstance(project_override.get("config"), dict)
+                else None
+            ),
+        )
         if not skill:
             return {
                 "ok": False,
@@ -439,8 +481,13 @@ class SkillRegistry:
                 "data": {},
             }
 
+        merged_payload = dict(payload or {})
+        payload_defaults = project_override.get("payload_defaults", {})
+        if isinstance(payload_defaults, dict) and payload_defaults:
+            merged_payload = {**payload_defaults, **merged_payload}
+
         try:
-            result = skill.run(payload)
+            result = skill.run(merged_payload)
 
             # Add manifest version to result if available
             if manifest and result.get("ok"):
@@ -456,27 +503,41 @@ class SkillRegistry:
                 "data": {},
             }
     
-    def get_skills_for_agent(self, agent: str, stage: str) -> list[str]:
+    def get_skills_for_agent(
+        self,
+        agent: str,
+        stage: str,
+        project_overrides: dict[str, Any] | None = None,
+    ) -> list[str]:
         """Get skills configured for an agent at a specific stage.
 
-        Args:
-            agent: Agent name (e.g., "polisher")
-            stage: Stage name (e.g., "after_llm")
-
-        Returns:
-            List of skill IDs (only enabled skills with valid manifest)
+        Project overrides can replace the stage mount list and/or disable
+        individual skills for a project without touching global skills.yaml.
         """
+        project_agent_skills = {}
+        if isinstance(project_overrides, dict):
+            project_agent_skills = project_overrides.get("agent_skills", {})
+            if not isinstance(project_agent_skills, dict):
+                project_agent_skills = {}
+
         agent_config = self.agent_skills.get(agent, {})
+        override_agent = project_agent_skills.get(agent, {})
+        if isinstance(override_agent, dict) and stage in override_agent:
+            agent_config = {stage: list(override_agent.get(stage, []))}
+
         all_skills = agent_config.get(stage, [])
 
-        # Filter out disabled skills and validate manifest
         enabled_skills = []
         for skill_id in all_skills:
             skill_config = self.skills_config.get(skill_id, {})
-            if not skill_config.get("enabled", True):
+            project_override = self._get_project_skill_override(project_overrides, skill_id)
+            effective_enabled = skill_config.get("enabled", True)
+            if "enabled" in project_override:
+                effective_enabled = bool(project_override.get("enabled", True))
+
+            if not effective_enabled:
                 continue
 
-            # Validate manifest if present
             manifest = self.get_manifest(skill_id)
             if manifest:
                 is_allowed, _ = validate_manifest_for_agent(manifest, agent, stage)
@@ -489,12 +550,13 @@ class SkillRegistry:
             enabled_skills.append(skill_id)
 
         return enabled_skills
-    
+
     def run_skills_for_agent(
         self,
         agent: str,
         stage: str,
         payload: dict[str, Any],
+        project_overrides: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Run all skills configured for an agent at a specific stage.
 
@@ -506,11 +568,23 @@ class SkillRegistry:
         Returns:
             List of skill results
         """
-        skill_ids = self.get_skills_for_agent(agent, stage)
+        skill_ids = self.get_skills_for_agent(agent, stage, project_overrides=project_overrides)
         results = []
 
         for skill_id in skill_ids:
-            result = self.run_skill(skill_id, payload, agent=agent, stage=stage)
+            skill_payload = dict(payload or {})
+            project_override = self._get_project_skill_override(project_overrides, skill_id)
+            payload_defaults = project_override.get("payload_defaults", {})
+            if isinstance(payload_defaults, dict) and payload_defaults:
+                skill_payload = {**payload_defaults, **skill_payload}
+
+            result = self.run_skill(
+                skill_id,
+                skill_payload,
+                agent=agent,
+                stage=stage,
+                project_overrides=project_overrides,
+            )
             results.append({
                 "skill_id": skill_id,
                 "result": result,

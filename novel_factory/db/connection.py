@@ -193,6 +193,13 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         columns = [row[1] for row in cursor.fetchall()]
         return "workflow_run_id" in columns
 
+    if name == "026_v5_4_13_project_skill_overrides":
+        # 026 adds project_skill_overrides table
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='project_skill_overrides'"
+        )
+        return cursor.fetchone() is not None
+
     return False
 
 

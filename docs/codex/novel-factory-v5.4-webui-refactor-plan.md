@@ -450,6 +450,34 @@ Success criteria:
 - Users can inspect safety findings before enabling or mounting.
 - Skill API tests, frontend typecheck/lint/build, and full pytest pass.
 
+### v5.4.13 Project-specific Skill Overrides
+
+Keep Skills global and reusable while allowing each project to define its
+own override layer for mount plan, Skill config, and payload defaults.
+
+Scope:
+
+- Add a per-project override document stored in SQLite.
+- Expose read/write/clear APIs for project Skill overrides.
+- Apply project overrides at runtime for `editor` and `polisher`.
+- Support project-level replacements for stage mount lists.
+- Support per-skill `enabled`, `config`, and `payload_defaults` overrides.
+- Add a project settings UI panel for editing the override JSON.
+
+Out of scope:
+
+- Mutating global `skills.yaml`.
+- Auto-importing Skills into a project override.
+- Workflow routing changes unrelated to Skill selection.
+- Skill manifest schema changes.
+
+Success criteria:
+
+- Project-specific overrides affect only the owning project.
+- Project A and Project B can diverge in mounts and params without conflict.
+- Runtime Skill execution merges project defaults deterministically.
+- Full pytest, frontend typecheck/lint/build pass.
+
 ## Implementation Rules
 
 - Do not redesign the product as a landing page.

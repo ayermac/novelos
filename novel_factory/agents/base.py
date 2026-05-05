@@ -171,3 +171,17 @@ class BaseAgent:
             return get_style_context_for_agent(project_id, agent_id, self.repo)
         except Exception:
             return ""
+
+    def _get_project_skill_overrides(self, project_id: str) -> dict[str, Any]:
+        """Helper: get project-specific skill override document.
+
+        Returns an empty override doc when none exists or when loading fails.
+        """
+        try:
+            record = self.repo.get_project_skill_overrides(project_id)
+            if not isinstance(record, dict):
+                return {}
+            overrides = record.get("overrides", {})
+            return overrides if isinstance(overrides, dict) else {}
+        except Exception:
+            return {}

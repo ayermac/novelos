@@ -144,7 +144,7 @@ class TestEditorStyleBiblePayload:
         # Mock skill registry that captures payload
         captured_payloads = []
 
-        def capture_run_skills(agent, stage, payload):
+        def capture_run_skills(agent, stage, payload, project_overrides=None):
             captured_payloads.append(payload)
             return []
 
@@ -222,7 +222,7 @@ class TestEditorStyleBiblePayload:
 
         captured_payloads = []
 
-        def capture_run_skills(agent, stage, payload):
+        def capture_run_skills(agent, stage, payload, project_overrides=None):
             captured_payloads.append(payload)
             return []
 

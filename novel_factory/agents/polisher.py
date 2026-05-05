@@ -97,6 +97,7 @@ class PolisherAgent(BaseAgent):
         # Apply skills from config (after_llm stage)
         polished_content = output.content
         if self.skill_registry:
+            project_skill_overrides = self._get_project_skill_overrides(project_id)
             after_llm_result = self.skill_registry.run_skills_for_agent(
                 agent="polisher",
                 stage="after_llm",
@@ -104,6 +105,7 @@ class PolisherAgent(BaseAgent):
                     "text": polished_content,
                     "fact_lock": {"key_events": [f.content for f in fact_lock] if fact_lock else []},
                 },
+                project_overrides=project_skill_overrides,
             )
             
             # Process skill results
@@ -188,10 +190,12 @@ class PolisherAgent(BaseAgent):
 
         # Apply skills from config (before_save stage)
         if self.skill_registry:
+            project_skill_overrides = self._get_project_skill_overrides(project_id)
             before_save_result = self.skill_registry.run_skills_for_agent(
                 agent="polisher",
                 stage="before_save",
                 payload={"text": polished_content},
+                project_overrides=project_skill_overrides,
             )
             
             # Check AI trace score from AIStyleDetector

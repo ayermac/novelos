@@ -93,6 +93,7 @@ def create_api_app(
         memory_updates_router,
         story_facts_router,
         skills_router,
+        project_skill_overrides_router,
     )
 
     app.include_router(health_router, prefix="/api", tags=["health"])
@@ -117,6 +118,7 @@ def create_api_app(
     app.include_router(memory_updates_router, prefix="/api", tags=["memory-updates"])
     app.include_router(story_facts_router, prefix="/api", tags=["story-facts"])
     app.include_router(skills_router, prefix="/api", tags=["skills"])
+    app.include_router(project_skill_overrides_router, prefix="/api", tags=["project-skill-overrides"])
 
     # Exception handler - never exposes traceback
     @app.exception_handler(Exception)
