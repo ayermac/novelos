@@ -4,7 +4,7 @@
 
 Novelos 将 FastAPI 后端、LangGraph 章节工作流、SQLite 项目存储、React 作者工作台和 CLI 工具整合在一起，用于章节生成、审核、风格管理、项目上下文维护和运行诊断。
 
-当前基线：**v5.5.3 Autonomous Production Loop**，已验证 **1740/1740 pytest 通过**，前端 TypeScript 检查、lint 和生产构建通过。
+当前基线：**v5.5.4 Real LLM Autonomous Planning**，已验证 **1755/1755 pytest 通过**（含 v5.5.4 专项 10 passed），前端 TypeScript 检查、lint 和生产构建通过。
 
 **v5.3 已实现能力**（部分，进行中）：
 
@@ -18,6 +18,7 @@ Novelos 将 FastAPI 后端、LangGraph 章节工作流、SQLite 项目存储、R
 - v5.5.1 卡住运行检测：running 超时识别、run-scoped running task 可见、标记阻塞、system recovery audit。
 - v5.5.2 运行健康面板：全局异常运行总览、项目过滤、批量 mark-stuck、部分失败可见。
 - v5.5.3 自主生产循环：项目工作台「下一步生产动作」、AI 自动补齐缺失资料、章节批次规划 Arc Plan、创世重新定位为「一次性项目初始化」。
+- v5.5.4 真实 LLM 自主规划：real-mode 配置错误显式化（LLM_CONFIG_MISSING）、auto-fill 只补缺失类型（missing_types 约束）、arc-plan 章节范围幂等保护。
 
 **v5.3 未收口项**：
 

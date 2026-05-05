@@ -56,6 +56,7 @@
 | `novel-factory-v5.5.1-stuck-run-detection-spec.md` | v5.5.1 卡住运行检测、标记阻塞、run 级恢复 audit | 开发 Agent、质量验收 |
 | `novel-factory-v5.5.2-run-health-dashboard-spec.md` | v5.5.2 运行健康面板、异常运行总览、批量标记阻塞 | 开发 Agent、质量验收 |
 | `novel-factory-v5.5.3-autonomous-production-loop-spec.md` | v5.5.3 自主生产循环、下一步动作 API、AI 自动补齐、Arc 规划、创世重新定位 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.4-real-llm-autonomous-planning-spec.md` | v5.5.4 真实 LLM 自主规划、配置错误显式化、只补缺失项、Arc range 幂等 | 开发 Agent、质量验收 |
 | `novel-factory-api-contract-guidelines.md` | API 设计规范：Resource API / Action API 边界、POST body-style、兼容迁移策略 | 开发 Agent、代码评审、API 验收 |
 
 ## v5.1.1 本地启动与验收
@@ -212,7 +213,7 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.5.2 Run Health Dashboard**，测试基线 **1725/1725 passed**。
+当前开发基线是 **v5.5.4 Real LLM Autonomous Planning**，测试基线 **1755/1755 passed**。
 
 **v5.3 已实现能力**（部分，进行中）：
 

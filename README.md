@@ -4,7 +4,7 @@ AI-powered novel production workbench for long-form fiction projects.
 
 Novelos combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.5.3 Autonomous Production Loop**, with **1740/1740 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
+Current baseline: **v5.5.4 Real LLM Autonomous Planning**, with **1755/1755 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
 
 ## What It Does
 
@@ -289,6 +289,8 @@ npm run build
 - v5.5.0 运行恢复控制台：Run Detail 恢复状态、retry/checkpoint 可见、安全 reset、run 级 audit。
 - v5.5.1 卡住运行检测：running 超时识别、run-scoped running task 可见、标记阻塞、system recovery audit。
 - v5.5.2 运行健康面板：全局异常运行总览、项目过滤、批量 mark-stuck、部分失败可见。
+- v5.5.3 自主生产循环：项目工作台「下一步生产动作」、AI 自动补齐缺失资料、章节批次规划 Arc Plan、创世重新定位为「一次性项目初始化」。
+- v5.5.4 真实 LLM 自主规划：real-mode 配置错误显式化（LLM_CONFIG_MISSING）、auto-fill 只补缺失类型（missing_types 约束）、arc-plan 章节范围幂等保护。
 
 **v5.3 未收口项**：
 
@@ -298,7 +300,8 @@ npm run build
 Current verified baseline:
 
 ```text
-pytest: 1725/1725 passed
+pytest: 1755/1755 passed (includes v5.5.4 targeted 10 passed)
+v5.5.3 regression: 20 passed
 frontend typecheck: passed
 frontend lint: passed
 frontend build: passed

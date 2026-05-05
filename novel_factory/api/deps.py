@@ -65,3 +65,32 @@ def get_dispatcher(request: Request, llm_mode: str | None = None) -> Dispatcher:
     settings = get_settings(request)
     mode = llm_mode or get_llm_mode(request)
     return _build_dispatcher(repo, settings, mode)
+
+
+class LLMConfigMissingError(Exception):
+    """Raised when real LLM mode is requested but API key is not configured."""
+
+    pass
+
+
+def get_llm_provider(request: Request) -> "LLMProvider":
+    """Create an LLM provider from request context settings.
+
+    Returns stub provider when llm_mode is 'stub'.
+    In real mode, raises LLMConfigMissingError if API key is not configured
+    so the caller can surface a clear configuration error.
+    """
+    from ..llm.stub_provider import StubLLM
+    from ..llm.openai_compatible import OpenAICompatibleProvider
+
+    llm_mode = get_llm_mode(request)
+    if llm_mode == "stub":
+        return StubLLM()
+
+    settings = get_settings(request)
+    if not settings.llm.api_key:
+        raise LLMConfigMissingError(
+            "Real LLM mode requires API key configuration (OPENAI_API_KEY or config/local.yaml)"
+        )
+
+    return OpenAICompatibleProvider(settings.llm)

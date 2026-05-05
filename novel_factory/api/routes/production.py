@@ -427,10 +427,10 @@ async def auto_fill(request: Request, project_id: str, body: AutoFillRequest) ->
             warnings.append("项目创世尚未批准，建议先生成并批准创世设定")
             # Still allow stub fill for demo/testing
 
-        # ── World Settings ──
-        existing_ws = repo.list_world_settings(project_id)
-        if len(existing_ws) == 0:
-            if llm_mode == "stub":
+        if llm_mode == "stub":
+            # ── World Settings ──
+            existing_ws = repo.list_world_settings(project_id)
+            if len(existing_ws) == 0:
                 repo.create_world_setting(
                     project_id,
                     category="地理",
@@ -444,13 +444,10 @@ async def auto_fill(request: Request, project_id: str, body: AutoFillRequest) ->
                     content="修炼体系分为九个大境界，每个境界有初期、中期、后期三个小阶段。",
                 )
                 created["world_settings"] = 2
-            else:
-                warnings.append("real LLM world_settings generation not yet implemented")
 
-        # ── Characters ──
-        existing_chars = repo.list_characters(project_id, include_inactive=True)
-        if len(existing_chars) == 0:
-            if llm_mode == "stub":
+            # ── Characters ──
+            existing_chars = repo.list_characters(project_id, include_inactive=True)
+            if len(existing_chars) == 0:
                 repo.create_character(
                     project_id,
                     name="主角",
@@ -473,13 +470,10 @@ async def auto_fill(request: Request, project_id: str, body: AutoFillRequest) ->
                     traits="狡猾、冷酷、有魅力",
                 )
                 created["characters"] = 3
-            else:
-                warnings.append("real LLM character generation not yet implemented")
 
-        # ── Outlines ──
-        existing_outlines = repo.list_outlines(project_id)
-        if len(existing_outlines) == 0:
-            if llm_mode == "stub":
+            # ── Outlines ──
+            existing_outlines = repo.list_outlines(project_id)
+            if len(existing_outlines) == 0:
                 repo.create_outline(
                     project_id,
                     level="arc",
@@ -505,13 +499,10 @@ async def auto_fill(request: Request, project_id: str, body: AutoFillRequest) ->
                     chapters_range=f"{body.chapter_start + 6}-{body.chapter_end}",
                 )
                 created["outlines"] = 3
-            else:
-                warnings.append("real LLM outline generation not yet implemented")
 
-        # ── Plot Holes ──
-        existing_plots = repo.list_plot_holes(project_id)
-        if len(existing_plots) == 0:
-            if llm_mode == "stub":
+            # ── Plot Holes ──
+            existing_plots = repo.list_plot_holes(project_id)
+            if len(existing_plots) == 0:
                 repo.create_plot_hole(
                     project_id,
                     code="PH-001",
@@ -533,14 +524,11 @@ async def auto_fill(request: Request, project_id: str, body: AutoFillRequest) ->
                     status="planted",
                 )
                 created["plot_holes"] = 2
-            else:
-                warnings.append("real LLM plot_hole generation not yet implemented")
 
-        # ── Instructions ──
-        for ch_num in range(body.chapter_start, body.chapter_end + 1):
-            existing_inst = repo.get_instruction_by_chapter(project_id, ch_num)
-            if existing_inst is None:
-                if llm_mode == "stub":
+            # ── Instructions ──
+            for ch_num in range(body.chapter_start, body.chapter_end + 1):
+                existing_inst = repo.get_instruction_by_chapter(project_id, ch_num)
+                if existing_inst is None:
                     word_target = 3000
                     if project.get("target_words") and project.get("total_chapters_planned"):
                         word_target = project["target_words"] // project["total_chapters_planned"]
@@ -557,16 +545,46 @@ async def auto_fill(request: Request, project_id: str, body: AutoFillRequest) ->
                         status="active",
                     )
                     created["instructions"] += 1
-                else:
-                    warnings.append(f"real LLM instruction generation for chapter {ch_num} not yet implemented")
+        else:
+            # Real LLM mode: use autonomous planner
+            from ..deps import get_llm_provider, LLMConfigMissingError
+            from ...agents.autonomous_planner import execute_autofill
 
-        # Real mode: if nothing was created due to unimplemented generation, return clear error
-        if llm_mode != "stub" and warnings:
-            return error_response(
-                "NOT_IMPLEMENTED",
-                "Real LLM 自动补齐尚未实现，请切换到 stub 模式或手动创建资料",
-                details={"warnings": warnings},
-            )
+            try:
+                llm = get_llm_provider(request)
+            except LLMConfigMissingError as e:
+                return error_response("LLM_CONFIG_MISSING", str(e))
+
+            created, warnings, missing_types = execute_autofill(repo, llm, project_id, body.chapter_start, body.chapter_end)
+
+            # If LLM invocation or validation failed, return error
+            _llm_error_keywords = ("调用失败", "校验失败", "非对象")
+            if any(k in w for w in warnings for k in _llm_error_keywords):
+                return error_response(
+                    "LLM_OUTPUT_INVALID",
+                    "LLM 生成内容解析失败，未写入任何资料",
+                    details={"warnings": warnings},
+                )
+
+            # If any target missing type was not created, return error
+            # (This distinguishes "LLM returned wrong types" from "items already existed")
+            if missing_types and not any(created.get(t, 0) > 0 for t in missing_types):
+                return error_response(
+                    "NO_CONTENT_CREATED",
+                    f"LLM 未生成缺失的资料类型: {', '.join(missing_types)}",
+                    details={"warnings": warnings, "missing_types": missing_types},
+                )
+
+            # If nothing was actually created and it's not due to idempotent skips, return error
+            total_created = sum(created.values())
+            _idempotent_keywords = ("已存在", "已忽略", "跳过", "已有")
+            has_idempotent_skip = any(k in w for w in warnings for k in _idempotent_keywords)
+            if total_created == 0 and not has_idempotent_skip:
+                return error_response(
+                    "NO_CONTENT_CREATED",
+                    "LLM 未生成任何有效资料",
+                    details={"warnings": warnings},
+                )
 
         return envelope_response({
             "filled": True,
@@ -690,15 +708,36 @@ async def arc_plan(request: Request, project_id: str, body: ArcPlanRequest) -> E
                 )
                 created["plot_holes"] += 1
         else:
-            warnings.append("real LLM arc planning not yet implemented")
+            # Real LLM mode: use autonomous planner
+            from ..deps import get_llm_provider, LLMConfigMissingError
+            from ...agents.autonomous_planner import execute_arc_plan
 
-        # Real mode: if nothing was created due to unimplemented generation, return clear error
-        if llm_mode != "stub" and warnings:
-            return error_response(
-                "NOT_IMPLEMENTED",
-                "Real LLM arc planning 尚未实现，请切换到 stub 模式",
-                details={"warnings": warnings},
-            )
+            try:
+                llm = get_llm_provider(request)
+            except LLMConfigMissingError as e:
+                return error_response("LLM_CONFIG_MISSING", str(e))
+
+            created, warnings = execute_arc_plan(repo, llm, project_id, body.chapter_start, body.chapter_end)
+
+            # If LLM invocation or validation failed, return error
+            _llm_error_keywords = ("调用失败", "校验失败", "非对象")
+            if any(k in w for w in warnings for k in _llm_error_keywords):
+                return error_response(
+                    "LLM_OUTPUT_INVALID",
+                    "LLM 生成内容解析失败，未写入任何资料",
+                    details={"warnings": warnings},
+                )
+
+            # If nothing was actually created and it's not due to idempotent skips, return error
+            total_created = sum(created.values())
+            _idempotent_keywords = ("已存在", "已忽略", "跳过", "已有")
+            has_idempotent_skip = any(k in w for w in warnings for k in _idempotent_keywords)
+            if total_created == 0 and not has_idempotent_skip:
+                return error_response(
+                    "NO_CONTENT_CREATED",
+                    "LLM 未生成任何有效资料",
+                    details={"warnings": warnings},
+                )
 
         return envelope_response({
             "planned": True,
