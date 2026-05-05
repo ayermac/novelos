@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -34,6 +35,37 @@ def _seed_run(repo: Repository, project_id: str, status: str = "blocking") -> st
         error_message="字数质量门未通过",
     )
     return run_id
+
+
+def _seed_running_run(repo: Repository, project_id: str, minutes_old: int) -> str:
+    repo.create_project(project_id=project_id, name="Recovery Project", genre="fantasy")
+    repo.add_chapter(project_id, 1, title="Ch1", status="drafted")
+    run_id = repo.create_workflow_run(project_id, 1)
+    repo.update_workflow_run(run_id, current_node="author")
+    started_at = (datetime.now() - timedelta(minutes=minutes_old)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = repo._conn()
+    try:
+        conn.execute(
+            "UPDATE workflow_runs SET started_at=? WHERE id=?",
+            (started_at, run_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return run_id
+
+
+def _backdate_task(repo: Repository, task_id: int, minutes_old: int) -> None:
+    started_at = (datetime.now() - timedelta(minutes=minutes_old)).strftime("%Y-%m-%d %H:%M:%S")
+    conn = repo._conn()
+    try:
+        conn.execute(
+            "UPDATE task_status SET started_at=? WHERE id=?",
+            (started_at, task_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def test_run_recovery_preview_for_blocked_run(tmp_path):
@@ -133,6 +165,130 @@ def test_run_recovery_reset_requires_confirmation(tmp_path):
     assert repo.get_chapter("recover_confirm", 1)["status"] == "blocking"
 
 
+def test_run_recovery_preview_detects_stuck_running_run(tmp_path):
+    client, repo, _ = _make_client(tmp_path)
+    run_id = _seed_running_run(repo, "recover_stuck_preview", minutes_old=45)
+    task_id = repo.start_task(
+        "recover_stuck_preview",
+        1,
+        "create",
+        "author",
+        workflow_run_id=run_id,
+    )
+    _backdate_task(repo, task_id, minutes_old=45)
+
+    resp = client.get(f"/api/runs/{run_id}/recovery")
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["workflow_status"] == "running"
+    assert data["stuck"] is True
+    assert data["timeout_minutes"] == 30
+    assert data["elapsed_minutes"] >= 30
+    assert data["actions"]["mark_stuck_blocked"]["enabled"] is True
+    assert data["running_tasks"][0]["stuck"] is True
+
+
+def test_run_recovery_preview_does_not_mix_legacy_running_tasks(tmp_path):
+    client, repo, _ = _make_client(tmp_path)
+    run_id = _seed_running_run(repo, "recover_stuck_legacy", minutes_old=5)
+    legacy_task_id = repo.start_task("recover_stuck_legacy", 1, "create", "author")
+    _backdate_task(repo, legacy_task_id, minutes_old=90)
+
+    resp = client.get(f"/api/runs/{run_id}/recovery")
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["stuck"] is False
+    assert data["running_tasks"] == []
+    assert data["actions"]["mark_stuck_blocked"]["enabled"] is False
+
+
+def test_mark_stuck_run_converts_to_blocking_and_audits_run(tmp_path):
+    client, repo, _ = _make_client(tmp_path)
+    run_id = _seed_running_run(repo, "recover_mark_stuck", minutes_old=50)
+    task_id = repo.start_task(
+        "recover_mark_stuck",
+        1,
+        "create",
+        "author",
+        workflow_run_id=run_id,
+    )
+    _backdate_task(repo, task_id, minutes_old=50)
+
+    resp = client.post(f"/api/runs/{run_id}/recovery/mark-stuck", json={"confirm": True})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    data = body["data"]
+    assert data["marked"] is True
+    assert data["previous_chapter_status"] == "drafted"
+    assert data["new_chapter_status"] == "blocking"
+    assert data["workflow_status"] == "blocked"
+    assert data["closed_running_tasks"] == 1
+    assert data["recovery"]["workflow_status"] == "blocked"
+    assert data["recovery"]["can_reset"] is True
+    assert repo.get_chapter("recover_mark_stuck", 1)["status"] == "blocking"
+
+    conn = repo._conn()
+    try:
+        run = conn.execute(
+            "SELECT status, error_message, completed_at FROM workflow_runs WHERE id=?",
+            (run_id,),
+        ).fetchone()
+        audit = conn.execute(
+            "SELECT workflow_run_id, task_type, agent_id, status, error_message FROM task_status "
+            "WHERE project_id=? AND chapter_number=? AND task_type='recover' "
+            "ORDER BY id DESC LIMIT 1",
+            ("recover_mark_stuck", 1),
+        ).fetchone()
+        original_task = conn.execute(
+            "SELECT status, completed_at, error_message FROM task_status WHERE id=?",
+            (task_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert run["status"] == "blocked"
+    assert "疑似卡住" in run["error_message"]
+    assert run["completed_at"]
+    assert audit["workflow_run_id"] == run_id
+    assert audit["task_type"] == "recover"
+    assert audit["agent_id"] == "system"
+    assert audit["status"] == "completed"
+    assert "疑似卡住" in audit["error_message"]
+    assert original_task["status"] == "failed"
+    assert original_task["completed_at"]
+    assert "疑似卡住" in original_task["error_message"]
+
+
+def test_mark_stuck_run_rejects_recent_running_run(tmp_path):
+    client, repo, _ = _make_client(tmp_path)
+    run_id = _seed_running_run(repo, "recover_mark_recent", minutes_old=3)
+
+    resp = client.post(f"/api/runs/{run_id}/recovery/mark-stuck", json={"confirm": True})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "RUN_NOT_STUCK"
+    assert repo.get_chapter("recover_mark_recent", 1)["status"] == "drafted"
+
+
+def test_mark_stuck_run_requires_confirmation(tmp_path):
+    client, repo, _ = _make_client(tmp_path)
+    run_id = _seed_running_run(repo, "recover_mark_confirm", minutes_old=45)
+
+    resp = client.post(f"/api/runs/{run_id}/recovery/mark-stuck", json={"confirm": False})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "CONFIRM_REQUIRED"
+    assert repo.get_chapter("recover_mark_confirm", 1)["status"] == "drafted"
+
+
 def test_run_detail_page_contains_recovery_console():
     content = Path("frontend/src/pages/RunDetail.tsx").read_text(encoding="utf-8")
 
@@ -140,3 +296,6 @@ def test_run_detail_page_contains_recovery_console():
     assert "/recovery/reset" in content
     assert "handleResetRecovery" in content
     assert "reset_to_planned" in content
+    assert "/recovery/mark-stuck" in content
+    assert "疑似卡住" in content
+    assert "handleMarkStuck" in content

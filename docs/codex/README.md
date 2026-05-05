@@ -53,6 +53,7 @@
 | `novel-factory-v5.3.2-project-genesis-memory-loop-spec.md` | v5.3.2 项目创世与创作记忆循环：自动生成项目骨架、章节后自动维护资料与事实 | 开发 Agent、质量验收 |
 | `novel-factory-v5.4.13-project-specific-skill-overrides-spec.md` | v5.4.13 项目级 Skill 覆盖层、挂载方案、参数默认值 | 开发 Agent、质量验收 |
 | `novel-factory-v5.5.0-run-recovery-console-spec.md` | v5.5.0 运行恢复控制台、阻塞/返修恢复、checkpoint 清理 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.1-stuck-run-detection-spec.md` | v5.5.1 卡住运行检测、标记阻塞、run 级恢复 audit | 开发 Agent、质量验收 |
 | `novel-factory-api-contract-guidelines.md` | API 设计规范：Resource API / Action API 边界、POST body-style、兼容迁移策略 | 开发 Agent、代码评审、API 验收 |
 
 ## v5.1.1 本地启动与验收
@@ -94,7 +95,7 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1711/1711 passed
+- **当前测试基线**: 1716/1716 passed
 - **新增测试**:
   - `test_v51_api_e2e_smoke.py`: 17 个端到端 smoke 测试
   - `test_v51_frontend_quality.py`: 8 个前端质量检查
@@ -208,7 +209,7 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.5.0 Run Recovery Console**，测试基线 **1711/1711 passed**。
+当前开发基线是 **v5.5.1 Stuck Run Detection**，测试基线 **1716/1716 passed**。
 
 **v5.3 已实现能力**（部分，进行中）：
 
@@ -219,6 +220,7 @@ npm run dev
 - v5.3.5 记忆可靠性：结构化字段应用、失败原因可见、失败项重试、批次状态重算。
 - v5.4.0-v5.4.13 WebUI 重构：ProjectShell 分组导航、章节工作区拆分、Settings Console 拆分、Attention Panel、Agent Skill Matrix、视觉 QA polish、Agent Skill Configuration Console、文件夹导入桥、启用状态管理与安全审查、挂载引导、项目级 Skill 覆盖层。
 - v5.5.0 运行恢复控制台：Run Detail 恢复状态、retry/checkpoint 可见、安全 reset、run 级 audit。
+- v5.5.1 卡住运行检测：running 超时识别、run-scoped running task 可见、标记阻塞、system recovery audit。
 
 **v5.3 未收口项**：
 

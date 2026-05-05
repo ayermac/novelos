@@ -47,10 +47,27 @@ interface RunRecovery {
   error_message?: string
   retry_count: number
   max_retries: number
+  timeout_minutes: number
+  elapsed_minutes?: number | null
+  stuck: boolean
+  stuck_reason?: string | null
+  running_tasks: {
+    id: number
+    task_type: string
+    agent_id: string
+    started_at: string
+    elapsed_minutes?: number | null
+    stuck: boolean
+  }[]
   checkpoint_exists: boolean
   can_reset: boolean
   actions: {
     reset_to_planned: {
+      enabled: boolean
+      label: string
+      reason: string
+    }
+    mark_stuck_blocked: {
       enabled: boolean
       label: string
       reason: string
@@ -70,6 +87,16 @@ interface RunRecoveryResetResult {
   recovery: RunRecovery
 }
 
+interface RunRecoveryMarkStuckResult {
+  marked: boolean
+  previous_chapter_status: string
+  new_chapter_status: string
+  workflow_status: string
+  message: string
+  closed_running_tasks: number
+  recovery: RunRecovery
+}
+
 export default function RunDetail() {
   const { runId } = useParams<{ runId: string }>()
   const [data, setData] = useState<RunDetail | null>(null)
@@ -79,6 +106,7 @@ export default function RunDetail() {
   const [recoveryError, setRecoveryError] = useState<string | null>(null)
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null)
   const [recovering, setRecovering] = useState(false)
+  const [markingStuck, setMarkingStuck] = useState(false)
 
   const load = async () => {
     if (!runId) return
@@ -127,6 +155,26 @@ export default function RunDetail() {
       await load()
     } else {
       setRecoveryError(result.error?.message || '恢复失败')
+    }
+  }
+
+  const handleMarkStuck = async () => {
+    if (!runId || !recovery?.stuck) return
+    const ok = window.confirm('确认将该 running 运行标记为阻塞？之后可以使用恢复操作回到 planned。')
+    if (!ok) return
+
+    setMarkingStuck(true)
+    setRecoveryError(null)
+    setRecoveryMessage(null)
+    const result = await post<RunRecoveryMarkStuckResult>(`/runs/${runId}/recovery/mark-stuck`, { confirm: true })
+    setMarkingStuck(false)
+
+    if (result.ok && result.data) {
+      setRecovery(result.data.recovery)
+      setRecoveryMessage(`已标记为阻塞：${result.data.previous_chapter_status} → ${result.data.new_chapter_status}`)
+      await load()
+    } else {
+      setRecoveryError(result.error?.message || '标记卡住运行失败')
     }
   }
 
@@ -202,7 +250,31 @@ export default function RunDetail() {
                     {recovery.can_reset ? '可恢复' : '无需恢复'}
                   </div>
                 </div>
+                <div>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: '13px', marginBottom: '4px' }}>运行耗时</div>
+                  <div style={{ fontWeight: 600 }}>
+                    {typeof recovery.elapsed_minutes === 'number' ? `${recovery.elapsed_minutes.toFixed(1)} 分钟` : '-'}
+                  </div>
+                </div>
               </div>
+              {recovery.stuck && (
+                <div className="alert alert-warning" style={{ marginBottom: '12px' }}>
+                  <strong>疑似卡住</strong>
+                  <div style={{ marginTop: '4px', fontSize: '14px' }}>
+                    {recovery.stuck_reason || `超过 ${recovery.timeout_minutes} 分钟仍未完成。`}
+                  </div>
+                </div>
+              )}
+              {recovery.running_tasks.length > 0 && (
+                <div style={{ marginBottom: '12px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+                  {recovery.running_tasks.map((task) => (
+                    <div key={task.id}>
+                      {task.agent_id}/{task.task_type} · {typeof task.elapsed_minutes === 'number' ? `${task.elapsed_minutes.toFixed(1)} 分钟` : '-'}
+                      {task.stuck ? ' · 已超时' : ''}
+                    </div>
+                  ))}
+                </div>
+              )}
               <div style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '12px', whiteSpace: 'pre-wrap' }}>
                 {recovery.actions.reset_to_planned.reason}
               </div>
@@ -217,6 +289,13 @@ export default function RunDetail() {
                 </div>
               )}
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-secondary"
+                  onClick={handleMarkStuck}
+                  disabled={!recovery.actions.mark_stuck_blocked.enabled || markingStuck}
+                >
+                  {markingStuck ? '标记中...' : recovery.actions.mark_stuck_blocked.label}
+                </button>
                 <button
                   className="btn btn-primary"
                   onClick={handleResetRecovery}
