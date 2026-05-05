@@ -174,7 +174,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       const ch = action.target_chapter || productionNext.current_chapter
       setFilling(true)
       setFillResult('')
-      const res = await post<{ message: string }>(action.action_url, {})
+      const resetPath = action.action_url.replace(/^\/api/, '')
+      const res = await post<{ message: string }>(resetPath, {})
       setFilling(false)
       if (res.ok && res.data) {
         setFillResult(res.data.message || `第 ${ch} 章已重置`)

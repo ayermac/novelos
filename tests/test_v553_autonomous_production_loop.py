@@ -571,6 +571,14 @@ class TestFrontendCopy:
         assert "项目初始化" in source
         assert "创世只需一次" in source or "只需一次" in source
 
+    def test_recovery_action_normalizes_api_prefix(self):
+        """Recovery action strips /api prefix from action_url to avoid /api/api double prefix."""
+        path = os.path.join(os.path.dirname(__file__), "../frontend/src/components/project/ProjectOverviewModule.tsx")
+        path = os.path.abspath(path)
+        with open(path, "r", encoding="utf-8") as f:
+            source = f.read()
+        assert "replace(/^\\/api/, '')" in source or "replace('/api', '')" in source
+
     def test_chapter_workspace_has_auto_fill_button(self):
         """ChapterWorkspace contains '让 AI 补齐缺失资料' button."""
         path = os.path.join(os.path.dirname(__file__), "../frontend/src/components/project/ChapterWorkspace.tsx")
