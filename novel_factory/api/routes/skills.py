@@ -4,6 +4,7 @@ v5.3.3: Read-only skill visibility — no config writes, no enable/disable,
 no import, no run/test.
 v5.3.4: Add test bench endpoints for fixtures testing and manual skill runs.
 v5.4.6: Add skill mount configuration console endpoints.
+v5.4.7: Add read-only OpenClaw legacy Skill import readiness endpoint.
 """
 
 from __future__ import annotations
@@ -303,6 +304,21 @@ async def get_skill_config(request: Request) -> EnvelopeResponse:
         return envelope_response(_build_config_view(registry))
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取 Skill 配置失败: {str(e)}")
+
+
+@router.get("/skills/openclaw-readiness")
+async def get_openclaw_readiness(request: Request) -> EnvelopeResponse:
+    """Scan local OpenClaw legacy skills for import readiness.
+
+    Read-only: does not import, copy, enable, mount, or execute anything.
+    """
+    try:
+        from ...skills.openclaw_readiness import scan_openclaw_readiness
+
+        root = getattr(request.app.state, "openclaw_root_path", None)
+        return envelope_response(scan_openclaw_readiness(root))
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"扫描 OpenClaw Skill 失败: {str(e)}")
 
 
 @router.get("/skills/mounts")

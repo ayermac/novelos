@@ -109,6 +109,33 @@ interface SkillConfig {
   total_mounted: number
 }
 
+interface OpenClawCandidate {
+  id: string
+  name: string
+  description: string
+  source_agent?: string | null
+  target_agent?: string | null
+  source_path: string
+  status: 'import_ready' | 'needs_adapter' | 'not_recommended' | 'invalid'
+  features: Record<string, boolean>
+  blockers: string[]
+  error?: string | null
+}
+
+interface OpenClawReadiness {
+  root: string
+  root_exists: boolean
+  total: number
+  summary: {
+    import_ready: number
+    needs_adapter: number
+    not_recommended: number
+    invalid: number
+  }
+  candidates: OpenClawCandidate[]
+  warnings: string[]
+}
+
 const panelStyle: CSSProperties = {
   marginBottom: 'var(--space-4)',
   padding: 'var(--space-4)',
@@ -171,11 +198,29 @@ function configSkillChipStyle(skill: { missing?: boolean; enabled?: boolean; leg
   }
 }
 
+function readinessStatusLabel(status: OpenClawCandidate['status']) {
+  const labels = {
+    import_ready: '可导入候选',
+    needs_adapter: '需要适配',
+    not_recommended: '不建议导入',
+    invalid: '无效',
+  }
+  return labels[status]
+}
+
+function readinessStatusKind(status: OpenClawCandidate['status']): 'ok' | 'warn' | 'danger' | 'muted' {
+  if (status === 'import_ready') return 'ok'
+  if (status === 'needs_adapter') return 'warn'
+  if (status === 'not_recommended') return 'muted'
+  return 'danger'
+}
+
 export default function SkillVisibilityPanel() {
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [mounts, setMounts] = useState<MountMap>({})
   const [agentMatrix, setAgentMatrix] = useState<AgentMatrix | null>(null)
   const [skillConfig, setSkillConfig] = useState<SkillConfig | null>(null)
+  const [openClawReadiness, setOpenClawReadiness] = useState<OpenClawReadiness | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [validating, setValidating] = useState(false)
@@ -203,11 +248,12 @@ export default function SkillVisibilityPanel() {
     setLoading(true)
     setError('')
 
-    const [skillsRes, mountsRes, matrixRes, configRes] = await Promise.all([
+    const [skillsRes, mountsRes, matrixRes, configRes, openClawRes] = await Promise.all([
       get<{ skills: SkillInfo[] }>('/skills'),
       get<MountMap>('/skills/mounts'),
       get<AgentMatrix>('/skills/agent-matrix'),
       get<SkillConfig>('/skills/config'),
+      get<OpenClawReadiness>('/skills/openclaw-readiness'),
     ])
 
     if (skillsRes.ok && skillsRes.data) {
@@ -226,6 +272,12 @@ export default function SkillVisibilityPanel() {
 
     if (configRes.ok && configRes.data) {
       setSkillConfig(configRes.data)
+    }
+
+    if (openClawRes.ok && openClawRes.data) {
+      setOpenClawReadiness(openClawRes.data)
+    } else {
+      setOpenClawReadiness(null)
     }
 
     setLoading(false)
@@ -842,6 +894,98 @@ export default function SkillVisibilityPanel() {
           </div>
         )}
       </div>
+
+      {/* OpenClaw Import Readiness */}
+      {openClawReadiness && (
+        <div style={panelStyle}>
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              justifyContent: 'space-between',
+              gap: 12,
+              flexWrap: 'wrap',
+              marginBottom: 'var(--space-3)',
+            }}
+          >
+            <div>
+              <h4 style={{ ...sectionTitleStyle, marginBottom: 4 }}>
+                OpenClaw Skill 导入体检
+              </h4>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}>
+                只读扫描：不复制、不启用、不挂载。Root: <code style={compactCodeStyle}>{openClawReadiness.root}</code>
+              </div>
+            </div>
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+              <span style={statusChipStyle('muted')}>{openClawReadiness.total} candidates</span>
+              <span style={statusChipStyle('ok')}>{openClawReadiness.summary.import_ready} 可导入</span>
+              <span style={statusChipStyle('warn')}>{openClawReadiness.summary.needs_adapter} 需适配</span>
+              <span style={statusChipStyle('muted')}>{openClawReadiness.summary.not_recommended} 不建议</span>
+              {openClawReadiness.summary.invalid > 0 && (
+                <span style={statusChipStyle('danger')}>{openClawReadiness.summary.invalid} 无效</span>
+              )}
+            </div>
+          </div>
+
+          {!openClawReadiness.root_exists && (
+            <div
+              style={{
+                padding: '10px 12px',
+                borderRadius: '6px',
+                background: '#fef3c7',
+                color: '#92400e',
+                fontSize: '13px',
+              }}
+            >
+              未找到 OpenClaw legacy workspace。当前页面仍只展示 Novelos SkillRegistry 已加载的 Skill。
+            </div>
+          )}
+
+          {openClawReadiness.root_exists && openClawReadiness.candidates.length > 0 && (
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: '12px' }}>
+              {openClawReadiness.candidates.map((candidate) => (
+                <div
+                  key={candidate.id}
+                  style={{
+                    padding: '12px',
+                    borderRadius: '8px',
+                    background: 'var(--paper-surface)',
+                    border: '1px solid rgba(30, 58, 95, 0.06)',
+                    minWidth: 0,
+                  }}
+                >
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
+                    <strong style={{ fontSize: '13px', overflowWrap: 'anywhere' }}>{candidate.name}</strong>
+                    <span style={statusChipStyle(readinessStatusKind(candidate.status))}>
+                      {readinessStatusLabel(candidate.status)}
+                    </span>
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: 6, overflowWrap: 'anywhere' }}>
+                    {candidate.source_agent || 'unknown'} → {candidate.target_agent || '无直接目标'}
+                  </div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: 8, overflowWrap: 'anywhere' }}>
+                    <code style={compactCodeStyle}>{candidate.source_path}</code>
+                  </div>
+                  {candidate.blockers.length > 0 && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                      {candidate.blockers.slice(0, 3).map((blocker, index) => (
+                        <span key={`${candidate.id}-blocker-${index}`} style={{ fontSize: '12px', color: '#92400e', overflowWrap: 'anywhere' }}>
+                          {blocker}
+                        </span>
+                      ))}
+                      {candidate.blockers.length > 3 && (
+                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
+                          另有 {candidate.blockers.length - 3} 项需检查
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Fixtures Test Bench */}
       <div style={panelStyle}>

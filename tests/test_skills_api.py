@@ -47,6 +47,24 @@ def test_client():
         yield client
 
 
+def _write_openclaw_skill(root: Path, agent: str, skill: str, body: str) -> Path:
+    """Write a minimal OpenClaw-style SKILL.md for tests."""
+    skill_dir = root / agent / "workspace" / "skills" / skill
+    skill_dir.mkdir(parents=True, exist_ok=True)
+    skill_md = skill_dir / "SKILL.md"
+    skill_md.write_text(
+        f"""---
+name: {skill}
+description: Test {skill}
+---
+
+{body}
+""",
+        encoding="utf-8",
+    )
+    return skill_dir
+
+
 class TestListSkills:
     """Test GET /api/skills."""
 
@@ -120,6 +138,68 @@ class TestGetSkillConfig:
         resp = test_client.get("/api/skills/config")
         data = resp.json()["data"]
         assert "skills.yaml" in data["config_path"]
+
+
+class TestOpenClawReadiness:
+    """Test GET /api/skills/openclaw-readiness."""
+
+    def test_openclaw_readiness_classifies_candidates(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "openclaw-agents"
+            _write_openclaw_skill(root, "planner", "worldbuilding", "Instruction-only skill.")
+            _write_openclaw_skill(root, "author", "novel-writing", "Run python3 tools/db.py build_context")
+            _write_openclaw_skill(root, "secretary", "daily-report", "Daily reporting helper.")
+
+            db_path = Path(tmpdir) / "test.db"
+            init_db(str(db_path))
+            skills_path = Path(tmpdir) / "skills.yaml"
+            shutil.copy(str(DEFAULT_SKILLS_PATH), str(skills_path))
+
+            app = create_api_app(
+                db_path=str(db_path),
+                llm_mode="stub",
+                skills_config_path=str(skills_path),
+                openclaw_root_path=str(root),
+            )
+            client = TestClient(app)
+
+            resp = client.get("/api/skills/openclaw-readiness")
+            assert resp.status_code == 200
+            envelope = resp.json()
+            assert envelope["ok"] is True
+            data = envelope["data"]
+            assert data["root_exists"] is True
+            assert data["total"] == 3
+            assert data["summary"]["import_ready"] == 1
+            assert data["summary"]["needs_adapter"] == 1
+            assert data["summary"]["not_recommended"] == 1
+
+            by_name = {candidate["name"]: candidate for candidate in data["candidates"]}
+            assert by_name["worldbuilding"]["target_agent"] == "planner"
+            assert by_name["worldbuilding"]["status"] == "import_ready"
+            assert by_name["novel-writing"]["status"] == "needs_adapter"
+            assert by_name["daily-report"]["status"] == "not_recommended"
+
+    def test_openclaw_readiness_missing_root_is_non_blocking(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            init_db(str(db_path))
+            skills_path = Path(tmpdir) / "skills.yaml"
+            shutil.copy(str(DEFAULT_SKILLS_PATH), str(skills_path))
+
+            app = create_api_app(
+                db_path=str(db_path),
+                llm_mode="stub",
+                skills_config_path=str(skills_path),
+                openclaw_root_path=str(Path(tmpdir) / "missing-openclaw"),
+            )
+            client = TestClient(app)
+
+            resp = client.get("/api/skills/openclaw-readiness")
+            data = resp.json()["data"]
+            assert data["root_exists"] is False
+            assert data["total"] == 0
+            assert data["warnings"] == ["OpenClaw legacy workspace not found"]
 
 
 class TestGetSkillDetail:

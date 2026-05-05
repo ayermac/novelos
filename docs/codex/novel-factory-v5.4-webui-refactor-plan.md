@@ -307,6 +307,36 @@ Success criteria:
 - UI 操作失败时局部显示错误，不导致整页崩溃
 - 长 skill id / stage 不会撑爆容器
 
+### v5.4.7 OpenClaw Skill Import Readiness
+
+Before importing legacy OpenClaw skills, expose a read-only readiness scan so users can see what exists and why not everything is immediately available in Novelos.
+
+Scope:
+
+- Add read-only `GET /api/skills/openclaw-readiness`.
+- Scan local `openclaw-agents/*/workspace/skills/*/SKILL.md` candidates.
+- Classify candidates as:
+  - `import_ready` — instruction-style candidate with direct Novelos target agent
+  - `needs_adapter` — depends on OpenClaw tools/prompts/scripts or command workflow
+  - `not_recommended` — no direct Novelos workflow target
+  - `invalid` — malformed `SKILL.md`
+- Show an OpenClaw readiness panel in Settings > Skill 管理.
+- Keep the scan non-blocking if the local `openclaw-agents` directory is absent.
+
+Out of scope:
+
+- Copying OpenClaw files into Novelos.
+- Auto-registering, enabling, or mounting imported skills.
+- Running OpenClaw scripts or commands.
+- Bulk migration UI.
+
+Success criteria:
+
+- The UI explains how many OpenClaw candidates were found and how many are ready/need adapter/not recommended.
+- The scanner is read-only and never mutates `skills.yaml`.
+- Missing OpenClaw workspace is shown as a non-blocking state.
+- Skill API tests, frontend typecheck/lint/build pass.
+
 ## Implementation Rules
 
 - Do not redesign the product as a landing page.
