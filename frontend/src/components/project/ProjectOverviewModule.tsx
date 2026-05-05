@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
-import { AlertCircle, BookOpen, CheckCircle2, FileText, Sparkles, Wrench, ArrowRight, Loader2 } from 'lucide-react'
+import { AlertCircle, BookOpen, CheckCircle2, FileText, Sparkles, Wrench, ArrowRight, Loader2, Play, Settings } from 'lucide-react'
 import { get, post } from '../../lib/api'
 
 interface ProjectSummary {
@@ -79,6 +79,29 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const [loading, setLoading] = useState(true)
   const [filling, setFilling] = useState(false)
   const [fillResult, setFillResult] = useState<string>('')
+  
+  // v5.5.5: Auto production state
+  const [autoRunning, setAutoRunning] = useState(false)
+  const [autoResult, setAutoResult] = useState<{
+    status: string
+    steps: Array<{
+      step: number
+      action: string
+      label: string
+      target_chapter?: number
+      result: string
+      warnings?: string[]
+      error?: string
+    }>
+    stop_reason: string
+    chapters_touched: number[]
+  } | null>(null)
+  const [autoConfig, setAutoConfig] = useState({
+    maxSteps: 5,
+    chapterStart: 1,
+    chapterEnd: 10,
+    stopOnReview: true,
+  })
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -204,6 +227,52 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       }
       setFilling(false)
       return
+    }
+  }
+
+  // v5.5.5: Auto production runner
+  const handleRunAuto = async (dryRun: boolean = false) => {
+    setAutoRunning(true)
+    setAutoResult(null)
+    
+    const res = await post<{
+      status: string
+      steps: Array<{
+        step: number
+        action: string
+        label: string
+        target_chapter?: number
+        result: string
+        warnings?: string[]
+        error?: string
+      }>
+      stop_reason: string
+      chapters_touched: number[]
+    }>(
+      `/projects/${project.project_id}/production/run-auto`,
+      {
+        max_steps: autoConfig.maxSteps,
+        chapter_start: autoConfig.chapterStart,
+        chapter_end: autoConfig.chapterEnd,
+        stop_on_review: autoConfig.stopOnReview,
+        dry_run: dryRun,
+        confirm: true,
+      }
+    )
+    
+    setAutoRunning(false)
+    if (res.ok && res.data) {
+      setAutoResult(res.data)
+      if (!dryRun && res.data.status !== 'failed') {
+        load() // Refresh production-next
+      }
+    } else {
+      setAutoResult({
+        status: 'failed',
+        steps: [],
+        stop_reason: res.error?.message || '运行失败',
+        chapters_touched: [],
+      })
     }
   }
 
@@ -356,6 +425,126 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
             </div>
           </>
         )}
+      </div>
+
+      {/* v5.5.5: Auto Production Console */}
+      <div className="data-card" style={{ marginTop: 16, borderLeft: '4px solid #8b5cf6' }}>
+        <div className="data-card-header">
+          <Play size={18} style={{ color: '#8b5cf6' }} />
+          <div className="data-card-title" style={{ marginBottom: 0 }}>自动生产控制台</div>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {/* Config */}
+          <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Settings size={14} />
+              <label style={{ fontSize: 13 }}>最大步数:</label>
+              <input
+                type="number"
+                min="1"
+                max="50"
+                value={autoConfig.maxSteps}
+                onChange={(e) => setAutoConfig({ ...autoConfig, maxSteps: parseInt(e.target.value) || 5 })}
+                style={{ width: 60, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)' }}
+              />
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <label style={{ fontSize: 13 }}>章节范围:</label>
+              <input
+                type="number"
+                min="1"
+                value={autoConfig.chapterStart}
+                onChange={(e) => setAutoConfig({ ...autoConfig, chapterStart: parseInt(e.target.value) || 1 })}
+                style={{ width: 50, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)' }}
+              />
+              <span style={{ fontSize: 13 }}>-</span>
+              <input
+                type="number"
+                min="1"
+                value={autoConfig.chapterEnd}
+                onChange={(e) => setAutoConfig({ ...autoConfig, chapterEnd: parseInt(e.target.value) || 10 })}
+                style={{ width: 50, padding: '4px 8px', borderRadius: 4, border: '1px solid var(--border)' }}
+              />
+            </div>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }}>
+              <input
+                type="checkbox"
+                checked={autoConfig.stopOnReview}
+                onChange={(e) => setAutoConfig({ ...autoConfig, stopOnReview: e.target.checked })}
+              />
+              遇审核停止
+            </label>
+          </div>
+
+          {/* Actions */}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => handleRunAuto(true)}
+              disabled={autoRunning}
+            >
+              {autoRunning ? <><Loader2 size={14} className="spin" /> 预览中...</> : '预览步骤'}
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={() => handleRunAuto(false)}
+              disabled={autoRunning}
+            >
+              {autoRunning ? <><Loader2 size={14} className="spin" /> 运行中...</> : <><Play size={14} /> 开始自动生产</>}
+            </button>
+          </div>
+
+          {/* Result */}
+          {autoResult && (
+            <div style={{ marginTop: 8 }}>
+              <div style={{ fontSize: 13, marginBottom: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <span>
+                  状态: <strong style={{ color: autoResult.status === 'completed' ? '#16a34a' : autoResult.status === 'failed' ? '#dc2626' : '#f59e0b' }}>
+                    {autoResult.status === 'completed' ? '已完成' : autoResult.status === 'failed' ? '失败' : autoResult.status === 'dry_run' ? '预览' : '已停止'}
+                  </strong>
+                </span>
+                <span style={{ color: 'var(--text-secondary)' }}>
+                  停止原因: {autoResult.stop_reason}
+                </span>
+              </div>
+
+              {/* Steps Timeline */}
+              {autoResult.steps.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
+                  {autoResult.steps.map((step, idx) => (
+                    <div
+                      key={idx}
+                      style={{
+                        padding: '8px 10px',
+                        background: 'var(--bg-tertiary)',
+                        borderRadius: 6,
+                        borderLeft: `3px solid ${step.result === 'success' ? '#16a34a' : step.result === 'failed' ? '#dc2626' : '#f59e0b'}`,
+                      }}
+                    >
+                      <div style={{ fontSize: 13, fontWeight: 500 }}>
+                        步骤 {step.step}: {step.label}
+                        {step.target_chapter && <span style={{ color: 'var(--text-secondary)', marginLeft: 6 }}>第 {step.target_chapter} 章</span>}
+                      </div>
+                      {step.error && <div style={{ fontSize: 12, color: '#dc2626', marginTop: 4 }}>{step.error}</div>}
+                      {step.warnings && step.warnings.length > 0 && (
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+                          {step.warnings.join('; ')}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {autoResult.chapters_touched.length > 0 && (
+                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 8 }}>
+                  涉及章节: {autoResult.chapters_touched.join(', ')}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
       </div>
     </div>
   )

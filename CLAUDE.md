@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Novelos is an AI-powered novel production workbench for long-form fiction projects. It combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.5.4 Real LLM Autonomous Planning**, with **1755/1755 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
+Current baseline: **v5.5.5 Autonomous Production Runner**, with **1765/1765 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
 
 ## Architecture
 

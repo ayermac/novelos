@@ -110,6 +110,7 @@ class ProjectRepositoryMixin:
         genre: str | None = None,
         target_words: int | None = None,
         total_chapters_planned: int | None = None,
+        current_chapter: int | None = None,
     ) -> dict | None:
         """Update project settings (v5.2 Phase C).
 
@@ -120,6 +121,7 @@ class ProjectRepositoryMixin:
             genre: New genre (optional).
             target_words: New target word count (optional).
             total_chapters_planned: New total chapters planned (optional).
+            current_chapter: New current chapter number (optional, v5.5.5).
 
         Returns:
             Updated project dict or None if not found.
@@ -144,6 +146,9 @@ class ProjectRepositoryMixin:
             if total_chapters_planned is not None:
                 fields.append("total_chapters_planned=?")
                 values.append(total_chapters_planned)
+            if current_chapter is not None:
+                fields.append("current_chapter=?")
+                values.append(current_chapter)
 
             if not fields:
                 return self.get_project(project_id)

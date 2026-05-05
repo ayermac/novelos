@@ -428,123 +428,7 @@ async def auto_fill(request: Request, project_id: str, body: AutoFillRequest) ->
             # Still allow stub fill for demo/testing
 
         if llm_mode == "stub":
-            # ── World Settings ──
-            existing_ws = repo.list_world_settings(project_id)
-            if len(existing_ws) == 0:
-                repo.create_world_setting(
-                    project_id,
-                    category="地理",
-                    title="世界观基础",
-                    content=f"故事发生在{project.get('genre', '奇幻')}世界中，存在多个势力和未知领域。",
-                )
-                repo.create_world_setting(
-                    project_id,
-                    category="规则",
-                    title="力量体系",
-                    content="修炼体系分为九个大境界，每个境界有初期、中期、后期三个小阶段。",
-                )
-                created["world_settings"] = 2
-
-            # ── Characters ──
-            existing_chars = repo.list_characters(project_id, include_inactive=True)
-            if len(existing_chars) == 0:
-                repo.create_character(
-                    project_id,
-                    name="主角",
-                    role="protagonist",
-                    description=f"《{project.get('name', '未命名')}》的核心人物，性格坚毅，有着不为人知的过去。",
-                    traits="聪明、执着、重情义",
-                )
-                repo.create_character(
-                    project_id,
-                    name="挚友",
-                    role="supporting",
-                    description="主角的青梅竹马，性格开朗，擅长情报收集。",
-                    traits="机智、幽默、忠诚",
-                )
-                repo.create_character(
-                    project_id,
-                    name="反派首领",
-                    role="antagonist",
-                    description="幕后黑手，行事隐秘，目的不明。",
-                    traits="狡猾、冷酷、有魅力",
-                )
-                created["characters"] = 3
-
-            # ── Outlines ──
-            existing_outlines = repo.list_outlines(project_id)
-            if len(existing_outlines) == 0:
-                repo.create_outline(
-                    project_id,
-                    level="arc",
-                    sequence=1,
-                    title="开篇",
-                    content="主角出场，建立日常世界，引出核心冲突。",
-                    chapters_range=f"{body.chapter_start}-{min(body.chapter_start + 2, body.chapter_end)}",
-                )
-                repo.create_outline(
-                    project_id,
-                    level="arc",
-                    sequence=2,
-                    title="启程",
-                    content="主角踏上旅程，遇到第一个挑战和盟友。",
-                    chapters_range=f"{body.chapter_start + 3}-{min(body.chapter_start + 5, body.chapter_end)}",
-                )
-                repo.create_outline(
-                    project_id,
-                    level="arc",
-                    sequence=3,
-                    title="第一幕高潮",
-                    content="主角面对第一个重大考验，揭示更大的阴谋。",
-                    chapters_range=f"{body.chapter_start + 6}-{body.chapter_end}",
-                )
-                created["outlines"] = 3
-
-            # ── Plot Holes ──
-            existing_plots = repo.list_plot_holes(project_id)
-            if len(existing_plots) == 0:
-                repo.create_plot_hole(
-                    project_id,
-                    code="PH-001",
-                    type="悬念",
-                    title="主角身世之谜",
-                    description="主角的真实身份和家族秘密。",
-                    planted_chapter=body.chapter_start,
-                    planned_resolve_chapter=body.chapter_end + 10,
-                    status="planted",
-                )
-                repo.create_plot_hole(
-                    project_id,
-                    code="PH-002",
-                    type="伏笔",
-                    title="神秘信物",
-                    description="主角随身携带的古旧物品的来历。",
-                    planted_chapter=body.chapter_start,
-                    planned_resolve_chapter=body.chapter_start + 9,
-                    status="planted",
-                )
-                created["plot_holes"] = 2
-
-            # ── Instructions ──
-            for ch_num in range(body.chapter_start, body.chapter_end + 1):
-                existing_inst = repo.get_instruction_by_chapter(project_id, ch_num)
-                if existing_inst is None:
-                    word_target = 3000
-                    if project.get("target_words") and project.get("total_chapters_planned"):
-                        word_target = project["target_words"] // project["total_chapters_planned"]
-                    repo.create_instruction(
-                        project_id,
-                        chapter_number=ch_num,
-                        objective=f"第 {ch_num} 章写作指令",
-                        key_events=f"关键事件 {ch_num}",
-                        plots_to_plant="[]",
-                        plots_to_resolve="[]",
-                        emotion_tone="神秘" if ch_num == 1 else "紧张",
-                        ending_hook="",
-                        word_target=word_target,
-                        status="active",
-                    )
-                    created["instructions"] += 1
+            created, _ = _stub_autofill(repo, project, project_id, body.chapter_start, body.chapter_end)
         else:
             # Real LLM mode: use autonomous planner
             from ..deps import get_llm_provider, LLMConfigMissingError
@@ -634,79 +518,7 @@ async def arc_plan(request: Request, project_id: str, body: ArcPlanRequest) -> E
         num_arcs = max(1, (body.chapter_end - body.chapter_start + 1 + arc_size - 1) // arc_size)
 
         if llm_mode == "stub":
-            # Generate arc-level outlines
-            for arc_idx in range(num_arcs):
-                arc_start = body.chapter_start + arc_idx * arc_size
-                arc_end = min(arc_start + arc_size - 1, body.chapter_end)
-
-                # Check if an outline already covers this range
-                existing_outlines = repo.list_outlines(project_id)
-                range_str = f"{arc_start}-{arc_end}"
-                has_covering = any(
-                    o.get("chapters_range") == range_str for o in existing_outlines
-                )
-                if not has_covering:
-                    arc_titles = ["新篇章", "暗流涌动", "危机四伏", "真相浮现", "最终决战"]
-                    arc_contents = [
-                        "故事进入新阶段，角色面临新的挑战。",
-                        "隐藏在暗处的势力开始行动，局势变得复杂。",
-                        "多重危机同时爆发，主角陷入绝境。",
-                        "关键线索串联起来，真相逐渐浮出水面。",
-                        "所有矛盾集中爆发，迎来阶段性高潮。",
-                    ]
-                    title = arc_titles[arc_idx % len(arc_titles)]
-                    content = arc_contents[arc_idx % len(arc_contents)]
-
-                    # Find next sequence
-                    max_seq = max((o.get("sequence", 0) for o in existing_outlines), default=0)
-
-                    repo.create_outline(
-                        project_id,
-                        level="arc",
-                        sequence=max_seq + 1,
-                        title=title,
-                        content=content,
-                        chapters_range=range_str,
-                    )
-                    created["outlines"] += 1
-
-            # Generate chapter instructions
-            word_target = 3000
-            if project.get("target_words") and project.get("total_chapters_planned"):
-                word_target = project["target_words"] // project["total_chapters_planned"]
-
-            for ch_num in range(body.chapter_start, body.chapter_end + 1):
-                existing_inst = repo.get_instruction_by_chapter(project_id, ch_num)
-                if existing_inst is None:
-                    repo.create_instruction(
-                        project_id,
-                        chapter_number=ch_num,
-                        objective=f"第 {ch_num} 章写作指令",
-                        key_events=f"关键事件 {ch_num}",
-                        plots_to_plant="[]",
-                        plots_to_resolve="[]",
-                        emotion_tone="紧张",
-                        ending_hook="",
-                        word_target=word_target,
-                        status="active",
-                    )
-                    created["instructions"] += 1
-
-            # Maybe add a new plot hole for the arc
-            existing_plots = repo.list_plot_holes(project_id)
-            max_ph = len(existing_plots)
-            if max_ph < 5:
-                repo.create_plot_hole(
-                    project_id,
-                    code=f"PH-{max_ph + 1:03d}",
-                    type="伏笔",
-                    title=f"新伏笔 {max_ph + 1}",
-                    description=f"在第 {body.chapter_start}-{body.chapter_end} 章期间埋下新的线索。",
-                    planted_chapter=body.chapter_start,
-                    planned_resolve_chapter=body.chapter_end + 5,
-                    status="planted",
-                )
-                created["plot_holes"] += 1
+            created = _stub_arc_plan(repo, project, project_id, body.chapter_start, body.chapter_end)
         else:
             # Real LLM mode: use autonomous planner
             from ..deps import get_llm_provider, LLMConfigMissingError
@@ -749,3 +561,563 @@ async def arc_plan(request: Request, project_id: str, body: ArcPlanRequest) -> E
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"Arc plan 生成失败: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# Stub Mode Helpers (extracted for run-auto reuse)
+# ---------------------------------------------------------------------------
+
+
+def _stub_autofill(repo, project: dict, project_id: str, chapter_start: int, chapter_end: int) -> tuple[dict[str, int], list[str]]:
+    """Stub mode auto-fill logic.
+
+    Returns:
+        (created_counts, warnings) where created_counts maps type -> count.
+    """
+    created = {
+        "world_settings": 0,
+        "characters": 0,
+        "outlines": 0,
+        "instructions": 0,
+        "plot_holes": 0,
+    }
+    warnings: list[str] = []
+
+    # ── World Settings ──
+    existing_ws = repo.list_world_settings(project_id)
+    if len(existing_ws) == 0:
+        repo.create_world_setting(
+            project_id,
+            category="地理",
+            title="世界观基础",
+            content=f"故事发生在{project.get('genre', '奇幻')}世界中，存在多个势力和未知领域。",
+        )
+        repo.create_world_setting(
+            project_id,
+            category="规则",
+            title="力量体系",
+            content="修炼体系分为九个大境界，每个境界有初期、中期、后期三个小阶段。",
+        )
+        created["world_settings"] = 2
+
+    # ── Characters ──
+    existing_chars = repo.list_characters(project_id, include_inactive=True)
+    if len(existing_chars) == 0:
+        repo.create_character(
+            project_id,
+            name="主角",
+            role="protagonist",
+            description=f"《{project.get('name', '未命名')}》的核心人物，性格坚毅，有着不为人知的过去。",
+            traits="聪明、执着、重情义",
+        )
+        repo.create_character(
+            project_id,
+            name="挚友",
+            role="supporting",
+            description="主角的青梅竹马，性格开朗，擅长情报收集。",
+            traits="机智、幽默、忠诚",
+        )
+        repo.create_character(
+            project_id,
+            name="反派首领",
+            role="antagonist",
+            description="幕后黑手，行事隐秘，目的不明。",
+            traits="狡猾、冷酷、有魅力",
+        )
+        created["characters"] = 3
+
+    # ── Outlines ──
+    existing_outlines = repo.list_outlines(project_id)
+    if len(existing_outlines) == 0:
+        repo.create_outline(
+            project_id,
+            level="arc",
+            sequence=1,
+            title="开篇",
+            content="主角出场，建立日常世界，引出核心冲突。",
+            chapters_range=f"{chapter_start}-{min(chapter_start + 2, chapter_end)}",
+        )
+        repo.create_outline(
+            project_id,
+            level="arc",
+            sequence=2,
+            title="启程",
+            content="主角踏上旅程，遇到第一个挑战和盟友。",
+            chapters_range=f"{chapter_start + 3}-{min(chapter_start + 5, chapter_end)}",
+        )
+        repo.create_outline(
+            project_id,
+            level="arc",
+            sequence=3,
+            title="第一幕高潮",
+            content="主角面对第一个重大考验，揭示更大的阴谋。",
+            chapters_range=f"{chapter_start + 6}-{chapter_end}",
+        )
+        created["outlines"] = 3
+
+    # ── Plot Holes ──
+    existing_plots = repo.list_plot_holes(project_id)
+    if len(existing_plots) == 0:
+        repo.create_plot_hole(
+            project_id,
+            code="PH-001",
+            type="悬念",
+            title="主角身世之谜",
+            description="主角的真实身份和家族秘密。",
+            planted_chapter=chapter_start,
+            planned_resolve_chapter=chapter_end + 10,
+            status="planted",
+        )
+        repo.create_plot_hole(
+            project_id,
+            code="PH-002",
+            type="伏笔",
+            title="神秘信物",
+            description="主角随身携带的古旧物品的来历。",
+            planted_chapter=chapter_start,
+            planned_resolve_chapter=chapter_start + 9,
+            status="planted",
+        )
+        created["plot_holes"] = 2
+
+    # ── Instructions ──
+    for ch_num in range(chapter_start, chapter_end + 1):
+        existing_inst = repo.get_instruction_by_chapter(project_id, ch_num)
+        if existing_inst is None:
+            word_target = 3000
+            if project.get("target_words") and project.get("total_chapters_planned"):
+                word_target = project["target_words"] // project["total_chapters_planned"]
+            repo.create_instruction(
+                project_id,
+                chapter_number=ch_num,
+                objective=f"第 {ch_num} 章写作指令",
+                key_events=f"关键事件 {ch_num}",
+                plots_to_plant="[]",
+                plots_to_resolve="[]",
+                emotion_tone="神秘" if ch_num == 1 else "紧张",
+                ending_hook="",
+                word_target=word_target,
+                status="active",
+            )
+            created["instructions"] += 1
+
+    return created, warnings
+
+
+def _stub_arc_plan(repo, project: dict, project_id: str, chapter_start: int, chapter_end: int) -> dict[str, int]:
+    """Stub mode arc-plan logic.
+
+    Returns:
+        created_counts mapping type -> count.
+    """
+    created = {
+        "outlines": 0,
+        "instructions": 0,
+        "plot_holes": 0,
+    }
+
+    arc_size = 10
+    num_arcs = max(1, (chapter_end - chapter_start + 1 + arc_size - 1) // arc_size)
+
+    # Generate arc-level outlines
+    for arc_idx in range(num_arcs):
+        arc_start = chapter_start + arc_idx * arc_size
+        arc_end = min(arc_start + arc_size - 1, chapter_end)
+
+        # Check if an outline already covers this range
+        existing_outlines = repo.list_outlines(project_id)
+        range_str = f"{arc_start}-{arc_end}"
+        has_covering = any(
+            o.get("chapters_range") == range_str for o in existing_outlines
+        )
+        if not has_covering:
+            arc_titles = ["新篇章", "暗流涌动", "危机四伏", "真相浮现", "最终决战"]
+            arc_contents = [
+                "故事进入新阶段，角色面临新的挑战。",
+                "隐藏在暗处的势力开始行动，局势变得复杂。",
+                "多重危机同时爆发，主角陷入绝境。",
+                "关键线索串联起来，真相逐渐浮出水面。",
+                "所有矛盾集中爆发，迎来阶段性高潮。",
+            ]
+            title = arc_titles[arc_idx % len(arc_titles)]
+            content = arc_contents[arc_idx % len(arc_contents)]
+
+            # Find next sequence
+            max_seq = max((o.get("sequence", 0) for o in existing_outlines), default=0)
+
+            repo.create_outline(
+                project_id,
+                level="arc",
+                sequence=max_seq + 1,
+                title=title,
+                content=content,
+                chapters_range=range_str,
+            )
+            created["outlines"] += 1
+
+    # Generate chapter instructions
+    word_target = 3000
+    if project.get("target_words") and project.get("total_chapters_planned"):
+        word_target = project["target_words"] // project["total_chapters_planned"]
+
+    for ch_num in range(chapter_start, chapter_end + 1):
+        existing_inst = repo.get_instruction_by_chapter(project_id, ch_num)
+        if existing_inst is None:
+            repo.create_instruction(
+                project_id,
+                chapter_number=ch_num,
+                objective=f"第 {ch_num} 章写作指令",
+                key_events=f"关键事件 {ch_num}",
+                plots_to_plant="[]",
+                plots_to_resolve="[]",
+                emotion_tone="紧张",
+                ending_hook="",
+                word_target=word_target,
+                status="active",
+            )
+            created["instructions"] += 1
+
+    # Maybe add a new plot hole for the arc
+    existing_plots = repo.list_plot_holes(project_id)
+    max_ph = len(existing_plots)
+    if max_ph < 5:
+        repo.create_plot_hole(
+            project_id,
+            code=f"PH-{max_ph + 1:03d}",
+            type="伏笔",
+            title=f"新伏笔 {max_ph + 1}",
+            description=f"在第 {chapter_start}-{chapter_end} 章期间埋下新的线索。",
+            planted_chapter=chapter_start,
+            planned_resolve_chapter=chapter_end + 5,
+            status="planted",
+        )
+        created["plot_holes"] += 1
+
+    return created
+
+
+# ---------------------------------------------------------------------------
+# v5.5.5: Autonomous Production Runner
+# ---------------------------------------------------------------------------
+
+
+class RunAutoRequest(BaseModel):
+    """Request for autonomous production runner."""
+
+    chapter_start: int | None = None
+    chapter_end: int | None = None
+    max_steps: int = 10
+    dry_run: bool = False
+    stop_on_review: bool = True
+    confirm: bool = False
+
+
+# Stop reasons
+STOP_REASON_MAX_STEPS = "max_steps_reached"
+STOP_REASON_REVIEW = "review_required"
+STOP_REASON_BLOCKED = "blocked"
+STOP_REASON_COMPLETED = "completed"
+STOP_REASON_UNSUPPORTED = "unsupported_action"
+STOP_REASON_FAILED = "step_failed"
+
+
+@router.post("/projects/{project_id}/production/run-auto")
+async def run_auto_production(request: Request, project_id: str, body: RunAutoRequest) -> EnvelopeResponse:
+    """v5.5.5: Autonomous production runner.
+
+    Executes production steps automatically based on production-next recommendations.
+    Stops on: max_steps, review/publish requirements, blocking states, or errors.
+
+    IMPORTANT: Never auto-publishes chapters. Real mode stops at awaiting_publish/review.
+    """
+    from ..deps import get_repo, get_llm_mode, get_settings
+    import asyncio
+
+    try:
+        repo = get_repo(request)
+        llm_mode = get_llm_mode(request)
+        settings = get_settings(request)
+
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        if not body.confirm:
+            return error_response("CONFIRM_REQUIRED", "请设置 confirm=true 确认执行自动生产")
+
+        # Validate LLM config for real mode
+        if llm_mode == "real":
+            try:
+                from ..deps import get_llm_provider
+                get_llm_provider(request)
+            except Exception as e:
+                return error_response("LLM_CONFIG_MISSING", str(e))
+
+        # Initialize tracking
+        steps: list[dict] = []
+        chapters_touched: set[int] = set()
+        current_chapter = project.get("current_chapter", 1)
+
+        # Determine chapter range
+        ch_start = body.chapter_start if body.chapter_start is not None else current_chapter
+        ch_end = body.chapter_end if body.chapter_end is not None else ch_start + 9
+
+        # Execute steps
+        step_count = 0
+        stop_reason = ""
+        final_next_action: dict | None = None
+
+        while step_count < body.max_steps:
+            # Get current state
+            health = _build_health(repo, project_id, current_chapter)
+            next_action = _determine_next_action(repo, project_id, health, current_chapter)
+
+            # Check if we should stop
+            if next_action["key"] == "none":
+                stop_reason = STOP_REASON_COMPLETED
+                final_next_action = next_action
+                break
+
+            # Check for human-review-required actions
+            if next_action["key"] in ("review_genesis", "review_chapter", "apply_memory_updates"):
+                stop_reason = STOP_REASON_REVIEW
+                final_next_action = next_action
+                break
+
+            if next_action["key"] in ("wait_genesis",):
+                stop_reason = STOP_REASON_BLOCKED
+                final_next_action = next_action
+                break
+
+            # Dry run: just record the action, don't execute
+            if body.dry_run:
+                steps.append({
+                    "step": step_count + 1,
+                    "action": next_action["key"],
+                    "label": next_action["label"],
+                    "target_chapter": next_action.get("target_chapter"),
+                    "result": "dry_run",
+                    "warnings": [],
+                })
+                # In dry_run mode, return after one step prediction
+                return envelope_response({
+                    "status": "dry_run",
+                    "steps": steps,
+                    "final_next_action": next_action,
+                    "chapters_touched": sorted(list(chapters_touched)),
+                    "stop_reason": "dry_run_preview",
+                    "steps_executed": 1,
+                })
+
+            # Execute the action
+            step_result = await _execute_auto_step(
+                request, repo, settings, llm_mode, project_id, next_action, ch_start, ch_end
+            )
+
+            steps.append({
+                "step": step_count + 1,
+                "action": next_action["key"],
+                "label": next_action["label"],
+                "target_chapter": next_action.get("target_chapter"),
+                "result": step_result.get("result", "unknown"),
+                "warnings": step_result.get("warnings", []),
+                "error": step_result.get("error"),
+            })
+
+            if step_result.get("target_chapter"):
+                chapters_touched.add(step_result["target_chapter"])
+
+            # Check for step failure
+            if step_result.get("result") == "failed":
+                stop_reason = STOP_REASON_FAILED
+                final_next_action = next_action
+                break
+
+            # Check for unsupported action
+            if step_result.get("result") == "unsupported":
+                stop_reason = STOP_REASON_UNSUPPORTED
+                final_next_action = next_action
+                break
+
+            # Check for review-required after generate_chapter
+            if next_action["key"] in ("generate_chapter", "continue_next_chapter"):
+                if step_result.get("requires_human") or step_result.get("awaiting_publish"):
+                    if body.stop_on_review:
+                        stop_reason = STOP_REASON_REVIEW
+                        final_next_action = next_action
+                        break
+
+            # Update current_chapter if chapter was published
+            if step_result.get("chapter_status") == "published":
+                current_chapter = next_action.get("target_chapter", current_chapter) + 1
+                # Update project current_chapter
+                repo.update_project(project_id, current_chapter=current_chapter)
+
+            step_count += 1
+
+        # Determine final status
+        if body.dry_run:
+            status = "dry_run"
+        elif stop_reason == STOP_REASON_FAILED:
+            status = "failed"
+        elif stop_reason in (STOP_REASON_REVIEW, STOP_REASON_BLOCKED, STOP_REASON_UNSUPPORTED):
+            status = "stopped"
+        else:
+            status = "completed"
+
+        # If we hit max_steps, mark it
+        if step_count >= body.max_steps and not stop_reason:
+            stop_reason = STOP_REASON_MAX_STEPS
+            status = "stopped"
+            # Get final next action
+            health = _build_health(repo, project_id, current_chapter)
+            final_next_action = _determine_next_action(repo, project_id, health, current_chapter)
+
+        return envelope_response({
+            "status": status,
+            "steps": steps,
+            "final_next_action": final_next_action,
+            "chapters_touched": sorted(list(chapters_touched)),
+            "stop_reason": stop_reason,
+            "steps_executed": step_count,
+        })
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"自动生产运行失败: {str(e)}")
+
+
+async def _execute_auto_step(
+    request: Request,
+    repo,
+    settings,
+    llm_mode: str,
+    project_id: str,
+    next_action: dict,
+    ch_start: int,
+    ch_end: int,
+) -> dict:
+    """Execute a single auto-production step.
+
+    Returns:
+        Dict with result, warnings, error, target_chapter, chapter_status, requires_human, awaiting_publish.
+    """
+    action_key = next_action["key"]
+    target_chapter = next_action.get("target_chapter")
+    result = {"result": "unknown", "warnings": [], "target_chapter": target_chapter}
+
+    try:
+        # ── generate_missing_context ──
+        if action_key == "generate_missing_context":
+            project = repo.get_project(project_id)
+            if llm_mode == "stub":
+                created, warnings = _stub_autofill(repo, project, project_id, ch_start, ch_end)
+            else:
+                from ..deps import get_llm_provider
+                from ...agents.autonomous_planner import execute_autofill
+                llm = get_llm_provider(request)
+                created, warnings, _ = execute_autofill(repo, llm, project_id, ch_start, ch_end)
+
+            result["result"] = "success"
+            result["warnings"] = warnings
+            result["created"] = created
+            return result
+
+        # ── generate_arc_plan ──
+        if action_key == "generate_arc_plan":
+            project = repo.get_project(project_id)
+            next_ch = target_chapter or (repo.get_project(project_id).get("current_chapter", 1) + 1)
+            if llm_mode == "stub":
+                created = _stub_arc_plan(repo, project, project_id, next_ch, next_ch + 9)
+            else:
+                from ..deps import get_llm_provider
+                from ...agents.autonomous_planner import execute_arc_plan
+                llm = get_llm_provider(request)
+                created, warnings = execute_arc_plan(repo, llm, project_id, next_ch, next_ch + 9)
+                result["warnings"] = warnings
+
+            result["result"] = "success"
+            result["created"] = created
+            return result
+
+        # ── generate_chapter / continue_next_chapter ──
+        if action_key in ("generate_chapter", "continue_next_chapter"):
+            chapter_num = target_chapter or repo.get_project(project_id).get("current_chapter", 1)
+            result["target_chapter"] = chapter_num
+
+            # Use run_with_graph
+            from ...workflow.runner import run_with_graph
+            import asyncio
+
+            run_result = await asyncio.to_thread(
+                run_with_graph,
+                project_id=project_id,
+                chapter_number=chapter_num,
+                settings=settings,
+                repo=repo,
+                llm_mode=llm_mode,
+            )
+
+            result["chapter_status"] = run_result.get("chapter_status")
+            result["requires_human"] = run_result.get("requires_human", False)
+            result["awaiting_publish"] = run_result.get("awaiting_publish", False)
+
+            if run_result.get("error"):
+                result["result"] = "failed"
+                result["error"] = run_result["error"]
+            elif run_result.get("context_incomplete"):
+                result["result"] = "failed"
+                result["error"] = "项目资料不完整"
+                result["warnings"] = run_result.get("missing", [])
+            else:
+                result["result"] = "success"
+
+            return result
+
+        # ── recover_blocked_run ──
+        if action_key == "recover_blocked_run":
+            chapter_num = target_chapter or repo.get_project(project_id).get("current_chapter", 1)
+            result["target_chapter"] = chapter_num
+
+            # Reset the chapter
+            chapter = repo.get_chapter(project_id, chapter_num)
+            if not chapter:
+                result["result"] = "failed"
+                result["error"] = f"章节 {chapter_num} 不存在"
+                return result
+
+            current_status = chapter.get("status", "")
+            if current_status not in ("blocking", "revision"):
+                result["result"] = "failed"
+                result["error"] = f"章节状态为 '{current_status}'，无法重置"
+                return result
+
+            reset_ok = repo.reset_chapter(project_id, chapter_num)
+            if not reset_ok:
+                result["result"] = "failed"
+                result["error"] = "重置章节失败"
+                return result
+
+            # Clear checkpoint
+            from ...workflow.checkpoint import delete_checkpoint_thread
+            delete_checkpoint_thread(repo.db_path, project_id, chapter_num)
+
+            result["result"] = "success"
+            return result
+
+        # ── apply_memory_updates ──
+        if action_key == "apply_memory_updates":
+            # This requires human review, return as blocked
+            result["result"] = "blocked"
+            result["error"] = "记忆更新需要人工审核后应用"
+            return result
+
+        # ── Unsupported actions ──
+        # generate_genesis, review_genesis, review_chapter, wait_genesis, none
+        result["result"] = "unsupported"
+        result["error"] = f"动作 '{action_key}' 需要人工处理"
+        return result
+
+    except Exception as e:
+        result["result"] = "failed"
+        result["error"] = str(e)[:200]
+        return result

@@ -6,7 +6,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 Novelos is an AI-powered novel production workbench for long-form fiction projects. It combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.5.4 Real LLM Autonomous Planning**, with **1755/1755 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
+Current baseline: **v5.5.5 Autonomous Production Runner**, with **1765/1765 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
 
 ## Architecture
 
@@ -168,6 +168,7 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 - **production-next**: GET endpoint returning the next recommended production action for a project
 - **auto-fill**: POST endpoint for AI auto-filling missing project context (world settings, characters, outlines, instructions)
 - **arc-plan**: POST endpoint for generating arc-level outlines and chapter instructions for a batch of chapters
+- **run-auto**: POST endpoint for autonomous production runner (v5.5.5)
 
 ## Configuration
 
