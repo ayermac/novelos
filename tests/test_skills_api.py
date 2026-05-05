@@ -172,13 +172,13 @@ class TestOpenClawReadiness:
             assert data["total"] == 3
             assert data["summary"]["import_ready"] == 1
             assert data["summary"]["needs_adapter"] == 1
-            assert data["summary"]["not_recommended"] == 1
+            assert data["summary"]["manual_ready"] == 1
 
             by_name = {candidate["name"]: candidate for candidate in data["candidates"]}
             assert by_name["worldbuilding"]["target_agent"] == "planner"
             assert by_name["worldbuilding"]["status"] == "import_ready"
             assert by_name["novel-writing"]["status"] == "needs_adapter"
-            assert by_name["daily-report"]["status"] == "not_recommended"
+            assert by_name["daily-report"]["status"] == "manual_ready"
 
     def test_openclaw_readiness_missing_root_is_non_blocking(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -200,6 +200,144 @@ class TestOpenClawReadiness:
             assert data["root_exists"] is False
             assert data["total"] == 0
             assert data["warnings"] == ["OpenClaw legacy workspace not found"]
+
+    def test_universal_import_readiness_treats_unmapped_skills_as_manual_ready(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "openclaw-agents"
+            _write_openclaw_skill(root, "planner", "worldbuilding", "Instruction-only skill.")
+            _write_openclaw_skill(root, "secretary", "daily-report", "Daily reporting helper.")
+
+            db_path = Path(tmpdir) / "test.db"
+            init_db(str(db_path))
+            skills_path = Path(tmpdir) / "skills.yaml"
+            shutil.copy(str(DEFAULT_SKILLS_PATH), str(skills_path))
+
+            app = create_api_app(
+                db_path=str(db_path),
+                llm_mode="stub",
+                skills_config_path=str(skills_path),
+                openclaw_root_path=str(root),
+            )
+            client = TestClient(app)
+
+            resp = client.get("/api/skills/import-readiness")
+            assert resp.status_code == 200
+            data = resp.json()["data"]
+            by_name = {candidate["name"]: candidate for candidate in data["candidates"]}
+            assert by_name["worldbuilding"]["status"] == "import_ready"
+            assert by_name["daily-report"]["status"] == "manual_ready"
+            assert by_name["daily-report"]["target_agent"] is None
+            assert by_name["daily-report"]["source_type"] == "openclaw"
+
+    def test_openclaw_import_plan_preview_is_read_only(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "openclaw-agents"
+            _write_openclaw_skill(root, "planner", "worldbuilding", "Instruction-only skill.")
+
+            db_path = Path(tmpdir) / "test.db"
+            init_db(str(db_path))
+            skills_path = Path(tmpdir) / "skills.yaml"
+            shutil.copy(str(DEFAULT_SKILLS_PATH), str(skills_path))
+
+            before = skills_path.read_text(encoding="utf-8")
+            app = create_api_app(
+                db_path=str(db_path),
+                llm_mode="stub",
+                skills_config_path=str(skills_path),
+                openclaw_root_path=str(root),
+            )
+            client = TestClient(app)
+
+            resp = client.post("/api/skills/openclaw-import-plan", json={
+                "source_path": "planner/workspace/skills/worldbuilding",
+            })
+            assert resp.status_code == 200
+            envelope = resp.json()
+            assert envelope["ok"] is True
+            data = envelope["data"]
+            assert data["target"]["skill_id"] == "imported-worldbuilding"
+            assert data["target"]["kind"] == "imported_instruction"
+            assert data["read_only"] is True
+            assert skills_path.read_text(encoding="utf-8") == before
+
+    def test_universal_import_plan_preview_is_read_only(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "openclaw-agents"
+            _write_openclaw_skill(root, "planner", "worldbuilding", "Instruction-only skill.")
+
+            db_path = Path(tmpdir) / "test.db"
+            init_db(str(db_path))
+            skills_path = Path(tmpdir) / "skills.yaml"
+            shutil.copy(str(DEFAULT_SKILLS_PATH), str(skills_path))
+
+            before = skills_path.read_text(encoding="utf-8")
+            app = create_api_app(
+                db_path=str(db_path),
+                llm_mode="stub",
+                skills_config_path=str(skills_path),
+                openclaw_root_path=str(root),
+            )
+            client = TestClient(app)
+
+            resp = client.post("/api/skills/import-plan", json={
+                "source_type": "openclaw",
+                "source_path": "planner/workspace/skills/worldbuilding",
+            })
+            envelope = resp.json()
+            assert envelope["ok"] is True
+            data = envelope["data"]
+            assert data["source_type"] == "openclaw"
+            assert data["source_label"] == "OpenClaw legacy workspace"
+            assert data["target"]["skill_id"] == "imported-worldbuilding"
+            assert data["read_only"] is True
+            assert skills_path.read_text(encoding="utf-8") == before
+
+    def test_openclaw_import_plan_rejects_path_escape(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "openclaw-agents"
+            root.mkdir()
+            db_path = Path(tmpdir) / "test.db"
+            init_db(str(db_path))
+            skills_path = Path(tmpdir) / "skills.yaml"
+            shutil.copy(str(DEFAULT_SKILLS_PATH), str(skills_path))
+
+            app = create_api_app(
+                db_path=str(db_path),
+                llm_mode="stub",
+                skills_config_path=str(skills_path),
+                openclaw_root_path=str(root),
+            )
+            client = TestClient(app)
+
+            resp = client.post("/api/skills/openclaw-import-plan", json={
+                "source_path": "../outside",
+            })
+            data = resp.json()
+            assert data["ok"] is False
+            assert data["error"]["code"] == "VALIDATION_ERROR"
+
+    def test_universal_import_plan_rejects_unknown_source_type(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            init_db(str(db_path))
+            skills_path = Path(tmpdir) / "skills.yaml"
+            shutil.copy(str(DEFAULT_SKILLS_PATH), str(skills_path))
+
+            app = create_api_app(
+                db_path=str(db_path),
+                llm_mode="stub",
+                skills_config_path=str(skills_path),
+                openclaw_root_path=str(Path(tmpdir) / "missing-openclaw"),
+            )
+            client = TestClient(app)
+
+            resp = client.post("/api/skills/import-plan", json={
+                "source_type": "unknown",
+                "source_path": "anything",
+            })
+            data = resp.json()
+            assert data["ok"] is False
+            assert data["error"]["code"] == "VALIDATION_ERROR"
 
 
 class TestGetSkillDetail:

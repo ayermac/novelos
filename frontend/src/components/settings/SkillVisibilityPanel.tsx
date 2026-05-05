@@ -109,30 +109,65 @@ interface SkillConfig {
   total_mounted: number
 }
 
-interface OpenClawCandidate {
+interface SkillImportCandidate {
   id: string
   name: string
   description: string
+  source_type: string
+  source_label: string
   source_agent?: string | null
   target_agent?: string | null
   source_path: string
-  status: 'import_ready' | 'needs_adapter' | 'not_recommended' | 'invalid'
+  status: 'import_ready' | 'needs_adapter' | 'manual_ready' | 'already_registered' | 'invalid'
   features: Record<string, boolean>
   blockers: string[]
   error?: string | null
 }
 
-interface OpenClawReadiness {
+interface SkillImportSource {
+  type: string
+  label: string
   root: string
   root_exists: boolean
+  count: number
+}
+
+interface SkillImportReadiness {
+  sources: SkillImportSource[]
   total: number
   summary: {
     import_ready: number
     needs_adapter: number
-    not_recommended: number
+    manual_ready: number
+    already_registered: number
     invalid: number
   }
-  candidates: OpenClawCandidate[]
+  candidates: SkillImportCandidate[]
+  warnings: string[]
+}
+
+interface SkillImportPlan {
+  source: string
+  source_type: string
+  source_label: string
+  source_path: string
+  root: string
+  read_only: boolean
+  detected: {
+    name: string
+    description: string
+    has_scripts: boolean
+    has_references: boolean
+    has_assets: boolean
+    has_rules: boolean
+    has_prompts: boolean
+    has_examples: boolean
+  }
+  target: {
+    skill_id: string
+    kind: string
+    import_mode: string
+  }
   warnings: string[]
 }
 
@@ -198,20 +233,22 @@ function configSkillChipStyle(skill: { missing?: boolean; enabled?: boolean; leg
   }
 }
 
-function readinessStatusLabel(status: OpenClawCandidate['status']) {
+function readinessStatusLabel(status: SkillImportCandidate['status']) {
   const labels = {
     import_ready: '可导入候选',
     needs_adapter: '需要适配',
-    not_recommended: '不建议导入',
+    manual_ready: '通用可手动',
+    already_registered: '已注册',
     invalid: '无效',
   }
   return labels[status]
 }
 
-function readinessStatusKind(status: OpenClawCandidate['status']): 'ok' | 'warn' | 'danger' | 'muted' {
+function readinessStatusKind(status: SkillImportCandidate['status']): 'ok' | 'warn' | 'danger' | 'muted' {
   if (status === 'import_ready') return 'ok'
+  if (status === 'manual_ready') return 'ok'
   if (status === 'needs_adapter') return 'warn'
-  if (status === 'not_recommended') return 'muted'
+  if (status === 'already_registered') return 'muted'
   return 'danger'
 }
 
@@ -220,7 +257,7 @@ export default function SkillVisibilityPanel() {
   const [mounts, setMounts] = useState<MountMap>({})
   const [agentMatrix, setAgentMatrix] = useState<AgentMatrix | null>(null)
   const [skillConfig, setSkillConfig] = useState<SkillConfig | null>(null)
-  const [openClawReadiness, setOpenClawReadiness] = useState<OpenClawReadiness | null>(null)
+  const [skillImportReadiness, setSkillImportReadiness] = useState<SkillImportReadiness | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [validating, setValidating] = useState(false)
@@ -244,16 +281,21 @@ export default function SkillVisibilityPanel() {
   const [mountError, setMountError] = useState('')
   const [selectedAddSkill, setSelectedAddSkill] = useState<Record<string, string>>({})
 
+  // Skill import plan preview state
+  const [planningSkillImport, setPlanningSkillImport] = useState<string | null>(null)
+  const [skillImportPlanError, setSkillImportPlanError] = useState('')
+  const [skillImportPlan, setSkillImportPlan] = useState<SkillImportPlan | null>(null)
+
   const load = async () => {
     setLoading(true)
     setError('')
 
-    const [skillsRes, mountsRes, matrixRes, configRes, openClawRes] = await Promise.all([
+    const [skillsRes, mountsRes, matrixRes, configRes, importReadinessRes] = await Promise.all([
       get<{ skills: SkillInfo[] }>('/skills'),
       get<MountMap>('/skills/mounts'),
       get<AgentMatrix>('/skills/agent-matrix'),
       get<SkillConfig>('/skills/config'),
-      get<OpenClawReadiness>('/skills/openclaw-readiness'),
+      get<SkillImportReadiness>('/skills/import-readiness'),
     ])
 
     if (skillsRes.ok && skillsRes.data) {
@@ -274,10 +316,10 @@ export default function SkillVisibilityPanel() {
       setSkillConfig(configRes.data)
     }
 
-    if (openClawRes.ok && openClawRes.data) {
-      setOpenClawReadiness(openClawRes.data)
+    if (importReadinessRes.ok && importReadinessRes.data) {
+      setSkillImportReadiness(importReadinessRes.data)
     } else {
-      setOpenClawReadiness(null)
+      setSkillImportReadiness(null)
     }
 
     setLoading(false)
@@ -451,6 +493,25 @@ export default function SkillVisibilityPanel() {
       await load()
     } else {
       setMountError(res.error?.message || '排序失败')
+    }
+  }
+
+  const handleSkillImportPlan = async (candidate: SkillImportCandidate) => {
+    setPlanningSkillImport(candidate.id)
+    setSkillImportPlanError('')
+    setSkillImportPlan(null)
+
+    const res = await post<SkillImportPlan>('/skills/import-plan', {
+      source_type: candidate.source_type,
+      source_path: candidate.source_path,
+    })
+
+    setPlanningSkillImport(null)
+
+    if (res.ok && res.data) {
+      setSkillImportPlan(res.data)
+    } else {
+      setSkillImportPlanError(res.error?.message || '生成导入计划失败')
     }
   }
 
@@ -752,7 +813,7 @@ export default function SkillVisibilityPanel() {
         >
           <strong>关于 Skill 数量</strong>
           <div style={{ marginTop: 4 }}>
-            当前仅展示已被 Novelos SkillRegistry 加载的 Skill（共 {skillConfig?.total_skills ?? 0} 个）。OpenClaw legacy skill 需要导入/注册后才会出现在这里。
+            当前仅展示已被 Novelos SkillRegistry 加载的 Skill（共 {skillConfig?.total_skills ?? 0} 个）。通用 SKILL.md 可先进入导入候选池，适配后再注册或挂载。
             {skillConfig && skillConfig.available_skills.filter((s) => !s.enabled).length > 0 && (
               <span> 另有 {skillConfig.available_skills.filter((s) => !s.enabled).length} 个已禁用 Skill。</span>
             )}
@@ -895,8 +956,8 @@ export default function SkillVisibilityPanel() {
         )}
       </div>
 
-      {/* OpenClaw Import Readiness */}
-      {openClawReadiness && (
+      {/* Universal Skill Import Readiness */}
+      {skillImportReadiness && (
         <div style={panelStyle}>
           <div
             style={{
@@ -910,26 +971,27 @@ export default function SkillVisibilityPanel() {
           >
             <div>
               <h4 style={{ ...sectionTitleStyle, marginBottom: 4 }}>
-                OpenClaw Skill 导入体检
+                Skill 导入候选
               </h4>
               <div style={{ fontSize: '12px', color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}>
-                只读扫描：不复制、不启用、不挂载。Root: <code style={compactCodeStyle}>{openClawReadiness.root}</code>
+                只读扫描：不复制、不启用、不挂载。OpenClaw、Codex 和本地 Agent Skill 都只是候选来源。
               </div>
             </div>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              <span style={statusChipStyle('muted')}>{openClawReadiness.total} candidates</span>
-              <span style={statusChipStyle('ok')}>{openClawReadiness.summary.import_ready} 可导入</span>
-              <span style={statusChipStyle('warn')}>{openClawReadiness.summary.needs_adapter} 需适配</span>
-              <span style={statusChipStyle('muted')}>{openClawReadiness.summary.not_recommended} 不建议</span>
-              {openClawReadiness.summary.invalid > 0 && (
-                <span style={statusChipStyle('danger')}>{openClawReadiness.summary.invalid} 无效</span>
+              <span style={statusChipStyle('muted')}>{skillImportReadiness.total} candidates</span>
+              <span style={statusChipStyle('ok')}>{skillImportReadiness.summary.import_ready} 可导入</span>
+              <span style={statusChipStyle('ok')}>{skillImportReadiness.summary.manual_ready} 通用可手动</span>
+              <span style={statusChipStyle('warn')}>{skillImportReadiness.summary.needs_adapter} 需适配</span>
+              {skillImportReadiness.summary.invalid > 0 && (
+                <span style={statusChipStyle('danger')}>{skillImportReadiness.summary.invalid} 无效</span>
               )}
             </div>
           </div>
 
-          {!openClawReadiness.root_exists && (
+          {skillImportReadiness.warnings.length > 0 && (
             <div
               style={{
+                marginBottom: 'var(--space-3)',
                 padding: '10px 12px',
                 borderRadius: '6px',
                 background: '#fef3c7',
@@ -937,13 +999,77 @@ export default function SkillVisibilityPanel() {
                 fontSize: '13px',
               }}
             >
-              未找到 OpenClaw legacy workspace。当前页面仍只展示 Novelos SkillRegistry 已加载的 Skill。
+              {skillImportReadiness.warnings.slice(0, 3).map((warning) => (
+                <div key={warning}>{warning}</div>
+              ))}
             </div>
           )}
 
-          {openClawReadiness.root_exists && openClawReadiness.candidates.length > 0 && (
+          {skillImportPlanError && (
+            <div
+              style={{
+                marginBottom: 'var(--space-3)',
+                padding: '10px 12px',
+                borderRadius: '6px',
+                background: '#fef2f2',
+                color: '#991b1b',
+                fontSize: '13px',
+              }}
+            >
+              {skillImportPlanError}
+              <button
+                onClick={() => setSkillImportPlanError('')}
+                style={{ marginLeft: 8, fontSize: '12px', background: 'none', border: 'none', color: '#991b1b', cursor: 'pointer', textDecoration: 'underline' }}
+              >
+                清除
+              </button>
+            </div>
+          )}
+
+          {skillImportPlan && (
+            <div
+              style={{
+                marginBottom: 'var(--space-3)',
+                padding: '12px',
+                borderRadius: '8px',
+                background: '#f8fafc',
+                border: '1px solid rgba(30, 58, 95, 0.08)',
+                minWidth: 0,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
+                <strong style={{ fontSize: '13px' }}>导入计划预览</strong>
+                <span style={statusChipStyle('muted')}>read-only</span>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 8, fontSize: '12px' }}>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>目标 Skill</span>
+                  <div><code style={compactCodeStyle}>{skillImportPlan.target.skill_id}</code></div>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>导入模式</span>
+                  <div><code style={compactCodeStyle}>{skillImportPlan.target.import_mode}</code></div>
+                </div>
+                <div>
+                  <span style={{ color: 'var(--text-muted)' }}>来源</span>
+                  <div><code style={compactCodeStyle}>{skillImportPlan.source_label} / {skillImportPlan.source_path}</code></div>
+                </div>
+              </div>
+              {skillImportPlan.warnings.length > 0 && (
+                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {skillImportPlan.warnings.map((warning, index) => (
+                    <span key={`openclaw-plan-warning-${index}`} style={{ fontSize: '12px', color: '#92400e', overflowWrap: 'anywhere' }}>
+                      {warning}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {skillImportReadiness.candidates.length > 0 && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: '12px' }}>
-              {openClawReadiness.candidates.map((candidate) => (
+              {skillImportReadiness.candidates.map((candidate) => (
                 <div
                   key={candidate.id}
                   style={{
@@ -961,7 +1087,7 @@ export default function SkillVisibilityPanel() {
                     </span>
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: 6, overflowWrap: 'anywhere' }}>
-                    {candidate.source_agent || 'unknown'} → {candidate.target_agent || '无直接目标'}
+                    {candidate.source_label}: {candidate.source_agent || 'manual'} → {candidate.target_agent || 'manual'}
                   </div>
                   <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: 8, overflowWrap: 'anywhere' }}>
                     <code style={compactCodeStyle}>{candidate.source_path}</code>
@@ -980,6 +1106,14 @@ export default function SkillVisibilityPanel() {
                       )}
                     </div>
                   )}
+                  <button
+                    onClick={() => handleSkillImportPlan(candidate)}
+                    className="btn btn-secondary"
+                    disabled={planningSkillImport === candidate.id || candidate.status === 'invalid'}
+                    style={{ marginTop: 10, fontSize: '12px', padding: '4px 10px' }}
+                  >
+                    {planningSkillImport === candidate.id ? '生成中...' : '预览导入计划'}
+                  </button>
                 </div>
               ))}
             </div>

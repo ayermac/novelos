@@ -307,20 +307,21 @@ Success criteria:
 - UI 操作失败时局部显示错误，不导致整页崩溃
 - 长 skill id / stage 不会撑爆容器
 
-### v5.4.7 OpenClaw Skill Import Readiness
+### v5.4.7 Universal Skill Import Readiness
 
-Before importing legacy OpenClaw skills, expose a read-only readiness scan so users can see what exists and why not everything is immediately available in Novelos.
+Before importing external skills, expose a read-only readiness scan so users can see what exists and why not everything is immediately available in Novelos.
 
 Scope:
 
-- Add read-only `GET /api/skills/openclaw-readiness`.
-- Scan local `openclaw-agents/*/workspace/skills/*/SKILL.md` candidates.
+- Add read-only `GET /api/skills/import-readiness`.
+- Scan local OpenClaw, Codex, and Agent `SKILL.md` candidates.
 - Classify candidates as:
   - `import_ready` — instruction-style candidate with direct Novelos target agent
   - `needs_adapter` — depends on OpenClaw tools/prompts/scripts or command workflow
-  - `not_recommended` — no direct Novelos workflow target
+  - `manual_ready` — valid generic skill with no direct workflow target yet
+  - `already_registered` — already in registry when applicable
   - `invalid` — malformed `SKILL.md`
-- Show an OpenClaw readiness panel in Settings > Skill 管理.
+- Show a universal Skill import readiness panel in Settings > Skill 管理.
 - Keep the scan non-blocking if the local `openclaw-agents` directory is absent.
 
 Out of scope:
@@ -332,9 +333,35 @@ Out of scope:
 
 Success criteria:
 
-- The UI explains how many OpenClaw candidates were found and how many are ready/need adapter/not recommended.
+- The UI explains how many candidates were found and how many are ready/manual/need adapter.
 - The scanner is read-only and never mutates `skills.yaml`.
-- Missing OpenClaw workspace is shown as a non-blocking state.
+- Missing skill source roots are shown as a non-blocking state.
+- Skill API tests, frontend typecheck/lint/build pass.
+
+### v5.4.8 Universal Skill Import Plan Preview
+
+After readiness classification, let users inspect the generated import plan for a single Skill candidate without applying it.
+
+Scope:
+
+- Add read-only `POST /api/skills/import-plan`.
+- Accept only a readiness candidate `source_type` + `source_path` relative to the scanned source root.
+- Reject path traversal and missing/non-skill directories.
+- Reuse the existing safe `build_import_plan()` logic.
+- Show target skill id, import mode, source path, and warnings in Settings > Skill 管理.
+
+Out of scope:
+
+- Copying files into `novel_factory/skill_packages`.
+- Editing `skills.yaml`.
+- Enabling or mounting imported skills.
+- Running external scripts or shell commands.
+
+Success criteria:
+
+- Import plan preview is read-only and does not mutate skill config.
+- Path escape attempts return a validation error.
+- Users can preview candidate import shape before deciding whether a later import/apply flow is safe.
 - Skill API tests, frontend typecheck/lint/build pass.
 
 ## Implementation Rules

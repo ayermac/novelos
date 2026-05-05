@@ -5,6 +5,7 @@ no import, no run/test.
 v5.3.4: Add test bench endpoints for fixtures testing and manual skill runs.
 v5.4.6: Add skill mount configuration console endpoints.
 v5.4.7: Add read-only OpenClaw legacy Skill import readiness endpoint.
+v5.4.8: Add universal Skill import readiness and plan preview endpoints.
 """
 
 from __future__ import annotations
@@ -57,6 +58,19 @@ class ReorderSkillsRequest(BaseModel):
     agent: str
     stage: str
     skill_ids: list[str]
+
+
+class SkillImportPlanRequest(BaseModel):
+    """Universal skill import plan preview request."""
+
+    source_type: str
+    source_path: str
+
+
+class OpenClawImportPlanRequest(BaseModel):
+    """Backward-compatible OpenClaw import plan preview request."""
+
+    source_path: str
 
 
 def _get_registry(request: Request):
@@ -319,6 +333,51 @@ async def get_openclaw_readiness(request: Request) -> EnvelopeResponse:
         return envelope_response(scan_openclaw_readiness(root))
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"扫描 OpenClaw Skill 失败: {str(e)}")
+
+
+@router.get("/skills/import-readiness")
+async def get_import_readiness(request: Request) -> EnvelopeResponse:
+    """Scan universal local Skill sources for import readiness.
+
+    Read-only: does not import, copy, enable, mount, or execute anything.
+    """
+    try:
+        from ...skills.openclaw_readiness import scan_import_readiness
+
+        root = getattr(request.app.state, "openclaw_root_path", None)
+        return envelope_response(scan_import_readiness(openclaw_root=root))
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"扫描 Skill 导入候选失败: {str(e)}")
+
+
+@router.post("/skills/import-plan")
+async def get_import_plan(body: SkillImportPlanRequest, request: Request) -> EnvelopeResponse:
+    """Build a read-only import plan preview for any local Skill candidate."""
+    try:
+        from ...skills.openclaw_readiness import build_import_plan_preview
+
+        root = getattr(request.app.state, "openclaw_root_path", None)
+        plan = build_import_plan_preview(body.source_type, body.source_path, openclaw_root=root)
+        if not plan.get("ok"):
+            return error_response("VALIDATION_ERROR", str(plan.get("error") or "生成导入计划失败"))
+        return envelope_response(plan.get("data", {}))
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"生成 Skill 导入计划失败: {str(e)}")
+
+
+@router.post("/skills/openclaw-import-plan")
+async def get_openclaw_import_plan(body: OpenClawImportPlanRequest, request: Request) -> EnvelopeResponse:
+    """Build a read-only import plan preview for an OpenClaw candidate."""
+    try:
+        from ...skills.openclaw_readiness import build_openclaw_import_plan
+
+        root = getattr(request.app.state, "openclaw_root_path", None)
+        plan = build_openclaw_import_plan(body.source_path, root)
+        if not plan.get("ok"):
+            return error_response("VALIDATION_ERROR", str(plan.get("error") or "生成导入计划失败"))
+        return envelope_response(plan.get("data", {}))
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"生成 Skill 导入计划失败: {str(e)}")
 
 
 @router.get("/skills/mounts")
