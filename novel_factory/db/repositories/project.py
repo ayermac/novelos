@@ -299,46 +299,84 @@ class ProjectRepositoryMixin:
             if not existing:
                 return False
 
-            # Delete from all related tables in single connection
-            # Only include tables that have project_id column
-            tables = [
-                "chapters",
-                "characters",
-                "outlines",
-                "world_settings",
-                "workflow_runs",
-                "instructions",
-                "scene_beats",
-                "chapter_state",
-                "chapter_versions",
-                "chapter_plots",
+            # Delete dependent child tables that do not carry project_id first.
+            # These rows would otherwise keep their parent project-scoped rows
+            # alive through foreign keys.
+            child_deletes = [
+                (
+                    "production_queue_events",
+                    "DELETE FROM production_queue_events "
+                    "WHERE queue_id IN (SELECT id FROM production_queue WHERE project_id=?)",
+                ),
+                (
+                    "serial_plan_events",
+                    "DELETE FROM serial_plan_events "
+                    "WHERE serial_plan_id IN (SELECT id FROM serial_plans WHERE project_id=?)",
+                ),
+                (
+                    "batch_revision_items",
+                    "DELETE FROM batch_revision_items "
+                    "WHERE revision_run_id IN (SELECT id FROM batch_revision_runs WHERE project_id=?)",
+                ),
+            ]
+            existing_tables = self._get_table_names(conn)
+            for table, sql in child_deletes:
+                if table in existing_tables:
+                    conn.execute(sql, (project_id,))
+
+            # Delete every project-scoped table dynamically.  This keeps project
+            # deletion resilient as new modules add tables with project_id.
+            preferred_order = [
+                "memory_update_items",
+                "memory_update_batches",
+                "story_fact_events",
+                "story_facts",
+                "style_bible_versions",
+                "style_evolution_proposals",
+                "style_samples",
+                "style_bibles",
+                "project_skill_overrides",
                 "chapter_review_notes",
-                "plot_holes",
-                "agent_artifacts",
-                "agent_messages",
-                "quality_reports",
-                "scout_reports",
-                "polish_reports",
-                "reviews",
-                "reports",
                 "batch_revision_runs",
-                "batch_continuity_gates",
-                "production_runs",
-                "production_queue",
-                "production_queue_events",
-                "serial_plans",
-                "serial_plan_events",
-                "state_history",
                 "human_review_sessions",
                 "production_run_items",
-                "batch_revision_items",
+                "production_runs",
+                "production_queue",
+                "serial_plans",
+                "genesis_runs",
+                "skill_runs",
+                "quality_reports",
+                "continuity_reports",
+                "architecture_proposals",
+                "scout_reports",
+                "reports",
+                "polish_reports",
+                "agent_artifacts",
+                "agent_messages",
+                "task_status",
+                "workflow_runs",
+                "reviews",
+                "chapter_versions",
+                "state_history",
+                "chapter_state",
+                "chapter_plots",
+                "scene_beats",
+                "chapters",
+                "instructions",
+                "plot_holes",
+                "outlines",
+                "world_settings",
+                "characters",
+                "factions",
+                "learned_patterns",
+                "best_practices",
             ]
-            for table in tables:
-                try:
-                    conn.execute(f"DELETE FROM {table} WHERE project_id=?", (project_id,))
-                except Exception:
-                    # Table may not exist in this schema
-                    pass
+            project_tables = self._get_project_scoped_tables(conn)
+            ordered_tables = [
+                table for table in preferred_order if table in project_tables
+            ] + sorted(project_tables - set(preferred_order))
+            for table in ordered_tables:
+                conn.execute(f"DELETE FROM {table} WHERE project_id=?", (project_id,))
 
             # Finally delete the project
             conn.execute("DELETE FROM projects WHERE project_id=?", (project_id,))
@@ -346,3 +384,22 @@ class ProjectRepositoryMixin:
             return True
         finally:
             conn.close()
+
+    def _get_table_names(self, conn) -> set[str]:
+        """Return user table names for the current database."""
+        rows = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+        return {row["name"] for row in rows}
+
+    def _get_project_scoped_tables(self, conn) -> set[str]:
+        """Return tables that have a project_id column and should be cascaded."""
+        tables = self._get_table_names(conn)
+        project_tables: set[str] = set()
+        for table in tables:
+            if table in {"projects", "_migrations_applied"}:
+                continue
+            columns = conn.execute(f"PRAGMA table_info({table})").fetchall()
+            if any(column["name"] == "project_id" for column in columns):
+                project_tables.add(table)
+        return project_tables

@@ -96,7 +96,7 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1723/1723 passed
+- **当前测试基线**: 1725/1725 passed
 - **新增测试**:
   - `test_v51_api_e2e_smoke.py`: 17 个端到端 smoke 测试
   - `test_v51_frontend_quality.py`: 8 个前端质量检查
@@ -111,6 +111,7 @@ npm run dev
   - `test_v532_fact_ledger.py`: 事实账本测试
   - `test_v53_project_modules.py`: 项目模块闭包测试
   - `test_skills_api.py`: Skill 可视化与测试台 API 测试
+  - `test_project_delete_cascade_completeness.py`: 项目删除 cascade 完整性测试
 
 ### v5.1.1 WebUI 产品化改进
 
@@ -210,7 +211,7 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.5.2 Run Health Dashboard**，测试基线 **1723/1723 passed**。
+当前开发基线是 **v5.5.2 Run Health Dashboard**，测试基线 **1725/1725 passed**。
 
 **v5.3 已实现能力**（部分，进行中）：
 
