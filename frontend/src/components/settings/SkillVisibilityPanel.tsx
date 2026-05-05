@@ -111,76 +111,6 @@ interface SkillConfig {
   total_mounted: number
 }
 
-interface SkillImportCandidate {
-  id: string
-  name: string
-  description: string
-  source_type: string
-  source_label: string
-  source_agent?: string | null
-  target_agent?: string | null
-  source_path: string
-  status: 'import_ready' | 'needs_adapter' | 'manual_ready' | 'already_registered' | 'invalid'
-  features: Record<string, boolean>
-  blockers: string[]
-  error?: string | null
-}
-
-interface SkillImportSource {
-  type: string
-  label: string
-  root: string
-  root_exists: boolean
-  count: number
-}
-
-interface SkillImportReadiness {
-  sources: SkillImportSource[]
-  total: number
-  summary: {
-    import_ready: number
-    needs_adapter: number
-    manual_ready: number
-    already_registered: number
-    invalid: number
-  }
-  candidates: SkillImportCandidate[]
-  warnings: string[]
-}
-
-interface SkillImportPlan {
-  source: string
-  source_type: string
-  source_label: string
-  source_path: string
-  root: string
-  read_only: boolean
-  detected: {
-    name: string
-    description: string
-    has_scripts: boolean
-    has_references: boolean
-    has_assets: boolean
-    has_rules: boolean
-    has_prompts: boolean
-    has_examples: boolean
-  }
-  target: {
-    skill_id: string
-    kind: string
-    import_mode: string
-  }
-  warnings: string[]
-}
-
-interface SkillImportApplyResult {
-  skill_id: string
-  package: string
-  registered: boolean
-  enabled: boolean
-  mounted: boolean
-}
-
 interface SkillEnabledResult {
   skill_id: string
   enabled: boolean
@@ -271,31 +201,11 @@ function configSkillChipStyle(skill: { missing?: boolean; enabled?: boolean; leg
   }
 }
 
-function readinessStatusLabel(status: SkillImportCandidate['status']) {
-  const labels = {
-    import_ready: '可导入候选',
-    needs_adapter: '需要适配',
-    manual_ready: '通用可手动',
-    already_registered: '已注册',
-    invalid: '无效',
-  }
-  return labels[status]
-}
-
-function readinessStatusKind(status: SkillImportCandidate['status']): 'ok' | 'warn' | 'danger' | 'muted' {
-  if (status === 'import_ready') return 'ok'
-  if (status === 'manual_ready') return 'ok'
-  if (status === 'needs_adapter') return 'warn'
-  if (status === 'already_registered') return 'muted'
-  return 'danger'
-}
-
 export default function SkillVisibilityPanel() {
   const [skills, setSkills] = useState<SkillInfo[]>([])
   const [mounts, setMounts] = useState<MountMap>({})
   const [agentMatrix, setAgentMatrix] = useState<AgentMatrix | null>(null)
   const [skillConfig, setSkillConfig] = useState<SkillConfig | null>(null)
-  const [skillImportReadiness, setSkillImportReadiness] = useState<SkillImportReadiness | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [validating, setValidating] = useState(false)
@@ -326,23 +236,15 @@ export default function SkillVisibilityPanel() {
   const [skillReviewError, setSkillReviewError] = useState('')
   const [skillReviewResults, setSkillReviewResults] = useState<Record<string, SkillReviewResult>>({})
 
-  // Skill import plan preview state
-  const [planningSkillImport, setPlanningSkillImport] = useState<string | null>(null)
-  const [applyingSkillImport, setApplyingSkillImport] = useState<string | null>(null)
-  const [skillImportPlanError, setSkillImportPlanError] = useState('')
-  const [skillImportPlan, setSkillImportPlan] = useState<SkillImportPlan | null>(null)
-  const [skillImportApplyResult, setSkillImportApplyResult] = useState<SkillImportApplyResult | null>(null)
-
   const load = async () => {
     setLoading(true)
     setError('')
 
-    const [skillsRes, mountsRes, matrixRes, configRes, importReadinessRes] = await Promise.all([
+    const [skillsRes, mountsRes, matrixRes, configRes] = await Promise.all([
       get<{ skills: SkillInfo[] }>('/skills'),
       get<MountMap>('/skills/mounts'),
       get<AgentMatrix>('/skills/agent-matrix'),
       get<SkillConfig>('/skills/config'),
-      get<SkillImportReadiness>('/skills/import-readiness'),
     ])
 
     if (skillsRes.ok && skillsRes.data) {
@@ -361,12 +263,6 @@ export default function SkillVisibilityPanel() {
 
     if (configRes.ok && configRes.data) {
       setSkillConfig(configRes.data)
-    }
-
-    if (importReadinessRes.ok && importReadinessRes.data) {
-      setSkillImportReadiness(importReadinessRes.data)
-    } else {
-      setSkillImportReadiness(null)
     }
 
     setLoading(false)
@@ -578,46 +474,6 @@ export default function SkillVisibilityPanel() {
     }
   }
 
-  const handleSkillImportPlan = async (candidate: SkillImportCandidate) => {
-    setPlanningSkillImport(candidate.id)
-    setSkillImportPlanError('')
-    setSkillImportPlan(null)
-
-    const res = await post<SkillImportPlan>('/skills/import-plan', {
-      source_type: candidate.source_type,
-      source_path: candidate.source_path,
-    })
-
-    setPlanningSkillImport(null)
-
-    if (res.ok && res.data) {
-      setSkillImportPlan(res.data)
-    } else {
-      setSkillImportPlanError(res.error?.message || '生成导入计划失败')
-    }
-  }
-
-  const handleSkillImportApply = async (candidate: SkillImportCandidate) => {
-    setApplyingSkillImport(candidate.id)
-    setSkillImportPlanError('')
-    setSkillImportApplyResult(null)
-
-    const res = await post<SkillImportApplyResult>('/skills/import-apply', {
-      source_type: candidate.source_type,
-      source_path: candidate.source_path,
-    })
-
-    setApplyingSkillImport(null)
-
-    if (res.ok && res.data) {
-      setSkillImportApplyResult(res.data)
-      setSkillImportPlan(null)
-      await load()
-    } else {
-      setSkillImportPlanError(res.error?.message || '导入 Skill 失败')
-    }
-  }
-
   if (loading) {
     return (
       <div style={{ padding: 'var(--space-5)', textAlign: 'center', color: 'var(--text-charcoal)' }}>
@@ -669,9 +525,6 @@ export default function SkillVisibilityPanel() {
     })
   }
 
-  const canApplySkillImport = (candidate: SkillImportCandidate) => (
-    candidate.status === 'import_ready' || candidate.status === 'manual_ready'
-  )
   const skillMountById = new Map(skills.map((skill) => [skill.id, skill]))
   const reviewStatusKind = (verdict: SkillReviewResult['verdict']): 'ok' | 'warn' | 'danger' => {
     if (verdict === 'pass') return 'ok'
@@ -1223,198 +1076,6 @@ export default function SkillVisibilityPanel() {
           </div>
         )}
       </div>
-
-      {/* Universal Skill Import Readiness */}
-      {skillImportReadiness && (
-        <div style={panelStyle}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              gap: 12,
-              flexWrap: 'wrap',
-              marginBottom: 'var(--space-3)',
-            }}
-          >
-            <div>
-              <h4 style={{ ...sectionTitleStyle, marginBottom: 4 }}>
-                Skill 导入候选
-              </h4>
-              <div style={{ fontSize: '12px', color: 'var(--text-secondary)', overflowWrap: 'anywhere' }}>
-                扫描不改变配置；导入只复制为禁用 package skill，不启用、不挂载、不执行外部脚本。
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-              <span style={statusChipStyle('muted')}>{skillImportReadiness.total} candidates</span>
-              <span style={statusChipStyle('ok')}>{skillImportReadiness.summary.import_ready} 可导入</span>
-              <span style={statusChipStyle('ok')}>{skillImportReadiness.summary.manual_ready} 通用可手动</span>
-              <span style={statusChipStyle('warn')}>{skillImportReadiness.summary.needs_adapter} 需适配</span>
-              {skillImportReadiness.summary.invalid > 0 && (
-                <span style={statusChipStyle('danger')}>{skillImportReadiness.summary.invalid} 无效</span>
-              )}
-            </div>
-          </div>
-
-          {skillImportReadiness.warnings.length > 0 && (
-            <div
-              style={{
-                marginBottom: 'var(--space-3)',
-                padding: '10px 12px',
-                borderRadius: '6px',
-                background: '#fef3c7',
-                color: '#92400e',
-                fontSize: '13px',
-              }}
-            >
-              {skillImportReadiness.warnings.slice(0, 3).map((warning) => (
-                <div key={warning}>{warning}</div>
-              ))}
-            </div>
-          )}
-
-          {skillImportPlanError && (
-            <div
-              style={{
-                marginBottom: 'var(--space-3)',
-                padding: '10px 12px',
-                borderRadius: '6px',
-                background: '#fef2f2',
-                color: '#991b1b',
-                fontSize: '13px',
-              }}
-            >
-              {skillImportPlanError}
-              <button
-                onClick={() => setSkillImportPlanError('')}
-                style={{ marginLeft: 8, fontSize: '12px', background: 'none', border: 'none', color: '#991b1b', cursor: 'pointer', textDecoration: 'underline' }}
-              >
-                清除
-              </button>
-            </div>
-          )}
-
-          {skillImportApplyResult && (
-            <div
-              style={{
-                marginBottom: 'var(--space-3)',
-                padding: '10px 12px',
-                borderRadius: '6px',
-                background: '#ecfdf5',
-                color: '#166534',
-                fontSize: '13px',
-              }}
-            >
-              已导入 <code style={compactCodeStyle}>{skillImportApplyResult.skill_id}</code>
-              {' '}为禁用 Skill，未挂载到任何工作流。
-            </div>
-          )}
-
-          {skillImportPlan && (
-            <div
-              style={{
-                marginBottom: 'var(--space-3)',
-                padding: '12px',
-                borderRadius: '8px',
-                background: '#f8fafc',
-                border: '1px solid rgba(30, 58, 95, 0.08)',
-                minWidth: 0,
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 8 }}>
-                <strong style={{ fontSize: '13px' }}>导入计划预览</strong>
-                <span style={statusChipStyle('muted')}>read-only</span>
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 220px), 1fr))', gap: 8, fontSize: '12px' }}>
-                <div>
-                  <span style={{ color: 'var(--text-muted)' }}>目标 Skill</span>
-                  <div><code style={compactCodeStyle}>{skillImportPlan.target.skill_id}</code></div>
-                </div>
-                <div>
-                  <span style={{ color: 'var(--text-muted)' }}>导入模式</span>
-                  <div><code style={compactCodeStyle}>{skillImportPlan.target.import_mode}</code></div>
-                </div>
-                <div>
-                  <span style={{ color: 'var(--text-muted)' }}>来源</span>
-                  <div><code style={compactCodeStyle}>{skillImportPlan.source_label} / {skillImportPlan.source_path}</code></div>
-                </div>
-              </div>
-              {skillImportPlan.warnings.length > 0 && (
-                <div style={{ marginTop: 8, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {skillImportPlan.warnings.map((warning, index) => (
-                    <span key={`openclaw-plan-warning-${index}`} style={{ fontSize: '12px', color: '#92400e', overflowWrap: 'anywhere' }}>
-                      {warning}
-                    </span>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {skillImportReadiness.candidates.length > 0 && (
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: '12px' }}>
-              {skillImportReadiness.candidates.map((candidate) => (
-                <div
-                  key={candidate.id}
-                  style={{
-                    padding: '12px',
-                    borderRadius: '8px',
-                    background: 'var(--paper-surface)',
-                    border: '1px solid rgba(30, 58, 95, 0.06)',
-                    minWidth: 0,
-                  }}
-                >
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', marginBottom: 6 }}>
-                    <strong style={{ fontSize: '13px', overflowWrap: 'anywhere' }}>{candidate.name}</strong>
-                    <span style={statusChipStyle(readinessStatusKind(candidate.status))}>
-                      {readinessStatusLabel(candidate.status)}
-                    </span>
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginBottom: 6, overflowWrap: 'anywhere' }}>
-                    {candidate.source_label}: {candidate.source_agent || 'manual'} → {candidate.target_agent || 'manual'}
-                  </div>
-                  <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: 8, overflowWrap: 'anywhere' }}>
-                    <code style={compactCodeStyle}>{candidate.source_path}</code>
-                  </div>
-                  {candidate.blockers.length > 0 && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                      {candidate.blockers.slice(0, 3).map((blocker, index) => (
-                        <span key={`${candidate.id}-blocker-${index}`} style={{ fontSize: '12px', color: '#92400e', overflowWrap: 'anywhere' }}>
-                          {blocker}
-                        </span>
-                      ))}
-                      {candidate.blockers.length > 3 && (
-                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-                          另有 {candidate.blockers.length - 3} 项需检查
-                        </span>
-                      )}
-                    </div>
-                  )}
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 10 }}>
-                    <button
-                      onClick={() => handleSkillImportPlan(candidate)}
-                      className="btn btn-secondary"
-                      disabled={planningSkillImport === candidate.id || candidate.status === 'invalid'}
-                      style={{ fontSize: '12px', padding: '4px 10px' }}
-                    >
-                      {planningSkillImport === candidate.id ? '生成中...' : '预览导入计划'}
-                    </button>
-                    <button
-                      onClick={() => handleSkillImportApply(candidate)}
-                      className="btn btn-secondary"
-                      disabled={applyingSkillImport === candidate.id || !canApplySkillImport(candidate)}
-                      style={{ fontSize: '12px', padding: '4px 10px' }}
-                      title={canApplySkillImport(candidate) ? '导入为禁用 Skill，不启用、不挂载' : '该候选暂不可直接导入'}
-                    >
-                      {applyingSkillImport === candidate.id ? '导入中...' : '导入为禁用 Skill'}
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Fixtures Test Bench */}
       <div style={panelStyle}>
