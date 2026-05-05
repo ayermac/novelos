@@ -63,6 +63,24 @@ novelos init-db --db-path acceptance_novel_factory.db
 
 ## Run Locally
 
+Use the service helper for day-to-day development:
+
+```bash
+scripts/novelos-service.sh start      # start API + WebUI
+scripts/novelos-service.sh stop       # stop API + WebUI
+scripts/novelos-service.sh restart    # restart API + WebUI
+scripts/novelos-service.sh status     # show service status
+scripts/novelos-service.sh logs       # show recent logs
+```
+
+By default it uses `acceptance_novel_factory.db`, `config/local.yaml`, `LLM_MODE=real`, API port `8765`, and WebUI port `5173`.
+Override with environment variables, for example:
+
+```bash
+LLM_MODE=stub scripts/novelos-service.sh restart api
+WEB_PORT=5174 scripts/novelos-service.sh start web
+```
+
 Start the API server in demo mode:
 
 ```bash

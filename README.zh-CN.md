@@ -80,6 +80,24 @@ novelos init-db --db-path acceptance_novel_factory.db
 
 ## 本地运行
 
+日常开发建议使用服务脚本：
+
+```bash
+scripts/novelos-service.sh start      # 启动 API + WebUI
+scripts/novelos-service.sh stop       # 停止 API + WebUI
+scripts/novelos-service.sh restart    # 重启 API + WebUI
+scripts/novelos-service.sh status     # 查看服务状态
+scripts/novelos-service.sh logs       # 查看最近日志
+```
+
+默认使用 `acceptance_novel_factory.db`、`config/local.yaml`、`LLM_MODE=real`、API 端口 `8765` 和 WebUI 端口 `5173`。
+可以用环境变量覆盖，例如：
+
+```bash
+LLM_MODE=stub scripts/novelos-service.sh restart api
+WEB_PORT=5174 scripts/novelos-service.sh start web
+```
+
 以演示模式启动 API：
 
 ```bash
