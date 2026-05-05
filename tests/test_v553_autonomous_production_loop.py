@@ -106,23 +106,27 @@ class TestProductionNextAPI:
         assert app_resp.json()["ok"] is True
 
         # Delete all created context to simulate missing context
-        from novel_factory.api_app import create_api_app
-        from novel_factory.db.connection import init_db
-        import tempfile as tf
-        fd, db_path = tf.mkstemp(suffix=".db")
-        os.close(fd)
-        init_db(db_path)
-        # We need to use the same DB; instead, call auto-fill then delete things via repo
-        # But easier: just check the endpoint still works after approval
+        ws_resp = client.get(f"/api/projects/{project_id}/world-settings")
+        for ws in ws_resp.json().get("data", []):
+            client.delete(f"/api/projects/{project_id}/world-settings/{ws['id']}")
+        ch_resp = client.get(f"/api/projects/{project_id}/characters")
+        for ch in ch_resp.json().get("data", []):
+            client.delete(f"/api/projects/{project_id}/characters/{ch['id']}")
+        ol_resp = client.get(f"/api/projects/{project_id}/outlines")
+        for ol in ol_resp.json().get("data", []):
+            client.delete(f"/api/projects/{project_id}/outlines/{ol['id']}")
+        inst_resp = client.get(f"/api/projects/{project_id}/instructions")
+        for inst in inst_resp.json().get("data", []):
+            client.delete(f"/api/projects/{project_id}/instructions/{inst['id']}")
+
         resp = client.get(f"/api/projects/{project_id}/production-next")
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is True
         data = body["data"]
-        # After genesis approval, genesis creates world_settings, characters, outlines etc.
-        # So it may not be missing context. Let's instead test by creating a fresh project
-        # and manually controlling state.
         assert data["health"]["has_approved_genesis"] is True
+        assert data["next_action"]["key"] == "generate_missing_context"
+        assert len(data["missing"]) >= 1
 
     def test_ready_context_planned_chapter_returns_generate_chapter(self, client, project_id):
         """4. Planned chapter with ready context should suggest generate_chapter."""
@@ -151,9 +155,8 @@ class TestProductionNextAPI:
         body = resp.json()
         assert body["ok"] is True
         data = body["data"]
-        # With approved genesis and instructions present, next action should be generate_chapter
-        # (unless there are blocking chapters or stuck runs)
-        assert data["next_action"]["key"] in ("generate_chapter", "generate_missing_context")
+        # With approved genesis and instructions present, next action must be generate_chapter
+        assert data["next_action"]["key"] == "generate_chapter"
 
     def test_blocking_chapter_returns_recover_blocked_run(self, client, project_id):
         """5. Blocking chapter should suggest recover_blocked_run."""

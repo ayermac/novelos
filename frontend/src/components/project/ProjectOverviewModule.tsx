@@ -96,9 +96,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const handleAutoFill = async () => {
     setFilling(true)
     setFillResult('')
+    const currentCh = productionNext?.current_chapter || 1
     const res = await post<{ filled: boolean; created: Record<string, number>; warnings: string[] }>(
       `/projects/${project.project_id}/production/auto-fill`,
-      { scope: 'missing_context', chapter_start: 1, chapter_end: 10, confirm: true }
+      { scope: 'missing_context', chapter_start: currentCh, chapter_end: currentCh + 9, confirm: true }
     )
     if (res.ok && res.data) {
       const created = res.data.created
@@ -127,6 +128,18 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       return
     }
     if (action.key === 'generate_chapter' || action.key === 'continue_next_chapter') {
+      setFilling(true)
+      setFillResult('')
+      const res = await post<{ workflow_status: string; message: string }>(
+        '/run/chapter',
+        { project_id: project.project_id, chapter: productionNext.current_chapter }
+      )
+      setFilling(false)
+      if (res.ok && res.data) {
+        setFillResult(res.data.message || `第 ${productionNext.current_chapter} 章生成已触发`)
+      } else {
+        setFillResult(res.error?.message || '生成触发失败')
+      }
       navigate(`/projects/${project.project_id}?module=chapters&chapter=${productionNext.current_chapter}`)
       return
     }

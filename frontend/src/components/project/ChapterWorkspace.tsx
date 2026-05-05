@@ -275,9 +275,11 @@ function ContentTab({ generating, genError, genErrorDetails, chapterLoading, has
   const handleAutoFill = async () => {
     setFilling(true)
     setFillMsg('')
+    const start = currentChapter
+    const end = currentChapter + 9
     const res = await post<{ filled: boolean; created: Record<string, number>; warnings: string[] }>(
       `/projects/${projectId}/production/auto-fill`,
-      { scope: 'missing_context', chapter_start: 1, chapter_end: 10, confirm: true }
+      { scope: 'missing_context', chapter_start: start, chapter_end: end, confirm: true }
     )
     if (res.ok && res.data) {
       const total = Object.values(res.data.created).reduce((a, b) => a + b, 0)

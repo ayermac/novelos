@@ -65,11 +65,15 @@ def _get_blocking_chapter(repo, project_id: str) -> dict | None:
     return None
 
 
-def _get_stuck_run(repo, project_id: str) -> dict | None:
-    """Find a stuck workflow run (failed/blocked status)."""
+def _get_stuck_run(repo, project_id: str, current_chapter: int) -> dict | None:
+    """Find a stuck workflow run for the current chapter (failed/blocked status).
+
+    Only considers runs for the current chapter to avoid old failures permanently
+    hijacking production-next.
+    """
     runs = repo.get_workflow_runs_for_project(project_id, limit=20)
     for run in runs:
-        if run.get("status") in ("failed", "blocked"):
+        if run.get("chapter_number") == current_chapter and run.get("status") in ("failed", "blocked"):
             return run
     return None
 
@@ -104,7 +108,7 @@ def _build_health(repo, project_id: str, current_chapter: int) -> dict:
         "has_instructions_for_current_chapter": instruction is not None and bool(instruction.get("objective")),
         "has_pending_memory_updates": _has_pending_memory_updates(repo, project_id),
         "has_blocking_chapter": _get_blocking_chapter(repo, project_id) is not None,
-        "has_stuck_run": _get_stuck_run(repo, project_id) is not None,
+        "has_stuck_run": _get_stuck_run(repo, project_id, current_chapter) is not None,
     }
 
 
@@ -180,13 +184,29 @@ def _determine_next_action(repo, project_id: str, health: dict, current_chapter:
     """Determine the next production action based on project state."""
 
     # 1. Recover blocked runs / blocking chapters first
-    if health["has_stuck_run"] or health["has_blocking_chapter"]:
+    blocking_ch = _get_blocking_chapter(repo, project_id)
+    stuck_run = _get_stuck_run(repo, project_id, current_chapter)
+
+    if blocking_ch:
+        ch_num = blocking_ch.get("chapter_number", current_chapter)
         return {
             "key": "recover_blocked_run",
-            "label": "恢复阻塞运行",
-            "description": "检测到阻塞章节或失败的运行，建议重置后重试。",
+            "label": f"恢复阻塞运行（第 {ch_num} 章）",
+            "description": f"检测到第 {ch_num} 章处于阻塞状态，建议重置后重试。",
             "primary": True,
-            "action_url": f"/api/projects/{project_id}/chapters/{current_chapter}/reset",
+            "action_url": f"/api/projects/{project_id}/chapters/{ch_num}/reset",
+            "method": "POST",
+            "requires_confirmation": True,
+        }
+
+    if stuck_run:
+        ch_num = stuck_run.get("chapter_number", current_chapter)
+        return {
+            "key": "recover_blocked_run",
+            "label": f"恢复阻塞运行（第 {ch_num} 章）",
+            "description": f"检测到第 {ch_num} 章的运行失败，建议重置后重试。",
+            "primary": True,
+            "action_url": f"/api/projects/{project_id}/chapters/{ch_num}/reset",
             "method": "POST",
             "requires_confirmation": True,
         }
@@ -258,7 +278,7 @@ def _determine_next_action(repo, project_id: str, health: dict, current_chapter:
             "label": f"生成第 {current_chapter} 章",
             "description": "资料已就绪，开始生成章节内容。",
             "primary": True,
-            "action_url": f"/api/run",
+            "action_url": f"/api/run/chapter",
             "method": "POST",
             "requires_confirmation": True,
         }
@@ -293,7 +313,7 @@ def _determine_next_action(repo, project_id: str, health: dict, current_chapter:
             "label": f"继续生成第 {next_ch} 章",
             "description": "当前章节已发布，继续下一章。",
             "primary": True,
-            "action_url": f"/api/run",
+            "action_url": f"/api/run/chapter",
             "method": "POST",
             "requires_confirmation": True,
         }
@@ -533,6 +553,14 @@ async def auto_fill(request: Request, project_id: str, body: AutoFillRequest) ->
                 else:
                     warnings.append(f"real LLM instruction generation for chapter {ch_num} not yet implemented")
 
+        # Real mode: if nothing was created due to unimplemented generation, return clear error
+        if llm_mode != "stub" and warnings:
+            return error_response(
+                "NOT_IMPLEMENTED",
+                "Real LLM 自动补齐尚未实现，请切换到 stub 模式或手动创建资料",
+                details={"warnings": warnings},
+            )
+
         return envelope_response({
             "filled": True,
             "scope": body.scope,
@@ -656,6 +684,14 @@ async def arc_plan(request: Request, project_id: str, body: ArcPlanRequest) -> E
                 created["plot_holes"] += 1
         else:
             warnings.append("real LLM arc planning not yet implemented")
+
+        # Real mode: if nothing was created due to unimplemented generation, return clear error
+        if llm_mode != "stub" and warnings:
+            return error_response(
+                "NOT_IMPLEMENTED",
+                "Real LLM arc planning 尚未实现，请切换到 stub 模式",
+                details={"warnings": warnings},
+            )
 
         return envelope_response({
             "planned": True,
