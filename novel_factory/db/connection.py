@@ -207,6 +207,12 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         )
         return cursor.fetchone() is not None
 
+    if name == "028_v5_5_9_auto_run_resilience":
+        # 028 adds last_event column to auto_run_sessions
+        cursor = conn.execute("PRAGMA table_info(auto_run_sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        return "last_event" in columns
+
     return False
 
 

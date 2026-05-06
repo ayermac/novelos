@@ -4,7 +4,7 @@ AI-powered novel production workbench for long-form fiction projects.
 
 Novelos combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.5.8 Auto-Run Control Loop**, with **1792/1792 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
+Current baseline: **v5.5.9 Auto-Run Resilience**, with **1804/1804 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
 
 ## What It Does
 
@@ -300,7 +300,7 @@ npm run build
 Current verified baseline:
 
 ```text
-pytest: 1769/1769 passed (includes v5.5.5 targeted 14 passed)
+pytest: 1792/1792 passed (includes v5.5.8 targeted 15 passed)
 v5.5.3 regression: 20 passed
 frontend typecheck: passed
 frontend lint: passed

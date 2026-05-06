@@ -128,6 +128,7 @@ interface AutoRunSession {
   chapter_end?: number
   max_steps: number
   dry_run: number
+  last_event?: string
   created_at: string
   updated_at: string
   ended_at?: string
@@ -230,6 +231,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const [showHistory, setShowHistory] = useState(false)
   const [sessionLoading, setSessionLoading] = useState(false)
 
+  /* v5.5.9: Resilience state */
+  const [disconnected, setDisconnected] = useState(false)
+  const [recovering, setRecovering] = useState(false)
+
   /* Reset auto-run state when project changes (P2-1) */
   useEffect(() => {
     autoConfigInitialized.current = false
@@ -238,9 +243,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setStreamSteps([])
     setStreamStatus('idle')
     setStreamError(null)
+    setDisconnected(false)
+    setRecovering(false)
     setAutoConfig({ maxSteps: 5, chapterStart: 1, chapterEnd: 10, stopOnReview: true })
     setProductionNext(null) // Clear stale productionNext to prevent race condition
-    setActiveSessionId(null)
     setShowHistory(false)
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
@@ -279,9 +285,46 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setLoading(false)
   }, [project.project_id, chapterNumber])
 
+  /* v5.5.9: Check for active session on mount/recovery */
+  const checkActiveSession = useCallback(async () => {
+    try {
+      const res = await get<{ active: boolean; session?: AutoRunSession; steps?: AutoRunStep[] }>(
+        `/projects/${project.project_id}/production/run-auto/active-session`
+      )
+      if (res.ok && res.data && res.data.active && res.data.session) {
+        const s = res.data.session
+        setActiveSessionId(s.id)
+        // If session is paused or disconnected, show recovery UI
+        if (s.status === 'paused' || s.status === 'running') {
+          setStreamStatus(s.status === 'running' ? 'running' : 'stopped')
+          setAutoRunning(s.status === 'running')
+          if (res.data.steps) {
+            setStreamSteps(
+              res.data.steps.map((st) => ({
+                step: st.step,
+                action: st.action,
+                label: st.label,
+                target_chapter: st.target_chapter,
+                result: st.result,
+                warnings: st.warnings || [],
+                error: st.error,
+              }))
+            )
+          }
+          if (s.last_event === 'paused' || s.stop_reason === 'client_disconnected') {
+            setDisconnected(true)
+            setStreamError({ code: 'DISCONNECTED', message: '连接已断开，可重新接入' })
+          }
+        }
+      }
+    } catch {
+      // ignore
+    }
+  }, [project.project_id])
+
   useEffect(() => {
-    load()
-  }, [load])
+    load().then(() => checkActiveSession())
+  }, [load, checkActiveSession])
 
   /* ---------------------------------------------------------------- */
   /*  Auto-fill (single entry)                                        */
@@ -659,10 +702,11 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
       es.onerror = () => {
         if (eventSourceRef.current === es) {
-          setStreamStatus('error')
+          setDisconnected(true)
+          setStreamStatus('stopped')
           setStreamError({
             code: 'NETWORK_ERROR',
-            message: 'SSE 连接失败或已断开',
+            message: 'SSE 连接失败或已断开，可重新接入',
           })
           setAutoRunning(false)
           es.close()
@@ -751,6 +795,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setAutoRunning(true)
     setStreamError(null)
     setStreamStatus('running')
+    setDisconnected(false)
+    setRecovering(true)
     try {
       const res = await post<{ resumed: boolean; stream_url: string }>(
         `/projects/${project.project_id}/production/run-auto/sessions/${activeSessionId}/resume`,
@@ -758,6 +804,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       )
       if (!res.ok || !res.data?.resumed) {
         setAutoRunning(false)
+        setRecovering(false)
         return
       }
       // Reconnect to stream URL returned by resume
@@ -843,6 +890,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
           chapters_touched: data.chapters_touched || [],
         })
         setAutoRunning(false)
+        setRecovering(false)
         loadSessions()
         es.close()
         eventSourceRef.current = null
@@ -858,6 +906,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
           chapters_touched: data.chapters_touched || [],
         })
         setAutoRunning(false)
+        setRecovering(false)
         loadSessions()
         es.close()
         eventSourceRef.current = null
@@ -868,6 +917,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
         setStreamStatus('error')
         setStreamError({ code: data.error || 'UNKNOWN_ERROR', message: data.message || '运行失败' })
         setAutoRunning(false)
+        setRecovering(false)
         loadSessions()
         es.close()
         eventSourceRef.current = null
@@ -875,8 +925,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
       es.onerror = () => {
         if (eventSourceRef.current === es) {
-          setStreamStatus('error')
-          setStreamError({ code: 'NETWORK_ERROR', message: 'SSE 连接失败或已断开' })
+          setDisconnected(true)
+          setStreamStatus('stopped')
+          setStreamError({ code: 'NETWORK_ERROR', message: 'SSE 连接失败或已断开，可重新接入' })
           setAutoRunning(false)
           es.close()
           eventSourceRef.current = null
@@ -884,6 +935,35 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       }
     } catch {
       setAutoRunning(false)
+      setRecovering(false)
+    }
+  }
+
+  /* v5.5.9: Retry a failed step */
+  const handleRetryStep = async (stepNumber: number) => {
+    if (!activeSessionId) return
+    try {
+      const res = await post<{
+        retried: boolean
+        result: string
+        error?: string
+        warnings?: string[]
+      }>(
+        `/projects/${project.project_id}/production/run-auto/sessions/${activeSessionId}/retry-step`,
+        { step_number: stepNumber }
+      )
+      if (res.ok && res.data) {
+        setStreamSteps((prev) =>
+          prev.map((s) =>
+            s.step === stepNumber
+              ? { ...s, result: res.data!.result, error: res.data!.error, warnings: res.data!.warnings || [] }
+              : s
+          )
+        )
+        loadSessions()
+      }
+    } catch {
+      // ignore
     }
   }
 
@@ -1002,7 +1082,18 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   )}
                 </button>
 
-                {!autoRunning && streamStatus === 'stopped' && autoResult?.stop_reason === 'paused' && (
+                {!autoRunning && disconnected && (
+                  <button
+                    className="btn btn-secondary"
+                    onClick={handleResumeSession}
+                    disabled={filling || recovering}
+                    style={{ flex: '0 1 auto' }}
+                  >
+                    <Play size={14} /> {recovering ? '恢复中…' : '重新接入'}
+                  </button>
+                )}
+
+                {!autoRunning && streamStatus === 'stopped' && autoResult?.stop_reason === 'paused' && !disconnected && (
                   <button
                     className="btn btn-secondary"
                     onClick={handleResumeSession}
@@ -1013,7 +1104,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   </button>
                 )}
 
-                {!autoRunning && !(streamStatus === 'stopped' && autoResult?.stop_reason === 'paused') && (
+                {!autoRunning && !(streamStatus === 'stopped' && autoResult?.stop_reason === 'paused') && !disconnected && (
                   <>
                     <button
                       className="btn btn-secondary"
@@ -1287,6 +1378,17 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                               {step.warnings.join('; ')}
                             </div>
                           )}
+                          {step.result === 'failed' && activeSessionId && (
+                            <div style={{ marginTop: 6 }}>
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => handleRetryStep(step.step)}
+                                style={{ fontSize: 11 }}
+                              >
+                                <Wrench size={11} /> 重试此步骤
+                              </button>
+                            </div>
+                          )}
                         </div>
                       ))}
                     </div>
@@ -1418,6 +1520,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                         <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>
                           步数: {s.current_step} / {s.max_steps}
                           {s.stop_reason ? ` · ${tStopReason(s.stop_reason)}` : ''}
+                          {s.last_event ? ` · 最近: ${s.last_event}` : ''}
                         </div>
                         <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
                           {s.created_at}

@@ -77,22 +77,33 @@ class AutoRunRepositoryMixin:
     def update_auto_run_session_status(
         self,
         session_id: str,
-        status: str,
+        status: str | None,
         stop_reason: str | None = None,
         current_step: int | None = None,
+        last_event: str | None = None,
     ) -> bool:
-        """Update session status and optional fields."""
+        """Update session status and optional fields.
+
+        status can be None to avoid overwriting the current status (used when
+        the generator only wants to update last_event / current_step).
+        """
         conn = self._conn()
         try:
-            sets = ["status = ?", "updated_at = datetime('now','+8 hours')"]
-            params: list = [status]
+            sets = ["updated_at = datetime('now','+8 hours')"]
+            params: list = []
 
+            if status is not None:
+                sets.append("status = ?")
+                params.append(status)
             if stop_reason is not None:
                 sets.append("stop_reason = ?")
                 params.append(stop_reason)
             if current_step is not None:
                 sets.append("current_step = ?")
                 params.append(current_step)
+            if last_event is not None:
+                sets.append("last_event = ?")
+                params.append(last_event)
             if status in ("stopped", "completed", "failed", "cancelled"):
                 sets.append("ended_at = datetime('now','+8 hours')")
 
@@ -101,6 +112,43 @@ class AutoRunRepositoryMixin:
             cursor = conn.execute(sql, params)
             conn.commit()
             return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def update_auto_run_session_max_steps(
+        self,
+        session_id: str,
+        max_steps: int,
+    ) -> bool:
+        """Update session max_steps (used on resume)."""
+        conn = self._conn()
+        try:
+            cursor = conn.execute(
+                """
+                UPDATE auto_run_sessions
+                SET max_steps = ?, updated_at = datetime('now','+8 hours')
+                WHERE id = ?
+                """,
+                (max_steps, session_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def get_active_auto_run_session(self, project_id: str) -> dict | None:
+        """Get the most recent running or paused session for a project."""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                """
+                SELECT * FROM auto_run_sessions
+                WHERE project_id = ? AND status IN ('running', 'paused')
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+            return row_to_dict(row)
         finally:
             conn.close()
 

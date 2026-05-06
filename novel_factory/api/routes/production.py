@@ -926,6 +926,30 @@ async def _auto_run_generator(
         stop_reason = ""
         final_next_action: dict | None = None
 
+        # v5.5.9: Resume state from persisted session steps
+        if session_id:
+            existing_steps = repo.list_auto_run_steps(session_id)
+            if existing_steps:
+                steps = [
+                    {
+                        "step": s["step_number"],
+                        "action": s["action"],
+                        "label": s["label"],
+                        "target_chapter": s.get("target_chapter"),
+                        "result": s.get("result", "unknown"),
+                        "warnings": s.get("warnings", []),
+                        "error": s.get("error"),
+                    }
+                    for s in existing_steps
+                ]
+                step_count = len(steps)
+                for s in steps:
+                    if s.get("target_chapter") is not None:
+                        chapters_touched.add(s["target_chapter"])
+            # Recompute active_chapter from project state in case it advanced
+            # while the session was paused/disconnected.
+            active_chapter = project.get("current_chapter", active_chapter)
+
         yield {
             "event": "auto_run_started",
             "data": {
@@ -937,6 +961,10 @@ async def _auto_run_generator(
                 "stop_on_review": body.stop_on_review,
             },
         }
+        if session_id:
+            repo.update_auto_run_session_status(
+                session_id, None, current_step=step_count, last_event="auto_run_started"
+            )
 
         while step_count < body.max_steps:
             # v5.5.8: Cooperative pause/cancel check
@@ -969,7 +997,7 @@ async def _auto_run_generator(
                     }
                     return
                 repo.update_auto_run_session_status(
-                    session_id, "running", current_step=step_count
+                    session_id, None, current_step=step_count
                 )
 
             # Get current state using active_chapter for range-aware decisions
@@ -1030,6 +1058,10 @@ async def _auto_run_generator(
                         "chapters_touched": sorted(list(chapters_touched)),
                     },
                 }
+                if session_id:
+                    repo.update_auto_run_session_status(
+                        session_id, None, current_step=step_count, last_event="step_completed"
+                    )
                 break
 
             # P2-2: Stop if active_chapter itself is outside the requested range.
@@ -1072,6 +1104,10 @@ async def _auto_run_generator(
                         "chapters_touched": sorted(list(chapters_touched)),
                     },
                 }
+                if session_id:
+                    repo.update_auto_run_session_status(
+                        session_id, None, current_step=step_count, last_event="step_completed"
+                    )
                 stop_reason = "dry_run_preview"
                 break
 
@@ -1096,6 +1132,10 @@ async def _auto_run_generator(
                     "target_chapter": effective_target,
                 },
             }
+            if session_id:
+                repo.update_auto_run_session_status(
+                    session_id, None, current_step=step_count, last_event="step_started"
+                )
 
             # Execute the action
             step_result = await _execute_auto_step(
@@ -1147,6 +1187,7 @@ async def _auto_run_generator(
                         "chapters_touched": sorted(list(chapters_touched)),
                     },
                 }
+                # v5.5.9: last_event updated via status update below
                 yield {
                     "event": "auto_run_stopped",
                     "data": {
@@ -1183,6 +1224,9 @@ async def _auto_run_generator(
                     result=step_result.get("result", "unknown"),
                     warnings=step_result.get("warnings", []),
                     error=step_result.get("error"),
+                )
+                repo.update_auto_run_session_status(
+                    session_id, None, current_step=step_count, last_event="step_completed"
                 )
 
             # Check for unsupported action
@@ -1390,8 +1434,17 @@ async def run_auto_stream(
     )
 
     async def event_stream():
-        async for event in _auto_run_generator(request, project_id, body, session_id=session_id):
-            yield f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
+        import asyncio
+        try:
+            async for event in _auto_run_generator(request, project_id, body, session_id=session_id):
+                yield f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
+        except (asyncio.CancelledError, GeneratorExit):
+            # v5.5.9: Client disconnected — mark session as paused so user can resume
+            if session_id:
+                repo.update_auto_run_session_status(
+                    session_id, "paused", stop_reason="client_disconnected"
+                )
+            raise
 
     return StreamingResponse(
         event_stream(),
@@ -1746,13 +1799,20 @@ async def pause_auto_run_session(
         return error_response("INTERNAL_ERROR", f"暂停会话失败: {str(e)}")
 
 
+class ResumeRequest(BaseModel):
+    """Request to resume a paused session."""
+
+    extra_steps: int = 5
+
+
 @router.post("/projects/{project_id}/production/run-auto/sessions/{session_id}/resume")
 async def resume_auto_run_session(
-    request: Request, project_id: str, session_id: str
+    request: Request, project_id: str, session_id: str, body: ResumeRequest | None = None
 ) -> EnvelopeResponse:
     """Resume a paused auto-run session.
 
     Returns a stream_url for the client to reconnect and continue execution.
+    v5.5.9: Supports extra_steps to extend max_steps on resume.
     """
     from ..deps import get_repo
 
@@ -1763,8 +1823,12 @@ async def resume_auto_run_session(
         if not session or session.get("project_id") != project_id:
             return error_response("SESSION_NOT_FOUND", "会话不存在")
 
-        if session.get("status") not in ("paused", "stopped", "failed"):
+        if session.get("status") not in ("paused", "stopped", "failed", "dry_run"):
             return error_response("INVALID_STATE", f"当前状态 '{session.get('status')}' 不可继续")
+
+        extra = body.extra_steps if body else 5
+        new_max_steps = session.get("max_steps", 10) + extra
+        repo.update_auto_run_session_max_steps(session_id, new_max_steps)
 
         # Reset to running so the stream endpoint can pick it up
         repo.update_auto_run_session_status(session_id, "running")
@@ -1773,7 +1837,7 @@ async def resume_auto_run_session(
             f"/api/projects/{project_id}/production/run-auto/stream"
             f"?session_id={session_id}"
             f"&confirm=true"
-            f"&max_steps={session.get('max_steps', 10)}"
+            f"&max_steps={new_max_steps}"
             f"&dry_run={bool(session.get('dry_run'))}"
             f"&stop_on_review={bool(session.get('stop_on_review', 1))}"
         )
@@ -1789,6 +1853,35 @@ async def resume_auto_run_session(
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"恢复会话失败: {str(e)}")
+
+
+@router.get("/projects/{project_id}/production/run-auto/active-session")
+async def get_active_auto_run_session(request: Request, project_id: str) -> EnvelopeResponse:
+    """Get the active (running or paused) auto-run session for a project.
+
+    v5.5.9: Used by frontend to recover session state after refresh.
+    """
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        session = repo.get_active_auto_run_session(project_id)
+        if not session:
+            return envelope_response({"active": False})
+
+        steps = repo.list_auto_run_steps(session["id"])
+        return envelope_response({
+            "active": True,
+            "session": session,
+            "steps": steps,
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"获取活跃会话失败: {str(e)}")
 
 
 @router.post("/projects/{project_id}/production/run-auto/sessions/{session_id}/retry-step")

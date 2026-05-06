@@ -61,6 +61,7 @@
 | `novel-factory-v5.5.6-production-command-center-ui-refresh-spec.md` | v5.5.6 生产指挥台 UI 刷新、合并主面板、中文映射、步骤时间线、错误详情 | 开发 Agent、质量验收 |
 | `novel-factory-v5.5.7-realtime-production-monitor-spec.md` | v5.5.7 实时监控/streaming UI、SSE endpoint、EventSource 实时追加、停止监听 | 开发 Agent、质量验收 |
 | `novel-factory-v5.5.8-auto-run-control-loop-spec.md` | v5.5.8 自动生产控制循环、session 持久化、pause/resume/cancel/retry、协作式控制 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.9-auto-run-resilience-spec.md` | v5.5.9 自动生产恢复闭环、刷新恢复、SSE 断线重连、session health、失败步精准重试 | 开发 Agent、质量验收 |
 | `novel-factory-api-contract-guidelines.md` | API 设计规范：Resource API / Action API 边界、POST body-style、兼容迁移策略 | 开发 Agent、代码评审、API 验收 |
 
 ## v5.1.1 本地启动与验收
@@ -217,7 +218,7 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.5.5 Autonomous Production Runner**，测试基线 **1769/1769 passed**（含 v5.5.5 专项 14 passed）。
+当前开发基线是 **v5.5.8 Auto-Run Control Loop**，测试基线 **1792/1792 passed**（含 v5.5.8 专项 15 passed）。
 
 **v5.3 已实现能力**（部分，进行中）：
 
