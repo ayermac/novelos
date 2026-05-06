@@ -57,6 +57,8 @@
 | `novel-factory-v5.5.2-run-health-dashboard-spec.md` | v5.5.2 运行健康面板、异常运行总览、批量标记阻塞 | 开发 Agent、质量验收 |
 | `novel-factory-v5.5.3-autonomous-production-loop-spec.md` | v5.5.3 自主生产循环、下一步动作 API、AI 自动补齐、Arc 规划、创世重新定位 | 开发 Agent、质量验收 |
 | `novel-factory-v5.5.4-real-llm-autonomous-planning-spec.md` | v5.5.4 真实 LLM 自主规划、配置错误显式化、只补缺失项、Arc range 幂等 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.5-autonomous-production-runner-spec.md` | v5.5.5 自主生产运行器、自动执行生产步骤、步数限制、dry-run、安全防护 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.6-production-command-center-ui-refresh-spec.md` | v5.5.6 生产指挥台 UI 刷新、合并主面板、中文映射、步骤时间线、错误详情 | 开发 Agent、质量验收 |
 | `novel-factory-api-contract-guidelines.md` | API 设计规范：Resource API / Action API 边界、POST body-style、兼容迁移策略 | 开发 Agent、代码评审、API 验收 |
 
 ## v5.1.1 本地启动与验收
