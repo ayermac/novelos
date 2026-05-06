@@ -200,6 +200,13 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         )
         return cursor.fetchone() is not None
 
+    if name == "027_v5_5_8_auto_run_sessions":
+        # 027 adds auto_run_sessions and auto_run_steps tables
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='auto_run_sessions'"
+        )
+        return cursor.fetchone() is not None
+
     return False
 
 

@@ -34,6 +34,7 @@ from .repositories.instruction import InstructionRepositoryMixin
 from .repositories.genesis import GenesisRepositoryMixin
 from .repositories.memory_update import MemoryUpdateRepositoryMixin
 from .repositories.story_fact import StoryFactRepositoryMixin
+from .repositories.auto_run import AutoRunRepositoryMixin
 
 # Backward-compatible re-exports
 from ..validators.chapter_checker import count_words  # noqa: F401
@@ -65,6 +66,7 @@ class Repository(
     GenesisRepositoryMixin,
     MemoryUpdateRepositoryMixin,
     StoryFactRepositoryMixin,
+    AutoRunRepositoryMixin,
     BaseRepository,
 ):
     """Backward-compatible repository facade combining all domain mixins."""

@@ -833,10 +833,16 @@ async def _auto_run_generator(
     request: Request,
     project_id: str,
     body: RunAutoRequest,
+    session_id: str | None = None,
 ) -> AsyncGenerator[dict, None]:
     """Async generator that yields auto-run events for both POST and SSE.
 
     Yields dicts with keys: event (str), data (dict).
+
+    Args:
+        session_id: Optional auto-run session id. When provided, the generator
+            checks session status at each step (cooperative pause/cancel) and
+            persists step records to the database.
     """
     from ..deps import get_repo, get_llm_mode, get_settings
 
@@ -856,6 +862,20 @@ async def _auto_run_generator(
                 },
             }
             return
+
+        # Validate session belongs to project when provided
+        if session_id:
+            session = repo.get_auto_run_session(session_id)
+            if not session or session.get("project_id") != project_id:
+                yield {
+                    "event": "auto_run_error",
+                    "data": {
+                        "project_id": project_id,
+                        "error": "SESSION_NOT_FOUND",
+                        "message": f"会话 '{session_id}' 不存在或不属于该项目",
+                    },
+                }
+                return
 
         if not body.confirm:
             yield {
@@ -919,6 +939,39 @@ async def _auto_run_generator(
         }
 
         while step_count < body.max_steps:
+            # v5.5.8: Cooperative pause/cancel check
+            if session_id:
+                session = repo.get_auto_run_session(session_id)
+                if session and session.get("status") == "cancelled":
+                    yield {
+                        "event": "auto_run_stopped",
+                        "data": {
+                            "project_id": project_id,
+                            "stop_reason": "cancelled",
+                            "steps_executed": step_count,
+                            "steps": steps,
+                            "chapters_touched": sorted(list(chapters_touched)),
+                            "final_next_action": final_next_action,
+                        },
+                    }
+                    return
+                if session and session.get("status") == "paused":
+                    yield {
+                        "event": "auto_run_stopped",
+                        "data": {
+                            "project_id": project_id,
+                            "stop_reason": "paused",
+                            "steps_executed": step_count,
+                            "steps": steps,
+                            "chapters_touched": sorted(list(chapters_touched)),
+                            "final_next_action": final_next_action,
+                        },
+                    }
+                    return
+                repo.update_auto_run_session_status(
+                    session_id, "running", current_step=step_count
+                )
+
             # Get current state using active_chapter for range-aware decisions
             health = _build_health(repo, project_id, active_chapter)
             next_action = _determine_next_action(repo, project_id, health, active_chapter)
@@ -998,6 +1051,12 @@ async def _auto_run_generator(
                     "result": "dry_run",
                     "warnings": [],
                 })
+                # v5.5.8: Persist dry-run step
+                if session_id:
+                    repo.create_auto_run_step(
+                        session_id, step_count, next_action["key"], next_action["label"], effective_target
+                    )
+                    repo.complete_auto_run_step(session_id, step_count, "dry_run", warnings=[])
                 yield {
                     "event": "step_completed",
                     "data": {
@@ -1015,6 +1074,16 @@ async def _auto_run_generator(
                 }
                 stop_reason = "dry_run_preview"
                 break
+
+            # v5.5.8: Persist step start
+            if session_id:
+                repo.create_auto_run_step(
+                    session_id,
+                    step_number=step_count + 1,
+                    action=next_action["key"],
+                    label=next_action["label"],
+                    target_chapter=effective_target,
+                )
 
             # Yield step_started
             yield {
@@ -1053,6 +1122,16 @@ async def _auto_run_generator(
 
             # Check for step failure — P2-3: return AUTO_RUN_STEP_FAILED error
             if step_result.get("result") == "failed":
+                # v5.5.8: Persist step failure
+                if session_id:
+                    repo.complete_auto_run_step(
+                        session_id, step_count, "failed",
+                        warnings=step_result.get("warnings", []),
+                        error=step_result.get("error"),
+                    )
+                    repo.update_auto_run_session_status(
+                        session_id, "failed", stop_reason=STOP_REASON_FAILED, current_step=step_count
+                    )
                 yield {
                     "event": "step_failed",
                     "data": {
@@ -1097,6 +1176,15 @@ async def _auto_run_generator(
                 },
             }
 
+            # v5.5.8: Persist step completion
+            if session_id:
+                repo.complete_auto_run_step(
+                    session_id, step_count,
+                    result=step_result.get("result", "unknown"),
+                    warnings=step_result.get("warnings", []),
+                    error=step_result.get("error"),
+                )
+
             # Check for unsupported action
             if step_result.get("result") == "unsupported":
                 stop_reason = STOP_REASON_UNSUPPORTED
@@ -1135,6 +1223,13 @@ async def _auto_run_generator(
             final_next_action = _determine_next_action(repo, project_id, health, current_chapter)
 
         final_event_name = "auto_run_stopped" if status == "stopped" else "auto_run_completed"
+
+        # v5.5.8: Update session final state
+        if session_id:
+            repo.update_auto_run_session_status(
+                session_id, status, stop_reason=stop_reason, current_step=step_count
+            )
+
         yield {
             "event": final_event_name,
             "data": {
@@ -1149,6 +1244,11 @@ async def _auto_run_generator(
         }
 
     except Exception as e:
+        # v5.5.8: Mark session as failed on unexpected error
+        if session_id:
+            repo.update_auto_run_session_status(
+                session_id, "failed", stop_reason="INTERNAL_ERROR", current_step=step_count
+            )
         yield {
             "event": "auto_run_error",
             "data": {
@@ -1236,12 +1336,49 @@ async def run_auto_stream(
     dry_run: bool = False,
     stop_on_review: bool = True,
     confirm: bool = False,
+    session_id: str | None = None,
 ) -> StreamingResponse:
     """v5.5.7: Real-time production monitor via SSE.
 
     Streams auto-run events as they happen.
+    v5.5.8: Supports session_id for control-loop integration.
     """
     import json
+    from ..deps import get_repo
+
+    repo = get_repo(request)
+
+    # Validate session when provided
+    if session_id:
+        session = repo.get_auto_run_session(session_id)
+        if not session or session.get("project_id") != project_id:
+            async def error_stream():
+                err = {
+                    "event": "auto_run_error",
+                    "data": {
+                        "project_id": project_id,
+                        "error": "SESSION_NOT_FOUND",
+                        "message": f"会话 '{session_id}' 不存在或不属于该项目",
+                    },
+                }
+                yield f"event: {err['event']}\ndata: {json.dumps(err['data'], ensure_ascii=False)}\n\n"
+            return StreamingResponse(error_stream(), media_type="text/event-stream")
+
+        # Do NOT auto-resume paused sessions here; resume endpoint handles that.
+        if session.get("status") == "paused":
+            async def paused_stream():
+                evt = {
+                    "event": "auto_run_stopped",
+                    "data": {
+                        "project_id": project_id,
+                        "stop_reason": "paused",
+                        "steps_executed": session.get("current_step", 0),
+                        "steps": [],
+                        "chapters_touched": [],
+                    },
+                }
+                yield f"event: {evt['event']}\ndata: {json.dumps(evt['data'], ensure_ascii=False)}\n\n"
+            return StreamingResponse(paused_stream(), media_type="text/event-stream")
 
     body = RunAutoRequest(
         chapter_start=chapter_start,
@@ -1253,7 +1390,7 @@ async def run_auto_stream(
     )
 
     async def event_stream():
-        async for event in _auto_run_generator(request, project_id, body):
+        async for event in _auto_run_generator(request, project_id, body, session_id=session_id):
             yield f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
@@ -1443,3 +1580,275 @@ async def _execute_auto_step(
         result["result"] = "failed"
         result["error"] = str(e)[:200]
         return result
+
+
+# ---------------------------------------------------------------------------
+# v5.5.8: Auto-Run Control Loop — Session Management
+# ---------------------------------------------------------------------------
+
+
+class RetryStepRequest(BaseModel):
+    """Request to retry a failed step."""
+
+    step_number: int
+
+
+@router.post("/projects/{project_id}/production/run-auto/start")
+async def run_auto_start(request: Request, project_id: str, body: RunAutoRequest) -> EnvelopeResponse:
+    """Create an auto-run session and return session info + stream URL.
+
+    The actual execution happens via the SSE stream endpoint using the
+    returned session_id.
+    """
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        if not body.confirm:
+            return error_response("CONFIRM_REQUIRED", "请设置 confirm=true 确认执行自动生产")
+
+        session = repo.create_auto_run_session(
+            project_id=project_id,
+            chapter_start=body.chapter_start,
+            chapter_end=body.chapter_end,
+            max_steps=body.max_steps,
+            dry_run=body.dry_run,
+            stop_on_review=body.stop_on_review,
+        )
+
+        stream_url = (
+            f"/api/projects/{project_id}/production/run-auto/stream"
+            f"?session_id={session['id']}"
+            f"&confirm=true"
+            f"&max_steps={body.max_steps}"
+            f"&dry_run={str(body.dry_run).lower()}"
+            f"&stop_on_review={str(body.stop_on_review).lower()}"
+        )
+        if body.chapter_start is not None:
+            stream_url += f"&chapter_start={body.chapter_start}"
+        if body.chapter_end is not None:
+            stream_url += f"&chapter_end={body.chapter_end}"
+
+        return envelope_response({
+            "session_id": session["id"],
+            "project_id": project_id,
+            "status": session["status"],
+            "stream_url": stream_url,
+            "config": {
+                "chapter_start": body.chapter_start,
+                "chapter_end": body.chapter_end,
+                "max_steps": body.max_steps,
+                "dry_run": body.dry_run,
+                "stop_on_review": body.stop_on_review,
+            },
+        })
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"创建自动生产会话失败: {str(e)}")
+
+
+@router.get("/projects/{project_id}/production/run-auto/sessions")
+async def list_auto_run_sessions(request: Request, project_id: str) -> EnvelopeResponse:
+    """List recent auto-run sessions for a project."""
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+        sessions = repo.list_auto_run_sessions(project_id, limit=20)
+        # Light serialization: exclude heavy fields
+        return envelope_response({
+            "sessions": sessions,
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"获取会话列表失败: {str(e)}")
+
+
+@router.get("/projects/{project_id}/production/run-auto/sessions/{session_id}")
+async def get_auto_run_session_detail(
+    request: Request, project_id: str, session_id: str
+) -> EnvelopeResponse:
+    """Get a single auto-run session with its steps."""
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        session = repo.get_auto_run_session(session_id)
+        if not session or session.get("project_id") != project_id:
+            return error_response("SESSION_NOT_FOUND", "会话不存在")
+
+        steps = repo.list_auto_run_steps(session_id)
+
+        return envelope_response({
+            "session": session,
+            "steps": steps,
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"获取会话详情失败: {str(e)}")
+
+
+@router.post("/projects/{project_id}/production/run-auto/sessions/{session_id}/cancel")
+async def cancel_auto_run_session(
+    request: Request, project_id: str, session_id: str
+) -> EnvelopeResponse:
+    """Cancel a running auto-run session.
+
+    Cooperative cancel: the generator checks status at the next step boundary
+    and stops. This does not interrupt an in-flight LLM call.
+    """
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        session = repo.get_auto_run_session(session_id)
+        if not session or session.get("project_id") != project_id:
+            return error_response("SESSION_NOT_FOUND", "会话不存在")
+
+        if session.get("status") not in ("running", "paused"):
+            return error_response("INVALID_STATE", f"当前状态 '{session.get('status')}' 不可取消")
+
+        repo.update_auto_run_session_status(session_id, "cancelled", stop_reason="cancelled")
+        return envelope_response({"cancelled": True, "session_id": session_id})
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"取消会话失败: {str(e)}")
+
+
+@router.post("/projects/{project_id}/production/run-auto/sessions/{session_id}/pause")
+async def pause_auto_run_session(
+    request: Request, project_id: str, session_id: str
+) -> EnvelopeResponse:
+    """Pause a running auto-run session.
+
+    Cooperative pause: the generator checks status at the next step boundary
+    and yields a stopped event with stop_reason='paused'.
+    """
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        session = repo.get_auto_run_session(session_id)
+        if not session or session.get("project_id") != project_id:
+            return error_response("SESSION_NOT_FOUND", "会话不存在")
+
+        if session.get("status") != "running":
+            return error_response("INVALID_STATE", f"当前状态 '{session.get('status')}' 不可暂停")
+
+        repo.update_auto_run_session_status(session_id, "paused")
+        return envelope_response({"paused": True, "session_id": session_id})
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"暂停会话失败: {str(e)}")
+
+
+@router.post("/projects/{project_id}/production/run-auto/sessions/{session_id}/resume")
+async def resume_auto_run_session(
+    request: Request, project_id: str, session_id: str
+) -> EnvelopeResponse:
+    """Resume a paused auto-run session.
+
+    Returns a stream_url for the client to reconnect and continue execution.
+    """
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        session = repo.get_auto_run_session(session_id)
+        if not session or session.get("project_id") != project_id:
+            return error_response("SESSION_NOT_FOUND", "会话不存在")
+
+        if session.get("status") not in ("paused", "stopped", "failed"):
+            return error_response("INVALID_STATE", f"当前状态 '{session.get('status')}' 不可继续")
+
+        # Reset to running so the stream endpoint can pick it up
+        repo.update_auto_run_session_status(session_id, "running")
+
+        stream_url = (
+            f"/api/projects/{project_id}/production/run-auto/stream"
+            f"?session_id={session_id}"
+            f"&confirm=true"
+            f"&max_steps={session.get('max_steps', 10)}"
+            f"&dry_run={bool(session.get('dry_run'))}"
+            f"&stop_on_review={bool(session.get('stop_on_review', 1))}"
+        )
+        if session.get("chapter_start") is not None:
+            stream_url += f"&chapter_start={session['chapter_start']}"
+        if session.get("chapter_end") is not None:
+            stream_url += f"&chapter_end={session['chapter_end']}"
+
+        return envelope_response({
+            "resumed": True,
+            "session_id": session_id,
+            "stream_url": stream_url,
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"恢复会话失败: {str(e)}")
+
+
+@router.post("/projects/{project_id}/production/run-auto/sessions/{session_id}/retry-step")
+async def retry_auto_run_step(
+    request: Request, project_id: str, session_id: str, body: RetryStepRequest
+) -> EnvelopeResponse:
+    """Retry a specific failed step from a session.
+
+    Re-executes the action associated with the given step_number using the
+    current project state. Does not bypass safety gates or auto-publish.
+    """
+    from ..deps import get_repo, get_llm_mode, get_settings
+
+    try:
+        repo = get_repo(request)
+        llm_mode = get_llm_mode(request)
+        settings = get_settings(request)
+
+        session = repo.get_auto_run_session(session_id)
+        if not session or session.get("project_id") != project_id:
+            return error_response("SESSION_NOT_FOUND", "会话不存在")
+
+        steps = repo.list_auto_run_steps(session_id)
+        target_step = None
+        for s in steps:
+            if s.get("step_number") == body.step_number:
+                target_step = s
+                break
+
+        if not target_step:
+            return error_response("STEP_NOT_FOUND", f"步骤 {body.step_number} 不存在")
+
+        if target_step.get("result") != "failed":
+            return error_response("INVALID_STEP", "仅可重试失败的步骤")
+
+        # Build the action dict from the persisted step
+        action = {
+            "key": target_step.get("action", ""),
+            "label": target_step.get("label", ""),
+            "target_chapter": target_step.get("target_chapter"),
+        }
+
+        # Re-execute using the same _execute_auto_step helper
+        ch_start = session.get("chapter_start") or 1
+        ch_end = session.get("chapter_end") or (ch_start + 9)
+        project = repo.get_project(project_id)
+        current_chapter = project.get("current_chapter", 1) if project else 1
+
+        step_result = await _execute_auto_step(
+            request, repo, settings, llm_mode, project_id, action, ch_start, ch_end, current_chapter
+        )
+
+        return envelope_response({
+            "retried": True,
+            "session_id": session_id,
+            "step_number": body.step_number,
+            "action": action["key"],
+            "result": step_result.get("result"),
+            "error": step_result.get("error"),
+            "warnings": step_result.get("warnings", []),
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"重试步骤失败: {str(e)}")

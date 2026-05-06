@@ -118,6 +118,21 @@ interface AutoRunEventData {
   message?: string
 }
 
+interface AutoRunSession {
+  id: string
+  project_id: string
+  status: string
+  stop_reason?: string
+  current_step: number
+  chapter_start?: number
+  chapter_end?: number
+  max_steps: number
+  dry_run: number
+  created_at: string
+  updated_at: string
+  ended_at?: string
+}
+
 interface Props {
   project: ProjectSummary
   stats: WorkspaceStats
@@ -209,6 +224,12 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const [streamError, setStreamError] = useState<{ code: string; message: string } | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
 
+  /* v5.5.8: Session control state */
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
+  const [sessions, setSessions] = useState<AutoRunSession[]>([])
+  const [showHistory, setShowHistory] = useState(false)
+  const [sessionLoading, setSessionLoading] = useState(false)
+
   /* Reset auto-run state when project changes (P2-1) */
   useEffect(() => {
     autoConfigInitialized.current = false
@@ -219,6 +240,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setStreamError(null)
     setAutoConfig({ maxSteps: 5, chapterStart: 1, chapterEnd: 10, stopOnReview: true })
     setProductionNext(null) // Clear stale productionNext to prevent race condition
+    setActiveSessionId(null)
+    setShowHistory(false)
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
       eventSourceRef.current = null
@@ -450,7 +473,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   }
 
   /* ---------------------------------------------------------------- */
-  /*  Auto production runner (SSE stream)                             */
+  /*  Auto production runner (SSE stream) v5.5.8 with session         */
   /* ---------------------------------------------------------------- */
 
   const handleRunAutoStream = async (dryRun: boolean = false) => {
@@ -473,157 +496,186 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setAutoError(null)
     setAutoRunning(true)
 
-    const params = new URLSearchParams({
-      chapter_start: String(autoConfig.chapterStart),
-      chapter_end: String(autoConfig.chapterEnd),
-      max_steps: String(autoConfig.maxSteps),
-      stop_on_review: String(autoConfig.stopOnReview),
-      dry_run: String(dryRun),
-      confirm: 'true',
-    })
-
-    const url = `/api/projects/${project.project_id}/production/run-auto/stream?${params.toString()}`
-    const es = new EventSource(url)
-    eventSourceRef.current = es
-
-    es.addEventListener('auto_run_started', () => {
-      // stream is running
-    })
-
-    es.addEventListener('step_started', (e) => {
-      const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
-      setStreamSteps((prev) => [
-        ...prev,
-        {
-          step: data.step!,
-          action: data.action!,
-          label: data.label!,
-          target_chapter: data.target_chapter,
-          result: 'running',
-          warnings: [],
-        },
-      ])
-    })
-
-    es.addEventListener('step_completed', (e) => {
-      const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
-      setStreamSteps((prev) => {
-        const exists = prev.find((s) => s.step === data.step)
-        if (exists) {
-          return prev.map((s) =>
-            s.step === data.step
-              ? {
-                  ...s,
-                  result: data.result!,
-                  warnings: data.warnings || [],
-                  error: data.error || undefined,
-                }
-              : s
-          )
-        }
-        return [
-          ...prev,
-          {
-            step: data.step!,
-            action: data.action!,
-            label: data.label!,
-            target_chapter: data.target_chapter,
-            result: data.result!,
-            warnings: data.warnings || [],
-            error: data.error || undefined,
-          },
-        ]
+    try {
+      // v5.5.8: Create session first
+      const startRes = await post<{
+        session_id: string
+        stream_url: string
+        status: string
+      }>(`/projects/${project.project_id}/production/run-auto/start`, {
+        max_steps: autoConfig.maxSteps,
+        chapter_start: autoConfig.chapterStart,
+        chapter_end: autoConfig.chapterEnd,
+        stop_on_review: autoConfig.stopOnReview,
+        dry_run: dryRun,
+        confirm: true,
       })
-    })
 
-    es.addEventListener('step_failed', (e) => {
-      const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
-      setStreamSteps((prev) => {
-        const exists = prev.find((s) => s.step === data.step)
-        if (exists) {
-          return prev.map((s) =>
-            s.step === data.step
-              ? {
-                  ...s,
-                  result: 'failed',
-                  warnings: data.warnings || [],
-                  error: data.error || undefined,
-                }
-              : s
-          )
-        }
-        return [
-          ...prev,
-          {
-            step: data.step!,
-            action: data.action!,
-            label: data.label!,
-            target_chapter: data.target_chapter,
-            result: 'failed',
-            warnings: data.warnings || [],
-            error: data.error || undefined,
-          },
-        ]
-      })
-    })
-
-    es.addEventListener('auto_run_stopped', (e) => {
-      const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
-      setStreamStatus('stopped')
-      setAutoResult({
-        status: data.status || 'stopped',
-        steps: data.steps || [],
-        stop_reason: data.stop_reason || '',
-        chapters_touched: data.chapters_touched || [],
-      })
-      setAutoRunning(false)
-      if (!dryRun) {
-        load()
-      }
-      es.close()
-      eventSourceRef.current = null
-    })
-
-    es.addEventListener('auto_run_completed', (e) => {
-      const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
-      setStreamStatus('completed')
-      setAutoResult({
-        status: data.status || 'completed',
-        steps: data.steps || [],
-        stop_reason: data.stop_reason || '',
-        chapters_touched: data.chapters_touched || [],
-      })
-      setAutoRunning(false)
-      if (!dryRun) {
-        load()
-      }
-      es.close()
-      eventSourceRef.current = null
-    })
-
-    es.addEventListener('auto_run_error', (e) => {
-      const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
-      setStreamStatus('error')
-      setStreamError({
-        code: data.error || 'UNKNOWN_ERROR',
-        message: data.message || '运行失败',
-      })
-      setAutoRunning(false)
-      es.close()
-      eventSourceRef.current = null
-    })
-
-    es.onerror = () => {
-      if (eventSourceRef.current === es) {
-        setStreamStatus('error')
-        setStreamError({
-          code: 'NETWORK_ERROR',
-          message: 'SSE 连接失败或已断开',
+      if (!startRes.ok || !startRes.data) {
+        setAutoError({
+          code: startRes.error?.code || 'START_FAILED',
+          message: startRes.error?.message || '启动失败',
         })
         setAutoRunning(false)
+        setStreamStatus('error')
+        return
+      }
+
+      const { session_id, stream_url } = startRes.data
+      setActiveSessionId(session_id)
+
+      const es = new EventSource(stream_url)
+      eventSourceRef.current = es
+
+      es.addEventListener('auto_run_started', () => {
+        // stream is running
+      })
+
+      es.addEventListener('step_started', (e) => {
+        const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+        setStreamSteps((prev) => [
+          ...prev,
+          {
+            step: data.step!,
+            action: data.action!,
+            label: data.label!,
+            target_chapter: data.target_chapter,
+            result: 'running',
+            warnings: [],
+          },
+        ])
+      })
+
+      es.addEventListener('step_completed', (e) => {
+        const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+        setStreamSteps((prev) => {
+          const exists = prev.find((s) => s.step === data.step)
+          if (exists) {
+            return prev.map((s) =>
+              s.step === data.step
+                ? {
+                    ...s,
+                    result: data.result!,
+                    warnings: data.warnings || [],
+                    error: data.error || undefined,
+                  }
+                : s
+            )
+          }
+          return [
+            ...prev,
+            {
+              step: data.step!,
+              action: data.action!,
+              label: data.label!,
+              target_chapter: data.target_chapter,
+              result: data.result!,
+              warnings: data.warnings || [],
+              error: data.error || undefined,
+            },
+          ]
+        })
+      })
+
+      es.addEventListener('step_failed', (e) => {
+        const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+        setStreamSteps((prev) => {
+          const exists = prev.find((s) => s.step === data.step)
+          if (exists) {
+            return prev.map((s) =>
+              s.step === data.step
+                ? {
+                    ...s,
+                    result: 'failed',
+                    warnings: data.warnings || [],
+                    error: data.error || undefined,
+                  }
+                : s
+            )
+          }
+          return [
+            ...prev,
+            {
+              step: data.step!,
+              action: data.action!,
+              label: data.label!,
+              target_chapter: data.target_chapter,
+              result: 'failed',
+              warnings: data.warnings || [],
+              error: data.error || undefined,
+            },
+          ]
+        })
+      })
+
+      es.addEventListener('auto_run_stopped', (e) => {
+        const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+        setStreamStatus('stopped')
+        setAutoResult({
+          status: data.status || 'stopped',
+          steps: data.steps || [],
+          stop_reason: data.stop_reason || '',
+          chapters_touched: data.chapters_touched || [],
+        })
+        setAutoRunning(false)
+        if (!dryRun) {
+          load()
+        }
+        loadSessions()
         es.close()
         eventSourceRef.current = null
+      })
+
+      es.addEventListener('auto_run_completed', (e) => {
+        const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+        setStreamStatus('completed')
+        setAutoResult({
+          status: data.status || 'completed',
+          steps: data.steps || [],
+          stop_reason: data.stop_reason || '',
+          chapters_touched: data.chapters_touched || [],
+        })
+        setAutoRunning(false)
+        if (!dryRun) {
+          load()
+        }
+        loadSessions()
+        es.close()
+        eventSourceRef.current = null
+      })
+
+      es.addEventListener('auto_run_error', (e) => {
+        const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+        setStreamStatus('error')
+        setStreamError({
+          code: data.error || 'UNKNOWN_ERROR',
+          message: data.message || '运行失败',
+        })
+        setAutoRunning(false)
+        loadSessions()
+        es.close()
+        eventSourceRef.current = null
+      })
+
+      es.onerror = () => {
+        if (eventSourceRef.current === es) {
+          setStreamStatus('error')
+          setStreamError({
+            code: 'NETWORK_ERROR',
+            message: 'SSE 连接失败或已断开',
+          })
+          setAutoRunning(false)
+          es.close()
+          eventSourceRef.current = null
+        }
       }
+    } catch (err) {
+      setAutoError({
+        code: 'NETWORK_ERROR',
+        message: err instanceof Error ? err.message : '网络请求失败',
+      })
+      setAutoRunning(false)
+      setStreamStatus('error')
     }
   }
 
@@ -635,6 +687,204 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setStreamStatus('stopped')
     setAutoRunning(false)
     setStreamError({ code: 'STOPPED_BY_USER', message: '已停止监听' })
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Session control (v5.5.8)                                        */
+  /* ---------------------------------------------------------------- */
+
+  const loadSessions = useCallback(async () => {
+    setSessionLoading(true)
+    try {
+      const res = await get<{ sessions: AutoRunSession[] }>(
+        `/projects/${project.project_id}/production/run-auto/sessions`
+      )
+      if (res.ok && res.data) {
+        setSessions(res.data.sessions)
+      }
+    } catch {
+      // ignore
+    } finally {
+      setSessionLoading(false)
+    }
+  }, [project.project_id])
+
+  const handleCancelSession = async () => {
+    if (!activeSessionId) return
+    try {
+      const res = await post<{ cancelled: boolean }>(
+        `/projects/${project.project_id}/production/run-auto/sessions/${activeSessionId}/cancel`,
+        {}
+      )
+      if (res.ok && res.data?.cancelled) {
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close()
+          eventSourceRef.current = null
+        }
+        setStreamStatus('stopped')
+        setAutoRunning(false)
+        setStreamError({ code: 'CANCELLED', message: '已取消' })
+        loadSessions()
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const handlePauseSession = async () => {
+    if (!activeSessionId) return
+    try {
+      const res = await post<{ paused: boolean }>(
+        `/projects/${project.project_id}/production/run-auto/sessions/${activeSessionId}/pause`,
+        {}
+      )
+      if (res.ok && res.data?.paused) {
+        // Cooperative pause: server stops at next boundary and sends stopped event
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const handleResumeSession = async () => {
+    if (!activeSessionId) return
+    setAutoRunning(true)
+    setStreamError(null)
+    setStreamStatus('running')
+    try {
+      const res = await post<{ resumed: boolean; stream_url: string }>(
+        `/projects/${project.project_id}/production/run-auto/sessions/${activeSessionId}/resume`,
+        {}
+      )
+      if (!res.ok || !res.data?.resumed) {
+        setAutoRunning(false)
+        return
+      }
+      // Reconnect to stream URL returned by resume
+      const es = new EventSource(res.data.stream_url)
+      eventSourceRef.current = es
+
+      es.addEventListener('auto_run_started', () => {})
+
+      es.addEventListener('step_started', (e) => {
+        const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+        setStreamSteps((prev) => [
+          ...prev,
+          {
+            step: data.step!,
+            action: data.action!,
+            label: data.label!,
+            target_chapter: data.target_chapter,
+            result: 'running',
+            warnings: [],
+          },
+        ])
+      })
+
+      es.addEventListener('step_completed', (e) => {
+        const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+        setStreamSteps((prev) => {
+          const exists = prev.find((s) => s.step === data.step)
+          if (exists) {
+            return prev.map((s) =>
+              s.step === data.step
+                ? { ...s, result: data.result!, warnings: data.warnings || [], error: data.error || undefined }
+                : s
+            )
+          }
+          return [
+            ...prev,
+            {
+              step: data.step!,
+              action: data.action!,
+              label: data.label!,
+              target_chapter: data.target_chapter,
+              result: data.result!,
+              warnings: data.warnings || [],
+              error: data.error || undefined,
+            },
+          ]
+        })
+      })
+
+      es.addEventListener('step_failed', (e) => {
+        const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+        setStreamSteps((prev) => {
+          const exists = prev.find((s) => s.step === data.step)
+          if (exists) {
+            return prev.map((s) =>
+              s.step === data.step
+                ? { ...s, result: 'failed', warnings: data.warnings || [], error: data.error || undefined }
+                : s
+            )
+          }
+          return [
+            ...prev,
+            {
+              step: data.step!,
+              action: data.action!,
+              label: data.label!,
+              target_chapter: data.target_chapter,
+              result: 'failed',
+              warnings: data.warnings || [],
+              error: data.error || undefined,
+            },
+          ]
+        })
+      })
+
+      es.addEventListener('auto_run_stopped', (e) => {
+        const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+        setStreamStatus('stopped')
+        setAutoResult({
+          status: data.status || 'stopped',
+          steps: data.steps || [],
+          stop_reason: data.stop_reason || '',
+          chapters_touched: data.chapters_touched || [],
+        })
+        setAutoRunning(false)
+        loadSessions()
+        es.close()
+        eventSourceRef.current = null
+      })
+
+      es.addEventListener('auto_run_completed', (e) => {
+        const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+        setStreamStatus('completed')
+        setAutoResult({
+          status: data.status || 'completed',
+          steps: data.steps || [],
+          stop_reason: data.stop_reason || '',
+          chapters_touched: data.chapters_touched || [],
+        })
+        setAutoRunning(false)
+        loadSessions()
+        es.close()
+        eventSourceRef.current = null
+      })
+
+      es.addEventListener('auto_run_error', (e) => {
+        const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+        setStreamStatus('error')
+        setStreamError({ code: data.error || 'UNKNOWN_ERROR', message: data.message || '运行失败' })
+        setAutoRunning(false)
+        loadSessions()
+        es.close()
+        eventSourceRef.current = null
+      })
+
+      es.onerror = () => {
+        if (eventSourceRef.current === es) {
+          setStreamStatus('error')
+          setStreamError({ code: 'NETWORK_ERROR', message: 'SSE 连接失败或已断开' })
+          setAutoRunning(false)
+          es.close()
+          eventSourceRef.current = null
+        }
+      }
+    } catch {
+      setAutoRunning(false)
+    }
   }
 
   /* ---------------------------------------------------------------- */
@@ -752,48 +1002,63 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   )}
                 </button>
 
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => handleRunAutoStream(true)}
-                  disabled={autoRunning || filling}
-                  style={{ flex: '0 1 auto' }}
-                >
-                  {autoRunning ? (
-                    <>
-                      <Loader2 size={14} className="spin" /> 预览中…
-                    </>
-                  ) : (
-                    <>
-                      <Sparkles size={14} /> 预览自动生产
-                    </>
-                  )}
-                </button>
-
-                <button
-                  className="btn btn-secondary"
-                  onClick={() => handleRunAutoStream(false)}
-                  disabled={autoRunning || filling}
-                  style={{ flex: '0 1 auto' }}
-                >
-                  {autoRunning ? (
-                    <>
-                      <Loader2 size={14} className="spin" /> 运行中…
-                    </>
-                  ) : (
-                    <>
-                      <Play size={14} /> 开始自动生产
-                    </>
-                  )}
-                </button>
-
-                {autoRunning && (
+                {!autoRunning && streamStatus === 'stopped' && autoResult?.stop_reason === 'paused' && (
                   <button
                     className="btn btn-secondary"
-                    onClick={handleStopListening}
+                    onClick={handleResumeSession}
+                    disabled={filling}
                     style={{ flex: '0 1 auto' }}
                   >
-                    <Square size={14} /> 停止监听
+                    <Play size={14} /> 继续自动生产
                   </button>
+                )}
+
+                {!autoRunning && !(streamStatus === 'stopped' && autoResult?.stop_reason === 'paused') && (
+                  <>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => handleRunAutoStream(true)}
+                      disabled={filling}
+                      style={{ flex: '0 1 auto' }}
+                    >
+                      <Sparkles size={14} /> 预览自动生产
+                    </button>
+
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => handleRunAutoStream(false)}
+                      disabled={filling}
+                      style={{ flex: '0 1 auto' }}
+                    >
+                      <Play size={14} /> 开始自动生产
+                    </button>
+                  </>
+                )}
+
+                {autoRunning && (
+                  <>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={handlePauseSession}
+                      style={{ flex: '0 1 auto' }}
+                    >
+                      <Square size={14} /> 暂停
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={handleCancelSession}
+                      style={{ flex: '0 1 auto' }}
+                    >
+                      <XCircle size={14} /> 取消
+                    </button>
+                    <button
+                      className="btn btn-secondary"
+                      onClick={handleStopListening}
+                      style={{ flex: '0 1 auto' }}
+                    >
+                      <Square size={14} /> 停止监听
+                    </button>
+                  </>
                 )}
               </div>
 
@@ -1075,6 +1340,93 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   )}
                 </div>
               )}
+
+              {/* Session history (v5.5.8) */}
+              <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 12, marginTop: 12 }}>
+                <div
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                    marginBottom: 10,
+                  }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>自动生产历史</span>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      className="btn btn-secondary btn-sm"
+                      onClick={() => { loadSessions(); setShowHistory((v) => !v) }}
+                      disabled={sessionLoading}
+                    >
+                      {sessionLoading ? <Loader2 size={12} className="spin" /> : <FileText size={12} />}
+                      {showHistory ? '收起' : '查看'}
+                    </button>
+                  </div>
+                </div>
+
+                {showHistory && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {sessions.length === 0 && (
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>暂无历史记录</div>
+                    )}
+                    {sessions.map((s) => (
+                      <div
+                        key={s.id}
+                        style={{
+                          padding: '8px 10px',
+                          background: 'var(--bg-tertiary)',
+                          borderRadius: 6,
+                          fontSize: 12,
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                          <span style={{ fontWeight: 500 }}>
+                            {s.chapter_start && s.chapter_end
+                              ? `第 ${s.chapter_start}-${s.chapter_end} 章`
+                              : '自动范围'}
+                          </span>
+                          <span
+                            className="status-badge"
+                            style={{
+                              fontSize: 11,
+                              background:
+                                s.status === 'completed'
+                                  ? '#d1fae5'
+                                  : s.status === 'failed'
+                                  ? '#fee2e2'
+                                  : s.status === 'cancelled'
+                                  ? '#f1f5f9'
+                                  : s.status === 'paused'
+                                  ? '#fef3c7'
+                                  : '#dbeafe',
+                              color:
+                                s.status === 'completed'
+                                  ? '#065f46'
+                                  : s.status === 'failed'
+                                  ? '#991b1b'
+                                  : s.status === 'cancelled'
+                                  ? '#64748b'
+                                  : s.status === 'paused'
+                                  ? '#92400e'
+                                  : '#1e40af',
+                            }}
+                          >
+                            {s.status}
+                          </span>
+                        </div>
+                        <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>
+                          步数: {s.current_step} / {s.max_steps}
+                          {s.stop_reason ? ` · ${tStopReason(s.stop_reason)}` : ''}
+                        </div>
+                        <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>
+                          {s.created_at}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </>
           ) : (
             <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>无法获取生产建议</div>
