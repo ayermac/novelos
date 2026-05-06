@@ -4,7 +4,7 @@ AI-powered novel production workbench for long-form fiction projects.
 
 Novelos combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.5.6 Production Command Center UI Refresh**, with **1769/1769 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
+Current baseline: **v5.5.7 Real-Time Production Monitor**, with **1777/1777 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
 
 ## What It Does
 

@@ -8,6 +8,7 @@ import {
   Play,
   Settings,
   Sparkles,
+  Square,
   Terminal,
   Wrench,
   XCircle,
@@ -99,6 +100,24 @@ interface AutoRunResponse {
   chapters_touched: number[]
 }
 
+interface AutoRunEventData {
+  project_id: string
+  step?: number
+  action?: string
+  label?: string
+  target_chapter?: number
+  result?: string
+  warnings?: string[]
+  error?: string | null
+  stop_reason?: string
+  steps_executed?: number
+  chapters_touched?: number[]
+  status?: string
+  steps?: AutoRunStep[]
+  final_next_action?: ProductionNextAction | null
+  message?: string
+}
+
 interface Props {
   project: ProjectSummary
   stats: WorkspaceStats
@@ -136,6 +155,7 @@ const RESULT_MAP: Record<string, string> = {
   failed: '失败',
   skipped: '跳过',
   dry_run: '预览',
+  running: '运行中',
 }
 
 function tStopReason(reason: string): string {
@@ -154,6 +174,7 @@ function stepBorderColor(result: string): string {
   if (result === 'success') return '#10b981'
   if (result === 'failed') return '#ef4444'
   if (result === 'skipped') return '#94a3b8'
+  if (result === 'running') return '#3b82f6'
   return '#f59e0b'
 }
 
@@ -170,7 +191,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const [filling, setFilling] = useState(false)
   const [fillResult, setFillResult] = useState<string>('')
 
-  /* v5.5.6: Auto-run state */
+  /* v5.5.7: Auto-run state */
   const [autoRunning, setAutoRunning] = useState(false)
   const [autoResult, setAutoResult] = useState<AutoRunResponse | null>(null)
   const [autoError, setAutoError] = useState<{ code: string; message: string; details?: unknown } | null>(null)
@@ -182,14 +203,37 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   })
   const autoConfigInitialized = useRef(false)
 
+  /* v5.5.7: SSE stream state */
+  const [streamSteps, setStreamSteps] = useState<AutoRunStep[]>([])
+  const [streamStatus, setStreamStatus] = useState<'idle' | 'running' | 'completed' | 'stopped' | 'error'>('idle')
+  const [streamError, setStreamError] = useState<{ code: string; message: string } | null>(null)
+  const eventSourceRef = useRef<EventSource | null>(null)
+
   /* Reset auto-run state when project changes (P2-1) */
   useEffect(() => {
     autoConfigInitialized.current = false
     setAutoResult(null)
     setAutoError(null)
+    setStreamSteps([])
+    setStreamStatus('idle')
+    setStreamError(null)
     setAutoConfig({ maxSteps: 5, chapterStart: 1, chapterEnd: 10, stopOnReview: true })
     setProductionNext(null) // Clear stale productionNext to prevent race condition
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
+    }
   }, [project.project_id])
+
+  /* Cleanup EventSource on unmount */
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+    }
+  }, [])
 
   /* Only initialise range once so user edits are not overwritten */
   useEffect(() => {
@@ -365,7 +409,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   }
 
   /* ---------------------------------------------------------------- */
-  /*  Auto production runner                                          */
+  /*  Auto production runner (POST fallback)                          */
   /* ---------------------------------------------------------------- */
 
   const handleRunAuto = async (dryRun: boolean = false) => {
@@ -403,6 +447,194 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     } finally {
       setAutoRunning(false)
     }
+  }
+
+  /* ---------------------------------------------------------------- */
+  /*  Auto production runner (SSE stream)                             */
+  /* ---------------------------------------------------------------- */
+
+  const handleRunAutoStream = async (dryRun: boolean = false) => {
+    // Cleanup any existing stream
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
+    }
+
+    // Fallback if EventSource not supported
+    if (typeof EventSource === 'undefined') {
+      handleRunAuto(dryRun)
+      return
+    }
+
+    setStreamStatus('running')
+    setStreamSteps([])
+    setStreamError(null)
+    setAutoResult(null)
+    setAutoError(null)
+    setAutoRunning(true)
+
+    const params = new URLSearchParams({
+      chapter_start: String(autoConfig.chapterStart),
+      chapter_end: String(autoConfig.chapterEnd),
+      max_steps: String(autoConfig.maxSteps),
+      stop_on_review: String(autoConfig.stopOnReview),
+      dry_run: String(dryRun),
+      confirm: 'true',
+    })
+
+    const url = `/api/projects/${project.project_id}/production/run-auto/stream?${params.toString()}`
+    const es = new EventSource(url)
+    eventSourceRef.current = es
+
+    es.addEventListener('auto_run_started', () => {
+      // stream is running
+    })
+
+    es.addEventListener('step_started', (e) => {
+      const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+      setStreamSteps((prev) => [
+        ...prev,
+        {
+          step: data.step!,
+          action: data.action!,
+          label: data.label!,
+          target_chapter: data.target_chapter,
+          result: 'running',
+          warnings: [],
+        },
+      ])
+    })
+
+    es.addEventListener('step_completed', (e) => {
+      const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+      setStreamSteps((prev) => {
+        const exists = prev.find((s) => s.step === data.step)
+        if (exists) {
+          return prev.map((s) =>
+            s.step === data.step
+              ? {
+                  ...s,
+                  result: data.result!,
+                  warnings: data.warnings || [],
+                  error: data.error || undefined,
+                }
+              : s
+          )
+        }
+        return [
+          ...prev,
+          {
+            step: data.step!,
+            action: data.action!,
+            label: data.label!,
+            target_chapter: data.target_chapter,
+            result: data.result!,
+            warnings: data.warnings || [],
+            error: data.error || undefined,
+          },
+        ]
+      })
+    })
+
+    es.addEventListener('step_failed', (e) => {
+      const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+      setStreamSteps((prev) => {
+        const exists = prev.find((s) => s.step === data.step)
+        if (exists) {
+          return prev.map((s) =>
+            s.step === data.step
+              ? {
+                  ...s,
+                  result: 'failed',
+                  warnings: data.warnings || [],
+                  error: data.error || undefined,
+                }
+              : s
+          )
+        }
+        return [
+          ...prev,
+          {
+            step: data.step!,
+            action: data.action!,
+            label: data.label!,
+            target_chapter: data.target_chapter,
+            result: 'failed',
+            warnings: data.warnings || [],
+            error: data.error || undefined,
+          },
+        ]
+      })
+    })
+
+    es.addEventListener('auto_run_stopped', (e) => {
+      const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+      setStreamStatus('stopped')
+      setAutoResult({
+        status: data.status || 'stopped',
+        steps: data.steps || [],
+        stop_reason: data.stop_reason || '',
+        chapters_touched: data.chapters_touched || [],
+      })
+      setAutoRunning(false)
+      if (!dryRun) {
+        load()
+      }
+      es.close()
+      eventSourceRef.current = null
+    })
+
+    es.addEventListener('auto_run_completed', (e) => {
+      const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+      setStreamStatus('completed')
+      setAutoResult({
+        status: data.status || 'completed',
+        steps: data.steps || [],
+        stop_reason: data.stop_reason || '',
+        chapters_touched: data.chapters_touched || [],
+      })
+      setAutoRunning(false)
+      if (!dryRun) {
+        load()
+      }
+      es.close()
+      eventSourceRef.current = null
+    })
+
+    es.addEventListener('auto_run_error', (e) => {
+      const data: AutoRunEventData = JSON.parse((e as MessageEvent).data)
+      setStreamStatus('error')
+      setStreamError({
+        code: data.error || 'UNKNOWN_ERROR',
+        message: data.message || '运行失败',
+      })
+      setAutoRunning(false)
+      es.close()
+      eventSourceRef.current = null
+    })
+
+    es.onerror = () => {
+      if (eventSourceRef.current === es) {
+        setStreamStatus('error')
+        setStreamError({
+          code: 'NETWORK_ERROR',
+          message: 'SSE 连接失败或已断开',
+        })
+        setAutoRunning(false)
+        es.close()
+        eventSourceRef.current = null
+      }
+    }
+  }
+
+  const handleStopListening = () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
+    }
+    setStreamStatus('stopped')
+    setAutoRunning(false)
+    setStreamError({ code: 'STOPPED_BY_USER', message: '已停止监听' })
   }
 
   /* ---------------------------------------------------------------- */
@@ -522,7 +754,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
                 <button
                   className="btn btn-secondary"
-                  onClick={() => handleRunAuto(true)}
+                  onClick={() => handleRunAutoStream(true)}
                   disabled={autoRunning || filling}
                   style={{ flex: '0 1 auto' }}
                 >
@@ -539,7 +771,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
                 <button
                   className="btn btn-secondary"
-                  onClick={() => handleRunAuto(false)}
+                  onClick={() => handleRunAutoStream(false)}
                   disabled={autoRunning || filling}
                   style={{ flex: '0 1 auto' }}
                 >
@@ -553,6 +785,16 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     </>
                   )}
                 </button>
+
+                {autoRunning && (
+                  <button
+                    className="btn btn-secondary"
+                    onClick={handleStopListening}
+                    style={{ flex: '0 1 auto' }}
+                  >
+                    <Square size={14} /> 停止监听
+                  </button>
+                )}
               </div>
 
               {/* Inline fill result */}
@@ -661,7 +903,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
               </div>
 
               {/* Auto-run result */}
-              {autoResult && (
+              {(autoResult || streamSteps.length > 0 || streamError) && (
                 <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 12 }}>
                   {/* Status bar */}
                   <div
@@ -675,30 +917,38 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     }}
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {autoResult.status === 'completed' && <CheckCircle2 size={14} color="#10b981" />}
-                      {autoResult.status === 'failed' && <XCircle size={14} color="#ef4444" />}
-                      {autoResult.status === 'dry_run' && <Sparkles size={14} color="#06b6d4" />}
-                      {autoResult.status === 'stopped' && <AlertCircle size={14} color="#f59e0b" />}
-                      {autoResult.status !== 'completed' && autoResult.status !== 'failed' && autoResult.status !== 'dry_run' && autoResult.status !== 'stopped' && (
+                      {streamStatus === 'running' && <Loader2 size={14} className="spin" color="#3b82f6" />}
+                      {autoResult?.status === 'completed' && <CheckCircle2 size={14} color="#10b981" />}
+                      {autoResult?.status === 'failed' && <XCircle size={14} color="#ef4444" />}
+                      {autoResult?.status === 'dry_run' && <Sparkles size={14} color="#06b6d4" />}
+                      {autoResult?.status === 'stopped' && <AlertCircle size={14} color="#f59e0b" />}
+                      {streamStatus === 'error' && <XCircle size={14} color="#ef4444" />}
+                      {!streamStatus && autoResult && autoResult.status !== 'completed' && autoResult.status !== 'failed' && autoResult.status !== 'dry_run' && autoResult.status !== 'stopped' && (
                         <AlertCircle size={14} color="#f59e0b" />
                       )}
                       <span style={{ fontSize: 13, fontWeight: 500 }}>
-                        {autoResult.status === 'completed'
+                        {streamStatus === 'running'
+                          ? '运行中…'
+                          : streamStatus === 'error'
+                          ? '流错误'
+                          : autoResult?.status === 'completed'
                           ? '已完成'
-                          : autoResult.status === 'failed'
+                          : autoResult?.status === 'failed'
                           ? '失败'
-                          : autoResult.status === 'dry_run'
+                          : autoResult?.status === 'dry_run'
                           ? '预览结果'
                           : '已停止'}
                       </span>
                     </div>
                     <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                      停止原因: {tStopReason(autoResult.stop_reason)}
+                      {streamError
+                        ? `${streamError.code}: ${streamError.message}`
+                        : `停止原因: ${tStopReason(autoResult?.stop_reason || '')}`}
                     </span>
                   </div>
 
                   {/* Steps timeline */}
-                  {autoResult.steps.length > 0 && (
+                  {(streamSteps.length > 0 || (autoResult?.steps && autoResult.steps.length > 0)) && (
                     <div
                       style={{
                         display: 'flex',
@@ -708,7 +958,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                         overflowY: 'auto',
                       }}
                     >
-                      {autoResult.steps.map((step, idx) => (
+                      {(streamSteps.length > 0 ? streamSteps : autoResult?.steps || []).map((step, idx) => (
                         <div
                           key={idx}
                           style={{
@@ -746,6 +996,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                                     ? '#fee2e2'
                                     : step.result === 'skipped'
                                     ? '#f1f5f9'
+                                    : step.result === 'running'
+                                    ? '#dbeafe'
                                     : '#fef3c7',
                                 color:
                                   step.result === 'success'
@@ -754,6 +1006,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                                     ? '#991b1b'
                                     : step.result === 'skipped'
                                     ? '#64748b'
+                                    : step.result === 'running'
+                                    ? '#1e40af'
                                     : '#92400e',
                               }}
                             >
@@ -773,7 +1027,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     </div>
                   )}
 
-                  {autoResult.chapters_touched.length > 0 && (
+                  {autoResult && autoResult.chapters_touched.length > 0 && (
                     <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8 }}>
                       涉及章节: {autoResult.chapters_touched.join(', ')}
                     </div>

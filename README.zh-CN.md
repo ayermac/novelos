@@ -4,7 +4,7 @@
 
 Novelos 将 FastAPI 后端、LangGraph 章节工作流、SQLite 项目存储、React 作者工作台和 CLI 工具整合在一起，用于章节生成、审核、风格管理、项目上下文维护和运行诊断。
 
-当前基线：**v5.5.6 Production Command Center UI Refresh**，已验证 **1769/1769 pytest 通过**，前端 TypeScript 检查、lint 和生产构建通过。
+当前基线：**v5.5.7 Real-Time Production Monitor**，已验证 **1777/1777 pytest 通过**，前端 TypeScript 检查、lint 和生产构建通过。
 
 **v5.3 已实现能力**（部分，进行中）：
 
@@ -21,6 +21,7 @@ Novelos 将 FastAPI 后端、LangGraph 章节工作流、SQLite 项目存储、R
 - v5.5.4 真实 LLM 自主规划：real-mode 配置错误显式化（LLM_CONFIG_MISSING）、auto-fill 只补缺失类型（missing_types 约束）、arc-plan 章节范围幂等保护。
 - v5.5.5 自主生产运行器：自动执行生产步骤、可配置步数限制、dry-run 预览、安全防护（禁止自动发布）、前端自动生产控制台。
 - v5.5.6 生产指挥台 UI 刷新：合并「下一步生产动作」与「自动生产控制台」为单一主面板、中文状态映射、步骤时间线、错误详情显示、紧凑布局。
+- v5.5.7 实时监控/streaming UI：后端新增 SSE endpoint `/production/run-auto/stream`，前端使用 EventSource 实时追加步骤时间线、显示 running 状态、支持停止监听（仅关闭前端 stream，不取消后端执行），不改变自动生产安全语义。
 
 **v5.3 未收口项**：
 

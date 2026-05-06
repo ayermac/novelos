@@ -5,7 +5,10 @@ v5.5.3: Provides next-action guidance and AI auto-fill for project production.
 
 from __future__ import annotations
 
+from collections.abc import AsyncGenerator
+
 from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
@@ -821,17 +824,21 @@ STOP_REASON_UNSUPPORTED = "unsupported_action"
 STOP_REASON_FAILED = "step_failed"
 
 
-@router.post("/projects/{project_id}/production/run-auto")
-async def run_auto_production(request: Request, project_id: str, body: RunAutoRequest) -> EnvelopeResponse:
-    """v5.5.5: Autonomous production runner.
+# ---------------------------------------------------------------------------
+# v5.5.7: Shared auto-run core (used by both POST and SSE)
+# ---------------------------------------------------------------------------
 
-    Executes production steps automatically based on production-next recommendations.
-    Stops on: max_steps, review/publish requirements, blocking states, or errors.
 
-    IMPORTANT: Never auto-publishes chapters. Real mode stops at awaiting_publish/review.
+async def _auto_run_generator(
+    request: Request,
+    project_id: str,
+    body: RunAutoRequest,
+) -> AsyncGenerator[dict, None]:
+    """Async generator that yields auto-run events for both POST and SSE.
+
+    Yields dicts with keys: event (str), data (dict).
     """
     from ..deps import get_repo, get_llm_mode, get_settings
-    import asyncio
 
     try:
         repo = get_repo(request)
@@ -840,10 +847,26 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            yield {
+                "event": "auto_run_error",
+                "data": {
+                    "project_id": project_id,
+                    "error": "PROJECT_NOT_FOUND",
+                    "message": f"项目 '{project_id}' 不存在",
+                },
+            }
+            return
 
         if not body.confirm:
-            return error_response("CONFIRM_REQUIRED", "请设置 confirm=true 确认执行自动生产")
+            yield {
+                "event": "auto_run_error",
+                "data": {
+                    "project_id": project_id,
+                    "error": "CONFIRM_REQUIRED",
+                    "message": "请设置 confirm=true 确认执行自动生产",
+                },
+            }
+            return
 
         # Validate LLM config for real mode
         if llm_mode == "real":
@@ -851,7 +874,15 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
                 from ..deps import get_llm_provider
                 get_llm_provider(request)
             except Exception as e:
-                return error_response("LLM_CONFIG_MISSING", str(e))
+                yield {
+                    "event": "auto_run_error",
+                    "data": {
+                        "project_id": project_id,
+                        "error": "LLM_CONFIG_MISSING",
+                        "message": str(e),
+                    },
+                }
+                return
 
         # Initialize tracking
         steps: list[dict] = []
@@ -874,6 +905,18 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
         step_count = 0
         stop_reason = ""
         final_next_action: dict | None = None
+
+        yield {
+            "event": "auto_run_started",
+            "data": {
+                "project_id": project_id,
+                "chapter_start": ch_start,
+                "chapter_end": ch_end,
+                "max_steps": body.max_steps,
+                "dry_run": body.dry_run,
+                "stop_on_review": body.stop_on_review,
+            },
+        }
 
         while step_count < body.max_steps:
             # Get current state using active_chapter for range-aware decisions
@@ -929,23 +972,44 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
 
             # Dry run: just record the action, don't execute
             if body.dry_run:
+                step_count += 1
                 steps.append({
-                    "step": step_count + 1,
+                    "step": step_count,
                     "action": next_action["key"],
                     "label": next_action["label"],
                     "target_chapter": next_action.get("target_chapter"),
                     "result": "dry_run",
                     "warnings": [],
                 })
-                # In dry_run mode, return after one step prediction
-                return envelope_response({
-                    "status": "dry_run",
-                    "steps": steps,
-                    "final_next_action": next_action,
-                    "chapters_touched": sorted(list(chapters_touched)),
-                    "stop_reason": "dry_run_preview",
-                    "steps_executed": 1,
-                })
+                yield {
+                    "event": "step_completed",
+                    "data": {
+                        "project_id": project_id,
+                        "step": step_count,
+                        "action": next_action["key"],
+                        "label": next_action["label"],
+                        "target_chapter": next_action.get("target_chapter"),
+                        "result": "dry_run",
+                        "warnings": [],
+                        "error": None,
+                        "steps_executed": step_count,
+                        "chapters_touched": sorted(list(chapters_touched)),
+                    },
+                }
+                stop_reason = "dry_run_preview"
+                break
+
+            # Yield step_started
+            yield {
+                "event": "step_started",
+                "data": {
+                    "project_id": project_id,
+                    "step": step_count + 1,
+                    "action": next_action["key"],
+                    "label": next_action["label"],
+                    "target_chapter": next_action.get("target_chapter"),
+                },
+            }
 
             # Execute the action
             step_result = await _execute_auto_step(
@@ -969,18 +1033,49 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
 
             # Check for step failure — P2-3: return AUTO_RUN_STEP_FAILED error
             if step_result.get("result") == "failed":
-                return error_response(
-                    "AUTO_RUN_STEP_FAILED",
-                    f"第 {step_count} 步执行失败: {step_result.get('error', '未知错误')}",
-                    details={
+                yield {
+                    "event": "step_failed",
+                    "data": {
+                        "project_id": project_id,
                         "step": step_count,
                         "action": next_action["key"],
-                        "steps": steps,
+                        "label": next_action["label"],
+                        "target_chapter": next_action.get("target_chapter"),
+                        "result": "failed",
+                        "warnings": step_result.get("warnings", []),
+                        "error": step_result.get("error"),
+                        "steps_executed": step_count,
                         "chapters_touched": sorted(list(chapters_touched)),
+                    },
+                }
+                yield {
+                    "event": "auto_run_stopped",
+                    "data": {
+                        "project_id": project_id,
                         "stop_reason": STOP_REASON_FAILED,
                         "steps_executed": step_count,
+                        "steps": steps,
+                        "chapters_touched": sorted(list(chapters_touched)),
+                        "final_next_action": next_action,
                     },
-                )
+                }
+                return
+
+            yield {
+                "event": "step_completed",
+                "data": {
+                    "project_id": project_id,
+                    "step": step_count,
+                    "action": next_action["key"],
+                    "label": next_action["label"],
+                    "target_chapter": next_action.get("target_chapter"),
+                    "result": step_result.get("result", "unknown"),
+                    "warnings": step_result.get("warnings", []),
+                    "error": step_result.get("error"),
+                    "steps_executed": step_count,
+                    "chapters_touched": sorted(list(chapters_touched)),
+                },
+            }
 
             # Check for unsupported action
             if step_result.get("result") == "unsupported":
@@ -1019,17 +1114,135 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
             health = _build_health(repo, project_id, current_chapter)
             final_next_action = _determine_next_action(repo, project_id, health, current_chapter)
 
+        final_event_name = "auto_run_stopped" if status == "stopped" else "auto_run_completed"
+        yield {
+            "event": final_event_name,
+            "data": {
+                "project_id": project_id,
+                "status": status,
+                "steps": steps,
+                "final_next_action": final_next_action,
+                "chapters_touched": sorted(list(chapters_touched)),
+                "stop_reason": stop_reason,
+                "steps_executed": step_count,
+            },
+        }
+
+    except Exception as e:
+        yield {
+            "event": "auto_run_error",
+            "data": {
+                "project_id": project_id,
+                "error": "INTERNAL_ERROR",
+                "message": f"自动生产运行失败: {str(e)}",
+            },
+        }
+
+
+@router.post("/projects/{project_id}/production/run-auto")
+async def run_auto_production(request: Request, project_id: str, body: RunAutoRequest) -> EnvelopeResponse:
+    """v5.5.5: Autonomous production runner.
+
+    Executes production steps automatically based on production-next recommendations.
+    Stops on: max_steps, review/publish requirements, blocking states, or errors.
+
+    IMPORTANT: Never auto-publishes chapters. Real mode stops at awaiting_publish/review.
+    """
+    try:
+        events: list[dict] = []
+        async for event in _auto_run_generator(request, project_id, body):
+            events.append(event)
+
+        # Handle early error events
+        if events and events[0]["event"] == "auto_run_error":
+            err_data = events[0]["data"]
+            return error_response(err_data["error"], err_data["message"])
+
+        # Check for step failure
+        failed_events = [e for e in events if e["event"] == "step_failed"]
+        if failed_events:
+            failed = failed_events[0]["data"]
+            all_steps = [
+                {
+                    "step": e["data"]["step"],
+                    "action": e["data"]["action"],
+                    "label": e["data"]["label"],
+                    "target_chapter": e["data"].get("target_chapter"),
+                    "result": e["data"]["result"],
+                    "warnings": e["data"].get("warnings", []),
+                    "error": e["data"].get("error"),
+                }
+                for e in events
+                if e["event"] in ("step_completed", "step_failed")
+            ]
+            return error_response(
+                "AUTO_RUN_STEP_FAILED",
+                f"第 {failed['step']} 步执行失败: {failed.get('error', '未知错误')}",
+                details={
+                    "step": failed["step"],
+                    "action": failed["action"],
+                    "steps": all_steps,
+                    "chapters_touched": failed.get("chapters_touched", []),
+                    "stop_reason": STOP_REASON_FAILED,
+                    "steps_executed": failed["steps_executed"],
+                },
+            )
+
+        # Find final event
+        final_event = events[-1]
+        data = final_event["data"]
+
         return envelope_response({
-            "status": status,
-            "steps": steps,
-            "final_next_action": final_next_action,
-            "chapters_touched": sorted(list(chapters_touched)),
-            "stop_reason": stop_reason,
-            "steps_executed": step_count,
+            "status": data["status"],
+            "steps": data["steps"],
+            "final_next_action": data.get("final_next_action"),
+            "chapters_touched": data.get("chapters_touched", []),
+            "stop_reason": data["stop_reason"],
+            "steps_executed": data["steps_executed"],
         })
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"自动生产运行失败: {str(e)}")
+
+
+@router.get("/projects/{project_id}/production/run-auto/stream")
+async def run_auto_stream(
+    request: Request,
+    project_id: str,
+    chapter_start: int | None = None,
+    chapter_end: int | None = None,
+    max_steps: int = 10,
+    dry_run: bool = False,
+    stop_on_review: bool = True,
+    confirm: bool = False,
+) -> StreamingResponse:
+    """v5.5.7: Real-time production monitor via SSE.
+
+    Streams auto-run events as they happen.
+    """
+    import json
+
+    body = RunAutoRequest(
+        chapter_start=chapter_start,
+        chapter_end=chapter_end,
+        max_steps=max_steps,
+        dry_run=dry_run,
+        stop_on_review=stop_on_review,
+        confirm=confirm,
+    )
+
+    async def event_stream():
+        async for event in _auto_run_generator(request, project_id, body):
+            yield f"event: {event['event']}\ndata: {json.dumps(event['data'], ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )
 
 
 def _normalize_llm_warnings(
