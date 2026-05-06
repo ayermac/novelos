@@ -919,6 +919,14 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
                 })
                 break
 
+            # P2-2: Stop if active_chapter itself is outside the requested range.
+            # This prevents no-target actions (e.g. generate_missing_context) from
+            # running after the requested range has been exhausted.
+            if active_chapter > ch_end:
+                stop_reason = STOP_REASON_COMPLETED
+                final_next_action = next_action
+                break
+
             # Dry run: just record the action, don't execute
             if body.dry_run:
                 steps.append({
@@ -1098,7 +1106,9 @@ async def _execute_auto_step(
         # ── generate_arc_plan ──
         if action_key == "generate_arc_plan":
             project = repo.get_project(project_id)
-            next_ch = target_chapter or (repo.get_project(project_id).get("current_chapter", 1) + 1)
+            # P2-1: Use target_chapter if provided (set by range guard), otherwise
+            # fall back to active_chapter + 1 to stay within the requested range.
+            next_ch = target_chapter or (active_chapter + 1)
             if llm_mode == "stub":
                 created = _stub_arc_plan(repo, project, project_id, next_ch, next_ch + 9)
                 warnings: list[str] = []

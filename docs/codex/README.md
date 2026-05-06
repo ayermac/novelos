@@ -213,7 +213,7 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.5.4 Real LLM Autonomous Planning**，测试基线 **1755/1755 passed**。
+当前开发基线是 **v5.5.5 Autonomous Production Runner**，测试基线 **1769/1769 passed**（含 v5.5.5 专项 14 passed）。
 
 **v5.3 已实现能力**（部分，进行中）：
 

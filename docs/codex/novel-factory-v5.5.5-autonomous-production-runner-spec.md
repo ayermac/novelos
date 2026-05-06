@@ -152,12 +152,12 @@ const [autoConfig, setAutoConfig] = useState<AutoConfig>({
 
 ### Test Coverage
 
-Created `tests/test_v555_autonomous_production_runner.py` with 13 tests:
+Created `tests/test_v555_autonomous_production_runner.py` with 14 tests:
 
 1. **TestRunAutoConfirmRequired**: CONFIRM_REQUIRED error when confirm=false
 2. **TestRunAutoDryRun**: Dry-run returns steps without executing
 3. **TestRunAutoMaxSteps**: max_steps limit is enforced
-4. **TestRunAutoChapterRange**: Respects requested chapter range (P2-1)
+4. **TestRunAutoChapterRange**: Respects requested chapter range (P2-1, 3 tests)
 5. **TestRunAutoAutoFill**: Auto-fill triggered when context missing
 6. **TestRunAutoGenerateChapter**: generate_chapter executes chapter run
 7. **TestRunAutoStopOnReview**: Stops on review/publish actions
@@ -167,7 +167,7 @@ Created `tests/test_v555_autonomous_production_runner.py` with 13 tests:
 11. **TestRunAutoNoAutoPublish**: Real mode stops at awaiting_publish
 12. **TestRunAutoUnsupportedAction**: Unsupported action returns blocked
 
-**Test Results**: 13/13 passed, 1768 total tests passing
+**Test Results**: 14/14 passed, 1769 total tests passing
 
 ---
 
@@ -320,7 +320,7 @@ run_auto_production()
 - Proper error handling for missing LLM configuration
 
 **Test Results**:
-- 1768/1768 pytest passing
+- 1769/1769 pytest passing
 - Frontend typecheck passing
 - Frontend lint passing
 - Frontend build passing
