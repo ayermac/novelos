@@ -309,7 +309,7 @@ run_auto_production()
 - `RunAutoRequest` model with configurable parameters
 - `_execute_auto_step()` async helper for step execution
 - Auto Production Console UI in ProjectOverviewModule
-- 10 comprehensive tests for autonomous runner
+- 14 comprehensive tests for autonomous runner
 
 **Changed**:
 - Extended `ProjectRepository.update_project()` to support `current_chapter` parameter
