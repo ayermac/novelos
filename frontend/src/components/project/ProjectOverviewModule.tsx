@@ -188,16 +188,17 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setAutoResult(null)
     setAutoError(null)
     setAutoConfig({ maxSteps: 5, chapterStart: 1, chapterEnd: 10, stopOnReview: true })
+    setProductionNext(null) // Clear stale productionNext to prevent race condition
   }, [project.project_id])
 
   /* Only initialise range once so user edits are not overwritten */
   useEffect(() => {
-    if (productionNext && !autoConfigInitialized.current) {
+    if (productionNext && !autoConfigInitialized.current && productionNext.project_id === project.project_id) {
       autoConfigInitialized.current = true
       const current = productionNext.current_chapter || 1
       setAutoConfig((prev) => ({ ...prev, chapterStart: current, chapterEnd: current + 9 }))
     }
-  }, [productionNext])
+  }, [productionNext, project.project_id])
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -930,7 +931,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   {action.label}
                 </Link>
               ))}
-              {(contextStatus?.missing || []).length > 0 && (
+              {(contextStatus?.missing || []).length > 0 && nextActionKey !== 'generate_missing_context' && (
                 <button className="btn btn-secondary btn-sm" onClick={handleAutoFill} disabled={filling || autoRunning}>
                   <Sparkles size={12} /> 让 AI 补齐缺失资料
                 </button>
