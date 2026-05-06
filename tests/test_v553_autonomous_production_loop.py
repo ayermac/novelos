@@ -545,12 +545,12 @@ class TestFrontendCopy:
     """10. Frontend source contains required copy for v5.5.3."""
 
     def test_project_overview_module_has_next_action_copy(self):
-        """ProjectOverviewModule contains '下一步生产动作' copy."""
+        """ProjectOverviewModule contains the production command center copy."""
         path = os.path.join(os.path.dirname(__file__), "../frontend/src/components/project/ProjectOverviewModule.tsx")
         path = os.path.abspath(path)
         with open(path, "r", encoding="utf-8") as f:
             source = f.read()
-        assert "下一步生产动作" in source
+        assert "生产指挥台" in source
         assert "让 AI 补齐缺失资料" in source
         assert "让 AI 补齐世界观" in source or "让 AI 补齐" in source
 

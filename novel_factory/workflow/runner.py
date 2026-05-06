@@ -16,7 +16,12 @@ from ..config.settings import Settings
 from ..db.repository import Repository
 from ..models.state import FactoryState
 from .graph import compile_graph
-from .checkpoint import get_sqlite_checkpointer, get_checkpoint_config, derive_checkpoint_db_path
+from .checkpoint import (
+    delete_checkpoint_thread,
+    derive_checkpoint_db_path,
+    get_checkpoint_config,
+    get_sqlite_checkpointer,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +34,36 @@ def _mark_run_failed(repo: Repository, run_id: str | None, error: str) -> None:
         repo.update_workflow_run(run_id, status="failed", error_message=error)
     except Exception:
         logger.warning("Failed to mark workflow run %s as failed", run_id, exc_info=True)
+
+
+def _clear_stale_checkpoint_for_new_run(
+    repo: Repository,
+    project_id: str,
+    chapter_number: int,
+) -> None:
+    """Clear persisted graph state before a user-initiated fresh run.
+
+    LangGraph checkpoints are keyed by project/chapter. If a previous run left
+    a checkpoint after an agent had already advanced the DB status, a later
+    manual retry can resume from that stale node and fail an optimistic status
+    transition such as planned->scripted. Keep checkpoints only while the latest
+    run is still marked running; every other new run starts from DB truth.
+    """
+    try:
+        latest_runs = repo.get_workflow_runs_for_project(
+            project_id, chapter_number=chapter_number, limit=1
+        )
+        latest_status = latest_runs[0].get("status") if latest_runs else None
+        if latest_status == "running":
+            return
+        delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
+    except Exception:
+        logger.warning(
+            "Failed to clear stale checkpoint for %s/%s",
+            project_id,
+            chapter_number,
+            exc_info=True,
+        )
 
 
 def _build_llm_router(settings: Settings, llm_mode: str = "stub"):
@@ -252,6 +287,8 @@ def run_with_graph(
             "requires_human": False,
         }
 
+    _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
+
     # v5.3.0: Context Readiness Gate
     readiness_error = _check_context_readiness_for_run(
         repo, project_id, chapter_number, current_status
@@ -384,6 +421,8 @@ def run_with_graph_stream(
             "awaiting_publish": False,
         }
         return
+
+    _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
 
     # v5.3.0: Context Readiness Gate must match non-streaming execution.
     readiness_error = _check_context_readiness_for_run(

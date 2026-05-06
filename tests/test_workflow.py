@@ -1,6 +1,7 @@
 """Tests for workflow/conditions.py — routing logic."""
 
 import pytest
+from unittest.mock import patch
 
 from novel_factory.models.state import ChapterStatus
 from novel_factory.workflow.conditions import (
@@ -10,6 +11,7 @@ from novel_factory.workflow.conditions import (
     route_by_revision_type,
     route_after_agent,
 )
+from novel_factory.workflow.runner import _clear_stale_checkpoint_for_new_run
 
 
 class TestRouteByChapterStatus:
@@ -88,6 +90,33 @@ class TestRouteByChapterStatus:
             "quality_gate": {"revision_target": "planner"},  # stale gate from old run
         }
         assert route_by_chapter_status(state) == "editor"
+
+
+class TestFreshRunCheckpointCleanup:
+    class FakeRepo:
+        db_path = "test.db"
+
+        def __init__(self, runs):
+            self.runs = runs
+
+        def get_workflow_runs_for_project(self, project_id, chapter_number=None, limit=20):
+            return self.runs
+
+    def test_clears_checkpoint_when_latest_run_failed(self):
+        repo = self.FakeRepo([{"status": "failed"}])
+
+        with patch("novel_factory.workflow.runner.delete_checkpoint_thread") as delete:
+            _clear_stale_checkpoint_for_new_run(repo, "demo", 1)
+
+        delete.assert_called_once_with("test.db", "demo", 1)
+
+    def test_keeps_checkpoint_for_active_running_run(self):
+        repo = self.FakeRepo([{"status": "running"}])
+
+        with patch("novel_factory.workflow.runner.delete_checkpoint_thread") as delete:
+            _clear_stale_checkpoint_for_new_run(repo, "demo", 1)
+
+        delete.assert_not_called()
 
 
 class TestRouteByReviewResult:
