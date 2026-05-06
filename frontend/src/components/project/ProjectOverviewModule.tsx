@@ -182,6 +182,14 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   })
   const autoConfigInitialized = useRef(false)
 
+  /* Reset auto-run state when project changes (P2-1) */
+  useEffect(() => {
+    autoConfigInitialized.current = false
+    setAutoResult(null)
+    setAutoError(null)
+    setAutoConfig({ maxSteps: 5, chapterStart: 1, chapterEnd: 10, stopOnReview: true })
+  }, [project.project_id])
+
   /* Only initialise range once so user edits are not overwritten */
   useEffect(() => {
     if (productionNext && !autoConfigInitialized.current) {
@@ -214,19 +222,24 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const handleAutoFill = async () => {
     setFilling(true)
     setFillResult('')
-    const currentCh = productionNext?.current_chapter || 1
-    const res = await post<{ filled: boolean; created: Record<string, number>; warnings: string[] }>(
-      `/projects/${project.project_id}/production/auto-fill`,
-      { scope: 'missing_context', chapter_start: currentCh, chapter_end: currentCh + 9, confirm: true }
-    )
-    if (res.ok && res.data) {
-      const total = Object.values(res.data.created).reduce((a, b) => a + b, 0)
-      setFillResult(`已自动补齐 ${total} 项资料`)
-      load()
-    } else {
-      setFillResult(res.error?.message || '补齐失败')
+    try {
+      const currentCh = productionNext?.current_chapter || 1
+      const res = await post<{ filled: boolean; created: Record<string, number>; warnings: string[] }>(
+        `/projects/${project.project_id}/production/auto-fill`,
+        { scope: 'missing_context', chapter_start: currentCh, chapter_end: currentCh + 9, confirm: true }
+      )
+      if (res.ok && res.data) {
+        const total = Object.values(res.data.created).reduce((a, b) => a + b, 0)
+        setFillResult(`已自动补齐 ${total} 项资料`)
+        load()
+      } else {
+        setFillResult(res.error?.message || '补齐失败')
+      }
+    } catch (err) {
+      setFillResult(err instanceof Error ? err.message : '网络请求失败')
+    } finally {
+      setFilling(false)
     }
-    setFilling(false)
   }
 
   /* ---------------------------------------------------------------- */
@@ -250,36 +263,46 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     if (action.key === 'generate_chapter') {
       setFilling(true)
       setFillResult('')
-      const ch = productionNext.current_chapter
-      const res = await post<{ workflow_status: string; message: string }>('/run/chapter', {
-        project_id: project.project_id,
-        chapter: ch,
-      })
-      setFilling(false)
-      if (res.ok && res.data) {
-        setFillResult(res.data.message || `第 ${ch} 章生成已触发`)
-      } else {
-        setFillResult(res.error?.message || '生成触发失败')
+      try {
+        const ch = productionNext.current_chapter
+        const res = await post<{ workflow_status: string; message: string }>('/run/chapter', {
+          project_id: project.project_id,
+          chapter: ch,
+        })
+        if (res.ok && res.data) {
+          setFillResult(res.data.message || `第 ${ch} 章生成已触发`)
+          navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
+        } else {
+          setFillResult(res.error?.message || '生成触发失败')
+        }
+      } catch (err) {
+        setFillResult(err instanceof Error ? err.message : '网络请求失败')
+      } finally {
+        setFilling(false)
       }
-      navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
       return
     }
 
     if (action.key === 'continue_next_chapter') {
       setFilling(true)
       setFillResult('')
-      const ch = action.target_chapter || productionNext.current_chapter + 1
-      const res = await post<{ workflow_status: string; message: string }>('/run/chapter', {
-        project_id: project.project_id,
-        chapter: ch,
-      })
-      setFilling(false)
-      if (res.ok && res.data) {
-        setFillResult(res.data.message || `第 ${ch} 章生成已触发`)
-      } else {
-        setFillResult(res.error?.message || '生成触发失败')
+      try {
+        const ch = action.target_chapter || productionNext.current_chapter + 1
+        const res = await post<{ workflow_status: string; message: string }>('/run/chapter', {
+          project_id: project.project_id,
+          chapter: ch,
+        })
+        if (res.ok && res.data) {
+          setFillResult(res.data.message || `第 ${ch} 章生成已触发`)
+          navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
+        } else {
+          setFillResult(res.error?.message || '生成触发失败')
+        }
+      } catch (err) {
+        setFillResult(err instanceof Error ? err.message : '网络请求失败')
+      } finally {
+        setFilling(false)
       }
-      navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
       return
     }
 
@@ -297,34 +320,44 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       const ch = action.target_chapter || productionNext.current_chapter
       setFilling(true)
       setFillResult('')
-      const resetPath = action.action_url.replace(/^\/api/, '')
-      const res = await post<{ message: string }>(resetPath, {})
-      setFilling(false)
-      if (res.ok && res.data) {
-        setFillResult(res.data.message || `第 ${ch} 章已重置`)
-        load()
-      } else {
-        setFillResult(res.error?.message || '重置失败')
+      try {
+        const resetPath = action.action_url.replace(/^\/api/, '')
+        const res = await post<{ message: string }>(resetPath, {})
+        if (res.ok && res.data) {
+          setFillResult(res.data.message || `第 ${ch} 章已重置`)
+          load()
+          navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
+        } else {
+          setFillResult(res.error?.message || '重置失败')
+        }
+      } catch (err) {
+        setFillResult(err instanceof Error ? err.message : '网络请求失败')
+      } finally {
+        setFilling(false)
       }
-      navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
       return
     }
 
     if (action.key === 'generate_arc_plan') {
       setFilling(true)
       setFillResult('')
-      const nextCh = productionNext.current_chapter + 1
-      const res = await post<{ planned: boolean; created: Record<string, number> }>(
-        `/projects/${project.project_id}/production/arc-plan`,
-        { chapter_start: nextCh, chapter_end: nextCh + 9, confirm: true }
-      )
-      setFilling(false)
-      if (res.ok && res.data) {
-        const total = Object.values(res.data.created).reduce((a, b) => a + b, 0)
-        setFillResult(`已生成章节计划，新增 ${total} 项`)
-        load()
-      } else {
-        setFillResult(res.error?.message || '计划生成失败')
+      try {
+        const nextCh = productionNext.current_chapter + 1
+        const res = await post<{ planned: boolean; created: Record<string, number> }>(
+          `/projects/${project.project_id}/production/arc-plan`,
+          { chapter_start: nextCh, chapter_end: nextCh + 9, confirm: true }
+        )
+        if (res.ok && res.data) {
+          const total = Object.values(res.data.created).reduce((a, b) => a + b, 0)
+          setFillResult(`已生成章节计划，新增 ${total} 项`)
+          load()
+        } else {
+          setFillResult(res.error?.message || '计划生成失败')
+        }
+      } catch (err) {
+        setFillResult(err instanceof Error ? err.message : '网络请求失败')
+      } finally {
+        setFilling(false)
       }
       return
     }
@@ -339,27 +372,35 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setAutoResult(null)
     setAutoError(null)
 
-    const res = await post<AutoRunResponse>(`/projects/${project.project_id}/production/run-auto`, {
-      max_steps: autoConfig.maxSteps,
-      chapter_start: autoConfig.chapterStart,
-      chapter_end: autoConfig.chapterEnd,
-      stop_on_review: autoConfig.stopOnReview,
-      dry_run: dryRun,
-      confirm: true,
-    })
-
-    setAutoRunning(false)
-    if (res.ok && res.data) {
-      setAutoResult(res.data)
-      if (!dryRun && res.data.status !== 'failed') {
-        load()
-      }
-    } else {
-      setAutoError({
-        code: res.error?.code || 'UNKNOWN_ERROR',
-        message: res.error?.message || '运行失败',
-        details: res.error?.details,
+    try {
+      const res = await post<AutoRunResponse>(`/projects/${project.project_id}/production/run-auto`, {
+        max_steps: autoConfig.maxSteps,
+        chapter_start: autoConfig.chapterStart,
+        chapter_end: autoConfig.chapterEnd,
+        stop_on_review: autoConfig.stopOnReview,
+        dry_run: dryRun,
+        confirm: true,
       })
+
+      if (res.ok && res.data) {
+        setAutoResult(res.data)
+        if (!dryRun && res.data.status !== 'failed') {
+          load()
+        }
+      } else {
+        setAutoError({
+          code: res.error?.code || 'UNKNOWN_ERROR',
+          message: res.error?.message || '运行失败',
+          details: res.error?.details,
+        })
+      }
+    } catch (err) {
+      setAutoError({
+        code: 'NETWORK_ERROR',
+        message: err instanceof Error ? err.message : '网络请求失败',
+      })
+    } finally {
+      setAutoRunning(false)
     }
   }
 
@@ -890,7 +931,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 </Link>
               ))}
               {(contextStatus?.missing || []).length > 0 && (
-                <button className="btn btn-primary btn-sm" onClick={handleAutoFill} disabled={filling || autoRunning}>
+                <button className="btn btn-secondary btn-sm" onClick={handleAutoFill} disabled={filling || autoRunning}>
                   <Sparkles size={12} /> 让 AI 补齐缺失资料
                 </button>
               )}
@@ -951,17 +992,6 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 </Link>
               </div>
             ))}
-          </div>
-
-          <div style={{ marginTop: 10 }}>
-            <button
-              className="btn btn-primary btn-sm"
-              onClick={handleAutoFill}
-              disabled={filling || autoRunning}
-              style={{ fontSize: 12 }}
-            >
-              <Sparkles size={12} /> AI 补齐全部缺失资料
-            </button>
           </div>
         </div>
       )}
