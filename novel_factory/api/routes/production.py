@@ -862,15 +862,23 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
         ch_start = body.chapter_start if body.chapter_start is not None else current_chapter
         ch_end = body.chapter_end if body.chapter_end is not None else ch_start + 9
 
+        # P2-1: When a range is explicitly requested, start from chapter_start
+        # so that generate_chapter/continue_next_chapter actions target the
+        # requested range instead of falling back to project.current_chapter.
+        if body.chapter_start is not None:
+            active_chapter = ch_start
+        else:
+            active_chapter = current_chapter
+
         # Execute steps
         step_count = 0
         stop_reason = ""
         final_next_action: dict | None = None
 
         while step_count < body.max_steps:
-            # Get current state
-            health = _build_health(repo, project_id, current_chapter)
-            next_action = _determine_next_action(repo, project_id, health, current_chapter)
+            # Get current state using active_chapter for range-aware decisions
+            health = _build_health(repo, project_id, active_chapter)
+            next_action = _determine_next_action(repo, project_id, health, active_chapter)
 
             # Check if we should stop
             if next_action["key"] == "none":
@@ -889,8 +897,15 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
                 final_next_action = next_action
                 break
 
-            # P2-1: Range-aware target selection — stop if target chapter is outside requested range
+            # P2-1: Range-aware target selection — derive effective target for all action types
             action_target_chapter = next_action.get("target_chapter")
+            if action_target_chapter is None and next_action["key"] in ("generate_chapter", "continue_next_chapter"):
+                # These actions fall back to active_chapter when target_chapter is absent
+                action_target_chapter = active_chapter
+            elif action_target_chapter is None and next_action["key"] == "generate_arc_plan":
+                # Arc plan targets the next chapter after active_chapter
+                action_target_chapter = active_chapter + 1
+
             if action_target_chapter is not None and (action_target_chapter < ch_start or action_target_chapter > ch_end):
                 stop_reason = STOP_REASON_COMPLETED
                 final_next_action = next_action
@@ -926,7 +941,7 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
 
             # Execute the action
             step_result = await _execute_auto_step(
-                request, repo, settings, llm_mode, project_id, next_action, ch_start, ch_end
+                request, repo, settings, llm_mode, project_id, next_action, ch_start, ch_end, active_chapter
             )
 
             step_count += 1  # Count attempted steps consistently
@@ -973,10 +988,11 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
                         final_next_action = next_action
                         break
 
-            # Update current_chapter if chapter was published
+            # Update active_chapter and project current_chapter if chapter was published
             if step_result.get("chapter_status") == "published":
-                current_chapter = next_action.get("target_chapter", current_chapter) + 1
-                # Update project current_chapter
+                published_ch = next_action.get("target_chapter", active_chapter)
+                active_chapter = published_ch + 1
+                current_chapter = active_chapter
                 repo.update_project(project_id, current_chapter=current_chapter)
 
         # Determine final status
@@ -1008,10 +1024,13 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
         return error_response("INTERNAL_ERROR", f"自动生产运行失败: {str(e)}")
 
 
-def _normalize_llm_warnings(created: dict, warnings: list[str]) -> tuple[str, str | None]:
+def _normalize_llm_warnings(
+    created: dict, warnings: list[str], missing_types: list[str] | None = None
+) -> tuple[str, str | None]:
     """Normalize LLM warnings into (status, error_message) for run-auto steps.
 
     Reuses the same error detection logic as the standalone auto-fill/arc-plan routes.
+    When missing_types is provided, requires at least one missing target type to be created.
     Returns ("success", None) if no error, ("failed", error_message) otherwise.
     """
     _llm_error_keywords = ("调用失败", "校验失败", "非对象")
@@ -1021,6 +1040,13 @@ def _normalize_llm_warnings(created: dict, warnings: list[str]) -> tuple[str, st
     total_created = sum(created.values())
     _idempotent_keywords = ("已存在", "已忽略", "跳过", "已有")
     has_idempotent_skip = any(k in w for w in warnings for k in _idempotent_keywords)
+
+    # P2-2: If missing_types is provided, require at least one missing target type
+    # to be created — matching the standalone route logic.
+    if missing_types is not None:
+        if not any(created.get(t, 0) > 0 for t in missing_types):
+            return "failed", f"LLM 未生成缺失的资料类型: {', '.join(missing_types)}"
+
     if total_created == 0 and not has_idempotent_skip:
         return "failed", "LLM 未生成任何有效资料"
 
@@ -1036,6 +1062,7 @@ async def _execute_auto_step(
     next_action: dict,
     ch_start: int,
     ch_end: int,
+    active_chapter: int,
 ) -> dict:
     """Execute a single auto-production step.
 
@@ -1052,14 +1079,15 @@ async def _execute_auto_step(
             project = repo.get_project(project_id)
             if llm_mode == "stub":
                 created, warnings = _stub_autofill(repo, project, project_id, ch_start, ch_end)
+                missing_types = None
             else:
                 from ..deps import get_llm_provider
                 from ...agents.autonomous_planner import execute_autofill
                 llm = get_llm_provider(request)
-                created, warnings, _ = execute_autofill(repo, llm, project_id, ch_start, ch_end)
+                created, warnings, missing_types = execute_autofill(repo, llm, project_id, ch_start, ch_end)
 
-            # P2-2: Normalize LLM failures same as standalone route
-            status, error_msg = _normalize_llm_warnings(created, warnings)
+            # P2-2: Normalize LLM failures same as standalone route, with missing_types
+            status, error_msg = _normalize_llm_warnings(created, warnings, missing_types)
             result["result"] = status
             if error_msg:
                 result["error"] = error_msg
@@ -1091,7 +1119,7 @@ async def _execute_auto_step(
 
         # ── generate_chapter / continue_next_chapter ──
         if action_key in ("generate_chapter", "continue_next_chapter"):
-            chapter_num = target_chapter or repo.get_project(project_id).get("current_chapter", 1)
+            chapter_num = target_chapter or active_chapter
             result["target_chapter"] = chapter_num
 
             # Use run_with_graph
@@ -1125,7 +1153,7 @@ async def _execute_auto_step(
 
         # ── recover_blocked_run ──
         if action_key == "recover_blocked_run":
-            chapter_num = target_chapter or repo.get_project(project_id).get("current_chapter", 1)
+            chapter_num = target_chapter or active_chapter
             result["target_chapter"] = chapter_num
 
             # Reset the chapter

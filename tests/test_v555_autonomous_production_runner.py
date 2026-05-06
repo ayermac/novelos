@@ -179,6 +179,45 @@ class TestRunAutoChapterRange:
         for ch in data["chapters_touched"]:
             assert ch == 1, f"Chapter {ch} touched but only chapter 1 was requested"
 
+    def test_range_11_20_does_not_generate_chapter_1(self, client, project_with_context):
+        """P2-1: Requesting 11-20 while current_chapter=1 must not generate chapter 1."""
+        from novel_factory.db.repository import Repository
+        db_path = client.app.state.db_path
+        repo = Repository(db_path)
+
+        # Ensure current_chapter is 1
+        repo.update_project(project_with_context, current_chapter=1)
+
+        # Request chapters 11-20 only
+        resp = client.post(f"/api/projects/{project_with_context}/production/run-auto", json={
+            "chapter_start": 11,
+            "chapter_end": 20,
+            "max_steps": 5,
+            "confirm": True,
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+
+        # The runner should attempt chapter 11 (not 1), which fails because
+        # instructions for 11-20 don't exist — that's expected. The key assertion
+        # is that chapter 1 is NEVER touched.
+        if body["ok"] is True:
+            data = body["data"]
+            for ch in data["chapters_touched"]:
+                assert ch != 1, f"Chapter 1 was touched but range was 11-20"
+                assert 11 <= ch <= 20, f"Chapter {ch} touched but outside range 11-20"
+        else:
+            # Step failure is ok — verify the failed step targeted chapter 11, not 1
+            details = body["error"]["details"]
+            failed_step = next((s for s in details["steps"] if s["result"] == "failed"), None)
+            if failed_step:
+                # target_chapter should be 11 (from active_chapter), not 1
+                assert failed_step.get("target_chapter") != 1, \
+                    f"Failed step targeted chapter 1 but range was 11-20"
+            # Also verify no chapter 1 in touched
+            for ch in details.get("chapters_touched", []):
+                assert ch != 1, f"Chapter 1 was touched but range was 11-20"
+
 
 class TestRunAutoAutoFill:
     """Test auto-fill integration."""
