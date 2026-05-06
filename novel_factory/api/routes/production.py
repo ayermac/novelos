@@ -941,25 +941,42 @@ async def _auto_run_generator(
                 break
 
             # P2-1: Range-aware target selection — derive effective target for all action types
-            action_target_chapter = next_action.get("target_chapter")
-            if action_target_chapter is None and next_action["key"] in ("generate_chapter", "continue_next_chapter"):
+            effective_target = next_action.get("target_chapter")
+            if effective_target is None and next_action["key"] in ("generate_chapter", "continue_next_chapter"):
                 # These actions fall back to active_chapter when target_chapter is absent
-                action_target_chapter = active_chapter
-            elif action_target_chapter is None and next_action["key"] == "generate_arc_plan":
+                effective_target = active_chapter
+            elif effective_target is None and next_action["key"] == "generate_arc_plan":
                 # Arc plan targets the next chapter after active_chapter
-                action_target_chapter = active_chapter + 1
+                effective_target = active_chapter + 1
 
-            if action_target_chapter is not None and (action_target_chapter < ch_start or action_target_chapter > ch_end):
+            if effective_target is not None and (effective_target < ch_start or effective_target > ch_end):
                 stop_reason = STOP_REASON_COMPLETED
                 final_next_action = next_action
-                steps.append({
-                    "step": step_count + 1,
+                step_count += 1
+                skipped_step = {
+                    "step": step_count,
                     "action": next_action["key"],
                     "label": next_action["label"],
-                    "target_chapter": action_target_chapter,
+                    "target_chapter": effective_target,
                     "result": "skipped",
-                    "warnings": [f"目标章节 {action_target_chapter} 超出请求范围 {ch_start}-{ch_end}"],
-                })
+                    "warnings": [f"目标章节 {effective_target} 超出请求范围 {ch_start}-{ch_end}"],
+                }
+                steps.append(skipped_step)
+                yield {
+                    "event": "step_completed",
+                    "data": {
+                        "project_id": project_id,
+                        "step": skipped_step["step"],
+                        "action": skipped_step["action"],
+                        "label": skipped_step["label"],
+                        "target_chapter": skipped_step["target_chapter"],
+                        "result": "skipped",
+                        "warnings": skipped_step["warnings"],
+                        "error": None,
+                        "steps_executed": step_count,
+                        "chapters_touched": sorted(list(chapters_touched)),
+                    },
+                }
                 break
 
             # P2-2: Stop if active_chapter itself is outside the requested range.
@@ -977,7 +994,7 @@ async def _auto_run_generator(
                     "step": step_count,
                     "action": next_action["key"],
                     "label": next_action["label"],
-                    "target_chapter": next_action.get("target_chapter"),
+                    "target_chapter": effective_target,
                     "result": "dry_run",
                     "warnings": [],
                 })
@@ -988,7 +1005,7 @@ async def _auto_run_generator(
                         "step": step_count,
                         "action": next_action["key"],
                         "label": next_action["label"],
-                        "target_chapter": next_action.get("target_chapter"),
+                        "target_chapter": effective_target,
                         "result": "dry_run",
                         "warnings": [],
                         "error": None,
@@ -1007,7 +1024,7 @@ async def _auto_run_generator(
                     "step": step_count + 1,
                     "action": next_action["key"],
                     "label": next_action["label"],
-                    "target_chapter": next_action.get("target_chapter"),
+                    "target_chapter": effective_target,
                 },
             }
 
@@ -1018,18 +1035,21 @@ async def _auto_run_generator(
 
             step_count += 1  # Count attempted steps consistently
 
+            # Use the most accurate target chapter available (step_result overrides effective fallback)
+            _resolved_target = step_result.get("target_chapter") if step_result.get("target_chapter") is not None else effective_target
+
             steps.append({
                 "step": step_count,
                 "action": next_action["key"],
                 "label": next_action["label"],
-                "target_chapter": next_action.get("target_chapter"),
+                "target_chapter": _resolved_target,
                 "result": step_result.get("result", "unknown"),
                 "warnings": step_result.get("warnings", []),
                 "error": step_result.get("error"),
             })
 
-            if step_result.get("target_chapter"):
-                chapters_touched.add(step_result["target_chapter"])
+            if _resolved_target is not None:
+                chapters_touched.add(_resolved_target)
 
             # Check for step failure — P2-3: return AUTO_RUN_STEP_FAILED error
             if step_result.get("result") == "failed":
@@ -1040,7 +1060,7 @@ async def _auto_run_generator(
                         "step": step_count,
                         "action": next_action["key"],
                         "label": next_action["label"],
-                        "target_chapter": next_action.get("target_chapter"),
+                        "target_chapter": _resolved_target,
                         "result": "failed",
                         "warnings": step_result.get("warnings", []),
                         "error": step_result.get("error"),
@@ -1068,7 +1088,7 @@ async def _auto_run_generator(
                     "step": step_count,
                     "action": next_action["key"],
                     "label": next_action["label"],
-                    "target_chapter": next_action.get("target_chapter"),
+                    "target_chapter": _resolved_target,
                     "result": step_result.get("result", "unknown"),
                     "warnings": step_result.get("warnings", []),
                     "error": step_result.get("error"),
@@ -1093,7 +1113,7 @@ async def _auto_run_generator(
 
             # Update active_chapter and project current_chapter if chapter was published
             if step_result.get("chapter_status") == "published":
-                published_ch = next_action.get("target_chapter", active_chapter)
+                published_ch = _resolved_target if _resolved_target is not None else active_chapter
                 active_chapter = published_ch + 1
                 current_chapter = active_chapter
                 repo.update_project(project_id, current_chapter=current_chapter)
@@ -1153,9 +1173,10 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
         async for event in _auto_run_generator(request, project_id, body):
             events.append(event)
 
-        # Handle early error events
-        if events and events[0]["event"] == "auto_run_error":
-            err_data = events[0]["data"]
+        # Handle any auto_run_error event (not just the first one)
+        error_events = [e for e in events if e["event"] == "auto_run_error"]
+        if error_events:
+            err_data = error_events[0]["data"]
             return error_response(err_data["error"], err_data["message"])
 
         # Check for step failure
