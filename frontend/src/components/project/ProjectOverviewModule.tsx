@@ -975,6 +975,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const planned = stats.status_counts?.planned || 0
   const nextActionKey = productionNext?.next_action?.key || 'none'
   const currentCh = productionNext?.current_chapter || 1
+  const completionRate = stats.total_chapters > 0 ? Math.round((published / stats.total_chapters) * 100) : 0
+  const missingCount = productionNext?.missing.length || 0
+  const healthReady = contextStatus?.ready ? '就绪' : missingCount > 0 ? '待补齐' : '检查中'
 
   /* ---------------------------------------------------------------- */
   /*  Render                                                          */
@@ -987,11 +990,12 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       {/* ============================================================== */}
       <div
         style={{
-          background: 'var(--bg-primary)',
-          border: '1px solid var(--border-color)',
+          background: '#ffffff',
+          border: '1px solid rgba(15, 118, 110, 0.14)',
           borderRadius: 8,
-          marginBottom: 20,
+          marginBottom: 18,
           overflow: 'hidden',
+          boxShadow: '0 18px 45px rgba(8, 17, 31, 0.12)',
         }}
       >
         {/* Header */}
@@ -1001,22 +1005,29 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
             alignItems: 'center',
             justifyContent: 'space-between',
             gap: 12,
-            padding: '14px 18px',
-            borderBottom: '1px solid var(--border-color)',
-            background: 'var(--bg-secondary)',
+            padding: '18px 20px',
+            borderBottom: '1px solid rgba(255, 255, 255, 0.14)',
+            background: 'linear-gradient(135deg, #08111f 0%, #16324f 58%, #0f766e 100%)',
+            color: '#ffffff',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <Terminal size={18} style={{ color: 'var(--primary)', flexShrink: 0 }} />
-            <h3 style={{ margin: 0, fontSize: 15, fontWeight: 600, whiteSpace: 'nowrap' }}>生产指挥台</h3>
-            <span style={{ fontSize: 11, color: 'var(--text-muted)', marginLeft: 4 }}>下一步生产动作</span>
-            {loading && <Loader2 size={14} className="spin" style={{ color: 'var(--text-muted)' }} />}
+            <Terminal size={20} style={{ color: '#5eead4', flexShrink: 0 }} />
+            <div style={{ minWidth: 0 }}>
+              <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, whiteSpace: 'nowrap', letterSpacing: 0 }}>
+                生产指挥台
+              </h3>
+              <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.72)', marginTop: 2 }}>
+                自动生产 · 实时监控 · 断线恢复
+              </div>
+            </div>
+            {loading && <Loader2 size={14} className="spin" style={{ color: 'rgba(255,255,255,0.72)' }} />}
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
             <span
               style={{
                 fontSize: 12,
-                color: 'var(--text-muted)',
+                color: 'rgba(255,255,255,0.72)',
                 fontVariantNumeric: 'tabular-nums',
               }}
             >
@@ -1026,8 +1037,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
               <span
                 className="status-badge"
                 style={{
-                  background: nextActionKey === 'none' ? '#f1f5f9' : '#dbeafe',
-                  color: nextActionKey === 'none' ? '#64748b' : '#1d4ed8',
+                  background: nextActionKey === 'none' ? 'rgba(255,255,255,0.12)' : 'rgba(20,184,166,0.2)',
+                  color: '#ffffff',
+                  border: '1px solid rgba(255,255,255,0.18)',
                   fontSize: 11,
                 }}
               >
@@ -1038,11 +1050,44 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
         </div>
 
         {/* Body */}
-        <div style={{ padding: '16px 18px' }}>
+        <div style={{ padding: '18px 20px' }}>
           {loading ? (
             <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>加载生产状态中…</div>
           ) : productionNext ? (
             <>
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(160px, 100%), 1fr))',
+                  gap: 10,
+                  marginBottom: 16,
+                }}
+              >
+                {[
+                  { label: '工厂状态', value: healthReady, hint: missingCount ? `${missingCount} 个缺口` : '资料链路可用' },
+                  { label: '当前章节', value: `第 ${currentCh} 章`, hint: tActionKey(nextActionKey) },
+                  { label: '发布进度', value: `${completionRate}%`, hint: `${published}/${stats.total_chapters || 0} 章` },
+                ].map((item) => (
+                  <div
+                    key={item.label}
+                    style={{
+                      padding: '12px 13px',
+                      borderRadius: 8,
+                      background: '#f8fbff',
+                      border: '1px solid rgba(15, 118, 110, 0.12)',
+                    }}
+                  >
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 4 }}>{item.label}</div>
+                    <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)', lineHeight: 1.2 }}>
+                      {item.value}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 5, overflowWrap: 'anywhere' }}>
+                      {item.hint}
+                    </div>
+                  </div>
+                ))}
+              </div>
+
               {/* Next action description */}
               <div
                 style={{
@@ -1050,6 +1095,12 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   color: 'var(--text-secondary)',
                   lineHeight: 1.5,
                   marginBottom: 14,
+                  padding: '11px 13px',
+                  borderRadius: 8,
+                  background: '#f6f8fb',
+                  border: '1px solid rgba(8, 17, 31, 0.06)',
+                  overflowWrap: 'anywhere',
+                  wordBreak: 'break-all',
                 }}
               >
                 {productionNext.next_action.description}
@@ -1068,7 +1119,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   className="btn btn-primary"
                   onClick={handlePrimaryAction}
                   disabled={filling || autoRunning || nextActionKey === 'none'}
-                  style={{ flex: '1 1 140px', minWidth: 120 }}
+                  style={{ flex: '1 1 220px', minWidth: 0, minHeight: 42 }}
                 >
                   {filling ? (
                     <>
@@ -1087,7 +1138,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     className="btn btn-secondary"
                     onClick={handleResumeSession}
                     disabled={filling || recovering}
-                    style={{ flex: '0 1 auto' }}
+                    style={{ flex: '1 1 150px', minWidth: 0 }}
                   >
                     <Play size={14} /> {recovering ? '恢复中…' : '重新接入'}
                   </button>
@@ -1098,7 +1149,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     className="btn btn-secondary"
                     onClick={handleResumeSession}
                     disabled={filling}
-                    style={{ flex: '0 1 auto' }}
+                    style={{ flex: '1 1 150px', minWidth: 0 }}
                   >
                     <Play size={14} /> 继续自动生产
                   </button>
@@ -1110,7 +1161,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                       className="btn btn-secondary"
                       onClick={() => handleRunAutoStream(true)}
                       disabled={filling}
-                      style={{ flex: '0 1 auto' }}
+                      style={{ flex: '1 1 150px', minWidth: 0, minHeight: 42 }}
                     >
                       <Sparkles size={14} /> 预览自动生产
                     </button>
@@ -1119,7 +1170,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                       className="btn btn-secondary"
                       onClick={() => handleRunAutoStream(false)}
                       disabled={filling}
-                      style={{ flex: '0 1 auto' }}
+                      style={{ flex: '1 1 150px', minWidth: 0, minHeight: 42 }}
                     >
                       <Play size={14} /> 开始自动生产
                     </button>
@@ -1131,21 +1182,21 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     <button
                       className="btn btn-secondary"
                       onClick={handlePauseSession}
-                      style={{ flex: '0 1 auto' }}
+                      style={{ flex: '1 1 120px', minWidth: 0 }}
                     >
                       <Square size={14} /> 暂停
                     </button>
                     <button
                       className="btn btn-secondary"
                       onClick={handleCancelSession}
-                      style={{ flex: '0 1 auto' }}
+                      style={{ flex: '1 1 120px', minWidth: 0 }}
                     >
                       <XCircle size={14} /> 取消
                     </button>
                     <button
                       className="btn btn-secondary"
                       onClick={handleStopListening}
-                      style={{ flex: '0 1 auto' }}
+                      style={{ flex: '1 1 120px', minWidth: 0 }}
                     >
                       <Square size={14} /> 停止监听
                     </button>
@@ -1166,17 +1217,18 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
               {/* Config row (compact) */}
               <div
                 style={{
-                  display: 'flex',
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(170px, 100%), 1fr))',
                   gap: 16,
-                  flexWrap: 'wrap',
-                  alignItems: 'center',
+                  alignItems: 'stretch',
                   padding: '10px 12px',
-                  background: 'var(--bg-tertiary)',
-                  borderRadius: 6,
+                  background: '#f8fbff',
+                  border: '1px solid rgba(15, 118, 110, 0.12)',
+                  borderRadius: 8,
                   marginBottom: 12,
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
                   <Settings size={13} style={{ color: 'var(--text-muted)' }} />
                   <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>最大步数</label>
                   <input
@@ -1190,16 +1242,17 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     disabled={autoRunning || filling}
                     style={{
                       width: 52,
-                      padding: '3px 6px',
+                      minHeight: 32,
+                      padding: '4px 7px',
                       fontSize: 12,
-                      borderRadius: 4,
+                      borderRadius: 6,
                       border: '1px solid var(--border-color)',
                       background: 'var(--bg-primary)',
                     }}
                   />
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
                   <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>章节范围</label>
                   <input
                     type="number"
@@ -1211,9 +1264,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     disabled={autoRunning || filling}
                     style={{
                       width: 46,
-                      padding: '3px 6px',
+                      minHeight: 32,
+                      padding: '4px 7px',
                       fontSize: 12,
-                      borderRadius: 4,
+                      borderRadius: 6,
                       border: '1px solid var(--border-color)',
                       background: 'var(--bg-primary)',
                     }}
@@ -1229,9 +1283,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     disabled={autoRunning || filling}
                     style={{
                       width: 46,
-                      padding: '3px 6px',
+                      minHeight: 32,
+                      padding: '4px 7px',
                       fontSize: 12,
-                      borderRadius: 4,
+                      borderRadius: 6,
                       border: '1px solid var(--border-color)',
                       background: 'var(--bg-primary)',
                     }}

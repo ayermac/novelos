@@ -30,6 +30,13 @@ interface ModuleGroup {
 
 const MODULE_GROUPS: ModuleGroup[] = [
   {
+    label: '项目',
+    items: [
+      { key: 'overview', label: '总览', icon: <LayoutDashboard size={16} /> },
+      { key: 'settings', label: '设置', icon: <Settings size={16} /> },
+    ],
+  },
+  {
     label: '写作',
     items: [
       { key: 'chapters', label: '章节', icon: <BookOpen size={16} /> },
@@ -55,13 +62,6 @@ const MODULE_GROUPS: ModuleGroup[] = [
       { key: 'style', label: '风格指南', icon: <Palette size={16} /> },
       { key: 'review', label: '审核', icon: <CheckCircle2 size={16} /> },
       { key: 'runs', label: '运行记录', icon: <History size={16} /> },
-    ],
-  },
-  {
-    label: '项目',
-    items: [
-      { key: 'overview', label: '总览', icon: <LayoutDashboard size={16} /> },
-      { key: 'settings', label: '设置', icon: <Settings size={16} /> },
     ],
   },
 ]

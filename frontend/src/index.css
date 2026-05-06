@@ -1,4 +1,4 @@
-/* v5.1 Design System - Chinese Author Workbench */
+/* v5.5.9 Design System - Chinese Novel Production Factory */
 
 :root {
   /* Layout */
@@ -6,8 +6,8 @@
   --topbar-height: 56px;
 
   /* Colors */
-  --primary: #3b82f6;
-  --primary-dark: #2563eb;
+  --primary: #0f766e;
+  --primary-dark: #16324f;
   --secondary: #64748b;
   --success: #10b981;
   --warning: #f59e0b;
@@ -16,8 +16,8 @@
 
   /* Backgrounds */
   --bg-primary: #ffffff;
-  --bg-secondary: #f8fafc;
-  --bg-tertiary: #f1f5f9;
+  --bg-secondary: #f6f8fb;
+  --bg-tertiary: #eef3f8;
 
   /* Text */
   --text-primary: #0f172a;

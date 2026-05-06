@@ -506,25 +506,25 @@ function ModuleRouter({
 function WorkspaceStyles() {
   return (
     <style>{`
-      .project-shell { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height)); margin: calc(-1 * var(--spacing-lg)); overflow: hidden; background: var(--bg-secondary); }
-      .project-header { min-height: 62px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 18px; background: var(--bg-primary); border-bottom: 1px solid var(--border-color); }
+      .project-shell { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height)); margin: calc(-1 * var(--spacing-lg)); overflow: hidden; background: linear-gradient(180deg, #f8fbff 0%, #eef3f8 100%); }
+      .project-header { min-height: 66px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 20px; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(12px); border-bottom: 1px solid rgba(15, 118, 110, 0.1); }
       .project-header-main { display: flex; align-items: center; gap: 18px; min-width: 0; }
-      .project-header-back { color: var(--text-secondary); text-decoration: none; font-size: 13px; white-space: nowrap; }
+      .project-header-back { color: var(--text-secondary); text-decoration: none; font-size: 13px; white-space: nowrap; padding: 6px 9px; border: 1px solid rgba(15, 118, 110, 0.12); border-radius: 8px; background: #ffffff; }
       .project-header-back:hover { color: var(--primary); }
       .project-header-title { min-width: 0; }
       .project-header h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary); line-height: 1.3; overflow-wrap: anywhere; }
       .project-header-meta { display: flex; gap: 12px; margin-top: 2px; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; }
       .project-shell-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-      .project-side-nav { width: 184px; flex-shrink: 0; overflow-y: auto; padding: 14px 10px; background: var(--bg-primary); border-right: 1px solid var(--border-color); }
+      .project-side-nav { width: 196px; flex-shrink: 0; overflow-y: auto; padding: 14px 10px; background: rgba(255, 255, 255, 0.82); border-right: 1px solid rgba(15, 118, 110, 0.1); }
       .project-side-nav-group + .project-side-nav-group { margin-top: 18px; }
-      .project-side-nav-label { padding: 0 10px 6px; font-size: 11px; font-weight: 600; color: var(--text-muted); letter-spacing: 0; }
-      .project-side-nav-items { display: flex; flex-direction: column; gap: 2px; }
-      .project-side-nav-item { width: 100%; min-height: 36px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s, color 0.15s, border-color 0.15s; }
+      .project-side-nav-label { padding: 0 10px 6px; font-size: 11px; font-weight: 700; color: var(--text-muted); letter-spacing: 0; }
+      .project-side-nav-items { display: flex; flex-direction: column; gap: 3px; }
+      .project-side-nav-item { width: 100%; min-height: 38px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s; }
       .project-side-nav-item span { min-width: 0; overflow-wrap: anywhere; }
-      .project-side-nav-item:hover { background: var(--bg-tertiary); color: var(--text-primary); }
+      .project-side-nav-item:hover { background: #ffffff; color: var(--text-primary); border-color: rgba(15, 118, 110, 0.12); transform: translateX(1px); }
       .project-side-nav-item:focus-visible { outline: 2px solid rgba(59, 130, 246, 0.45); outline-offset: 2px; }
-      .project-side-nav-item.active { background: #eff6ff; color: var(--primary); border-color: #bfdbfe; font-weight: 500; }
-      .project-shell-main { flex: 1; min-width: 0; overflow: hidden; }
+      .project-side-nav-item.active { background: rgba(20, 184, 166, 0.1); color: #0f766e; border-color: rgba(15, 118, 110, 0.2); font-weight: 600; }
+      .project-shell-main { flex: 1; min-width: 0; width: 100%; overflow: hidden; }
       .workspace-layout { display: flex; flex-direction: column; height: 100%; overflow-x: hidden; width: 100%; box-sizing: border-box; }
       .ws-body { display: flex; flex: 1; overflow: hidden; min-width: 0; }
       .ws-left { width: 220px; flex-shrink: 0; overflow-y: auto; }
@@ -532,11 +532,11 @@ function WorkspaceStyles() {
       .ws-right { width: 260px; flex-shrink: 0; overflow-y: auto; }
       .ws-module-content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px 24px; max-width: 100%; min-width: 0; }
       @media (max-width: 768px) {
-        .project-shell { height: calc(100vh - var(--topbar-height)); }
+        .project-shell { height: calc(100vh - var(--topbar-height)); margin: 0; width: 100%; }
         .project-header { align-items: flex-start; flex-direction: column; padding: 10px 14px; }
         .project-header-main { width: 100%; flex-wrap: wrap; gap: 8px; }
-        .project-shell-body { flex-direction: column; }
-        .project-side-nav { width: 100%; display: flex; gap: 14px; overflow-x: auto; overflow-y: hidden; padding: 10px 12px; border-right: none; border-bottom: 1px solid var(--border-color); }
+        .project-shell-body { flex-direction: column; min-width: 0; overflow-x: hidden; }
+        .project-side-nav { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; display: flex; gap: 14px; overflow-x: auto; overflow-y: hidden; padding: 10px 12px; border-right: none; border-bottom: 1px solid var(--border-color); }
         .project-side-nav-group { min-width: max-content; }
         .project-side-nav-group + .project-side-nav-group { margin-top: 0; }
         .project-side-nav-items { flex-direction: row; }
@@ -544,9 +544,9 @@ function WorkspaceStyles() {
         .ws-body { flex-direction: column; }
         .ws-left { width: 100%; max-height: 200px; border-right: none; border-bottom: 1px solid var(--border-color); }
         .ws-right { width: 100%; max-height: 200px; border-left: none; border-top: 1px solid var(--border-color); }
-        .ws-module-content { padding: 16px; }
+        .ws-module-content { padding: 16px; width: 100%; min-width: 0; }
         .data-grid { grid-template-columns: 1fr; }
-        .project-module { max-width: 100%; }
+        .project-module { max-width: 100%; min-width: 0; }
       }
       .ws-tabs { display: flex; border-bottom: 1px solid var(--border-color); background: var(--bg-primary); padding: 0 16px; }
       .ws-tab { padding: 10px 16px; border: none; background: none; cursor: pointer; font-size: 14px; color: var(--text-secondary); border-bottom: 2px solid transparent; transition: all 0.15s; }
