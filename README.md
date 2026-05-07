@@ -300,7 +300,7 @@ npm run build
 Current verified baseline:
 
 ```text
-pytest: 1792/1792 passed (includes v5.5.8 targeted 15 passed)
+pytest: 1809/1809 passed (includes v5.5.9 targeted 12 passed)
 v5.5.3 regression: 20 passed
 frontend typecheck: passed
 frontend lint: passed

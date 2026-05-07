@@ -62,6 +62,7 @@
 | `novel-factory-v5.5.7-realtime-production-monitor-spec.md` | v5.5.7 实时监控/streaming UI、SSE endpoint、EventSource 实时追加、停止监听 | 开发 Agent、质量验收 |
 | `novel-factory-v5.5.8-auto-run-control-loop-spec.md` | v5.5.8 自动生产控制循环、session 持久化、pause/resume/cancel/retry、协作式控制 | 开发 Agent、质量验收 |
 | `novel-factory-v5.5.9-auto-run-resilience-spec.md` | v5.5.9 自动生产恢复闭环、刷新恢复、SSE 断线重连、session health、失败步精准重试 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.10-bounded-autonomy-guardrails-spec.md` | v5.5.10 有界自动生产护栏、token/步数/时长预算、无进展停机、人工闸门 | 产品规划、开发 Agent |
 | `novel-factory-api-contract-guidelines.md` | API 设计规范：Resource API / Action API 边界、POST body-style、兼容迁移策略 | 开发 Agent、代码评审、API 验收 |
 
 ## v5.1.1 本地启动与验收
