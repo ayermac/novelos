@@ -550,7 +550,7 @@ class TestFrontendCopy:
         path = os.path.abspath(path)
         with open(path, "r", encoding="utf-8") as f:
             source = f.read()
-        assert "生产指挥台" in source
+        assert "今日生产" in source
         assert "让 AI 补齐缺失资料" in source
         assert "让 AI 补齐世界观" in source or "让 AI 补齐" in source
 

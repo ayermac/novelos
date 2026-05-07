@@ -423,6 +423,7 @@ export default function ProjectDetail() {
           currentChapterRecord={currentCh}
           genError={genError}
           genErrorDetails={genErrorDetails}
+          isLaunching={generating && !isStreaming}
           isStub={isStub}
           isStreaming={isCurrentChapterGenerating}
           llmMode={llmMode}
@@ -495,7 +496,12 @@ function ModuleRouter({
     case 'instructions':
       return <InstructionsModule projectId={projectId} />
     case 'memory':
-      return <MemoryUpdatesModule projectId={projectId} />
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 32 }}>
+          <MemoryUpdatesModule projectId={projectId} />
+          <FactLedgerModule projectId={projectId} />
+        </div>
+      )
     case 'facts':
       return <FactLedgerModule projectId={projectId} />
     case 'style':
@@ -525,7 +531,9 @@ function WorkspaceStyles() {
       .project-shell-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
       .project-side-nav { width: 196px; flex-shrink: 0; overflow-y: auto; padding: 14px 10px; background: rgba(255, 255, 255, 0.82); border-right: 1px solid rgba(15, 118, 110, 0.1); }
       .project-side-nav-group + .project-side-nav-group { margin-top: 18px; }
-      .project-side-nav-label { padding: 0 10px 6px; font-size: 11px; font-weight: 700; color: var(--text-muted); letter-spacing: 0; }
+      .project-side-nav-label { padding: 0 10px 6px; font-size: 11px; font-weight: 700; color: var(--text-muted); letter-spacing: 0; display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+      .project-side-nav-label.collapsible { cursor: pointer; user-select: none; }
+      .project-side-nav-label.collapsible:hover { color: var(--text-secondary); }
       .project-side-nav-items { display: flex; flex-direction: column; gap: 3px; }
       .project-side-nav-item { width: 100%; min-height: 38px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s; }
       .project-side-nav-item span { min-width: 0; overflow-wrap: anywhere; }

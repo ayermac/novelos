@@ -96,6 +96,7 @@ interface ChapterWorkspaceProps {
   currentChapterRecord: Chapter | null
   genError: string
   genErrorDetails: { missing?: string[]; actions?: string[] } | null
+  isLaunching: boolean
   isStub: boolean
   isStreaming: boolean
   llmMode: string
@@ -125,6 +126,7 @@ export default function ChapterWorkspace({
   currentChapterRecord,
   genError,
   genErrorDetails,
+  isLaunching,
   isStub,
   isStreaming,
   llmMode,
@@ -171,6 +173,7 @@ export default function ChapterWorkspace({
             genErrorDetails={genErrorDetails}
             chapterLoading={chapterLoading}
             hasContent={hasContent}
+            isLaunching={isLaunching}
             isStub={isStub}
             currentChapter={currentChapter}
             chapterDetail={chapterDetail}
@@ -229,13 +232,13 @@ function ChapterTabBar({ activeTab, onTabChange, hasRuns }: {
   )
 }
 
-function ChapterTabContent({ activeTab, generating, genError, genErrorDetails, chapterLoading, hasContent, isStub,
+function ChapterTabContent({ activeTab, generating, genError, genErrorDetails, chapterLoading, hasContent, isLaunching, isStub,
   currentChapter, chapterDetail, runDetail, runsForChapter, onGenerate, onViewWorkflow,
   sseSteps, isStreaming, projectId,
 }: {
   activeTab: ChapterTabKey; generating: boolean; genError: string
   genErrorDetails: { missing?: string[]; actions?: string[] } | null
-  chapterLoading: boolean; hasContent: boolean; isStub: boolean; currentChapter: number
+  chapterLoading: boolean; hasContent: boolean; isLaunching: boolean; isStub: boolean; currentChapter: number
   chapterDetail: ChapterDetail | null; runDetail: RunDetailData | null
   runsForChapter: Run[]; onGenerate: () => void; onViewWorkflow: (runId: string) => void
   sseSteps: Record<string, StepStatus>; isStreaming: boolean; projectId: string
@@ -251,7 +254,7 @@ function ChapterTabContent({ activeTab, generating, genError, genErrorDetails, c
         />
       )
     case 'workflow':
-      return <WorkflowTab runDetail={runDetail} generating={generating} sseSteps={sseSteps} isStreaming={isStreaming} />
+      return <WorkflowTab runDetail={runDetail} generating={generating} isLaunching={isLaunching} sseSteps={sseSteps} isStreaming={isStreaming} />
     case 'artifacts':
       return <ArtifactsTab runDetail={runDetail} />
     case 'history':
@@ -405,10 +408,20 @@ function ContentTab({ generating, genError, genErrorDetails, chapterLoading, has
   )
 }
 
-function WorkflowTab({ runDetail, generating, sseSteps, isStreaming }: {
-  runDetail: RunDetailData | null; generating: boolean; sseSteps: Record<string, StepStatus>; isStreaming: boolean
+function WorkflowTab({ runDetail, generating, isLaunching, sseSteps, isStreaming }: {
+  runDetail: RunDetailData | null; generating: boolean; isLaunching: boolean; sseSteps: Record<string, StepStatus>; isStreaming: boolean
 }) {
   if (runDetail && !isStreaming) return <WorkflowTimeline steps={runDetail.steps} />
+
+  if (isLaunching && !isStreaming) {
+    return (
+      <div style={{ padding: '48px 24px', textAlign: 'center' }}>
+        <Loader2 size={24} className="spin" style={{ color: 'var(--primary)', marginBottom: 12 }} />
+        <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 6 }}>正在启动生成流程...</div>
+        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>准备章节数据和 AI 模型，即将开始</div>
+      </div>
+    )
+  }
 
   if (generating || isStreaming) {
     const hasSseData = Object.keys(sseSteps).length > 0

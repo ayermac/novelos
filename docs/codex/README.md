@@ -97,10 +97,11 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1819/1819 passed
+- **当前测试基线**: 1824/1824 passed
 - **v5.5.9 专项**: 12 passed
 - **v5.5.10 专项**: 8 passed
-- **前端**: typecheck / lint / production build passed
+- **v5.5.11 专项**: 15 passed
+- **前端**: typecheck / lint / production build / vitest passed
 
 ## 使用方式
 
@@ -140,7 +141,7 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.5.10 Bounded Autonomy Guardrails**，测试基线 **1819/1819 passed**（含 v5.5.9 专项 12 passed、v5.5.10 专项 8 passed）。
+当前开发基线是 **v5.5.11 Author-Centric Workspace Reset**，测试基线 **1824/1824 passed**（含 v5.5.9 专项 12 passed、v5.5.10 专项 8 passed、v5.5.11 专项 15 passed）。
 
 **近期已实现能力**：
 
@@ -161,9 +162,6 @@ npm run dev
 - v5.5.8 自动生产控制循环：session 持久化、pause/resume/cancel/retry、协作式控制。
 - v5.5.9 自动生产恢复闭环：刷新恢复、SSE 断线重连、session health、失败步精准重试。
 - v5.5.10 有界自动生产护栏：入口收敛、预算可见、空转检测、重复失败检测、session 清理。
-
-当前下一步：
-
-- v5.5.11 Author-Centric Workspace Reset：把项目工作台从系统能力堆叠重置为作者任务流，重点收口项目导航、今日生产、阻塞复盘、工作流启动可见性和自动生产文案。
+- v5.5.11 作者中心工作台重置：项目导航重组（作者任务/小说设定/系统状态分组）、今日生产面板、阻塞复盘卡、工作流启动可见性、记忆收件箱合并视图、前端测试基线。
 
 历史版本的详细规格请从上方文档列表进入对应版本文档，不再在本索引中重复维护长篇 changelog。

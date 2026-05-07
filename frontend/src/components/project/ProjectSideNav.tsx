@@ -1,6 +1,7 @@
 import {
   BookOpen,
   CheckCircle2,
+  ChevronDown,
   Database,
   FileText,
   Globe,
@@ -14,6 +15,7 @@ import {
   Swords,
   Users,
 } from 'lucide-react'
+import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ProjectModule } from './ProjectModuleNav'
 
@@ -26,20 +28,22 @@ interface ModuleItem {
 interface ModuleGroup {
   label: string
   items: ModuleItem[]
+  collapsible?: boolean
+  defaultCollapsed?: boolean
 }
 
 const MODULE_GROUPS: ModuleGroup[] = [
   {
-    label: '日常工作',
+    label: '作者任务',
     items: [
       { key: 'overview', label: '工作台', icon: <LayoutDashboard size={16} /> },
       { key: 'chapters', label: '写章节', icon: <BookOpen size={16} /> },
-      { key: 'review', label: '审核发布', icon: <CheckCircle2 size={16} /> },
-      { key: 'memory', label: '记忆收纳', icon: <Database size={16} /> },
+      { key: 'review', label: '审稿发布', icon: <CheckCircle2 size={16} /> },
+      { key: 'memory', label: '记忆收件箱', icon: <Database size={16} /> },
     ],
   },
   {
-    label: '小说资料',
+    label: '小说设定',
     items: [
       { key: 'genesis', label: '创世设定', icon: <Sparkles size={16} /> },
       { key: 'outline', label: '大纲篇章', icon: <ListTree size={16} /> },
@@ -53,7 +57,9 @@ const MODULE_GROUPS: ModuleGroup[] = [
     ],
   },
   {
-    label: '系统',
+    label: '系统状态',
+    collapsible: true,
+    defaultCollapsed: true,
     items: [
       { key: 'runs', label: '运行记录', icon: <History size={16} /> },
       { key: 'settings', label: '项目设置', icon: <Settings size={16} /> },
@@ -67,26 +73,70 @@ interface ProjectSideNavProps {
 }
 
 export default function ProjectSideNav({ activeModule, onModuleChange }: ProjectSideNavProps) {
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
+    const initial = new Set<string>()
+    for (const group of MODULE_GROUPS) {
+      if (group.collapsible && group.defaultCollapsed) {
+        initial.add(group.label)
+      }
+    }
+    return initial
+  })
+
+  const toggleGroup = (label: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev)
+      if (next.has(label)) next.delete(label)
+      else next.add(label)
+      return next
+    })
+  }
+
+  const isGroupActive = (group: ModuleGroup) =>
+    group.items.some((item) => item.key === activeModule)
+
   return (
-    <nav className="project-side-nav" aria-label="项目模块">
-      {MODULE_GROUPS.map((group) => (
-        <section className="project-side-nav-group" key={group.label}>
-          <div className="project-side-nav-label">{group.label}</div>
-          <div className="project-side-nav-items">
-            {group.items.map((item) => (
-              <button
-                type="button"
-                key={item.key}
-                className={`project-side-nav-item${activeModule === item.key ? ' active' : ''}`}
-                onClick={() => onModuleChange(item.key)}
-              >
-                {item.icon}
-                <span>{item.label}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      ))}
+    <nav className="project-side-nav" aria-label="项目导航">
+      {MODULE_GROUPS.map((group) => {
+        const collapsed = collapsedGroups.has(group.label) && !isGroupActive(group)
+        return (
+          <section className="project-side-nav-group" key={group.label}>
+            <div
+              className={`project-side-nav-label${group.collapsible ? ' collapsible' : ''}`}
+              onClick={group.collapsible ? () => toggleGroup(group.label) : undefined}
+              role={group.collapsible ? 'button' : undefined}
+              tabIndex={group.collapsible ? 0 : undefined}
+              onKeyDown={group.collapsible ? (e) => { if (e.key === 'Enter' || e.key === ' ') toggleGroup(group.label) } : undefined}
+            >
+              <span>{group.label}</span>
+              {group.collapsible && (
+                <ChevronDown
+                  size={12}
+                  style={{
+                    transform: collapsed ? 'rotate(-90deg)' : 'rotate(0)',
+                    transition: 'transform 0.15s',
+                  }}
+                />
+              )}
+            </div>
+            {!collapsed && (
+              <div className="project-side-nav-items">
+                {group.items.map((item) => (
+                  <button
+                    type="button"
+                    key={item.key}
+                    className={`project-side-nav-item${activeModule === item.key ? ' active' : ''}`}
+                    onClick={() => onModuleChange(item.key)}
+                  >
+                    {item.icon}
+                    <span>{item.label}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+          </section>
+        )
+      })}
     </nav>
   )
 }

@@ -4,7 +4,7 @@
 
 Novelos 将 FastAPI 后端、LangGraph 章节工作流、SQLite 项目存储、React 作者工作台和 CLI 工具整合在一起，用于章节生成、审核、风格管理、项目上下文维护和运行诊断。
 
-当前基线：**v5.5.10 Bounded Autonomy Guardrails**，已验证 **1819/1819 pytest 通过**，前端 TypeScript 检查、lint 和生产构建通过。
+当前基线：**v5.5.11 Author-Centric Workspace Reset**，已验证 **1824/1824 pytest 通过**，前端 TypeScript 检查、lint、生产构建和 vitest 通过。
 
 **近期已实现能力**：
 
@@ -25,10 +25,7 @@ Novelos 将 FastAPI 后端、LangGraph 章节工作流、SQLite 项目存储、R
 - v5.5.8 自动生产控制循环：session 持久化（auto_run_sessions/steps）、start/cancel/pause/resume/retry-step 控制接口、协作式 pause/cancel（generator 在检查点停住）、前端显示暂停/取消/继续按钮和历史列表。
 - v5.5.9 自动生产恢复闭环：刷新后通过 active-session 端点恢复 running/paused session、SSE 断线后标记 paused 并支持重新接入、resume 时自动扩展 max_steps、session 持久化 last_event、步骤时间线中 failed step 支持精准重试。
 - v5.5.10 有界自动生产护栏：自动生产入口收敛（单一入口 + dry-run 开关）、预算状态面板（步数进度、章节范围、停止原因）、空转检测（连续无进展停机）、重复失败检测（同一动作/章节连续失败上限）、session 历史清理能力。
-
-**当前规划分支**：
-
-- v5.5.11 作者中心工作台重置：项目导航重组、今日生产面板、阻塞复盘卡、工作流启动可见性、自动生产文案作者化。
+- v5.5.11 作者中心工作台重置：项目导航重组（作者任务/小说设定/系统状态分组）、今日生产面板、阻塞复盘卡、工作流启动可见性、记忆收件箱合并视图、前端测试基线。
 
 ## 功能概览
 
@@ -306,10 +303,11 @@ npm run build
 当前已验证基线：
 
 ```text
-pytest: 1819/1819 passed（含 v5.5.9 专项 12 passed、v5.5.10 专项 8 passed）
+pytest: 1824/1824 passed（含 v5.5.9 专项 12 passed、v5.5.10 专项 8 passed、v5.5.11 专项 15 passed）
 frontend typecheck: passed
 frontend lint: passed
 frontend build: passed
+frontend vitest: 15/15 passed
 ```
 
 ## 文档
