@@ -849,6 +849,8 @@ class RunAutoRequest(BaseModel):
     dry_run: bool = False
     stop_on_review: bool = True
     confirm: bool = False
+    max_consecutive_no_progress: int = 3
+    max_retries_per_step: int = 2
 
 
 # Stop reasons
@@ -858,6 +860,31 @@ STOP_REASON_BLOCKED = "blocked"
 STOP_REASON_COMPLETED = "completed"
 STOP_REASON_UNSUPPORTED = "unsupported_action"
 STOP_REASON_FAILED = "step_failed"
+STOP_REASON_NO_PROGRESS = "consecutive_no_progress"
+STOP_REASON_REPEATED_FAILURE = "repeated_failure"
+
+
+# v5.5.10: Guardrail helpers
+_NO_PROGRESS_RESULTS = {"skipped", "failed", "blocked", "dry_run"}
+
+
+def _check_consecutive_no_progress(steps: list[dict], max_count: int) -> bool:
+    """Check if the last max_count steps all had no progress."""
+    if len(steps) < max_count:
+        return False
+    recent = steps[-max_count:]
+    return all(s.get("result") in _NO_PROGRESS_RESULTS for s in recent)
+
+
+def _check_repeated_failure(steps: list[dict], action: str, target_chapter: int | None, max_count: int) -> bool:
+    """Check if the same (action, target_chapter) has failed consecutively max_count times."""
+    consecutive = 0
+    for s in reversed(steps):
+        if s.get("action") == action and s.get("target_chapter") == target_chapter and s.get("result") == "failed":
+            consecutive += 1
+        else:
+            break
+    return consecutive >= max_count
 
 
 # ---------------------------------------------------------------------------
@@ -1147,6 +1174,28 @@ async def _auto_run_generator(
                 stop_reason = "dry_run_preview"
                 break
 
+            # v5.5.10: Repeated failure guardrail — stop before executing if the
+            # same (action, target_chapter) has already failed max_retries_per_step times.
+            if _check_repeated_failure(steps, next_action["key"], effective_target, body.max_retries_per_step):
+                stop_reason = STOP_REASON_REPEATED_FAILURE
+                final_next_action = next_action
+                if session_id:
+                    repo.update_auto_run_session_status(
+                        session_id, "stopped", stop_reason=stop_reason, current_step=step_count
+                    )
+                yield {
+                    "event": "auto_run_stopped",
+                    "data": {
+                        "project_id": project_id,
+                        "stop_reason": stop_reason,
+                        "steps_executed": step_count,
+                        "steps": steps,
+                        "chapters_touched": sorted(list(chapters_touched)),
+                        "final_next_action": final_next_action,
+                    },
+                }
+                return
+
             # v5.5.8: Persist step start
             if session_id:
                 repo.create_auto_run_step(
@@ -1264,6 +1313,16 @@ async def _auto_run_generator(
                 repo.update_auto_run_session_status(
                     session_id, None, current_step=step_count, last_event="step_completed"
                 )
+
+            # v5.5.10: No-progress guardrail — stop if the last N steps all had no progress
+            if _check_consecutive_no_progress(steps, body.max_consecutive_no_progress):
+                stop_reason = STOP_REASON_NO_PROGRESS
+                final_next_action = next_action
+                if session_id:
+                    repo.update_auto_run_session_status(
+                        session_id, "stopped", stop_reason=stop_reason, current_step=step_count
+                    )
+                break
 
             # Check for unsupported action
             if step_result.get("result") == "unsupported":
@@ -1981,3 +2040,72 @@ async def retry_auto_run_step(
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"重试步骤失败: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# v5.5.10: Session cleanup
+# ---------------------------------------------------------------------------
+
+class CleanupRequest(BaseModel):
+    """Request to clean up old auto-run sessions."""
+
+    keep_running: bool = True
+    days_old: int = 0
+
+
+@router.delete("/projects/{project_id}/production/run-auto/sessions/{session_id}")
+async def delete_auto_run_session(
+    request: Request, project_id: str, session_id: str
+) -> EnvelopeResponse:
+    """Delete a single auto-run session and its steps."""
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        session = repo.get_auto_run_session(session_id)
+        if not session or session.get("project_id") != project_id:
+            return error_response("SESSION_NOT_FOUND", "会话不存在")
+        if session.get("status") in ("running", "paused"):
+            return error_response("INVALID_STATE", f"当前状态 '{session.get('status')}' 不可删除")
+
+        repo.delete_auto_run_session(session_id)
+        return envelope_response({"deleted": True, "session_id": session_id})
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"删除会话失败: {str(e)}")
+
+
+@router.post("/projects/{project_id}/production/run-auto/cleanup")
+async def cleanup_auto_run_sessions(
+    request: Request, project_id: str, body: CleanupRequest | None = None
+) -> EnvelopeResponse:
+    """Clean up old auto-run sessions for a project.
+
+    Removes sessions with status in (completed, failed, cancelled, dry_run)
+    optionally older than N days.  Never removes running or paused sessions
+    unless keep_running is False.
+    """
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        keep_running = body.keep_running if body else True
+        days_old = body.days_old if body else 0
+
+        removed = repo.cleanup_auto_run_sessions(
+            project_id,
+            keep_running=keep_running,
+            days_old=days_old,
+        )
+
+        return envelope_response({
+            "cleaned": True,
+            "removed_count": removed,
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"清理会话失败: {str(e)}")

@@ -365,6 +365,14 @@ class TestDeriveWordTarget:
         result = derive_word_target(instruction, project)
         assert result == 5000
 
+    def test_instruction_word_target_accepts_numeric_string(self):
+        """Real/autonomous planning may persist word_target as a string."""
+        instruction = {"word_target": "3000"}
+        project = {"target_words": 1500000, "total_chapters_planned": 500}
+
+        result = derive_word_target(instruction, project)
+        assert result == 3000
+
     def test_derive_from_project_settings(self):
         """Should derive from project settings if no instruction word_target."""
         instruction = {"objective": "test"}  # No word_target
@@ -372,6 +380,14 @@ class TestDeriveWordTarget:
 
         result = derive_word_target(instruction, project)
         assert result == 3000  # 1500000 / 500 = 3000
+
+    def test_project_word_settings_accept_numeric_strings(self):
+        """Project settings from APIs should not crash when numeric fields are strings."""
+        instruction = {"objective": "test"}
+        project = {"target_words": "1500000", "total_chapters_planned": "500"}
+
+        result = derive_word_target(instruction, project)
+        assert result == 3000
 
     def test_minimum_2000(self):
         """Should enforce minimum of 2000."""

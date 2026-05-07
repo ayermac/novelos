@@ -4,7 +4,7 @@
 
 Novelos 将 FastAPI 后端、LangGraph 章节工作流、SQLite 项目存储、React 作者工作台和 CLI 工具整合在一起，用于章节生成、审核、风格管理、项目上下文维护和运行诊断。
 
-当前基线：**v5.5.9 Auto-Run Resilience**，已验证 **1809/1809 pytest 通过**，前端 TypeScript 检查、lint 和生产构建通过。
+当前基线：**v5.5.10 Bounded Autonomy Guardrails**，已验证 **1819/1819 pytest 通过**，前端 TypeScript 检查、lint 和生产构建通过。
 
 **v5.3 已实现能力**（部分，进行中）：
 
@@ -24,6 +24,7 @@ Novelos 将 FastAPI 后端、LangGraph 章节工作流、SQLite 项目存储、R
 - v5.5.7 实时监控/streaming UI：后端新增 SSE endpoint `/production/run-auto/stream`，前端使用 EventSource 实时追加步骤时间线、显示 running 状态、支持停止监听（仅关闭前端 stream，不取消后端执行），不改变自动生产安全语义。
 - v5.5.8 自动生产控制循环：session 持久化（auto_run_sessions/steps）、start/cancel/pause/resume/retry-step 控制接口、协作式 pause/cancel（generator 在检查点停住）、前端显示暂停/取消/继续按钮和历史列表。
 - v5.5.9 自动生产恢复闭环：刷新后通过 active-session 端点恢复 running/paused session、SSE 断线后标记 paused 并支持重新接入、resume 时自动扩展 max_steps、session 持久化 last_event、步骤时间线中 failed step 支持精准重试。
+- v5.5.10 有界自动生产护栏：自动生产入口收敛（单一入口 + dry-run 开关）、预算状态面板（步数进度、章节范围、停止原因）、空转检测（连续无进展停机）、重复失败检测（同一动作/章节连续失败上限）、session 历史清理能力。
 
 **v5.3 未收口项**：
 

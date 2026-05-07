@@ -752,6 +752,39 @@ class TestMemoryStructuredFieldNormalization:
         assert "伏笔A" in instruction["plots_to_plant"]
         assert "旧伏笔1" in instruction["plots_to_resolve"]
 
+    def test_apply_faction_update_without_target_id_infers_name(self, client, project_id):
+        """Faction update patches without target_id should infer a faction name from evidence."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=2, summary="Faction inference")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="factions",
+            operation="update",
+            target_id=None,
+            after_json=json.dumps({
+                "relationship_with_protagonist": "敌对（计划在拍卖会除掉主角）",
+            }, ensure_ascii=False),
+            rationale="明确了秦家高层对主角的杀意和具体行动计划。",
+            evidence_text="秦家家主秦德山说，三天后的拍卖会就是他的死期。",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id, "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+
+        factions = repo.list_factions(project_id)
+        qin = next((f for f in factions if f["name"] == "秦家"), None)
+        assert qin is not None
+        assert "敌对" in qin["relationship_with_protagonist"]
+
 
 class TestMemoryCuratorRouting:
     """v5.3.2: Memory curator failure routing in workflow conditions."""

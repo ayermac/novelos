@@ -98,6 +98,7 @@ interface AutoRunResponse {
   steps: AutoRunStep[]
   stop_reason: string
   chapters_touched: number[]
+  steps_executed?: number
 }
 
 interface AutoRunEventData {
@@ -152,6 +153,11 @@ const STOP_REASON_MAP: Record<string, string> = {
   unsupported_action: '需要人工处理',
   step_failed: '步骤失败',
   dry_run: '预览模式',
+  consecutive_no_progress: '连续无进展',
+  repeated_failure: '同一错误多次失败',
+  client_disconnected: '连接断开',
+  cancelled: '已取消',
+  paused: '已暂停',
 }
 
 const ACTION_KEY_MAP: Record<string, string> = {
@@ -217,7 +223,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     chapterStart: 1,
     chapterEnd: 10,
     stopOnReview: true,
+    dryRun: false,
   })
+  const [showAdvancedControls, setShowAdvancedControls] = useState(false)
   const autoConfigInitialized = useRef(false)
 
   /* v5.5.7: SSE stream state */
@@ -246,7 +254,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setStreamError(null)
     setDisconnected(false)
     setRecovering(false)
-    setAutoConfig({ maxSteps: 5, chapterStart: 1, chapterEnd: 10, stopOnReview: true })
+    setAutoConfig({ maxSteps: 5, chapterStart: 1, chapterEnd: 10, stopOnReview: true, dryRun: false })
+    setShowAdvancedControls(false)
     setProductionNext(null) // Clear stale productionNext to prevent race condition
     setShowHistory(false)
     if (eventSourceRef.current) {
@@ -294,25 +303,31 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       )
       if (res.ok && res.data && res.data.active && res.data.session) {
         const s = res.data.session
+        const steps = (res.data.steps || []).map((st) => ({
+          step: st.step,
+          action: st.action,
+          label: st.label,
+          target_chapter: st.target_chapter,
+          result: st.result,
+          warnings: st.warnings || [],
+          error: st.error,
+        }))
+        const touched = Array.from(
+          new Set(steps.map((st) => st.target_chapter).filter((n): n is number => n !== undefined))
+        )
         setActiveSessionId(s.id)
-        // If session is paused or disconnected, show recovery UI
+        setStreamSteps(steps)
         if (s.status === 'paused' || s.status === 'running') {
           setStreamStatus(s.status === 'running' ? 'running' : 'stopped')
           setAutoRunning(s.status === 'running')
-          if (res.data.steps) {
-            setStreamSteps(
-              res.data.steps.map((st) => ({
-                step: st.step,
-                action: st.action,
-                label: st.label,
-                target_chapter: st.target_chapter,
-                result: st.result,
-                warnings: st.warnings || [],
-                error: st.error,
-              }))
-            )
-          }
-          if (s.last_event === 'paused' || s.stop_reason === 'client_disconnected') {
+          setAutoResult({
+            status: s.status,
+            steps,
+            stop_reason: s.stop_reason || (s.status === 'paused' ? 'paused' : ''),
+            chapters_touched: touched,
+            steps_executed: s.current_step,
+          })
+          if (s.stop_reason === 'client_disconnected' || s.last_event === 'client_disconnected') {
             setDisconnected(true)
             setStreamError({ code: 'DISCONNECTED', message: '连接已断开，可重新接入' })
           }
@@ -373,48 +388,14 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     }
 
     if (action.key === 'generate_chapter') {
-      setFilling(true)
-      setFillResult('')
-      try {
-        const ch = productionNext.current_chapter
-        const res = await post<{ workflow_status: string; message: string }>('/run/chapter', {
-          project_id: project.project_id,
-          chapter: ch,
-        })
-        if (res.ok && res.data) {
-          setFillResult(res.data.message || `第 ${ch} 章生成已触发`)
-          navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
-        } else {
-          setFillResult(res.error?.message || '生成触发失败')
-        }
-      } catch (err) {
-        setFillResult(err instanceof Error ? err.message : '网络请求失败')
-      } finally {
-        setFilling(false)
-      }
+      const ch = productionNext.current_chapter
+      navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}&view=workflow&auto_generate=1`)
       return
     }
 
     if (action.key === 'continue_next_chapter') {
-      setFilling(true)
-      setFillResult('')
-      try {
-        const ch = action.target_chapter || productionNext.current_chapter + 1
-        const res = await post<{ workflow_status: string; message: string }>('/run/chapter', {
-          project_id: project.project_id,
-          chapter: ch,
-        })
-        if (res.ok && res.data) {
-          setFillResult(res.data.message || `第 ${ch} 章生成已触发`)
-          navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
-        } else {
-          setFillResult(res.error?.message || '生成触发失败')
-        }
-      } catch (err) {
-        setFillResult(err instanceof Error ? err.message : '网络请求失败')
-      } finally {
-        setFilling(false)
-      }
+      const ch = action.target_chapter || productionNext.current_chapter + 1
+      navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}&view=workflow&auto_generate=1`)
       return
     }
 
@@ -754,6 +735,33 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     }
   }, [project.project_id])
 
+  const handleDeleteSession = async (sessionId: string) => {
+    try {
+      const res = await fetch(`/api/projects/${project.project_id}/production/run-auto/sessions/${sessionId}`, {
+        method: 'DELETE',
+      })
+      if (res.ok) {
+        loadSessions()
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  const handleCleanupSessions = async () => {
+    try {
+      const res = await post<{ cleaned: boolean; removed_count: number }>(
+        `/projects/${project.project_id}/production/run-auto/cleanup`,
+        { keep_running: true, days_old: 0 }
+      )
+      if (res.ok && res.data) {
+        loadSessions()
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   const handleCancelSession = async () => {
     if (!activeSessionId) return
     try {
@@ -806,6 +814,12 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       if (!res.ok || !res.data?.resumed) {
         setAutoRunning(false)
         setRecovering(false)
+        setDisconnected(true)
+        setStreamStatus('error')
+        setStreamError({
+          code: res.error?.code || 'RESUME_FAILED',
+          message: res.error?.message || '恢复会话失败',
+        })
         return
       }
       // Reconnect to stream URL returned by resume
@@ -930,6 +944,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
           setStreamStatus('stopped')
           setStreamError({ code: 'NETWORK_ERROR', message: 'SSE 连接失败或已断开，可重新接入' })
           setAutoRunning(false)
+          setRecovering(false)
           es.close()
           eventSourceRef.current = null
         }
@@ -937,6 +952,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     } catch {
       setAutoRunning(false)
       setRecovering(false)
+      setDisconnected(true)
+      setStreamStatus('error')
+      setStreamError({ code: 'RESUME_FAILED', message: '恢复会话失败' })
     }
   }
 
@@ -1016,10 +1034,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
             <Terminal size={20} style={{ color: '#5eead4', flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
               <h3 style={{ margin: 0, fontSize: 18, fontWeight: 700, whiteSpace: 'nowrap', letterSpacing: 0 }}>
-                生产指挥台
+                今日工作台
               </h3>
               <div style={{ fontSize: 12, color: 'rgba(255,255,255,0.72)', marginTop: 2 }}>
-                自动生产 · 实时监控 · 断线恢复
+                先看下一步，再决定是否连续生成
               </div>
             </div>
             {loading && <Loader2 size={14} className="spin" style={{ color: 'rgba(255,255,255,0.72)' }} />}
@@ -1104,7 +1122,11 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   wordBreak: 'break-all',
                 }}
               >
-                {productionNext.next_action.description}
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 4 }}>当前该做什么</div>
+                <div style={{ fontSize: 16, fontWeight: 650, color: 'var(--text-primary)', marginBottom: 4 }}>
+                  {productionNext.next_action.label}
+                </div>
+                <div>{productionNext.next_action.description}</div>
               </div>
 
               {/* Primary + secondary buttons */}
@@ -1157,25 +1179,15 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 )}
 
                 {!autoRunning && !(streamStatus === 'stopped' && autoResult?.stop_reason === 'paused') && !disconnected && (
-                  <>
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => handleRunAutoStream(true)}
-                      disabled={filling}
-                      style={{ flex: '1 1 150px', minWidth: 0, minHeight: 42 }}
-                    >
-                      <Sparkles size={14} /> 预览自动生产
-                    </button>
-
-                    <button
-                      className="btn btn-secondary"
-                      onClick={() => handleRunAutoStream(false)}
-                      disabled={filling}
-                      style={{ flex: '1 1 150px', minWidth: 0, minHeight: 42 }}
-                    >
-                      <Play size={14} /> 开始自动生产
-                    </button>
-                  </>
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => setShowAdvancedControls((value) => !value)}
+                    disabled={filling}
+                    style={{ flex: '0 1 150px', minWidth: 0, minHeight: 42 }}
+                  >
+                    <Settings size={14} />
+                    {showAdvancedControls ? '收起高级' : '高级控制'}
+                  </button>
                 )}
 
                 {autoRunning && (
@@ -1215,46 +1227,74 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 </div>
               )}
 
-              {/* Config row (compact) */}
-              <div
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: 'repeat(auto-fit, minmax(min(170px, 100%), 1fr))',
-                  gap: 16,
-                  alignItems: 'stretch',
-                  padding: '10px 12px',
-                  background: '#f8fbff',
-                  border: '1px solid rgba(15, 118, 110, 0.12)',
-                  borderRadius: 8,
-                  marginBottom: 12,
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
-                  <Settings size={13} style={{ color: 'var(--text-muted)' }} />
-                  <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>最大步数</label>
-                  <input
-                    type="number"
-                    min={1}
-                    max={50}
-                    value={autoConfig.maxSteps}
-                    onChange={(e) =>
-                      setAutoConfig((prev) => ({ ...prev, maxSteps: parseInt(e.target.value) || 5 }))
-                    }
-                    disabled={autoRunning || filling}
+              {/* Advanced controls */}
+              {showAdvancedControls && (
+                <>
+                  <div
                     style={{
-                      width: 52,
-                      minHeight: 32,
-                      padding: '4px 7px',
-                      fontSize: 12,
-                      borderRadius: 6,
-                      border: '1px solid var(--border-color)',
-                      background: 'var(--bg-primary)',
+                      display: 'flex',
+                      gap: 10,
+                      flexWrap: 'wrap',
+                      padding: '10px 12px',
+                      background: '#f8fbff',
+                      border: '1px solid rgba(15, 118, 110, 0.12)',
+                      borderRadius: 8,
+                      marginBottom: 10,
                     }}
-                  />
-                </div>
+                  >
+                    <button
+                      className="btn btn-secondary"
+                      onClick={() => handleRunAutoStream(autoConfig.dryRun)}
+                      disabled={filling || autoRunning}
+                      style={{ flex: '1 1 180px', minWidth: 0, minHeight: 38 }}
+                    >
+                      {autoConfig.dryRun ? <Sparkles size={14} /> : <Play size={14} />}
+                      {autoConfig.dryRun ? '预览连续生成' : '开始连续生成'}
+                    </button>
+                    <div style={{ flex: '2 1 260px', fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                      连续生成会按下面预算逐步执行，遇到审核、阻塞、无进展或重复失败会停下，不会无限自循环。
+                    </div>
+                  </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
-                  <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>章节范围</label>
+                  <div
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(min(170px, 100%), 1fr))',
+                      gap: 16,
+                      alignItems: 'stretch',
+                      padding: '10px 12px',
+                      background: '#f8fbff',
+                      border: '1px solid rgba(15, 118, 110, 0.12)',
+                      borderRadius: 8,
+                      marginBottom: 12,
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
+                      <Settings size={13} style={{ color: 'var(--text-muted)' }} />
+                      <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>最多执行几步</label>
+                      <input
+                        type="number"
+                        min={1}
+                        max={50}
+                        value={autoConfig.maxSteps}
+                        onChange={(e) =>
+                          setAutoConfig((prev) => ({ ...prev, maxSteps: parseInt(e.target.value) || 5 }))
+                        }
+                        disabled={autoRunning || filling}
+                        style={{
+                          width: 52,
+                          minHeight: 32,
+                          padding: '4px 7px',
+                          fontSize: 12,
+                          borderRadius: 6,
+                          border: '1px solid var(--border-color)',
+                          background: 'var(--bg-primary)',
+                        }}
+                      />
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
+                      <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>章节范围</label>
                   <input
                     type="number"
                     min={1}
@@ -1292,9 +1332,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                       background: 'var(--bg-primary)',
                     }}
                   />
-                </div>
+                    </div>
 
-                <label
+                    <label
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -1303,7 +1343,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     color: 'var(--text-secondary)',
                     cursor: 'pointer',
                   }}
-                >
+                    >
                   <input
                     type="checkbox"
                     checked={autoConfig.stopOnReview}
@@ -1311,8 +1351,91 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     disabled={autoRunning || filling}
                   />
                   遇审核停止
-                </label>
-              </div>
+                    </label>
+
+                    <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    fontSize: 12,
+                    color: 'var(--text-secondary)',
+                    cursor: 'pointer',
+                  }}
+                    >
+                  <input
+                    type="checkbox"
+                    checked={autoConfig.dryRun}
+                    onChange={(e) => setAutoConfig((prev) => ({ ...prev, dryRun: e.target.checked }))}
+                    disabled={autoRunning || filling}
+                  />
+                  仅预览（不执行）
+                    </label>
+                  </div>
+                </>
+              )}
+
+              {/* v5.5.10: Budget status panel */}
+              {(autoRunning || autoResult || streamSteps.length > 0 || streamError || activeSessionId) && (
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'repeat(auto-fit, minmax(min(140px, 100%), 1fr))',
+                    gap: 10,
+                    marginBottom: 12,
+                    padding: '10px 12px',
+                    background: '#f8fbff',
+                    border: '1px solid rgba(15, 118, 110, 0.12)',
+                    borderRadius: 8,
+                  }}
+                >
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>步数预算</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {streamSteps.length > 0 ? streamSteps.length : autoResult?.steps_executed || 0} / {autoConfig.maxSteps}
+                    </div>
+                    <div
+                      style={{
+                        height: 4,
+                        background: '#e2e8f0',
+                        borderRadius: 2,
+                        marginTop: 4,
+                        overflow: 'hidden',
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${Math.min(100, ((streamSteps.length > 0 ? streamSteps.length : autoResult?.steps_executed || 0) / Math.max(1, autoConfig.maxSteps)) * 100)}%`,
+                          background: streamStatus === 'running' ? '#3b82f6' : '#10b981',
+                          borderRadius: 2,
+                          transition: 'width 0.3s ease',
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>章节范围</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      第 {autoConfig.chapterStart}-{autoConfig.chapterEnd} 章
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>当前状态</div>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
+                      {streamStatus === 'running' ? '运行中' : autoResult?.status === 'dry_run' ? '预览' : autoResult?.status || '就绪'}
+                    </div>
+                  </div>
+                  {(autoResult?.stop_reason || streamError) && (
+                    <div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>停止原因</div>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#92400e' }}>
+                        {streamError ? streamError.message : tStopReason(autoResult?.stop_reason || '')}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               {/* Auto-run result */}
               {(autoResult || streamSteps.length > 0 || streamError) && (
@@ -1499,7 +1622,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 </div>
               )}
 
-              {/* Session history (v5.5.8) */}
+              {/* Production history (advanced) */}
+              {showAdvancedControls && (
               <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: 12, marginTop: 12 }}>
                 <div
                   style={{
@@ -1510,7 +1634,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     marginBottom: 10,
                   }}
                 >
-                  <span style={{ fontSize: 13, fontWeight: 500 }}>自动生产历史</span>
+                  <span style={{ fontSize: 13, fontWeight: 500 }}>连续生成记录</span>
                   <div style={{ display: 'flex', gap: 8 }}>
                     <button
                       className="btn btn-secondary btn-sm"
@@ -1528,6 +1652,17 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     {sessions.length === 0 && (
                       <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>暂无历史记录</div>
                     )}
+                    {sessions.length > 0 && (
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 4 }}>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={handleCleanupSessions}
+                          style={{ fontSize: 11 }}
+                        >
+                          清理已完成记录
+                        </button>
+                      </div>
+                    )}
                     {sessions.map((s) => (
                       <div
                         key={s.id}
@@ -1544,34 +1679,46 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                               ? `第 ${s.chapter_start}-${s.chapter_end} 章`
                               : '自动范围'}
                           </span>
-                          <span
-                            className="status-badge"
-                            style={{
-                              fontSize: 11,
-                              background:
-                                s.status === 'completed'
-                                  ? '#d1fae5'
-                                  : s.status === 'failed'
-                                  ? '#fee2e2'
-                                  : s.status === 'cancelled'
-                                  ? '#f1f5f9'
-                                  : s.status === 'paused'
-                                  ? '#fef3c7'
-                                  : '#dbeafe',
-                              color:
-                                s.status === 'completed'
-                                  ? '#065f46'
-                                  : s.status === 'failed'
-                                  ? '#991b1b'
-                                  : s.status === 'cancelled'
-                                  ? '#64748b'
-                                  : s.status === 'paused'
-                                  ? '#92400e'
-                                  : '#1e40af',
-                            }}
-                          >
-                            {s.status}
-                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                            <span
+                              className="status-badge"
+                              style={{
+                                fontSize: 11,
+                                background:
+                                  s.status === 'completed'
+                                    ? '#d1fae5'
+                                    : s.status === 'failed'
+                                    ? '#fee2e2'
+                                    : s.status === 'cancelled'
+                                    ? '#f1f5f9'
+                                    : s.status === 'paused'
+                                    ? '#fef3c7'
+                                    : '#dbeafe',
+                                color:
+                                  s.status === 'completed'
+                                    ? '#065f46'
+                                    : s.status === 'failed'
+                                    ? '#991b1b'
+                                    : s.status === 'cancelled'
+                                    ? '#64748b'
+                                    : s.status === 'paused'
+                                    ? '#92400e'
+                                    : '#1e40af',
+                              }}
+                            >
+                              {s.status}
+                            </span>
+                            {s.status !== 'running' && s.status !== 'paused' && (
+                              <button
+                                className="btn btn-secondary btn-sm"
+                                onClick={() => handleDeleteSession(s.id)}
+                                style={{ fontSize: 10, padding: '2px 6px' }}
+                                title="删除此记录"
+                              >
+                                ×
+                              </button>
+                            )}
+                          </div>
                         </div>
                         <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>
                           步数: {s.current_step} / {s.max_steps}
@@ -1586,6 +1733,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   </div>
                 )}
               </div>
+              )}
             </>
           ) : (
             <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>无法获取生产建议</div>

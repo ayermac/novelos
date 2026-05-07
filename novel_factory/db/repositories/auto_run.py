@@ -255,3 +255,58 @@ class AutoRunRepositoryMixin:
             return row_to_dict(row)
         finally:
             conn.close()
+
+    def delete_auto_run_session(self, session_id: str) -> bool:
+        """Delete a session and its steps."""
+        conn = self._conn()
+        try:
+            conn.execute("DELETE FROM auto_run_steps WHERE session_id=?", (session_id,))
+            cursor = conn.execute("DELETE FROM auto_run_sessions WHERE id=?", (session_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def cleanup_auto_run_sessions(
+        self,
+        project_id: str,
+        keep_running: bool = True,
+        days_old: int = 0,
+    ) -> int:
+        """Clean up old auto-run sessions for a project.
+
+        Returns the number of sessions removed.
+        """
+        conn = self._conn()
+        try:
+            deletable_statuses = ("completed", "failed", "cancelled", "dry_run", "stopped")
+            conditions = ["project_id = ?", "status IN (" + ",".join("?" * len(deletable_statuses)) + ")"]
+            params: list = [project_id, *deletable_statuses]
+
+            if keep_running:
+                conditions.append("status NOT IN ('running', 'paused')")
+
+            if days_old > 0:
+                conditions.append("updated_at < datetime('now', '-' || ? || ' days', '+8 hours')")
+                params.append(days_old)
+
+            where_clause = " AND ".join(conditions)
+
+            # Delete steps first, then sessions
+            step_cursor = conn.execute(
+                f"""
+                DELETE FROM auto_run_steps
+                WHERE session_id IN (
+                    SELECT id FROM auto_run_sessions WHERE {where_clause}
+                )
+                """,
+                params,
+            )
+            session_cursor = conn.execute(
+                f"DELETE FROM auto_run_sessions WHERE {where_clause}",
+                params,
+            )
+            conn.commit()
+            return session_cursor.rowcount
+        finally:
+            conn.close()

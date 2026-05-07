@@ -17,21 +17,21 @@ interface ModuleTab {
 }
 
 const MODULE_TABS: ModuleTab[] = [
-  { key: 'overview', label: '总览', icon: <LayoutDashboard size={16} /> },
-  { key: 'genesis', label: '创世', icon: <Sparkles size={16} /> },
-  { key: 'chapters', label: '章节', icon: <BookOpen size={16} /> },
-  { key: 'worldview', label: '世界观', icon: <Globe size={16} /> },
-  { key: 'characters', label: '角色', icon: <Users size={16} /> },
-  { key: 'factions', label: '势力', icon: <Swords size={16} /> },
-  { key: 'outline', label: '大纲', icon: <ListTree size={16} /> },
-  { key: 'plots', label: '伏笔', icon: <Sparkles size={16} /> },
+  { key: 'overview', label: '工作台', icon: <LayoutDashboard size={16} /> },
+  { key: 'chapters', label: '写章节', icon: <BookOpen size={16} /> },
+  { key: 'review', label: '审核发布', icon: <CheckCircle2 size={16} /> },
+  { key: 'memory', label: '记忆收纳', icon: <Database size={16} /> },
+  { key: 'genesis', label: '创世设定', icon: <Sparkles size={16} /> },
+  { key: 'outline', label: '大纲篇章', icon: <ListTree size={16} /> },
   { key: 'instructions', label: '章节指令', icon: <FileText size={16} /> },
-  { key: 'memory', label: '记忆更新', icon: <Database size={16} /> },
+  { key: 'characters', label: '人物', icon: <Users size={16} /> },
+  { key: 'factions', label: '势力', icon: <Swords size={16} /> },
+  { key: 'worldview', label: '世界资料', icon: <Globe size={16} /> },
+  { key: 'plots', label: '伏笔', icon: <Sparkles size={16} /> },
   { key: 'facts', label: '事实账本', icon: <ScrollText size={16} /> },
-  { key: 'style', label: '风格指南', icon: <Palette size={16} /> },
-  { key: 'review', label: '审核', icon: <CheckCircle2 size={16} /> },
+  { key: 'style', label: '风格规范', icon: <Palette size={16} /> },
   { key: 'runs', label: '运行记录', icon: <History size={16} /> },
-  { key: 'settings', label: '设置', icon: <Settings size={16} /> },
+  { key: 'settings', label: '项目设置', icon: <Settings size={16} /> },
 ]
 
 interface ProjectModuleNavProps {

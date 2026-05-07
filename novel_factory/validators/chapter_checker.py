@@ -24,6 +24,16 @@ QUALITY_GATE_AUTHOR_THRESHOLD = 0.85  # Author/Polisher: content < word_target *
 QUALITY_GATE_EDITOR_THRESHOLD = 0.90  # Editor: content < word_target * 0.9 = no pass
 
 
+def _coerce_positive_int(value, default: int = 0) -> int:
+    """Coerce DB/API numeric fields that may arrive as strings."""
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def count_words(text: str | None) -> int:
     """Count words in text. For Chinese, uses character count as approximation.
 
@@ -103,6 +113,7 @@ def check_word_count_quality_gate(
         - message: Description of the result.
     """
     word_count = count_words(content)
+    word_target = _coerce_positive_int(word_target, 2500)
 
     if word_count == 0:
         return False, "内容为空"
@@ -142,11 +153,11 @@ def derive_word_target(
     """
     # First check if instruction has explicit word_target
     if instruction and instruction.get("word_target"):
-        return max(instruction["word_target"], 2000)
+        return max(_coerce_positive_int(instruction.get("word_target"), 2500), 2000)
 
     # Derive from project settings
-    target_words = project.get("target_words", 0)
-    total_chapters = project.get("total_chapters_planned", 0)
+    target_words = _coerce_positive_int(project.get("target_words"), 0)
+    total_chapters = _coerce_positive_int(project.get("total_chapters_planned"), 0)
 
     if target_words and total_chapters:
         derived = target_words // total_chapters
@@ -182,6 +193,7 @@ def validate_chapter_output(
     declared_wc = output.get("word_count")
     if declared_wc is not None:
         actual_wc = count_words(content)
+        declared_wc = _coerce_positive_int(declared_wc, actual_wc)
         # Allow 10% tolerance
         if abs(actual_wc - declared_wc) > declared_wc * 0.1:
             violations.append(

@@ -14,7 +14,13 @@ from ..validators.chapter_checker import (
     derive_word_target,
     normalize_declared_word_count,
 )
-from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_critical_violation
+from ..validators.death_penalty import (
+    check_death_penalty,
+    check_death_penalty_structured,
+    format_death_penalty_for_prompt,
+    has_critical_violation,
+    sanitize_death_penalty_text,
+)
 from ..validators.plot_verifier import check_plot_coverage
 from .base import BaseAgent
 
@@ -27,11 +33,6 @@ AUTHOR_SYSTEM_PROMPT = """你是网文工厂的执笔（Author），负责章节
 2. 动作化叙事 — Show, Don't Tell
 3. 精准落实指令 — 不遗漏指令中的任何要素
 4. 钩子控制 — 每章末尾必须有悬念
-
-禁止词汇（死刑红线）：
-- 冷笑、嘴角微扬、倒吸一口凉气、眼中闪过寒芒
-- 不仅...而且...更是...、夜色笼罩、心中暗想
-- 章节末尾总结人生道理
 
 铁律：
 1. 禁止自己编造数值，必须从状态卡抄
@@ -103,6 +104,10 @@ class AuthorAgent(BaseAgent):
         if style_ctx:
             parts.append(style_ctx)
 
+        repair_context = self._build_death_penalty_repair_context(state)
+        if repair_context:
+            parts.append(repair_context)
+
         # If revision, include review issues
         chapter = self._get_chapter_info(state)
         if chapter and chapter.get("status") == ChapterStatus.REVISION.value:
@@ -125,13 +130,15 @@ class AuthorAgent(BaseAgent):
         is_revision = chapter and chapter.get("status") == ChapterStatus.REVISION.value
 
         task_desc = "返修" if is_revision else "创作"
+        system_prompt = f"{AUTHOR_SYSTEM_PROMPT}\n\n{format_death_penalty_for_prompt()}"
         messages = [
-            {"role": "system", "content": AUTHOR_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n任务: {task_desc}\n\n{context}\n\n请{task_desc}第{chapter_number}章。"},
         ]
 
         raw = self.llm.invoke_json(messages, schema=AuthorOutput)
         output = AuthorOutput(**normalize_declared_word_count(raw))
+        output = self._sanitize_output(output, state)
 
         self.validate_output(output.model_dump())
 
@@ -275,11 +282,57 @@ class AuthorAgent(BaseAgent):
         try:
             raw = self.llm.invoke_json(messages, schema=AuthorOutput)
             expanded = AuthorOutput(**normalize_declared_word_count(raw))
+            expanded = self._sanitize_output(expanded, state)
             self.validate_output(expanded.model_dump())
             return expanded
         except Exception as e:
             logger.warning("Author: expand-short-output retry failed: %s", e)
             return None
+
+    def _sanitize_output(self, output: AuthorOutput, state: FactoryState) -> AuthorOutput:
+        """Apply deterministic safe rewrites before hard death-penalty validation."""
+        if state.get("llm_mode") != "real":
+            return output
+        sanitized_content, replacements = sanitize_death_penalty_text(output.content)
+        if not replacements:
+            return output
+        logger.info(
+            "Author: sanitized death-penalty phrases before validation: %s",
+            replacements,
+        )
+        data = output.model_dump()
+        data["content"] = sanitized_content
+        return AuthorOutput(**normalize_declared_word_count(data))
+
+    def _build_death_penalty_repair_context(self, state: FactoryState) -> str:
+        """Build repair context from the active gate and recent failed runs."""
+        messages: list[str] = []
+        gate = state.get("quality_gate", {}) or {}
+        if gate.get("death_penalty_fail"):
+            msg = gate.get("message") or "上一轮触发死刑红线"
+            messages.append(str(msg))
+
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+        try:
+            runs = self.repo.get_workflow_runs_for_project(
+                project_id, chapter_number=chapter_number, limit=5
+            )
+        except Exception:
+            runs = []
+        for run in runs:
+            error = str(run.get("error_message") or "")
+            if "死刑红线" in error and error not in messages:
+                messages.append(error)
+
+        if not messages:
+            return ""
+
+        return (
+            "【自动复盘：上一轮失败原因】\n"
+            + "\n".join(f"- {msg}" for msg in messages[:3])
+            + "\n本轮必须彻底避开上述原词和同类模板表达；优先改成具体动作、物理反应或对话推进。"
+        )
 
     def _get_word_target(self, state: FactoryState) -> int:
         """Derive the active word target for this chapter."""

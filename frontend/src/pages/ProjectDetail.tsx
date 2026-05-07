@@ -142,8 +142,9 @@ export default function ProjectDetail() {
   const streamingChapterRef = useRef<number | null>(null)
 
   const currentChapter = parseInt(searchParams.get('chapter') || '1', 10)
-  const activeModule: ProjectModule = (searchParams.get('module') as ProjectModule) || 'chapters'
+  const activeModule: ProjectModule = (searchParams.get('module') as ProjectModule) || 'overview'
   const requestedView = searchParams.get('view') as TabKey | null
+  const requestedAutoGenerate = searchParams.get('auto_generate') === '1'
 
   useEffect(() => {
     currentChapterRef.current = currentChapter
@@ -292,7 +293,7 @@ export default function ProjectDetail() {
     }
   }
 
-  const handleGenerate = () => {
+  const handleGenerate = useCallback(() => {
     if (!id) return
     setGenerating(true)
     setGeneratingChapter(currentChapter)
@@ -307,7 +308,7 @@ export default function ProjectDetail() {
       view: 'workflow',
     }, { replace: true })
     startStream(id, currentChapter)
-  }
+  }, [currentChapter, id, setSearchParams, startStream])
 
   const handleViewWorkflow = (runId: string) => {
     loadRunDetail(runId)
@@ -345,6 +346,13 @@ export default function ProjectDetail() {
     }, { replace: true })
     startStream(id, next)
   }
+
+  useEffect(() => {
+    if (activeModule !== 'chapters') return
+    if (requestedView !== 'workflow' || !requestedAutoGenerate) return
+    if (!id || generating || isStreaming) return
+    handleGenerate()
+  }, [activeModule, requestedView, requestedAutoGenerate, id, generating, isStreaming, handleGenerate])
 
   const handleNavigateToRun = () => {
     navigate(`/run?project_id=${id}&chapter=${currentChapter}`)

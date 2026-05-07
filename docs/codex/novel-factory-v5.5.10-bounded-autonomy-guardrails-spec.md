@@ -63,12 +63,13 @@ v5.5.9 已经实现：
 
 ### 本期要覆盖
 
-- 自动生产预算上限
-- 无进展停机
-- 重复状态停机
+- 自动生产入口收敛（单一入口 + dry-run 开关）
+- 自动生产预算上限与可见性
+- 无进展停机（连续无有效产出）
+- 重复状态停机（同一章节/动作连续失败）
 - 同一章节/同一动作的重试上限
-- token 消耗可见化
 - 前端“停止原因”与“预算状态”展示
+- 旧 session 清理能力
 
 ### 本期不做
 
@@ -76,35 +77,35 @@ v5.5.9 已经实现：
 - 不把所有阻塞都改成自动修复
 - 不让 runner 无休止自愈
 - 不替代人工审核节点
+- 不做 `max_tokens` / `max_duration` 的精确统计（留待后续）
 
 ## 规则定义
 
 ### 预算护栏
 
 自动生产必须支持以下上限：
-- `max_steps`
-- `max_tokens`
-- `max_duration`
-- `max_retries_per_step`
-- `max_consecutive_no_progress`
+- `max_steps`（已存在）
+- `max_consecutive_no_progress`（新增，默认 3 步）
+- `max_retries_per_step`（新增，默认 2 次）
 
 任意一个触发，都必须停机。
 
 ### 无进展判定
 
 定义为至少满足以下之一：
-- 连续多步没有新增内容
+- 连续多步没有新增内容（`skipped`、`failed`、`dry_run`、`blocked`）
 - 连续多步没有推进 chapter 状态
-- 连续多步没有新增可见产物
-- 连续多步只产生相同警告或相同结果
+- 连续多步只产生相同警告或相同错误
+
+当连续 `max_consecutive_no_progress` 步（默认 3）无进展时，触发停机，stop_reason=`consecutive_no_progress`。
 
 ### 重复判定
 
 定义为：
-- 同一 action 重复执行
-- 同一目标章节重复执行
+- 同一 action 在同一目标章节连续失败
 - 同一错误连续出现
-- 同一 checkpoint 状态反复恢复后没有推进
+
+当同一 (action, target_chapter) 组合连续失败达到 `max_retries_per_step` 次（默认 2）时，触发停机，stop_reason=`repeated_failure`。
 
 ### 人工闸门
 
@@ -115,25 +116,67 @@ v5.5.9 已经实现：
 - 需要重新定义 arc 或批次边界
 - LLM 输出无法恢复且没有新信息
 
+## API 变更
+
+### 后端
+
+1. `_auto_run_generator` 增加空转检测：
+   - 每步完成后扫描最近 `max_consecutive_no_progress` 步
+   - 如果全部为 `skipped`/`failed`/`blocked`/`dry_run`，则停机
+
+2. `_auto_run_generator` 增加重复失败检测：
+   - 每步失败后检查同一 `(action, target_chapter)` 的连续失败次数
+   - 达到 `max_retries_per_step` 则停机
+
+3. 新增 stop_reason：
+   - `consecutive_no_progress`
+   - `repeated_failure`
+
+4. 新增 session 清理端点：
+   - `DELETE /projects/{pid}/production/run-auto/sessions/{sid}` — 删除单个 session
+   - `POST /projects/{pid}/production/run-auto/cleanup` — 清理已完成/失败/取消的旧 session
+
+5. `RunAutoRequest` 增加可选字段：
+   - `max_consecutive_no_progress: int = 3`
+   - `max_retries_per_step: int = 2`
+
+### 前端
+
+1. 自动生产入口收敛：
+   - 移除独立的“预览自动生产”和“开始自动生产”按钮
+   - 保留一个主按钮，文案根据 dry-run checkbox 切换
+   - 配置区增加 `dry_run` checkbox
+
+2. 预算状态面板：
+   - 显示当前 session 的 `current_step / max_steps`
+   - 显示章节范围
+   - 显示停止原因（中文映射）
+   - 显示下一步建议操作
+
+3. Session 历史增强：
+   - 每个历史 session 显示删除按钮
+   - 增加“清理已完成 session”批量操作
+
+4. 停止原因中文映射扩展：
+   - `consecutive_no_progress` → "连续无进展"
+   - `repeated_failure` → "同一错误多次失败"
+
 ## 产品交互
 
 ### 自动生产控制台
 
 控制台需要清晰显示：
 - 当前 session
-- 当前步骤
-- 已执行步数
-- 已消耗 token
-- 预算剩余
+- 当前步骤 / 最大步数（进度条）
+- 章节范围
 - 停止原因
-- 最近一次有进展的时间点
+- 下一步建议
 
 ### 停机反馈
 
 停机后必须给出：
 - `stop_reason`
 - `spent_steps`
-- `spent_tokens`
 - `last_progress_step`
 - `next_manual_action`
 
@@ -149,7 +192,6 @@ v5.5.9 已经实现：
 ### 运行时指标
 
 需要统计：
-- 每次 session 的总 token
 - 每次 session 的总步数
 - 每次 session 的有效产出数
 - 每次 session 的停机原因分布
@@ -167,8 +209,10 @@ v5.5.9 已经实现：
 
 - 自动生产不会在无进展状态下无限循环
 - 预算上限触发时，前端明确显示停机原因
-- 用户能看到步数、token、持续时间等消耗信息
+- 用户能看到步数、章节范围、持续时间等消耗信息
 - 同一错误不会被无限重试
 - 人工只介入真正需要判断的点
 - 自动生产不会悄悄烧 token 而没有可见结果
+- 旧 session 可被清理
+- 所有 v5.5.9 测试继续通过
 

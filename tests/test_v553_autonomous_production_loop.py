@@ -562,6 +562,24 @@ class TestFrontendCopy:
             source = f.read()
         assert "生成章节计划" in source or "generate_arc_plan" in source
 
+    def test_project_overview_generate_chapter_opens_workflow_stream(self):
+        """Generate chapter from overview should open the chapter workflow and auto-start generation."""
+        path = os.path.join(os.path.dirname(__file__), "../frontend/src/components/project/ProjectOverviewModule.tsx")
+        path = os.path.abspath(path)
+        with open(path, "r", encoding="utf-8") as f:
+            source = f.read()
+        assert "view=workflow&auto_generate=1" in source
+        assert "generate_chapter" in source
+
+    def test_project_detail_autogenerate_query_triggers_workflow(self):
+        """ProjectDetail should auto-start chapter generation when auto_generate=1 is present."""
+        path = os.path.join(os.path.dirname(__file__), "../frontend/src/pages/ProjectDetail.tsx")
+        path = os.path.abspath(path)
+        with open(path, "r", encoding="utf-8") as f:
+            source = f.read()
+        assert "auto_generate" in source
+        assert "handleGenerate()" in source
+
     def test_genesis_module_reframed_as_init(self):
         """GenesisModule reframes genesis as one-time initialization."""
         path = os.path.join(os.path.dirname(__file__), "../frontend/src/components/project/GenesisModule.tsx")

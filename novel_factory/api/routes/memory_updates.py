@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -58,6 +59,53 @@ def _normalize_text_fields(data: dict, fields: tuple[str, ...]) -> dict:
         if field in normalized:
             normalized[field] = _json_text(normalized[field])
     return normalized
+
+
+def _parse_json_object(value) -> dict:
+    """Parse a JSON object string safely."""
+    if not value:
+        return {}
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _infer_faction_name(repo, project_id: str, item: dict, after_data: dict) -> str:
+    """Infer a faction name for memory patches missing target_id.
+
+    LLM-generated memory patches sometimes classify an item as `update` but omit
+    both target_id and name. Prefer existing faction names mentioned in the
+    evidence/rationale, then fall back to a conservative Chinese faction-name
+    pattern.
+    """
+    before_data = _parse_json_object(item.get("before_json"))
+    for candidate in (after_data.get("name"), before_data.get("name")):
+        if isinstance(candidate, str) and candidate.strip():
+            return candidate.strip()
+
+    text = "\n".join(
+        str(part or "")
+        for part in (item.get("rationale"), item.get("evidence_text"), json.dumps(after_data, ensure_ascii=False))
+    )
+    for faction in repo.list_factions(project_id):
+        name = str(faction.get("name") or "").strip()
+        if name and name in text:
+            return name
+
+    ignored = {"拍卖会", "地下拍卖会", "豪门", "顶级豪门"}
+    matches = re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{1,12}(?:集团|公司|世家|家|宗|门|派|会|阁|楼|盟|帮|宫|族)", text)
+    for match in sorted(set(matches), key=len):
+        candidate = match
+        for sep in ("了", "在"):
+            if sep in candidate:
+                candidate = candidate.rsplit(sep, 1)[-1]
+        if candidate.endswith("家家"):
+            candidate = candidate[:-1]
+        if candidate and candidate not in ignored:
+            return candidate
+    return ""
 
 
 def _apply_memory_item(
@@ -129,9 +177,44 @@ def _apply_memory_item(
                 )
                 result["success"] = True
                 result["created_id"] = f["id"] if f else None
-            elif operation == "update" and target_id:
-                repo.update_faction(project_id, target_id, after_data)
-                result["success"] = True
+            elif operation == "update":
+                if target_id:
+                    updated = repo.update_faction(project_id, target_id, after_data)
+                    result["success"] = updated is not None
+                    if updated:
+                        result["created_id"] = updated["id"]
+                    else:
+                        result["error"] = f"势力 {target_id} 不存在，无法更新"
+                else:
+                    inferred_name = _infer_faction_name(repo, project_id, item, after_data)
+                    if not inferred_name:
+                        result["error"] = "势力更新缺少 target_id，且无法从证据中推断势力名称"
+                    else:
+                        existing = next(
+                            (
+                                faction
+                                for faction in repo.list_factions(project_id)
+                                if faction.get("name") == inferred_name
+                            ),
+                            None,
+                        )
+                        faction_data = dict(after_data)
+                        faction_data["name"] = inferred_name
+                        if existing:
+                            updated = repo.update_faction(project_id, existing["id"], faction_data)
+                            result["success"] = updated is not None
+                            result["created_id"] = existing["id"]
+                        else:
+                            created = repo.create_faction(
+                                project_id,
+                                name=inferred_name,
+                                type=faction_data.get("type") or ("家族势力" if inferred_name.endswith("家") else "势力"),
+                                description=faction_data.get("description") or item.get("rationale", ""),
+                                relationship_with_protagonist=faction_data.get("relationship_with_protagonist", ""),
+                            )
+                            result["operation"] = "create"
+                            result["success"] = True
+                            result["created_id"] = created["id"] if created else None
 
         elif target_table == "outlines":
             if operation == "create":
@@ -270,6 +353,9 @@ def _apply_memory_item(
 
     except Exception as e:
         result["error"] = str(e)[:200]
+
+    if not result["success"] and "error" not in result:
+        result["error"] = f"不支持的记忆更新: {target_table}.{operation}"
 
     return result
 
