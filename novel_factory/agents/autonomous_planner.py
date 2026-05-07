@@ -18,6 +18,7 @@ from ..models.schemas import (
     AutoFillLLMOutput,
     ArcPlanLLMOutput,
 )
+from .title_contract import build_title_contract
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,8 @@ def _format_context(ctx: dict[str, Any]) -> str:
     lines.append(f"描述: {project.get('description', '')}")
     lines.append(f"目标字数: {project.get('target_words', 0)}")
     lines.append(f"计划章节数: {project.get('total_chapters_planned', 0)}")
+    lines.append("")
+    lines.append(build_title_contract(project))
 
     if genesis and genesis.get("content"):
         lines.append("\n【创世草案】")
@@ -126,6 +129,7 @@ def _build_autofill_prompt(
         "- instructions: 章节指令数组，每项含 chapter_number, objective, key_events, plots_to_plant, plots_to_resolve, emotion_tone, ending_hook, word_target",
         "",
         "如果某类资料已经存在且不需要新增，返回空数组 []。",
+        "所有新增资料必须严格遵守【书名契约】；如果已有资料与书名冲突，不要沿用错误方向。",
         "不要输出任何其他文字。",
     ]
     return "\n".join(lines)
@@ -150,6 +154,7 @@ def _build_arc_plan_prompt(
         "- instructions: 每章写作指令数组，每项含 chapter_number, objective, key_events, plots_to_plant, plots_to_resolve, emotion_tone, ending_hook, word_target",
         "",
         "如果某章已有指令，不需要覆盖，尽量只生成缺失部分。",
+        "所有弧线规划和章节指令必须严格遵守【书名契约】，不得把故事推进成与书名无关的题材。",
         "不要输出任何其他文字。",
     ]
     return "\n".join(lines)

@@ -124,7 +124,7 @@ GET /api/projects/{project_id}/production/run-auto/active-session
 
 ## 验收标准
 
-- [x] 关键回归测试全绿（1804/1804）
+- [x] 关键回归测试全绿（1809/1809）
 - [x] 前端 typecheck / lint / build 通过
 - [x] 文档基线同步到 v5.5.9
 - [x] 用户能在浏览器刷新、断线后重新接回自动生产

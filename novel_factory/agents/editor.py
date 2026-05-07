@@ -67,6 +67,9 @@ class EditorAgent(BaseAgent):
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
+        title_contract = self._get_title_contract_context(state["project_id"])
+        if title_contract:
+            parts.append(title_contract)
 
         # Chapter content
         chapter = self._get_chapter_info(state)

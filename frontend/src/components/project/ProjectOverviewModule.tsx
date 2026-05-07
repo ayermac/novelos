@@ -157,6 +157,7 @@ const STOP_REASON_MAP: Record<string, string> = {
 const ACTION_KEY_MAP: Record<string, string> = {
   generate_genesis: '生成创世设定',
   review_genesis: '审核创世设定',
+  repair_title_contract: '修复书名契约',
   generate_missing_context: '补齐缺失资料',
   generate_chapter: '生成本章',
   continue_next_chapter: '继续下一章',
@@ -361,7 +362,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     if (!productionNext) return
     const action = productionNext.next_action
 
-    if (action.key === 'generate_genesis' || action.key === 'review_genesis') {
+    if (action.key === 'generate_genesis' || action.key === 'review_genesis' || action.key === 'repair_title_contract') {
       navigate(`/projects/${project.project_id}?module=genesis`)
       return
     }

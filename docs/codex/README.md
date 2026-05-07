@@ -218,7 +218,7 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.5.8 Auto-Run Control Loop**，测试基线 **1792/1792 passed**（含 v5.5.8 专项 15 passed）。
+当前开发基线是 **v5.5.9 Auto-Run Resilience**，测试基线 **1809/1809 passed**（含 v5.5.9 专项 12 passed）。
 
 **v5.3 已实现能力**（部分，进行中）：
 

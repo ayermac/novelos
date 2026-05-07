@@ -172,6 +172,15 @@ class BaseAgent:
         except Exception:
             return ""
 
+    def _get_title_contract_context(self, project_id: str) -> str:
+        """Helper: get title-promise constraints for generation prompts."""
+        try:
+            from .title_contract import build_title_contract
+            project = self.repo.get_project(project_id)
+            return build_title_contract(project)
+        except Exception:
+            return ""
+
     def _get_project_skill_overrides(self, project_id: str) -> dict[str, Any]:
         """Helper: get project-specific skill override document.
 

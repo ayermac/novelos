@@ -62,7 +62,11 @@ class PolisherAgent(BaseAgent):
         and best_practices are injected into the actual LLM messages.
         """
         builder = ContextBuilder(self.repo)
-        return builder.build_for_polisher(state["project_id"], state["chapter_number"])
+        title_contract = self._get_title_contract_context(state["project_id"])
+        context = builder.build_for_polisher(state["project_id"], state["chapter_number"])
+        if title_contract:
+            return f"{title_contract}\n\n{context}"
+        return context
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]

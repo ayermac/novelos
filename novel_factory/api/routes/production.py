@@ -98,12 +98,24 @@ def _has_pending_memory_updates(repo, project_id: str) -> bool:
 
 def _build_health(repo, project_id: str, current_chapter: int) -> dict:
     """Build health snapshot for a project."""
+    from ...agents.title_contract import evaluate_title_alignment
+
     project = repo.get_project(project_id)
     world_settings = repo.list_world_settings(project_id)
     characters = repo.list_characters(project_id, include_inactive=True)
     outlines = repo.list_outlines(project_id)
     instruction = repo.get_instruction_by_chapter(project_id, current_chapter)
     latest_genesis = repo.get_latest_genesis_run(project_id)
+    context_items: list[str] = []
+    context_items.extend(f"{w.get('title', '')} {w.get('content', '')}" for w in world_settings)
+    context_items.extend(f"{c.get('name', '')} {c.get('description', '')} {c.get('traits', '')}" for c in characters)
+    context_items.extend(f"{o.get('title', '')} {o.get('content', '')}" for o in outlines)
+    if instruction:
+        context_items.append(
+            f"{instruction.get('objective', '')} {instruction.get('key_events', '')} "
+            f"{instruction.get('emotion_tone', '')} {instruction.get('ending_hook', '')}"
+        )
+    title_alignment = evaluate_title_alignment(project, context_items)
 
     return {
         "has_project": project is not None,
@@ -116,6 +128,8 @@ def _build_health(repo, project_id: str, current_chapter: int) -> dict:
         "has_pending_memory_updates": _has_pending_memory_updates(repo, project_id),
         "has_blocking_chapter": _get_blocking_chapter(repo, project_id) is not None,
         "has_stuck_run": _get_stuck_run(repo, project_id, current_chapter) is not None,
+        "title_contract": title_alignment,
+        "title_contract_aligned": title_alignment["aligned"],
     }
 
 
@@ -136,6 +150,18 @@ def _build_missing(health: dict, project_id: str, current_chapter: int) -> list[
         })
 
     if health["has_approved_genesis"]:
+        if not health.get("title_contract_aligned", True):
+            missing.append({
+                "key": "title_contract",
+                "label": "书名与内容一致性",
+                "severity": "blocking",
+                "manual_url": f"/projects/{project_id}?module=genesis",
+                "ai_action": {
+                    "key": "repair_title_contract",
+                    "label": "重新生成符合书名的项目设定",
+                },
+            })
+
         if not health["has_world_settings"]:
             missing.append({
                 "key": "world_settings",
@@ -255,6 +281,16 @@ def _determine_next_action(repo, project_id: str, health: dict, current_chapter:
     # 3. Missing context after approved genesis
     missing_items = _build_missing(health, project_id, current_chapter)
     if missing_items:
+        if any(item.get("key") == "title_contract" for item in missing_items):
+            return {
+                "key": "repair_title_contract",
+                "label": "修复书名与内容不一致",
+                "description": "当前世界观、角色或大纲没有兑现书名承诺，建议先重新生成并审核项目设定。",
+                "primary": True,
+                "action_url": f"/api/projects/{project_id}/genesis/generate",
+                "method": "POST",
+                "requires_confirmation": True,
+            }
         return {
             "key": "generate_missing_context",
             "label": "补齐缺失资料",

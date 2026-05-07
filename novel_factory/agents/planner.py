@@ -47,6 +47,10 @@ class PlannerAgent(BaseAgent):
         # R3: Review notes from human review sessions (v3.2)
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+        title_contract = self._get_title_contract_context(project_id)
+        if title_contract:
+            parts.append(title_contract)
+
         review_notes = self.repo.get_chapter_review_notes(project_id, chapter_number)
         if review_notes:
             latest_note = review_notes[0]

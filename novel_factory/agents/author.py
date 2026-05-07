@@ -53,6 +53,9 @@ class AuthorAgent(BaseAgent):
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
+        title_contract = self._get_title_contract_context(state["project_id"])
+        if title_contract:
+            parts.append(title_contract)
 
         # Writing instruction
         instruction = self._get_instruction(state)

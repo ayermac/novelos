@@ -8,6 +8,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ...agents.title_contract import build_title_contract
 
 router = APIRouter()
 
@@ -203,6 +204,13 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
     from ...workflow.runner import _build_llm_router
 
     llm = _build_llm_router(settings, "real").for_agent("planner")
+    title_contract = build_title_contract({
+        "name": body.title,
+        "genre": body.genre,
+        "description": body.premise,
+        "target_words": body.target_words,
+        "total_chapters_planned": body.target_chapters,
+    })
     prompt = (
         "你是一个小说项目设定专家。根据以下创作意图，生成完整的项目圣经草案。\n"
         f"标题: {body.title}\n"
@@ -212,6 +220,7 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
         f"读者: {body.target_audience}\n"
         f"风格: {body.style_preference}\n"
         f"约束: {body.constraints}\n\n"
+        f"{title_contract}\n\n"
         "请返回严格的 JSON 格式（不要用 Markdown 代码块包裹），包含以下字段:\n"
         "- project_updates: {\"description\": \"项目描述\"}\n"
         "- world_settings: [{\"title\": \"\", \"category\": \"\", \"content\": \"\"}]\n"
@@ -225,6 +234,7 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
         "2. 不要在 JSON 中使用尾逗号\n"
         "3. 所有字符串值必须使用双引号\n"
         "4. 数值字段（planted_chapter, planned_resolve_chapter, chapter_number, word_target, sequence）必须是整数，不要用引号包裹\n"
+        "5. 世界观、角色、大纲和章节指令必须严格兑现【书名契约】，不得生成与书名无关的通用故事模板\n"
     )
 
     return llm.invoke_json([
