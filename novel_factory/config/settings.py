@@ -32,6 +32,10 @@ class LLMConfig(BaseModel):
     model: str = "gpt-4o-mini"
     temperature: float = 0.7
     max_tokens: int = 4096
+    request_timeout_seconds: int = 60
+    retry_attempts: int = 3
+    retry_min_seconds: float = 1.0
+    retry_max_seconds: float = 8.0
 
 
 class QualityGateConfig(BaseModel):
@@ -55,6 +59,17 @@ class WorkflowConfig(BaseModel):
     checkpoint_enabled: bool = True
 
 
+class RuntimeBudgetConfig(BaseModel):
+    """Token budget guardrails for real LLM production runs.
+
+    A value of 0 disables the corresponding limit.
+    """
+
+    chapter_token_limit: int = 0
+    project_token_limit: int = 0
+    auto_run_token_limit: int = 0
+
+
 class Settings(BaseModel):
     """Root settings object."""
 
@@ -62,6 +77,7 @@ class Settings(BaseModel):
     llm: LLMConfig = Field(default_factory=LLMConfig)
     quality_gate: QualityGateConfig = Field(default_factory=QualityGateConfig)
     workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
+    runtime_budget: RuntimeBudgetConfig = Field(default_factory=RuntimeBudgetConfig)
     
     # v3.1: LLM profiles and agent routing
     default_llm: str = "default"

@@ -105,6 +105,23 @@ describe('v5.5.11-C: ChapterWorkspace launching state', () => {
     onViewWorkflow: vi.fn(),
   }
 
+  const runningRunDetail = {
+    run_id: 'run-1',
+    project_id: 'test-project',
+    chapter_number: 1,
+    workflow_status: 'running',
+    chapter_status: 'planned',
+    current_node: 'editor',
+    llm_mode: 'stub' as const,
+    steps: [
+      { key: 'screenwriter', label: '编剧', description: '规划章节场景和情节', status: 'completed' as const },
+      { key: 'author', label: '执笔', description: '撰写章节正文', status: 'completed' as const },
+      { key: 'polisher', label: '润色', description: '优化文字表达', status: 'completed' as const },
+      { key: 'editor', label: '审核', description: '检查内容质量', status: 'running' as const },
+      { key: 'publish', label: '发布', description: '发布章节内容', status: 'pending' as const },
+    ],
+  }
+
   it('shows launching indicator when isLaunching is true and not yet streaming', () => {
     render(<ChapterWorkspace {...baseProps} isLaunching={true} isStreaming={false} />)
     expect(screen.getByText('正在启动生成流程...')).toBeInTheDocument()
@@ -119,5 +136,13 @@ describe('v5.5.11-C: ChapterWorkspace launching state', () => {
   it('does not show launching indicator when streaming has started', () => {
     render(<ChapterWorkspace {...baseProps} isLaunching={true} isStreaming={true} />)
     expect(screen.queryByText('正在启动生成流程...')).not.toBeInTheDocument()
+  })
+
+  it('shows a clearer workflow status banner for running editor step', () => {
+    render(<ChapterWorkspace {...baseProps} runDetail={runningRunDetail as never} isLaunching={false} isStreaming={false} />)
+    expect(screen.getByText('工作流正在推进')).toBeInTheDocument()
+    expect(screen.getByText('当前节点：审核')).toBeInTheDocument()
+    expect(screen.getByText('运行中')).toBeInTheDocument()
+    expect(screen.getByText('已规划', { selector: '.status-badge' })).toBeInTheDocument()
   })
 })

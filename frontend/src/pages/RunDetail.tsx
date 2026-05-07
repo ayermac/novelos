@@ -26,6 +26,7 @@ interface RunDetail {
   chapter_number: number
   workflow_status: string
   chapter_status: string
+  current_node?: string | null
   llm_mode: string
   started_at: string
   completed_at: string

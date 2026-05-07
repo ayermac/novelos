@@ -6,7 +6,7 @@ import ContextSidebar from '../ContextSidebar'
 import WorkflowTimeline from '../WorkflowTimeline'
 import AttentionPanel, { ActionHintList } from '../AttentionPanel'
 import { StepStatus } from '../../hooks/useSSEStream'
-import { tWorkflowStatus } from '../../lib/i18n'
+import { tChapterStatus, tWorkflowStatus } from '../../lib/i18n'
 import { post } from '../../lib/api'
 
 interface Chapter {
@@ -57,6 +57,7 @@ interface RunDetailData {
   chapter_number: number
   workflow_status: string
   chapter_status: string
+  current_node?: string | null
   llm_mode: string
   steps: Step[]
 }
@@ -80,11 +81,25 @@ const MISSING_TO_MODULE: Record<string, string> = {
   '目标字数': 'settings',
 }
 
+const NODE_LABEL_MAP: Record<string, string> = {
+  screenwriter: '编剧',
+  author: '执笔',
+  polisher: '润色',
+  editor: '审核',
+  publish: '发布',
+  human_review: '人工复盘',
+}
+
 function getModuleForMissing(item: string): string {
   for (const [label, mod] of Object.entries(MISSING_TO_MODULE)) {
     if (item.startsWith(label) || item === label) return mod
   }
   return 'settings'
+}
+
+function getNodeLabel(node?: string | null): string {
+  if (!node) return '未知节点'
+  return NODE_LABEL_MAP[node] || node
 }
 
 interface ChapterWorkspaceProps {
@@ -411,7 +426,55 @@ function ContentTab({ generating, genError, genErrorDetails, chapterLoading, has
 function WorkflowTab({ runDetail, generating, isLaunching, sseSteps, isStreaming }: {
   runDetail: RunDetailData | null; generating: boolean; isLaunching: boolean; sseSteps: Record<string, StepStatus>; isStreaming: boolean
 }) {
-  if (runDetail && !isStreaming) return <WorkflowTimeline steps={runDetail.steps} />
+  if (runDetail && !isStreaming) {
+    const nodeLabel = getNodeLabel(runDetail.current_node)
+    const statusLabel = tWorkflowStatus(runDetail.workflow_status)
+    const chapterStatusLabel = tChapterStatus(runDetail.chapter_status)
+    const statusTone = runDetail.workflow_status === 'blocked' ? 'warning' : runDetail.workflow_status === 'failed' ? 'error' : 'info'
+    const statusHeadline = runDetail.workflow_status === 'running'
+      ? '工作流正在推进'
+      : runDetail.workflow_status === 'blocked'
+        ? '工作流已阻塞'
+        : runDetail.workflow_status === 'completed' && runDetail.chapter_status === 'reviewed'
+          ? '审核已完成'
+          : '最近一次运行'
+    const statusDescription = runDetail.workflow_status === 'running'
+      ? `当前节点：${nodeLabel}。这表示工作流仍在推进，不是静态卡死。`
+      : runDetail.workflow_status === 'blocked'
+        ? `本次运行已阻塞，需要先处理最近的失败或返修原因。`
+        : runDetail.workflow_status === 'completed' && runDetail.chapter_status === 'reviewed'
+          ? 'AI 审核已完成，当前等待人工发布。'
+          : '最近一次运行记录如下。'
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div
+          className={`alert ${statusTone === 'warning' ? 'alert-warn' : statusTone === 'error' ? 'alert-error' : 'alert-info'}`}
+          style={{ marginBottom: 0 }}
+        >
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
+                {statusHeadline}
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                当前节点：{nodeLabel}
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>{statusDescription}</div>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <span className={`status-badge status-${runDetail.workflow_status}`}>{statusLabel}</span>
+              <span className={`status-badge status-${runDetail.chapter_status}`}>{chapterStatusLabel}</span>
+            </div>
+          </div>
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+            节点是流程里的具体步骤名，审核节点亮起时表示正在审稿，不一定代表失败。
+          </div>
+        </div>
+        <WorkflowTimeline steps={runDetail.steps} />
+      </div>
+    )
+  }
 
   if (isLaunching && !isStreaming) {
     return (

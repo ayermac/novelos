@@ -265,6 +265,12 @@ async def reset_chapter(
         if not reset:
             return error_response("RESET_FAILED", "重置章节失败")
 
+        invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
+            project_id,
+            chapter_number,
+            "章节已重置，旧运行已作废，请重新开始新的工作流。",
+        )
+
         from ...workflow.checkpoint import delete_checkpoint_thread
         checkpoint_cleared = delete_checkpoint_thread(
             repo.db_path, project_id, chapter_number
@@ -278,6 +284,7 @@ async def reset_chapter(
             "retry_count_before": retry_count_before,
             "retry_count_after": retry_count_after,
             "retries_cleared": max(0, retry_count_before - retry_count_after),
+            "invalidated_runs": invalidated_runs,
             "checkpoint_cleared": checkpoint_cleared,
         })
 

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Novelos is an AI-powered novel production workbench for long-form fiction projects. It combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.5.11 Author-Centric Workspace Reset**, with **1824/1824 pytest passing**, frontend typecheck/lint/build/vitest passing.
+Current baseline: **v5.5.12 LLM Runtime Reliability & Cost Guardrails**, with **1828/1828 pytest passing**, frontend typecheck/lint/build/vitest passing.
 
 ## Architecture
 
@@ -185,7 +185,7 @@ Key configuration files:
 ### Python Tests
 - Test location: `tests/`
 - Framework: pytest
-- Current baseline: 1824/1824 passing
+- Current baseline: 1828/1828 passing
 - Run full suite: `python3 -m pytest -q`
 - Run specific test: `python3 -m pytest tests/test_file.py::test_name -q`
 
@@ -205,6 +205,7 @@ Start with:
 - `docs/codex/novel-factory-roadmap.md`
 - `docs/codex/novel-factory-v5.5.10-bounded-autonomy-guardrails-spec.md`
 - `docs/codex/novel-factory-v5.5.11-author-centric-workspace-reset-spec.md`
+- `docs/codex/novel-factory-v5.5.12-llm-runtime-reliability-cost-guardrails-spec.md`
 
 ## Development Notes
 

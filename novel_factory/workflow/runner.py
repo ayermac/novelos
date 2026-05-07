@@ -225,6 +225,16 @@ def _check_context_readiness_for_run(
     }
 
 
+def _runtime_budget_state(settings: Settings, repo: Repository, project_id: str) -> dict[str, int]:
+    """Build runtime budget fields injected into FactoryState."""
+    budget = getattr(settings, "runtime_budget", None)
+    return {
+        "chapter_token_limit": getattr(budget, "chapter_token_limit", 0) if budget else 0,
+        "project_token_limit": getattr(budget, "project_token_limit", 0) if budget else 0,
+        "project_tokens_before_run": repo.get_project_workflow_token_total(project_id),
+    }
+
+
 def run_with_graph(
     project_id: str,
     chapter_number: int,
@@ -307,6 +317,7 @@ def run_with_graph(
         "error": None,
         "steps": [],
         "llm_mode": llm_mode,  # v5.3.0: Pass llm_mode for publish routing
+        **_runtime_budget_state(settings, repo, project_id),
     }
 
     # Build LLMRouter
@@ -343,6 +354,10 @@ def run_with_graph(
             "steps": state.get("steps", []),
             "error": str(e),
             "requires_human": True,
+            "prompt_tokens": state.get("prompt_tokens", 0),
+            "completion_tokens": state.get("completion_tokens", 0),
+            "total_tokens": state.get("total_tokens", 0),
+            "duration_ms": state.get("duration_ms", 0),
         }
 
     # Map to Dispatcher return shape
@@ -353,6 +368,10 @@ def run_with_graph(
         "error": result_state.get("error"),
         "requires_human": result_state.get("requires_human", False),
         "awaiting_publish": result_state.get("awaiting_publish", False),
+        "prompt_tokens": result_state.get("prompt_tokens", 0),
+        "completion_tokens": result_state.get("completion_tokens", 0),
+        "total_tokens": result_state.get("total_tokens", 0),
+        "duration_ms": result_state.get("duration_ms", 0),
     }
 
 
@@ -452,6 +471,7 @@ def run_with_graph_stream(
         "steps": [],
         "workflow_run_id": "",
         "llm_mode": llm_mode,
+        **_runtime_budget_state(settings, repo, project_id),
     }
 
     # Build LLMRouter
@@ -541,6 +561,10 @@ def run_with_graph_stream(
             "chapter_status": state.get("chapter_status"),
             "run_id": state.get("workflow_run_id", ""),
             "awaiting_publish": state.get("awaiting_publish", False),
+            "prompt_tokens": state.get("prompt_tokens", 0),
+            "completion_tokens": state.get("completion_tokens", 0),
+            "total_tokens": state.get("total_tokens", 0),
+            "duration_ms": state.get("duration_ms", 0),
         }
 
     except Exception as e:
@@ -551,4 +575,8 @@ def run_with_graph_stream(
             "run_id": state.get("workflow_run_id", ""),
             "error": str(e),
             "chapter_status": state.get("chapter_status", current_status),
+            "prompt_tokens": state.get("prompt_tokens", 0),
+            "completion_tokens": state.get("completion_tokens", 0),
+            "total_tokens": state.get("total_tokens", 0),
+            "duration_ms": state.get("duration_ms", 0),
         }

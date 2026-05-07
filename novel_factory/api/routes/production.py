@@ -851,6 +851,7 @@ class RunAutoRequest(BaseModel):
     confirm: bool = False
     max_consecutive_no_progress: int = 3
     max_retries_per_step: int = 2
+    max_session_tokens: int | None = None
 
 
 # Stop reasons
@@ -862,6 +863,7 @@ STOP_REASON_UNSUPPORTED = "unsupported_action"
 STOP_REASON_FAILED = "step_failed"
 STOP_REASON_NO_PROGRESS = "consecutive_no_progress"
 STOP_REASON_REPEATED_FAILURE = "repeated_failure"
+STOP_REASON_TOKEN_BUDGET = "token_budget_exceeded"
 
 
 # v5.5.10: Guardrail helpers
@@ -988,6 +990,12 @@ async def _auto_run_generator(
         step_count = 0
         stop_reason = ""
         final_next_action: dict | None = None
+        session_tokens_used = 0
+        session_token_limit = (
+            body.max_session_tokens
+            if body.max_session_tokens is not None
+            else settings.runtime_budget.auto_run_token_limit
+        )
 
         # v5.5.9: Resume state from persisted session steps
         if session_id:
@@ -1022,6 +1030,7 @@ async def _auto_run_generator(
                 "max_steps": body.max_steps,
                 "dry_run": body.dry_run,
                 "stop_on_review": body.stop_on_review,
+                "max_session_tokens": session_token_limit,
             },
         }
         if session_id:
@@ -1043,6 +1052,8 @@ async def _auto_run_generator(
                             "steps": steps,
                             "chapters_touched": sorted(list(chapters_touched)),
                             "final_next_action": final_next_action,
+                            "session_tokens_used": session_tokens_used,
+                            "max_session_tokens": session_token_limit,
                         },
                     }
                     return
@@ -1056,6 +1067,8 @@ async def _auto_run_generator(
                             "steps": steps,
                             "chapters_touched": sorted(list(chapters_touched)),
                             "final_next_action": final_next_action,
+                            "session_tokens_used": session_tokens_used,
+                            "max_session_tokens": session_token_limit,
                         },
                     }
                     return
@@ -1192,6 +1205,8 @@ async def _auto_run_generator(
                         "steps": steps,
                         "chapters_touched": sorted(list(chapters_touched)),
                         "final_next_action": final_next_action,
+                        "session_tokens_used": session_tokens_used,
+                        "max_session_tokens": session_token_limit,
                     },
                 }
                 return
@@ -1228,6 +1243,8 @@ async def _auto_run_generator(
             )
 
             step_count += 1  # Count attempted steps consistently
+            step_tokens = int(step_result.get("total_tokens", 0) or 0)
+            session_tokens_used += step_tokens
 
             # Use the most accurate target chapter available (step_result overrides effective fallback)
             _resolved_target = step_result.get("target_chapter") if step_result.get("target_chapter") is not None else effective_target
@@ -1240,6 +1257,7 @@ async def _auto_run_generator(
                 "result": step_result.get("result", "unknown"),
                 "warnings": step_result.get("warnings", []),
                 "error": step_result.get("error"),
+                "total_tokens": step_tokens,
             })
 
             if _resolved_target is not None:
@@ -1270,6 +1288,9 @@ async def _auto_run_generator(
                         "error": step_result.get("error"),
                         "steps_executed": step_count,
                         "chapters_touched": sorted(list(chapters_touched)),
+                        "total_tokens": step_tokens,
+                        "session_tokens_used": session_tokens_used,
+                        "max_session_tokens": session_token_limit,
                     },
                 }
                 # v5.5.9: last_event updated via status update below
@@ -1282,6 +1303,8 @@ async def _auto_run_generator(
                         "steps": steps,
                         "chapters_touched": sorted(list(chapters_touched)),
                         "final_next_action": next_action,
+                        "session_tokens_used": session_tokens_used,
+                        "max_session_tokens": session_token_limit,
                     },
                 }
                 return
@@ -1297,8 +1320,11 @@ async def _auto_run_generator(
                     "result": step_result.get("result", "unknown"),
                     "warnings": step_result.get("warnings", []),
                     "error": step_result.get("error"),
+                    "total_tokens": step_tokens,
                     "steps_executed": step_count,
                     "chapters_touched": sorted(list(chapters_touched)),
+                    "session_tokens_used": session_tokens_used,
+                    "max_session_tokens": session_token_limit,
                 },
             }
 
@@ -1313,6 +1339,15 @@ async def _auto_run_generator(
                 repo.update_auto_run_session_status(
                     session_id, None, current_step=step_count, last_event="step_completed"
                 )
+
+            if session_token_limit and session_tokens_used > session_token_limit:
+                stop_reason = STOP_REASON_TOKEN_BUDGET
+                final_next_action = next_action
+                if session_id:
+                    repo.update_auto_run_session_status(
+                        session_id, "stopped", stop_reason=stop_reason, current_step=step_count
+                    )
+                break
 
             # v5.5.10: No-progress guardrail — stop if the last N steps all had no progress
             if _check_consecutive_no_progress(steps, body.max_consecutive_no_progress):
@@ -1350,6 +1385,8 @@ async def _auto_run_generator(
             status = "dry_run"
         elif stop_reason in (STOP_REASON_REVIEW, STOP_REASON_BLOCKED, STOP_REASON_UNSUPPORTED):
             status = "stopped"
+        elif stop_reason == STOP_REASON_TOKEN_BUDGET:
+            status = "stopped"
         else:
             status = "completed"
 
@@ -1379,6 +1416,8 @@ async def _auto_run_generator(
                 "chapters_touched": sorted(list(chapters_touched)),
                 "stop_reason": stop_reason,
                 "steps_executed": step_count,
+                "session_tokens_used": session_tokens_used,
+                "max_session_tokens": session_token_limit,
             },
         }
 
@@ -1459,6 +1498,8 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
             "chapters_touched": data.get("chapters_touched", []),
             "stop_reason": data["stop_reason"],
             "steps_executed": data["steps_executed"],
+            "session_tokens_used": data.get("session_tokens_used", 0),
+            "max_session_tokens": data.get("max_session_tokens"),
         })
 
     except Exception as e:
@@ -1475,6 +1516,7 @@ async def run_auto_stream(
     dry_run: bool = False,
     stop_on_review: bool = True,
     confirm: bool = False,
+    max_session_tokens: int | None = None,
     session_id: str | None = None,
 ) -> StreamingResponse:
     """v5.5.7: Real-time production monitor via SSE.
@@ -1526,6 +1568,7 @@ async def run_auto_stream(
         dry_run=dry_run,
         stop_on_review=stop_on_review,
         confirm=confirm,
+        max_session_tokens=max_session_tokens,
     )
 
     async def event_stream():
@@ -1667,6 +1710,10 @@ async def _execute_auto_step(
             result["chapter_status"] = run_result.get("chapter_status")
             result["requires_human"] = run_result.get("requires_human", False)
             result["awaiting_publish"] = run_result.get("awaiting_publish", False)
+            result["prompt_tokens"] = run_result.get("prompt_tokens", 0)
+            result["completion_tokens"] = run_result.get("completion_tokens", 0)
+            result["total_tokens"] = run_result.get("total_tokens", 0)
+            result["duration_ms"] = run_result.get("duration_ms", 0)
 
             if run_result.get("error"):
                 result["result"] = "failed"
@@ -1703,6 +1750,12 @@ async def _execute_auto_step(
                 result["result"] = "failed"
                 result["error"] = "重置章节失败"
                 return result
+
+            repo.invalidate_running_workflow_runs_for_chapter(
+                project_id,
+                chapter_num,
+                "章节已重置，旧运行已作废，请重新开始新的工作流。",
+            )
 
             # Clear checkpoint
             from ...workflow.checkpoint import delete_checkpoint_thread
@@ -1781,6 +1834,8 @@ async def run_auto_start(request: Request, project_id: str, body: RunAutoRequest
             stream_url += f"&chapter_start={body.chapter_start}"
         if body.chapter_end is not None:
             stream_url += f"&chapter_end={body.chapter_end}"
+        if body.max_session_tokens is not None:
+            stream_url += f"&max_session_tokens={body.max_session_tokens}"
 
         return envelope_response({
             "session_id": session["id"],
@@ -1791,6 +1846,7 @@ async def run_auto_start(request: Request, project_id: str, body: RunAutoRequest
                 "chapter_start": body.chapter_start,
                 "chapter_end": body.chapter_end,
                 "max_steps": body.max_steps,
+                "max_session_tokens": body.max_session_tokens,
                 "dry_run": body.dry_run,
                 "stop_on_review": body.stop_on_review,
             },

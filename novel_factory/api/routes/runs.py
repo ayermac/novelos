@@ -246,6 +246,7 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             "chapter_number": run_data["chapter_number"],
             "workflow_status": run_data.get("status", "unknown"),
             "chapter_status": chapter.get("status", "unknown") if chapter else "unknown",
+            "current_node": run_data.get("current_node"),
             "llm_mode": llm_mode,
             "started_at": run_data.get("started_at", ""),
             "completed_at": run_data.get("completed_at", ""),
@@ -334,6 +335,12 @@ async def reset_run_chapter(
         if not reset:
             return error_response("RESET_FAILED", "恢复章节失败")
 
+        invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
+            project_id,
+            chapter_number,
+            "章节已恢复重置，旧运行已作废，请重新开始新的工作流。",
+        )
+
         checkpoint_cleared = delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
         retry_count_after = repo.get_chapter_retry_count(project_id, chapter_number)
         recovery = _build_recovery_state(
@@ -353,6 +360,7 @@ async def reset_run_chapter(
             "retry_count_before": retry_count_before,
             "retry_count_after": retry_count_after,
             "retries_cleared": max(0, retry_count_before - retry_count_after),
+            "invalidated_runs": invalidated_runs,
             "checkpoint_before": checkpoint_before,
             "checkpoint_cleared": checkpoint_cleared,
             "recovery": recovery,

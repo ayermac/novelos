@@ -13,6 +13,13 @@ from typing import Any
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from tenacity import (
+    Retrying,
+    before_sleep_log,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from ..config.settings import LLMConfig
 from .provider import LLMProvider
@@ -93,7 +100,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 model=self.config.model,
                 temperature=self.config.temperature,
                 max_tokens=self.config.max_tokens,
-                request_timeout=60,  # 60 second timeout
+                request_timeout=self.config.request_timeout_seconds,
             )
         return self._client
 
@@ -123,24 +130,42 @@ class OpenAICompatibleProvider(LLMProvider):
         elif "rate" in error_str or "limit" in error_str or "429" in error_str:
             raise RateLimitError("API 请求频率超限，请稍后重试") from error
         elif "timeout" in error_str or "timed out" in error_str:
-            raise LLMTimeoutError("LLM 响应超时（>60秒），请稍后重试") from error
+            raise LLMTimeoutError(
+                f"LLM 响应超时（>{self.config.request_timeout_seconds}秒），请稍后重试"
+            ) from error
         else:
             raise LLMError(f"LLM 调用失败: {error}") from error
 
     def _invoke_with_retry(
         self,
         lc_messages: list,
-        max_retries: int = 1,
+        max_retries: int | None = None,
         **kwargs,
     ) -> Any:
-        """Invoke with automatic retry on rate limit or validation errors."""
-        last_error = None
+        """Invoke with exponential backoff for transient provider failures."""
+        attempts = max(1, max_retries if max_retries is not None else self.config.retry_attempts)
+        retryer = Retrying(
+            stop=stop_after_attempt(attempts),
+            wait=wait_exponential(
+                multiplier=self.config.retry_min_seconds,
+                min=self.config.retry_min_seconds,
+                max=self.config.retry_max_seconds,
+            ),
+            retry=retry_if_exception_type((RateLimitError, LLMTimeoutError)),
+            before_sleep=before_sleep_log(logger, logging.WARNING),
+            reraise=True,
+        )
 
-        for attempt in range(max_retries + 1):
-            try:
-                start_time = time.time()
-                response = self.client.invoke(lc_messages, **kwargs)
-                duration_ms = int((time.time() - start_time) * 1000)
+        for attempt in retryer:
+            with attempt:
+                try:
+                    start_time = time.time()
+                    response = self.client.invoke(lc_messages, **kwargs)
+                    duration_ms = int((time.time() - start_time) * 1000)
+                except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
+                    raise
+                except Exception as e:
+                    self._handle_api_error(e)
 
                 # Extract token usage if available
                 prompt_tokens = 0
@@ -166,18 +191,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
                 return response
 
-            except RateLimitError:
-                # Retry rate limit errors
-                last_error = RateLimitError("API 请求频率超限，请稍后重试")
-                if attempt < max_retries:
-                    logger.warning("Rate limit hit, retrying... (attempt %d/%d)", attempt + 1, max_retries)
-                    time.sleep(2)  # Wait 2 seconds before retry
-                    continue
-                raise
-            except Exception as e:
-                self._handle_api_error(e)
-
-        raise last_error or LLMError("未知错误")
+        raise LLMError("未知错误")
 
     def invoke_json(
         self,
@@ -208,7 +222,7 @@ class OpenAICompatibleProvider(LLMProvider):
         last_json_error: json.JSONDecodeError | None = None
         for attempt in range(max_retries + 1):
             try:
-                response = self._invoke_with_retry(lc_messages, max_retries=1, **kwargs)
+                response = self._invoke_with_retry(lc_messages, **kwargs)
                 text = response.content
                 json_str = self._extract_json(text)
                 return json.loads(json_str)
@@ -258,7 +272,7 @@ class OpenAICompatibleProvider(LLMProvider):
             kwargs["max_tokens"] = max_tokens
 
         try:
-            response = self._invoke_with_retry(lc_messages, max_retries=1, **kwargs)
+            response = self._invoke_with_retry(lc_messages, **kwargs)
             return response.content
         except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
             raise
