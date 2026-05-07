@@ -49,6 +49,21 @@
 | `novel-factory-v5.1.6-langgraph-activation-spec.md` | v5.1.6 LangGraph 编排激活 + 真实 LLM 首次生成 + 安全收口 | 产品规划、开发 Agent、质量验收 |
 | `novel-factory-v5.2-product-completion-real-llm-closure-spec.md` | v5.2 产品能力补齐、真实 LLM 闭环、LangGraph 持久化 | 产品规划、开发 Agent、质量验收 |
 | `novel-factory-v5.3-authoring-system-reset-plan.md` | v5.3 作者系统 Reset 规划：项目创世、可信生成链路、工作流透明化 | 产品规划、开发 Agent、质量验收 |
+| `novel-factory-v5.3.1-project-level-author-workspace-spec.md` | v5.3.1 项目级作者工作台：项目资料模块、章节工作区、主路径收口 | 开发 Agent、质量验收 |
+| `novel-factory-v5.3.2-project-genesis-memory-loop-spec.md` | v5.3.2 项目创世与创作记忆循环：自动生成项目骨架、章节后自动维护资料与事实 | 开发 Agent、质量验收 |
+| `novel-factory-v5.4.13-project-specific-skill-overrides-spec.md` | v5.4.13 项目级 Skill 覆盖层、挂载方案、参数默认值 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.0-run-recovery-console-spec.md` | v5.5.0 运行恢复控制台、阻塞/返修恢复、checkpoint 清理 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.1-stuck-run-detection-spec.md` | v5.5.1 卡住运行检测、标记阻塞、run 级恢复 audit | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.2-run-health-dashboard-spec.md` | v5.5.2 运行健康面板、异常运行总览、批量标记阻塞 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.3-autonomous-production-loop-spec.md` | v5.5.3 自主生产循环、下一步动作 API、AI 自动补齐、Arc 规划、创世重新定位 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.4-real-llm-autonomous-planning-spec.md` | v5.5.4 真实 LLM 自主规划、配置错误显式化、只补缺失项、Arc range 幂等 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.5-autonomous-production-runner-spec.md` | v5.5.5 自主生产运行器、自动执行生产步骤、步数限制、dry-run、安全防护 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.6-production-command-center-ui-refresh-spec.md` | v5.5.6 生产指挥台 UI 刷新、合并主面板、中文映射、步骤时间线、错误详情 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.7-realtime-production-monitor-spec.md` | v5.5.7 实时监控/streaming UI、SSE endpoint、EventSource 实时追加、停止监听 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.8-auto-run-control-loop-spec.md` | v5.5.8 自动生产控制循环、session 持久化、pause/resume/cancel/retry、协作式控制 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.9-auto-run-resilience-spec.md` | v5.5.9 自动生产恢复闭环、刷新恢复、SSE 断线重连、session health、失败步精准重试 | 开发 Agent、质量验收 |
+| `novel-factory-v5.5.10-bounded-autonomy-guardrails-spec.md` | v5.5.10 有界自动生产护栏、token/步数/时长预算、无进展停机、人工闸门 | 产品规划、开发 Agent |
+| `novel-factory-api-contract-guidelines.md` | API 设计规范：Resource API / Action API 边界、POST body-style、兼容迁移策略 | 开发 Agent、代码评审、API 验收 |
 
 ## v5.1.1 本地启动与验收
 
@@ -89,7 +104,7 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1471/1471 passed
+- **当前测试基线**: 1725/1725 passed
 - **新增测试**:
   - `test_v51_api_e2e_smoke.py`: 17 个端到端 smoke 测试
   - `test_v51_frontend_quality.py`: 8 个前端质量检查
@@ -97,6 +112,14 @@ npm run dev
   - `test_v51_p2_fixes.py`: 扩展测试（包括 Style 优雅降级、Acceptance partial 状态）
   - `test_v516_frontend_closure.py`: 9 个前端收口测试（导航分组、空状态、Acceptance 路由移除）
   - `test_v516_langgraph_activation.py`: 12 个 LangGraph 激活测试（图编译、路由等价、published 短路、配置验证、安全）
+  - `test_v530_trusted_generation_chain.py`: 29 个可信生成链路测试
+  - `test_v531_project_workspace.py`: 项目级工作台测试
+  - `test_v532_project_genesis.py`: 项目创世测试
+  - `test_v532_memory_loop.py`: 记忆循环测试
+  - `test_v532_fact_ledger.py`: 事实账本测试
+  - `test_v53_project_modules.py`: 项目模块闭包测试
+  - `test_skills_api.py`: Skill 可视化与测试台 API 测试
+  - `test_project_delete_cascade_completeness.py`: 项目删除 cascade 完整性测试
 
 ### v5.1.1 WebUI 产品化改进
 
@@ -196,7 +219,32 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.3.0 Trusted Generation Chain，测试基线 1471/1471**。
+当前开发基线是 **v5.5.10 Bounded Autonomy Guardrails**，测试基线 **1819/1819 passed**（含 v5.5.9 专项 12 passed、v5.5.10 专项 8 passed）。
+
+**v5.3 已实现能力**（部分，进行中）：
+
+- v5.3.0 可信生成链路：Context Readiness Gate、Planner 必经路由、字数硬质量门、真实模式人工发布闸门。
+- v5.3.1 项目级作者工作台（部分）：项目模块导航、世界观/角色/势力/大纲/伏笔/章节指令 CRUD、项目上下文状态、章节重置/删除。
+- v5.3.2 项目创世与记忆循环（部分）：创世生成/批准/拒绝、记忆更新批次、事实账本 CRUD 与事件。
+- v5.3.3-v5.3.4 Skill 可视化与测试台：Skill 列表、挂载关系、配置验证、fixtures 测试、手动试运行。
+- v5.3.5 记忆可靠性：结构化字段应用、失败原因可见、失败项重试、批次状态重算。
+- v5.4.0-v5.4.13 WebUI 重构：ProjectShell 分组导航、章节工作区拆分、Settings Console 拆分、Attention Panel、Agent Skill Matrix、视觉 QA polish、Agent Skill Configuration Console、文件夹导入桥、启用状态管理与安全审查、挂载引导、项目级 Skill 覆盖层。
+- v5.5.0 运行恢复控制台：Run Detail 恢复状态、retry/checkpoint 可见、安全 reset、run 级 audit。
+- v5.5.1 卡住运行检测：running 超时识别、run-scoped running task 可见、标记阻塞、system recovery audit。
+- v5.5.2 运行健康面板：全局异常运行总览、项目过滤、批量 mark-stuck、部分失败可见。
+- v5.5.3 自主生产循环：项目工作台「下一步生产动作」、AI 自动补齐缺失资料、章节批次规划 Arc Plan、创世重新定位。
+- v5.5.4 真实 LLM 自主规划：real-mode 配置错误显式化、auto-fill 只补缺失类型、arc-plan 章节范围幂等保护。
+- v5.5.5 自主生产运行器：自动执行生产步骤、步数限制、dry-run 预览、安全防护。
+- v5.5.6 生产指挥台 UI 刷新：合并主面板、中文状态映射、步骤时间线、错误详情。
+- v5.5.7 实时监控/streaming UI：SSE endpoint、EventSource 实时追加、停止监听。
+- v5.5.8 自动生产控制循环：session 持久化、pause/resume/cancel/retry、协作式控制。
+- v5.5.9 自动生产恢复闭环：刷新恢复、SSE 断线重连、session health、失败步精准重试。
+- v5.5.10 有界自动生产护栏：入口收敛、预算可见、空转检测、重复失败检测、session 清理。
+
+**v5.3 未收口项**：
+
+- 连续性门禁与完整事实账本跨章强制执行。
+- v5.3 命令的完整 CLI 对齐。
 
 **v5.2 核心变更:**
 - LangGraph SqliteSaver checkpoint 持久化
@@ -212,6 +260,7 @@ npm run dev
 
 **v5.3 规划方向:**
 - Project Genesis：从一句创意生成项目圣经，用户批准后才进入 active。
+- Project Memory Loop：章节生成后自动提出世界观、角色、大纲、势力、伏笔、章节指令和事实账本更新。
 - Context Readiness Gate：项目骨架不完整时禁止章节生成。
 - Planner 必经：无章节指令时先规划，再进入 Screenwriter。
 - 真实质量门：字数、指令覆盖、上下文完整性、风格和连续性进入硬审核。

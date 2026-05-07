@@ -291,6 +291,38 @@ class TestChapterReset:
             if os.path.exists(db_path):
                 os.unlink(db_path)
 
+    def test_reset_chapter_starts_new_retry_window(self):
+        """Resetting a blocked chapter should clear active retry circuit breaker count."""
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+            db_path = f.name
+
+        try:
+            init_db(db_path)
+            repo = Repository(db_path)
+
+            repo.create_project(project_id="reset_retry", name="Test")
+            repo.add_chapter(project_id="reset_retry", chapter_number=1, title="第一章", status="blocking")
+
+            for _ in range(3):
+                repo.start_task("reset_retry", 1, "revise", "editor")
+
+            assert repo.get_chapter_retry_count("reset_retry", 1) == 3
+            assert repo.get_chapter_total_retry_count("reset_retry", 1) == 3
+
+            assert repo.reset_chapter("reset_retry", 1) is True
+
+            chapter = repo.get_chapter("reset_retry", 1)
+            assert chapter["status"] == "planned"
+            assert repo.get_chapter_retry_count("reset_retry", 1) == 0
+            assert repo.get_chapter_total_retry_count("reset_retry", 1) == 3
+
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
     def test_reset_revision_chapter(self):
         """Resetting a revision chapter should change status to planned."""
         from novel_factory.db.repository import Repository
@@ -536,11 +568,16 @@ class TestAPIRoutes:
             from novel_factory.db.repository import Repository
             repo = Repository(db_path)
             repo.update_chapter_status("reset_api_test", 1, "blocking")
+            for _ in range(2):
+                repo.start_task("reset_api_test", 1, "revise", "editor")
 
             # Reset via API
             resp = client.post("/api/projects/reset_api_test/chapters/1/reset")
             assert resp.json()["ok"] is True
             assert resp.json()["data"]["new_status"] == "planned"
+            assert resp.json()["data"]["retry_count_before"] == 2
+            assert resp.json()["data"]["retry_count_after"] == 0
+            assert resp.json()["data"]["retries_cleared"] == 2
 
         finally:
             if os.path.exists(db_path):

@@ -1,13 +1,17 @@
 """Tests for workflow/conditions.py — routing logic."""
 
 import pytest
+from unittest.mock import patch
 
 from novel_factory.models.state import ChapterStatus
 from novel_factory.workflow.conditions import (
     route_by_chapter_status,
     route_by_review_result,
+    route_after_memory_curator,
     route_by_revision_type,
+    route_after_agent,
 )
+from novel_factory.workflow.runner import _clear_stale_checkpoint_for_new_run
 
 
 class TestRouteByChapterStatus:
@@ -59,26 +63,106 @@ class TestRouteByChapterStatus:
         }
         assert route_by_chapter_status(state) == "planner"
 
+    # P1: Safety gate tests — error/requires_human always routes to human_review
+    @pytest.mark.parametrize("status", ["planned", "scripted", "drafted", "polished", "reviewed", "revision"])
+    def test_requires_human_routes_to_human_review(self, status):
+        state = {"chapter_status": status, "requires_human": True}
+        assert route_by_chapter_status(state) == "human_review"
+
+    @pytest.mark.parametrize("status", ["planned", "scripted", "drafted", "polished", "reviewed", "revision"])
+    def test_error_routes_to_human_review(self, status):
+        state = {"chapter_status": status, "error": "some failure"}
+        assert route_by_chapter_status(state) == "human_review"
+
+    # P1: Stale checkpoint recovery — DB status overrides stale state
+    def test_drafted_with_stale_revision_gate_routes_to_polisher(self):
+        """If checkpoint says revision but DB says drafted, must go to polisher."""
+        state = {
+            "chapter_status": "drafted",
+            "quality_gate": {"revision_target": "author"},  # stale gate from old run
+        }
+        assert route_by_chapter_status(state) == "polisher"
+
+    def test_polished_with_stale_revision_gate_routes_to_editor(self):
+        """If checkpoint says revision but DB says polished, must go to editor."""
+        state = {
+            "chapter_status": "polished",
+            "quality_gate": {"revision_target": "planner"},  # stale gate from old run
+        }
+        assert route_by_chapter_status(state) == "editor"
+
+
+class TestFreshRunCheckpointCleanup:
+    class FakeRepo:
+        db_path = "test.db"
+
+        def __init__(self, runs):
+            self.runs = runs
+
+        def get_workflow_runs_for_project(self, project_id, chapter_number=None, limit=20):
+            return self.runs
+
+    def test_clears_checkpoint_when_latest_run_failed(self):
+        repo = self.FakeRepo([{"status": "failed"}])
+
+        with patch("novel_factory.workflow.runner.delete_checkpoint_thread") as delete:
+            _clear_stale_checkpoint_for_new_run(repo, "demo", 1)
+
+        delete.assert_called_once_with("test.db", "demo", 1)
+
+    def test_keeps_checkpoint_for_active_running_run(self):
+        repo = self.FakeRepo([{"status": "running"}])
+
+        with patch("novel_factory.workflow.runner.delete_checkpoint_thread") as delete:
+            _clear_stale_checkpoint_for_new_run(repo, "demo", 1)
+
+        delete.assert_not_called()
+
 
 class TestRouteByReviewResult:
-    def test_pass_goes_to_publish_in_stub_mode(self):
-        """v5.3.0: Stub mode (default) routes to publish after pass."""
+    def test_pass_goes_to_memory_curator_in_stub_mode(self):
+        """v5.3.2: Stub mode routes to memory_curator after pass."""
         state = {"quality_gate": {"pass": True}, "retry_count": 0, "max_retries": 3, "llm_mode": "stub"}
-        assert route_by_review_result(state) == "publish"
+        assert route_by_review_result(state) == "memory_curator"
 
-    def test_pass_goes_to_awaiting_publish_in_real_mode(self):
-        """v5.3.0: Real mode routes to awaiting_publish, not publish."""
+    def test_pass_goes_to_memory_curator_in_real_mode(self):
+        """v5.3.2: Real mode routes to memory_curator after pass."""
         state = {"quality_gate": {"pass": True}, "retry_count": 0, "max_retries": 3, "llm_mode": "real"}
-        assert route_by_review_result(state) == "awaiting_publish"
+        assert route_by_review_result(state) == "memory_curator"
 
-    def test_pass_without_llm_mode_defaults_to_publish(self):
-        """Backward compatibility: no llm_mode defaults to stub behavior."""
+    def test_pass_without_llm_mode_defaults_to_memory_curator(self):
+        """v5.3.2: No llm_mode defaults to memory_curator after pass."""
         state = {"quality_gate": {"pass": True}, "retry_count": 0, "max_retries": 3}
-        assert route_by_review_result(state) == "publish"
+        assert route_by_review_result(state) == "memory_curator"
 
     def test_fail_goes_to_revise(self):
         state = {"quality_gate": {"pass": False}, "retry_count": 1, "max_retries": 3}
         assert route_by_review_result(state) == "revise"
+
+    def test_death_penalty_gate_after_agent_goes_to_revision(self):
+        state = {
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "author",
+                "death_penalty_fail": True,
+            }
+        }
+        assert route_after_agent(state) == "revision_router"
+
+    def test_stale_quality_gate_ignored_when_status_advanced(self):
+        """A stale quality_gate from a previous failed attempt must not cause
+        route_after_agent to send a successful agent run back to revision_router.
+        """
+        for status in ("drafted", "polished", "reviewed"):
+            state = {
+                "chapter_status": status,
+                "quality_gate": {
+                    "pass": False,
+                    "word_count_fail": True,
+                    "revision_target": "author",
+                },
+            }
+            assert route_after_agent(state) == "next", f"stale gate should be ignored for status={status}"
 
     def test_max_retries_goes_to_human(self):
         state = {"quality_gate": {"pass": False}, "retry_count": 3, "max_retries": 3}
@@ -101,3 +185,72 @@ class TestRouteByRevisionType:
     def test_default_routes_to_author(self):
         state = {"quality_gate": {}}
         assert route_by_revision_type(state) == "author"
+
+    # P1: Full stale-revision-gate matrix — when DB status != REVISION, ignore gate
+    @pytest.mark.parametrize(
+        "db_status,expected",
+        [
+            (ChapterStatus.IDEA.value, "planner"),
+            (ChapterStatus.OUTLINED.value, "planner"),
+            (ChapterStatus.PLANNED.value, "planner"),
+            (ChapterStatus.SCRIPTED.value, "author"),
+            (ChapterStatus.DRAFTED.value, "polisher"),
+            (ChapterStatus.POLISHED.value, "editor"),
+            (ChapterStatus.REVIEW.value, "editor"),
+            (ChapterStatus.REVIEWED.value, "publisher"),
+            (ChapterStatus.PUBLISHED.value, "archive"),
+            (ChapterStatus.BLOCKING.value, "human_review"),
+        ],
+    )
+    def test_stale_revision_gate_routes_by_db_status(self, db_status, expected):
+        """Stale revision gate must never override actual DB status."""
+        state = {
+            "chapter_status": db_status,
+            "quality_gate": {"revision_target": "author"},  # stale gate
+        }
+        assert route_by_revision_type(state) == expected
+
+    def test_stale_revision_gate_respects_drafted_status(self):
+        state = {
+            "chapter_status": ChapterStatus.DRAFTED.value,
+            "quality_gate": {"revision_target": "author"},
+        }
+        assert route_by_revision_type(state) == "polisher"
+
+    def test_stale_revision_gate_respects_polished_status(self):
+        state = {
+            "chapter_status": ChapterStatus.POLISHED.value,
+            "quality_gate": {"revision_target": "planner"},
+        }
+        assert route_by_revision_type(state) == "editor"
+
+
+class TestRouteAfterMemoryCurator:
+    """v5.3.2 closure: memory_curator failure routing."""
+
+    def test_stub_mode_no_error_goes_to_publish(self):
+        state = {"llm_mode": "stub"}
+        assert route_after_memory_curator(state) == "publish"
+
+    def test_real_mode_no_error_goes_to_awaiting_publish(self):
+        state = {"llm_mode": "real"}
+        assert route_after_memory_curator(state) == "awaiting_publish"
+
+    def test_no_llm_mode_defaults_to_publish(self):
+        state = {}
+        assert route_after_memory_curator(state) == "publish"
+
+    def test_requires_human_routes_to_human_review(self):
+        """Real mode memory_curator failure blocks publish."""
+        state = {"llm_mode": "real", "requires_human": True}
+        assert route_after_memory_curator(state) == "human_review"
+
+    def test_error_routes_to_human_review(self):
+        """Error in state blocks publish regardless of mode."""
+        state = {"llm_mode": "real", "error": "extraction failed"}
+        assert route_after_memory_curator(state) == "human_review"
+
+    def test_requires_human_in_stub_also_blocks(self):
+        """Even in stub mode, requires_human=True routes to human_review."""
+        state = {"llm_mode": "stub", "requires_human": True}
+        assert route_after_memory_curator(state) == "human_review"

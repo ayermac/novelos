@@ -1,0 +1,312 @@
+"""Auto-run session and step persistence."""
+
+from __future__ import annotations
+
+import json
+import uuid
+from datetime import datetime, timezone
+
+from ..connection import row_to_dict
+
+
+class AutoRunRepositoryMixin:
+    """CRUD for auto-run sessions and steps."""
+
+    # ------------------------------------------------------------------
+    # Session CRUD
+    # ------------------------------------------------------------------
+
+    def create_auto_run_session(
+        self,
+        project_id: str,
+        chapter_start: int | None,
+        chapter_end: int | None,
+        max_steps: int,
+        dry_run: bool,
+        stop_on_review: bool,
+    ) -> dict:
+        """Create a new auto-run session and return it."""
+        session_id = uuid.uuid4().hex[:12]
+        conn = self._conn()
+        try:
+            conn.execute(
+                """
+                INSERT INTO auto_run_sessions
+                (id, project_id, chapter_start, chapter_end, max_steps, dry_run, stop_on_review, status, current_step)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'running', 0)
+                """,
+                (
+                    session_id,
+                    project_id,
+                    chapter_start,
+                    chapter_end,
+                    max_steps,
+                    1 if dry_run else 0,
+                    1 if stop_on_review else 0,
+                ),
+            )
+            conn.commit()
+            return self.get_auto_run_session(session_id)
+        finally:
+            conn.close()
+
+    def get_auto_run_session(self, session_id: str) -> dict | None:
+        """Get session by id."""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM auto_run_sessions WHERE id=?",
+                (session_id,),
+            ).fetchone()
+            return row_to_dict(row)
+        finally:
+            conn.close()
+
+    def list_auto_run_sessions(self, project_id: str, limit: int = 20) -> list[dict]:
+        """List sessions for a project, newest first."""
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM auto_run_sessions WHERE project_id=? ORDER BY created_at DESC LIMIT ?",
+                (project_id, limit),
+            ).fetchall()
+            return [row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def update_auto_run_session_status(
+        self,
+        session_id: str,
+        status: str | None,
+        stop_reason: str | None = None,
+        current_step: int | None = None,
+        last_event: str | None = None,
+    ) -> bool:
+        """Update session status and optional fields.
+
+        status can be None to avoid overwriting the current status (used when
+        the generator only wants to update last_event / current_step).
+        """
+        conn = self._conn()
+        try:
+            sets = ["updated_at = datetime('now','+8 hours')"]
+            params: list = []
+
+            if status is not None:
+                sets.append("status = ?")
+                params.append(status)
+            if stop_reason is not None:
+                sets.append("stop_reason = ?")
+                params.append(stop_reason)
+            if current_step is not None:
+                sets.append("current_step = ?")
+                params.append(current_step)
+            if last_event is not None:
+                sets.append("last_event = ?")
+                params.append(last_event)
+            if status in ("stopped", "completed", "failed", "cancelled"):
+                sets.append("ended_at = datetime('now','+8 hours')")
+
+            params.append(session_id)
+            sql = f"UPDATE auto_run_sessions SET {', '.join(sets)} WHERE id=?"
+            cursor = conn.execute(sql, params)
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def update_auto_run_session_max_steps(
+        self,
+        session_id: str,
+        max_steps: int,
+    ) -> bool:
+        """Update session max_steps (used on resume)."""
+        conn = self._conn()
+        try:
+            cursor = conn.execute(
+                """
+                UPDATE auto_run_sessions
+                SET max_steps = ?, updated_at = datetime('now','+8 hours')
+                WHERE id = ?
+                """,
+                (max_steps, session_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def get_active_auto_run_session(self, project_id: str) -> dict | None:
+        """Get the most recent running or paused session for a project."""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                """
+                SELECT * FROM auto_run_sessions
+                WHERE project_id = ? AND status IN ('running', 'paused')
+                ORDER BY updated_at DESC LIMIT 1
+                """,
+                (project_id,),
+            ).fetchone()
+            return row_to_dict(row)
+        finally:
+            conn.close()
+
+    # ------------------------------------------------------------------
+    # Step CRUD
+    # ------------------------------------------------------------------
+
+    def create_auto_run_step(
+        self,
+        session_id: str,
+        step_number: int,
+        action: str,
+        label: str,
+        target_chapter: int | None,
+    ) -> dict:
+        """Record that a step has started."""
+        conn = self._conn()
+        try:
+            conn.execute(
+                """
+                INSERT INTO auto_run_steps
+                (session_id, step_number, action, label, target_chapter, started_at)
+                VALUES (?, ?, ?, ?, ?, datetime('now','+8 hours'))
+                """,
+                (session_id, step_number, action, label, target_chapter),
+            )
+            conn.commit()
+            return self._get_auto_run_step(session_id, step_number)
+        finally:
+            conn.close()
+
+    def _get_auto_run_step(self, session_id: str, step_number: int) -> dict:
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM auto_run_steps WHERE session_id=? AND step_number=?",
+                (session_id, step_number),
+            ).fetchone()
+            return row_to_dict(row) or {}
+        finally:
+            conn.close()
+
+    def complete_auto_run_step(
+        self,
+        session_id: str,
+        step_number: int,
+        result: str,
+        warnings: list[str] | None = None,
+        error: str | None = None,
+    ) -> bool:
+        """Update step with completion info."""
+        conn = self._conn()
+        try:
+            cursor = conn.execute(
+                """
+                UPDATE auto_run_steps
+                SET result=?, warnings=?, error=?, completed_at=datetime('now','+8 hours')
+                WHERE session_id=? AND step_number=?
+                """,
+                (
+                    result,
+                    json.dumps(warnings or [], ensure_ascii=False),
+                    error,
+                    session_id,
+                    step_number,
+                ),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def list_auto_run_steps(self, session_id: str) -> list[dict]:
+        """List all steps for a session in order."""
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM auto_run_steps WHERE session_id=? ORDER BY step_number",
+                (session_id,),
+            ).fetchall()
+            result = []
+            for r in rows:
+                d = row_to_dict(r)
+                if d.get("warnings"):
+                    try:
+                        d["warnings"] = json.loads(d["warnings"])
+                    except Exception:
+                        d["warnings"] = []
+                else:
+                    d["warnings"] = []
+                result.append(d)
+            return result
+        finally:
+            conn.close()
+
+    def get_last_auto_run_step(self, session_id: str) -> dict | None:
+        """Get the most recent step for a session."""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM auto_run_steps WHERE session_id=? ORDER BY step_number DESC LIMIT 1",
+                (session_id,),
+            ).fetchone()
+            return row_to_dict(row)
+        finally:
+            conn.close()
+
+    def delete_auto_run_session(self, session_id: str) -> bool:
+        """Delete a session and its steps."""
+        conn = self._conn()
+        try:
+            conn.execute("DELETE FROM auto_run_steps WHERE session_id=?", (session_id,))
+            cursor = conn.execute("DELETE FROM auto_run_sessions WHERE id=?", (session_id,))
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
+
+    def cleanup_auto_run_sessions(
+        self,
+        project_id: str,
+        keep_running: bool = True,
+        days_old: int = 0,
+    ) -> int:
+        """Clean up old auto-run sessions for a project.
+
+        Returns the number of sessions removed.
+        """
+        conn = self._conn()
+        try:
+            deletable_statuses = ("completed", "failed", "cancelled", "dry_run", "stopped")
+            conditions = ["project_id = ?", "status IN (" + ",".join("?" * len(deletable_statuses)) + ")"]
+            params: list = [project_id, *deletable_statuses]
+
+            if keep_running:
+                conditions.append("status NOT IN ('running', 'paused')")
+
+            if days_old > 0:
+                conditions.append("updated_at < datetime('now', '-' || ? || ' days', '+8 hours')")
+                params.append(days_old)
+
+            where_clause = " AND ".join(conditions)
+
+            # Delete steps first, then sessions
+            step_cursor = conn.execute(
+                f"""
+                DELETE FROM auto_run_steps
+                WHERE session_id IN (
+                    SELECT id FROM auto_run_sessions WHERE {where_clause}
+                )
+                """,
+                params,
+            )
+            session_cursor = conn.execute(
+                f"DELETE FROM auto_run_sessions WHERE {where_clause}",
+                params,
+            )
+            conn.commit()
+            return session_cursor.rowcount
+        finally:
+            conn.close()

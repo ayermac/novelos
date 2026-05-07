@@ -117,13 +117,13 @@ class WorkflowRepositoryMixin:
             if chapter_number is not None:
                 rows = conn.execute(
                     "SELECT * FROM workflow_runs WHERE project_id=? AND chapter_number=? "
-                    "ORDER BY started_at DESC LIMIT ?",
+                    "ORDER BY started_at DESC, rowid DESC LIMIT ?",
                     (project_id, chapter_number, limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
                     "SELECT * FROM workflow_runs WHERE project_id=? "
-                    "ORDER BY started_at DESC LIMIT ?",
+                    "ORDER BY started_at DESC, rowid DESC LIMIT ?",
                     (project_id, limit),
                 ).fetchall()
             results = []
@@ -142,15 +142,16 @@ class WorkflowRepositoryMixin:
         chapter_number: int,
         task_type: str,
         agent_id: str,
+        workflow_run_id: str | None = None,
     ) -> int:
         """Start a new task. Returns task id."""
         conn = self._conn()
         try:
             cursor = conn.execute(
                 "INSERT INTO task_status "
-                "(project_id, chapter_number, task_type, agent_id, status, started_at) "
-                "VALUES (?, ?, ?, ?, 'running', datetime('now','+8 hours'))",
-                (project_id, chapter_number, task_type, agent_id),
+                "(project_id, chapter_number, task_type, agent_id, status, started_at, workflow_run_id) "
+                "VALUES (?, ?, ?, ?, 'running', datetime('now','+8 hours'), ?)",
+                (project_id, chapter_number, task_type, agent_id, workflow_run_id),
             )
             conn.commit()
             return cursor.lastrowid
@@ -198,7 +199,24 @@ class WorkflowRepositoryMixin:
             conn.close()
 
     def get_chapter_retry_count(self, project_id: str, chapter_number: int) -> int:
-        """Get the number of revision tasks for a chapter (circuit breaker)."""
+        """Get revision attempts since the last manual reset for a chapter."""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM task_status "
+                "WHERE project_id=? AND chapter_number=? AND task_type='revise' "
+                "AND id > COALESCE(( "
+                "  SELECT MAX(id) FROM task_status "
+                "  WHERE project_id=? AND chapter_number=? AND task_type='reset' "
+                "), 0)",
+                (project_id, chapter_number, project_id, chapter_number),
+            ).fetchone()
+            return row["cnt"] if row else 0
+        finally:
+            conn.close()
+
+    def get_chapter_total_retry_count(self, project_id: str, chapter_number: int) -> int:
+        """Get all historical revision attempts for a chapter."""
         conn = self._conn()
         try:
             row = conn.execute(

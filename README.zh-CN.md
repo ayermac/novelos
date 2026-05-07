@@ -4,7 +4,32 @@
 
 Novelos 将 FastAPI 后端、LangGraph 章节工作流、SQLite 项目存储、React 作者工作台和 CLI 工具整合在一起，用于章节生成、审核、风格管理、项目上下文维护和运行诊断。
 
-当前基线：**v5.2.0**，已验证 **1425/1425 pytest 通过**，前端 TypeScript 检查通过，前端生产构建通过。
+当前基线：**v5.5.10 Bounded Autonomy Guardrails**，已验证 **1819/1819 pytest 通过**，前端 TypeScript 检查、lint 和生产构建通过。
+
+**v5.3 已实现能力**（部分，进行中）：
+
+- v5.3.0 可信生成链路：上下文完整性门禁、Planner 必经路由、字数硬质量门、真实模式人工发布闸门。
+- v5.3.1 项目级作者工作台（部分）：项目模块导航、世界观/角色/势力/大纲/伏笔/章节指令 CRUD、项目上下文状态、章节重置/删除。
+- v5.3.2 项目创世与记忆循环（部分）：创世生成/批准/拒绝、记忆更新批次、事实账本 CRUD 与事件。
+- v5.3.3-v5.3.4 Skill 可视化与测试台：Skill 列表、挂载关系、配置验证、fixtures 测试、手动试运行。
+- v5.3.5 记忆可靠性：结构化字段应用、失败原因可见、失败项重试、批次状态重算。
+- v5.4.0-v5.4.13 WebUI 重构：ProjectShell 分组导航、章节工作区拆分、Settings Console 拆分、Attention Panel、Agent Skill Matrix、视觉 QA polish、Agent Skill Configuration Console、文件夹导入桥、启用状态管理与安全审查、挂载引导、项目级 Skill 覆盖层。
+- v5.5.0 运行恢复控制台：Run Detail 恢复状态、retry/checkpoint 可见、安全 reset、run 级 audit。
+- v5.5.1 卡住运行检测：running 超时识别、run-scoped running task 可见、标记阻塞、system recovery audit。
+- v5.5.2 运行健康面板：全局异常运行总览、项目过滤、批量 mark-stuck、部分失败可见。
+- v5.5.3 自主生产循环：项目工作台「下一步生产动作」、AI 自动补齐缺失资料、章节批次规划 Arc Plan、创世重新定位为「一次性项目初始化」。
+- v5.5.4 真实 LLM 自主规划：real-mode 配置错误显式化（LLM_CONFIG_MISSING）、auto-fill 只补缺失类型（missing_types 约束）、arc-plan 章节范围幂等保护。
+- v5.5.5 自主生产运行器：自动执行生产步骤、可配置步数限制、dry-run 预览、安全防护（禁止自动发布）、前端自动生产控制台。
+- v5.5.6 生产指挥台 UI 刷新：合并「下一步生产动作」与「自动生产控制台」为单一主面板、中文状态映射、步骤时间线、错误详情显示、紧凑布局。
+- v5.5.7 实时监控/streaming UI：后端新增 SSE endpoint `/production/run-auto/stream`，前端使用 EventSource 实时追加步骤时间线、显示 running 状态、支持停止监听（仅关闭前端 stream，不取消后端执行），不改变自动生产安全语义。
+- v5.5.8 自动生产控制循环：session 持久化（auto_run_sessions/steps）、start/cancel/pause/resume/retry-step 控制接口、协作式 pause/cancel（generator 在检查点停住）、前端显示暂停/取消/继续按钮和历史列表。
+- v5.5.9 自动生产恢复闭环：刷新后通过 active-session 端点恢复 running/paused session、SSE 断线后标记 paused 并支持重新接入、resume 时自动扩展 max_steps、session 持久化 last_event、步骤时间线中 failed step 支持精准重试。
+- v5.5.10 有界自动生产护栏：自动生产入口收敛（单一入口 + dry-run 开关）、预算状态面板（步数进度、章节范围、停止原因）、空转检测（连续无进展停机）、重复失败检测（同一动作/章节连续失败上限）、session 历史清理能力。
+
+**v5.3 未收口项**：
+
+- 连续性门禁与完整事实账本跨章强制执行。
+- v5.3 命令的完整 CLI 对齐。
 
 ## 功能概览
 
@@ -62,6 +87,24 @@ novelos init-db --db-path acceptance_novel_factory.db
 ```
 
 ## 本地运行
+
+日常开发建议使用服务脚本：
+
+```bash
+scripts/novelos-service.sh start      # 启动 API + WebUI
+scripts/novelos-service.sh stop       # 停止 API + WebUI
+scripts/novelos-service.sh restart    # 重启 API + WebUI
+scripts/novelos-service.sh status     # 查看服务状态
+scripts/novelos-service.sh logs       # 查看最近日志
+```
+
+默认使用 `acceptance_novel_factory.db`、`config/local.yaml`、`LLM_MODE=real`、API 端口 `8765` 和 WebUI 端口 `5173`。
+可以用环境变量覆盖，例如：
+
+```bash
+LLM_MODE=stub scripts/novelos-service.sh restart api
+WEB_PORT=5174 scripts/novelos-service.sh start web
+```
 
 以演示模式启动 API：
 
@@ -263,8 +306,9 @@ npm run build
 当前已验证基线：
 
 ```text
-pytest: 1425/1425 passed
+pytest: 1725/1725 passed
 frontend typecheck: passed
+frontend lint: passed
 frontend build: passed
 ```
 

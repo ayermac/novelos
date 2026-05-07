@@ -8,6 +8,7 @@ from typing import Any
 
 from ..models.schemas import PlannerOutput
 from ..models.state import ChapterStatus, FactoryState
+from ..validators.chapter_checker import derive_word_target
 from .base import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -46,6 +47,10 @@ class PlannerAgent(BaseAgent):
         # R3: Review notes from human review sessions (v3.2)
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+        title_contract = self._get_title_contract_context(project_id)
+        if title_contract:
+            parts.append(title_contract)
+
         review_notes = self.repo.get_chapter_review_notes(project_id, chapter_number)
         if review_notes:
             latest_note = review_notes[0]
@@ -102,8 +107,14 @@ class PlannerAgent(BaseAgent):
 
         self.validate_output(output.model_dump())
 
-        # Save instruction to DB
+        # Save instruction to DB, preserving word_target if one already exists
         brief = output.chapter_brief
+        existing = self.repo.get_instruction(project_id, chapter_number)
+        project = self.repo.get_project(project_id)
+        word_target = existing.get("word_target") if existing else None
+        if not word_target:
+            word_target = derive_word_target(existing, project)
+
         self.repo.create_instruction(
             project_id=project_id,
             chapter_number=chapter_number,
@@ -112,6 +123,7 @@ class PlannerAgent(BaseAgent):
             plots_to_plant=json.dumps(brief.plots_to_plant, ensure_ascii=False),
             plots_to_resolve=json.dumps(brief.plots_to_resolve, ensure_ascii=False),
             ending_hook=brief.ending_hook,
+            word_target=word_target,
         )
 
         # Update chapter status
@@ -120,10 +132,12 @@ class PlannerAgent(BaseAgent):
             expected_status=ChapterStatus.PLANNED.value,
         )
 
-        # Save artifact
+        # Save artifact (bind to workflow run for isolation)
+        workflow_run_id = state.get("workflow_run_id")
         self.repo.save_artifact(
             project_id, chapter_number, "planner", "chapter_brief",
             content_json=output.model_dump(),
+            workflow_run_id=workflow_run_id,
         )
 
         return {

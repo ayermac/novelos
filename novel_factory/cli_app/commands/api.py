@@ -22,6 +22,7 @@ def cmd_api(args) -> None:
         db_path=args.db_path,
         config_path=args.config,
         llm_mode=args.llm_mode,
+        skills_config_path=args.skills_config,
     )
 
     # Log startup info

@@ -120,10 +120,12 @@ export function useSSEStream(
     };
 
     eventSource.onerror = () => {
-      setError('SSE 连接断开');
+      const message = 'SSE 连接断开';
+      setError(message);
       setIsConnected(false);
       setIsStreaming(false);
       eventSource.close();
+      onError?.(message);
     };
   }, [onComplete, onError]);
 

@@ -1,6 +1,6 @@
 /* ==========================================================================
-   Novel Factory - 「墨流」Design System v2.0
-   简约科技 + 创意点缀
+   Novel Factory - 「墨流」Design System v2.1
+   生产工厂控制台 + 长篇创作工作流
    ========================================================================== */
 
 /* Google Fonts Import */
@@ -11,23 +11,23 @@
    -------------------------------------------------------------------------- */
 :root {
   /* Ink Colors - 墨水 */
-  --ink-primary: #1e3a5f;
-  --ink-deep: #0f172a;
-  --ink-accent: #4f46e5;
-  --ink-glow: #818cf8;
-  --ink-soft: #6366f1;
+  --ink-primary: #16324f;
+  --ink-deep: #08111f;
+  --ink-accent: #0f766e;
+  --ink-glow: #14b8a6;
+  --ink-soft: #2563eb;
 
   /* Paper Colors - 纸张 */
-  --paper-bg: #faf8f5;
+  --paper-bg: #f6f8fb;
   --paper-surface: #ffffff;
-  --paper-elevated: #f5f3ef;
-  --paper-hover: #f0ede8;
+  --paper-elevated: #eef3f8;
+  --paper-hover: #e7edf5;
 
   /* Text Colors */
-  --text-ink: #1a1a1a;
-  --text-charcoal: #475569;
-  --text-gray: #94a3b8;
-  --text-muted: #cbd5e1;
+  --text-ink: #111827;
+  --text-charcoal: #405166;
+  --text-gray: #7b8797;
+  --text-muted: #a7b0bf;
 
   /* Status Colors - 保持可识别性 */
   --status-success: #10b981;
@@ -36,9 +36,9 @@
   --status-info: #06b6d4;
 
   /* Gradient Accents */
-  --gradient-ink: linear-gradient(135deg, #1e3a5f 0%, #3730a3 100%);
-  --gradient-glow: linear-gradient(135deg, #4f46e5 0%, #818cf8 100%);
-  --gradient-subtle: linear-gradient(180deg, #faf8f5 0%, #f5f3ef 100%);
+  --gradient-ink: linear-gradient(135deg, #0b1728 0%, #16324f 58%, #0f766e 100%);
+  --gradient-glow: linear-gradient(135deg, #0f766e 0%, #14b8a6 100%);
+  --gradient-subtle: linear-gradient(180deg, #ffffff 0%, #eef3f8 100%);
 
   /* --------------------------------------------------------------------------
      2. Typography - 字体系统

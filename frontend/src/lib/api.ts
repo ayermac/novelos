@@ -45,8 +45,11 @@ export async function post<T = unknown>(
   })
 }
 
-export async function del<T = unknown>(path: string): Promise<EnvelopeResponse<T>> {
-  return api<T>(path, { method: 'DELETE' })
+export async function del<T = unknown>(path: string, body?: unknown): Promise<EnvelopeResponse<T>> {
+  return api<T>(path, {
+    method: 'DELETE',
+    body: body ? JSON.stringify(body) : undefined,
+  })
 }
 
 export async function put<T = unknown>(

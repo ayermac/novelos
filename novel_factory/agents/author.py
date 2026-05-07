@@ -8,8 +8,19 @@ from typing import Any
 
 from ..models.schemas import AuthorOutput
 from ..models.state import ChapterStatus, FactoryState
-from ..validators.chapter_checker import validate_chapter_output, check_word_count_quality_gate, derive_word_target
-from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_critical_violation
+from ..validators.chapter_checker import (
+    validate_chapter_output,
+    check_word_count_quality_gate,
+    derive_word_target,
+    normalize_declared_word_count,
+)
+from ..validators.death_penalty import (
+    check_death_penalty,
+    check_death_penalty_structured,
+    format_death_penalty_for_prompt,
+    has_critical_violation,
+    sanitize_death_penalty_text,
+)
 from ..validators.plot_verifier import check_plot_coverage
 from .base import BaseAgent
 
@@ -22,11 +33,6 @@ AUTHOR_SYSTEM_PROMPT = """你是网文工厂的执笔（Author），负责章节
 2. 动作化叙事 — Show, Don't Tell
 3. 精准落实指令 — 不遗漏指令中的任何要素
 4. 钩子控制 — 每章末尾必须有悬念
-
-禁止词汇（死刑红线）：
-- 冷笑、嘴角微扬、倒吸一口凉气、眼中闪过寒芒
-- 不仅...而且...更是...、夜色笼罩、心中暗想
-- 章节末尾总结人生道理
 
 铁律：
 1. 禁止自己编造数值，必须从状态卡抄
@@ -48,15 +54,22 @@ class AuthorAgent(BaseAgent):
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
+        title_contract = self._get_title_contract_context(state["project_id"])
+        if title_contract:
+            parts.append(title_contract)
 
         # Writing instruction
         instruction = self._get_instruction(state)
         if instruction:
+            word_target = self._get_word_target(state)
+            minimum_required = int(word_target * 0.85)
+            recommended_target = max(word_target, minimum_required + 500)
             parts.append(f"【写作指令】\n目标: {instruction.get('objective', '')}\n"
                          f"关键事件: {instruction.get('key_events', '')}\n"
                          f"情绪基调: {instruction.get('emotion_tone', '')}\n"
                          f"章末钩子: {instruction.get('ending_hook', '')}\n"
-                         f"字数目标: {instruction.get('word_target', 2500)}")
+                         f"字数硬要求: 正文 content 至少 {minimum_required} 字符，"
+                         f"建议写到 {recommended_target} 字符左右，低于硬要求会自动返修。")
 
         # R3: Review notes from human review sessions (v3.2)
         project_id = state["project_id"]
@@ -91,6 +104,10 @@ class AuthorAgent(BaseAgent):
         if style_ctx:
             parts.append(style_ctx)
 
+        repair_context = self._build_death_penalty_repair_context(state)
+        if repair_context:
+            parts.append(repair_context)
+
         # If revision, include review issues
         chapter = self._get_chapter_info(state)
         if chapter and chapter.get("status") == ChapterStatus.REVISION.value:
@@ -113,21 +130,37 @@ class AuthorAgent(BaseAgent):
         is_revision = chapter and chapter.get("status") == ChapterStatus.REVISION.value
 
         task_desc = "返修" if is_revision else "创作"
+        system_prompt = f"{AUTHOR_SYSTEM_PROMPT}\n\n{format_death_penalty_for_prompt()}"
         messages = [
-            {"role": "system", "content": AUTHOR_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n任务: {task_desc}\n\n{context}\n\n请{task_desc}第{chapter_number}章。"},
         ]
 
         raw = self.llm.invoke_json(messages, schema=AuthorOutput)
-        output = AuthorOutput(**raw)
+        output = AuthorOutput(**normalize_declared_word_count(raw))
+        output = self._sanitize_output(output, state)
 
         self.validate_output(output.model_dump())
 
         # v5.3.0: Word count quality gate
-        word_gate_passed, word_gate_msg = self._check_word_count_gate(state, output.content)
+        word_target = self._get_word_target(state)
+        word_gate_passed, word_gate_msg = check_word_count_quality_gate(
+            output.content, word_target, "author"
+        )
+        if not word_gate_passed and state.get("llm_mode") == "real":
+            expanded = self._try_expand_short_output(state, output, word_gate_msg)
+            if expanded is not None:
+                output = expanded
+                word_gate_passed, word_gate_msg = check_word_count_quality_gate(
+                    output.content, word_target, "author"
+                )
+
         if not word_gate_passed:
             logger.warning("Author: word count quality gate failed: %s", word_gate_msg)
             # Do not advance status, return error for retry
+            # P1: Record actual word count and target for traceability
+            from ..validators.chapter_checker import count_words
+            actual_wc = count_words(output.content)
             return {
                 "error": f"字数质量门未通过: {word_gate_msg}",
                 "chapter_status": state.get("chapter_status"),
@@ -136,6 +169,10 @@ class AuthorAgent(BaseAgent):
                     "revision_target": "author",
                     "word_count_fail": True,
                     "message": word_gate_msg,
+                    "actual_word_count": actual_wc,
+                    "word_target": word_target,
+                    "agent": "author",
+                    "workflow_run_id": state.get("workflow_run_id"),
                 },
             }
 
@@ -168,10 +205,12 @@ class AuthorAgent(BaseAgent):
                 created_by="author" if not is_revision else "revision",
             )
 
-            # Save artifact
+            # Save artifact (bind to workflow run for isolation)
+            workflow_run_id = state.get("workflow_run_id")
             self.repo.save_artifact(
                 project_id, chapter_number, "author", "draft",
                 content_json=output.model_dump(),
+                workflow_run_id=workflow_run_id,
             )
         except Exception as e:
             self._compensate_status(
@@ -187,8 +226,10 @@ class AuthorAgent(BaseAgent):
 
     def validate_output(self, output: dict) -> None:
         AuthorOutput(**output)
-        # Hard validation: word count and death penalty
-        violations = validate_chapter_output(output)
+        # Hard validation: schema, word_count match, death penalty.
+        # Skip word-count range here — the retryable quality gate handles it
+        # so short drafts route to revision instead of blocking.
+        violations = validate_chapter_output(output, check_min_words=False, check_max_words=True)
         if violations:
             raise ValueError(f"Author 输出校验失败: {'; '.join(violations)}")
         # Q2: Enhanced death penalty with severity
@@ -200,18 +241,112 @@ class AuthorAgent(BaseAgent):
         if dp_result.violations:
             raise ValueError(f"Author 输出包含死刑红线词汇: {', '.join(dp_result.violations)}")
 
+    def _try_expand_short_output(
+        self,
+        state: FactoryState,
+        output: AuthorOutput,
+        word_gate_msg: str,
+    ) -> AuthorOutput | None:
+        """Ask the LLM once to expand a valid-but-short draft.
+
+        This only runs in real mode. Stub mode stays deterministic for tests
+        and demos, while real model output gets one chance to satisfy the hard
+        word-count gate before the chapter escalates to human review.
+        """
+        instruction = self._get_instruction(state)
+        project = self.repo.get_project(state["project_id"])
+        word_target = derive_word_target(instruction, project)
+        minimum_required = int(word_target * 0.85)
+        expansion_target = max(word_target + 300, minimum_required + 700)
+
+        messages = [
+            {"role": "system", "content": AUTHOR_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"第{state['chapter_number']}章正文未达到字数硬闸门：{word_gate_msg}。\n"
+                    f"请在不改变已实现关键事件、伏笔和事实的前提下扩写正文，"
+                    f"至少达到 {minimum_required} 字符，建议扩到 {expansion_target} 字符，"
+                    "不要只补几十字或一小段。\n"
+                    "必须返回完整 JSON，字段仍为 title/content/word_count/"
+                    "implemented_events/used_plot_refs。word_count 可填写估算值，"
+                    "系统会以 content 实际长度为准。\n\n"
+                    f"【当前标题】\n{output.title}\n\n"
+                    f"【当前正文】\n{output.content}\n\n"
+                    f"【已实现事件】\n{json.dumps(output.implemented_events, ensure_ascii=False)}\n"
+                    f"【已使用伏笔】\n{json.dumps(output.used_plot_refs, ensure_ascii=False)}"
+                ),
+            },
+        ]
+
+        try:
+            raw = self.llm.invoke_json(messages, schema=AuthorOutput)
+            expanded = AuthorOutput(**normalize_declared_word_count(raw))
+            expanded = self._sanitize_output(expanded, state)
+            self.validate_output(expanded.model_dump())
+            return expanded
+        except Exception as e:
+            logger.warning("Author: expand-short-output retry failed: %s", e)
+            return None
+
+    def _sanitize_output(self, output: AuthorOutput, state: FactoryState) -> AuthorOutput:
+        """Apply deterministic safe rewrites before hard death-penalty validation."""
+        if state.get("llm_mode") != "real":
+            return output
+        sanitized_content, replacements = sanitize_death_penalty_text(output.content)
+        if not replacements:
+            return output
+        logger.info(
+            "Author: sanitized death-penalty phrases before validation: %s",
+            replacements,
+        )
+        data = output.model_dump()
+        data["content"] = sanitized_content
+        return AuthorOutput(**normalize_declared_word_count(data))
+
+    def _build_death_penalty_repair_context(self, state: FactoryState) -> str:
+        """Build repair context from the active gate and recent failed runs."""
+        messages: list[str] = []
+        gate = state.get("quality_gate", {}) or {}
+        if gate.get("death_penalty_fail"):
+            msg = gate.get("message") or "上一轮触发死刑红线"
+            messages.append(str(msg))
+
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+        try:
+            runs = self.repo.get_workflow_runs_for_project(
+                project_id, chapter_number=chapter_number, limit=5
+            )
+        except Exception:
+            runs = []
+        for run in runs:
+            error = str(run.get("error_message") or "")
+            if "死刑红线" in error and error not in messages:
+                messages.append(error)
+
+        if not messages:
+            return ""
+
+        return (
+            "【自动复盘：上一轮失败原因】\n"
+            + "\n".join(f"- {msg}" for msg in messages[:3])
+            + "\n本轮必须彻底避开上述原词和同类模板表达；优先改成具体动作、物理反应或对话推进。"
+        )
+
+    def _get_word_target(self, state: FactoryState) -> int:
+        """Derive the active word target for this chapter."""
+        project_id = state["project_id"]
+        instruction = self._get_instruction(state)
+        project = self.repo.get_project(project_id)
+        return derive_word_target(instruction, project)
+
     def _check_word_count_gate(self, state: FactoryState, content: str) -> tuple[bool, str]:
         """v5.3.0: Check word count quality gate.
 
         Returns:
             Tuple of (passed, message).
         """
-        project_id = state["project_id"]
-        chapter_number = state["chapter_number"]
-
-        # Get word_target from instruction or project
-        instruction = self._get_instruction(state)
-        project = self.repo.get_project(project_id)
-        word_target = derive_word_target(instruction, project)
+        word_target = self._get_word_target(state)
 
         return check_word_count_quality_gate(content, word_target, "author")

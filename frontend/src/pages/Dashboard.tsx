@@ -28,16 +28,17 @@ interface Chapter {
   run_id?: string
 }
 
-interface ProjectDetail extends Project {
-  chapters: Chapter[]
-}
-
 interface DashboardData {
   project_count: number
   recent_runs: RunItem[]
   queue_count: number
   review_count: number
   llm_mode: string
+  attention_items: Array<{
+    project_id: string
+    project_name: string
+    chapters: Array<{ chapter_number: number; status: string }>
+  }>
 }
 
 function formatRelativeTime(ts: string): string {
@@ -97,24 +98,18 @@ export default function Dashboard() {
       ])
       if (dashboardRes.ok && dashboardRes.data) {
         setData(dashboardRes.data)
+        // Use server-side attention_items instead of N+1 queries
+        const items = dashboardRes.data.attention_items || []
+        const mapped = items.map((item) => ({
+          project: { project_id: item.project_id, name: item.project_name, chapter_count: 0, created_at: '' },
+          chapters: item.chapters,
+        }))
+        setAttentionProjects(mapped)
       } else {
         setError(dashboardRes.error?.message || '获取仪表盘数据失败')
       }
       if (projectsRes.ok && projectsRes.data) {
         setProjects(projectsRes.data)
-        const attentionItems: Array<{ project: Project; chapters: Chapter[] }> = []
-        for (const project of projectsRes.data) {
-          const detailRes = await get<ProjectDetail>(`/projects/${project.project_id}`)
-          if (detailRes.ok && detailRes.data) {
-            const blockedFailed = detailRes.data.chapters.filter(
-              ch => ch.status === 'blocked' || ch.status === 'failed'
-            )
-            if (blockedFailed.length > 0) {
-              attentionItems.push({ project, chapters: blockedFailed })
-            }
-          }
-        }
-        setAttentionProjects(attentionItems)
       }
     } catch {
       setError('网络错误')

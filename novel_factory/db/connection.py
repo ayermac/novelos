@@ -168,6 +168,51 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         required = {"prompt_tokens", "completion_tokens", "total_tokens", "duration_ms"}
         return required.issubset(set(columns))
 
+    if name == "022_v5_3_2_genesis_memory":
+        # 022 adds genesis_memories table
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='genesis_memories'"
+        )
+        return cursor.fetchone() is not None
+
+    if name == "023_v5_3_artifact_run_id":
+        # 023 adds workflow_run_id column to agent_artifacts
+        cursor = conn.execute("PRAGMA table_info(agent_artifacts)")
+        columns = [row[1] for row in cursor.fetchall()]
+        return "workflow_run_id" in columns
+
+    if name == "024_v5_3_5_memory_item_error":
+        # 024 adds error_message column to memory_update_items
+        cursor = conn.execute("PRAGMA table_info(memory_update_items)")
+        columns = [row[1] for row in cursor.fetchall()]
+        return "error_message" in columns
+
+    if name == "025_v5_3_6_task_status_run_id":
+        # 025 adds workflow_run_id column to task_status
+        cursor = conn.execute("PRAGMA table_info(task_status)")
+        columns = [row[1] for row in cursor.fetchall()]
+        return "workflow_run_id" in columns
+
+    if name == "026_v5_4_13_project_skill_overrides":
+        # 026 adds project_skill_overrides table
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='project_skill_overrides'"
+        )
+        return cursor.fetchone() is not None
+
+    if name == "027_v5_5_8_auto_run_sessions":
+        # 027 adds auto_run_sessions and auto_run_steps tables
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='auto_run_sessions'"
+        )
+        return cursor.fetchone() is not None
+
+    if name == "028_v5_5_9_auto_run_resilience":
+        # 028 adds last_event column to auto_run_sessions
+        cursor = conn.execute("PRAGMA table_info(auto_run_sessions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        return "last_event" in columns
+
     return False
 
 

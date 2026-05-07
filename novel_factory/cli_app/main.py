@@ -757,6 +757,7 @@ def build_parser() -> argparse.ArgumentParser:
     api_parser.add_argument("--port", type=int, default=8765, help="Port to bind (default: 8765)")
     api_parser.add_argument("--db-path", help="Path to SQLite database file")
     api_parser.add_argument("--config", help="Path to config YAML file")
+    api_parser.add_argument("--skills-config", help="Path to skills YAML config file (default: novel_factory/config/skills.yaml)")
     api_parser.add_argument("--llm-mode", choices=["stub", "real"], default="stub", help="LLM mode: stub for demo, real for actual LLM (default: stub)")
     api_parser.set_defaults(func=cmd_api)
 

@@ -18,6 +18,7 @@ from ..agents.screenwriter import ScreenwriterAgent
 from ..agents.author import AuthorAgent
 from ..agents.polisher import PolisherAgent
 from ..agents.editor import EditorAgent
+from ..agents.memory_curator import MemoryCuratorAgent
 
 logger = logging.getLogger(__name__)
 
@@ -79,6 +80,56 @@ def _accumulate_tokens(state: FactoryState, llm: LLMProvider) -> dict[str, int]:
     }
 
 
+def _handle_retryable_quality_gate(
+    state: FactoryState,
+    repo: Repository,
+    result: dict[str, Any],
+) -> dict[str, Any]:
+    """Convert retryable quality gate failures into revision routing.
+
+    Author/Polisher word-count failures and death-penalty red-line failures
+    are expected recoverable defects. They should consume a revision attempt
+    and route back to the responsible agent until the chapter-level retry cap
+    is reached. Other errors remain blocking.
+    """
+    gate = result.get("quality_gate") or {}
+    retryable_gate = gate.get("word_count_fail") or gate.get("death_penalty_fail")
+    if not result.get("error") or not retryable_gate:
+        return result
+
+    project_id = state.get("project_id", "")
+    chapter_number = state.get("chapter_number", 0)
+    retry_count = repo.get_chapter_retry_count(project_id, chapter_number)
+    max_retries = state.get("max_retries", 3)
+    if retry_count >= max_retries:
+        result["requires_human"] = True
+        result["retry_count"] = retry_count
+        return result
+
+    revision_target = gate.get("revision_target") or "author"
+    current_status = repo.get_chapter_status(project_id, chapter_number)
+    if current_status not in (
+        ChapterStatus.BLOCKING.value,
+        ChapterStatus.PUBLISHED.value,
+        ChapterStatus.REVIEWED.value,
+    ):
+        repo.update_chapter_status(project_id, chapter_number, ChapterStatus.REVISION.value)
+
+    task_id = repo.start_task(
+        project_id, chapter_number, "revise", revision_target,
+        workflow_run_id=state.get("workflow_run_id"),
+    )
+    repo.complete_task(task_id, success=True)
+
+    updated = dict(result)
+    updated.pop("error", None)
+    updated["chapter_status"] = ChapterStatus.REVISION.value
+    updated["current_stage"] = "revision"
+    updated["retry_count"] = retry_count + 1
+    updated["requires_human"] = False
+    return updated
+
+
 # ── v5.1.6: Node factory for LLMRouter-based injection ────────────────
 
 
@@ -135,7 +186,7 @@ def create_node_runners(
         else:
             agent = agent_cls(repo, llm)
 
-        result = agent.run(state)
+        result = _handle_retryable_quality_gate(state, repo, agent.run(state))
 
         # v5.2: Accumulate token usage from LLM provider
         token_updates = _accumulate_tokens(state, llm)
@@ -167,6 +218,7 @@ def create_node_runners(
         "author": lambda s: _run_agent_node("author", AuthorAgent, s),
         "polisher": lambda s: _run_agent_node("polisher", PolisherAgent, s),
         "editor": lambda s: _run_agent_node("editor", EditorAgent, s),
+        "memory_curator": lambda s: _run_agent_node("memory_curator", MemoryCuratorAgent, s),
     }
 
 
@@ -266,7 +318,7 @@ def author_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict
     """Run the Author agent."""
     _update_run_node(state, repo, "author")
     agent = AuthorAgent(repo, llm)
-    result = agent.run(state)
+    result = _handle_retryable_quality_gate(state, repo, agent.run(state))
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
     if token_updates:
@@ -288,7 +340,7 @@ def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill
         except Exception as e:
             logger.warning(f"Failed to create SkillRegistry: {e}")
     agent = PolisherAgent(repo, llm, skill_registry=skill_registry)
-    result = agent.run(state)
+    result = _handle_retryable_quality_gate(state, repo, agent.run(state))
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
     if token_updates:
@@ -318,6 +370,34 @@ def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
+    return result
+
+
+def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
+    """Run the Memory Curator agent to extract story facts from reviewed chapter.
+
+    v5.3.2 closure: In real mode, failure is blocking (requires_human=True).
+    In stub mode, failure is non-blocking (log and continue).
+    """
+    _update_run_node(state, repo, "memory_curator")
+    agent = MemoryCuratorAgent(repo, llm)
+    result = agent.run(state)
+    # Accumulate token usage
+    token_updates = _accumulate_tokens(state, llm)
+    if token_updates:
+        result.update(token_updates)
+    if "error" in result:
+        llm_mode = state.get("llm_mode", "stub")
+        if llm_mode == "real":
+            # Real mode: memory extraction failure blocks publish
+            logger.error("MemoryCurator failed (real mode): %s", result["error"])
+            _finalize_run(state, repo, "failed", result["error"])
+            result["requires_human"] = True
+        else:
+            # Stub mode: non-blocking, log and continue
+            logger.warning("MemoryCurator failed (stub mode): %s", result["error"])
+            result.pop("error", None)
+            result["requires_human"] = False
     return result
 
 
@@ -374,12 +454,47 @@ def revision_router_node(state: FactoryState) -> dict[str, Any]:
 def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
     """Handle blocking/human intervention scenarios."""
     _update_run_node(state, repo, "human_review")
-    _finalize_run(state, repo, "blocked")
+    project_id = state.get("project_id", "")
+    chapter_number = state.get("chapter_number", 0)
+    gate = state.get("quality_gate", {}) or {}
+    retry_count = state.get("retry_count", 0)
+    max_retries = state.get("max_retries", 3)
+    error = state.get("error")
+    if not error and gate.get("pass") is False:
+        score = gate.get("score")
+        target = gate.get("revision_target") or "author"
+        # P1: Include quality gate details (word count, etc.) in blocking error
+        error = (
+            f"章节审核未通过，已达到最大返修次数 "
+            f"({retry_count}/{max_retries})，建议人工检查。"
+            f"退回目标: {target}"
+        )
+        if score is not None:
+            error += f"，评分: {score}"
+        if gate.get("word_count_fail"):
+            actual_wc = gate.get("actual_word_count")
+            word_target = gate.get("word_target")
+            if actual_wc is not None and word_target is not None:
+                error += f"，该次失败字数: {actual_wc} (目标 {word_target})"
+
+    if not error and state.get("chapter_status") == ChapterStatus.BLOCKING.value:
+        error = "章节已处于阻塞状态，请先解除阻塞后再重新执行工作流。"
+
+    if project_id and chapter_number:
+        current_status = repo.get_chapter_status(project_id, chapter_number)
+        if current_status not in (ChapterStatus.PUBLISHED.value, ChapterStatus.REVIEWED.value):
+            repo.update_chapter_status(project_id, chapter_number, ChapterStatus.BLOCKING.value)
+
+    _finalize_run(state, repo, "blocked", error=error)
     logger.warning(
         "Human intervention required: project=%s chapter=%s",
-        state.get("project_id"), state.get("chapter_number"),
+        project_id, chapter_number,
     )
-    return {"requires_human": True, "chapter_status": "blocking"}
+    return {
+        "requires_human": True,
+        "chapter_status": ChapterStatus.BLOCKING.value,
+        "error": error,
+    }
 
 
 def archive_node(state: FactoryState, repo: Repository) -> dict[str, Any]:

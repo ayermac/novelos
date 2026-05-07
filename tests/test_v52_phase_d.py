@@ -24,11 +24,13 @@ class TestCheckpointHelpers:
     def test_get_checkpoint_config(self):
         """Test checkpoint config generation."""
         config = get_checkpoint_config("my-project", 10)
-        assert config == {
-            "configurable": {
-                "thread_id": "my-project-chapter-10",
-            }
-        }
+        assert config["configurable"]["thread_id"] == "my-project-chapter-10"
+        assert config["recursion_limit"] == 50
+
+    def test_get_checkpoint_config_custom_recursion_limit(self):
+        """Test that recursion_limit can be overridden."""
+        config = get_checkpoint_config("my-project", 10, recursion_limit=20)
+        assert config["recursion_limit"] == 20
 
     def test_get_sqlite_checkpointer_default_path(self):
         """Test SqliteSaver creation with default (in-memory) path."""

@@ -12,6 +12,7 @@ interface Step {
   description: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
   error_message?: string
+  error_is_legacy?: boolean
   artifacts?: Artifacts | null
 }
 
@@ -82,7 +83,12 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
                     <div className="step-description">{step.description}</div>
                   )}
                   {step.error_message && (
-                    <div className="step-error">{step.error_message}</div>
+                    <div className={`step-error ${step.error_is_legacy ? 'step-error-legacy' : ''}`}>
+                      {step.error_message}
+                      {step.error_is_legacy && (
+                        <span className="legacy-tag">（历史记录）</span>
+                      )}
+                    </div>
                   )}
                 </div>
                 {hasArtifacts && (
@@ -181,6 +187,15 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           border-radius: 4px;
           font-size: 12px;
           color: #dc2626;
+        }
+        .wf-timeline .step-error-legacy {
+          background: #fffbeb;
+          color: #b45309;
+        }
+        .wf-timeline .legacy-tag {
+          margin-left: 6px;
+          font-size: 11px;
+          opacity: 0.8;
         }
         .wf-timeline .step-expand-btn {
           padding: 4px 10px;

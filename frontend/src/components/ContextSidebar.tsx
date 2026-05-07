@@ -24,6 +24,7 @@ interface Props {
   llmMode: string
   recentRuns: Run[]
   totalChapters: number
+  nextChapterNumber?: number | null
   projectId: string
   onGenerate: () => void
   onViewWorkflow: (runId: string) => void
@@ -39,6 +40,7 @@ export default function ContextSidebar({
   llmMode,
   recentRuns,
   totalChapters,
+  nextChapterNumber,
   projectId,
   onGenerate,
   onViewWorkflow,
@@ -76,10 +78,14 @@ export default function ContextSidebar({
     nextTitle = '本章尚未生成'
     nextHint = '点击下方按钮开始生成。'
     nextAction = { label: '生成本章', onClick: onGenerate }
-  } else if (isPublished && chapterNumber < totalChapters) {
+  } else if (isPublished && nextChapterNumber) {
     nextTitle = '继续创作'
-    nextHint = `下一章：第 ${chapterNumber + 1} 章`
+    nextHint = `下一章：第 ${nextChapterNumber} 章`
     nextAction = { label: '生成下一章', onClick: onGenerateNext }
+  } else if (isPublished && chapterNumber >= totalChapters) {
+    nextTitle = '已完成规划章节'
+    nextHint = '没有更多可生成章节。'
+    nextAction = null
   } else {
     nextTitle = '继续创作'
     nextHint = '返回创作流程'
@@ -183,7 +189,7 @@ export default function ContextSidebar({
               查看工作流
             </button>
           )}
-          {isPublished && chapterNumber < totalChapters && (
+          {isPublished && nextChapterNumber && (
             <button className="btn btn-secondary" style={{ width: '100%' }} onClick={onGenerateNext}>
               生成下一章
             </button>
@@ -205,6 +211,11 @@ export default function ContextSidebar({
             <div style={{ marginTop: '4px', fontSize: '12px', color: 'var(--text-muted)' }}>
               {latestRun.created_at || ''}
             </div>
+            {latestRun.error_message && (
+              <div style={{ marginTop: '6px', padding: '6px 8px', background: '#fef2f2', borderRadius: '4px', fontSize: '12px', color: '#dc2626' }}>
+                {latestRun.error_message}
+              </div>
+            )}
           </div>
         </div>
       )}

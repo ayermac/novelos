@@ -514,7 +514,7 @@ class ReviewWorkbenchRepositoryMixin:
                         # Get workflow runs
                         workflow_rows = conn.execute(
                             "SELECT * FROM workflow_runs WHERE project_id = ? AND chapter_number = ? "
-                            "ORDER BY started_at ASC",
+                            "ORDER BY started_at ASC, rowid ASC",
                             (project_id, chapter_number),
                         ).fetchall()
                         for workflow_row in workflow_rows:

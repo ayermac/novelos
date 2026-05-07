@@ -112,6 +112,43 @@ class TestPlannerAgent:
         instr = seeded_repo.get_instruction("test_proj", 1)
         assert instr is not None
 
+    def test_planner_derives_word_target_when_existing_is_empty(self, seeded_repo):
+        from novel_factory.agents.planner import PlannerAgent
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET word_target = NULL WHERE project_id = ? AND chapter_number = ?",
+            ("test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        stub = StubLLMProvider([{
+            "objective": "继续推进主线冲突",
+            "key_events": ["事件1", "事件2"],
+            "plots_to_plant": [],
+            "plots_to_resolve": [],
+            "ending_hook": "悬念",
+            "constraints": [],
+        }])
+
+        agent = PlannerAgent(seeded_repo, stub)
+        state: FactoryState = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "planned",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        }
+
+        result = agent.run(state)
+
+        assert result["chapter_status"] == ChapterStatus.PLANNED.value
+        instr = seeded_repo.get_instruction("test_proj", 1)
+        assert instr["word_target"] == 3000
+
 
 class TestScreenwriterAgent:
     def test_screenwriter_creates_beats(self, seeded_repo):
@@ -144,6 +181,28 @@ class TestScreenwriterAgent:
 
 
 class TestAuthorAgent:
+    def test_author_context_derives_missing_word_target(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET word_target = NULL WHERE project_id = ? AND chapter_number = ?",
+            ("test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
+        context = agent.build_context({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+        })
+
+        assert "字数目标: None" not in context
+        assert "至少 2550 字符" in context
+        assert "建议写到 3050 字符左右" in context
+
     def test_author_writes_content(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
 
@@ -182,6 +241,93 @@ class TestAuthorAgent:
 
         chapter = seeded_repo.get_chapter("test_proj", 1)
         assert chapter["content"] is not None
+
+    def test_author_recomputes_llm_declared_word_count(self, seeded_repo):
+        """LLM word_count guesses should not block otherwise valid content."""
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.validators.chapter_checker import count_words
+
+        base_content = "这是一段测试正文内容，用于验证 Author Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 44
+
+        stub = StubLLMProvider([{
+            "title": "第一章 测试",
+            "content": long_content,
+            "word_count": 3000,
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        state: FactoryState = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        }
+
+        result = agent.run(state)
+
+        assert "word_count 不匹配" not in result.get("error", "")
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["word_count"] == count_words(long_content)
+
+    def test_author_real_mode_expands_short_valid_draft_once(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        short_content = "短正文" * 200  # 600 chars: valid payload, too short for gate.
+        long_content = "扩写后的正文内容" * 300  # 2400 chars: passes 2500 * 85%.
+
+        stub = StubLLMProvider([
+            {
+                "title": "第一章 测试",
+                "content": short_content,
+                "word_count": 3000,
+                "implemented_events": ["事件1"],
+                "used_plot_refs": ["P001"],
+            },
+            {
+                "title": "第一章 测试",
+                "content": long_content,
+                "word_count": 3000,
+                "implemented_events": ["事件1"],
+                "used_plot_refs": ["P001"],
+            },
+        ])
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        state: FactoryState = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        }
+
+        result = agent.run(state)
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        assert stub._call_count == 2
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["content"] == long_content
 
 
 class TestPolisherAgent:
@@ -323,3 +469,120 @@ class TestEditorAgent:
         result = agent.run(state)
         assert result["chapter_status"] == ChapterStatus.REVISION.value
         assert result["quality_gate"]["pass"] is False
+
+    def test_editor_accepts_null_state_card(self, seeded_repo):
+        from novel_factory.agents.editor import EditorAgent
+
+        base_content = "这是一段测试正文内容，用于验证 Editor Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 45
+
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "polished")
+
+        stub = StubLLMProvider([{
+            "pass": True,
+            "score": 88,
+            "scores": {"setting": 20, "logic": 18, "poison": 18, "text": 16, "pacing": 16},
+            "issues": [],
+            "suggestions": [],
+            "revision_target": None,
+            "state_card": None,
+        }])
+
+        agent = EditorAgent(seeded_repo, stub)
+        state: FactoryState = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        }
+
+        result = agent.run(state)
+        assert "validation error" not in result.get("error", "")
+        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
+        assert result["quality_gate"]["pass"] is True
+
+    def test_editor_word_gate_reports_target_details(self, seeded_repo):
+        from novel_factory.agents.editor import EditorAgent
+
+        short_content = "短正文" * 700  # 2100 chars, below editor threshold 2500 * 90%.
+
+        seeded_repo.save_chapter_content("test_proj", 1, short_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "polished")
+
+        stub = StubLLMProvider([{
+            "pass": True,
+            "score": 90,
+            "scores": {"setting": 20, "logic": 18, "poison": 18, "text": 17, "pacing": 17},
+            "issues": [],
+            "suggestions": [],
+            "revision_target": None,
+            "state_card": {},
+        }])
+
+        agent = EditorAgent(seeded_repo, stub)
+        state: FactoryState = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "workflow_run_id": "run-word-gate",
+        }
+
+        result = agent.run(state)
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"]["pass"] is False
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert result["quality_gate"]["actual_word_count"] == 2100
+        assert result["quality_gate"]["word_target"] == 2500
+        assert result["quality_gate"]["workflow_run_id"] == "run-word-gate"
+
+    def test_editor_word_gate_persists_fail_in_review_record(self, seeded_repo):
+        """When LLM says pass but word-count gate fails, the review row must reflect fail."""
+        from novel_factory.agents.editor import EditorAgent
+
+        short_content = "短正文" * 700  # 2100 chars, below editor threshold.
+
+        seeded_repo.save_chapter_content("test_proj", 1, short_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "polished")
+
+        stub = StubLLMProvider([{
+            "pass": True,
+            "score": 92,
+            "scores": {"setting": 20, "logic": 18, "poison": 18, "text": 17, "pacing": 17},
+            "issues": [],
+            "suggestions": [],
+            "revision_target": None,
+            "state_card": {},
+        }])
+
+        agent = EditorAgent(seeded_repo, stub)
+        state: FactoryState = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        }
+
+        result = agent.run(state)
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"]["pass"] is False
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert result["quality_gate"]["revision_target"] == "polisher"
+
+        # Verify the persisted review record matches the gate decision
+        review = seeded_repo.get_latest_review("test_proj", 1)
+        assert review is not None
+        assert review["pass"] == 0  # SQLite stores bool as int
+        assert review["revision_target"] == "polisher"
+        issues = json.loads(review["issues"])
+        assert any("字数" in i or "word" in i.lower() for i in issues)

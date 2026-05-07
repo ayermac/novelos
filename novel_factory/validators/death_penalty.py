@@ -202,6 +202,41 @@ def has_critical_violation(text: str) -> bool:
     return result.has_critical
 
 
+def sanitize_death_penalty_text(
+    text: str,
+    rules: list[DeathPenaltyRule] | None = None,
+) -> tuple[str, list[dict[str, str]]]:
+    """Replace deterministic forbidden phrases with configured alternatives.
+
+    This is intentionally conservative: only exact/substring rules with a
+    concrete alternative are rewritten. Regex rules and rules without
+    alternatives still go through the hard validator.
+    """
+    if text is None:
+        text = ""
+    if rules is None:
+        rules = DEFAULT_RULES
+
+    sanitized = text
+    replacements: list[dict[str, str]] = []
+    for rule in rules:
+        if rule.match_type not in (PenaltyMatchType.EXACT, PenaltyMatchType.SUBSTRING):
+            continue
+        if not rule.alternatives:
+            continue
+        if rule.pattern not in sanitized:
+            continue
+        replacement = rule.alternatives[0]
+        sanitized = sanitized.replace(rule.pattern, replacement)
+        replacements.append({
+            "code": rule.code,
+            "pattern": rule.pattern,
+            "replacement": replacement,
+        })
+
+    return sanitized, replacements
+
+
 def format_death_penalty_for_prompt(
     rules: list[DeathPenaltyRule] | None = None,
 ) -> str:

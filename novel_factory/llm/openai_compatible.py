@@ -184,8 +184,13 @@ class OpenAICompatibleProvider(LLMProvider):
         messages: list[dict[str, str]],
         schema: type | None = None,
         temperature: float | None = None,
+        max_retries: int = 1,
     ) -> dict[str, Any]:
-        """Invoke LLM and parse JSON from the response."""
+        """Invoke LLM and parse JSON from the response.
+
+        On JSON parse failure, retries up to *max_retries* times with an
+        explicit correction prompt appended.
+        """
         lc_messages = self._to_lc_messages(messages)
 
         kwargs: dict[str, Any] = {}
@@ -200,21 +205,42 @@ class OpenAICompatibleProvider(LLMProvider):
                 )
             )
 
-        try:
-            response = self._invoke_with_retry(lc_messages, max_retries=1, **kwargs)
-            text = response.content
-            # Try to extract JSON from markdown code blocks
-            json_str = self._extract_json(text)
-            return json.loads(json_str)
-        except json.JSONDecodeError as e:
-            logger.error("Failed to parse LLM JSON output: %s\nRaw: %s", e, text[:500])
-            raise OutputValidationError(f"LLM 输出不是有效的 JSON 格式: {e}") from e
-        except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
-            raise
-        except LLMError:
-            raise
-        except Exception as e:
-            self._handle_api_error(e)
+        last_json_error: json.JSONDecodeError | None = None
+        for attempt in range(max_retries + 1):
+            try:
+                response = self._invoke_with_retry(lc_messages, max_retries=1, **kwargs)
+                text = response.content
+                json_str = self._extract_json(text)
+                return json.loads(json_str)
+            except json.JSONDecodeError as e:
+                last_json_error = e
+                logger.warning(
+                    "JSON parse failed (attempt %d/%d): %s | near: ...%s...",
+                    attempt + 1, max_retries + 1, e,
+                    text[max(0, e.pos - 40):e.pos + 40] if hasattr(e, "pos") and e.pos else text[:80],
+                )
+                if attempt < max_retries:
+                    # Append a correction prompt and retry
+                    lc_messages.append(HumanMessage(
+                        content=(
+                            f"你上一次输出的 JSON 解析失败，错误为: {e}\n"
+                            "请重新输出完整、合法的 JSON，不要包含注释、尾逗号或 Markdown 标记。"
+                        )
+                    ))
+                else:
+                    logger.error(
+                        "Failed to parse LLM JSON after %d attempts: %s\nRaw (first 800 chars): %s",
+                        max_retries + 1, e, text[:800],
+                    )
+                    raise OutputValidationError(f"LLM 输出不是有效的 JSON 格式: {e}") from e
+            except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
+                raise
+            except LLMError:
+                raise
+            except Exception as e:
+                self._handle_api_error(e)
+
+        raise OutputValidationError(f"LLM 输出不是有效的 JSON 格式: {last_json_error}")
 
     def invoke_text(
         self,
@@ -244,25 +270,92 @@ class OpenAICompatibleProvider(LLMProvider):
     @staticmethod
     def _extract_json(text: str) -> str:
         """Extract JSON from potentially markdown-wrapped text."""
-        # Try ```json ... ``` first
         import re
 
+        # Strip BOM and leading/trailing whitespace
+        text = text.lstrip("\ufeff").strip()
+
+        # Try ```json ... ``` first
         match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
         if match:
-            return match.group(1).strip()
+            candidate = match.group(1).strip()
+            return OpenAICompatibleProvider._sanitize_json(candidate)
 
-        # Try finding the first { ... } or [ ... ]
+        # Try finding the first { ... } or [ ... ], respecting strings
         for start_char, end_char in [("{", "}"), ("[", "]")]:
             start = text.find(start_char)
             if start != -1:
                 depth = 0
+                in_string = False
+                escape_next = False
                 for i in range(start, len(text)):
-                    if text[i] == start_char:
+                    c = text[i]
+                    if escape_next:
+                        escape_next = False
+                        continue
+                    if c == "\\":
+                        escape_next = True
+                        continue
+                    if c == '"':
+                        in_string = not in_string
+                        continue
+                    if in_string:
+                        continue
+                    if c == start_char:
                         depth += 1
-                    elif text[i] == end_char:
+                    elif c == end_char:
                         depth -= 1
                     if depth == 0:
-                        return text[start : i + 1]
+                        candidate = text[start : i + 1]
+                        return OpenAICompatibleProvider._sanitize_json(candidate)
 
-        # Fallback: return as-is
-        return text.strip()
+        # Fallback: return sanitized text
+        return OpenAICompatibleProvider._sanitize_json(text.strip())
+
+    @staticmethod
+    def _sanitize_json(text: str) -> str:
+        """Attempt to fix common LLM JSON output issues before parsing.
+
+        Handles: trailing commas, single-quoted strings, JS-style comments,
+        and unescaped newlines in strings.
+        """
+        import re
+
+        # Remove JS-style single-line comments (// ...) outside of strings
+        result_lines = []
+        in_string = False
+        for line in text.split("\n"):
+            new_line = []
+            escape_next = False
+            i = 0
+            while i < len(line):
+                c = line[i]
+                if escape_next:
+                    new_line.append(c)
+                    escape_next = False
+                    i += 1
+                    continue
+                if c == "\\":
+                    new_line.append(c)
+                    escape_next = True
+                    i += 1
+                    continue
+                if c == '"':
+                    in_string = not in_string
+                    new_line.append(c)
+                    i += 1
+                    continue
+                if not in_string and c == "/" and i + 1 < len(line) and line[i + 1] == "/":
+                    break
+                new_line.append(c)
+                i += 1
+            result_lines.append("".join(new_line))
+        text = "\n".join(result_lines)
+
+        # Remove trailing commas before } or ]
+        text = re.sub(r",\s*([}\]])", r"\1", text)
+
+        # Replace single-quoted keys/values with double-quoted (simple heuristic)
+        text = re.sub(r"(?<=[\[{,:\s])'([^']*)'(?=[\]},:\s])", r'"\1"', text)
+
+        return text

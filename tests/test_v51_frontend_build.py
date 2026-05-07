@@ -68,7 +68,6 @@ class TestFrontendChineseLabels:
         assert "创作中心" in content
         assert "项目" in content
         assert "创建项目" in content
-        assert "高级运行" in content
         assert "审核" in content
         assert "风格" in content
         assert "配置" in content

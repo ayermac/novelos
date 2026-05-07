@@ -249,7 +249,7 @@ class TestCLIChainIdempotency:
             "--db-path", str(db_path),
             "--llm-mode", "stub",
             "run-chapter", "--project-id", "demo", "--chapter", "1",
-            "--max-steps", "1", "--json",
+            "--max-steps", "50", "--json",
         ], clean_env=True)
         # Should not traceback
         assert "Traceback" not in stdout, f"stdout contains traceback: {stdout[:500]}"

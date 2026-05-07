@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
@@ -55,7 +57,8 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
             repo.update_chapter_status(body.project_id, body.chapter, "planned")
 
         # Run chapter via LangGraph workflow
-        result = run_with_graph(
+        result = await asyncio.to_thread(
+            run_with_graph,
             project_id=body.project_id,
             chapter_number=body.chapter,
             settings=settings,

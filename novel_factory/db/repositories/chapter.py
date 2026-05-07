@@ -339,6 +339,35 @@ class ChapterRepositoryMixin:
         finally:
             conn.close()
 
+    def list_state_history(
+        self, project_id: str, chapter_number: int
+    ) -> list[dict]:
+        """List state history for a chapter.
+
+        Args:
+            project_id: Project identifier.
+            chapter_number: Chapter number.
+
+        Returns:
+            List of state history entries ordered by created_at.
+        """
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM state_history "
+                "WHERE project_id=? AND chapter=? ORDER BY created_at DESC",
+                (project_id, chapter_number),
+            ).fetchall()
+            results = []
+            for row in rows:
+                d = row_to_dict(row)
+                if d.get("state_data"):
+                    d["state_data"] = json.loads(d["state_data"])
+                results.append(d)
+            return results
+        finally:
+            conn.close()
+
     # ── Chapter versions ──────────────────────────────────────
 
     def save_version(
@@ -385,6 +414,53 @@ class ChapterRepositoryMixin:
             )
             conn.commit()
             return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def list_chapter_versions(
+        self, project_id: str, chapter_number: int
+    ) -> list[dict]:
+        """List all versions for a chapter.
+
+        Args:
+            project_id: Project identifier.
+            chapter_number: Chapter number.
+
+        Returns:
+            List of version dicts ordered by version number descending.
+        """
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT id, project_id, chapter, version, word_count, "
+                "created_by, notes, content_hash, created_at "
+                "FROM chapter_versions "
+                "WHERE project_id=? AND chapter=? ORDER BY version DESC",
+                (project_id, chapter_number),
+            ).fetchall()
+            return [row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_version_by_id(
+        self, project_id: str, version_id: int
+    ) -> dict | None:
+        """Get a specific version by ID (includes content).
+
+        Args:
+            project_id: Project identifier.
+            version_id: Version ID.
+
+        Returns:
+            Version dict with content, or None if not found.
+        """
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM chapter_versions WHERE project_id=? AND id=?",
+                (project_id, version_id),
+            ).fetchone()
+            return row_to_dict(row)
         finally:
             conn.close()
 
@@ -440,7 +516,12 @@ class ChapterRepositoryMixin:
 
     # Scout Agent methods
 
-    def reset_chapter(self, project_id: str, chapter_number: int) -> bool:
+    def reset_chapter(
+        self,
+        project_id: str,
+        chapter_number: int,
+        workflow_run_id: str | None = None,
+    ) -> bool:
         """Reset a chapter to planned status for re-processing.
 
         Reset rules:
@@ -451,6 +532,7 @@ class ChapterRepositoryMixin:
         Args:
             project_id: Project identifier.
             chapter_number: Chapter number.
+            workflow_run_id: Optional run id for recovery audit isolation.
 
         Returns:
             True if chapter was reset, False if status doesn't allow reset.
@@ -465,8 +547,23 @@ class ChapterRepositoryMixin:
                 "AND status IN ('blocking', 'revision')",
                 (project_id, chapter_number),
             )
+            reset = cursor.rowcount > 0
+            if reset:
+                conn.execute(
+                    "INSERT INTO task_status "
+                    "(project_id, chapter_number, task_type, agent_id, status, "
+                    "started_at, completed_at, error_message, workflow_run_id) "
+                    "VALUES (?, ?, 'reset', 'human', 'completed', "
+                    "datetime('now','+8 hours'), datetime('now','+8 hours'), ?, ?)",
+                    (
+                        project_id,
+                        chapter_number,
+                        "人工重置章节：解除阻塞并清空本轮返修计数。",
+                        workflow_run_id,
+                    ),
+                )
             conn.commit()
-            return cursor.rowcount > 0
+            return reset
         finally:
             conn.close()
 

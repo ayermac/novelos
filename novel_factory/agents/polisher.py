@@ -62,7 +62,11 @@ class PolisherAgent(BaseAgent):
         and best_practices are injected into the actual LLM messages.
         """
         builder = ContextBuilder(self.repo)
-        return builder.build_for_polisher(state["project_id"], state["chapter_number"])
+        title_contract = self._get_title_contract_context(state["project_id"])
+        context = builder.build_for_polisher(state["project_id"], state["chapter_number"])
+        if title_contract:
+            return f"{title_contract}\n\n{context}"
+        return context
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
@@ -97,6 +101,7 @@ class PolisherAgent(BaseAgent):
         # Apply skills from config (after_llm stage)
         polished_content = output.content
         if self.skill_registry:
+            project_skill_overrides = self._get_project_skill_overrides(project_id)
             after_llm_result = self.skill_registry.run_skills_for_agent(
                 agent="polisher",
                 stage="after_llm",
@@ -104,6 +109,7 @@ class PolisherAgent(BaseAgent):
                     "text": polished_content,
                     "fact_lock": {"key_events": [f.content for f in fact_lock] if fact_lock else []},
                 },
+                project_overrides=project_skill_overrides,
             )
             
             # Process skill results
@@ -168,6 +174,9 @@ class PolisherAgent(BaseAgent):
         )
         if not word_gate_passed:
             logger.warning("Polisher: word count quality gate failed: %s", word_gate_msg)
+            # P1: Record actual word count and target for traceability
+            from ..validators.chapter_checker import count_words
+            actual_wc = count_words(polished_content)
             return {
                 "error": f"字数质量门未通过: {word_gate_msg}",
                 "chapter_status": state.get("chapter_status"),
@@ -176,15 +185,21 @@ class PolisherAgent(BaseAgent):
                     "revision_target": "polisher",
                     "word_count_fail": True,
                     "message": word_gate_msg,
+                    "actual_word_count": actual_wc,
+                    "word_target": word_target,
+                    "agent": "polisher",
+                    "workflow_run_id": state.get("workflow_run_id"),
                 },
             }
 
         # Apply skills from config (before_save stage)
         if self.skill_registry:
+            project_skill_overrides = self._get_project_skill_overrides(project_id)
             before_save_result = self.skill_registry.run_skills_for_agent(
                 agent="polisher",
                 stage="before_save",
                 payload={"text": polished_content},
+                project_overrides=project_skill_overrides,
             )
             
             # Check AI trace score from AIStyleDetector
@@ -272,10 +287,12 @@ class PolisherAgent(BaseAgent):
                 summary=output.summary,
             )
 
-            # Save artifact
+            # Save artifact (bind to workflow run for isolation)
+            workflow_run_id = state.get("workflow_run_id")
             self.repo.save_artifact(
                 project_id, chapter_number, "polisher", "polished_draft",
                 content_json=output.model_dump(),
+                workflow_run_id=workflow_run_id,
             )
         except Exception as e:
             self._compensate_status(

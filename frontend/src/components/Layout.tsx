@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Outlet, NavLink, useLocation } from 'react-router-dom'
-import { FolderPlus, Play, CheckSquare, Palette, Settings, LayoutDashboard, FolderOpen, LucideIcon, Feather, Menu, X } from 'lucide-react'
+import { FolderPlus, CheckSquare, Palette, Settings, LayoutDashboard, FolderOpen, LucideIcon, Factory, Menu, X, Activity } from 'lucide-react'
 import { get } from '../lib/api'
 
 interface NavItem {
@@ -19,8 +19,6 @@ const navItems: NavItem[] = [
   { to: '/review', label: '审核', icon: CheckSquare },
   { to: '/style', label: '风格', icon: Palette },
   { to: '/settings', label: '配置', icon: Settings },
-  { to: '', label: '开发', icon: null, isSectionLabel: true },
-  { to: '/run', label: '高级运行', icon: Play },
 ]
 
 export default function Layout() {
@@ -60,13 +58,13 @@ export default function Layout() {
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-brand">
           <div className="brand-icon">
-            <Feather size={22} />
+            <Factory size={22} />
           </div>
           <div className="brand-text">
-            <span className="brand-name">墨流</span>
-            <span className="brand-tagline">小说创作工作台</span>
+            <span className="brand-name">墨流工厂</span>
+            <span className="brand-tagline">长篇小说生产系统</span>
           </div>
-          <span className="version">v5.3</span>
+          <span className="version">v5.5.9</span>
         </div>
 
         <nav className="sidebar-nav">
@@ -110,9 +108,14 @@ export default function Layout() {
           <div className="topbar-gradient" />
           <div className="topbar-content">
             <div className="topbar-left">
-              <span className="topbar-title">创作中心</span>
+              <span className="topbar-title">生产控制台</span>
+              <span className="topbar-subtitle">Auto-Run Resilience</span>
             </div>
             <div className="topbar-right">
+              <span className="badge badge-neutral">
+                <Activity size={13} />
+                工厂在线
+              </span>
               {isStub ? (
                 <span className="badge badge-warning">
                   <span className="badge-dot" />
@@ -142,8 +145,8 @@ export default function Layout() {
 
         .sidebar {
           width: var(--sidebar-width);
-          background: var(--paper-surface);
-          border-right: 1px solid rgba(30, 58, 95, 0.06);
+          background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+          border-right: 1px solid rgba(15, 118, 110, 0.1);
           display: flex;
           flex-direction: column;
           position: fixed;
@@ -159,17 +162,17 @@ export default function Layout() {
           display: flex;
           align-items: center;
           gap: var(--space-3);
-          border-bottom: 1px solid rgba(30, 58, 95, 0.04);
+          border-bottom: 1px solid rgba(15, 118, 110, 0.1);
         }
 
         .brand-icon {
-          width: 40px;
-          height: 40px;
+          width: 42px;
+          height: 42px;
           display: flex;
           align-items: center;
           justify-content: center;
           background: var(--gradient-ink);
-          border-radius: var(--radius-lg);
+          border-radius: var(--radius-md);
           color: white;
         }
 
@@ -195,10 +198,12 @@ export default function Layout() {
 
         .version {
           font-size: var(--text-xs);
-          color: var(--text-muted);
-          background: var(--paper-elevated);
-          padding: 2px 8px;
-          border-radius: var(--radius-full);
+          color: #0f766e;
+          background: rgba(20, 184, 166, 0.12);
+          border: 1px solid rgba(15, 118, 110, 0.16);
+          padding: 3px 8px;
+          border-radius: var(--radius-md);
+          font-weight: var(--font-semibold);
         }
 
         .sidebar-nav {
@@ -241,7 +246,7 @@ export default function Layout() {
         }
 
         .nav-link.active {
-          background: rgba(79, 70, 229, 0.08);
+          background: rgba(15, 118, 110, 0.1);
           color: var(--ink-accent);
           font-weight: var(--font-medium);
         }
@@ -271,7 +276,7 @@ export default function Layout() {
 
         .sidebar-footer {
           padding: var(--space-4) var(--space-5);
-          border-top: 1px solid rgba(30, 58, 95, 0.04);
+          border-top: 1px solid rgba(15, 118, 110, 0.1);
         }
 
         .status-indicator {
@@ -308,7 +313,8 @@ export default function Layout() {
 
         .topbar {
           height: var(--topbar-height);
-          background: var(--paper-surface);
+          background: rgba(255, 255, 255, 0.92);
+          backdrop-filter: blur(12px);
           position: relative;
           display: flex;
           align-items: center;
@@ -344,6 +350,15 @@ export default function Layout() {
           font-size: var(--text-lg);
           font-weight: var(--font-semibold);
           color: var(--text-ink);
+        }
+
+        .topbar-subtitle {
+          font-size: var(--text-xs);
+          color: var(--text-gray);
+          padding: 3px 8px;
+          border: 1px solid rgba(15, 118, 110, 0.14);
+          background: rgba(20, 184, 166, 0.08);
+          border-radius: var(--radius-md);
         }
 
         .topbar-right {

@@ -101,11 +101,11 @@ export default function ChapterNav({ chapters, currentChapter, onSelect, onReset
                   className="chapter-nav-reset"
                   onClick={(e) => {
                     e.stopPropagation()
-                    if (window.confirm(`确定要重置「${title}」吗？章节将重新生成。`)) {
+                    if (window.confirm(`确定要解除「${title}」的阻塞吗？本章会回到待生成状态，并清空本轮返修计数。`)) {
                       onReset(ch.chapter_number)
                     }
                   }}
-                  title="重置章节"
+                  title="解除阻塞并重新生成"
                 >
                   ↻
                 </button>

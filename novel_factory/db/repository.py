@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from .repositories.base import BaseRepository
 from .repositories.project import ProjectRepositoryMixin
+from .repositories.project_skill_override import ProjectSkillOverrideRepositoryMixin
 from .repositories.chapter import ChapterRepositoryMixin
 from .repositories.workflow import WorkflowRepositoryMixin
 from .repositories.artifact import ArtifactRepositoryMixin
@@ -27,6 +28,13 @@ from .repositories.style_sample import StyleSampleRepositoryMixin
 from .repositories.world_setting import WorldSettingRepositoryMixin
 from .repositories.character import CharacterRepositoryMixin
 from .repositories.outline import OutlineRepositoryMixin
+from .repositories.faction import FactionRepositoryMixin
+from .repositories.plot_hole import PlotHoleRepositoryMixin
+from .repositories.instruction import InstructionRepositoryMixin
+from .repositories.genesis import GenesisRepositoryMixin
+from .repositories.memory_update import MemoryUpdateRepositoryMixin
+from .repositories.story_fact import StoryFactRepositoryMixin
+from .repositories.auto_run import AutoRunRepositoryMixin
 
 # Backward-compatible re-exports
 from ..validators.chapter_checker import count_words  # noqa: F401
@@ -36,7 +44,11 @@ class Repository(
     WorldSettingRepositoryMixin,
     CharacterRepositoryMixin,
     OutlineRepositoryMixin,
+    FactionRepositoryMixin,
+    PlotHoleRepositoryMixin,
+    InstructionRepositoryMixin,
     ProjectRepositoryMixin,
+    ProjectSkillOverrideRepositoryMixin,
     ChapterRepositoryMixin,
     WorkflowRepositoryMixin,
     ArtifactRepositoryMixin,
@@ -51,6 +63,10 @@ class Repository(
     StyleBibleRepositoryMixin,
     StyleGateRepositoryMixin,
     StyleSampleRepositoryMixin,
+    GenesisRepositoryMixin,
+    MemoryUpdateRepositoryMixin,
+    StoryFactRepositoryMixin,
+    AutoRunRepositoryMixin,
     BaseRepository,
 ):
     """Backward-compatible repository facade combining all domain mixins."""

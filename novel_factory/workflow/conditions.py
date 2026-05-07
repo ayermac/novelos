@@ -60,17 +60,18 @@ def route_by_review_result(state: FactoryState) -> str:
 
     v5.3.0: In real mode, do NOT auto-publish. Route to 'awaiting_publish' instead.
     """
+    if state.get("requires_human") or state.get("error"):
+        return "human_review"
+
+    if state.get("chapter_status") == ChapterStatus.BLOCKING.value:
+        return "human_review"
+
     gate = state.get("quality_gate", {})
     passed = gate.get("pass", False)
 
     if passed:
-        # v5.3.0: Check llm_mode for auto-publish decision
-        llm_mode = state.get("llm_mode", "stub")
-        if llm_mode == "real":
-            # Real mode: do NOT auto-publish, stop at reviewed status
-            return "awaiting_publish"
-        # Stub mode: auto-publish is allowed
-        return "publish"
+        # v5.3.2: Route to memory_curator for fact extraction after review passes
+        return "memory_curator"
 
     retry_count = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 3)
@@ -85,11 +86,57 @@ def route_after_agent(state: FactoryState) -> str:
     """Continue to the next node unless the agent returned an error/human flag."""
     if state.get("requires_human") or state.get("error"):
         return "human_review"
+    gate = state.get("quality_gate", {}) or {}
+    current_status = state.get("chapter_status", "")
+    # Only trust the quality_gate if the chapter is still in an upstream status.
+    # If the agent has already advanced the status (e.g. drafted, polished),
+    # the gate is stale from a previous failed attempt that was retried.
+    if (
+        gate.get("pass") is False
+        and (gate.get("word_count_fail") or gate.get("death_penalty_fail"))
+        and current_status not in (
+            ChapterStatus.DRAFTED.value,
+            ChapterStatus.POLISHED.value,
+            ChapterStatus.REVIEWED.value,
+        )
+    ):
+        return "revision_router"
     return "next"
+
+
+def route_after_memory_curator(state: FactoryState) -> str:
+    """Route after memory curator: publish (stub) or awaiting_publish (real).
+
+    v5.3.2 closure: In real mode, memory curator failure blocks publish.
+    """
+    # If memory curator failed in real mode, route to human_review
+    if state.get("requires_human") or state.get("error"):
+        return "human_review"
+
+    llm_mode = state.get("llm_mode", "stub")
+    if llm_mode == "real":
+        return "awaiting_publish"
+    return "publish"
 
 
 def route_by_revision_type(state: FactoryState) -> str:
     """Route revision to the appropriate agent based on revision_target."""
+    status = state.get("chapter_status", "")
+    if status and status != ChapterStatus.REVISION.value:
+        routing_by_status = {
+            ChapterStatus.IDEA.value: "planner",
+            ChapterStatus.OUTLINED.value: "planner",
+            ChapterStatus.PLANNED.value: "planner",
+            ChapterStatus.SCRIPTED.value: "author",
+            ChapterStatus.DRAFTED.value: "polisher",
+            ChapterStatus.POLISHED.value: "editor",
+            ChapterStatus.REVIEW.value: "editor",
+            ChapterStatus.REVIEWED.value: "publisher",
+            ChapterStatus.PUBLISHED.value: "archive",
+            ChapterStatus.BLOCKING.value: "human_review",
+        }
+        return routing_by_status.get(status, "human_review")
+
     gate = state.get("quality_gate", {})
     target = gate.get("revision_target", "author")
 

@@ -16,9 +16,54 @@ from ..config.settings import Settings
 from ..db.repository import Repository
 from ..models.state import FactoryState
 from .graph import compile_graph
-from .checkpoint import get_sqlite_checkpointer, get_checkpoint_config, derive_checkpoint_db_path
+from .checkpoint import (
+    delete_checkpoint_thread,
+    derive_checkpoint_db_path,
+    get_checkpoint_config,
+    get_sqlite_checkpointer,
+)
 
 logger = logging.getLogger(__name__)
+
+
+def _mark_run_failed(repo: Repository, run_id: str | None, error: str) -> None:
+    """Best-effort workflow run failure finalization."""
+    if not run_id:
+        return
+    try:
+        repo.update_workflow_run(run_id, status="failed", error_message=error)
+    except Exception:
+        logger.warning("Failed to mark workflow run %s as failed", run_id, exc_info=True)
+
+
+def _clear_stale_checkpoint_for_new_run(
+    repo: Repository,
+    project_id: str,
+    chapter_number: int,
+) -> None:
+    """Clear persisted graph state before a user-initiated fresh run.
+
+    LangGraph checkpoints are keyed by project/chapter. If a previous run left
+    a checkpoint after an agent had already advanced the DB status, a later
+    manual retry can resume from that stale node and fail an optimistic status
+    transition such as planned->scripted. Keep checkpoints only while the latest
+    run is still marked running; every other new run starts from DB truth.
+    """
+    try:
+        latest_runs = repo.get_workflow_runs_for_project(
+            project_id, chapter_number=chapter_number, limit=1
+        )
+        latest_status = latest_runs[0].get("status") if latest_runs else None
+        if latest_status == "running":
+            return
+        delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
+    except Exception:
+        logger.warning(
+            "Failed to clear stale checkpoint for %s/%s",
+            project_id,
+            chapter_number,
+            exc_info=True,
+        )
 
 
 def _build_llm_router(settings: Settings, llm_mode: str = "stub"):
@@ -186,7 +231,7 @@ def run_with_graph(
     settings: Settings,
     repo: Repository,
     llm_mode: str = "stub",
-    max_steps: int = 20,
+    max_steps: int = 50,
 ) -> dict[str, Any]:
     """Run chapter production via LangGraph.
 
@@ -199,7 +244,7 @@ def run_with_graph(
         settings: Application settings.
         repo: Repository instance for database access.
         llm_mode: "stub" for demo mode, "real" for actual LLM calls.
-        max_steps: Maximum workflow steps (not currently enforced by LangGraph).
+        max_steps: Maximum graph recursion limit (steps). Defaults to 50.
 
     Returns:
         Dict with the same shape as Dispatcher.run_chapter():
@@ -242,6 +287,8 @@ def run_with_graph(
             "requires_human": False,
         }
 
+    _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
+
     # v5.3.0: Context Readiness Gate
     readiness_error = _check_context_readiness_for_run(
         repo, project_id, chapter_number, current_status
@@ -266,7 +313,7 @@ def run_with_graph(
     llm_router = _build_llm_router(settings, llm_mode)
 
     # Get checkpoint config for this chapter
-    config = get_checkpoint_config(project_id, chapter_number)
+    config = get_checkpoint_config(project_id, chapter_number, recursion_limit=max_steps)
 
     # Build initial state with workflow_run_id placeholder
     # (will be populated by health_check_node)
@@ -289,6 +336,7 @@ def run_with_graph(
             result_state = graph.invoke(state, config=config)
     except Exception as e:
         logger.exception("LangGraph execution failed")
+        _mark_run_failed(repo, state.get("workflow_run_id"), str(e))
         return {
             "run_id": state.get("workflow_run_id", ""),
             "chapter_status": current_status,
@@ -314,7 +362,7 @@ def run_with_graph_stream(
     settings: Settings,
     repo: Repository,
     llm_mode: str = "stub",
-    max_steps: int = 20,
+    max_steps: int = 50,
 ) -> Generator[dict[str, Any], None, None]:
     """Run chapter production with streaming events (v5.2 Phase C).
 
@@ -326,7 +374,7 @@ def run_with_graph_stream(
         settings: Application settings.
         repo: Repository instance for database access.
         llm_mode: "stub" for demo mode, "real" for actual LLM calls.
-        max_steps: Maximum workflow steps (not currently enforced).
+        max_steps: Maximum graph recursion limit (steps). Defaults to 50.
 
     Yields:
         Event dicts with format:
@@ -374,6 +422,8 @@ def run_with_graph_stream(
         }
         return
 
+    _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
+
     # v5.3.0: Context Readiness Gate must match non-streaming execution.
     readiness_error = _check_context_readiness_for_run(
         repo, project_id, chapter_number, current_status
@@ -416,7 +466,7 @@ def run_with_graph_stream(
         return
 
     # Get checkpoint config for this chapter
-    config = get_checkpoint_config(project_id, chapter_number)
+    config = get_checkpoint_config(project_id, chapter_number, recursion_limit=max_steps)
 
     # Track timing per agent
     agent_start_times: dict[str, float] = {}
@@ -442,7 +492,12 @@ def run_with_graph_stream(
                 # Parse LangGraph stream event
                 # Event format: {node_name: {output_state}}
                 for node_name, node_output in event.items():
-                    # Skip internal nodes
+                    # Always merge state updates so workflow_run_id and tokens
+                    # set by health_check/internal nodes are preserved.
+                    if isinstance(node_output, dict):
+                        state.update(node_output)
+
+                    # Skip internal nodes for SSE events
                     if node_name in ("health_check", "task_discovery", "revision_router", "archive"):
                         continue
 
@@ -490,8 +545,10 @@ def run_with_graph_stream(
 
     except Exception as e:
         logger.exception("LangGraph streaming failed")
+        _mark_run_failed(repo, state.get("workflow_run_id"), str(e))
         yield {
             "type": "run_error",
+            "run_id": state.get("workflow_run_id", ""),
             "error": str(e),
             "chapter_status": state.get("chapter_status", current_status),
         }

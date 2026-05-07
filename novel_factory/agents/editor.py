@@ -67,6 +67,9 @@ class EditorAgent(BaseAgent):
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
+        title_contract = self._get_title_contract_context(state["project_id"])
+        if title_contract:
+            parts.append(title_contract)
 
         # Chapter content
         chapter = self._get_chapter_info(state)
@@ -131,10 +134,23 @@ class EditorAgent(BaseAgent):
 
         # Apply skills from config (before_review stage)
         if self.skill_registry:
+            # v5.3.7: Inject style_bible into payload so style-bible-checker
+            # can run against the project's style rules instead of silently skipping.
+            skill_payload: dict[str, Any] = {"text": content, "chapter_number": chapter_number}
+            try:
+                bible_record = self.repo.get_style_bible(project_id)
+                if bible_record:
+                    skill_payload["style_bible"] = bible_record.get("bible", {})
+            except Exception:
+                logger.warning("Editor: failed to load style_bible for skill payload", exc_info=True)
+
+            project_skill_overrides = self._get_project_skill_overrides(project_id)
+
             before_review_result = self.skill_registry.run_skills_for_agent(
                 agent="editor",
                 stage="before_review",
-                payload={"text": content, "chapter_number": chapter_number},
+                payload=skill_payload,
+                project_overrides=project_skill_overrides,
             )
             
             # Process skill results
@@ -258,7 +274,31 @@ class EditorAgent(BaseAgent):
                 except Exception as e:
                     logger.warning("Editor: failed to save quality report: %s", e)
 
-        # Save review AFTER final_gate decision
+        # v5.3.0: Word count quality gate (Editor threshold = 0.90)
+        # Apply BEFORE save_review so persisted review matches the gate decision
+        instruction = self._get_instruction(state)
+        project = self.repo.get_project(project_id)
+        word_target = derive_word_target(instruction, project)
+        word_gate_passed, word_gate_msg = check_word_count_quality_gate(
+            content, word_target, "editor"
+        )
+        word_gate_details = {}
+        if not word_gate_passed:
+            logger.warning("Editor: word count quality gate failed: %s", word_gate_msg)
+            # Force fail and set revision_target to polisher (word count issue)
+            output.pass_ = False
+            output.revision_target = "polisher"
+            output.issues = output.issues + [word_gate_msg]
+            word_gate_details = {
+                "word_count_fail": True,
+                "message": word_gate_msg,
+                "actual_word_count": count_words(content),
+                "word_target": word_target,
+                "agent": "editor",
+                "workflow_run_id": state.get("workflow_run_id"),
+            }
+
+        # Save review AFTER all gates have mutated output
         review_id = self.repo.save_review(
             project_id=project_id,
             chapter_id=chapter["id"],
@@ -290,21 +330,6 @@ class EditorAgent(BaseAgent):
         if not output.pass_:
             self._save_learned_patterns(project_id, chapter_number, output)
 
-        # v5.3.0: Word count quality gate (Editor threshold = 0.90)
-        # Check word count BEFORE advancing status
-        instruction = self._get_instruction(state)
-        project = self.repo.get_project(project_id)
-        word_target = derive_word_target(instruction, project)
-        word_gate_passed, word_gate_msg = check_word_count_quality_gate(
-            content, word_target, "editor"
-        )
-        if not word_gate_passed:
-            logger.warning("Editor: word count quality gate failed: %s", word_gate_msg)
-            # Force fail and set revision_target to polisher (word count issue)
-            output.pass_ = False
-            output.revision_target = "polisher"
-            output.issues = output.issues + [word_gate_msg]
-
         # Advance chapter status FIRST to lock the transition; abort if stale
         if output.pass_:
             ok = self.repo.update_chapter_status(
@@ -329,10 +354,12 @@ class EditorAgent(BaseAgent):
                         )
                         return {"error": "Editor: save_chapter_state failed", "chapter_status": ChapterStatus.POLISHED.value}
 
-                # Save artifact
+                # Save artifact (bind to workflow run for isolation)
+                workflow_run_id = state.get("workflow_run_id")
                 self.repo.save_artifact(
                     project_id, chapter_number, "editor", "review",
                     content_json=output.model_dump(),
+                    workflow_run_id=workflow_run_id,
                 )
             except Exception as e:
                 self._compensate_status(
@@ -364,10 +391,12 @@ class EditorAgent(BaseAgent):
                         {"reason": f"Chapter {chapter_number} reached max retries ({retry_count})"},
                         priority="urgent", chapter_number=chapter_number,
                     )
-                    # Save artifact
+                    # Save artifact (bind to workflow run for isolation)
+                    workflow_run_id = state.get("workflow_run_id")
                     self.repo.save_artifact(
                         project_id, chapter_number, "editor", "review",
                         content_json=output.model_dump(),
+                        workflow_run_id=workflow_run_id,
                     )
                 except Exception as e:
                     self._compensate_status(
@@ -379,6 +408,7 @@ class EditorAgent(BaseAgent):
                 new_status = ChapterStatus.BLOCKING.value
                 new_stage = "blocking"
             else:
+                retry_agent = output.revision_target or "author"
                 ok = self.repo.update_chapter_status(
                     project_id, chapter_number, ChapterStatus.REVISION.value,
                     expected_status=ChapterStatus.POLISHED.value,
@@ -388,17 +418,27 @@ class EditorAgent(BaseAgent):
                     return {"error": "Editor: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
 
                 try:
+                    revise_task_id = self.repo.start_task(
+                        project_id,
+                        chapter_number,
+                        "revise",
+                        retry_agent,
+                        workflow_run_id=state.get("workflow_run_id"),
+                    )
+                    self.repo.complete_task(revise_task_id, success=True)
                     # Send message to responsible agent if not author
-                    if output.revision_target and output.revision_target != "author":
+                    if retry_agent != "author":
                         self.repo.send_message(
-                            project_id, "editor", output.revision_target, "FLAG_ISSUE",
+                            project_id, "editor", retry_agent, "FLAG_ISSUE",
                             {"issues": output.issues[:3], "chapter": chapter_number},
                             chapter_number=chapter_number,
                         )
-                    # Save artifact
+                    # Save artifact (bind to workflow run for isolation)
+                    workflow_run_id = state.get("workflow_run_id")
                     self.repo.save_artifact(
                         project_id, chapter_number, "editor", "review",
                         content_json=output.model_dump(),
+                        workflow_run_id=workflow_run_id,
                     )
                 except Exception as e:
                     self._compensate_status(
@@ -409,14 +449,18 @@ class EditorAgent(BaseAgent):
 
                 new_status = ChapterStatus.REVISION.value
                 new_stage = "revision"
+                retry_count = retry_count + 1
 
         return {
             "chapter_status": new_status,
             "current_stage": new_stage,
+            "retry_count": retry_count if not output.pass_ else state.get("retry_count", 0),
+            "requires_human": new_status == ChapterStatus.BLOCKING.value,
             "quality_gate": {
                 "pass": output.pass_,
                 "score": output.score,
                 "revision_target": output.revision_target,
+                **word_gate_details,
             },
         }
 

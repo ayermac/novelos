@@ -24,6 +24,16 @@ QUALITY_GATE_AUTHOR_THRESHOLD = 0.85  # Author/Polisher: content < word_target *
 QUALITY_GATE_EDITOR_THRESHOLD = 0.90  # Editor: content < word_target * 0.9 = no pass
 
 
+def _coerce_positive_int(value, default: int = 0) -> int:
+    """Coerce DB/API numeric fields that may arrive as strings."""
+    if value is None or value == "":
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def count_words(text: str | None) -> int:
     """Count words in text. For Chinese, uses character count as approximation.
 
@@ -37,10 +47,26 @@ def count_words(text: str | None) -> int:
     return len(text)
 
 
+def normalize_declared_word_count(output: dict) -> dict:
+    """Return output with word_count recomputed from content.
+
+    Real LLMs often return a guessed ``word_count`` that is far from the
+    actual generated text length. The system should treat the text as the
+    source of truth and keep the mismatch validator for external/raw payloads.
+    """
+    normalized = dict(output)
+    content = normalized.get("content")
+    if content is not None:
+        normalized["word_count"] = count_words(content)
+    return normalized
+
+
 def check_word_count(
     content: str,
     min_words: int = DEFAULT_MIN_WORDS,
     max_words: int = DEFAULT_MAX_WORDS,
+    check_min: bool = True,
+    check_max: bool = True,
 ) -> list[str]:
     """Check if content word count is within acceptable range.
 
@@ -48,6 +74,8 @@ def check_word_count(
         content: Chapter text content.
         min_words: Minimum acceptable word count.
         max_words: Maximum acceptable word count.
+        check_min: Whether to enforce the minimum word count.
+        check_max: Whether to enforce the maximum word count.
 
     Returns:
         List of violation messages. Empty list means no violations.
@@ -57,9 +85,9 @@ def check_word_count(
 
     if word_count == 0:
         violations.append("内容为空")
-    elif word_count < min_words:
+    elif check_min and word_count < min_words:
         violations.append(f"字数不足: {word_count} < {min_words}")
-    elif word_count > max_words:
+    elif check_max and word_count > max_words:
         violations.append(f"字数超标: {word_count} > {max_words}")
 
     return violations
@@ -85,6 +113,7 @@ def check_word_count_quality_gate(
         - message: Description of the result.
     """
     word_count = count_words(content)
+    word_target = _coerce_positive_int(word_target, 2500)
 
     if word_count == 0:
         return False, "内容为空"
@@ -124,11 +153,11 @@ def derive_word_target(
     """
     # First check if instruction has explicit word_target
     if instruction and instruction.get("word_target"):
-        return max(instruction["word_target"], 2000)
+        return max(_coerce_positive_int(instruction.get("word_target"), 2500), 2000)
 
     # Derive from project settings
-    target_words = project.get("target_words", 0)
-    total_chapters = project.get("total_chapters_planned", 0)
+    target_words = _coerce_positive_int(project.get("target_words"), 0)
+    total_chapters = _coerce_positive_int(project.get("total_chapters_planned"), 0)
 
     if target_words and total_chapters:
         derived = target_words // total_chapters
@@ -138,13 +167,17 @@ def derive_word_target(
     return 2500
 
 
-def validate_chapter_output(output: dict) -> list[str]:
+def validate_chapter_output(
+    output: dict,
+    check_min_words: bool = True,
+    check_max_words: bool = True,
+) -> list[str]:
     """Validate Author/Polisher output for chapter-level constraints.
 
     Checks:
     - content is non-empty
     - word_count matches actual content length (if provided)
-    - word count within range
+    - word count within range (controlled by check_min_words/check_max_words)
 
     Returns:
         List of violation messages.
@@ -160,13 +193,15 @@ def validate_chapter_output(output: dict) -> list[str]:
     declared_wc = output.get("word_count")
     if declared_wc is not None:
         actual_wc = count_words(content)
+        declared_wc = _coerce_positive_int(declared_wc, actual_wc)
         # Allow 10% tolerance
         if abs(actual_wc - declared_wc) > declared_wc * 0.1:
             violations.append(
                 f"word_count 不匹配: 声明 {declared_wc}, 实际 {actual_wc}"
             )
 
-    # Word count range check
-    violations.extend(check_word_count(content))
+    # Word count range check (skip min when quality gate handles it separately)
+    if check_min_words or check_max_words:
+        violations.extend(check_word_count(content, check_min=check_min_words, check_max=check_max_words))
 
     return violations

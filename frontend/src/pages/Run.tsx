@@ -97,29 +97,25 @@ export default function Run() {
           : projectList[0].project_id
         const target = projectList.find(p => p.project_id === targetId) || projectList[0]
         setSelectedProject(target)
-        loadWorkspace(target.project_id)
+        // Load workspace inline to avoid dependency issue
+        get<Workspace>(`/projects/${target.project_id}/workspace`).then((wres) => {
+          if (wres.ok && wres.data) {
+            setWorkspace(wres.data)
+            const chs = wres.data.chapters || []
+            setChapters(chs)
+            const defaultCh = findDefaultChapter(chs)
+            // Use query param chapter if valid and runnable, else default
+            const qCh = queryChapter ? parseInt(queryChapter) : null
+            const useQueryChapter = qCh && chs.some((c: Chapter) => c.chapter_number === qCh && isRunnable(c))
+            setForm({
+              project_id: target.project_id,
+              chapter: useQueryChapter ? qCh! : (defaultCh?.chapter_number || 1),
+            })
+          }
+        })
       }
     })
-  }, [])
-
-  const loadWorkspace = (projectId: string) => {
-    get<Workspace>(`/projects/${projectId}/workspace`).then((res) => {
-      if (res.ok && res.data) {
-        setWorkspace(res.data)
-        const chs = res.data.chapters || []
-        setChapters(chs)
-        const defaultCh = findDefaultChapter(chs)
-        // Use query param chapter if valid and runnable, else default
-        const qCh = queryChapter ? parseInt(queryChapter) : null
-        const useQueryChapter = qCh && chs.some((c: Chapter) => c.chapter_number === qCh && isRunnable(c))
-        setForm((prev) => ({
-          ...prev,
-          project_id: projectId,
-          chapter: useQueryChapter ? qCh : (defaultCh ? defaultCh.chapter_number : 1),
-        }))
-      }
-    })
-  }
+  }, [queryProjectId, queryChapter])
 
   const handleProjectChange = (projectId: string) => {
     const p = projects.find((x) => x.project_id === projectId)
@@ -127,7 +123,19 @@ export default function Run() {
       setSelectedProject(p)
       setResult(null)
       setError('')
-      loadWorkspace(p.project_id)
+      get<Workspace>(`/projects/${projectId}/workspace`).then((res) => {
+        if (res.ok && res.data) {
+          setWorkspace(res.data)
+          const chs = res.data.chapters || []
+          setChapters(chs)
+          const defaultCh = findDefaultChapter(chs)
+          setForm((prev) => ({
+            ...prev,
+            project_id: projectId,
+            chapter: defaultCh ? defaultCh.chapter_number : 1,
+          }))
+        }
+      })
     }
   }
 
@@ -144,7 +152,12 @@ export default function Run() {
       setResult(res.data as RunResult)
       // Refresh workspace to update chapter statuses
       if (selectedProject) {
-        loadWorkspace(selectedProject.project_id)
+        get<Workspace>(`/projects/${selectedProject.project_id}/workspace`).then((wres) => {
+          if (wres.ok && wres.data) {
+            setWorkspace(wres.data)
+            setChapters(wres.data.chapters || [])
+          }
+        })
       }
     } else {
       setError(res.error?.message || '运行章节失败')
@@ -188,7 +201,12 @@ export default function Run() {
     if (res.ok && res.data) {
       setResult({ ...result, chapter_status: 'published', awaiting_publish: false, requires_human: false, message: '已发布' })
       if (selectedProject) {
-        loadWorkspace(selectedProject.project_id)
+        get<Workspace>(`/projects/${selectedProject.project_id}/workspace`).then((wres) => {
+          if (wres.ok && wres.data) {
+            setWorkspace(wres.data)
+            setChapters(wres.data.chapters || [])
+          }
+        })
       }
     } else {
       setError(res.error?.message || '发布失败')

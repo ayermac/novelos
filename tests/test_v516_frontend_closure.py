@@ -121,7 +121,6 @@ class TestNavigationStructure:
         # Should have section labels
         assert "创作" in content
         assert "工具" in content
-        assert "开发" in content
 
 
 class TestAcceptanceRouteRemoved:

@@ -327,6 +327,76 @@ def _get_stub_chapter_content(messages: list | None = None) -> dict:
     }
 
 
+def _is_memory_curator_request(messages: list | None) -> bool:
+    """Detect Memory Curator prompts, which call invoke_json without a schema."""
+    if not messages:
+        return False
+    combined = "\n".join(
+        str(msg.get("content", "")) if isinstance(msg, dict) else str(msg)
+        for msg in messages
+    )
+    return "记忆管理员" in combined or "项目资料变更建议" in combined
+
+
+def _get_stub_memory_patches(messages: list | None = None) -> dict:
+    """Return deterministic memory patches so demo/browser flows exercise v5.3.2."""
+    chapter_num = _extract_chapter_number(messages)
+    next_chapter = chapter_num + 1
+    return {
+        "patches": [
+            {
+                "target_table": "story_facts",
+                "operation": "create",
+                "target_name": f"chapter_{chapter_num}.artifact",
+                "data": {
+                    "fact_key": f"chapter_{chapter_num}.artifact",
+                    "fact_type": "artifact",
+                    "subject": "主角",
+                    "attribute": "线索",
+                    "value": f"第{chapter_num}章获得关键线索",
+                    "unit": None,
+                    "scope": "chapter",
+                },
+                "confidence": 0.88,
+                "evidence_text": f"第{chapter_num}章出现关键线索",
+                "rationale": "演示模式下提取章节中出现的重要事实，供事实账本追踪。",
+            },
+            {
+                "target_table": "plot_holes",
+                "operation": "create",
+                "target_name": f"PH-{chapter_num:03d}",
+                "data": {
+                    "code": f"PH-{chapter_num:03d}",
+                    "type": "mystery",
+                    "title": f"第{chapter_num}章遗留线索",
+                    "description": "章节结尾留下尚未解释的关键线索，需要后续章节回收。",
+                    "planted_chapter": chapter_num,
+                    "planned_resolve_chapter": next_chapter + 2,
+                    "status": "planted",
+                },
+                "confidence": 0.82,
+                "evidence_text": "章节结尾留下未解问题",
+                "rationale": "将章节钩子沉淀为项目级伏笔，避免后续遗忘。",
+            },
+            {
+                "target_table": "instructions",
+                "operation": "create",
+                "target_name": str(next_chapter),
+                "data": {
+                    "chapter_number": next_chapter,
+                    "objective": f"承接第{chapter_num}章线索，推进调查并制造新的选择压力。",
+                    "key_events": "追踪线索、遭遇阻碍、主角做出下一步决策",
+                    "emotion_tone": "紧张、克制、悬疑",
+                    "word_target": 3000,
+                },
+                "confidence": 0.86,
+                "evidence_text": "根据本章结尾钩子生成下一章承接任务",
+                "rationale": "把章节后的规划意图写入下一章指令，形成自动维护闭环。",
+            },
+        ]
+    }
+
+
 class StubLLM(LLMProvider):
     """Stub LLM that returns minimal valid outputs for local tests and demos."""
 
@@ -344,6 +414,8 @@ class StubLLM(LLMProvider):
         )
 
         schema_name = getattr(schema, "__name__", "") if schema else ""
+        if not schema and _is_memory_curator_request(messages):
+            return _get_stub_memory_patches(messages)
         if "Planner" in schema_name:
             return {
                 "chapter_brief": {

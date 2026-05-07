@@ -23,6 +23,8 @@ def create_api_app(
     db_path: str | None = None,
     config_path: str | None = None,
     llm_mode: str = "stub",
+    skills_config_path: str | None = None,
+    openclaw_root_path: str | None = None,
 ) -> FastAPI:
     """Create and configure the API application.
 
@@ -30,6 +32,8 @@ def create_api_app(
         db_path: Path to SQLite database file
         config_path: Path to config YAML file
         llm_mode: LLM mode ('stub' or 'real'), defaults to 'stub'
+        skills_config_path: Path to skills YAML config file
+        openclaw_root_path: Path to local OpenClaw legacy workspace
 
     Returns:
         Configured FastAPI application
@@ -45,6 +49,16 @@ def create_api_app(
     app.state.db_path = db_path
     app.state.config_path = config_path
     app.state.llm_mode = llm_mode
+    app.state.skills_config_path = skills_config_path
+    app.state.openclaw_root_path = openclaw_root_path
+
+    # Auto-initialize database on startup
+    @app.on_event("startup")
+    async def _ensure_db_ready() -> None:
+        """Ensure database tables exist when API starts."""
+        from .db.connection import init_db
+        if db_path:
+            init_db(db_path)
 
     # CORS for frontend development
     app.add_middleware(
@@ -70,6 +84,17 @@ def create_api_app(
         characters_router,
         outlines_router,
         world_settings_router,
+        factions_router,
+        plot_holes_router,
+        instructions_router,
+        context_router,
+        readonly_router,
+        genesis_router,
+        memory_updates_router,
+        story_facts_router,
+        skills_router,
+        project_skill_overrides_router,
+        production_router,
     )
 
     app.include_router(health_router, prefix="/api", tags=["health"])
@@ -85,6 +110,17 @@ def create_api_app(
     app.include_router(characters_router, prefix="/api", tags=["characters"])
     app.include_router(outlines_router, prefix="/api", tags=["outlines"])
     app.include_router(world_settings_router, prefix="/api", tags=["world-settings"])
+    app.include_router(factions_router, prefix="/api", tags=["factions"])
+    app.include_router(plot_holes_router, prefix="/api", tags=["plot-holes"])
+    app.include_router(instructions_router, prefix="/api", tags=["instructions"])
+    app.include_router(context_router, prefix="/api", tags=["context"])
+    app.include_router(readonly_router, prefix="/api", tags=["readonly"])
+    app.include_router(genesis_router, prefix="/api", tags=["genesis"])
+    app.include_router(memory_updates_router, prefix="/api", tags=["memory-updates"])
+    app.include_router(story_facts_router, prefix="/api", tags=["story-facts"])
+    app.include_router(skills_router, prefix="/api", tags=["skills"])
+    app.include_router(project_skill_overrides_router, prefix="/api", tags=["project-skill-overrides"])
+    app.include_router(production_router, prefix="/api", tags=["production"])
 
     # Exception handler - never exposes traceback
     @app.exception_handler(Exception)

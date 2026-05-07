@@ -13,6 +13,17 @@ from .acceptance import router as acceptance_router
 from .characters import router as characters_router
 from .outlines import router as outlines_router
 from .world_settings import router as world_settings_router
+from .factions import router as factions_router
+from .plot_holes import router as plot_holes_router
+from .instructions import router as instructions_router
+from .project_context import router as context_router
+from .chapter_readonly import router as readonly_router
+from .genesis import router as genesis_router
+from .memory_updates import router as memory_updates_router
+from .story_facts import router as story_facts_router
+from .skills import router as skills_router
+from .project_skill_overrides import router as project_skill_overrides_router
+from .production import router as production_router
 
 __all__ = [
     "health_router",
@@ -28,4 +39,15 @@ __all__ = [
     "characters_router",
     "outlines_router",
     "world_settings_router",
+    "factions_router",
+    "plot_holes_router",
+    "instructions_router",
+    "context_router",
+    "readonly_router",
+    "genesis_router",
+    "memory_updates_router",
+    "story_facts_router",
+    "skills_router",
+    "project_skill_overrides_router",
+    "production_router",
 ]

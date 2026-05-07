@@ -1516,6 +1516,8 @@ v5.2 整体验收：
 
 ### v5.3.1 Project-Level Author Workspace
 
+规格文档：`novel-factory-v5.3.1-project-level-author-workspace-spec.md`
+
 范围：
 
 - WebUI 重构为项目级模块：总览、章节、世界观、角色、势力、大纲、伏笔、章节指令、风格指南、审核、运行记录、设置。
@@ -1529,7 +1531,53 @@ v5.2 整体验收：
 - 章节页只展示章节相关内容、当前章指令、scene beats、版本、审核、工作流。
 - 高级运行不干扰主创作路径。
 
-### v5.3.2 Workflow Observability
+### v5.3.2 Project Genesis & Memory Loop
+
+规格文档：`novel-factory-v5.3.2-project-genesis-memory-loop-spec.md`
+
+范围：
+
+- 从一句创意生成项目圣经草案，用户批准后写入项目简介、世界观、角色、势力、大纲、伏笔、章节指令和风格指南。
+- 章节生成后新增 `memory_curator`，自动提出世界观、角色、势力、大纲、伏笔、章节指令和事实账本更新。
+- Memory patch 默认进入待确认队列，不静默覆盖正式资料。
+- 引入最小 Fact Ledger 子集，覆盖角色状态、道具/资源、地点、时间线、关系和伏笔状态。
+- WebUI 增加项目创世、记忆更新、事实账本入口。
+- CLI 对齐 Genesis、Memory、Facts 基础命令。
+- 新增动作型 `POST` API 采用 body-style canonical route；旧 path-style 动作接口只做兼容，不作为新接口设计方向。
+
+验收：
+
+- 新用户只输入一句创意即可生成可审核的项目骨架。
+- Context Gate 缺失项可以通过 Genesis 补齐，而不是只能手填。
+- 每章生成后能看到待确认记忆更新。
+- 批准 memory patch 后，后续章节能继承更新后的角色、设定、伏笔和事实。
+- 明显事实冲突不能静默进入发布。
+
+### v5.3.2.x API Contract Addendum
+
+范围：
+
+- 建立 WebUI/CLI 共用 API 设计规范。
+- 区分资源读取接口和动作型命令接口。
+- 动作型 `POST` 统一使用 request body 传递业务参数。
+- 旧 path-style 动作接口保留兼容期，新增 canonical body-style route。
+- 前端 API client 改用 canonical route。
+- 补 API contract tests，防止新增动作接口继续把业务参数塞 path。
+
+规范：
+
+- `GET /api/projects/{project_id}/characters` 合理，因为 `project_id` 是资源路径。
+- `POST /api/run/chapter` 合理，因为 `project_id/chapter` 在 body。
+- `POST /api/projects/{project_id}/chapters/{chapter_number}/reset` 只保留兼容，canonical route 应为 `POST /api/chapters/reset`。
+- v5.3.2 新增的 `genesis / memory / facts` 动作接口必须优先使用 body-style route。
+
+验收：
+
+- 新增动作型接口均有 request body schema。
+- 前端不再调用新增 path-style action routes。
+- 兼容路由有测试覆盖并标注 deprecated。
+
+### v5.3.3 Workflow Observability
 
 范围：
 
@@ -1545,7 +1593,7 @@ v5.2 整体验收：
 - 用户能看清每个 Agent 到底做了什么。
 - 每次通过/失败/待审都有可解释原因。
 
-### v5.3.3 Continuity & Fact Ledger
+### v5.3.4 Continuity & Fact Ledger
 
 范围：
 
@@ -1562,7 +1610,7 @@ v5.2 整体验收：
 - 无理由数值回退、道具重复出现、死亡角色复活、伏笔状态错乱等冲突不能静默发布。
 - 用户能在 WebUI 查看事实历史，并对必要覆盖填写原因。
 
-状态：**v5.3.0 已通过验收；v5.3.1-v5.3.3 规划中**。
+状态：**v5.3.0 已通过验收；v5.3.1-v5.3.4 规划中**。
 
 ## v5.4+：多模型与生产治理
 

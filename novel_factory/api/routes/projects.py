@@ -258,15 +258,27 @@ async def reset_chapter(
                 f"章节状态为 '{current_status}'，仅 'blocking' 或 'revision' 状态可重置"
             )
 
-        # Reset the chapter
+        retry_count_before = repo.get_chapter_retry_count(project_id, chapter_number)
+
+        # Reset the chapter and mark a new retry window.
         reset = repo.reset_chapter(project_id, chapter_number)
         if not reset:
             return error_response("RESET_FAILED", "重置章节失败")
+
+        from ...workflow.checkpoint import delete_checkpoint_thread
+        checkpoint_cleared = delete_checkpoint_thread(
+            repo.db_path, project_id, chapter_number
+        )
+        retry_count_after = repo.get_chapter_retry_count(project_id, chapter_number)
 
         return envelope_response({
             "reset": True,
             "previous_status": current_status,
             "new_status": "planned",
+            "retry_count_before": retry_count_before,
+            "retry_count_after": retry_count_after,
+            "retries_cleared": max(0, retry_count_before - retry_count_after),
+            "checkpoint_cleared": checkpoint_cleared,
         })
 
     except Exception as e:
@@ -313,3 +325,28 @@ async def delete_chapter(
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"删除章节失败: {str(e)}")
+
+
+@router.get("/projects/{project_id}/runs")
+async def get_project_runs(request: Request, project_id: str) -> EnvelopeResponse:
+    """Get all workflow runs for a project.
+
+    Returns run list with id, chapter_number, status, current_node,
+    error_message, token usage, duration, and timestamps.
+    """
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        # Verify project exists
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        runs = repo.get_workflow_runs_for_project(project_id, limit=50)
+
+        return envelope_response(runs)
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"获取运行记录失败: {str(e)}")

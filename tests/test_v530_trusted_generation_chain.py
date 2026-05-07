@@ -365,6 +365,14 @@ class TestDeriveWordTarget:
         result = derive_word_target(instruction, project)
         assert result == 5000
 
+    def test_instruction_word_target_accepts_numeric_string(self):
+        """Real/autonomous planning may persist word_target as a string."""
+        instruction = {"word_target": "3000"}
+        project = {"target_words": 1500000, "total_chapters_planned": 500}
+
+        result = derive_word_target(instruction, project)
+        assert result == 3000
+
     def test_derive_from_project_settings(self):
         """Should derive from project settings if no instruction word_target."""
         instruction = {"objective": "test"}  # No word_target
@@ -372,6 +380,14 @@ class TestDeriveWordTarget:
 
         result = derive_word_target(instruction, project)
         assert result == 3000  # 1500000 / 500 = 3000
+
+    def test_project_word_settings_accept_numeric_strings(self):
+        """Project settings from APIs should not crash when numeric fields are strings."""
+        instruction = {"objective": "test"}
+        project = {"target_words": "1500000", "total_chapters_planned": "500"}
+
+        result = derive_word_target(instruction, project)
+        assert result == 3000
 
     def test_minimum_2000(self):
         """Should enforce minimum of 2000."""
@@ -396,7 +412,7 @@ class TestRealModeAutoPublishBlocking:
     """Tests for blocking auto-publish in real mode."""
 
     def test_stub_mode_auto_publish(self):
-        """Stub mode should route to publisher after pass."""
+        """v5.3.2: After pass, routes to memory_curator (then publish)."""
         state: FactoryState = {
             "project_id": "test",
             "chapter_number": 1,
@@ -406,10 +422,10 @@ class TestRealModeAutoPublishBlocking:
         }
 
         result = route_by_review_result(state)
-        assert result == "publish"
+        assert result == "memory_curator"
 
     def test_real_mode_no_auto_publish(self):
-        """Real mode should route to awaiting_publish, not publish."""
+        """v5.3.2: After pass, routes to memory_curator (then awaiting_publish)."""
         state: FactoryState = {
             "project_id": "test",
             "chapter_number": 1,
@@ -419,7 +435,7 @@ class TestRealModeAutoPublishBlocking:
         }
 
         result = route_by_review_result(state)
-        assert result == "awaiting_publish"
+        assert result == "memory_curator"
 
     def test_failed_review_routes_to_revise(self):
         """Failed review should route to revise regardless of mode."""
@@ -484,12 +500,12 @@ class TestIntegration:
         # Should route to screenwriter (has instruction)
         assert route_by_chapter_status(state) == "screenwriter"
 
-        # After pass, should route to publish
+        # After pass, should route to memory_curator (then publish)
         state["quality_gate"] = {"pass": True}
-        assert route_by_review_result(state) == "publish"
+        assert route_by_review_result(state) == "memory_curator"
 
     def test_full_workflow_real_mode(self):
-        """Test that real mode workflow stops at reviewed."""
+        """Test that real mode workflow routes through memory_curator."""
         state: FactoryState = {
             "project_id": "test",
             "chapter_number": 1,
@@ -504,9 +520,9 @@ class TestIntegration:
         # Should route to screenwriter (has instruction)
         assert route_by_chapter_status(state) == "screenwriter"
 
-        # After pass, should route to awaiting_publish (NOT publish)
+        # After pass, should route to memory_curator (then awaiting_publish)
         state["quality_gate"] = {"pass": True}
-        assert route_by_review_result(state) == "awaiting_publish"
+        assert route_by_review_result(state) == "memory_curator"
 
 
 # ── 6. API Integration Tests ──────────────────────────────────────────────────
