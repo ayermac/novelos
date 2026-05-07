@@ -185,7 +185,7 @@ Key configuration files:
 ### Python Tests
 - Test location: `tests/`
 - Framework: pytest
-- Current baseline: 1809/1809 passing
+- Current baseline: 1819/1819 passing
 - Run full suite: `python3 -m pytest -q`
 - Run specific test: `python3 -m pytest tests/test_file.py::test_name -q`
 
@@ -203,7 +203,8 @@ docs/codex/
 Start with:
 - `docs/codex/README.md`
 - `docs/codex/novel-factory-roadmap.md`
-- `docs/codex/novel-factory-v5.2-product-completion-real-llm-closure-spec.md`
+- `docs/codex/novel-factory-v5.5.10-bounded-autonomy-guardrails-spec.md`
+- `docs/codex/novel-factory-v5.5.11-author-centric-workspace-reset-spec.md`
 
 ## Development Notes
 

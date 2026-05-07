@@ -63,123 +63,44 @@
 | `novel-factory-v5.5.8-auto-run-control-loop-spec.md` | v5.5.8 自动生产控制循环、session 持久化、pause/resume/cancel/retry、协作式控制 | 开发 Agent、质量验收 |
 | `novel-factory-v5.5.9-auto-run-resilience-spec.md` | v5.5.9 自动生产恢复闭环、刷新恢复、SSE 断线重连、session health、失败步精准重试 | 开发 Agent、质量验收 |
 | `novel-factory-v5.5.10-bounded-autonomy-guardrails-spec.md` | v5.5.10 有界自动生产护栏、token/步数/时长预算、无进展停机、人工闸门 | 产品规划、开发 Agent |
+| `novel-factory-v5.5.11-author-centric-workspace-reset-spec.md` | v5.5.11 作者中心工作台重置、项目导航重组、今日生产、阻塞复盘、工作流启动可见性 | 产品规划、开发 Agent |
 | `novel-factory-api-contract-guidelines.md` | API 设计规范：Resource API / Action API 边界、POST body-style、兼容迁移策略 | 开发 Agent、代码评审、API 验收 |
 
-## v5.1.1 本地启动与验收
+## 本地启动与验收
 
 ### 快速启动
 
-**启动 API 后端**：
+日常开发建议使用仓库内服务脚本：
+
 ```bash
-novelos api --host 127.0.0.1 --port 8765 --llm-mode stub
+scripts/novelos-service.sh start      # 启动 API + WebUI
+scripts/novelos-service.sh stop       # 停止 API + WebUI
+scripts/novelos-service.sh restart    # 重启 API + WebUI
+scripts/novelos-service.sh status     # 查看服务状态
+scripts/novelos-service.sh logs       # 查看最近日志
 ```
 
-**启动前端开发服务器**：
+默认使用 `acceptance_novel_factory.db`、`config/local.yaml`、`LLM_MODE=real`、API 端口 `8765` 和 WebUI 端口 `5173`。
+
+也可以手动启动 API 与前端：
+
+```bash
+novelos api --host 127.0.0.1 --port 8765 --db-path acceptance_novel_factory.db --llm-mode stub
+```
+
 ```bash
 cd frontend
-npm install  # 首次需要安装依赖
 npm run dev
 ```
 
 访问 http://localhost:5173 即可使用。
 
-### 端口说明
-
-- **API 后端**: 默认 8765 端口
-- **前端开发服务器**: 默认 5173 端口
-
-### Smoke 验收脚本
-
-运行完整验收测试：
-```bash
-./scripts/v51_smoke_acceptance.sh
-```
-
-该脚本会自动检查：
-- Python 导入和 CLI 命令
-- pytest 测试套件
-- 前端类型检查和构建
-- API 端点 smoke 测试
-- .gitignore 规则
-
 ### 测试基线
 
-- **当前测试基线**: 1725/1725 passed
-- **新增测试**:
-  - `test_v51_api_e2e_smoke.py`: 17 个端到端 smoke 测试
-  - `test_v51_frontend_quality.py`: 8 个前端质量检查
-  - `test_v51_api_security.py`: 9 个 API 安全测试
-  - `test_v51_p2_fixes.py`: 扩展测试（包括 Style 优雅降级、Acceptance partial 状态）
-  - `test_v516_frontend_closure.py`: 9 个前端收口测试（导航分组、空状态、Acceptance 路由移除）
-  - `test_v516_langgraph_activation.py`: 12 个 LangGraph 激活测试（图编译、路由等价、published 短路、配置验证、安全）
-  - `test_v530_trusted_generation_chain.py`: 29 个可信生成链路测试
-  - `test_v531_project_workspace.py`: 项目级工作台测试
-  - `test_v532_project_genesis.py`: 项目创世测试
-  - `test_v532_memory_loop.py`: 记忆循环测试
-  - `test_v532_fact_ledger.py`: 事实账本测试
-  - `test_v53_project_modules.py`: 项目模块闭包测试
-  - `test_skills_api.py`: Skill 可视化与测试台 API 测试
-  - `test_project_delete_cascade_completeness.py`: 项目删除 cascade 完整性测试
-
-### v5.1.1 WebUI 产品化改进
-
-**状态映射**：
-- completed → 已完成
-- pending → 等待中
-- running → 运行中
-- failed → 失败
-- partial → 迁移中
-- pass → 通过
-- error → 错误
-- review → 待审核
-- approved → 已通过
-- rejected → 需返修
-- blocking → 已阻塞
-- fantasy → 奇幻
-- urban → 都市
-- sci-fi → 科幻
-- xianxia → 仙侠
-
-**页面改进**：
-- Dashboard: 下一步建议卡片、快捷操作
-- Projects: 中文类型标签、工作台入口
-- ProjectDetail: NextAction 建议、章节进度统计
-- Onboarding: Wizard 表单、成功结果面板
-- Run: 项目信息展示、结构化结果面板
-- Review: 统计概览、StatusBadge 中文
-- Style: 优雅空状态、健康摘要
-- Settings: 配置诊断、启动命令示例
-- Acceptance: 卡片列表（防溢出）、partial 显示"迁移中"
-
-### 验收覆盖项
-
-**API 后端**:
-- ✅ 统一响应格式 `{ok, error, data}`
-- ✅ 中文错误消息
-- ✅ 不暴露 traceback、绝对路径、API 密钥
-- ✅ Stub 模式安全运行
-- ✅ 所有端点返回 envelope
-- ✅ Style console 对缺失表优雅降级
-- ✅ Acceptance summary 包含 partial 计数
-
-**前端**:
-- ✅ 9 个页面组件（Acceptance 已移除）
-- ✅ 中文导航、标题、状态
-- ✅ StatusBadge 统一组件
-- ✅ EmptyState 统一组件（支持 actions 多按钮）
-- ✅ PageHeader 统一组件
-- ✅ 错误和加载状态处理
-- ✅ 空状态提示与下一步引导
-- ✅ API 客户端正确处理 envelope
-- ✅ TypeScript 类型检查通过
-- ✅ 生产构建通过
-
-**安全**:
-- ✅ 不暴露 API 密钥
-- ✅ 不暴露 traceback
-- ✅ 不暴露绝对路径
-- ✅ Config plan 不写文件
-- ✅ Stub 模式不调用真实 LLM
+- **当前测试基线**: 1819/1819 passed
+- **v5.5.9 专项**: 12 passed
+- **v5.5.10 专项**: 8 passed
+- **前端**: typecheck / lint / production build passed
 
 ## 使用方式
 
@@ -221,7 +142,7 @@ npm run dev
 
 当前开发基线是 **v5.5.10 Bounded Autonomy Guardrails**，测试基线 **1819/1819 passed**（含 v5.5.9 专项 12 passed、v5.5.10 专项 8 passed）。
 
-**v5.3 已实现能力**（部分，进行中）：
+**近期已实现能力**：
 
 - v5.3.0 可信生成链路：Context Readiness Gate、Planner 必经路由、字数硬质量门、真实模式人工发布闸门。
 - v5.3.1 项目级作者工作台（部分）：项目模块导航、世界观/角色/势力/大纲/伏笔/章节指令 CRUD、项目上下文状态、章节重置/删除。
@@ -241,128 +162,8 @@ npm run dev
 - v5.5.9 自动生产恢复闭环：刷新恢复、SSE 断线重连、session health、失败步精准重试。
 - v5.5.10 有界自动生产护栏：入口收敛、预算可见、空转检测、重复失败检测、session 清理。
 
-**v5.3 未收口项**：
-
-- 连续性门禁与完整事实账本跨章强制执行。
-- v5.3 命令的完整 CLI 对齐。
-
-**v5.2 核心变更:**
-- LangGraph SqliteSaver checkpoint 持久化
-- 世界观/角色/大纲 CRUD 完整链路
-- 项目删除和章节删除/重置能力
-- Agent 上下文注入世界观/角色/大纲
-- 真实 LLM 端到端验证闭环
-- Token 统计记录和健康度展示
-- CLI 错误信封格式增强
-- Migration 幂等检测
-- Dispatcher 保留兼容路径（未删除）
-- 全量测试 1425/1425、TypeScript、前端构建通过
-
-**v5.3 规划方向:**
-- Project Genesis：从一句创意生成项目圣经，用户批准后才进入 active。
-- Project Memory Loop：章节生成后自动提出世界观、角色、大纲、势力、伏笔、章节指令和事实账本更新。
-- Context Readiness Gate：项目骨架不完整时禁止章节生成。
-- Planner 必经：无章节指令时先规划，再进入 Screenwriter。
-- 真实质量门：字数、指令覆盖、上下文完整性、风格和连续性进入硬审核。
-- 人工发布闸门：真实模式下 AI 审核通过后进入待人工确认，不自动发布。
-- 项目级作者工作台：世界观/角色/大纲/伏笔/章节指令等独立模块管理。
-- 工作流透明化：每个 Agent 的输入摘要、输出产物、校验结果、token、耗时、错误可查看。
-- 事实账本与连续性门禁：跨章数值、道具、时间线、伤势、关系、伏笔状态必须可继承、可审计，冲突不能静默发布。
-
-**v5.3.0 已验收能力:**
-- Context Readiness Gate 已接入 API 与 SSE 生成链路。
-- Planner 必经规则已生效：`planned + no instruction -> planner`。
-- Author/Polisher/Editor 字数硬质量门已接入。
-- 真实模式不自动发布，AI 审核通过后停在 `reviewed + awaiting_publish=true`。
-- Manual Publish API 已接入：`POST /api/publish/chapter`。
-- Checkpoint 文件跟随主 DB 路径，不再写 repo root。
-- 全量测试 1471/1471、TypeScript、前端构建通过。
-
-**v5.1.6 核心变更:**
-- LangGraph StateGraph 替代 Dispatcher while 循环作为唯一编排器（API 层已切换）
-- 新增 `run_with_graph()` 适配函数，返回值与 `Dispatcher.run_chapter()` 同构
-- 新增 `create_node_runners()` 闭包注入 LLMRouter / Repository / skill_registry
-- FactoryState 扩展 `steps` 字段
-- 修复 `published` 状态死循环 bug（路由到 `archive` 终端节点 + 短路返回）
-- Review/Style 空状态重构，消灭产品死胡同
-- 导航分组：创作 / 工具 / 开发
-- EmptyState 支持 `actions` 多按钮
-- Acceptance 页面移除
-- 配置验证端点 `POST /api/settings/validate`
-- Settings 验证按钮 + real 模式成本提示
-- LLMRouter 错误信息中文化
-- API Key 不泄露审计通过
-
-**v5.1.5 核心变更:**
-- `/projects/:id` 重构为三栏作者项目工作台：章节导航、章节内容区、上下文侧栏。
-- 日常生成入口回归项目工作台，`/run` 保留为高级运行入口。
-- 工作流步骤抽取为共享组件，并为 stub 模式补充结构化 Agent 产物。
-- Dashboard 重构为"创作中心"，主 CTA 导向项目工作台。
-- Settings 新增"生成记录健康度"，避免把历史成功率误称为 LLM 连通性。
-- Projects 页从表格改为卡片布局。
-- 旧路由 `/projects/:id/chapters/:num` 与 `/runs/:runId` 保持兼容。
-- 版本号统一更新至 v5.1.5。
-
-**v5.1.4 核心变更:**
-- 新增运行详情 API：`GET /api/runs/{run_id}` 返回工作流步骤时间线
-- 新增 RunDetail 页面：路由 `/runs/:runId`，显示 5 个 Agent 步骤
-- 演示模式说明强化：全局状态栏、Run 页面、ChapterReader 提示
-- 生成交互优化：loading skeleton、步骤状态、结果卡片、下一步引导
-- 章节阅读页交互优化：导航、正文样式、来源标签
-- 配置体验优化：复制反馈、切换指引
-- 修复 P1 问题：前端 API path 双 /api 问题
-- 新增测试覆盖：防止双 /api 前缀问题
-- 版本号统一更新至 v5.1.4
-
-**v5.1.3 核心变更:**
-- 新增章节详情 API：`GET /api/projects/{id}/chapters/{num}` 返回正文内容
-- 新增 ChapterReader 页面：路由 `/projects/:id/chapters/:num`，阅读宽度排版
-- ProjectDetail 章节表新增"操作"列：有正文→"查看正文"，无正文→"生成本章"
-- Stub 内容按章节号区分：3 套故事模板 + 确定性动态生成，每章 ≥500 字
-- NextAction 只检查最近一次运行（不再被历史失败误导）
-- Run 结果页新增操作按钮：查看正文/生成下一章/重新运行
-- Settings 页改为配置草案生成器，Provider 切换自动更新字段
-- Review 空状态说明当前流程直接发布
-- Acceptance 卡片默认隐藏 capability_id
-- Onboarding 自动生成项目 ID（CJK 感知 slug）
-- i18n 新增 `blocked: '已阻塞'` 映射
-- 版本号统一更新至 v5.1.3
-
-**v5.1.2 核心变更:**
-- 统一章节状态模型：`chapter.status` vs `workflow_run.status` vs `queue.status` 明确区分
-- 修复 onboarding 初始章节状态：`pending` → `planned`
-- Dispatcher `STATUS_ROUTE` 兼容旧 `pending` 章节：`pending` → `screenwriter`
-- 修复 `/api/run/chapter` 响应结构：新增 `workflow_status`、`chapter_status`、`requires_human`、`error`
-- 修复 Run 页面章节选择：使用 workspace 获取 chapters，select 下拉选择可生成章节
-- ProjectDetail recent_runs 增加 blocked 兜底说明
-- 前端新增 `tWorkflowStatus()` / `tChapterStatus()` 避免状态混淆
-
-**v5.1.1 核心变更:**
-- 将 v5.1 React WebUI 从 API demo 升级为可用的中文作者工作台
-- 统一状态映射：completed→已完成, review→待审核, etc.
-- 新增可复用组件：StatusBadge, EmptyState, ErrorState, PageHeader
-- API 优雅降级：Style console 对缺失表返回 ok=true + 空数据
-- 增强页面：Dashboard 下一步建议、Settings 配置诊断、Acceptance 卡片列表
-- 修复表格溢出：所有表格增加 overflowX: auto 容器
-- 完整 TypeScript 类型检查 + 生产构建
-
-v1 只实现：
-
-- `Planner -> Screenwriter -> Author -> Polisher -> Editor`
-- LangGraph 章节状态流转
-- SQLite + Repository
-- Pydantic 输出校验
-- 单一 OpenAI-compatible LLM Provider
-- 基础硬校验和测试闭环
-
-v1 不实现：
-
-- 多 Provider 原生适配
-- Skill 热加载
-- Scout / Architect / Secretary
-- ContinuityChecker 独立 Agent
-- SQLModel 全量 ORM 接管
-
 当前下一步：
 
-- v5.3.1 Project-Level Author Workspace：补项目创世、项目级世界观/角色/大纲/伏笔/章节指令管理入口，并继续收口 WebUI 主创作路径。
+- v5.5.11 Author-Centric Workspace Reset：把项目工作台从系统能力堆叠重置为作者任务流，重点收口项目导航、今日生产、阻塞复盘、工作流启动可见性和自动生产文案。
+
+历史版本的详细规格请从上方文档列表进入对应版本文档，不再在本索引中重复维护长篇 changelog。

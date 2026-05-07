@@ -4,8 +4,6 @@ AI-powered novel production workbench for long-form fiction projects.
 
 Novelos combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.5.10 Bounded Autonomy Guardrails**, with **1819/1819 pytest passing**, frontend typecheck/lint passing, and frontend production build passing.
-
 ## What It Does
 
 - Creates and manages novel projects, chapters, world settings, characters, and outlines.
@@ -24,8 +22,8 @@ novel_factory/db/      SQLite schema, migrations, repositories
 novel_factory/workflow LangGraph chapter workflow and checkpointing
 novel_factory/llm/     Stub and OpenAI-compatible LLM providers
 novel_factory/cli_app/ CLI command implementation
-tests/                 Python regression and version acceptance tests
-docs/codex/            Product specs, roadmap, and version history
+tests/                 Python regression and acceptance tests
+docs/codex/            Product specs, roadmap, and project history
 ```
 
 The main production path is now LangGraph-based. `Dispatcher` and `dispatch/` are still retained as compatibility paths for older CLI capabilities and historical workflows.
@@ -259,57 +257,18 @@ Run the full Python test suite:
 python3 -m pytest -q
 ```
 
-Run v5.2 acceptance tests:
-
-```bash
-python3 -m pytest \
-  tests/test_v52_phase_a.py \
-  tests/test_v52_phase_b.py \
-  tests/test_v52_phase_c.py \
-  tests/test_v52_phase_d.py \
-  -q
-```
-
 Run frontend checks:
 
 ```bash
 cd frontend
 npm run typecheck
+npm run lint
 npm run build
-```
-
-**v5.3 已实现能力**（部分，进行中）：
-
-- v5.3.0 可信生成链路：上下文完整性门禁、Planner 必经路由、字数硬质量门、真实模式人工发布闸门。
-- v5.3.1 项目级作者工作台（部分）：项目模块导航、世界观/角色/势力/大纲/伏笔/章节指令 CRUD、项目上下文状态、章节重置/删除。
-- v5.3.2 项目创世与记忆循环（部分）：创世生成/批准/拒绝、记忆更新批次、事实账本 CRUD 与事件。
-- v5.3.3-v5.3.4 Skill 可视化与测试台：Skill 列表、挂载关系、配置验证、fixtures 测试、手动试运行。
-- v5.3.5 记忆可靠性：结构化字段应用、失败原因可见、失败项重试、批次状态重算。
-- v5.4.0-v5.4.13 WebUI 重构：ProjectShell 分组导航、章节工作区拆分、Settings Console 拆分、Attention Panel、Agent Skill Matrix、视觉 QA polish、Agent Skill Configuration Console、文件夹导入桥、启用状态管理与安全审查、挂载引导、项目级 Skill 覆盖层。
-- v5.5.0 运行恢复控制台：Run Detail 恢复状态、retry/checkpoint 可见、安全 reset、run 级 audit。
-- v5.5.1 卡住运行检测：running 超时识别、run-scoped running task 可见、标记阻塞、system recovery audit。
-- v5.5.2 运行健康面板：全局异常运行总览、项目过滤、批量 mark-stuck、部分失败可见。
-- v5.5.3 自主生产循环：项目工作台「下一步生产动作」、AI 自动补齐缺失资料、章节批次规划 Arc Plan、创世重新定位为「一次性项目初始化」。
-- v5.5.4 真实 LLM 自主规划：real-mode 配置错误显式化（LLM_CONFIG_MISSING）、auto-fill 只补缺失类型（missing_types 约束）、arc-plan 章节范围幂等保护。
-
-**v5.3 未收口项**：
-
-- 连续性门禁与完整事实账本跨章强制执行。
-- v5.3 命令的完整 CLI 对齐。
-
-Current verified baseline:
-
-```text
-pytest: 1819/1819 passed (includes v5.5.9 targeted 12 passed, v5.5.10 targeted 8 passed)
-v5.5.3 regression: 20 passed
-frontend typecheck: passed
-frontend lint: passed
-frontend build: passed
 ```
 
 ## Documentation
 
-Primary project planning and version documentation lives under:
+Primary project planning documentation lives under:
 
 ```text
 docs/codex/
@@ -319,7 +278,6 @@ Start with:
 
 - `docs/codex/README.md`
 - `docs/codex/novel-factory-roadmap.md`
-- `docs/codex/novel-factory-v5.2-product-completion-real-llm-closure-spec.md`
 
 ## Repository Notes
 
