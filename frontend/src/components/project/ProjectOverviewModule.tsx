@@ -67,6 +67,12 @@ interface ProductionHealth {
   has_blocking_chapter: boolean
   has_stuck_run: boolean
   has_running_chapter_workflow: boolean
+  target_chapter?: number
+  has_running_target_workflow?: boolean
+  target_workflow_run_id?: string | null
+  target_workflow_current_node?: string | null
+  target_workflow_elapsed_minutes?: number | null
+  target_workflow_stale?: boolean
 }
 
 interface MissingItem {
@@ -440,11 +446,20 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
             setStreamError({ code: 'DISCONNECTED', message: '连接已断开，可重新接入' })
           }
         }
+      } else if (res.ok && res.data && !res.data.active) {
+        setActiveSessionId(null)
+        setAutoRunning(false)
+        setDisconnected(false)
+        setRecovering(false)
+        setStreamError(null)
+        if (streamStatus !== 'running') {
+          setStreamStatus('idle')
+        }
       }
     } catch {
       // ignore
     }
-  }, [project.project_id])
+  }, [project.project_id, streamStatus])
 
   useEffect(() => {
     load().then(() => checkActiveSession())
@@ -1016,12 +1031,17 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const planned = stats.status_counts?.planned || 0
   const nextActionKey = productionNext?.next_action?.key || 'none'
   const currentCh = productionNext?.current_chapter || 1
+  const targetCh = productionNext?.next_action?.target_chapter
+    || productionNext?.health?.target_chapter
+    || currentCh
+  const isTargetWorkflowStale = productionNext?.health?.target_workflow_stale || false
   const completionRate = stats.total_chapters > 0 ? Math.round((published / stats.total_chapters) * 100) : 0
   const responsibleParty = getResponsibleParty(nextActionKey)
   const hasRunningWorkflow = streamStatus === 'running'
     || autoResult?.steps?.some((s) => s.result === 'running')
     || (activeSessionId && autoResult?.status === 'running')
     || productionNext?.health?.has_running_chapter_workflow
+    || productionNext?.health?.has_running_target_workflow
     || false
 
   /* Determine if we should show postmortem */
@@ -1153,7 +1173,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 <button
                   className="btn btn-primary"
                   onClick={handlePrimaryAction}
-                  disabled={filling || autoRunning || nextActionKey === 'none' || (disconnected && hasRunningWorkflow)}
+                  disabled={filling || autoRunning || nextActionKey === 'none' || hasRunningWorkflow}
                   style={{ flex: '1 1 220px', minWidth: 0, minHeight: 42 }}
                 >
                   {filling ? (
@@ -1165,11 +1185,11 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
                 {!autoRunning && disconnected && hasRunningWorkflow && (
                   <Link
-                    to={`?module=chapters&chapter=${currentCh}&view=workflow`}
+                    to={`?module=chapters&chapter=${targetCh}&view=workflow`}
                     className="btn btn-secondary"
                     style={{ flex: '1 1 180px', minWidth: 0, textDecoration: 'none' }}
                   >
-                    <Zap size={14} /> 查看第 {currentCh} 章实时进度
+                    <Zap size={14} /> {isTargetWorkflowStale ? `处理第 ${targetCh} 章卡住的运行` : `查看第 ${targetCh} 章实时进度`}
                   </Link>
                 )}
 
