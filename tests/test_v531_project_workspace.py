@@ -291,7 +291,7 @@ class TestProjectWorkspaceFrontendWiring:
         project_detail = self.frontend_src / "pages" / "ProjectDetail.tsx"
         settings_module = self.frontend_src / "components" / "project" / "ProjectSettingsModule.tsx"
 
-        assert "onWorkspaceChange={loadWorkspace}" in project_detail.read_text()
+        assert "onWorkspaceChange={refetchWorkspace}" in project_detail.read_text()
         settings_content = settings_module.read_text()
         assert "onSaved?: () => void" in settings_content
         assert "onSaved?.()" in settings_content

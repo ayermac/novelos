@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { BookOpen, Trash2, Plus } from 'lucide-react'
-import { get, del } from '../lib/api'
+import { useApiQuery, useApiMutation } from '../hooks/useApiQuery'
 import { tGenre } from '../lib/i18n'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
@@ -114,37 +113,18 @@ function ProjectCard({ project, onDelete }: { project: Project; onDelete: (id: s
 }
 
 export default function Projects() {
-  const [projects, setProjects] = useState<Project[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const { data: projects, isLoading, error, refetch } = useApiQuery<Project[]>(['projects'], '/projects')
 
-  const load = () => {
-    setLoading(true)
-    setError('')
-    get<Project[]>('/projects').then((res) => {
-      if (res.ok && res.data) {
-        setProjects(res.data)
-      } else {
-        setError(res.error?.message || '获取项目列表失败')
-      }
-      setLoading(false)
-    })
+  const deleteMutation = useApiMutation<unknown, string>(
+    (id) => `/projects/${id}`,
+    { method: 'del', invalidateKeys: [['projects']] },
+  )
+
+  const handleDelete = (projectId: string) => {
+    deleteMutation.mutate(projectId)
   }
 
-  const handleDelete = async (projectId: string) => {
-    const res = await del<{ deleted: boolean }>(`/projects/${projectId}`)
-    if (res.ok) {
-      setProjects((prev) => prev.filter((p) => p.project_id !== projectId))
-    } else {
-      alert(res.error?.message || '删除项目失败')
-    }
-  }
-
-  useEffect(() => {
-    load()
-  }, [])
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div>
         <PageHeader title="项目列表" />
@@ -179,12 +159,14 @@ export default function Projects() {
         <PageHeader title="项目列表" />
         <ErrorState
           title="加载失败"
-          message={error}
-          onRetry={load}
+          message={error.message}
+          onRetry={refetch}
         />
       </div>
     )
   }
+
+  const list = projects ?? []
 
   return (
     <div>
@@ -221,7 +203,7 @@ export default function Projects() {
         }
       />
 
-      {projects.length > 0 ? (
+      {list.length > 0 ? (
         <div
           className="projects-grid"
           style={{
@@ -230,7 +212,7 @@ export default function Projects() {
             gap: 'var(--space-4)',
           }}
         >
-          {projects.map((project) => (
+          {list.map((project) => (
             <ProjectCard key={project.project_id} project={project} onDelete={handleDelete} />
           ))}
         </div>

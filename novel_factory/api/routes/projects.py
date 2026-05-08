@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request, HTTPException
+import io
+from enum import Enum
+
+from fastapi import APIRouter, Query, Request, HTTPException
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
@@ -357,3 +361,69 @@ async def get_project_runs(request: Request, project_id: str) -> EnvelopeRespons
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取运行记录失败: {str(e)}")
+
+
+class ExportFormat(str, Enum):
+    txt = "txt"
+    markdown = "markdown"
+
+
+@router.get("/projects/{project_id}/export")
+async def export_project(
+    request: Request,
+    project_id: str,
+    format: ExportFormat = Query(ExportFormat.txt, description="导出格式: txt 或 markdown"),
+) -> StreamingResponse:
+    """Export all chapters of a project as a downloadable text file.
+
+    Only chapters with content are included. Chapters are ordered by chapter_number.
+    """
+    from ..deps import get_repo
+
+    repo = get_repo(request)
+
+    project = repo.get_project(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail=f"项目 '{project_id}' 不存在")
+
+    chapters = repo.list_chapters(project_id)
+    project_name = project.get("name", project_id)
+
+    # Filter chapters that have content
+    chapters_with_content = [
+        ch for ch in chapters
+        if ch.get("content") and ch["content"].strip()
+    ]
+
+    if not chapters_with_content:
+        raise HTTPException(status_code=400, detail="该项目没有可导出的章节内容")
+
+    # Build output
+    buf = io.StringIO()
+
+    if format == ExportFormat.markdown:
+        buf.write(f"# {project_name}\n\n")
+        for ch in chapters_with_content:
+            buf.write(f"## 第{ch['chapter_number']}章 {ch.get('title', '')}\n\n")
+            buf.write(ch["content"])
+            buf.write("\n\n---\n\n")
+    else:
+        buf.write(f"{project_name}\n{'=' * 40}\n\n")
+        for ch in chapters_with_content:
+            buf.write(f"第{ch['chapter_number']}章 {ch.get('title', '')}\n{'-' * 40}\n\n")
+            buf.write(ch["content"])
+            buf.write("\n\n")
+
+    content = buf.getvalue()
+    buf.close()
+
+    suffix = "md" if format == ExportFormat.markdown else "txt"
+    filename = f"{project_name}.{suffix}"
+
+    return StreamingResponse(
+        io.BytesIO(content.encode("utf-8")),
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+        },
+    )

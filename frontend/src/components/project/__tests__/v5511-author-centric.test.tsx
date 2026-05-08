@@ -141,7 +141,7 @@ describe('v5.5.11-C: ChapterWorkspace launching state', () => {
   it('shows a clearer workflow status banner for running editor step', () => {
     render(<ChapterWorkspace {...baseProps} runDetail={runningRunDetail as never} isLaunching={false} isStreaming={false} />)
     expect(screen.getByText('工作流正在推进')).toBeInTheDocument()
-    expect(screen.getByText('当前节点：审核')).toBeInTheDocument()
+    expect(screen.getAllByText('当前节点：审稿').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText('运行中')).toBeInTheDocument()
     expect(screen.getByText('已规划', { selector: '.status-badge' })).toBeInTheDocument()
   })

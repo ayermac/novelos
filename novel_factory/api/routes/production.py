@@ -96,6 +96,12 @@ def _has_pending_memory_updates(repo, project_id: str) -> bool:
     return len(items) > 0
 
 
+def _has_running_chapter_workflow(repo, project_id: str, chapter_number: int) -> bool:
+    """Check if a chapter has a currently running workflow run."""
+    runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=5)
+    return any(r.get("status") == "running" for r in runs)
+
+
 def _build_health(repo, project_id: str, current_chapter: int) -> dict:
     """Build health snapshot for a project."""
     from ...agents.title_contract import evaluate_title_alignment
@@ -128,6 +134,7 @@ def _build_health(repo, project_id: str, current_chapter: int) -> dict:
         "has_pending_memory_updates": _has_pending_memory_updates(repo, project_id),
         "has_blocking_chapter": _get_blocking_chapter(repo, project_id) is not None,
         "has_stuck_run": _get_stuck_run(repo, project_id, current_chapter) is not None,
+        "has_running_chapter_workflow": _has_running_chapter_workflow(repo, project_id, current_chapter),
         "title_contract": title_alignment,
         "title_contract_aligned": title_alignment["aligned"],
     }

@@ -16,6 +16,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { get, post } from '../../lib/api'
+import { tSessionStopLabel, tActionKey, tStepResult } from '../../lib/state-labels'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -65,6 +66,7 @@ interface ProductionHealth {
   has_pending_memory_updates: boolean
   has_blocking_chapter: boolean
   has_stuck_run: boolean
+  has_running_chapter_workflow: boolean
 }
 
 interface MissingItem {
@@ -146,53 +148,6 @@ interface Props {
 /*  i18n helpers                                                       */
 /* ------------------------------------------------------------------ */
 
-const STOP_REASON_MAP: Record<string, string> = {
-  max_steps_reached: '达到最大步数',
-  review_required: '等待人工审核',
-  blocked: '已阻塞',
-  completed: '当前范围完成',
-  unsupported_action: '需要人工处理',
-  step_failed: '步骤失败',
-  dry_run: '预览模式',
-  consecutive_no_progress: '连续无进展',
-  repeated_failure: '同一错误多次失败',
-  client_disconnected: '连接断开',
-  cancelled: '已取消',
-  paused: '已暂停',
-}
-
-const ACTION_KEY_MAP: Record<string, string> = {
-  generate_genesis: '生成创世设定',
-  review_genesis: '审核创世设定',
-  repair_title_contract: '修复书名契约',
-  generate_missing_context: '补齐缺失资料',
-  generate_chapter: '生成本章',
-  continue_next_chapter: '继续下一章',
-  review_chapter: '审核章节',
-  apply_memory_updates: '应用记忆更新',
-  recover_blocked_run: '重置阻塞运行',
-  generate_arc_plan: '生成章节计划',
-}
-
-const RESULT_MAP: Record<string, string> = {
-  success: '成功',
-  failed: '失败',
-  skipped: '跳过',
-  dry_run: '预览',
-  running: '运行中',
-}
-
-function tStopReason(reason: string): string {
-  return STOP_REASON_MAP[reason] || reason
-}
-
-function tActionKey(key: string): string {
-  return ACTION_KEY_MAP[key] || key
-}
-
-function tResult(result: string): string {
-  return RESULT_MAP[result] || result
-}
 
 function stepBorderColor(result: string): string {
   if (result === 'success') return '#10b981'
@@ -275,12 +230,14 @@ function BookTitleContractCard({ project }: { project: ProjectSummary }) {
 function ProductionPostmortemCard({
   actionKey,
   stopReason,
+  sessionStatus,
   lastError,
   targetChapter,
   steps,
 }: {
   actionKey: string
   stopReason: string
+  sessionStatus: string
   lastError?: string
   targetChapter?: number
   steps?: AutoRunStep[]
@@ -289,7 +246,7 @@ function ProductionPostmortemCard({
   const failedSteps = (steps || []).filter((s) => s.result === 'failed')
   const lastFailedStep = failedSteps.length > 0 ? failedSteps[failedSteps.length - 1] : null
 
-  const stopReasonText = tStopReason(stopReason)
+  const stopReasonText = tSessionStopLabel(sessionStatus, stopReason)
   const errorText = lastError || lastFailedStep?.error || '未知错误'
 
   const getSuggestion = (): { text: string; action?: string } => {
@@ -1061,6 +1018,11 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const currentCh = productionNext?.current_chapter || 1
   const completionRate = stats.total_chapters > 0 ? Math.round((published / stats.total_chapters) * 100) : 0
   const responsibleParty = getResponsibleParty(nextActionKey)
+  const hasRunningWorkflow = streamStatus === 'running'
+    || autoResult?.steps?.some((s) => s.result === 'running')
+    || (activeSessionId && autoResult?.status === 'running')
+    || productionNext?.health?.has_running_chapter_workflow
+    || false
 
   /* Determine if we should show postmortem */
   const isBlockedState = autoResult?.stop_reason && ['blocked', 'repeated_failure', 'consecutive_no_progress', 'step_failed'].includes(autoResult.stop_reason)
@@ -1072,7 +1034,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   /* ---------------------------------------------------------------- */
 
   return (
-    <div className="project-module">
+    <div className="project-module project-overview-grid">
+      <div className="overview-main">
       {/* ============================================================ */}
       {/*  Book title contract (lightweight)                           */}
       {/* ============================================================ */}
@@ -1126,12 +1089,24 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 fontSize: 11,
                 padding: '2px 8px',
                 borderRadius: 4,
+                background: '#dbeafe',
+                color: '#1e40af',
+                fontWeight: 500,
+              }}
+            >
+              全书 {published}/{project.total_chapters_planned} 章
+            </span>
+            <span
+              style={{
+                fontSize: 11,
+                padding: '2px 8px',
+                borderRadius: 4,
                 background: completionRate >= 100 ? '#d1fae5' : '#dbeafe',
                 color: completionRate >= 100 ? '#065f46' : '#1e40af',
                 fontWeight: 500,
               }}
             >
-              {published}/{stats.total_chapters || 0} 章已发布
+              批次 {published}/{stats.total_chapters || 0} 章
             </span>
           </div>
         </div>
@@ -1178,7 +1153,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 <button
                   className="btn btn-primary"
                   onClick={handlePrimaryAction}
-                  disabled={filling || autoRunning || nextActionKey === 'none'}
+                  disabled={filling || autoRunning || nextActionKey === 'none' || (disconnected && hasRunningWorkflow)}
                   style={{ flex: '1 1 220px', minWidth: 0, minHeight: 42 }}
                 >
                   {filling ? (
@@ -1188,7 +1163,17 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   )}
                 </button>
 
-                {!autoRunning && disconnected && (
+                {!autoRunning && disconnected && hasRunningWorkflow && (
+                  <Link
+                    to={`?module=chapters&chapter=${currentCh}&view=workflow`}
+                    className="btn btn-secondary"
+                    style={{ flex: '1 1 180px', minWidth: 0, textDecoration: 'none' }}
+                  >
+                    <Zap size={14} /> 查看第 {currentCh} 章实时进度
+                  </Link>
+                )}
+
+                {!autoRunning && disconnected && !hasRunningWorkflow && (
                   <button
                     className="btn btn-secondary"
                     onClick={handleResumeSession}
@@ -1199,7 +1184,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   </button>
                 )}
 
-                {!autoRunning && streamStatus === 'stopped' && autoResult?.stop_reason === 'paused' && !disconnected && (
+                {!autoRunning && !disconnected && streamStatus === 'stopped' && autoResult?.stop_reason === 'paused' && (
                   <button
                     className="btn btn-secondary"
                     onClick={handleResumeSession}
@@ -1210,7 +1195,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   </button>
                 )}
 
-                {!autoRunning && !(streamStatus === 'stopped' && autoResult?.stop_reason === 'paused') && !disconnected && (
+                {!autoRunning && !disconnected && (
                   <button
                     className="btn btn-secondary"
                     onClick={() => setShowAdvancedControls((v) => !v)}
@@ -1374,14 +1359,14 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   <div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>当前状态</div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
-                      {streamStatus === 'running' ? '运行中' : autoResult?.status === 'dry_run' ? '预览' : autoResult?.status || '就绪'}
+                      {tSessionStopLabel(streamStatus === 'running' ? 'running' : autoResult?.status || 'idle')}
                     </div>
                   </div>
                   {(autoResult?.stop_reason || streamError) && (
                     <div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>停止原因</div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: '#92400e' }}>
-                        {streamError ? streamError.message : tStopReason(autoResult?.stop_reason || '')}
+                        {streamError ? streamError.message : tSessionStopLabel(autoResult?.status || 'stopped', autoResult?.stop_reason)}
                       </div>
                     </div>
                   )}
@@ -1393,6 +1378,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 <ProductionPostmortemCard
                   actionKey={autoResult?.steps?.[autoResult.steps.length - 1]?.action || nextActionKey}
                   stopReason={autoResult?.stop_reason || ''}
+                  sessionStatus={autoResult?.status || 'stopped'}
                   lastError={streamError?.message || autoResult?.steps?.filter((s) => s.result === 'failed').pop()?.error}
                   targetChapter={autoResult?.steps?.filter((s) => s.result === 'failed').pop()?.target_chapter || currentCh}
                   steps={streamSteps.length > 0 ? streamSteps : autoResult?.steps}
@@ -1421,7 +1407,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                       </span>
                     </div>
                     <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                      {streamError ? streamError.message : `停止原因: ${tStopReason(autoResult?.stop_reason || '')}`}
+                      {streamError ? streamError.message : tSessionStopLabel(autoResult?.status || 'stopped', autoResult?.stop_reason)}
                     </span>
                   </div>
 
@@ -1456,7 +1442,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                                 color: step.result === 'success' ? '#065f46' : step.result === 'failed' ? '#991b1b' : step.result === 'skipped' ? '#64748b' : step.result === 'running' ? '#1e40af' : '#92400e',
                               }}
                             >
-                              {tResult(step.result)}
+                              {tStepResult(step.result)}
                             </span>
                           </div>
                           {step.error && (
@@ -1542,7 +1528,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                                   color: s.status === 'completed' ? '#065f46' : s.status === 'failed' ? '#991b1b' : s.status === 'cancelled' ? '#64748b' : s.status === 'paused' ? '#92400e' : '#1e40af',
                                 }}
                               >
-                                {s.status}
+                                {tSessionStopLabel(s.status, s.stop_reason)}
                               </span>
                               {s.status !== 'running' && s.status !== 'paused' && (
                                 <button className="btn btn-secondary btn-sm" onClick={() => handleDeleteSession(s.id)} style={{ fontSize: 10, padding: '2px 6px' }} title="删除此记录">
@@ -1553,7 +1539,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                           </div>
                           <div style={{ color: 'var(--text-muted)', marginTop: 4 }}>
                             步数: {s.current_step} / {s.max_steps}
-                            {s.stop_reason ? ` - ${tStopReason(s.stop_reason)}` : ''}
+                            {s.stop_reason ? ` - ${tSessionStopLabel(s.status, s.stop_reason)}` : ''}
                           </div>
                           <div style={{ color: 'var(--text-muted)', marginTop: 2 }}>{s.created_at}</div>
                         </div>
@@ -1568,7 +1554,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
           )}
         </div>
       </div>
+      </div>{/* end .overview-main */}
 
+      <div className="overview-sidebar">
       {/* ============================================================ */}
       {/*  Secondary info                                              */}
       {/* ============================================================ */}
@@ -1576,12 +1564,14 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       <div className="data-grid" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(min(240px, 100%), 1fr))', marginBottom: 0 }}>
         <div className="data-card" style={{ padding: 12 }}>
           <div className="data-card-title" style={{ fontSize: 13, marginBottom: 4 }}>章节进度</div>
-          <div style={{ fontSize: 20, fontWeight: 600, marginBottom: 4 }}>
-            {published}
-            <span style={{ fontSize: 13, color: 'var(--text-muted)', fontWeight: 400 }}> / {stats.total_chapters}</span>
+          <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 2 }}>
+            全书进度：{published} / {project.total_chapters_planned} 章
+          </div>
+          <div style={{ fontSize: 13, fontWeight: 500, marginBottom: 4, color: 'var(--text-secondary)' }}>
+            当前批次：{published} / {stats.total_chapters} 章
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-            已发布 {published} 章 · 已规划 {planned} 章 · 共 {stats.total_words.toLocaleString()} 字
+            已规划 {planned} 章 · 共 {stats.total_words.toLocaleString()} 字
           </div>
         </div>
         <div className="data-card" style={{ padding: 12 }}>
@@ -1696,6 +1686,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
           </div>
         </div>
       )}
+      </div>{/* end .overview-sidebar */}
     </div>
   )
 }

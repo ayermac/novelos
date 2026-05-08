@@ -65,6 +65,7 @@
 | `novel-factory-v5.5.10-bounded-autonomy-guardrails-spec.md` | v5.5.10 有界自动生产护栏、token/步数/时长预算、无进展停机、人工闸门 | 产品规划、开发 Agent |
 | `novel-factory-v5.5.11-author-centric-workspace-reset-spec.md` | v5.5.11 作者中心工作台重置、项目导航重组、今日生产、阻塞复盘、工作流启动可见性 | 产品规划、开发 Agent |
 | `novel-factory-v5.5.12-llm-runtime-reliability-cost-guardrails-spec.md` | v5.5.12 LLM 运行可靠性与成本护栏、指数退避、token 预算、旧运行作废 | 产品规划、开发 Agent |
+| `novel-factory-v5.5.13-wide-screen-author-workspace-ia-fix-spec.md` | v5.5.13 宽屏作者工作台 IA 修复、统一状态标签、Overview 双栏、RunDetail 侧栏、CTA 消歧 | 产品规划、开发 Agent |
 | `novel-factory-api-contract-guidelines.md` | API 设计规范：Resource API / Action API 边界、POST body-style、兼容迁移策略 | 开发 Agent、代码评审、API 验收 |
 
 ## 本地启动与验收
