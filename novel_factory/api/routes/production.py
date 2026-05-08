@@ -152,15 +152,132 @@ def _is_obsolete_disconnected_session(repo, project_id: str, session: dict, step
     step_target = last_step.get("target_chapter") or session.get("chapter_start")
     next_target = next_action.get("target_chapter") or step_target
 
-    if step_target and _has_running_chapter_workflow(repo, project_id, int(step_target)):
-        return False
-
     target_chapter = repo.get_chapter(project_id, int(step_target)) if step_target else None
     target_status = target_chapter.get("status") if target_chapter else None
     target_already_moved_on = target_status in ("reviewed", "published", "blocking")
     action_changed = next_action.get("key") != step_action or next_target != step_target
 
+    if target_already_moved_on:
+        return True
+
+    if step_target and _has_running_chapter_workflow(repo, project_id, int(step_target)):
+        return False
+
     return target_already_moved_on or action_changed
+
+
+def _list_stale_running_workflows(repo, project_id: str, timeout_minutes: int) -> list[dict]:
+    """List running workflow runs that exceeded the project timeout."""
+    rows = repo.get_workflow_runs_for_project(project_id, limit=100)
+    stale: list[dict] = []
+    for row in rows:
+        if row.get("status") != "running":
+            continue
+        elapsed = _elapsed_minutes_since(row.get("started_at"))
+        if elapsed is None or elapsed < timeout_minutes:
+            continue
+        stale.append({
+            "run_id": row.get("id") or row.get("run_id"),
+            "chapter_number": row.get("chapter_number"),
+            "current_node": row.get("current_node"),
+            "elapsed_minutes": elapsed,
+            "started_at": row.get("started_at"),
+        })
+    return stale
+
+
+def _build_project_health_summary(repo, project_id: str, timeout_minutes: int) -> dict:
+    """Build a concise author-facing project health summary."""
+    project = repo.get_project(project_id)
+    current_chapter = project.get("current_chapter", 1) if project else 1
+    health = _build_health(repo, project_id, current_chapter)
+    next_action = _determine_next_action(repo, project_id, health, current_chapter)
+
+    stale_runs = _list_stale_running_workflows(repo, project_id, timeout_minutes)
+    pending_memory_items = repo.list_memory_items_by_project(project_id, status="pending")
+    pending_memory_batches = [
+        b for b in repo.list_memory_batches(project_id)
+        if b.get("status") in ("pending", "partial")
+    ]
+
+    active_session = repo.get_active_auto_run_session(project_id)
+    obsolete_session = None
+    if active_session:
+        steps = repo.list_auto_run_steps(active_session["id"])
+        if _is_obsolete_disconnected_session(repo, project_id, active_session, steps, next_action):
+            obsolete_session = active_session
+
+    blocking_chapter = _get_blocking_chapter(repo, project_id)
+    items: list[dict] = []
+
+    for run in stale_runs[:5]:
+        ch = run.get("chapter_number")
+        items.append({
+            "key": f"stale_run:{run.get('run_id')}",
+            "severity": "blocking",
+            "label": f"第 {ch} 章运行疑似卡住",
+            "description": f"当前节点 {run.get('current_node') or '未知'} 已超过 {timeout_minutes} 分钟未完成。",
+            "action_label": "处理卡住运行",
+            "action_url": f"/projects/{project_id}?module=chapters&chapter={ch}&view=workflow",
+            "run_id": run.get("run_id"),
+            "chapter_number": ch,
+        })
+
+    if obsolete_session:
+        items.append({
+            "key": f"obsolete_session:{obsolete_session.get('id')}",
+            "severity": "warning",
+            "label": "存在过期的断线会话",
+            "description": "旧自动生产会话的目标章节已经进入新状态，可以清理，避免继续误导。",
+            "action_label": "清理旧会话",
+            "action_url": f"/api/projects/{project_id}/production/run-auto/sessions/{obsolete_session.get('id')}",
+            "session_id": obsolete_session.get("id"),
+        })
+
+    if blocking_chapter:
+        ch = blocking_chapter.get("chapter_number")
+        items.append({
+            "key": f"blocking_chapter:{ch}",
+            "severity": "blocking",
+            "label": f"第 {ch} 章需要恢复",
+            "description": "章节处于阻塞/返修状态，需要处理后才能继续生产。",
+            "action_label": "查看章节",
+            "action_url": f"/projects/{project_id}?module=chapters&chapter={ch}&view=workflow",
+            "chapter_number": ch,
+        })
+
+    if pending_memory_items or pending_memory_batches:
+        items.append({
+            "key": "pending_memory_updates",
+            "severity": "attention",
+            "label": "有待处理的记忆更新",
+            "description": f"{len(pending_memory_items)} 条记忆项等待应用或审核。",
+            "action_label": "打开记忆收件箱",
+            "action_url": f"/projects/{project_id}?module=memory",
+            "pending_items": len(pending_memory_items),
+            "pending_batches": len(pending_memory_batches),
+        })
+
+    status = "ok"
+    if any(item["severity"] == "blocking" for item in items):
+        status = "blocking"
+    elif items:
+        status = "attention"
+
+    return {
+        "project_id": project_id,
+        "status": status,
+        "summary": {
+            "blocking": sum(1 for item in items if item["severity"] == "blocking"),
+            "attention": sum(1 for item in items if item["severity"] == "attention"),
+            "warning": sum(1 for item in items if item["severity"] == "warning"),
+            "stale_runs": len(stale_runs),
+            "pending_memory_items": len(pending_memory_items),
+            "obsolete_sessions": 1 if obsolete_session else 0,
+        },
+        "items": items,
+        "next_action": next_action,
+    }
 
 
 def _build_health(repo, project_id: str, current_chapter: int) -> dict:
@@ -502,6 +619,25 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取生产下一步失败: {str(e)}")
+
+
+@router.get("/projects/{project_id}/production/health-summary")
+async def get_production_health_summary(request: Request, project_id: str) -> EnvelopeResponse:
+    """Return an author-facing health summary for the current project."""
+    from ..deps import get_repo, get_settings
+
+    try:
+        repo = get_repo(request)
+        settings = get_settings(request)
+
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        timeout_minutes = getattr(settings.workflow, "task_timeout_minutes", 30)
+        return envelope_response(_build_project_health_summary(repo, project_id, timeout_minutes))
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"获取项目健康摘要失败: {str(e)}")
 
 
 @router.post("/projects/{project_id}/production/auto-fill")
