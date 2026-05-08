@@ -6,6 +6,7 @@ import ProjectSideNav from './ProjectSideNav'
 interface ProjectShellProps {
   activeModule: ProjectModule
   currentChapter: number
+  projectId: string
   projectName: string
   publishedCount: number
   isStub: boolean
@@ -16,6 +17,7 @@ interface ProjectShellProps {
 export default function ProjectShell({
   activeModule,
   currentChapter,
+  projectId,
   projectName,
   publishedCount,
   isStub,
@@ -25,6 +27,7 @@ export default function ProjectShell({
   return (
     <div className="project-shell">
       <ProjectHeader
+        projectId={projectId}
         projectName={projectName}
         currentChapter={currentChapter}
         publishedCount={publishedCount}

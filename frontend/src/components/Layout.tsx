@@ -37,6 +37,7 @@ export default function Layout() {
   }, [])
 
   const isStub = llmMode === 'stub'
+  const isProjectWorkspace = /^\/projects\/[^/]+/.test(location.pathname)
 
   useEffect(() => {
     setSidebarOpen(false)
@@ -131,7 +132,7 @@ export default function Layout() {
           </div>
         </header>
 
-        <main className="content">
+        <main className={`content ${isProjectWorkspace ? 'content-project-workspace' : ''}`}>
           <Outlet />
         </main>
       </div>
@@ -383,6 +384,13 @@ export default function Layout() {
           width: 100%;
         }
 
+        .content-project-workspace {
+          max-width: none;
+          margin: 0;
+          padding: var(--space-6);
+          min-width: 0;
+        }
+
         .mobile-toggle {
           display: none;
           position: fixed;
@@ -438,6 +446,10 @@ export default function Layout() {
 
           .content {
             padding: calc(var(--topbar-height) + var(--space-4)) var(--space-4) var(--space-4);
+          }
+
+          .content-project-workspace {
+            padding: calc(var(--topbar-height) + var(--space-4)) 0 0;
           }
 
           .topbar-content {

@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useMemo } from 'react'
 import { Link } from 'react-router-dom'
 import { AlertCircle, ChevronRight, BookOpen, Sparkles, Clock, FileText } from 'lucide-react'
-import { get } from '../lib/api'
+import { useApiQuery } from '../hooks/useApiQuery'
 import { tLlmMode, tWorkflowStatus, tChapterStatus } from '../lib/i18n'
 import ErrorState from '../components/ErrorState'
 
@@ -22,11 +22,6 @@ interface Project {
   created_at: string
 }
 
-interface Chapter {
-  chapter_number: number
-  status: string
-  run_id?: string
-}
 
 interface DashboardData {
   project_count: number
@@ -82,45 +77,18 @@ function getStatusBadgeClass(status: string): string {
 }
 
 export default function Dashboard() {
-  const [data, setData] = useState<DashboardData | null>(null)
-  const [projects, setProjects] = useState<Project[]>([])
-  const [attentionProjects, setAttentionProjects] = useState<Array<{ project: Project; chapters: Chapter[] }>>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const { data, isLoading, error, refetch } = useApiQuery<DashboardData>(['dashboard'], '/dashboard')
+  const { data: projects } = useApiQuery<Project[]>(['projects'], '/projects')
 
-  const load = async () => {
-    setLoading(true)
-    setError('')
-    try {
-      const [dashboardRes, projectsRes] = await Promise.all([
-        get<DashboardData>('/dashboard'),
-        get<Project[]>('/projects'),
-      ])
-      if (dashboardRes.ok && dashboardRes.data) {
-        setData(dashboardRes.data)
-        // Use server-side attention_items instead of N+1 queries
-        const items = dashboardRes.data.attention_items || []
-        const mapped = items.map((item) => ({
-          project: { project_id: item.project_id, name: item.project_name, chapter_count: 0, created_at: '' },
-          chapters: item.chapters,
-        }))
-        setAttentionProjects(mapped)
-      } else {
-        setError(dashboardRes.error?.message || '获取仪表盘数据失败')
-      }
-      if (projectsRes.ok && projectsRes.data) {
-        setProjects(projectsRes.data)
-      }
-    } catch {
-      setError('网络错误')
-    } finally {
-      setLoading(false)
-    }
-  }
+  const attentionProjects = useMemo(() => {
+    const items = data?.attention_items || []
+    return items.map((item) => ({
+      project: { project_id: item.project_id, name: item.project_name, chapter_count: 0, created_at: '' },
+      chapters: item.chapters,
+    }))
+  }, [data])
 
-  useEffect(() => { load() }, [])
-
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="loading-state">
         <div className="loading-spinner" />
@@ -133,8 +101,8 @@ export default function Dashboard() {
     return (
       <ErrorState
         title="加载失败"
-        message={error || '无法获取仪表盘数据'}
-        onRetry={load}
+        message={error?.message || '无法获取仪表盘数据'}
+        onRetry={refetch}
       />
     )
   }
@@ -143,7 +111,8 @@ export default function Dashboard() {
   const hasProjects = data.project_count > 0
   const hasRuns = data.recent_runs.length > 0
   const latestRun = hasRuns ? data.recent_runs[0] : null
-  const firstProject = projects[0]
+  const list = projects ?? []
+  const firstProject = list[0]
 
   let heroTitle = ''
   let heroHint = ''
@@ -244,7 +213,7 @@ export default function Dashboard() {
       {/* Content Grid */}
       <div className="content-grid">
         {/* My Projects */}
-        {projects.length > 0 && (
+        {list.length > 0 && (
           <div className="card-ds">
             <div className="card-header-ds">
               <h3>我的项目</h3>
@@ -253,7 +222,7 @@ export default function Dashboard() {
               </Link>
             </div>
             <div className="projects-list">
-              {projects.slice(0, 5).map((project) => (
+              {list.slice(0, 5).map((project) => (
                 <Link
                   key={project.project_id}
                   to={`/projects/${project.project_id}`}

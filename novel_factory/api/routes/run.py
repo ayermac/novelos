@@ -115,6 +115,10 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
             "error": error,
             "llm_mode": llm_mode,
             "message": message,
+            "prompt_tokens": result.get("prompt_tokens", 0),
+            "completion_tokens": result.get("completion_tokens", 0),
+            "total_tokens": result.get("total_tokens", 0),
+            "duration_ms": result.get("duration_ms", 0),
         })
 
     except Exception as e:

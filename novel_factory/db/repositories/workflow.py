@@ -136,6 +136,50 @@ class WorkflowRepositoryMixin:
         finally:
             conn.close()
 
+    def invalidate_running_workflow_runs_for_chapter(
+        self,
+        project_id: str,
+        chapter_number: int,
+        error_message: str,
+        run_id: str | None = None,
+    ) -> int:
+        """Mark active running workflow runs for a chapter as blocked.
+
+        Used when a chapter is reset or otherwise invalidated while an older
+        workflow is still in flight. This prevents stale runs from lingering in
+        ``running`` state after the source chapter has been reset.
+        """
+        conn = self._conn()
+        try:
+            query = (
+                "UPDATE workflow_runs SET status='blocked', "
+                "current_node='human_review', "
+                "error_message=?, "
+                "completed_at=datetime('now','+8 hours') "
+                "WHERE project_id=? AND chapter_number=? AND status='running'"
+            )
+            params: list[Any] = [error_message, project_id, chapter_number]
+            if run_id:
+                query += " AND id=?"
+                params.append(run_id)
+            cursor = conn.execute(query, params)
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()
+
+    def get_project_workflow_token_total(self, project_id: str) -> int:
+        """Return total workflow tokens already recorded for a project."""
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT COALESCE(SUM(total_tokens), 0) AS total FROM workflow_runs WHERE project_id=?",
+                (project_id,),
+            ).fetchone()
+            return int(row["total"] or 0) if row else 0
+        finally:
+            conn.close()
+
     def start_task(
         self,
         project_id: str,

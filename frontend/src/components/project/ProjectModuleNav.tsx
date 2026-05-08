@@ -19,8 +19,8 @@ interface ModuleTab {
 const MODULE_TABS: ModuleTab[] = [
   { key: 'overview', label: '工作台', icon: <LayoutDashboard size={16} /> },
   { key: 'chapters', label: '写章节', icon: <BookOpen size={16} /> },
-  { key: 'review', label: '审核发布', icon: <CheckCircle2 size={16} /> },
-  { key: 'memory', label: '记忆收纳', icon: <Database size={16} /> },
+  { key: 'review', label: '审稿发布', icon: <CheckCircle2 size={16} /> },
+  { key: 'memory', label: '记忆收件箱', icon: <Database size={16} /> },
   { key: 'genesis', label: '创世设定', icon: <Sparkles size={16} /> },
   { key: 'outline', label: '大纲篇章', icon: <ListTree size={16} /> },
   { key: 'instructions', label: '章节指令', icon: <FileText size={16} /> },

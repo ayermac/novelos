@@ -80,6 +80,33 @@ def _accumulate_tokens(state: FactoryState, llm: LLMProvider) -> dict[str, int]:
     }
 
 
+def _enforce_token_budget(state: FactoryState, updates: dict[str, Any]) -> dict[str, Any] | None:
+    """Return a blocking error update when runtime token budgets are exceeded."""
+    total_tokens = updates.get("total_tokens", state.get("total_tokens", 0))
+    chapter_limit = state.get("chapter_token_limit", 0) or 0
+    project_limit = state.get("project_token_limit", 0) or 0
+    project_tokens_before = state.get("project_tokens_before_run", 0) or 0
+
+    if chapter_limit > 0 and total_tokens > chapter_limit:
+        return {
+            **updates,
+            "error": f"TOKEN_BUDGET_EXCEEDED: 单章 token 已用 {total_tokens}，超过上限 {chapter_limit}",
+            "chapter_status": updates.get("chapter_status", state.get("chapter_status")),
+            "requires_human": True,
+        }
+
+    project_total = project_tokens_before + total_tokens
+    if project_limit > 0 and project_total > project_limit:
+        return {
+            **updates,
+            "error": f"TOKEN_BUDGET_EXCEEDED: 项目 token 已用 {project_total}，超过上限 {project_limit}",
+            "chapter_status": updates.get("chapter_status", state.get("chapter_status")),
+            "requires_human": True,
+        }
+
+    return None
+
+
 def _handle_retryable_quality_gate(
     state: FactoryState,
     repo: Repository,
@@ -192,6 +219,9 @@ def create_node_runners(
         token_updates = _accumulate_tokens(state, llm)
         if token_updates:
             result.update(token_updates)
+            budget_error = _enforce_token_budget(state, result)
+            if budget_error:
+                result = budget_error
 
         # Handle error - set requires_human to stop downstream execution
         if "error" in result:
@@ -293,6 +323,9 @@ def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dic
     token_updates = _accumulate_tokens(state, llm)
     if token_updates:
         result.update(token_updates)
+        budget_error = _enforce_token_budget(state, result)
+        if budget_error:
+            result = budget_error
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
@@ -308,6 +341,9 @@ def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider) -
     token_updates = _accumulate_tokens(state, llm)
     if token_updates:
         result.update(token_updates)
+        budget_error = _enforce_token_budget(state, result)
+        if budget_error:
+            result = budget_error
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
@@ -323,6 +359,9 @@ def author_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict
     token_updates = _accumulate_tokens(state, llm)
     if token_updates:
         result.update(token_updates)
+        budget_error = _enforce_token_budget(state, result)
+        if budget_error:
+            result = budget_error
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
@@ -345,6 +384,9 @@ def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill
     token_updates = _accumulate_tokens(state, llm)
     if token_updates:
         result.update(token_updates)
+        budget_error = _enforce_token_budget(state, result)
+        if budget_error:
+            result = budget_error
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
@@ -367,6 +409,9 @@ def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
     token_updates = _accumulate_tokens(state, llm)
     if token_updates:
         result.update(token_updates)
+        budget_error = _enforce_token_budget(state, result)
+        if budget_error:
+            result = budget_error
     if "error" in result:
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
@@ -386,6 +431,9 @@ def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider)
     token_updates = _accumulate_tokens(state, llm)
     if token_updates:
         result.update(token_updates)
+        budget_error = _enforce_token_budget(state, result)
+        if budget_error:
+            result = budget_error
     if "error" in result:
         llm_mode = state.get("llm_mode", "stub")
         if llm_mode == "real":

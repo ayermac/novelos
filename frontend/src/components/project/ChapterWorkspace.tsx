@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Sparkles, Loader2 } from 'lucide-react'
+import { Sparkles, Loader2, Play, Eye, FileText, XCircle, CheckCircle2, AlertCircle } from 'lucide-react'
 import ChapterNav from '../ChapterNav'
-import ContextSidebar from '../ContextSidebar'
 import WorkflowTimeline from '../WorkflowTimeline'
 import AttentionPanel, { ActionHintList } from '../AttentionPanel'
 import { StepStatus } from '../../hooks/useSSEStream'
-import { tWorkflowStatus } from '../../lib/i18n'
+import { tWorkflowNodeLabel } from '../../lib/state-labels'
+import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
 import { post } from '../../lib/api'
 
 interface Chapter {
@@ -57,8 +57,12 @@ interface RunDetailData {
   chapter_number: number
   workflow_status: string
   chapter_status: string
+  current_node?: string | null
   llm_mode: string
   steps: Step[]
+  error_message?: string | null
+  total_tokens?: number | null
+  duration_ms?: number | null
 }
 
 export type ChapterTabKey = 'content' | 'workflow' | 'artifacts' | 'history'
@@ -87,6 +91,215 @@ function getModuleForMissing(item: string): string {
   return 'settings'
 }
 
+
+/* ------------------------------------------------------------------ */
+/*  RunDetailSidebar — right panel showing current run status          */
+/* ------------------------------------------------------------------ */
+
+function RunDetailSidebar({
+  runDetail,
+  isStreaming,
+  sseSteps,
+  currentChapter,
+  currentChapterRecord,
+  runsForChapter,
+  isWorkflowRunning,
+  onGenerate,
+  onPublish,
+  onGenerateNext,
+  onViewContent,
+  onViewWorkflow,
+}: {
+  runDetail: RunDetailData | null
+  isStreaming: boolean
+  sseSteps: Record<string, StepStatus>
+  currentChapter: number
+  currentChapterRecord: Chapter | null
+  runsForChapter: Run[]
+  isWorkflowRunning?: boolean
+  onGenerate: () => void
+  onPublish?: () => void
+  onGenerateNext?: () => void
+  onViewContent: () => void
+  onViewWorkflow: (runId: string) => void
+}) {
+  const hasContent = (currentChapterRecord?.word_count || 0) > 0
+  const currentNode = runDetail?.current_node
+  const workflowStatus = runDetail?.workflow_status
+  const sseStepEntries = Object.entries(sseSteps)
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      {/* Current run status */}
+      <div className="data-card" style={{ padding: 12 }}>
+        <div className="data-card-title" style={{ fontSize: 13, marginBottom: 8 }}>
+          第 {currentChapter} 章 · 运行状态
+        </div>
+
+        {runDetail ? (
+          <>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+              {workflowStatus === 'running' && <Loader2 size={14} className="spin" color="#3b82f6" />}
+              {workflowStatus === 'completed' && <CheckCircle2 size={14} color="#10b981" />}
+              {workflowStatus === 'failed' && <XCircle size={14} color="#ef4444" />}
+              {workflowStatus === 'blocked' && <AlertCircle size={14} color="#f59e0b" />}
+              <span style={{ fontSize: 13, fontWeight: 500 }}>
+                {workflowStatus === 'running' ? '执行中'
+                  : workflowStatus === 'completed' ? '已完成'
+                  : workflowStatus === 'failed' ? '失败'
+                  : workflowStatus === 'blocked' ? '阻塞'
+                  : workflowStatus || '—'}
+              </span>
+            </div>
+            {currentNode && (
+              <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                当前节点：{tWorkflowNodeLabel(currentNode)}
+              </div>
+            )}
+            {runDetail.chapter_status && (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                章节状态：{tChapterStatus(runDetail.chapter_status)}
+              </div>
+            )}
+          </>
+        ) : (
+          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>暂无运行记录</div>
+        )}
+
+        {/* Streaming indicator */}
+        {isStreaming && sseStepEntries.length > 0 && (
+          <div style={{ marginTop: 8, borderTop: '1px solid var(--border-color)', paddingTop: 8 }}>
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>实时进度</div>
+            {sseStepEntries.map(([key, step]) => (
+              <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                {step.status === 'running' && <Loader2 size={11} className="spin" color="#3b82f6" />}
+                {step.status === 'completed' && <CheckCircle2 size={11} color="#10b981" />}
+                {step.status === 'failed' && <XCircle size={11} color="#ef4444" />}
+                <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{key}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* Error/stop reason */}
+      {runDetail?.error_message && (workflowStatus === 'failed' || workflowStatus === 'blocked') && (
+        <div className="data-card" style={{ padding: 12, borderLeft: '3px solid #ef4444' }}>
+          <div style={{ fontSize: 12, color: '#991b1b' }}>{runDetail.error_message}</div>
+        </div>
+      )}
+
+      {/* Run stats */}
+      {runDetail && (runDetail.total_tokens || runDetail.duration_ms) && (
+        <div style={{ display: 'flex', gap: 12, fontSize: 11, color: 'var(--text-muted)' }}>
+          {runDetail.total_tokens ? <span>Token: {runDetail.total_tokens.toLocaleString()}</span> : null}
+          {runDetail.duration_ms ? <span>耗时: {Math.round(runDetail.duration_ms / 1000)}s</span> : null}
+        </div>
+      )}
+
+      {/* Action buttons */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+        {runDetail && (
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={() => onViewWorkflow(runDetail.run_id)}
+            style={{ fontSize: 12, justifyContent: 'flex-start' }}
+          >
+            <Eye size={12} /> 查看运行详情
+          </button>
+        )}
+        {hasContent && (
+          <button
+            className="btn btn-secondary btn-sm"
+            onClick={onViewContent}
+            style={{ fontSize: 12, justifyContent: 'flex-start' }}
+          >
+            <FileText size={12} /> 查看正文
+          </button>
+        )}
+        {/* Publish: when reviewed and workflow completed (real mode) */}
+        {currentChapterRecord?.status === 'reviewed' && workflowStatus === 'completed' && onPublish && (
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={onPublish}
+            style={{ fontSize: 12, justifyContent: 'flex-start' }}
+          >
+            <CheckCircle2 size={12} /> 确认发布
+          </button>
+        )}
+        {/* Generate: when not published and not awaiting publish */}
+        {currentChapterRecord?.status !== 'published' && currentChapterRecord?.status !== 'awaiting_publish' && currentChapterRecord?.status !== 'reviewed' && (
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={onGenerate}
+            disabled={isStreaming || workflowStatus === 'running' || isWorkflowRunning}
+            style={{ fontSize: 12, justifyContent: 'flex-start' }}
+          >
+            <Play size={12} /> {isStreaming || workflowStatus === 'running' || isWorkflowRunning ? '生成中...' : '生成本章'}
+          </button>
+        )}
+        {/* Generate next: when current chapter is published */}
+        {currentChapterRecord?.status === 'published' && onGenerateNext && (
+          <button
+            className="btn btn-primary btn-sm"
+            onClick={onGenerateNext}
+            style={{ fontSize: 12, justifyContent: 'flex-start' }}
+          >
+            <Sparkles size={12} /> 生成下一章
+          </button>
+        )}
+      </div>
+
+      {/* Recent runs */}
+      {runsForChapter.length > 0 && (
+        <div className="data-card" style={{ padding: 12 }}>
+          <div className="data-card-title" style={{ fontSize: 13, marginBottom: 8 }}>
+            近期运行
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 200, overflowY: 'auto' }}>
+            {runsForChapter.slice(0, 5).map((run) => (
+              <div
+                key={run.run_id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  gap: 8,
+                  padding: '6px 8px',
+                  background: 'var(--bg-tertiary)',
+                  borderRadius: 6,
+                  cursor: 'pointer',
+                }}
+                onClick={() => onViewWorkflow(run.run_id)}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {run.run_id.slice(0, 8)}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{run.created_at}</div>
+                </div>
+                <span
+                  style={{
+                    fontSize: 10,
+                    padding: '2px 6px',
+                    borderRadius: 4,
+                    background: run.status === 'completed' ? '#d1fae5' : run.status === 'failed' ? '#fee2e2' : '#dbeafe',
+                    color: run.status === 'completed' ? '#065f46' : run.status === 'failed' ? '#991b1b' : '#1e40af',
+                    flexShrink: 0,
+                  }}
+                >
+                  {tWorkflowStatus(run.status)}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+
 interface ChapterWorkspaceProps {
   activeTab: ChapterTabKey
   chapterDetail: ChapterDetail | null
@@ -96,19 +309,18 @@ interface ChapterWorkspaceProps {
   currentChapterRecord: Chapter | null
   genError: string
   genErrorDetails: { missing?: string[]; actions?: string[] } | null
+  isLaunching: boolean
   isStub: boolean
   isStreaming: boolean
+  isWorkflowRunning?: boolean
   llmMode: string
-  nextChapterNumber: number | null
   projectId: string
   runDetail: RunDetailData | null
   runsForChapter: Run[]
   sseSteps: Record<string, StepStatus>
-  totalChapters: number
   onGenerate: () => void
-  onGenerateNext: () => void
-  onNavigateToRun: () => void
-  onPublish: () => void
+  onGenerateNext?: () => void
+  onPublish?: () => void
   onResetChapter: (chapterNumber: number) => void
   onSelectChapter: (chapterNumber: number) => void
   onTabChange: (tab: ChapterTabKey) => void
@@ -125,18 +337,17 @@ export default function ChapterWorkspace({
   currentChapterRecord,
   genError,
   genErrorDetails,
+  isLaunching,
   isStub,
   isStreaming,
+  isWorkflowRunning,
   llmMode,
-  nextChapterNumber,
   projectId,
   runDetail,
   runsForChapter,
   sseSteps,
-  totalChapters,
   onGenerate,
   onGenerateNext,
-  onNavigateToRun,
   onPublish,
   onResetChapter,
   onSelectChapter,
@@ -171,6 +382,7 @@ export default function ChapterWorkspace({
             genErrorDetails={genErrorDetails}
             chapterLoading={chapterLoading}
             hasContent={hasContent}
+            isLaunching={isLaunching}
             isStub={isStub}
             currentChapter={currentChapter}
             chapterDetail={chapterDetail}
@@ -181,24 +393,24 @@ export default function ChapterWorkspace({
             sseSteps={sseSteps}
             isStreaming={isStreaming}
             projectId={projectId}
+            isWorkflowRunning={isWorkflowRunning}
           />
         </div>
       </div>
       <div className="ws-right">
-        <ContextSidebar
-          currentChapter={currentChapterRecord}
-          chapterNumber={currentChapter}
-          llmMode={llmMode}
-          recentRuns={runsForChapter}
-          totalChapters={totalChapters}
-          nextChapterNumber={nextChapterNumber}
-          projectId={projectId}
+        <RunDetailSidebar
+          runDetail={runDetail}
+          isStreaming={isStreaming}
+          sseSteps={sseSteps}
+          currentChapter={currentChapter}
+          currentChapterRecord={currentChapterRecord}
+          runsForChapter={runsForChapter}
+          isWorkflowRunning={isWorkflowRunning}
           onGenerate={onGenerate}
-          onViewWorkflow={onViewWorkflow}
-          onViewContent={onViewContent}
-          onGenerateNext={onGenerateNext}
-          onNavigateToRun={onNavigateToRun}
           onPublish={onPublish}
+          onGenerateNext={onGenerateNext}
+          onViewContent={onViewContent}
+          onViewWorkflow={onViewWorkflow}
         />
       </div>
     </div>
@@ -229,16 +441,17 @@ function ChapterTabBar({ activeTab, onTabChange, hasRuns }: {
   )
 }
 
-function ChapterTabContent({ activeTab, generating, genError, genErrorDetails, chapterLoading, hasContent, isStub,
+function ChapterTabContent({ activeTab, generating, genError, genErrorDetails, chapterLoading, hasContent, isLaunching, isStub,
   currentChapter, chapterDetail, runDetail, runsForChapter, onGenerate, onViewWorkflow,
-  sseSteps, isStreaming, projectId,
+  sseSteps, isStreaming, projectId, isWorkflowRunning,
 }: {
   activeTab: ChapterTabKey; generating: boolean; genError: string
   genErrorDetails: { missing?: string[]; actions?: string[] } | null
-  chapterLoading: boolean; hasContent: boolean; isStub: boolean; currentChapter: number
+  chapterLoading: boolean; hasContent: boolean; isLaunching: boolean; isStub: boolean; currentChapter: number
   chapterDetail: ChapterDetail | null; runDetail: RunDetailData | null
   runsForChapter: Run[]; onGenerate: () => void; onViewWorkflow: (runId: string) => void
   sseSteps: Record<string, StepStatus>; isStreaming: boolean; projectId: string
+  isWorkflowRunning?: boolean
 }) {
   switch (activeTab) {
     case 'content':
@@ -247,11 +460,11 @@ function ChapterTabContent({ activeTab, generating, genError, genErrorDetails, c
           generating={generating} genError={genError} genErrorDetails={genErrorDetails} chapterLoading={chapterLoading}
           hasContent={hasContent} isStub={isStub} currentChapter={currentChapter}
           chapterDetail={chapterDetail} onGenerate={onGenerate}
-          sseSteps={sseSteps} projectId={projectId}
+          sseSteps={sseSteps} projectId={projectId} isWorkflowRunning={isWorkflowRunning}
         />
       )
     case 'workflow':
-      return <WorkflowTab runDetail={runDetail} generating={generating} sseSteps={sseSteps} isStreaming={isStreaming} />
+      return <WorkflowTab runDetail={runDetail} generating={generating} isLaunching={isLaunching} sseSteps={sseSteps} isStreaming={isStreaming} />
     case 'artifacts':
       return <ArtifactsTab runDetail={runDetail} />
     case 'history':
@@ -262,12 +475,13 @@ function ChapterTabContent({ activeTab, generating, genError, genErrorDetails, c
 }
 
 function ContentTab({ generating, genError, genErrorDetails, chapterLoading, hasContent, isStub,
-  currentChapter, chapterDetail, onGenerate, sseSteps, projectId,
+  currentChapter, chapterDetail, onGenerate, sseSteps, projectId, isWorkflowRunning,
 }: {
   generating: boolean; genError: string
   genErrorDetails: { missing?: string[]; actions?: string[] } | null
   chapterLoading: boolean; hasContent: boolean; isStub: boolean; currentChapter: number; chapterDetail: ChapterDetail | null
   onGenerate: () => void; sseSteps: Record<string, StepStatus>; projectId: string
+  isWorkflowRunning?: boolean
 }) {
   const [filling, setFilling] = useState(false)
   const [fillMsg, setFillMsg] = useState('')
@@ -374,8 +588,9 @@ function ContentTab({ generating, genError, genErrorDetails, chapterLoading, has
           {chapterDetail?.title && <div className="empty-chapter-title">{chapterDetail.title}</div>}
           <div className="empty-chapter-hint">本章尚未生成</div>
           <div className="empty-chapter-desc">编剧将规划章节场景和情节，执笔将撰写章节正文</div>
-          <button className="btn btn-primary" onClick={onGenerate} style={{ marginTop: '16px' }}>
-            生成本章
+          <button className="btn btn-primary" onClick={onGenerate} style={{ marginTop: '16px' }}
+            disabled={isWorkflowRunning}>
+            {isWorkflowRunning ? '生成中...' : '生成本章'}
           </button>
           <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-muted)' }}>
             预计字数: 2,000-4,000 &middot; 生成模式: {isStub ? '演示模式' : '真实 LLM'}
@@ -405,10 +620,68 @@ function ContentTab({ generating, genError, genErrorDetails, chapterLoading, has
   )
 }
 
-function WorkflowTab({ runDetail, generating, sseSteps, isStreaming }: {
-  runDetail: RunDetailData | null; generating: boolean; sseSteps: Record<string, StepStatus>; isStreaming: boolean
+function WorkflowTab({ runDetail, generating, isLaunching, sseSteps, isStreaming }: {
+  runDetail: RunDetailData | null; generating: boolean; isLaunching: boolean; sseSteps: Record<string, StepStatus>; isStreaming: boolean
 }) {
-  if (runDetail && !isStreaming) return <WorkflowTimeline steps={runDetail.steps} />
+  if (runDetail && !isStreaming) {
+    const nodeLabel = tWorkflowNodeLabel(runDetail.current_node)
+    const statusLabel = tWorkflowStatus(runDetail.workflow_status)
+    const chapterStatusLabel = tChapterStatus(runDetail.chapter_status)
+    const statusTone = runDetail.workflow_status === 'blocked' ? 'warning' : runDetail.workflow_status === 'failed' ? 'error' : 'info'
+    const statusHeadline = runDetail.workflow_status === 'running'
+      ? '工作流正在推进'
+      : runDetail.workflow_status === 'blocked'
+        ? '工作流已阻塞'
+        : runDetail.workflow_status === 'completed' && runDetail.chapter_status === 'reviewed'
+          ? '审核已完成'
+          : '最近一次运行'
+    const statusDescription = runDetail.workflow_status === 'running'
+      ? `当前节点：${nodeLabel}。这表示工作流仍在推进，不是静态卡死。`
+      : runDetail.workflow_status === 'blocked'
+        ? `本次运行已阻塞，需要先处理最近的失败或返修原因。`
+        : runDetail.workflow_status === 'completed' && runDetail.chapter_status === 'reviewed'
+          ? 'AI 审核已完成，当前等待人工发布。'
+          : '最近一次运行记录如下。'
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div
+          className={`alert ${statusTone === 'warning' ? 'alert-warn' : statusTone === 'error' ? 'alert-error' : 'alert-info'}`}
+          style={{ marginBottom: 0 }}
+        >
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>
+                {statusHeadline}
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>
+                当前节点：{nodeLabel}
+              </div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>{statusDescription}</div>
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+              <span className={`status-badge status-${runDetail.workflow_status}`}>{statusLabel}</span>
+              <span className={`status-badge status-${runDetail.chapter_status}`}>{chapterStatusLabel}</span>
+            </div>
+          </div>
+          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-muted)' }}>
+            节点是流程里的具体步骤名，审核节点亮起时表示正在审稿，不一定代表失败。
+          </div>
+        </div>
+        <WorkflowTimeline steps={runDetail.steps} />
+      </div>
+    )
+  }
+
+  if (isLaunching && !isStreaming) {
+    return (
+      <div style={{ padding: '48px 24px', textAlign: 'center' }}>
+        <Loader2 size={24} className="spin" style={{ color: 'var(--primary)', marginBottom: 12 }} />
+        <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 6 }}>正在启动生成流程...</div>
+        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>准备章节数据和 AI 模型，即将开始</div>
+      </div>
+    )
+  }
 
   if (generating || isStreaming) {
     const hasSseData = Object.keys(sseSteps).length > 0

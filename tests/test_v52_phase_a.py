@@ -568,6 +568,8 @@ class TestAPIRoutes:
             from novel_factory.db.repository import Repository
             repo = Repository(db_path)
             repo.update_chapter_status("reset_api_test", 1, "blocking")
+            run_id = repo.create_workflow_run("reset_api_test", 1)
+            repo.update_workflow_run(run_id, status="running", current_node="editor")
             for _ in range(2):
                 repo.start_task("reset_api_test", 1, "revise", "editor")
 
@@ -578,6 +580,21 @@ class TestAPIRoutes:
             assert resp.json()["data"]["retry_count_before"] == 2
             assert resp.json()["data"]["retry_count_after"] == 0
             assert resp.json()["data"]["retries_cleared"] == 2
+            assert resp.json()["data"]["invalidated_runs"] == 1
+
+            conn = repo._conn()
+            try:
+                row = conn.execute(
+                    "SELECT status, current_node, error_message, completed_at FROM workflow_runs WHERE id=?",
+                    (run_id,),
+                ).fetchone()
+            finally:
+                conn.close()
+
+            assert row["status"] == "blocked"
+            assert row["current_node"] == "human_review"
+            assert "旧运行已作废" in row["error_message"]
+            assert row["completed_at"]
 
         finally:
             if os.path.exists(db_path):
