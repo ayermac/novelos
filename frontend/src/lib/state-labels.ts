@@ -36,6 +36,7 @@ export function tSessionStopLabel(status: string, stopReason?: string): string {
       case 'completed': return '已完成'
       case 'dry_run_preview': return '试运行完成'
       case 'unsupported_action': return '遇到不支持的操作，已停止'
+      case 'obsolete': return '旧会话已过期'
       default: return '已停止'
     }
   }

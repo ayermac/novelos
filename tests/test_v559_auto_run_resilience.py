@@ -139,6 +139,49 @@ class TestActiveSession:
         assert active_resp.status_code == 200
         assert active_resp.json()["data"]["active"] is False
 
+    def test_active_session_ignores_obsolete_disconnected_step(self, client, project_with_context):
+        """Paused disconnected sessions should expire when target chapter already moved on."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        repo.update_chapter_status(project_with_context, 1, "reviewed")
+        repo.publish_chapter(project_with_context, 1, expected_status="reviewed")
+        repo.update_chapter_status(project_with_context, 2, "reviewed")
+
+        session = repo.create_auto_run_session(
+            project_with_context,
+            chapter_start=1,
+            chapter_end=10,
+            max_steps=5,
+            dry_run=False,
+            stop_on_review=True,
+        )
+        repo.create_auto_run_step(
+            session["id"],
+            step_number=1,
+            action="continue_next_chapter",
+            label="继续生成第 2 章",
+            target_chapter=2,
+        )
+        repo.update_auto_run_session_status(
+            session["id"],
+            "paused",
+            stop_reason="client_disconnected",
+            last_event="step_started",
+        )
+
+        active_resp = client.get(
+            f"/api/projects/{project_with_context}/production/run-auto/active-session"
+        )
+        assert active_resp.status_code == 200
+        data = active_resp.json()["data"]
+        assert data["active"] is False
+        assert data["obsolete_session_id"] == session["id"]
+
+        stopped = repo.get_auto_run_session(session["id"])
+        assert stopped["status"] == "stopped"
+        assert stopped["stop_reason"] == "obsolete"
+
 
 class TestResumeWithExtraSteps:
     """Test resume extends max_steps and continues execution."""

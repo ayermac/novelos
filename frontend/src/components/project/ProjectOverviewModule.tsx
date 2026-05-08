@@ -446,11 +446,20 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
             setStreamError({ code: 'DISCONNECTED', message: '连接已断开，可重新接入' })
           }
         }
+      } else if (res.ok && res.data && !res.data.active) {
+        setActiveSessionId(null)
+        setAutoRunning(false)
+        setDisconnected(false)
+        setRecovering(false)
+        setStreamError(null)
+        if (streamStatus !== 'running') {
+          setStreamStatus('idle')
+        }
       }
     } catch {
       // ignore
     }
-  }, [project.project_id])
+  }, [project.project_id, streamStatus])
 
   useEffect(() => {
     load().then(() => checkActiveSession())

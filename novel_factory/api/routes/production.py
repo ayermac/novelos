@@ -138,6 +138,31 @@ def _target_workflow_health(repo, project_id: str, target_chapter: int, timeout_
     }
 
 
+def _is_obsolete_disconnected_session(repo, project_id: str, session: dict, steps: list[dict], next_action: dict) -> bool:
+    """Return True when a paused disconnected session no longer matches project truth."""
+    if session.get("status") != "paused" or session.get("stop_reason") != "client_disconnected":
+        return False
+
+    unfinished_steps = [s for s in steps if not s.get("result")]
+    if not unfinished_steps:
+        return False
+
+    last_step = unfinished_steps[-1]
+    step_action = last_step.get("action")
+    step_target = last_step.get("target_chapter") or session.get("chapter_start")
+    next_target = next_action.get("target_chapter") or step_target
+
+    if step_target and _has_running_chapter_workflow(repo, project_id, int(step_target)):
+        return False
+
+    target_chapter = repo.get_chapter(project_id, int(step_target)) if step_target else None
+    target_status = target_chapter.get("status") if target_chapter else None
+    target_already_moved_on = target_status in ("reviewed", "published", "blocking")
+    action_changed = next_action.get("key") != step_action or next_target != step_target
+
+    return target_already_moved_on or action_changed
+
+
 def _build_health(repo, project_id: str, current_chapter: int) -> dict:
     """Build health snapshot for a project."""
     from ...agents.title_contract import evaluate_title_alignment
@@ -2073,6 +2098,22 @@ async def get_active_auto_run_session(request: Request, project_id: str) -> Enve
             return envelope_response({"active": False})
 
         steps = repo.list_auto_run_steps(session["id"])
+        current_chapter = project.get("current_chapter", 1)
+        health = _build_health(repo, project_id, current_chapter)
+        next_action = _determine_next_action(repo, project_id, health, current_chapter)
+        if _is_obsolete_disconnected_session(repo, project_id, session, steps, next_action):
+            repo.update_auto_run_session_status(
+                session["id"],
+                "stopped",
+                stop_reason="obsolete",
+                last_event="obsolete",
+            )
+            return envelope_response({
+                "active": False,
+                "obsolete_session_id": session["id"],
+                "stop_reason": "obsolete",
+            })
+
         return envelope_response({
             "active": True,
             "session": session,
