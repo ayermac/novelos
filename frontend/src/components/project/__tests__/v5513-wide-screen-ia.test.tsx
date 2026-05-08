@@ -264,3 +264,32 @@ describe('v5.5.13 wide-screen grid structure', () => {
     expect(pdContent).toMatch(/if.*!workspace.*generating.*isStreaming/s)
   })
 })
+
+/* ------------------------------------------------------------------ */
+/*  v5.5.14 stabilization structure tests                             */
+/* ------------------------------------------------------------------ */
+
+describe('v5.5.14 release stabilization health summary', () => {
+  const overviewPath = resolve(__dirname, '../ProjectOverviewModule.tsx')
+
+  it('ProjectOverviewModule fetches the project health summary', () => {
+    const content = readFileSync(overviewPath, 'utf-8')
+    expect(content).toContain('ProductionHealthSummary')
+    expect(content).toContain('/production/health-summary')
+    expect(content).toContain('setHealthSummary')
+  })
+
+  it('ProjectOverviewModule renders author-facing health actions', () => {
+    const content = readFileSync(overviewPath, 'utf-8')
+    expect(content).toContain('项目健康需要处理')
+    expect(content).toContain('handleHealthAction')
+    expect(content).toContain('item.action_label')
+  })
+
+  it('obsolete session health action deletes the explicit session instead of bulk cleanup', () => {
+    const content = readFileSync(overviewPath, 'utf-8')
+    expect(content).toContain("item.key.startsWith('obsolete_session') && item.session_id")
+    expect(content).toContain('handleDeleteSession(item.session_id)')
+    expect(content).not.toContain('await handleCleanupSessions()')
+  })
+})

@@ -92,6 +92,32 @@ interface ProductionNext {
   actions: { key: string; label: string; description: string; action_url: string; method: string }[]
 }
 
+interface ProductionHealthItem {
+  key: string
+  severity: 'blocking' | 'attention' | 'warning'
+  label: string
+  description: string
+  action_label: string
+  action_url: string
+  run_id?: string
+  session_id?: string
+  chapter_number?: number
+}
+
+interface ProductionHealthSummary {
+  project_id: string
+  status: 'ok' | 'attention' | 'blocking'
+  summary: {
+    blocking: number
+    attention: number
+    warning: number
+    stale_runs: number
+    pending_memory_items: number
+    obsolete_sessions: number
+  }
+  items: ProductionHealthItem[]
+}
+
 interface AutoRunStep {
   step: number
   action: string
@@ -324,6 +350,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
   const [contextStatus, setContextStatus] = useState<ContextStatus | null>(null)
   const [productionNext, setProductionNext] = useState<ProductionNext | null>(null)
+  const [healthSummary, setHealthSummary] = useState<ProductionHealthSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [filling, setFilling] = useState(false)
   const [fillResult, setFillResult] = useState<string>('')
@@ -371,6 +398,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setAutoConfig({ maxSteps: 5, chapterStart: 1, chapterEnd: 10, stopOnReview: true, dryRun: false })
     setShowAdvancedControls(false)
     setProductionNext(null)
+    setHealthSummary(null)
     setShowHistory(false)
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
@@ -400,12 +428,14 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const load = useCallback(async () => {
     setLoading(true)
     const chapterParam = chapterNumber && chapterNumber > 1 ? `?chapter=${chapterNumber}` : ''
-    const [ctxRes, prodRes] = await Promise.all([
+    const [ctxRes, prodRes, healthRes] = await Promise.all([
       get<ContextStatus>(`/projects/${project.project_id}/context-status${chapterParam}`),
       get<ProductionNext>(`/projects/${project.project_id}/production-next`),
+      get<ProductionHealthSummary>(`/projects/${project.project_id}/production/health-summary`),
     ])
     if (ctxRes.ok && ctxRes.data) setContextStatus(ctxRes.data)
     if (prodRes.ok && prodRes.data) setProductionNext(prodRes.data)
+    if (healthRes.ok && healthRes.data) setHealthSummary(healthRes.data)
     setLoading(false)
   }, [project.project_id, chapterNumber])
 
@@ -842,11 +872,13 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
         method: 'DELETE',
       })
       if (res.ok) {
-        loadSessions()
+        await loadSessions()
+        return true
       }
     } catch {
       // ignore
     }
+    return false
   }
 
   const handleCleanupSessions = async () => {
@@ -861,6 +893,19 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     } catch {
       // ignore
     }
+  }
+
+  const handleHealthAction = async (item: ProductionHealthItem) => {
+    if (item.action_url.startsWith('/api/')) {
+      if (item.key.startsWith('obsolete_session') && item.session_id) {
+        const deleted = await handleDeleteSession(item.session_id)
+        if (deleted) {
+          await load()
+        }
+      }
+      return
+    }
+    navigate(item.action_url)
   }
 
   const handleCancelSession = async () => {
@@ -1250,6 +1295,54 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   style={{ padding: '8px 12px', fontSize: 13, marginBottom: 12 }}
                 >
                   {fillResult}
+                </div>
+              )}
+
+              {healthSummary && healthSummary.status !== 'ok' && (
+                <div
+                  style={{
+                    padding: '10px 12px',
+                    borderRadius: 8,
+                    border: '1px solid rgba(217, 119, 6, 0.24)',
+                    background: '#fffbeb',
+                    marginBottom: 12,
+                  }}
+                >
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, flexWrap: 'wrap' }}>
+                    <AlertCircle size={14} color="#d97706" />
+                    <span style={{ fontSize: 13, fontWeight: 650, color: '#78350f' }}>项目健康需要处理</span>
+                    <span style={{ fontSize: 12, color: '#92400e', marginLeft: 'auto' }}>
+                      {healthSummary.summary.blocking > 0 ? `${healthSummary.summary.blocking} 项阻塞` : `${healthSummary.summary.attention + healthSummary.summary.warning} 项提醒`}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                    {healthSummary.items.slice(0, 3).map((item) => (
+                      <div
+                        key={item.key}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'space-between',
+                          gap: 10,
+                          padding: '7px 8px',
+                          background: '#fff7ed',
+                          borderRadius: 6,
+                        }}
+                      >
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: 12, fontWeight: 600, color: '#78350f' }}>{item.label}</div>
+                          <div style={{ fontSize: 12, color: '#92400e', lineHeight: 1.35 }}>{item.description}</div>
+                        </div>
+                        <button
+                          className="btn btn-secondary btn-sm"
+                          onClick={() => handleHealthAction(item)}
+                          style={{ fontSize: 11, flexShrink: 0 }}
+                        >
+                          <Wrench size={11} /> {item.action_label}
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
 
