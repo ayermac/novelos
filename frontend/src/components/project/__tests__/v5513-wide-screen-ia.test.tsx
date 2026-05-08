@@ -223,9 +223,12 @@ describe('v5.5.13 wide-screen grid structure', () => {
     expect(content).toContain('view=workflow')
   })
 
-  it('ProjectOverviewModule disables main CTA when disconnected+running', () => {
+  it('ProjectOverviewModule disables main CTA when any target workflow is running', () => {
     const content = readFileSync(overviewPath, 'utf-8')
-    expect(content).toContain('disconnected && hasRunningWorkflow')
+    expect(content).toContain('has_running_target_workflow')
+    expect(content).toContain('targetCh')
+    expect(content).toContain('处理第')
+    expect(content).toMatch(/disabled=\{[^}]*hasRunningWorkflow/)
   })
 
   it('ChapterWorkspace RunDetailSidebar uses translated chapter status', () => {

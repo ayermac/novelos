@@ -311,6 +311,50 @@ class TestProductionNextAPI:
         data = resp.json()["data"]
         assert data["next_action"]["key"] == "continue_next_chapter"
         assert data["next_action"].get("target_chapter") == 2
+        assert data["health"]["target_chapter"] == 2
+        os.unlink(db_path)
+
+    def test_production_next_reports_running_target_chapter(self, client, project_id):
+        """Published current chapter should report running workflow on target next chapter."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "target-run-test", "name": "Target Run Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 10, "target_words": 30000,
+        })
+        tc.post("/api/projects/target-run-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
+        })
+        gid = tc.get("/api/projects/target-run-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/target-run-test/genesis/{gid}/approve")
+        tc.post("/api/projects/target-run-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        repo.update_chapter_status("target-run-test", 1, "reviewed")
+        repo.publish_chapter("target-run-test", 1, expected_status="reviewed")
+        if repo.get_chapter("target-run-test", 2) is None:
+            repo.add_chapter("target-run-test", 2, "第 2 章", status="planned")
+        run_id = repo.create_workflow_run("target-run-test", 2)
+        repo.update_workflow_run(run_id, status="running", current_node="polisher")
+
+        resp = tc.get("/api/projects/target-run-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "continue_next_chapter"
+        assert data["next_action"]["target_chapter"] == 2
+        assert data["health"]["has_running_chapter_workflow"] is False
+        assert data["health"]["has_running_target_workflow"] is True
+        assert data["health"]["target_workflow_run_id"] == run_id
+        assert data["health"]["target_workflow_current_node"] == "polisher"
         os.unlink(db_path)
 
     def test_blocking_non_current_chapter_returns_correct_target(self, client, project_id):

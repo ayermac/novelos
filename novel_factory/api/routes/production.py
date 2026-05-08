@@ -6,6 +6,7 @@ v5.5.3: Provides next-action guidance and AI auto-fill for project production.
 from __future__ import annotations
 
 from collections.abc import AsyncGenerator
+from datetime import datetime
 
 from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
@@ -100,6 +101,41 @@ def _has_running_chapter_workflow(repo, project_id: str, chapter_number: int) ->
     """Check if a chapter has a currently running workflow run."""
     runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=5)
     return any(r.get("status") == "running" for r in runs)
+
+
+def _get_running_chapter_workflow(repo, project_id: str, chapter_number: int) -> dict | None:
+    """Return the latest running workflow run for a chapter, if any."""
+    runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=5)
+    for run in runs:
+        if run.get("status") == "running":
+            return run
+    return None
+
+
+def _elapsed_minutes_since(timestamp: str | None) -> float | None:
+    if not timestamp:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f"):
+        try:
+            return (datetime.now() - datetime.strptime(timestamp[:26], fmt)).total_seconds() / 60
+        except ValueError:
+            continue
+    return None
+
+
+def _target_workflow_health(repo, project_id: str, target_chapter: int, timeout_minutes: int) -> dict:
+    """Build workflow health for the chapter targeted by the recommended action."""
+    running = _get_running_chapter_workflow(repo, project_id, target_chapter)
+    elapsed = _elapsed_minutes_since(running.get("started_at")) if running else None
+    stale = elapsed is not None and elapsed >= timeout_minutes
+    return {
+        "target_chapter": target_chapter,
+        "has_running_target_workflow": running is not None,
+        "target_workflow_run_id": running.get("id") if running else None,
+        "target_workflow_current_node": running.get("current_node") if running else None,
+        "target_workflow_elapsed_minutes": elapsed,
+        "target_workflow_stale": stale,
+    }
 
 
 def _build_health(repo, project_id: str, current_chapter: int) -> dict:
@@ -392,10 +428,11 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
 
     Returns current project health, missing items, and a recommended next action.
     """
-    from ..deps import get_repo
+    from ..deps import get_repo, get_settings
 
     try:
         repo = get_repo(request)
+        settings = get_settings(request)
 
         project = repo.get_project(project_id)
         if not project:
@@ -406,6 +443,9 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
         health = _build_health(repo, project_id, current_chapter)
         missing = _build_missing(health, project_id, current_chapter)
         next_action = _determine_next_action(repo, project_id, health, current_chapter)
+        target_chapter = next_action.get("target_chapter") or current_chapter
+        timeout_minutes = getattr(settings.workflow, "task_timeout_minutes", 30)
+        health.update(_target_workflow_health(repo, project_id, target_chapter, timeout_minutes))
 
         # Build secondary actions
         actions = []
