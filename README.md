@@ -1,85 +1,127 @@
+<div align="center">
+
 # Novelos
 
-AI-powered novel production workbench for long-form fiction projects.
+**AI-Powered Novel Production Workbench**
 
-Novelos combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
+English | [中文](README.zh-CN.md)
 
-## What It Does
+[![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-18+-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![Vite](https://img.shields.io/badge/Vite-5+-646CFF?logo=vite&logoColor=white)](https://vitejs.dev/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Workflow-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
+[![SQLite](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5+-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
-- Creates and manages novel projects, chapters, world settings, characters, and outlines.
-- Runs chapter production through a LangGraph workflow.
-- Supports stub mode for local demos and real mode for OpenAI-compatible LLM providers.
-- Tracks workflow runs, artifacts, token usage, errors, and review state.
-- Provides a React author workspace for day-to-day writing and project context editing.
-- Keeps CLI access for automation, batch operations, review tools, style tools, and diagnostics.
+An end-to-end workbench for long-form fiction: plan arcs, generate chapters through a LangGraph pipeline, review and polish prose, and manage project context — from CLI and web workspace.
+
+[Features](#features) | [Architecture](#architecture) | [Quick Start](#quick-start) | [CLI Reference](#cli-reference) | [Configuration](#configuration) | [Testing](#testing) | [Documentation](#documentation)
+
+</div>
+
+---
+
+## Features
+
+- **Chapter Production Pipeline** — LangGraph workflow with planner, screenwriter, author, polisher, editor, and publisher nodes
+- **Project Context Management** — World settings, characters, factions, outlines, foreshadowing, and chapter instructions
+- **Dual LLM Modes** — Stub mode for local development and demos; real mode for OpenAI-compatible providers (OpenAI, OpenRouter, DeepSeek)
+- **Author Workspace** — React + Vite web UI for day-to-day writing, chapter browsing, and project context editing
+- **Autonomous Production Loop** — AI-driven batch chapter generation with step-by-step control, pause/resume, and budget guardrails
+- **Token Budget Guardrails** — Per-chapter, per-project, and per-session token limits with explicit shutdown on overage
+- **LLM Reliability** — Exponential backoff retry for rate limits and timeouts; configurable retry and timeout parameters
+- **Workflow Observability** — Run tracking, artifact logging, token usage, error state, and review status
+- **CLI Toolkit** — Automation, batch operations, review tools, style tools, config validation, and diagnostics
+- **One-Command Deploy** — Service script for starting/stopping API + WebUI together
 
 ## Architecture
 
-```text
-frontend/              React + Vite author workspace
-novel_factory/api/     FastAPI app, route dependencies, API models
-novel_factory/db/      SQLite schema, migrations, repositories
-novel_factory/workflow LangGraph chapter workflow and checkpointing
-novel_factory/llm/     Stub and OpenAI-compatible LLM providers
-novel_factory/cli_app/ CLI command implementation
-tests/                 Python regression and acceptance tests
-docs/codex/            Product specs, roadmap, and project history
+```
+                        ┌──────────────────────┐
+                        │   Author Workspace   │
+                        │   React + Vite SPA   │
+                        └──────────┬───────────┘
+                                   │ REST / SSE
+                        ┌──────────▼───────────┐
+                        │     FastAPI Server    │
+                        │   Routes / Services   │
+                        └───┬────────┬────┬─────┘
+                            │        │    │
+               ┌────────────┘        │    └────────────┐
+               ▼                     ▼                 ▼
+    ┌──────────────────┐  ┌──────────────────┐  ┌─────────────┐
+    │  LangGraph       │  │   LLM Providers  │  │    CLI      │
+    │  Chapter Workflow │  │  Stub / OpenAI   │  │   Toolkit   │
+    │  (StateGraph)    │  │  Compatible      │  │             │
+    └────────┬─────────┘  └──────────────────┘  └─────────────┘
+             │
+    ┌────────▼─────────┐
+    │   SQLite + WAL   │
+    │  Projects, Runs, │
+    │  Chapters, etc.  │
+    └──────────────────┘
 ```
 
-The main production path is now LangGraph-based. `Dispatcher` and `dispatch/` are still retained as compatibility paths for older CLI capabilities and historical workflows.
+| Layer | Technology | Purpose |
+|-------|-----------|---------|
+| Frontend | React 18 + TypeScript + Vite | Author workspace SPA |
+| Backend | FastAPI (async) | REST API, SSE streaming, dependency injection |
+| Workflow | LangGraph StateGraph | Chapter production pipeline orchestration |
+| LLM | Stub / OpenAI-compatible | Pluggable LLM providers with retry and budget |
+| Database | SQLite + WAL | Project storage, workflow checkpoints |
+| CLI | Python entry point | Automation, batch ops, diagnostics |
 
-## Requirements
+## Quick Start
+
+### Prerequisites
 
 - Python 3.9+
 - Node.js 18+
 - npm
 
-Optional but recommended:
+Optional: [`uv`](https://github.com/astral-sh/uv) for reproducible Python dependency management via `uv.lock`.
 
-- `uv` for reproducible Python dependency management via `uv.lock`
-
-## Setup
-
-Install Python package and dependencies:
+### Installation
 
 ```bash
+# Clone the repository
+git clone https://github.com/<your-org>/novelos.git
+cd novelos
+
+# Install Python package
 python3 -m pip install -e .
-```
 
-Install frontend dependencies:
+# Install frontend dependencies
+cd frontend && npm install && cd ..
 
-```bash
-cd frontend
-npm install
-```
-
-Initialize a local database:
-
-```bash
+# Initialize a local database
 novelos init-db --db-path acceptance_novel_factory.db
 ```
 
-## Run Locally
-
-Use the service helper for day-to-day development:
+### Launch
 
 ```bash
-scripts/novelos-service.sh start      # start API + WebUI
-scripts/novelos-service.sh stop       # stop API + WebUI
-scripts/novelos-service.sh restart    # restart API + WebUI
-scripts/novelos-service.sh status     # show service status
-scripts/novelos-service.sh logs       # show recent logs
+# Start API + WebUI together (recommended)
+scripts/novelos-service.sh start
 ```
 
-By default it uses `acceptance_novel_factory.db`, `config/local.yaml`, `LLM_MODE=real`, API port `8765`, and WebUI port `5173`.
-Override with environment variables, for example:
+| Service | URL | Notes |
+|---------|-----|-------|
+| WebUI | http://127.0.0.1:5173 | Author workspace |
+| API Server | http://127.0.0.1:8765 | FastAPI backend |
+| API Docs | http://127.0.0.1:8765/docs | Swagger UI |
+
+Override defaults with environment variables:
 
 ```bash
-LLM_MODE=stub scripts/novelos-service.sh restart api
-WEB_PORT=5174 scripts/novelos-service.sh start web
+LLM_MODE=stub scripts/novelos-service.sh restart api   # switch to stub mode
+WEB_PORT=5174 scripts/novelos-service.sh start web      # custom WebUI port
 ```
 
-Start the API server in demo mode:
+### Manual Launch
+
+Start the API server independently:
 
 ```bash
 novelos api \
@@ -89,28 +131,22 @@ novelos api \
   --llm-mode stub
 ```
 
-Start the frontend:
+Start the frontend independently:
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-Open:
+## CLI Reference
 
-```text
-http://127.0.0.1:5173
-```
-
-## Common CLI Commands
-
-Create demo data:
+Seed demo data:
 
 ```bash
 novelos --db-path acceptance_novel_factory.db seed-demo --project-id demo
 ```
 
-Generate a chapter in demo mode:
+Generate a chapter (stub mode):
 
 ```bash
 novelos --db-path acceptance_novel_factory.db run-chapter \
@@ -143,30 +179,36 @@ Validate configuration:
 novelos --config config/local.yaml config validate --json
 ```
 
-## Real LLM Mode
+## Configuration
 
-Real mode uses OpenAI-compatible providers. Novelos never needs raw API keys in YAML; keep secrets in OS environment variables or the project-root `.env` file.
+### LLM Modes
 
-Environment loading priority:
+| Mode | Use Case | API Calls |
+|------|----------|-----------|
+| `stub` | Local demos, testing, development | None — deterministic output |
+| `real` | Production generation with real LLM | Paid — requires API key |
 
-1. OS environment variables
-2. Project-root `.env`
-3. YAML defaults
+### Environment Variables
 
-Create or edit `.env`:
+Novelos reads secrets from OS environment variables or a project-root `.env` file (already gitignored).
+
+Priority: OS env > `.env` > YAML defaults.
 
 ```bash
+# OpenAI
 OPENAI_API_KEY=your-api-key
 OPENAI_BASE_URL=https://api.openai.com/v1
 
-# Optional alternatives:
-OPENROUTER_API_KEY=your-openrouter-key
+# Alternatives
+OPENROUTER_API_KEY=your-key
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-DEEPSEEK_API_KEY=your-deepseek-key
+DEEPSEEK_API_KEY=your-key
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 ```
 
-Create a local config file, for example `config/local.yaml`:
+### YAML Config
+
+Create `config/local.yaml`:
 
 ```yaml
 db_path: ./acceptance_real_novel_factory.db
@@ -178,13 +220,11 @@ llm_profiles:
     base_url_env: OPENAI_BASE_URL
     api_key_env: OPENAI_API_KEY
     model: gpt-4o-mini
-
   author:
     provider: openai_compatible
     base_url_env: OPENAI_BASE_URL
     api_key_env: OPENAI_API_KEY
     model: gpt-4o-mini
-
   editor:
     provider: openai_compatible
     base_url_env: OPENAI_BASE_URL
@@ -202,88 +242,56 @@ agent_llm:
   architect: default
 ```
 
-For OpenRouter or DeepSeek, keep the same shape and change the env var names and model:
-
-```yaml
-llm_profiles:
-  default:
-    provider: openai_compatible
-    base_url_env: OPENROUTER_BASE_URL
-    api_key_env: OPENROUTER_API_KEY
-    model: openai/gpt-4o-mini
-```
-
-Validate the configuration before starting real generation:
+Validate before running real generation:
 
 ```bash
 novelos --config config/local.yaml --llm-mode real config validate --json
 ```
 
-If the `novelos` command is not installed yet, use the source entry:
-
-```bash
-python3 -m novel_factory.cli --config config/local.yaml --llm-mode real config validate --json
-```
-
-Start the API in real mode:
-
-```bash
-novelos api \
-  --host 127.0.0.1 \
-  --port 8765 \
-  --db-path acceptance_real_novel_factory.db \
-  --config config/local.yaml \
-  --llm-mode real
-```
-
-Generate a chapter from the CLI in real mode:
-
-```bash
-novelos --config config/local.yaml --llm-mode real run-chapter \
-  --project-id demo \
-  --chapter 1 \
-  --json
-```
-
-Real mode makes paid API calls. Start with a small test project and confirm the model, base URL, and key are correct before running longer workflows.
-
-Do not commit real API keys. `.env` is ignored by Git.
+> **Warning:** Real mode makes paid API calls. Test with a small project first. Never commit real API keys.
 
 ## Testing
 
-Run the full Python test suite:
+### Python Backend
 
 ```bash
 python3 -m pytest -q
 ```
 
-Run frontend checks:
+### Frontend
 
 ```bash
 cd frontend
 npm run typecheck
 npm run lint
 npm run build
+npm run test
+```
+
+### Current Baseline
+
+```text
+pytest:      1828/1828 passed
+typecheck:   passed
+lint:        passed
+build:       passed
+vitest:      46/46 passed
 ```
 
 ## Documentation
 
-Primary project planning documentation lives under:
-
-```text
-docs/codex/
-```
+Primary project planning and version documentation lives under `docs/codex/`.
 
 Start with:
 
-- `docs/codex/README.md`
-- `docs/codex/novel-factory-roadmap.md`
+- [`docs/codex/README.md`](docs/codex/README.md) — Documentation index
+- [`docs/codex/novel-factory-roadmap.md`](docs/codex/novel-factory-roadmap.md) — Product roadmap
 
 ## Repository Notes
 
-- `openclaw-agents/` is treated as a local-only legacy workspace and is ignored by Git.
-- Local SQLite databases, WAL files, build output, Python caches, and frontend dependencies are ignored.
-- `uv.lock` is committed for reproducibility.
+- `openclaw-agents/` is a local-only legacy workspace, ignored by Git.
+- SQLite databases, WAL files, build output, Python caches, and `node_modules` are gitignored.
+- `uv.lock` is committed for reproducible dependency resolution.
 
 ## License
 

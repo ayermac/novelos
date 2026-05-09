@@ -1,110 +1,127 @@
+<div align="center">
+
 # Novelos
 
-面向长篇小说创作的 AI 生产工作台。
+**AI 驱动的长篇小说生产工作台**
 
-Novelos 将 FastAPI 后端、LangGraph 章节工作流、SQLite 项目存储、React 作者工作台和 CLI 工具整合在一起，用于章节生成、审核、风格管理、项目上下文维护和运行诊断。
+[English](README.md) | 中文
 
-当前基线：**v5.5.12 LLM Runtime Reliability & Cost Guardrails**，已验证 **1828/1828 pytest 通过**，前端 TypeScript 检查、lint、生产构建和 vitest 通过。
+[![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
+[![React](https://img.shields.io/badge/React-18+-61DAFB?logo=react&logoColor=black)](https://react.dev/)
+[![Vite](https://img.shields.io/badge/Vite-5+-646CFF?logo=vite&logoColor=white)](https://vitejs.dev/)
+[![LangGraph](https://img.shields.io/badge/LangGraph-Workflow-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
+[![SQLite](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5+-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
 
-**近期已实现能力**：
+面向长篇小说创作的端到端 AI 生产工作台：规划故事弧线、通过 LangGraph 流水线生成章节、审校润色文稿、管理项目上下文 —— 同时支持 CLI 和 Web 工作台。
 
-- v5.3.0 可信生成链路：上下文完整性门禁、Planner 必经路由、字数硬质量门、真实模式人工发布闸门。
-- v5.3.1 项目级作者工作台（部分）：项目模块导航、世界观/角色/势力/大纲/伏笔/章节指令 CRUD、项目上下文状态、章节重置/删除。
-- v5.3.2 项目创世与记忆循环（部分）：创世生成/批准/拒绝、记忆更新批次、事实账本 CRUD 与事件。
-- v5.3.3-v5.3.4 Skill 可视化与测试台：Skill 列表、挂载关系、配置验证、fixtures 测试、手动试运行。
-- v5.3.5 记忆可靠性：结构化字段应用、失败原因可见、失败项重试、批次状态重算。
-- v5.4.0-v5.4.13 WebUI 重构：ProjectShell 分组导航、章节工作区拆分、Settings Console 拆分、Attention Panel、Agent Skill Matrix、视觉 QA polish、Agent Skill Configuration Console、文件夹导入桥、启用状态管理与安全审查、挂载引导、项目级 Skill 覆盖层。
-- v5.5.0 运行恢复控制台：Run Detail 恢复状态、retry/checkpoint 可见、安全 reset、run 级 audit。
-- v5.5.1 卡住运行检测：running 超时识别、run-scoped running task 可见、标记阻塞、system recovery audit。
-- v5.5.2 运行健康面板：全局异常运行总览、项目过滤、批量 mark-stuck、部分失败可见。
-- v5.5.3 自主生产循环：项目工作台「下一步生产动作」、AI 自动补齐缺失资料、章节批次规划 Arc Plan、创世重新定位为「一次性项目初始化」。
-- v5.5.4 真实 LLM 自主规划：real-mode 配置错误显式化（LLM_CONFIG_MISSING）、auto-fill 只补缺失类型（missing_types 约束）、arc-plan 章节范围幂等保护。
-- v5.5.5 自主生产运行器：自动执行生产步骤、可配置步数限制、dry-run 预览、安全防护（禁止自动发布）、前端自动生产控制台。
-- v5.5.6 生产指挥台 UI 刷新：合并「下一步生产动作」与「自动生产控制台」为单一主面板、中文状态映射、步骤时间线、错误详情显示、紧凑布局。
-- v5.5.7 实时监控/streaming UI：后端新增 SSE endpoint `/production/run-auto/stream`，前端使用 EventSource 实时追加步骤时间线、显示 running 状态、支持停止监听（仅关闭前端 stream，不取消后端执行），不改变自动生产安全语义。
-- v5.5.8 自动生产控制循环：session 持久化（auto_run_sessions/steps）、start/cancel/pause/resume/retry-step 控制接口、协作式 pause/cancel（generator 在检查点停住）、前端显示暂停/取消/继续按钮和历史列表。
-- v5.5.9 自动生产恢复闭环：刷新后通过 active-session 端点恢复 running/paused session、SSE 断线后标记 paused 并支持重新接入、resume 时自动扩展 max_steps、session 持久化 last_event、步骤时间线中 failed step 支持精准重试。
-- v5.5.10 有界自动生产护栏：自动生产入口收敛（单一入口 + dry-run 开关）、预算状态面板（步数进度、章节范围、停止原因）、空转检测（连续无进展停机）、重复失败检测（同一动作/章节连续失败上限）、session 历史清理能力。
-- v5.5.11 作者中心工作台重置：项目导航重组（作者任务/小说设定/系统状态分组）、今日生产面板、阻塞复盘卡、工作流启动可见性、记忆收件箱合并视图、前端测试基线。
-- v5.5.12 LLM 运行可靠性与成本护栏：LLM 限流/超时指数退避、单章/项目/自动生产 token 预算、超预算显式停机、章节重置时作废旧 running workflow run。
-- v5.5.13 宽屏作者工作台 IA 修复：统一技术状态→中文标签映射、Overview ≥1440px 双栏布局、RunDetail 侧栏替换 ContextSidebar、CTA 消歧（查看实时进度/重新接入/继续生产）、全书/批次进度拆分、技术状态隐藏。
+[功能特性](#功能特性) | [架构概览](#架构概览) | [快速开始](#快速开始) | [CLI 参考](#cli-参考) | [配置说明](#配置说明) | [测试](#测试) | [文档](#文档)
 
-## 功能概览
+</div>
 
-- 创建和管理小说项目、章节、世界观、角色和大纲。
-- 使用 LangGraph 工作流执行章节生产。
-- 支持本地演示用的 stub 模式，以及 OpenAI 兼容接口的 real 模式。
-- 记录工作流运行、Agent 产物、Token 用量、错误和审核状态。
-- 提供 React 作者工作台，用于日常创作、章节阅读和项目上下文编辑。
-- 保留 CLI 能力，用于自动化、批量生产、审核、风格工具和诊断。
+---
 
-## 项目结构
+## 功能特性
 
-```text
-frontend/              React + Vite 作者工作台
-novel_factory/api/     FastAPI 应用、路由依赖、API 模型
-novel_factory/db/      SQLite schema、迁移、Repository
-novel_factory/workflow LangGraph 章节工作流与 checkpoint
-novel_factory/llm/     Stub 与 OpenAI 兼容 LLM Provider
-novel_factory/cli_app/ CLI 命令实现
-tests/                 Python 回归测试与版本验收测试
-docs/codex/            产品规格、路线图和版本历史
+- **章节生产流水线** — LangGraph 工作流，包含 planner、screenwriter、author、polisher、editor、publisher 节点
+- **项目上下文管理** — 世界观、角色、势力、大纲、伏笔、章节指令的完整 CRUD
+- **双 LLM 模式** — Stub 模式用于本地开发和演示；Real 模式支持 OpenAI 兼容供应商（OpenAI、OpenRouter、DeepSeek）
+- **作者工作台** — React + Vite Web UI，用于日常创作、章节浏览和项目上下文编辑
+- **自主生产循环** — AI 驱动的批量章节生成，支持逐步控制、暂停/恢复、预算护栏
+- **Token 预算护栏** — 单章/项目/自动生产 session 级 token 上限，超预算显式停机
+- **LLM 可靠性** — 限流和超时指数退避重试，retry/timeout 参数可配置
+- **工作流可观测性** — 运行追踪、产物日志、Token 用量、错误状态、审核记录
+- **CLI 工具集** — 自动化、批量操作、审核工具、风格工具、配置校验、诊断
+- **一键启动** — 服务脚本统一启动/停止 API + WebUI
+
+## 架构概览
+
+```
+                        ┌──────────────────────┐
+                        │   作者工作台          │
+                        │   React + Vite SPA   │
+                        └──────────┬───────────┘
+                                   │ REST / SSE
+                        ┌──────────▼───────────┐
+                        │     FastAPI 服务      │
+                        │   路由 / 服务层       │
+                        └───┬────────┬────┬─────┘
+                            │        │    │
+               ┌────────────┘        │    └────────────┐
+               ▼                     ▼                 ▼
+    ┌──────────────────┐  ┌──────────────────┐  ┌─────────────┐
+    │  LangGraph       │  │   LLM Provider   │  │    CLI      │
+    │  章节工作流       │  │  Stub / OpenAI   │  │   工具集    │
+    │  (StateGraph)    │  │  兼容接口        │  │             │
+    └────────┬─────────┘  └──────────────────┘  └─────────────┘
+             │
+    ┌────────▼─────────┐
+    │   SQLite + WAL   │
+    │  项目、运行、     │
+    │  章节等数据       │
+    └──────────────────┘
 ```
 
-当前主生产路径已经切到 LangGraph。`Dispatcher` 和 `dispatch/` 仍作为兼容路径保留，用于旧 CLI 能力和历史工作流。
+| 层级 | 技术栈 | 用途 |
+|------|-------|------|
+| 前端 | React 18 + TypeScript + Vite | 作者工作台 SPA |
+| 后端 | FastAPI (async) | REST API、SSE 流式推送、依赖注入 |
+| 工作流 | LangGraph StateGraph | 章节生产流水线编排 |
+| LLM | Stub / OpenAI 兼容 | 可插拔 LLM Provider，内置重试和预算 |
+| 数据库 | SQLite + WAL | 项目存储、工作流 checkpoint |
+| CLI | Python 入口 | 自动化、批量操作、诊断 |
 
-## 环境要求
+## 快速开始
+
+### 环境要求
 
 - Python 3.9+
 - Node.js 18+
 - npm
 
-可选但推荐：
+可选：[`uv`](https://github.com/astral-sh/uv) 用于通过 `uv.lock` 实现可复现的 Python 依赖管理。
 
-- `uv`：通过 `uv.lock` 获得更稳定的 Python 依赖复现。
-
-## 安装
-
-安装 Python 包和依赖：
+### 安装
 
 ```bash
+# 克隆仓库
+git clone https://github.com/<your-org>/novelos.git
+cd novelos
+
+# 安装 Python 包
 python3 -m pip install -e .
-```
 
-安装前端依赖：
+# 安装前端依赖
+cd frontend && npm install && cd ..
 
-```bash
-cd frontend
-npm install
-```
-
-初始化本地数据库：
-
-```bash
+# 初始化本地数据库
 novelos init-db --db-path acceptance_novel_factory.db
 ```
 
-## 本地运行
-
-日常开发建议使用服务脚本：
+### 启动
 
 ```bash
-scripts/novelos-service.sh start      # 启动 API + WebUI
-scripts/novelos-service.sh stop       # 停止 API + WebUI
-scripts/novelos-service.sh restart    # 重启 API + WebUI
-scripts/novelos-service.sh status     # 查看服务状态
-scripts/novelos-service.sh logs       # 查看最近日志
+# 一键启动 API + WebUI（推荐）
+scripts/novelos-service.sh start
 ```
 
-默认使用 `acceptance_novel_factory.db`、`config/local.yaml`、`LLM_MODE=real`、API 端口 `8765` 和 WebUI 端口 `5173`。
-可以用环境变量覆盖，例如：
+| 服务 | URL | 说明 |
+|------|-----|------|
+| WebUI | http://127.0.0.1:5173 | 作者工作台 |
+| API 服务 | http://127.0.0.1:8765 | FastAPI 后端 |
+| API 文档 | http://127.0.0.1:8765/docs | Swagger UI |
+
+通过环境变量覆盖默认值：
 
 ```bash
-LLM_MODE=stub scripts/novelos-service.sh restart api
-WEB_PORT=5174 scripts/novelos-service.sh start web
+LLM_MODE=stub scripts/novelos-service.sh restart api   # 切换到 stub 模式
+WEB_PORT=5174 scripts/novelos-service.sh start web      # 自定义 WebUI 端口
 ```
 
-以演示模式启动 API：
+### 手动启动
+
+单独启动 API 服务：
 
 ```bash
 novelos api \
@@ -114,20 +131,14 @@ novelos api \
   --llm-mode stub
 ```
 
-启动前端：
+单独启动前端：
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-浏览器打开：
-
-```text
-http://127.0.0.1:5173
-```
-
-## 常用 CLI 命令
+## CLI 参考
 
 创建演示数据：
 
@@ -135,7 +146,7 @@ http://127.0.0.1:5173
 novelos --db-path acceptance_novel_factory.db seed-demo --project-id demo
 ```
 
-用演示模式生成章节：
+用 stub 模式生成章节：
 
 ```bash
 novelos --db-path acceptance_novel_factory.db run-chapter \
@@ -168,30 +179,36 @@ novelos --db-path acceptance_novel_factory.db runs \
 novelos --config config/local.yaml config validate --json
 ```
 
-## 真实 LLM 模式
+## 配置说明
 
-真实模式使用 OpenAI 兼容 Provider。Novelos 不要求把真实 API Key 写进 YAML；建议把密钥放在系统环境变量或项目根目录的 `.env` 文件中。
+### LLM 模式
 
-环境变量读取优先级：
+| 模式 | 用途 | API 调用 |
+|------|------|---------|
+| `stub` | 本地演示、测试、开发 | 无 — 确定性输出 |
+| `real` | 使用真实 LLM 生产生成 | 付费 — 需要 API Key |
 
-1. 系统环境变量
-2. 项目根目录 `.env`
-3. YAML 默认值
+### 环境变量
 
-创建或编辑 `.env`：
+Novelos 从系统环境变量或项目根目录的 `.env` 文件读取密钥（已被 Git 忽略）。
+
+优先级：系统环境变量 > `.env` > YAML 默认值。
 
 ```bash
+# OpenAI
 OPENAI_API_KEY=your-api-key
 OPENAI_BASE_URL=https://api.openai.com/v1
 
-# 可选供应商：
-OPENROUTER_API_KEY=your-openrouter-key
+# 可选供应商
+OPENROUTER_API_KEY=your-key
 OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-DEEPSEEK_API_KEY=your-deepseek-key
+DEEPSEEK_API_KEY=your-key
 DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 ```
 
-创建本地配置文件，例如 `config/local.yaml`：
+### YAML 配置
+
+创建 `config/local.yaml`：
 
 ```yaml
 db_path: ./acceptance_real_novel_factory.db
@@ -203,13 +220,11 @@ llm_profiles:
     base_url_env: OPENAI_BASE_URL
     api_key_env: OPENAI_API_KEY
     model: gpt-4o-mini
-
   author:
     provider: openai_compatible
     base_url_env: OPENAI_BASE_URL
     api_key_env: OPENAI_API_KEY
     model: gpt-4o-mini
-
   editor:
     provider: openai_compatible
     base_url_env: OPENAI_BASE_URL
@@ -227,113 +242,57 @@ agent_llm:
   architect: default
 ```
 
-如果使用 OpenRouter 或 DeepSeek，结构保持一致，只需要替换环境变量名和模型名：
-
-```yaml
-llm_profiles:
-  default:
-    provider: openai_compatible
-    base_url_env: OPENROUTER_BASE_URL
-    api_key_env: OPENROUTER_API_KEY
-    model: openai/gpt-4o-mini
-```
-
 启动真实生成前，先校验配置：
 
 ```bash
 novelos --config config/local.yaml --llm-mode real config validate --json
 ```
 
-如果还没有安装 `novelos` 命令，可以使用源码入口：
-
-```bash
-python3 -m novel_factory.cli --config config/local.yaml --llm-mode real config validate --json
-```
-
-启动真实模式 API：
-
-```bash
-novelos api \
-  --host 127.0.0.1 \
-  --port 8765 \
-  --db-path acceptance_real_novel_factory.db \
-  --config config/local.yaml \
-  --llm-mode real
-```
-
-使用 CLI 真实生成章节：
-
-```bash
-novelos --config config/local.yaml --llm-mode real run-chapter \
-  --project-id demo \
-  --chapter 1 \
-  --json
-```
-
-真实模式会产生 API 费用。建议先用小项目测试，确认模型、Base URL 和 API Key 都正确，再运行长流程。
-
-不要提交真实 API Key。`.env` 已被 Git 忽略。
+> **注意：** Real 模式会产生 API 费用。建议先用小项目测试，确认模型、Base URL 和 API Key 都正确。不要提交真实 API Key。
 
 ## 测试
 
-运行完整 Python 测试：
+### Python 后端
 
 ```bash
 python3 -m pytest -q
 ```
 
-运行 v5.2 专项验收测试：
-
-```bash
-python3 -m pytest \
-  tests/test_v52_phase_a.py \
-  tests/test_v52_phase_b.py \
-  tests/test_v52_phase_c.py \
-  tests/test_v52_phase_d.py \
-  -q
-```
-
-运行前端检查：
+### 前端
 
 ```bash
 cd frontend
 npm run typecheck
 npm run lint
 npm run build
+npm run test
 ```
 
-当前已验证基线：
+### 当前基线
 
 ```text
-pytest: 1828/1828 passed（含 v5.5.9 专项 12 passed、v5.5.10 专项 8 passed、v5.5.11 专项 15 passed、v5.5.12 专项 4 passed）
-frontend typecheck: passed
-frontend lint: passed
-frontend build: passed
-frontend vitest: 15/15 passed
+pytest:      1828/1828 passed
+typecheck:   passed
+lint:        passed
+build:       passed
+vitest:      46/46 passed
 ```
 
 ## 文档
 
-主要产品规划和版本文档位于：
-
-```text
-docs/codex/
-```
+主要产品规划和版本文档位于 `docs/codex/`。
 
 建议优先阅读：
 
-- `docs/codex/README.md`
-- `docs/codex/novel-factory-roadmap.md`
-- `docs/codex/novel-factory-v5.5.10-bounded-autonomy-guardrails-spec.md`
-- `docs/codex/novel-factory-v5.5.11-author-centric-workspace-reset-spec.md`
-- `docs/codex/novel-factory-v5.5.12-llm-runtime-reliability-cost-guardrails-spec.md`
+- [`docs/codex/README.md`](docs/codex/README.md) — 文档索引
+- [`docs/codex/novel-factory-roadmap.md`](docs/codex/novel-factory-roadmap.md) — 产品路线图
 
 ## 仓库说明
 
 - `openclaw-agents/` 是仅保留在本地的旧 Agent 工作区，已被 Git 忽略。
-- 本地 SQLite 数据库、WAL 文件、构建产物、Python 缓存和前端依赖目录都已忽略。
-- `uv.lock` 已提交，用于依赖复现。
+- 本地 SQLite 数据库、WAL 文件、构建产物、Python 缓存和 `node_modules` 都已忽略。
+- `uv.lock` 已提交，用于可复现的依赖解析。
 
-## License
+## 许可证
 
-当前仓库尚未包含 License 文件。
+当前仓库尚未包含许可证文件。
