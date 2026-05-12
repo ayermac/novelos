@@ -24,6 +24,8 @@ export default function ProjectShell({
   onModuleChange,
   children,
 }: ProjectShellProps) {
+  const isWorkbench = activeModule === 'chapters' || activeModule === 'overview'
+
   return (
     <div className="project-shell">
       <ProjectHeader
@@ -34,7 +36,12 @@ export default function ProjectShell({
         isStub={isStub}
       />
       <div className="project-shell-body">
-        <ProjectSideNav activeModule={activeModule} onModuleChange={onModuleChange} />
+        {/* v5.6: Side nav becomes a compact secondary panel when workbench is active */}
+        <ProjectSideNav
+          activeModule={activeModule}
+          onModuleChange={onModuleChange}
+          compact={isWorkbench}
+        />
         <main className="project-shell-main">
           {children}
         </main>

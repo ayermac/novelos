@@ -70,9 +70,10 @@ const MODULE_GROUPS: ModuleGroup[] = [
 interface ProjectSideNavProps {
   activeModule: ProjectModule
   onModuleChange: (module: ProjectModule) => void
+  compact?: boolean
 }
 
-export default function ProjectSideNav({ activeModule, onModuleChange }: ProjectSideNavProps) {
+export default function ProjectSideNav({ activeModule, onModuleChange, compact }: ProjectSideNavProps) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => {
     const initial = new Set<string>()
     for (const group of MODULE_GROUPS) {
@@ -96,7 +97,20 @@ export default function ProjectSideNav({ activeModule, onModuleChange }: Project
     group.items.some((item) => item.key === activeModule)
 
   return (
-    <nav className="project-side-nav" aria-label="项目导航">
+    <nav className={`project-side-nav${compact ? ' project-side-nav--compact' : ''}`} aria-label="项目导航">
+      {compact && (
+        <div className="project-side-nav-compact-header">
+          <button
+            type="button"
+            className={`project-side-nav-item${activeModule === 'chapters' || activeModule === 'overview' ? ' active' : ''}`}
+            onClick={() => onModuleChange('chapters')}
+            title="工作台"
+          >
+            <LayoutDashboard size={16} />
+            <span>工作台</span>
+          </button>
+        </div>
+      )}
       {MODULE_GROUPS.map((group) => {
         const collapsed = collapsedGroups.has(group.label) && !isGroupActive(group)
         return (
@@ -137,6 +151,42 @@ export default function ProjectSideNav({ activeModule, onModuleChange }: Project
           </section>
         )
       })}
+      {compact && (
+        <style>{`
+          .project-side-nav--compact {
+            width: 56px !important;
+            padding: 8px 4px !important;
+          }
+          .project-side-nav--compact .project-side-nav-group {
+            display: none;
+          }
+          .project-side-nav--compact .project-side-nav-compact-header {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+          }
+          .project-side-nav--compact .project-side-nav-item {
+            padding: 8px;
+            justify-content: center;
+          }
+          .project-side-nav--compact .project-side-nav-item span {
+            display: none;
+          }
+          @media (max-width: 768px) {
+            .project-side-nav--compact {
+              width: 100% !important;
+              flex-direction: row;
+              padding: 8px 12px !important;
+            }
+            .project-side-nav--compact .project-side-nav-compact-header {
+              flex-direction: row;
+            }
+            .project-side-nav--compact .project-side-nav-item span {
+              display: inline;
+            }
+          }
+        `}</style>
+      )}
     </nav>
   )
 }

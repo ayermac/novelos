@@ -1,0 +1,213 @@
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen } from '@testing-library/react'
+import AuthorWorkbench from '../AuthorWorkbench'
+
+// Mock API
+vi.mock('../../../lib/api', () => ({
+  get: vi.fn().mockResolvedValue({ ok: true, data: null }),
+  post: vi.fn().mockResolvedValue({ ok: true, data: null }),
+}))
+
+// Mock react-router-dom
+vi.mock('react-router-dom', () => ({
+  Link: ({ children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement> & { children: React.ReactNode }) => (
+    <a {...props}>{children}</a>
+  ),
+  useNavigate: () => vi.fn(),
+}))
+
+const baseProps = {
+  activeTab: 'content' as const,
+  chapterDetail: null,
+  chapterLoading: false,
+  chapters: [
+    { chapter_number: 1, status: 'published', word_count: 5000, title: '第一章' },
+    { chapter_number: 2, status: 'reviewed', word_count: 4200, title: '第二章' },
+    { chapter_number: 3, status: 'drafted', word_count: 3800, title: '第三章' },
+    { chapter_number: 4, status: 'planned', word_count: 0, title: '第四章' },
+  ],
+  currentChapter: 3,
+  currentChapterRecord: { chapter_number: 3, status: 'drafted', word_count: 3800, title: '第三章' },
+  genError: '',
+  genErrorDetails: null,
+  isLaunching: false,
+  isStub: true,
+  isStreaming: false,
+  isWorkflowRunning: false,
+  llmMode: 'stub',
+  projectId: 'test-proj',
+  runDetail: null,
+  runsForChapter: [],
+  sseSteps: {},
+  onGenerate: vi.fn(),
+  onGenerateNext: vi.fn(),
+  onPublish: vi.fn(),
+  onSelectChapter: vi.fn(),
+  onTabChange: vi.fn(),
+  onViewContent: vi.fn(),
+  onViewWorkflow: vi.fn(),
+}
+
+describe('AuthorWorkbench', () => {
+  it('renders three zones: chapter rail, writing surface, agent panel', () => {
+    render(<AuthorWorkbench {...baseProps} />)
+    expect(screen.getByLabelText('章节导航')).toBeInTheDocument()
+    expect(screen.getByLabelText('写作区')).toBeInTheDocument()
+    expect(screen.getByLabelText('AI 助手面板')).toBeInTheDocument()
+  })
+
+  it('highlights current chapter in rail', () => {
+    render(<AuthorWorkbench {...baseProps} />)
+    const items = screen.getAllByRole('button')
+    const current = items.find((b) => b.classList.contains('active'))
+    expect(current).toBeDefined()
+    expect(current?.textContent).toContain('第三章')
+  })
+
+  it('shows chapter progress in rail', () => {
+    render(<AuthorWorkbench {...baseProps} />)
+    expect(screen.getByText('1/4')).toBeInTheDocument()
+    expect(screen.getByText('25%')).toBeInTheDocument()
+  })
+
+  it('shows generate button for drafted chapter', () => {
+    render(<AuthorWorkbench {...baseProps} />)
+    expect(screen.getAllByRole('button', { name: /生成本章/ }).length).toBeGreaterThan(0)
+  })
+
+  it('does not show generate button for published chapter', () => {
+    render(<AuthorWorkbench {...baseProps} currentChapter={1} currentChapterRecord={baseProps.chapters[0]} />)
+    expect(screen.queryAllByRole('button', { name: /生成本章/ })).toHaveLength(0)
+  })
+
+  it('does not show generate button for reviewed chapter in real mode', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        currentChapter={2}
+        currentChapterRecord={baseProps.chapters[1]}
+        llmMode="real"
+      />
+    )
+    expect(screen.queryAllByRole('button', { name: /生成本章/ })).toHaveLength(0)
+  })
+
+  it('shows publish button for reviewed + real mode', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        currentChapter={2}
+        currentChapterRecord={baseProps.chapters[1]}
+        llmMode="real"
+      />
+    )
+    expect(screen.getAllByRole('button', { name: /确认发布/ }).length).toBeGreaterThan(0)
+  })
+
+  it('shows generate-next button for published chapter', () => {
+    render(<AuthorWorkbench {...baseProps} currentChapter={1} currentChapterRecord={baseProps.chapters[0]} />)
+    expect(screen.getAllByRole('button', { name: /生成下一章/ }).length).toBeGreaterThan(0)
+  })
+
+  it('disables generate when workflow is running', () => {
+    render(<AuthorWorkbench {...baseProps} isWorkflowRunning />)
+    for (const btn of screen.getAllByRole('button', { name: /生成中/ })) {
+      expect(btn).toBeDisabled()
+    }
+  })
+
+  it('shows content tab by default', () => {
+    render(<AuthorWorkbench {...baseProps} />)
+    const contentTab = screen.getByRole('button', { name: '正文' })
+    expect(contentTab.classList.contains('active')).toBe(true)
+  })
+
+  it('renders empty state for planned chapter without content', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        currentChapter={4}
+        currentChapterRecord={baseProps.chapters[3]}
+      />
+    )
+    expect(screen.getByText('本章尚未生成')).toBeInTheDocument()
+  })
+
+  it('renders workflow timeline steps on workflow tab', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        runDetail={{
+          run_id: 'run-1',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'completed',
+          chapter_status: 'drafted',
+          current_node: 'author',
+          llm_mode: 'stub',
+          steps: [
+            {
+              key: 'screenwriter',
+              label: '编剧',
+              description: '完成分场',
+              status: 'completed',
+            },
+            {
+              key: 'author',
+              label: '执笔',
+              description: '完成正文',
+              status: 'completed',
+            },
+          ],
+        }}
+        runsForChapter={[{
+          run_id: 'run-1',
+          chapter_number: 3,
+          status: 'completed',
+          created_at: '2026-05-13T10:00:00',
+        }]}
+      />
+    )
+    expect(screen.getByText('编剧')).toBeInTheDocument()
+    expect(screen.getByText('完成分场')).toBeInTheDocument()
+    expect(screen.getByText('执笔')).toBeInTheDocument()
+    expect(screen.getByText('完成正文')).toBeInTheDocument()
+  })
+
+  it('labels long-running workflow as possibly stuck', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        runDetail={{
+          run_id: 'run-stale',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'running',
+          chapter_status: 'polished',
+          current_node: 'polisher',
+          llm_mode: 'real',
+          started_at: '2000-01-01 00:00:00',
+          steps: [
+            {
+              key: 'polisher',
+              label: '润色',
+              description: '优化文字表达',
+              status: 'running',
+            },
+          ],
+        }}
+        runsForChapter={[{
+          run_id: 'run-stale',
+          chapter_number: 3,
+          status: 'running',
+          created_at: '2000-01-01 00:00:00',
+        }]}
+        isWorkflowRunning
+      />
+    )
+    expect(screen.getByText('工作流疑似卡住')).toBeInTheDocument()
+    expect(screen.getAllByText(/超过卡住阈值 30 分钟/).length).toBeGreaterThan(0)
+  })
+})

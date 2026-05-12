@@ -15,7 +15,7 @@
 
 - **版本**: v5.5.15 Production Readiness Closure
 - **状态**: Review + 真实项目验收通过，项目进入短期收尾可用状态
-- **测试基线**: pytest 1841/1841 passed；vitest 67/67 passed；frontend typecheck/lint/build passed
+- **测试基线**: pytest 1844/1844 passed；vitest passed；frontend typecheck/lint/build passed
 - **完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 
@@ -32,6 +32,7 @@
 - 版本路线: [planning/novel-factory-roadmap.md](planning/novel-factory-roadmap.md)
 - API 规范: [planning/novel-factory-api-contract-guidelines.md](planning/novel-factory-api-contract-guidelines.md)
 - v5.5.15 规格: [planning/novel-factory-v5.5.15-production-readiness-closure-spec.md](planning/novel-factory-v5.5.15-production-readiness-closure-spec.md)
+- v5.6 WebUI 重构规格: [planning/novel-factory-v5.6-webui-author-workbench-rework-spec.md](planning/novel-factory-v5.6-webui-author-workbench-rework-spec.md)
 - 下一阶段方向: [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)
 
 ## 下一阶段方向

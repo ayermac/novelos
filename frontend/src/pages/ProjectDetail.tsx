@@ -6,7 +6,8 @@ import ErrorState from '../components/ErrorState'
 import { useSSEStream, SSEEvent, StepStatus } from '../hooks/useSSEStream'
 import type { ProjectModule } from '../components/project/ProjectModuleNav'
 import ProjectShell from '../components/project/ProjectShell'
-import ChapterWorkspace, { ChapterTabKey } from '../components/project/ChapterWorkspace'
+import AuthorWorkbench from '../components/project/AuthorWorkbench'
+import type { SurfaceTabKey } from '../components/project/AuthorWritingSurface'
 import WorldSettingsModule from '../components/project/WorldSettingsModule'
 import CharactersModule from '../components/project/CharactersModule'
 import FactionsModule from '../components/project/FactionsModule'
@@ -95,10 +96,12 @@ interface RunDetailData {
   chapter_status: string
   current_node?: string | null
   llm_mode: string
+  started_at?: string
+  completed_at?: string
   steps: Step[]
 }
 
-type TabKey = ChapterTabKey
+type TabKey = SurfaceTabKey
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>()
@@ -126,7 +129,7 @@ export default function ProjectDetail() {
   const streamingChapterRef = useRef<number | null>(null)
 
   const currentChapter = parseInt(searchParams.get('chapter') || '1', 10)
-  const activeModule: ProjectModule = (searchParams.get('module') as ProjectModule) || 'overview'
+  const activeModule: ProjectModule = (searchParams.get('module') as ProjectModule) || 'chapters'
   const requestedView = searchParams.get('view') as TabKey | null
   const requestedAutoGenerate = searchParams.get('auto_generate') === '1'
 
@@ -145,16 +148,16 @@ export default function ProjectDetail() {
     }
   }, [activeModule, requestedView])
 
-  // Set initial chapter
+  // Set initial chapter (default to workbench / chapters module)
   useEffect(() => {
     if (workspace && !searchParams.get('chapter') && workspace.chapters.length > 0) {
-      setSearchParams({ chapter: String(workspace.chapters[0].chapter_number), module: activeModule }, { replace: true })
+      setSearchParams({ chapter: String(workspace.chapters[0].chapter_number), module: 'chapters' }, { replace: true })
     }
   }, [workspace]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load chapter detail when chapter changes (only for chapters module)
+  // Load chapter detail when chapter changes (for workbench and chapters module)
   useEffect(() => {
-    if (!id || !currentChapter || activeModule !== 'chapters') return
+    if (!id || !currentChapter) return
     setChapterLoading(true)
     setChapterDetail(null)
     setRunDetail(null)
@@ -166,7 +169,7 @@ export default function ProjectDetail() {
       })
       .catch(() => setGenError('获取章节详情失败'))
       .finally(() => setChapterLoading(false))
-  }, [id, currentChapter, activeModule])
+  }, [id, currentChapter])
 
   const loadRunDetail = useCallback((runId: string) => {
     setRunDetail(null)
@@ -179,7 +182,6 @@ export default function ProjectDetail() {
   }, [])
 
   useEffect(() => {
-    if (activeModule !== 'chapters') return
     if (activeTab !== 'workflow' && activeTab !== 'artifacts') return
 
     const runsForCurrentChapter = (workspace?.recent_runs || [])
@@ -187,7 +189,7 @@ export default function ProjectDetail() {
     const latestRun = runsForCurrentChapter.length > 0 ? runsForCurrentChapter[0] : null
     if (latestRun) loadRunDetail(latestRun.run_id)
     else setRunDetail(null)
-  }, [activeModule, activeTab, currentChapter, workspace?.recent_runs, loadRunDetail])
+  }, [activeTab, currentChapter, workspace?.recent_runs, loadRunDetail])
 
   // SSE streaming hook for real-time generation progress
   const handleSSEComplete = useCallback((event: SSEEvent) => {
@@ -242,14 +244,13 @@ export default function ProjectDetail() {
   }, [sseHookSteps])
 
   const handleSelectChapter = (chapterNumber: number) => {
-    setSearchParams({ chapter: String(chapterNumber), module: 'chapters' }, { replace: true })
+    setSearchParams({ chapter: String(chapterNumber) }, { replace: true })
     setActiveTab('content')
   }
 
   const handleTabChange = (tab: TabKey) => {
     setActiveTab(tab)
     setSearchParams({
-      module: 'chapters',
       chapter: String(currentChapter),
       ...(tab === 'content' ? {} : { view: tab }),
     }, { replace: true })
@@ -276,7 +277,6 @@ export default function ProjectDetail() {
     setSseSteps({})
     setActiveTab('workflow')
     setSearchParams({
-      module: 'chapters',
       chapter: String(currentChapter),
       view: 'workflow',
     }, { replace: true })
@@ -287,7 +287,6 @@ export default function ProjectDetail() {
     loadRunDetail(runId)
     setActiveTab('workflow')
     setSearchParams({
-      module: 'chapters',
       chapter: String(currentChapter),
       view: 'workflow',
     }, { replace: true })
@@ -296,13 +295,11 @@ export default function ProjectDetail() {
   const handleViewContent = () => {
     setActiveTab('content')
     setSearchParams({
-      module: 'chapters',
       chapter: String(currentChapter),
     }, { replace: true })
   }
 
   useEffect(() => {
-    if (activeModule !== 'chapters') return
     if (requestedView !== 'workflow' || !requestedAutoGenerate) return
     if (!id || !workspace || generating || isStreaming) return
     // Guard: don't auto-generate if chapter already has a running workflow
@@ -311,30 +308,7 @@ export default function ProjectDetail() {
     )
     if (hasRunningRun) return
     handleGenerate()
-  }, [activeModule, requestedView, requestedAutoGenerate, id, generating, isStreaming, handleGenerate, workspace, currentChapter])
-
-  const handleResetChapter = async (chapterNumber: number) => {
-    if (!id) return
-    const res = await post<{
-      reset: boolean
-      previous_status: string
-      new_status: string
-      retry_count_before?: number
-      retry_count_after?: number
-      retries_cleared?: number
-    }>(
-      `/projects/${id}/chapters/${chapterNumber}/reset`
-    )
-    if (res.ok && res.data) {
-      refetchWorkspace()
-      get<ChapterDetail>(`/projects/${id}/chapters/${chapterNumber}`)
-        .then((r) => {
-          if (r.ok && r.data) setChapterDetail(r.data)
-        })
-    } else {
-      alert(res.error?.message || '重置章节失败')
-    }
-  }
+  }, [requestedView, requestedAutoGenerate, id, generating, isStreaming, handleGenerate, workspace, currentChapter])
 
   const handlePublish = useCallback(async () => {
     if (!id) return
@@ -349,7 +323,7 @@ export default function ProjectDetail() {
   const handleGenerateNext = useCallback(() => {
     if (!id) return
     const nextCh = currentChapter + 1
-    setSearchParams({ module: 'chapters', chapter: String(nextCh), view: 'workflow', auto_generate: '1' }, { replace: true })
+    setSearchParams({ chapter: String(nextCh), view: 'workflow', auto_generate: '1' }, { replace: true })
   }, [id, currentChapter, setSearchParams])
 
   const handleModuleChange = (module: ProjectModule) => {
@@ -377,9 +351,9 @@ export default function ProjectDetail() {
       isStub={isStub}
     >
       <div className="workspace-layout">
-      {activeModule === 'chapters' ? (
-        <ChapterWorkspace
-          activeTab={activeTab}
+      {activeModule === 'chapters' || activeModule === 'overview' ? (
+        <AuthorWorkbench
+          activeTab={activeTab as SurfaceTabKey}
           chapterDetail={chapterDetail}
           chapterLoading={chapterLoading}
           chapters={workspace.chapters}
@@ -399,7 +373,6 @@ export default function ProjectDetail() {
           onGenerate={handleGenerate}
           onGenerateNext={handleGenerateNext}
           onPublish={handlePublish}
-          onResetChapter={handleResetChapter}
           onSelectChapter={handleSelectChapter}
           onTabChange={handleTabChange}
           onViewContent={handleViewContent}
@@ -482,48 +455,29 @@ function ModuleRouter({
 function WorkspaceStyles() {
   return (
     <style>{`
-      .project-shell { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height)); margin: calc(-1 * var(--spacing-lg)); overflow: hidden; background: linear-gradient(180deg, #f8fbff 0%, #eef3f8 100%); width: calc(100% + (2 * var(--spacing-lg))); }
-      .project-header { min-height: 66px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 20px; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(12px); border-bottom: 1px solid rgba(15, 118, 110, 0.1); }
+      /* v5.6: Workbench layout styles moved to AuthorWorkbench.css */
+      .project-shell { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height)); margin: calc(-1 * var(--spacing-lg)); overflow: hidden; background: var(--paper-bg, #f6f8fb); width: calc(100% + (2 * var(--spacing-lg))); }
+      .project-header { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 20px; background: var(--paper-surface, #ffffff); border-bottom: 1px solid rgba(30, 58, 95, 0.08); }
       .project-header-main { display: flex; align-items: center; gap: 18px; min-width: 0; }
-      .project-header-back { color: var(--text-secondary); text-decoration: none; font-size: 13px; white-space: nowrap; padding: 6px 9px; border: 1px solid rgba(15, 118, 110, 0.12); border-radius: 8px; background: #ffffff; }
+      .project-header-back { color: var(--text-secondary); text-decoration: none; font-size: 13px; white-space: nowrap; padding: 6px 9px; border: 1px solid rgba(30, 58, 95, 0.1); border-radius: 6px; background: var(--paper-surface); }
       .project-header-back:hover { color: var(--primary); }
       .project-header-title { min-width: 0; }
-      .project-header h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary); line-height: 1.3; overflow-wrap: anywhere; }
+      .project-header h1 { margin: 0; font-size: 15px; font-weight: 600; color: var(--text-primary); line-height: 1.3; overflow-wrap: anywhere; }
       .project-header-meta { display: flex; gap: 12px; margin-top: 2px; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; }
       .project-shell-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-      .project-side-nav { width: 196px; flex-shrink: 0; overflow-y: auto; padding: 14px 10px; background: rgba(255, 255, 255, 0.82); border-right: 1px solid rgba(15, 118, 110, 0.1); }
-      .project-side-nav-group + .project-side-nav-group { margin-top: 18px; }
-      .project-side-nav-label { padding: 0 10px 6px; font-size: 11px; font-weight: 700; color: var(--text-muted); letter-spacing: 0; display: flex; align-items: center; justify-content: space-between; gap: 4px; }
-      .project-side-nav-label.collapsible { cursor: pointer; user-select: none; }
-      .project-side-nav-label.collapsible:hover { color: var(--text-secondary); }
-      .project-side-nav-items { display: flex; flex-direction: column; gap: 3px; }
-      .project-side-nav-item { width: 100%; min-height: 38px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s; }
-      .project-side-nav-item span { min-width: 0; overflow-wrap: anywhere; }
-      .project-side-nav-item:hover { background: #ffffff; color: var(--text-primary); border-color: rgba(15, 118, 110, 0.12); transform: translateX(1px); }
-      .project-side-nav-item:focus-visible { outline: 2px solid rgba(59, 130, 246, 0.45); outline-offset: 2px; }
-      .project-side-nav-item.active { background: rgba(20, 184, 166, 0.1); color: #0f766e; border-color: rgba(15, 118, 110, 0.2); font-weight: 600; }
       .project-shell-main { flex: 1; min-width: 0; width: 100%; overflow: hidden; }
       .workspace-layout { display: flex; flex-direction: column; height: 100%; overflow-x: hidden; width: 100%; box-sizing: border-box; }
       .ws-body { display: flex; flex: 1; overflow: hidden; min-width: 0; }
-      .ws-left { width: clamp(220px, 13vw, 300px); flex-shrink: 0; overflow-y: auto; }
-      .ws-center { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-      .ws-right { width: clamp(260px, 16vw, 360px); flex-shrink: 0; overflow-y: auto; }
       .ws-module-content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px 24px; max-width: 100%; min-width: 0; }
       @media (min-width: 1440px) {
-        .project-shell .ws-tab-content { padding: 20px 28px; }
         .project-shell .chapter-content-body { max-width: 860px; font-size: 17px; line-height: 2; }
       }
       @media (min-width: 1920px) {
         .project-shell .project-header { padding-left: 28px; padding-right: 28px; }
-        .project-shell .ws-left { width: clamp(260px, 12vw, 340px); }
-        .project-shell .ws-right { width: clamp(320px, 15vw, 420px); }
-        .project-shell .ws-tab-content { padding: 24px 36px; }
         .project-shell .chapter-content-body { max-width: 980px; }
         .project-shell .project-module { max-width: 1440px; }
       }
       @media (min-width: 2560px) {
-        .project-shell .ws-left { width: 360px; }
-        .project-shell .ws-right { width: 460px; }
         .project-shell .chapter-content-body { max-width: 1080px; }
         .project-shell .project-module { max-width: 1680px; }
       }
@@ -532,14 +486,7 @@ function WorkspaceStyles() {
         .project-header { align-items: flex-start; flex-direction: column; padding: 10px 14px; }
         .project-header-main { width: 100%; flex-wrap: wrap; gap: 8px; }
         .project-shell-body { flex-direction: column; min-width: 0; overflow-x: hidden; }
-        .project-side-nav { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; display: flex; gap: 14px; overflow-x: auto; overflow-y: hidden; padding: 10px 12px; border-right: none; border-bottom: 1px solid var(--border-color); }
-        .project-side-nav-group { min-width: max-content; }
-        .project-side-nav-group + .project-side-nav-group { margin-top: 0; }
-        .project-side-nav-items { flex-direction: row; }
-        .project-side-nav-item { width: auto; white-space: nowrap; }
         .ws-body { flex-direction: column; }
-        .ws-left { width: 100%; max-height: 200px; border-right: none; border-bottom: 1px solid var(--border-color); }
-        .ws-right { width: 100%; max-height: 200px; border-left: none; border-top: 1px solid var(--border-color); }
         .ws-module-content { padding: 16px; width: 100%; min-width: 0; }
         .data-grid { grid-template-columns: 1fr; }
         .project-module { max-width: 100%; min-width: 0; }
@@ -553,17 +500,6 @@ function WorkspaceStyles() {
       }
       @media (min-width: 1920px) { .project-overview-grid { grid-template-columns: 1fr 400px; } }
       @media (min-width: 2560px) { .project-overview-grid { grid-template-columns: 1fr 440px; } }
-      .ws-tabs { display: flex; border-bottom: 1px solid var(--border-color); background: var(--bg-primary); padding: 0 16px; }
-      .ws-tab { padding: 10px 16px; border: none; background: none; cursor: pointer; font-size: 14px; color: var(--text-secondary); border-bottom: 2px solid transparent; transition: all 0.15s; }
-      .ws-tab:hover { color: var(--text-primary); }
-      .ws-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
-      .ws-tab-disabled { color: var(--text-muted); cursor: default; }
-      .ws-tab-content { flex: 1; overflow-y: auto; padding: 16px; }
-      .empty-chapter { text-align: center; padding: 60px 20px; }
-      .empty-chapter-num { font-size: 24px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
-      .empty-chapter-title { font-size: 18px; color: var(--text-secondary); margin-bottom: 16px; }
-      .empty-chapter-hint { font-size: 16px; color: var(--text-secondary); margin-bottom: 8px; }
-      .empty-chapter-desc { font-size: 14px; color: var(--text-muted); }
       .chapter-meta { display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); }
       .chapter-content-title { font-size: 22px; font-weight: 600; margin-bottom: 24px; text-align: center; }
       .chapter-content-body { max-width: 720px; margin: 0 auto; font-size: 16px; line-height: 1.9; color: var(--text-primary); white-space: pre-wrap; word-break: break-word; }
