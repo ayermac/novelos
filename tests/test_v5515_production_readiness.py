@@ -353,3 +353,37 @@ def test_published_chapter_with_stale_workflow_contradiction():
     finally:
         if os.path.exists(db_path):
             os.unlink(db_path)
+
+
+def test_terminal_chapter_cannot_be_regenerated():
+    """POST /run/chapter must be rejected if the chapter is already in
+    a terminal state (reviewed / awaiting_publish / published)."""
+    client, repo, db_path = _client_with_repo()
+    try:
+        project_id = "v5515-terminal-guard"
+        repo.create_project(
+            project_id=project_id,
+            name="Terminal Guard Test",
+            genre="fantasy",
+            description="test",
+            target_words=30000,
+            total_chapters_planned=10,
+        )
+        # Test all three terminal statuses
+        for status in ("reviewed", "awaiting_publish", "published"):
+            ch_num = {"reviewed": 1, "awaiting_publish": 2, "published": 3}[status]
+            repo.add_chapter(project_id, ch_num, f"第{ch_num}章", status=status)
+
+        for status, ch_num in [("reviewed", 1), ("awaiting_publish", 2), ("published", 3)]:
+            resp = client.post("/api/run/chapter", json={
+                "project_id": project_id,
+                "chapter": ch_num,
+            })
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["ok"] is False, f"Expected error for {status} chapter {ch_num}"
+            assert data["error"]["code"] == "CHAPTER_ALREADY_COMPLETED"
+            assert "终态" in data["error"]["message"] or status in data["error"]["message"]
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)

@@ -80,4 +80,25 @@ describe('v5.5.15 production readiness closure', () => {
     // The ProductionHealthSummary interface should exist
     expect(content).toContain('ProductionHealthSummary')
   })
+
+  /* ---- 8. ChapterWorkspace respects terminal chapter status ---- */
+  it('ChapterWorkspace does not show generate for reviewed/awaiting_publish/published', () => {
+    const content = readFileSync(chapterPath, 'utf-8')
+    // The sidebar generate button has a guard that excludes reviewed,
+    // awaiting_publish, and published statuses
+    expect(content).toContain("'reviewed'")
+    expect(content).toContain("'awaiting_publish'")
+    expect(content).toContain("'published'")
+    // The generate button is only shown when status is NOT in these terminal states
+    expect(content).toMatch(/status\s*!==\s*['"]awaiting_publish['"]/)
+  })
+
+  /* ---- 9. Backend CHAPTER_ALREADY_COMPLETED error code ---- */
+  it('run.py contains CHAPTER_ALREADY_COMPLETED guard', () => {
+    // Use process.cwd() to find the project root — vitest runs from frontend/
+    const runPath = resolve(process.cwd(), '..', 'novel_factory', 'api', 'routes', 'run.py')
+    const content = readFileSync(runPath, 'utf-8')
+    expect(content).toContain('CHAPTER_ALREADY_COMPLETED')
+    expect(content).toContain('_terminal_statuses')
+  })
 })

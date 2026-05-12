@@ -101,7 +101,7 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1840/1840 passed
+- **当前测试基线**: 1841/1841 passed
 - **v5.5.9 专项**: 12 passed
 - **v5.5.10 专项**: 8 passed
 - **v5.5.11 专项**: 15 passed
@@ -146,7 +146,7 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.5.15 Production Readiness Closure**，测试基线 **1840/1840 passed**（含 v5.5.9 专项 12 passed、v5.5.10 专项 8 passed、v5.5.11 专项 15 passed、v5.5.12 专项 4 passed、v5.5.14 专项 5 passed、v5.5.15 专项 7 passed）。
+当前开发基线是 **v5.5.15 Production Readiness Closure**，测试基线 **1841/1841 passed**（含 v5.5.9 专项 12 passed、v5.5.10 专项 8 passed、v5.5.11 专项 15 passed、v5.5.12 专项 4 passed、v5.5.14 专项 5 passed、v5.5.15 专项 8 passed）。
 
 **近期已实现能力**：
 

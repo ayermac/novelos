@@ -72,6 +72,21 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
                 },
             )
 
+        # v5.5.15: Guard against regenerating a chapter that is already in a terminal
+        # state (reviewed / awaiting_publish / published).  These chapters have already
+        # completed the production pipeline and should not be re-run without an explicit
+        # reset.  This prevents the auto-runner from stomping on finished chapters.
+        _terminal_statuses = {"reviewed", "awaiting_publish", "published"}
+        if chapter.get("status") in _terminal_statuses:
+            return error_response(
+                "CHAPTER_ALREADY_COMPLETED",
+                f"第 {body.chapter} 章已处于终态（{chapter.get('status')}），不能重复启动生成。如需重新生成，请先重置章节。",
+                details={
+                    "chapter_status": chapter.get("status"),
+                    "hint": "reset_chapter",
+                },
+            )
+
         # Run chapter via LangGraph workflow
         result = await asyncio.to_thread(
             run_with_graph,

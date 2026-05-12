@@ -1967,6 +1967,20 @@ async def _execute_auto_step(
             chapter_num = target_chapter or active_chapter
             result["target_chapter"] = chapter_num
 
+            # v5.5.15: Guard against regenerating a terminal-status chapter
+            _terminal_statuses = {"reviewed", "awaiting_publish", "published"}
+            chapter_record = repo.get_chapter(project_id, chapter_num)
+            if chapter_record and chapter_record.get("status") in _terminal_statuses:
+                result["result"] = "skipped"
+                result["error"] = f"第 {chapter_num} 章已处于终态（{chapter_record.get('status')}），跳过生成"
+                return result
+
+            # v5.5.15: Guard against generating a chapter that already has a running workflow
+            if _has_running_chapter_workflow(repo, project_id, chapter_num):
+                result["result"] = "skipped"
+                result["error"] = f"第 {chapter_num} 章已有正在运行的工作流，跳过重复启动"
+                return result
+
             # Use run_with_graph
             from ...workflow.runner import run_with_graph
             import asyncio
