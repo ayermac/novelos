@@ -314,6 +314,77 @@ def test_chapter_workflow_contradiction_detected():
             os.unlink(db_path)
 
 
+def test_stream_endpoint_rejects_terminal_chapter():
+    """GET /run/chapter/stream must return an error event for terminal-status
+    chapters, just like POST /run/chapter returns CHAPTER_ALREADY_COMPLETED."""
+    client, repo, db_path = _client_with_repo()
+    try:
+        project_id = "v5515-stream-terminal"
+        repo.create_project(
+            project_id=project_id,
+            name="Stream Terminal Guard Test",
+            genre="fantasy",
+            description="test",
+            target_words=30000,
+            total_chapters_planned=10,
+        )
+        # Test reviewed status (the most risky — it was not short-circuited before)
+        repo.add_chapter(project_id, 1, "第一章", status="reviewed")
+
+        resp = client.get(f"/api/run/chapter/stream?project_id={project_id}&chapter=1")
+        assert resp.status_code == 200
+        # SSE response — parse the event
+        body = resp.text
+        assert "run_error" in body
+        assert "CHAPTER_ALREADY_COMPLETED" in body or "终态" in body
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
+def test_stream_endpoint_rejects_running_workflow():
+    """GET /run/chapter/stream must return an error event when a workflow
+    is already running for the target chapter."""
+    client, repo, db_path = _client_with_repo()
+    try:
+        project_id = "v5515-stream-running"
+        repo.create_project(
+            project_id=project_id,
+            name="Stream Running Guard Test",
+            genre="fantasy",
+            description="test",
+            target_words=30000,
+            total_chapters_planned=10,
+        )
+        repo.add_chapter(project_id, 1, "第一章", status="drafted")
+        run_id = repo.create_workflow_run(project_id, 1)
+        repo.update_workflow_run(run_id, status="running", current_node="editor")
+
+        resp = client.get(f"/api/run/chapter/stream?project_id={project_id}&chapter=1")
+        assert resp.status_code == 200
+        body = resp.text
+        assert "run_error" in body
+        assert "WORKFLOW_ALREADY_RUNNING" in body or "运行的工作流" in body
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
+def test_unified_guard_covers_all_entry_points():
+    """All three generation entry points must import the shared guard module."""
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    guard_module = os.path.join(base, "novel_factory", "api", "routes", "_run_guards.py")
+    run_py = os.path.join(base, "novel_factory", "api", "routes", "run.py")
+    runs_py = os.path.join(base, "novel_factory", "api", "routes", "runs.py")
+    prod_py = os.path.join(base, "novel_factory", "api", "routes", "production.py")
+
+    assert os.path.exists(guard_module), "_run_guards.py must exist"
+
+    for path, name in [(run_py, "run.py"), (runs_py, "runs.py"), (prod_py, "production.py")]:
+        content = open(path).read()
+        assert "check_chapter_run_guard" in content, f"{name} must import check_chapter_run_guard"
+
+
 def test_published_chapter_with_stale_workflow_contradiction():
     """A published chapter with a stale running workflow should have
     both a stale_run item and a contradiction item."""

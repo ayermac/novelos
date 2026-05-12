@@ -1028,6 +1028,22 @@ async def run_chapter_stream(
         settings = get_settings(request)
         llm_mode = get_llm_mode(request)
 
+        # v5.5.15: Unified run guard — same checks as POST /run/chapter.
+        # For SSE, guard violations are returned as structured error events
+        # rather than HTTP error responses so the client can display them.
+        from ._run_guards import check_chapter_run_guard
+
+        guard_error = check_chapter_run_guard(repo, project_id, chapter)
+        if guard_error:
+
+            async def guard_event():
+                yield f"data: {json.dumps({'type': 'run_error', 'error': guard_error.message, 'code': guard_error.code, 'details': guard_error.details}, ensure_ascii=False)}\n\n"
+
+            return StreamingResponse(
+                guard_event(),
+                media_type="text/event-stream",
+            )
+
         def next_stream_event(iterator):
             try:
                 return False, next(iterator)

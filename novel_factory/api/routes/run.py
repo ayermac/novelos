@@ -56,36 +56,13 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
         if chapter.get("status") == "pending":
             repo.update_chapter_status(body.project_id, body.chapter, "planned")
 
-        # v5.5.15: Guard against duplicate generation — if the chapter already has
-        # a running workflow_run, refuse to start another one.  This prevents the
-        # auto-runner and manual UI from stomping on each other.
-        existing_runs = repo.get_workflow_runs_for_project(body.project_id, chapter_number=body.chapter, limit=5)
-        if any(r.get("status") == "running" for r in existing_runs):
-            running_run = next(r for r in existing_runs if r.get("status") == "running")
-            return error_response(
-                "WORKFLOW_ALREADY_RUNNING",
-                f"第 {body.chapter} 章已有正在运行的工作流，不能重复启动生成",
-                details={
-                    "run_id": running_run.get("id"),
-                    "current_node": running_run.get("current_node"),
-                    "started_at": running_run.get("started_at"),
-                },
-            )
+        # v5.5.15: Unified run guard — check both running workflow and
+        # terminal chapter status via the shared helper.
+        from ._run_guards import check_chapter_run_guard
 
-        # v5.5.15: Guard against regenerating a chapter that is already in a terminal
-        # state (reviewed / awaiting_publish / published).  These chapters have already
-        # completed the production pipeline and should not be re-run without an explicit
-        # reset.  This prevents the auto-runner from stomping on finished chapters.
-        _terminal_statuses = {"reviewed", "awaiting_publish", "published"}
-        if chapter.get("status") in _terminal_statuses:
-            return error_response(
-                "CHAPTER_ALREADY_COMPLETED",
-                f"第 {body.chapter} 章已处于终态（{chapter.get('status')}），不能重复启动生成。如需重新生成，请先重置章节。",
-                details={
-                    "chapter_status": chapter.get("status"),
-                    "hint": "reset_chapter",
-                },
-            )
+        guard_error = check_chapter_run_guard(repo, body.project_id, body.chapter)
+        if guard_error:
+            return error_response(guard_error.code, guard_error.message, details=guard_error.details)
 
         # Run chapter via LangGraph workflow
         result = await asyncio.to_thread(

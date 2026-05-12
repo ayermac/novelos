@@ -154,7 +154,7 @@ def _is_obsolete_disconnected_session(repo, project_id: str, session: dict, step
 
     target_chapter = repo.get_chapter(project_id, int(step_target)) if step_target else None
     target_status = target_chapter.get("status") if target_chapter else None
-    target_already_moved_on = target_status in ("reviewed", "published", "blocking")
+    target_already_moved_on = target_status in ("reviewed", "awaiting_publish", "published", "blocking")
     action_changed = next_action.get("key") != step_action or next_target != step_target
 
     if target_already_moved_on:
@@ -1967,18 +1967,13 @@ async def _execute_auto_step(
             chapter_num = target_chapter or active_chapter
             result["target_chapter"] = chapter_num
 
-            # v5.5.15: Guard against regenerating a terminal-status chapter
-            _terminal_statuses = {"reviewed", "awaiting_publish", "published"}
-            chapter_record = repo.get_chapter(project_id, chapter_num)
-            if chapter_record and chapter_record.get("status") in _terminal_statuses:
-                result["result"] = "skipped"
-                result["error"] = f"第 {chapter_num} 章已处于终态（{chapter_record.get('status')}），跳过生成"
-                return result
+            # v5.5.15: Unified run guard — same checks as POST /run/chapter
+            from ._run_guards import check_chapter_run_guard
 
-            # v5.5.15: Guard against generating a chapter that already has a running workflow
-            if _has_running_chapter_workflow(repo, project_id, chapter_num):
+            guard_error = check_chapter_run_guard(repo, project_id, chapter_num)
+            if guard_error:
                 result["result"] = "skipped"
-                result["error"] = f"第 {chapter_num} 章已有正在运行的工作流，跳过重复启动"
+                result["error"] = guard_error.message
                 return result
 
             # Use run_with_graph
