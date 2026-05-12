@@ -203,13 +203,11 @@ docs/codex/
 
 Start with:
 - `docs/codex/README.md`
-- `docs/codex/novel-factory-roadmap.md`
-- `docs/codex/novel-factory-v5.5.10-bounded-autonomy-guardrails-spec.md`
-- `docs/codex/novel-factory-v5.5.11-author-centric-workspace-reset-spec.md`
-- `docs/codex/novel-factory-v5.5.12-llm-runtime-reliability-cost-guardrails-spec.md`
-- `docs/codex/novel-factory-v5.5.13-wide-screen-author-workspace-ia-fix-spec.md`
-- `docs/codex/novel-factory-v5.5.14-release-stabilization-spec.md`
-- `docs/codex/novel-factory-v5.5.15-production-readiness-closure-spec.md`
+- `docs/codex/planning/novel-factory-roadmap.md`
+- `docs/codex/planning/novel-factory-v5.5.15-production-readiness-closure-spec.md`
+- `docs/codex/reports/novel-factory-v5.5.15-completion-report.md`
+- `docs/codex/reviews/novel-factory-v5.5.15-review.md`
+- `docs/codex/next/personal-author-workbench-direction.md`
 
 ## Development Notes
 

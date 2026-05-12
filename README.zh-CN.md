@@ -275,7 +275,8 @@ npm run test
 建议优先阅读：
 
 - [`docs/codex/README.md`](docs/codex/README.md) — 文档索引
-- [`docs/codex/novel-factory-roadmap.md`](docs/codex/novel-factory-roadmap.md) — 产品路线图
+- [`docs/codex/planning/novel-factory-roadmap.md`](docs/codex/planning/novel-factory-roadmap.md) — 产品路线图
+- [`docs/codex/next/personal-author-workbench-direction.md`](docs/codex/next/personal-author-workbench-direction.md) — 下一阶段产品方向
 
 ## 仓库说明
 

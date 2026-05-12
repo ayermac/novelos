@@ -283,7 +283,7 @@ v5.5.11 的核心不是继续加自动动作，而是把已存在能力重新组
 - 必要的 API 轻量字段。
 - v5.5.11 专项测试。
 - 文档更新：
-  - `docs/codex/novel-factory-v5.5.11-author-centric-workspace-reset-spec.md`
+  - `docs/codex/planning/novel-factory-v5.5.11-author-centric-workspace-reset-spec.md`
   - `docs/codex/README.md`
   - `README.md`
   - `README.zh-CN.md`

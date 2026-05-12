@@ -293,7 +293,7 @@ run_auto_production()
 ## References
 
 - **Baseline**: v5.5.4 Real LLM Autonomous Planning
-- **Roadmap**: `docs/codex/novel-factory-roadmap.md`
+- **Roadmap**: `docs/codex/planning/novel-factory-roadmap.md`
 - **API Docs**: `novel_factory/api/routes/production.py`
 - **Frontend**: `frontend/src/components/project/ProjectOverviewModule.tsx`
 - **Tests**: `tests/test_v555_autonomous_production_runner.py`

@@ -275,7 +275,8 @@ Primary project planning and version documentation lives under `docs/codex/`.
 Start with:
 
 - [`docs/codex/README.md`](docs/codex/README.md) — Documentation index
-- [`docs/codex/novel-factory-roadmap.md`](docs/codex/novel-factory-roadmap.md) — Product roadmap
+- [`docs/codex/planning/novel-factory-roadmap.md`](docs/codex/planning/novel-factory-roadmap.md) — Product roadmap
+- [`docs/codex/next/personal-author-workbench-direction.md`](docs/codex/next/personal-author-workbench-direction.md) — Next product direction
 
 ## Repository Notes
 

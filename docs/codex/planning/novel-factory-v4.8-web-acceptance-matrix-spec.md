@@ -190,7 +190,7 @@ python3 -m pytest -q
 - novel_factory/web/routes/acceptance.py：Web 路由
 - novel_factory/web/templates/acceptance.html：模板
 - tests/test_v48_web_acceptance_matrix.py：测试（29 个测试用例）
-- docs/codex/novel-factory-v4.8-web-acceptance-matrix-spec.md：规格文档
+- docs/codex/planning/novel-factory-v4.8-web-acceptance-matrix-spec.md：规格文档
 
 遵守禁止范围：
 - ✅ 不新增生产写入逻辑
