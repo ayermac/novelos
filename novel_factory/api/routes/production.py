@@ -186,6 +186,63 @@ def _list_stale_running_workflows(repo, project_id: str, timeout_minutes: int) -
     return stale
 
 
+def _detect_chapter_workflow_contradictions(repo, project_id: str) -> list[dict]:
+    """v5.5.15: Detect contradictions between chapter_status and workflow_run status.
+
+    Priority rule: workflow_run > chapter_status > auto_run_session
+
+    Contradictions detected:
+    1. Chapter is reviewed/published/awaiting_publish but has a running workflow run
+    2. Chapter is in a terminal state but has a stale running workflow that should have completed
+    3. Chapter status contradicts the most recent workflow status
+    """
+    items: list[dict] = []
+    chapters = repo.list_chapters(project_id)
+    terminal_statuses = {"reviewed", "published", "awaiting_publish"}
+
+    for ch in chapters:
+        ch_num = ch.get("chapter_number")
+        ch_status = ch.get("status", "planned")
+
+        # Get workflow runs for this chapter
+        runs = repo.get_workflow_runs_for_project(project_id, chapter_number=ch_num, limit=5)
+        if not runs:
+            continue
+
+        running_runs = [r for r in runs if r.get("status") == "running"]
+        latest_run = runs[0]  # Most recent first
+
+        # Contradiction 1: Chapter in terminal state but workflow is still "running"
+        if ch_status in terminal_statuses and running_runs:
+            run = running_runs[0]
+            items.append({
+                "key": f"chapter_workflow_contradiction:{ch_num}:running_terminal",
+                "severity": "blocking",
+                "label": f"第 {ch_num} 章状态矛盾",
+                "description": f"章节已 {ch_status}，但工作流仍显示运行中（节点：{run.get('current_node') or '未知'}），可能需要标记卡住或等待完成。",
+                "action_label": "处理卡住运行",
+                "action_url": f"/projects/{project_id}?module=chapters&chapter={ch_num}&view=workflow",
+                "chapter_number": ch_num,
+                "run_id": run.get("id") or run.get("run_id"),
+            })
+
+        # Contradiction 2: Chapter status doesn't match latest completed workflow
+        elif ch_status not in terminal_statuses and ch_status not in ("blocking", "revision", "planned") and latest_run.get("status") == "completed":
+            # If the latest run completed successfully, the chapter should have advanced
+            # If it hasn't, something is inconsistent
+            items.append({
+                "key": f"chapter_workflow_contradiction:{ch_num}:stale_state",
+                "severity": "attention",
+                "label": f"第 {ch_num} 章状态可能滞后",
+                "description": f"章节当前状态为 {ch_status}，但最近的工作流已完成。请检查章节是否需要刷新。",
+                "action_label": "查看章节",
+                "action_url": f"/projects/{project_id}?module=chapters&chapter={ch_num}",
+                "chapter_number": ch_num,
+            })
+
+    return items
+
+
 def _build_project_health_summary(repo, project_id: str, timeout_minutes: int) -> dict:
     """Build a concise author-facing project health summary."""
     project = repo.get_project(project_id)
@@ -208,6 +265,10 @@ def _build_project_health_summary(repo, project_id: str, timeout_minutes: int) -
             obsolete_session = active_session
 
     blocking_chapter = _get_blocking_chapter(repo, project_id)
+
+    # v5.5.15: Detect chapter/workflow status contradictions
+    contradiction_items = _detect_chapter_workflow_contradictions(repo, project_id)
+
     items: list[dict] = []
 
     for run in stale_runs[:5]:
@@ -222,6 +283,9 @@ def _build_project_health_summary(repo, project_id: str, timeout_minutes: int) -
             "run_id": run.get("run_id"),
             "chapter_number": ch,
         })
+
+    # v5.5.15: Chapter/workflow contradiction items
+    items.extend(contradiction_items)
 
     if obsolete_session:
         items.append({
@@ -274,6 +338,7 @@ def _build_project_health_summary(repo, project_id: str, timeout_minutes: int) -
             "stale_runs": len(stale_runs),
             "pending_memory_items": len(pending_memory_items),
             "obsolete_sessions": 1 if obsolete_session else 0,
+            "contradictions": len(contradiction_items),
         },
         "items": items,
         "next_action": next_action,

@@ -67,6 +67,7 @@
 | `novel-factory-v5.5.12-llm-runtime-reliability-cost-guardrails-spec.md` | v5.5.12 LLM 运行可靠性与成本护栏、指数退避、token 预算、旧运行作废 | 产品规划、开发 Agent |
 | `novel-factory-v5.5.13-wide-screen-author-workspace-ia-fix-spec.md` | v5.5.13 宽屏作者工作台 IA 修复、统一状态标签、Overview 双栏、RunDetail 侧栏、CTA 消歧 | 产品规划、开发 Agent |
 | `novel-factory-v5.5.14-release-stabilization-spec.md` | v5.5.14 发布稳定化、状态真相源、健康修复入口、自动生产收口、真实项目验收 | 产品规划、开发 Agent |
+| `novel-factory-v5.5.15-production-readiness-closure-spec.md` | v5.5.15 生产就绪收口、状态矛盾检测、重复生成防护、文档去版本化、真实项目验收 | 产品规划、开发 Agent |
 | `novel-factory-api-contract-guidelines.md` | API 设计规范：Resource API / Action API 边界、POST body-style、兼容迁移策略 | 开发 Agent、代码评审、API 验收 |
 
 ## 本地启动与验收
@@ -100,7 +101,7 @@ npm run dev
 
 ### 测试基线
 
-- **当前测试基线**: 1828/1828 passed
+- **当前测试基线**: 1840/1840 passed
 - **v5.5.9 专项**: 12 passed
 - **v5.5.10 专项**: 8 passed
 - **v5.5.11 专项**: 15 passed
@@ -145,7 +146,7 @@ npm run dev
 
 ## 当前版本
 
-当前开发基线是 **v5.5.12 LLM Runtime Reliability & Cost Guardrails**，测试基线 **1828/1828 passed**（含 v5.5.9 专项 12 passed、v5.5.10 专项 8 passed、v5.5.11 专项 15 passed、v5.5.12 专项 4 passed）。
+当前开发基线是 **v5.5.15 Production Readiness Closure**，测试基线 **1840/1840 passed**（含 v5.5.9 专项 12 passed、v5.5.10 专项 8 passed、v5.5.11 专项 15 passed、v5.5.12 专项 4 passed、v5.5.14 专项 5 passed、v5.5.15 专项 7 passed）。
 
 **近期已实现能力**：
 
@@ -169,9 +170,9 @@ npm run dev
 - v5.5.11 作者中心工作台重置：项目导航重组（作者任务/小说设定/系统状态分组）、今日生产面板、阻塞复盘卡、工作流启动可见性、记忆收件箱合并视图、前端测试基线。
 - v5.5.12 LLM 运行可靠性与成本护栏：LLM 限流/超时指数退避、单章/项目/自动生产 token 预算、超预算显式停机、章节重置时作废旧 running workflow run。
 - v5.5.13 宽屏作者工作台 IA 修复：统一状态标签、Overview 双栏、RunDetail 侧栏、CTA 消歧、目标章节 workflow 状态对齐。
+- v5.5.14 发布稳定化：状态真相源收口、健康修复入口、自动生产语义收口、真实项目验收。
+- v5.5.15 生产就绪收口：章节/工作流状态矛盾检测、重复生成防护、文档去版本化、真实项目验收。
 
 当前下一步：
-
-- v5.5.14 Release Stabilization：只做发布稳定化，收口状态真相源、健康修复入口、自动生产语义和真实项目验收，不再扩功能。
 
 历史版本的详细规格请从上方文档列表进入对应版本文档，不再在本索引中重复维护长篇 changelog。

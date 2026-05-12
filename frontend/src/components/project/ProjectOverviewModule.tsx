@@ -1089,6 +1089,12 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     || productionNext?.health?.has_running_target_workflow
     || false
 
+  /* v5.5.15: Check if health-summary reports an obsolete session */
+  const obsoleteSessionItem = healthSummary?.items.find(
+    (item) => item.key.startsWith('obsolete_session')
+  )
+  const isSessionObsolete = disconnected && !!obsoleteSessionItem
+
   /* Determine if we should show postmortem */
   const isBlockedState = autoResult?.stop_reason && ['blocked', 'repeated_failure', 'consecutive_no_progress', 'step_failed'].includes(autoResult.stop_reason)
   const hasCriticalError = streamError?.message?.includes('CRITICAL') || streamError?.message?.includes('死刑红线')
@@ -1238,7 +1244,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   </Link>
                 )}
 
-                {!autoRunning && disconnected && !hasRunningWorkflow && (
+                {!autoRunning && disconnected && !hasRunningWorkflow && !isSessionObsolete && (
                   <button
                     className="btn btn-secondary"
                     onClick={handleResumeSession}
@@ -1246,6 +1252,17 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     style={{ flex: '1 1 150px', minWidth: 0 }}
                   >
                     <Play size={14} /> {recovering ? '恢复中...' : '重新接入'}
+                  </button>
+                )}
+
+                {/* v5.5.15: Obsolete disconnected session → show cleanup instead of reconnect */}
+                {!autoRunning && disconnected && !hasRunningWorkflow && isSessionObsolete && obsoleteSessionItem && (
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => handleHealthAction(obsoleteSessionItem)}
+                    style={{ flex: '1 1 150px', minWidth: 0 }}
+                  >
+                    <XCircle size={14} /> 清理旧会话
                   </button>
                 )}
 

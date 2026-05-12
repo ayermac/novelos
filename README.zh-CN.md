@@ -268,16 +268,6 @@ npm run build
 npm run test
 ```
 
-### 当前基线
-
-```text
-pytest:      1828/1828 passed
-typecheck:   passed
-lint:        passed
-build:       passed
-vitest:      46/46 passed
-```
-
 ## 文档
 
 主要产品规划和版本文档位于 `docs/codex/`。

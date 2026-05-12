@@ -56,6 +56,22 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
         if chapter.get("status") == "pending":
             repo.update_chapter_status(body.project_id, body.chapter, "planned")
 
+        # v5.5.15: Guard against duplicate generation — if the chapter already has
+        # a running workflow_run, refuse to start another one.  This prevents the
+        # auto-runner and manual UI from stomping on each other.
+        existing_runs = repo.get_workflow_runs_for_project(body.project_id, chapter_number=body.chapter, limit=5)
+        if any(r.get("status") == "running" for r in existing_runs):
+            running_run = next(r for r in existing_runs if r.get("status") == "running")
+            return error_response(
+                "WORKFLOW_ALREADY_RUNNING",
+                f"第 {body.chapter} 章已有正在运行的工作流，不能重复启动生成",
+                details={
+                    "run_id": running_run.get("id"),
+                    "current_node": running_run.get("current_node"),
+                    "started_at": running_run.get("started_at"),
+                },
+            )
+
         # Run chapter via LangGraph workflow
         result = await asyncio.to_thread(
             run_with_graph,
