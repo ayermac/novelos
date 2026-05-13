@@ -558,4 +558,92 @@ describe('AuthorWorkbench', () => {
     expect(screen.getByText('状态矛盾：终态章节仍有运行中工作流')).toBeInTheDocument()
     expect(screen.getByText(/本章状态已经是 已发布/)).toBeInTheDocument()
   })
+
+  it('contradictory state takes priority over stale running', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        currentChapter={1}
+        currentChapterRecord={baseProps.chapters[0]}
+        runDetail={{
+          run_id: 'run-contra-stale',
+          project_id: 'test-proj',
+          chapter_number: 1,
+          workflow_status: 'running',
+          chapter_status: 'published',
+          current_node: 'author',
+          llm_mode: 'real',
+          started_at: '2000-01-01 00:00:00',
+          steps: [],
+        }}
+        runsForChapter={[{
+          run_id: 'run-contra-stale',
+          chapter_number: 1,
+          status: 'running',
+          created_at: '2000-01-01T00:00:00',
+        }]}
+        isWorkflowRunning
+      />
+    )
+    expect(screen.getByText('状态矛盾：终态章节仍有运行中工作流')).toBeInTheDocument()
+    expect(screen.queryByText('工作流疑似卡住')).not.toBeInTheDocument()
+    expect(screen.getAllByText(/已运行约/).length).toBeGreaterThan(0)
+  })
+
+  it('agent panel publish button shows pending spinner', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        currentChapter={2}
+        currentChapterRecord={baseProps.chapters[1]}
+        llmMode="real"
+        publishPending
+      />
+    )
+    const publishBtn = screen.getAllByRole('button', { name: /发布中/ }).find((b) =>
+      b.closest('[aria-label="AI 助手面板"]')
+    )
+    expect(publishBtn).toBeDefined()
+    expect(publishBtn).toBeDisabled()
+  })
+
+  it('agent panel recovery buttons show pending spinner', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        currentChapterRecord={{ chapter_number: 3, status: 'blocking', word_count: 3800, title: '第三章' }}
+        runDetail={{
+          run_id: 'run-block',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'blocked',
+          chapter_status: 'blocking',
+          current_node: 'human_review',
+          llm_mode: 'real',
+          started_at: '2026-05-13 10:00:00',
+          steps: [{
+            key: 'editor',
+            label: '审核',
+            description: '需要人工处理',
+            status: 'blocked',
+          }],
+        }}
+        runsForChapter={[{
+          run_id: 'run-block',
+          chapter_number: 3,
+          status: 'blocked',
+          created_at: '2026-05-13T10:00:00',
+        }]}
+        resetRecoveryPending
+      />
+    )
+    const panel = screen.getByLabelText('AI 助手面板')
+    const resetBtn = screen.getAllByRole('button', { name: /处理中/ }).find((b) =>
+      panel.contains(b)
+    )
+    expect(resetBtn).toBeDefined()
+    expect(resetBtn).toBeDisabled()
+  })
 })

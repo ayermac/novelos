@@ -478,7 +478,7 @@ function WorkflowBody({
     const isStaleRunning = runDetail.workflow_status === 'running' && elapsedMinutes !== null && elapsedMinutes >= STUCK_RUN_THRESHOLD_MINUTES
     const isTerminalChapter = ['published', 'awaiting_publish', 'reviewed'].includes(runDetail.chapter_status)
     const isRunning = runDetail.workflow_status === 'running'
-    const isContradictory = isTerminalChapter && isRunning && !isStaleRunning
+    const isContradictory = isTerminalChapter && isRunning
     const statusTone = isContradictory || isStaleRunning || runDetail.workflow_status === 'blocked' ? 'warning' : runDetail.workflow_status === 'failed' ? 'error' : 'info'
     const statusHeadline = isContradictory
       ? '状态矛盾：终态章节仍有运行中工作流'

@@ -16,7 +16,7 @@
 - **生产稳定基线**: v5.5.15 Production Readiness Closure
 - **当前 WebUI 基线**: v5.6.1 Workbench Stabilization
 - **状态**: v5.5.15 和 v5.6.1 全部通过 Review 与真实项目验收；工作台已稳定
-- **测试基线**: pytest 1847/1847 passed；vitest 112/112 passed；frontend typecheck/lint/build passed
+- **测试基线**: pytest 1847/1847 passed；vitest 115/115 passed；frontend typecheck/lint/build passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)

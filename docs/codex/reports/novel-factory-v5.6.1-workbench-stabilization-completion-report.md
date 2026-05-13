@@ -11,10 +11,11 @@ v5.6.1 stabilizes the personal author workbench introduced in v5.6. No large UI 
 | File | Change |
 | --- | --- |
 | `frontend/src/components/project/AuthorChapterRail.tsx` | Added `onResetRunRecoveryForChapter` prop; `ChapterMenu` now shows "清除阻塞并重置" for `blocking`/`revision` chapters; `blocking` no longer shows generate actions |
-| `frontend/src/components/project/AuthorWorkbench.tsx` | Added `onResetRunRecoveryForChapter` prop forwarding to `AuthorChapterRail` |
-| `frontend/src/pages/ProjectDetail.tsx` | Added `handleResetRunRecoveryForChapter` — finds the latest running/blocked run for a chapter and resets it via dialog confirmation |
-| `frontend/src/components/project/AuthorWritingSurface.tsx` | `WorkflowBody` now detects contradictory state when a terminal chapter (`published`/`reviewed`/`awaiting_publish`) still has a `running` workflow, and shows a warning headline + description instead of "工作流正在推进" |
-| `frontend/src/components/project/__tests__/AuthorWorkbench.test.tsx` | Added 4 tests: blocking menu reset, revision menu reset+generate, menu reset targets clicked chapter, contradictory terminal+running warning |
+| `frontend/src/components/project/AuthorWorkbench.tsx` | Added `onResetRunRecoveryForChapter` prop forwarding to `AuthorChapterRail`; **Fix: also forwards `publishPending`/`markStuckPending`/`resetRecoveryPending` to `AuthorAgentPanel`** |
+| `frontend/src/pages/ProjectDetail.tsx` | Added `handleResetRunRecoveryForChapter` — finds the latest **run for a chapter (any status)** and resets it via dialog confirmation; **Fix: added `try/catch/finally` to publish/mark-stuck/reset handlers to prevent stuck pending states on exceptions** |
+| `frontend/src/components/project/AuthorWritingSurface.tsx` | `WorkflowBody` now detects contradictory state when a terminal chapter (`published`/`reviewed`/`awaiting_publish`) still has a `running` workflow; **Fix: contradiction now takes priority over stale running, and recovery buttons show pending spinners** |
+| `frontend/src/components/project/AuthorAgentPanel.tsx` | Publish and recovery buttons now show spinners and are disabled while pending |
+| `frontend/src/components/project/__tests__/AuthorWorkbench.test.tsx` | Added 8 tests total: blocking menu reset, revision menu reset+generate, menu reset targets clicked chapter, contradictory terminal+running warning, **contradiction priority over stale, agent panel publish pending, agent panel recovery pending** |
 
 ### Behavior Changes
 
@@ -27,10 +28,18 @@ v5.6.1 stabilizes the personal author workbench introduced in v5.6. No large UI 
    - `running workflow`: shows "已有运行中工作流" hint.
 
 2. **Contradictory workflow state warning**
-   - If a terminal-status chapter has a `running` workflow (not stale), the workflow tab now warns: "状态矛盾：终态章节仍有运行中工作流" and guides the user to mark stuck and reset.
+   - If a terminal-status chapter has a `running` workflow, the workflow tab warns: "状态矛盾：终态章节仍有运行中工作流" and guides the user to mark stuck and reset.
+   - **Fix**: Contradiction now takes priority over stale-running; even if the workflow has been running for >30 min, the contradiction headline is shown.
 
 3. **Recovery via chapter menu**
    - Users can now reset a blocked/revision chapter directly from the chapter rail overflow menu, without needing to first select that chapter.
+   - **Fix**: The handler now finds the latest run for the chapter regardless of run status, so completed review runs that left the chapter in `revision` can also be reset.
+
+4. **Pending state safety**
+   - Publish, mark-stuck, and reset-recovery POST actions now have `try/catch/finally` protection, ensuring the pending flag is always cleared even if the network request or follow-up refresh throws.
+
+5. **AI agent panel pending spinners**
+   - The right-side AI assistant panel now shows spinner text and disables buttons during publish, mark-stuck, and reset-recovery operations, matching the writing surface behavior.
 
 ## Real Project Acceptance: `novel_3v2o`
 
@@ -57,7 +66,7 @@ v5.6.1 stabilizes the personal author workbench introduced in v5.6. No large UI 
 ## Test Baseline
 
 - pytest: 1847/1847 passed
-- vitest: 112/112 passed
+- vitest: 115/115 passed
 - frontend typecheck: passed
 - frontend lint: passed
 - frontend production build: passed
@@ -66,7 +75,10 @@ v5.6.1 stabilizes the personal author workbench introduced in v5.6. No large UI 
 
 - `4f1e05b`: 基线 — "工作台"菜单路由到项目 overview
 - `b787cfa` 至 `c76ac75`: 后续修复（弹窗、产物标签、导航、侧边栏）
-- v5.6.1 稳定化提交（本报告）: `fix(v5.6.1): stabilize author workbench flows`
+- v5.6.1 稳定化提交（本报告）:
+  - `fix(v5.6.1): stabilize author workbench flows`
+  - `fix(v5.6.1): add pending states to publish, mark-stuck and reset-recovery actions`
+  - `fix(v5.6.1): review fixes — pending props, exception safety, contradiction priority, menu run lookup`
 
 ## Conclusion
 

@@ -28,9 +28,9 @@ This review validates the v5.6.1 stabilization goals:
 | 11 | Artifacts use human-readable labels | Pass | `getArtifactTitle` maps `screenwriter→分场大纲`, `author→正文初稿`, etc.; `formatArtifactSummary` normalizes raw tokens |
 | 12 | Workflow auto-refreshes when on workflow tab | Pass | `useEffect` polling at 5s interval when `activeTab === 'workflow'` and status is `running` |
 | 13 | Stale run (>30 min) shows "疑似卡住" with recovery | Pass | `isStaleRunning` triggers warning headline and "标记为阻塞" button |
-| 14 | Terminal chapter with running workflow warns contradiction | Pass | `isContradictory` detects `published`/`reviewed`/`awaiting_publish` + `running` + not stale |
+| 14 | Terminal chapter with running workflow warns contradiction | Pass | `isContradictory` detects `published`/`reviewed`/`awaiting_publish` + `running`; now takes priority over stale running |
 | 15 | No native `confirm`/`alert`/`prompt` in workbench | Pass | `useAppDialog` used for all confirmations; grep finds zero matches for `window.confirm`/`alert`/`prompt` |
-| 16 | POST actions have pending state and disable duplicates | Pass | `generating` state disables buttons; SSE `isStreaming` shows spinners |
+| 16 | POST actions have pending state and disable duplicates | Pass | `generating` state disables buttons; SSE `isStreaming` shows spinners; publish/mark-stuck/reset now have pending flags with `try/catch/finally` |
 
 ## Findings
 
@@ -72,6 +72,34 @@ Verified behavior:
 - A simulated `revision` Chapter 5 overflow menu shows both "继续生成" and "清除阻塞并重置".
 - A simulated `published` + `running` workflow shows the contradiction warning instead of "工作流正在推进".
 - All workbench confirmations use the inline dialog system; no native browser dialogs.
+
+### Round 3 — Review fixes (post-commit review)
+
+Four issues were identified during a post-implementation review before pushing to remote:
+
+**[P1] AI agent panel pending props not wired**
+
+`AuthorWorkbench` forwarded `publishPending`/`markStuckPending`/`resetRecoveryPending` to `AuthorWritingSurface` but not to `AuthorAgentPanel`. The right-side panel's publish/recovery buttons did not show spinners or disable during requests.
+
+Fix: Added the three pending props to the `AuthorAgentPanel` call in `AuthorWorkbench.tsx`.
+
+**[P1] Chapter menu reset could not find completed review runs**
+
+`handleResetRunRecoveryForChapter` filtered for `status === 'running' || status === 'blocked'`. However, a chapter in `revision` status often comes from a *completed* review run, so the menu's "清除阻塞并重置" button would show a "未找到待恢复运行记录" error.
+
+Fix: Changed the lookup to find the latest run for the chapter regardless of run status. The backend (`runs.py`) already validates chapter-state legality.
+
+**[P2] Pending flags lacked exception safety**
+
+`handlePublishChapter`, `handleMarkRunStuck`, and `handleResetRunRecovery` cleared the pending flag only at the end of the happy path. If `post()`, `refetchWorkspace()`, or `loadRunDetail()` threw, the button would remain disabled forever.
+
+Fix: Wrapped all three handlers in `try/catch/finally`; catch shows an inline alert, finally always resets the pending flag.
+
+**[P2] Contradictory state hidden after 30 minutes**
+
+`isContradictory` was defined as `isTerminalChapter && isRunning && !isStaleRunning`. Once a terminal chapter's lingering workflow exceeded the 30-minute threshold, the UI switched from "状态矛盾" to "工作流疑似卡住", losing the critical context that the chapter was already finished.
+
+Fix: Removed the `!isStaleRunning` guard so contradiction always takes priority. The stale-running duration is still displayed in the warning description.
 
 ## Outcome
 

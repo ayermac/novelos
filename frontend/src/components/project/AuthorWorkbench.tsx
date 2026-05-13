@@ -197,6 +197,9 @@ export default function AuthorWorkbench({
         onPublish={onPublish}
         onGenerateNext={onGenerateNext}
         onResetRunRecovery={onResetRunRecovery}
+        publishPending={publishPending}
+        markStuckPending={markStuckPending}
+        resetRecoveryPending={resetRecoveryPending}
         onViewContent={onViewContent}
         onViewWorkflow={onViewWorkflow}
       />

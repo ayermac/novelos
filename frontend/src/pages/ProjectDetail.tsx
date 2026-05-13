@@ -358,17 +358,26 @@ export default function ProjectDetail() {
   const handlePublishChapter = useCallback(async (chapterNumber: number) => {
     if (!id || publishPending) return
     setPublishPending(true)
-    const res = await post(`/publish/chapter`, { project_id: id, chapter: chapterNumber })
-    if (res.ok) {
-      await refetchWorkspace()
-    } else {
+    try {
+      const res = await post(`/publish/chapter`, { project_id: id, chapter: chapterNumber })
+      if (res.ok) {
+        await refetchWorkspace()
+      } else {
+        await dialog.alert({
+          title: '发布章节失败',
+          message: res.error?.message || '发布章节失败',
+          tone: 'danger',
+        })
+      }
+    } catch (err: unknown) {
       await dialog.alert({
         title: '发布章节失败',
-        message: res.error?.message || '发布章节失败',
+        message: err instanceof Error ? err.message : '发布章节失败',
         tone: 'danger',
       })
+    } finally {
+      setPublishPending(false)
     }
-    setPublishPending(false)
   }, [dialog, id, publishPending, refetchWorkspace])
 
   const handlePublish = useCallback(async () => {
@@ -395,19 +404,28 @@ export default function ProjectDetail() {
     })
     if (!ok) return
     setMarkStuckPending(true)
-    const res = await post(`/runs/${runId}/recovery/mark-stuck`, { confirm: true })
-    if (res.ok) {
-      setGenError('')
-      await refetchWorkspace()
-      loadRunDetail(runId)
-    } else {
+    try {
+      const res = await post(`/runs/${runId}/recovery/mark-stuck`, { confirm: true })
+      if (res.ok) {
+        setGenError('')
+        await refetchWorkspace()
+        loadRunDetail(runId)
+      } else {
+        await dialog.alert({
+          title: '标记卡住运行失败',
+          message: res.error?.message || '标记卡住运行失败',
+          tone: 'danger',
+        })
+      }
+    } catch (err: unknown) {
       await dialog.alert({
         title: '标记卡住运行失败',
-        message: res.error?.message || '标记卡住运行失败',
+        message: err instanceof Error ? err.message : '标记卡住运行失败',
         tone: 'danger',
       })
+    } finally {
+      setMarkStuckPending(false)
     }
-    setMarkStuckPending(false)
   }, [dialog, loadRunDetail, markStuckPending, refetchWorkspace])
 
   const handleResetRunRecovery = useCallback(async (runId: string) => {
@@ -420,24 +438,36 @@ export default function ProjectDetail() {
     })
     if (!ok) return
     setResetRecoveryPending(true)
-    const res = await post(`/runs/${runId}/recovery/reset`, { confirm: true })
-    if (res.ok) {
-      setGenError('')
-      await refetchWorkspace()
-      loadRunDetail(runId)
-    } else {
+    try {
+      const res = await post(`/runs/${runId}/recovery/reset`, { confirm: true })
+      if (res.ok) {
+        setGenError('')
+        await refetchWorkspace()
+        loadRunDetail(runId)
+      } else {
+        await dialog.alert({
+          title: '恢复运行失败',
+          message: res.error?.message || '恢复运行失败',
+          tone: 'danger',
+        })
+      }
+    } catch (err: unknown) {
       await dialog.alert({
         title: '恢复运行失败',
-        message: res.error?.message || '恢复运行失败',
+        message: err instanceof Error ? err.message : '恢复运行失败',
         tone: 'danger',
       })
+    } finally {
+      setResetRecoveryPending(false)
     }
-    setResetRecoveryPending(false)
   }, [dialog, loadRunDetail, refetchWorkspace, resetRecoveryPending])
 
   const handleResetRunRecoveryForChapter = useCallback(async (chapterNumber: number) => {
     if (!id || !workspace) return
-    const run = workspace.recent_runs.find((r) => r.chapter_number === chapterNumber && (r.status === 'running' || r.status === 'blocked'))
+    const runs = workspace.recent_runs.filter((r) => r.chapter_number === chapterNumber)
+    const run = runs.length > 0
+      ? runs.reduce((latest, r) => (new Date(r.created_at) > new Date(latest.created_at) ? r : latest))
+      : null
     if (!run) {
       await dialog.alert({
         title: '恢复失败',
