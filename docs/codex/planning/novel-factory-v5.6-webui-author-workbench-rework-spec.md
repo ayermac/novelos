@@ -2,12 +2,18 @@
 
 ## Status
 
-- Type: executable planning spec
+- Type: executed planning spec
+- Status: implemented and reviewed
 - Baseline: v5.5.15 Production Readiness Closure
 - Previous stable commits:
   - `fb984df`: unified run guard, SSE guard, runner reviewed semantics, test cleanup
   - `c3db226`: v5.5.15 final baseline documentation
+- Implementation commits:
+  - `b725bde`: introduce author workbench WebUI
+  - `4d59b04`: polish workbench navigation and recovery UI
 - Target: rebuild the project WebUI around a personal author workbench experience
+- Completion report: [../reports/novel-factory-v5.6-author-workbench-completion-report.md](../reports/novel-factory-v5.6-author-workbench-completion-report.md)
+- Review record: [../reviews/novel-factory-v5.6-author-workbench-review.md](../reviews/novel-factory-v5.6-author-workbench-review.md)
 
 ## Goal
 
@@ -353,7 +359,9 @@ The implementation is acceptable when:
 
 ## Development Prompt for Implementation Agent
 
-Use this prompt for the agent that will implement phase 3:
+Historical note: this prompt was used to implement v5.6 Phase 1. It is kept for traceability and should not be treated as the next active development prompt.
+
+Historical implementation prompt:
 
 ```text
 You are working in /Users/chenchao/Workspace/AI-Project/novelos.

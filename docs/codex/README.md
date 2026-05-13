@@ -11,13 +11,16 @@
 | `reviews/` | Review 检查项、发现的问题、修复验证 | 代码/产品审查与回归验证 |
 | `next/` | 下一阶段方向、候选路线、未锁定规划 | 讨论未来方向，不作为当前执行规格 |
 
-## 当前稳定基线
+## 当前进度
 
-- **版本**: v5.5.15 Production Readiness Closure
-- **状态**: Review + 真实项目验收通过，项目进入短期收尾可用状态
-- **测试基线**: pytest 1844/1844 passed；vitest passed；frontend typecheck/lint/build passed
-- **完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
-- **Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
+- **生产稳定基线**: v5.5.15 Production Readiness Closure
+- **当前 WebUI 基线**: v5.6 Author Workbench Phase 1
+- **状态**: v5.5.15 Review + 真实项目验收通过；v5.6 已完成个人创作工作台第一阶段
+- **测试基线**: pytest 1844/1844 passed；vitest 95/95 passed；frontend typecheck/lint/build passed
+- **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
+- **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
+- **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
+- **v5.6 Review 记录**: [reviews/novel-factory-v5.6-author-workbench-review.md](reviews/novel-factory-v5.6-author-workbench-review.md)
 
 ## 当前执行规则
 
@@ -33,11 +36,13 @@
 - API 规范: [planning/novel-factory-api-contract-guidelines.md](planning/novel-factory-api-contract-guidelines.md)
 - v5.5.15 规格: [planning/novel-factory-v5.5.15-production-readiness-closure-spec.md](planning/novel-factory-v5.5.15-production-readiness-closure-spec.md)
 - v5.6 WebUI 重构规格: [planning/novel-factory-v5.6-webui-author-workbench-rework-spec.md](planning/novel-factory-v5.6-webui-author-workbench-rework-spec.md)
+- v5.6 完成报告: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
+- v5.6 Review: [reviews/novel-factory-v5.6-author-workbench-review.md](reviews/novel-factory-v5.6-author-workbench-review.md)
 - 下一阶段方向: [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)
 
 ## 下一阶段方向
 
-v5.5.15 完成后，下一阶段不优先展开多租户、企业权限或复杂商业化后台。项目方向先收敛为：
+v5.5.15 和 v5.6 Phase 1 完成后，下一阶段不优先展开多租户、企业权限或复杂商业化后台。项目方向先收敛为：
 
 ```text
 个人创作者的 AI Agent 长篇内容生产工作台
@@ -45,12 +50,13 @@ v5.5.15 完成后，下一阶段不优先展开多租户、企业权限或复杂
 
 近期优先级：
 
-1. 每日创作工作台体验。
-2. 长篇记忆与设定一致性。
-3. 审核问题定位与局部返修。
-4. 创作者资料库 / RAG。
-5. AgentOps 运行复盘与评测。
-6. 导出与发布流水线。
+1. 让 v5.6 工作台支持真实日常写作：正文编辑、保存、版本对比、局部返修。
+2. 运行恢复闭环：卡住原因、恢复建议、重跑边界和用户确认。
+3. 长篇记忆与设定一致性。
+4. 审核问题定位与局部返修。
+5. 创作者资料库 / RAG。
+6. AgentOps 运行复盘与评测。
+7. 导出与发布流水线。
 
 详细方向见 [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)。
 
