@@ -463,21 +463,42 @@ export default function ProjectDetail() {
   }, [dialog, loadRunDetail, refetchWorkspace, resetRecoveryPending])
 
   const handleResetRunRecoveryForChapter = useCallback(async (chapterNumber: number) => {
-    if (!id || !workspace) return
-    const runs = workspace.recent_runs.filter((r) => r.chapter_number === chapterNumber)
-    const run = runs.length > 0
-      ? runs.reduce((latest, r) => (new Date(r.created_at) > new Date(latest.created_at) ? r : latest))
-      : null
-    if (!run) {
+    if (!id || resetRecoveryPending) return
+    const ok = await dialog.confirm({
+      title: '清除阻塞并重置',
+      message: '确认清除本章阻塞/返修状态并回到 planned？正文、运行记录和过程稿会保留。',
+      tone: 'warning',
+      confirmLabel: '清除并重置',
+    })
+    if (!ok) return
+    setResetRecoveryPending(true)
+    try {
+      const res = await post(`/projects/${id}/chapters/${chapterNumber}/reset`, {})
+      if (res.ok) {
+        setGenError('')
+        await refetchWorkspace()
+        // If the current workflow view is for this chapter, clear its run detail.
+        const currentRun = runDetail
+        if (currentRun && currentRun.chapter_number === chapterNumber) {
+          loadRunDetail('')
+        }
+      } else {
+        await dialog.alert({
+          title: '恢复失败',
+          message: res.error?.message || '恢复失败',
+          tone: 'danger',
+        })
+      }
+    } catch (err: unknown) {
       await dialog.alert({
         title: '恢复失败',
-        message: `未找到第 ${chapterNumber} 章的待恢复运行记录。`,
+        message: err instanceof Error ? err.message : '恢复失败',
         tone: 'danger',
       })
-      return
+    } finally {
+      setResetRecoveryPending(false)
     }
-    await handleResetRunRecovery(run.run_id)
-  }, [dialog, handleResetRunRecovery, id, workspace])
+  }, [dialog, id, loadRunDetail, refetchWorkspace, resetRecoveryPending, runDetail])
 
   const handleModuleChange = (module: ProjectModule) => {
     setSearchParams(buildProjectModuleSearchParams(searchParams, module, currentChapter), { replace: true })
