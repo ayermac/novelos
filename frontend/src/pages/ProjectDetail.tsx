@@ -4,6 +4,7 @@ import { get, post } from '../lib/api'
 import { useApiQuery } from '../hooks/useApiQuery'
 import ErrorState from '../components/ErrorState'
 import { useSSEStream, SSEEvent, StepStatus } from '../hooks/useSSEStream'
+import { buildProjectModuleSearchParams, ensureChapterSearchParams } from '../lib/project-routing'
 import type { ProjectModule } from '../components/project/ProjectModuleNav'
 import ProjectShell from '../components/project/ProjectShell'
 import AuthorWorkbench from '../components/project/AuthorWorkbench'
@@ -153,7 +154,10 @@ export default function ProjectDetail() {
   // Set initial chapter (default to workbench / chapters module)
   useEffect(() => {
     if (workspace && !searchParams.get('chapter') && workspace.chapters.length > 0) {
-      setSearchParams({ chapter: String(workspace.chapters[0].chapter_number), module: 'chapters' }, { replace: true })
+      setSearchParams(
+        ensureChapterSearchParams(searchParams, workspace.chapters[0].chapter_number),
+        { replace: true }
+      )
     }
   }, [workspace]) // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -421,7 +425,7 @@ export default function ProjectDetail() {
   }, [dialog, loadRunDetail, refetchWorkspace])
 
   const handleModuleChange = (module: ProjectModule) => {
-    setSearchParams({ module, ...(module === 'chapters' ? { chapter: String(currentChapter) } : {}) }, { replace: true })
+    setSearchParams(buildProjectModuleSearchParams(searchParams, module, currentChapter), { replace: true })
   }
 
   if (loading) return <div className="module-loading">加载项目工作台...</div>
