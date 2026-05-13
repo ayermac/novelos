@@ -16,7 +16,8 @@
 - **生产稳定基线**: v5.5.15 Production Readiness Closure
 - **当前 WebUI 基线**: v5.6.1 Workbench Stabilization
 - **当前创作者闭环基线**: v5.7 Daily Writing Editing and Versioning
-- **状态**: v5.7 Review fixes completed — 编辑器接入、站内弹窗、diff 边界校验、异步保护、局部返修输出归一化均已验证
+- **当前执行方向**: v5.7.1 Internal Hardening — 先做内部构建完整、真实项目验收和稳定性收敛，不继续扩功能
+- **状态**: v5.7 Review fixes completed；v5.7.1 planned
 - **测试基线**: pytest 1859/1859 passed；vitest 125/125 passed；frontend typecheck/lint/build passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
@@ -43,6 +44,7 @@
 - v5.6 WebUI 重构规格: [planning/novel-factory-v5.6-webui-author-workbench-rework-spec.md](planning/novel-factory-v5.6-webui-author-workbench-rework-spec.md)
 - v5.6.1 工作台稳定化规格: [planning/novel-factory-v5.6.1-workbench-stabilization-spec.md](planning/novel-factory-v5.6.1-workbench-stabilization-spec.md)
 - v5.7 日常写作编辑与版本管理规格: [planning/novel-factory-v5.7-daily-writing-editing-versioning-spec.md](planning/novel-factory-v5.7-daily-writing-editing-versioning-spec.md)
+- v5.7.1 内部构建完整与稳定规格: [planning/novel-factory-v5.7.1-internal-hardening-spec.md](planning/novel-factory-v5.7.1-internal-hardening-spec.md)
 - v5.6 完成报告: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
 - v5.6 Review: [reviews/novel-factory-v5.6-author-workbench-review.md](reviews/novel-factory-v5.6-author-workbench-review.md)
 - 下一阶段方向: [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)
@@ -57,7 +59,7 @@ v5.5.15 和 v5.6 Phase 1 完成后，下一阶段不优先展开多租户、企�
 
 近期优先级：
 
-1. v5.7 日常写作闭环：正文编辑、保存、版本列表、版本对比、回滚、局部返修。
+1. v5.7.1 内部构建完整与稳定：真实项目验收、运行状态一致性、编辑/版本/导出稳定、验证脚本和文档基线统一。
 2. v5.8 工作流可观测与恢复增强：节点日志、恢复边界、运行复盘。
 3. 长篇记忆与设定一致性。
 4. 审核问题定位与局部返修增强。

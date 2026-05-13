@@ -3,7 +3,7 @@
 ## 状态
 
 - 类型：可执行规划规格
-- 状态：planned
+- 状态：completed
 - 基线：v5.6.1 Workbench Stabilization
 - 产品目标：把 Author Workbench 从“AI 章节生产控制台”推进到“作者每天可写、可改、可追溯的创作闭环”
 - 技术目标：建立正文编辑、版本管理、对比回滚、局部返修的最小闭环，为后续记忆一致性、RAG 和 AgentOps 复盘打基础
