@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import { describe, it, expect, vi } from 'vitest'
 import ProjectSideNav from '../ProjectSideNav'
 import ChapterWorkspace from '../ChapterWorkspace'
@@ -54,6 +54,18 @@ describe('v5.5.11-A: ProjectSideNav labels and grouping', () => {
     render(<ProjectSideNav activeModule="overview" onModuleChange={vi.fn()} />)
     const systemLabel = screen.getByText('系统状态').closest('.project-side-nav-label')
     expect(systemLabel).toHaveClass('collapsible')
+  })
+
+  it('compact menu supports collapse and expand shell', () => {
+    render(<ProjectSideNav activeModule="overview" onModuleChange={vi.fn()} compact />)
+    const nav = screen.getByLabelText('项目导航')
+    expect(nav).toHaveClass('project-side-nav--collapsed')
+
+    fireEvent.click(screen.getByLabelText('展开项目菜单'))
+    expect(nav).not.toHaveClass('project-side-nav--collapsed')
+
+    fireEvent.click(screen.getByLabelText('收起项目菜单'))
+    expect(nav).toHaveClass('project-side-nav--collapsed')
   })
 })
 

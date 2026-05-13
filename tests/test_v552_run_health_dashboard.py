@@ -71,6 +71,8 @@ def test_run_health_lists_stuck_running_runs(tmp_path):
     assert data["runs"][0]["stuck"] is True
     assert data["runs"][0]["actions"]["mark_stuck_blocked"]["enabled"] is True
     assert data["runs"][0]["running_tasks"][0]["stuck"] is True
+    assert data["runs"][0]["running_tasks"][0]["task_label"] == "生成任务"
+    assert data["runs"][0]["running_tasks"][0]["agent_label"] == "执笔"
 
 
 def test_run_health_project_filter(tmp_path):

@@ -173,6 +173,43 @@ class TestArtifactsAPI:
                     f"Step {step['key']} summary too short"
                 )
 
+    def test_real_artifact_summary_uses_human_labels(self, client):
+        """DB artifact summaries should not leak raw keys like scene_plan (screenwriter)."""
+        from novel_factory.db.repository import Repository
+
+        project_id = "test_v515b_labels"
+        client.post(
+            "/api/onboarding/projects",
+            json={
+                "project_id": project_id,
+                "name": "Artifact Labels Test",
+                "initial_chapter_count": 1,
+            },
+        )
+        seed_context_for_chapter(client.app.state.db_path, project_id, 1)
+        repo = Repository(client.app.state.db_path)
+        run_id = repo.create_workflow_run(project_id, 1)
+        repo.save_artifact(
+            project_id,
+            1,
+            "screenwriter",
+            "scene_plan",
+            content_json={"scenes": []},
+            workflow_run_id=run_id,
+        )
+
+        client.app.state.llm_mode = "real"
+        resp = client.get(f"/api/runs/{run_id}")
+        assert resp.status_code == 200
+        steps = resp.json()["data"]["steps"]
+        screenwriter_step = next(s for s in steps if s["key"] == "screenwriter")
+        summary = screenwriter_step["artifacts"]["summary"]
+
+        assert summary == "分场规划 · 编剧"
+        assert "scene_plan" not in summary
+        assert "screenwriter" not in summary
+        assert screenwriter_step["artifacts"]["artifact_labels"] == ["分场规划 · 编剧"]
+
     def test_artifacts_output_preview_bounded(self, client):
         """Output preview should be reasonably bounded."""
         # Create project and run
@@ -215,7 +252,7 @@ class TestFrontendArtifacts:
         content = timeline_file.read_text()
 
         assert "artifacts" in content, "WorkflowTimeline should handle artifacts"
-        assert "查看产物" in content or "展开" in content, (
+        assert "查看过程稿" in content or "查看产物" in content or "展开" in content, (
             "WorkflowTimeline should have expand button for artifacts"
         )
 

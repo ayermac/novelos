@@ -268,16 +268,6 @@ npm run build
 npm run test
 ```
 
-### Current Baseline
-
-```text
-pytest:      1828/1828 passed
-typecheck:   passed
-lint:        passed
-build:       passed
-vitest:      46/46 passed
-```
-
 ## Documentation
 
 Primary project planning and version documentation lives under `docs/codex/`.
@@ -285,7 +275,8 @@ Primary project planning and version documentation lives under `docs/codex/`.
 Start with:
 
 - [`docs/codex/README.md`](docs/codex/README.md) — Documentation index
-- [`docs/codex/novel-factory-roadmap.md`](docs/codex/novel-factory-roadmap.md) — Product roadmap
+- [`docs/codex/planning/novel-factory-roadmap.md`](docs/codex/planning/novel-factory-roadmap.md) — Product roadmap
+- [`docs/codex/next/personal-author-workbench-direction.md`](docs/codex/next/personal-author-workbench-direction.md) — Next product direction
 
 ## Repository Notes
 

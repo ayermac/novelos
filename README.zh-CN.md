@@ -268,16 +268,6 @@ npm run build
 npm run test
 ```
 
-### 当前基线
-
-```text
-pytest:      1828/1828 passed
-typecheck:   passed
-lint:        passed
-build:       passed
-vitest:      46/46 passed
-```
-
 ## 文档
 
 主要产品规划和版本文档位于 `docs/codex/`。
@@ -285,7 +275,8 @@ vitest:      46/46 passed
 建议优先阅读：
 
 - [`docs/codex/README.md`](docs/codex/README.md) — 文档索引
-- [`docs/codex/novel-factory-roadmap.md`](docs/codex/novel-factory-roadmap.md) — 产品路线图
+- [`docs/codex/planning/novel-factory-roadmap.md`](docs/codex/planning/novel-factory-roadmap.md) — 产品路线图
+- [`docs/codex/next/personal-author-workbench-direction.md`](docs/codex/next/personal-author-workbench-direction.md) — 下一阶段产品方向
 
 ## 仓库说明
 

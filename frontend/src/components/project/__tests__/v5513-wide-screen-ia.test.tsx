@@ -81,10 +81,12 @@ describe('v5.5.13 state-labels', () => {
 
   describe('tWorkflowNodeLabel', () => {
     it('returns Chinese labels for all known nodes', () => {
-      expect(tWorkflowNodeLabel('screenwriter')).toBe('策划')
+      expect(tWorkflowNodeLabel('planner')).toBe('规划')
+      expect(tWorkflowNodeLabel('screenwriter')).toBe('编剧')
       expect(tWorkflowNodeLabel('author')).toBe('执笔')
       expect(tWorkflowNodeLabel('polisher')).toBe('润色')
       expect(tWorkflowNodeLabel('editor')).toBe('审稿')
+      expect(tWorkflowNodeLabel('publisher')).toBe('发布')
       expect(tWorkflowNodeLabel('publish')).toBe('发布')
       expect(tWorkflowNodeLabel('human_review')).toBe('人工审核')
     })
@@ -223,6 +225,14 @@ describe('v5.5.13 wide-screen grid structure', () => {
     expect(content).toContain('view=workflow')
   })
 
+  it('ProjectDetail routes overview menu to ProjectOverviewModule, not chapter workbench', () => {
+    const content = readFileSync(projectDetailPath, 'utf-8')
+    expect(content).toContain("activeModule === 'chapters' ?")
+    expect(content).not.toContain("activeModule === 'chapters' || activeModule === 'overview'")
+    expect(content).toContain("case 'overview':")
+    expect(content).toContain('return <ProjectOverviewModule')
+  })
+
   it('ProjectOverviewModule disables main CTA when any target workflow is running', () => {
     const content = readFileSync(overviewPath, 'utf-8')
     expect(content).toContain('has_running_target_workflow')
@@ -262,6 +272,14 @@ describe('v5.5.13 wide-screen grid structure', () => {
     expect(pdContent).toMatch(/handleGenerate.*if.*!workspace/s)
     // auto_generate effect should bail if workspace is undefined
     expect(pdContent).toMatch(/if.*!workspace.*generating.*isStreaming/s)
+  })
+
+  it('ProjectDetail polls running workflow details while workflow view stays open', () => {
+    const pdContent = readFileSync(resolve(__dirname, '../../../pages/ProjectDetail.tsx'), 'utf-8')
+    expect(pdContent).toContain('window.setInterval')
+    expect(pdContent).toContain("activeTab !== 'workflow'")
+    expect(pdContent).toContain("workflow_status === 'running'")
+    expect(pdContent).toContain('loadRunDetail(pollingRunId, { silent: true })')
   })
 })
 

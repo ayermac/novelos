@@ -143,7 +143,7 @@ npm run build
 - `AGENTS.md`
 - `CLAUDE.md`
 - `docs/codex/README.md`
-- 新增 `docs/codex/novel-factory-v5.5.7-realtime-production-monitor-spec.md`
+- 新增 `docs/codex/planning/novel-factory-v5.5.7-realtime-production-monitor-spec.md`
 
 文档说明：
 - v5.5.7 是实时监控/streaming UI，不改变自动生产安全语义

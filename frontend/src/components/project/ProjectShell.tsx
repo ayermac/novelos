@@ -5,10 +5,8 @@ import ProjectSideNav from './ProjectSideNav'
 
 interface ProjectShellProps {
   activeModule: ProjectModule
-  currentChapter: number
   projectId: string
   projectName: string
-  publishedCount: number
   isStub: boolean
   onModuleChange: (module: ProjectModule) => void
   children: ReactNode
@@ -16,10 +14,8 @@ interface ProjectShellProps {
 
 export default function ProjectShell({
   activeModule,
-  currentChapter,
   projectId,
   projectName,
-  publishedCount,
   isStub,
   onModuleChange,
   children,
@@ -29,12 +25,15 @@ export default function ProjectShell({
       <ProjectHeader
         projectId={projectId}
         projectName={projectName}
-        currentChapter={currentChapter}
-        publishedCount={publishedCount}
         isStub={isStub}
       />
       <div className="project-shell-body">
-        <ProjectSideNav activeModule={activeModule} onModuleChange={onModuleChange} />
+        {/* v5.8: Side nav is consistently compact and user-expandable across project modules. */}
+        <ProjectSideNav
+          activeModule={activeModule}
+          onModuleChange={onModuleChange}
+          compact
+        />
         <main className="project-shell-main">
           {children}
         </main>

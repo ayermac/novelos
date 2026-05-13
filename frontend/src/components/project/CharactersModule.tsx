@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, post, put, del } from '../../lib/api'
 import { Users, Plus, Pencil, Trash2 } from 'lucide-react'
+import { useAppDialog } from '../AppDialogContext'
 
 interface Character {
   id: number
@@ -23,6 +24,7 @@ const ROLE_LABELS: Record<string, string> = {
 }
 
 export default function CharactersModule({ projectId }: Props) {
+  const dialog = useAppDialog()
   const [items, setItems] = useState<Character[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -52,7 +54,13 @@ export default function CharactersModule({ projectId }: Props) {
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm('确定删除此角色？')) return
+    const ok = await dialog.confirm({
+      title: '删除角色',
+      message: '确定删除此角色？',
+      tone: 'danger',
+      confirmLabel: '删除',
+    })
+    if (!ok) return
     const res = await del(`/projects/${projectId}/characters/${id}`)
     if (res.ok) load()
   }

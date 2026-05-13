@@ -6,7 +6,7 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 Novelos is an AI-powered novel production workbench for long-form fiction projects. It combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.5.13 Wide-Screen Author Workspace IA Fix**, with **1828/1828 pytest passing**, frontend typecheck/lint/build/vitest (46/46) passing.
+Current baseline: **v5.5.15 Production Readiness Closure**, with **1844/1844 pytest passing**, frontend typecheck/lint/build/vitest passing.
 
 ## Architecture
 
@@ -186,7 +186,7 @@ Key configuration files:
 ### Python Tests
 - Test location: `tests/`
 - Framework: pytest
-- Current baseline: 1828/1828 passing
+- Current baseline: 1844/1844 passing
 - Run full suite: `python3 -m pytest -q`
 - Run specific test: `python3 -m pytest tests/test_file.py::test_name -q`
 
@@ -203,11 +203,11 @@ docs/codex/
 
 Start with:
 - `docs/codex/README.md`
-- `docs/codex/novel-factory-roadmap.md`
-- `docs/codex/novel-factory-v5.5.10-bounded-autonomy-guardrails-spec.md`
-- `docs/codex/novel-factory-v5.5.11-author-centric-workspace-reset-spec.md`
-- `docs/codex/novel-factory-v5.5.12-llm-runtime-reliability-cost-guardrails-spec.md`
-- `docs/codex/novel-factory-v5.5.13-wide-screen-author-workspace-ia-fix-spec.md`
+- `docs/codex/planning/novel-factory-roadmap.md`
+- `docs/codex/planning/novel-factory-v5.5.15-production-readiness-closure-spec.md`
+- `docs/codex/reports/novel-factory-v5.5.15-completion-report.md`
+- `docs/codex/reviews/novel-factory-v5.5.15-review.md`
+- `docs/codex/next/personal-author-workbench-direction.md`
 
 ## Development Notes
 

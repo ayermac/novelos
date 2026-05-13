@@ -287,14 +287,21 @@ def run_with_graph(
         repo.update_chapter_status(project_id, chapter_number, "planned")
         current_status = "planned"
 
-    # Short-circuit: already-published chapters need no processing
-    if current_status == "published":
+    # Short-circuit: chapters already in a terminal status
+    # (reviewed / awaiting_publish / published) should not be re-processed.
+    # In real mode, 'reviewed' semantically means "awaiting human publish".
+    _terminal_statuses = {"reviewed", "awaiting_publish", "published"}
+    if current_status in _terminal_statuses:
+        _is_awaiting = current_status == "awaiting_publish" or (
+            current_status == "reviewed" and llm_mode == "real"
+        )
         return {
             "run_id": "",
-            "chapter_status": "published",
+            "chapter_status": current_status,
             "steps": [],
             "error": None,
-            "requires_human": False,
+            "requires_human": _is_awaiting,
+            "awaiting_publish": _is_awaiting,
         }
 
     _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
@@ -431,13 +438,20 @@ def run_with_graph_stream(
         repo.update_chapter_status(project_id, chapter_number, "planned")
         current_status = "planned"
 
-    # Short-circuit: already-published chapters
-    if current_status == "published":
+    # Short-circuit: chapters already in a terminal status
+    # (reviewed / awaiting_publish / published) should not be re-processed.
+    # In real mode, 'reviewed' semantically means "awaiting human publish".
+    _terminal_statuses = {"reviewed", "awaiting_publish", "published"}
+    if current_status in _terminal_statuses:
+        _is_awaiting = current_status == "awaiting_publish" or (
+            current_status == "reviewed" and llm_mode == "real"
+        )
         yield {
             "type": "run_complete",
-            "chapter_status": "published",
+            "chapter_status": current_status,
             "run_id": "",
-            "awaiting_publish": False,
+            "awaiting_publish": _is_awaiting,
+            "requires_human": _is_awaiting,
         }
         return
 

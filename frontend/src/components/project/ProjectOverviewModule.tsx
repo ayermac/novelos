@@ -182,11 +182,11 @@ interface Props {
 
 
 function stepBorderColor(result: string): string {
-  if (result === 'success') return '#10b981'
-  if (result === 'failed') return '#ef4444'
-  if (result === 'skipped') return '#94a3b8'
-  if (result === 'running') return '#3b82f6'
-  return '#f59e0b'
+  if (result === 'success') return '#1d7b46'
+  if (result === 'failed') return '#a33138'
+  if (result === 'skipped') return '#8b837b'
+  if (result === 'running') return '#761a34'
+  return '#b46b18'
 }
 
 /** Determine responsible party for an action key */
@@ -232,14 +232,14 @@ function BookTitleContractCard({ project }: { project: ProjectSummary }) {
         alignItems: 'center',
         gap: 14,
         padding: '10px 14px',
-        background: '#f8fbff',
-        border: '1px solid rgba(15, 118, 110, 0.1)',
-        borderRadius: 8,
+        background: '#fffefc',
+        border: '1px solid #dedbd4',
+        borderRadius: 6,
         marginBottom: 14,
         flexWrap: 'wrap',
       }}
     >
-      <BookOpen size={16} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+      <BookOpen size={16} style={{ color: '#761a34', flexShrink: 0 }} />
       {items.map((item) => (
         <div key={item.label} style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
           <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{item.label}:</span>
@@ -250,7 +250,7 @@ function BookTitleContractCard({ project }: { project: ProjectSummary }) {
       ))}
       <Link
         to={`?module=genesis`}
-        style={{ fontSize: 11, color: 'var(--primary)', marginLeft: 'auto', whiteSpace: 'nowrap' }}
+        style={{ fontSize: 11, color: '#761a34', marginLeft: 'auto', whiteSpace: 'nowrap' }}
       >
         查看契约详情
       </Link>
@@ -1089,6 +1089,12 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     || productionNext?.health?.has_running_target_workflow
     || false
 
+  /* v5.5.15: Check if health-summary reports an obsolete session */
+  const obsoleteSessionItem = healthSummary?.items.find(
+    (item) => item.key.startsWith('obsolete_session')
+  )
+  const isSessionObsolete = disconnected && !!obsoleteSessionItem
+
   /* Determine if we should show postmortem */
   const isBlockedState = autoResult?.stop_reason && ['blocked', 'repeated_failure', 'consecutive_no_progress', 'step_failed'].includes(autoResult.stop_reason)
   const hasCriticalError = streamError?.message?.includes('CRITICAL') || streamError?.message?.includes('死刑红线')
@@ -1111,9 +1117,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       {/* ============================================================ */}
       <div
         style={{
-          background: '#ffffff',
-          border: '1px solid rgba(15, 118, 110, 0.14)',
-          borderRadius: 8,
+          background: '#fffefc',
+          border: '1px solid #dedbd4',
+          borderRadius: 6,
           marginBottom: 14,
           overflow: 'hidden',
         }}
@@ -1126,12 +1132,12 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
             justifyContent: 'space-between',
             gap: 12,
             padding: '14px 18px',
-            borderBottom: '1px solid rgba(15, 118, 110, 0.1)',
-            background: '#f8fbff',
+            borderBottom: '1px solid #dedbd4',
+            background: '#fbfaf7',
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <Zap size={18} style={{ color: 'var(--primary)', flexShrink: 0 }} />
+            <Zap size={18} style={{ color: '#761a34', flexShrink: 0 }} />
             <div style={{ minWidth: 0 }}>
               <h3 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: 'var(--text-primary)' }}>
                 今日生产
@@ -1154,8 +1160,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 fontSize: 11,
                 padding: '2px 8px',
                 borderRadius: 4,
-                background: '#dbeafe',
-                color: '#1e40af',
+                background: '#f3e8eb',
+                color: '#761a34',
                 fontWeight: 500,
               }}
             >
@@ -1166,8 +1172,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 fontSize: 11,
                 padding: '2px 8px',
                 borderRadius: 4,
-                background: completionRate >= 100 ? '#d1fae5' : '#dbeafe',
-                color: completionRate >= 100 ? '#065f46' : '#1e40af',
+                background: completionRate >= 100 ? '#e9f4ed' : '#f3e8eb',
+                color: completionRate >= 100 ? '#1d7b46' : '#761a34',
                 fontWeight: 500,
               }}
             >
@@ -1186,14 +1192,14 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
               <div
                 style={{
                   padding: '12px 14px',
-                  borderRadius: 8,
-                  background: nextActionKey === 'none' ? '#f0fdf4' : '#f8fbff',
-                  border: `1px solid ${nextActionKey === 'none' ? 'rgba(16, 185, 129, 0.2)' : 'rgba(15, 118, 110, 0.12)'}`,
+                  borderRadius: 6,
+                  background: nextActionKey === 'none' ? '#f6faf7' : '#fbfaf7',
+                  border: `1px solid ${nextActionKey === 'none' ? 'rgba(29, 123, 70, 0.18)' : '#e8e4dd'}`,
                   marginBottom: 14,
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  {responsibleParty === 'ai' && <Sparkles size={14} color="#0f766e" />}
+                  {responsibleParty === 'ai' && <Sparkles size={14} color="#761a34" />}
                   {responsibleParty === 'human' && <AlertCircle size={14} color="#d97706" />}
                   {responsibleParty === 'system' && <Wrench size={14} color="#6b7280" />}
                   <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
@@ -1238,7 +1244,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   </Link>
                 )}
 
-                {!autoRunning && disconnected && !hasRunningWorkflow && (
+                {!autoRunning && disconnected && !hasRunningWorkflow && !isSessionObsolete && (
                   <button
                     className="btn btn-secondary"
                     onClick={handleResumeSession}
@@ -1246,6 +1252,17 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     style={{ flex: '1 1 150px', minWidth: 0 }}
                   >
                     <Play size={14} /> {recovering ? '恢复中...' : '重新接入'}
+                  </button>
+                )}
+
+                {/* v5.5.15: Obsolete disconnected session → show cleanup instead of reconnect */}
+                {!autoRunning && disconnected && !hasRunningWorkflow && isSessionObsolete && obsoleteSessionItem && (
+                  <button
+                    className="btn btn-secondary"
+                    onClick={() => handleHealthAction(obsoleteSessionItem)}
+                    style={{ flex: '1 1 150px', minWidth: 0 }}
+                  >
+                    <XCircle size={14} /> 清理旧会话
                   </button>
                 )}
 
@@ -1355,9 +1372,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                       gap: 10,
                       flexWrap: 'wrap',
                       padding: '10px 12px',
-                      background: '#f8fbff',
-                      border: '1px solid rgba(15, 118, 110, 0.12)',
-                      borderRadius: 8,
+                      background: '#fbfaf7',
+                      border: '1px solid #e8e4dd',
+                      borderRadius: 6,
                       marginBottom: 10,
                     }}
                   >
@@ -1382,9 +1399,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                       gap: 12,
                       alignItems: 'center',
                       padding: '10px 12px',
-                      background: '#f8fbff',
-                      border: '1px solid rgba(15, 118, 110, 0.12)',
-                      borderRadius: 8,
+                      background: '#fbfaf7',
+                      border: '1px solid #e8e4dd',
+                      borderRadius: 6,
                       marginBottom: 12,
                     }}
                   >
@@ -1441,9 +1458,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     gap: 10,
                     marginBottom: 12,
                     padding: '10px 12px',
-                    background: '#f8fbff',
-                    border: '1px solid rgba(15, 118, 110, 0.12)',
-                    borderRadius: 8,
+                    background: '#fbfaf7',
+                    border: '1px solid #e8e4dd',
+                    borderRadius: 6,
                   }}
                 >
                   <div>
@@ -1456,7 +1473,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                         style={{
                           height: '100%',
                           width: `${Math.min(100, ((streamSteps.length > 0 ? streamSteps.length : autoResult?.steps_executed || 0) / Math.max(1, autoConfig.maxSteps)) * 100)}%`,
-                          background: streamStatus === 'running' ? '#3b82f6' : '#10b981',
+                          background: streamStatus === 'running' ? '#761a34' : '#1d7b46',
                           borderRadius: 2,
                           transition: 'width 0.3s ease',
                         }}
@@ -1504,10 +1521,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   {/* Status bar */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {streamStatus === 'running' && <Loader2 size={14} className="spin" color="#3b82f6" />}
-                      {autoResult?.status === 'completed' && <CheckCircle2 size={14} color="#10b981" />}
+                      {streamStatus === 'running' && <Loader2 size={14} className="spin" color="#761a34" />}
+                      {autoResult?.status === 'completed' && <CheckCircle2 size={14} color="#1d7b46" />}
                       {autoResult?.status === 'failed' && <XCircle size={14} color="#ef4444" />}
-                      {autoResult?.status === 'dry_run' && <Sparkles size={14} color="#06b6d4" />}
+                      {autoResult?.status === 'dry_run' && <Sparkles size={14} color="#761a34" />}
                       {autoResult?.status === 'stopped' && <AlertCircle size={14} color="#f59e0b" />}
                       {streamStatus === 'error' && <XCircle size={14} color="#ef4444" />}
                       <span style={{ fontSize: 13, fontWeight: 500 }}>
@@ -1551,8 +1568,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                                 fontSize: 11,
                                 padding: '2px 6px',
                                 borderRadius: 4,
-                                background: step.result === 'success' ? '#d1fae5' : step.result === 'failed' ? '#fee2e2' : step.result === 'skipped' ? '#f1f5f9' : step.result === 'running' ? '#dbeafe' : '#fef3c7',
-                                color: step.result === 'success' ? '#065f46' : step.result === 'failed' ? '#991b1b' : step.result === 'skipped' ? '#64748b' : step.result === 'running' ? '#1e40af' : '#92400e',
+                                background: step.result === 'success' ? '#e9f4ed' : step.result === 'failed' ? '#fee2e2' : step.result === 'skipped' ? '#f1f0ee' : step.result === 'running' ? '#f3e8eb' : '#fef3c7',
+                                color: step.result === 'success' ? '#1d7b46' : step.result === 'failed' ? '#991b1b' : step.result === 'skipped' ? '#6f6862' : step.result === 'running' ? '#761a34' : '#92400e',
                               }}
                             >
                               {tStepResult(step.result)}
@@ -1637,8 +1654,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                                   fontSize: 11,
                                   padding: '2px 6px',
                                   borderRadius: 4,
-                                  background: s.status === 'completed' ? '#d1fae5' : s.status === 'failed' ? '#fee2e2' : s.status === 'cancelled' ? '#f1f5f9' : s.status === 'paused' ? '#fef3c7' : '#dbeafe',
-                                  color: s.status === 'completed' ? '#065f46' : s.status === 'failed' ? '#991b1b' : s.status === 'cancelled' ? '#64748b' : s.status === 'paused' ? '#92400e' : '#1e40af',
+                                  background: s.status === 'completed' ? '#e9f4ed' : s.status === 'failed' ? '#fee2e2' : s.status === 'cancelled' ? '#f1f0ee' : s.status === 'paused' ? '#fef3c7' : '#f3e8eb',
+                                  color: s.status === 'completed' ? '#1d7b46' : s.status === 'failed' ? '#991b1b' : s.status === 'cancelled' ? '#6f6862' : s.status === 'paused' ? '#92400e' : '#761a34',
                                 }}
                               >
                                 {tSessionStopLabel(s.status, s.stop_reason)}
@@ -1710,7 +1727,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       <div className="data-card" style={{ marginTop: 12, padding: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 8 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            {contextStatus?.ready ? <CheckCircle2 size={14} color="#10b981" /> : <AlertCircle size={14} color="#f59e0b" />}
+            {contextStatus?.ready ? <CheckCircle2 size={14} color="#1d7b46" /> : <AlertCircle size={14} color="#b46b18" />}
             <span style={{ fontSize: 13, fontWeight: 500 }}>资料准备度</span>
           </div>
           {contextStatus && (
@@ -1719,8 +1736,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 fontSize: 11,
                 padding: '2px 8px',
                 borderRadius: 4,
-                background: contextStatus.ready ? '#d1fae5' : '#fef3c7',
-                color: contextStatus.ready ? '#065f46' : '#92400e',
+                background: contextStatus.ready ? '#e9f4ed' : '#f8eee0',
+                color: contextStatus.ready ? '#1d7b46' : '#b46b18',
               }}
             >
               {contextStatus.score}%

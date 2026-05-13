@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, post, put, del } from '../../lib/api'
 import { FileText, Plus, Pencil, Trash2 } from 'lucide-react'
+import { useAppDialog } from '../AppDialogContext'
 
 interface Instruction {
   id: number
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export default function InstructionsModule({ projectId }: Props) {
+  const dialog = useAppDialog()
   const [items, setItems] = useState<Instruction[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -59,7 +61,13 @@ export default function InstructionsModule({ projectId }: Props) {
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm('确定删除此章节指令？')) return
+    const ok = await dialog.confirm({
+      title: '删除章节指令',
+      message: '确定删除此章节指令？',
+      tone: 'danger',
+      confirmLabel: '删除',
+    })
+    if (!ok) return
     const res = await del(`/projects/${projectId}/instructions/${id}`)
     if (res.ok) load()
   }

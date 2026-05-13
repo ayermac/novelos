@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { Activity, RefreshCw } from 'lucide-react'
 import { get, post } from '../../lib/api'
 import { tChapterStatus, tWorkflowStatus } from '../../lib/i18n'
+import { useAppDialog } from '../AppDialogContext'
 
 interface RunningTask {
   id: number
@@ -65,6 +66,7 @@ interface BatchMarkResult {
 }
 
 export default function RunHealthPanel() {
+  const dialog = useAppDialog()
   const [data, setData] = useState<RunHealthResponse | null>(null)
   const [selected, setSelected] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
@@ -109,7 +111,12 @@ export default function RunHealthPanel() {
 
   const handleBatchMark = async () => {
     if (selected.length === 0) return
-    const ok = window.confirm(`确认将 ${selected.length} 条疑似卡住运行标记为阻塞？`)
+    const ok = await dialog.confirm({
+      title: '批量标记卡住运行',
+      message: `确认将 ${selected.length} 条疑似卡住运行标记为阻塞？`,
+      tone: 'warning',
+      confirmLabel: '批量标记',
+    })
     if (!ok) return
 
     setMarking(true)

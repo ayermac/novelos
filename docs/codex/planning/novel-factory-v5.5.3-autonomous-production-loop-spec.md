@@ -203,7 +203,7 @@ npm run build
 
 ## 文档更新
 
-- 新增：`docs/codex/novel-factory-v5.5.3-autonomous-production-loop-spec.md`
+- 新增：`docs/codex/planning/novel-factory-v5.5.3-autonomous-production-loop-spec.md`
 - 更新：`README.md`、`README.zh-CN.md`、`docs/codex/README.md`、`AGENTS.md`、`CLAUDE.md`
 
 ## 接口兼容性

@@ -56,6 +56,14 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
         if chapter.get("status") == "pending":
             repo.update_chapter_status(body.project_id, body.chapter, "planned")
 
+        # v5.5.15: Unified run guard — check both running workflow and
+        # terminal chapter status via the shared helper.
+        from ._run_guards import check_chapter_run_guard
+
+        guard_error = check_chapter_run_guard(repo, body.project_id, body.chapter)
+        if guard_error:
+            return error_response(guard_error.code, guard_error.message, details=guard_error.details)
+
         # Run chapter via LangGraph workflow
         result = await asyncio.to_thread(
             run_with_graph,

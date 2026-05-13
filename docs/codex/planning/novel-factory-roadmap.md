@@ -1,10 +1,12 @@
 # 小说内容生产工厂版本路线
 
+> 说明：本文是历史版本路线与规格索引，保留用于追溯既有阶段。当前稳定基线与下一阶段方向以 `docs/codex/README.md` 为入口；v5.5.15 完成事实见 `docs/codex/reports/novel-factory-v5.5.15-completion-report.md`；下一阶段候选方向见 `docs/codex/next/personal-author-workbench-direction.md`。
+
 ## 版本策略
 
 系统按“小闭环先跑通，再逐步增强”的方式迭代。每个版本都必须有明确的范围、验收标准和延后项，避免多个开发 Agent 同时扩散实现。
 
-当前建议路线：
+历史路线：
 
 ```text
 v1   章节生产 MVP

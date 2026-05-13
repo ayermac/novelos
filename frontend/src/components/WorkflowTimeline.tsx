@@ -1,10 +1,5 @@
 import { useState } from 'react'
-
-interface Artifacts {
-  summary: string
-  output_preview?: string
-  [key: string]: unknown
-}
+import { formatArtifactSummary, WorkflowArtifacts } from '../lib/artifacts'
 
 interface Step {
   key: string
@@ -13,7 +8,13 @@ interface Step {
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
   error_message?: string
   error_is_legacy?: boolean
-  artifacts?: Artifacts | null
+  logs?: {
+    id?: string
+    timestamp?: string
+    level?: 'info' | 'success' | 'warning' | 'error'
+    message: string
+  }[]
+  artifacts?: WorkflowArtifacts | null
 }
 
 interface Props {
@@ -72,6 +73,7 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
         {steps.map((step) => {
           const isExpanded = expandedStep === step.key
           const hasArtifacts = step.status === 'completed' && step.artifacts
+          const logs = step.logs || []
 
           return (
             <div key={step.key} className={`step-item ${stepStatusClass(step.status)}`}>
@@ -90,22 +92,40 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
                       )}
                     </div>
                   )}
+                  {(logs.length > 0 || step.status === 'running') && (
+                    <div className="step-logs" aria-live={step.status === 'running' ? 'polite' : undefined}>
+                      <div className="step-logs-title">节点日志</div>
+                      {logs.map((log, index) => (
+                        <div key={log.id || `${step.key}-log-${index}`} className={`step-log step-log-${log.level || 'info'}`}>
+                          <span className="step-log-dot" />
+                          <span className="step-log-message">{log.message}</span>
+                          {log.timestamp && <span className="step-log-time">{log.timestamp}</span>}
+                        </div>
+                      ))}
+                      {step.status === 'running' && logs.length === 0 && (
+                        <div className="step-log step-log-info">
+                          <span className="step-log-dot step-log-dot-pulse" />
+                          <span className="step-log-message">节点运行中，正在等待模型或工具返回。</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
                 {hasArtifacts && (
                   <button
                     className="step-expand-btn"
                     onClick={() => toggleExpand(step.key)}
                   >
-                    {isExpanded ? '收起' : '查看产物'}
+                    {isExpanded ? '收起' : '查看过程稿'}
                   </button>
                 )}
               </div>
               {hasArtifacts && isExpanded && (
                 <div className="step-artifacts">
-                  <div className="artifacts-summary">{step.artifacts!.summary}</div>
+                  <div className="artifacts-summary">{formatArtifactSummary(step.artifacts)}</div>
                   {step.artifacts!.output_preview && (
                     <div className="artifacts-preview">
-                      <div className="preview-label">预览:</div>
+                      <div className="preview-label">内容预览:</div>
                       <div className="preview-content">{step.artifacts!.output_preview}</div>
                     </div>
                   )}
@@ -191,6 +211,61 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
         .wf-timeline .step-error-legacy {
           background: #fffbeb;
           color: #b45309;
+        }
+        .wf-timeline .step-logs {
+          margin-top: 8px;
+          display: flex;
+          flex-direction: column;
+          gap: 5px;
+          padding: 8px 10px;
+          border-radius: 6px;
+          background: rgba(255, 255, 255, 0.64);
+          border: 1px solid rgba(148, 163, 184, 0.2);
+        }
+        .wf-timeline .step-logs-title {
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--text-muted);
+          margin-bottom: 1px;
+        }
+        .wf-timeline .step-log {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr) auto;
+          align-items: center;
+          gap: 7px;
+          font-size: 12px;
+          line-height: 1.5;
+          color: var(--text-secondary);
+        }
+        .wf-timeline .step-log-dot {
+          width: 6px;
+          height: 6px;
+          border-radius: 50%;
+          background: #94a3b8;
+        }
+        .wf-timeline .step-log-success .step-log-dot {
+          background: #16a34a;
+        }
+        .wf-timeline .step-log-warning .step-log-dot {
+          background: #d97706;
+        }
+        .wf-timeline .step-log-error .step-log-dot {
+          background: #dc2626;
+        }
+        .wf-timeline .step-log-info .step-log-dot {
+          background: #2563eb;
+        }
+        .wf-timeline .step-log-dot-pulse {
+          animation: wf-pulse 1.5s infinite;
+        }
+        .wf-timeline .step-log-message {
+          min-width: 0;
+          overflow-wrap: anywhere;
+        }
+        .wf-timeline .step-log-time {
+          font-size: 11px;
+          color: var(--text-muted);
+          font-variant-numeric: tabular-nums;
         }
         .wf-timeline .legacy-tag {
           margin-left: 6px;

@@ -49,11 +49,19 @@ export function tSessionStopLabel(status: string, stopReason?: string): string {
 // ── Workflow node labels ──────────────────────────────────────────
 
 export const WORKFLOW_NODE_LABEL: Record<string, string> = {
-  screenwriter: '策划',
+  health_check: '预检',
+  task_discovery: '任务识别',
+  planner: '规划',
+  screenwriter: '编剧',
   author: '执笔',
   polisher: '润色',
   editor: '审稿',
+  memory_curator: '记忆整理',
+  publisher: '发布',
   publish: '发布',
+  awaiting_publish: '等待发布',
+  archive: '归档',
+  revision_router: '返修路由',
   human_review: '人工审核',
 }
 
@@ -99,4 +107,32 @@ export const STEP_RESULT_LABEL: Record<string, string> = {
 export function tStepResult(result: string | undefined | null): string {
   if (!result) return '—'
   return STEP_RESULT_LABEL[result] || result
+}
+
+// ── v5.7 Version source labels ───────────────────────────────────
+
+export const VERSION_SOURCE_LABEL: Record<string, string> = {
+  ai_generation: 'AI 生成',
+  manual_edit: '人工编辑',
+  local_revision: '局部返修',
+  rollback: '回滚',
+  publish_snapshot: '发布快照',
+}
+
+export function tVersionSource(source: string | null | undefined): string {
+  if (!source) return '未知'
+  return VERSION_SOURCE_LABEL[source] || source
+}
+
+export const LOCAL_REVISION_MODE_LABEL: Record<string, string> = {
+  rewrite: '重写',
+  polish: '润色',
+  shorten: '精简',
+  expand: '扩写',
+  tone: '调整语气',
+}
+
+export function tRevisionMode(mode: string | null | undefined): string {
+  if (!mode) return '返修'
+  return LOCAL_REVISION_MODE_LABEL[mode] || mode
 }

@@ -213,6 +213,12 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         columns = [row[1] for row in cursor.fetchall()]
         return "last_event" in columns
 
+    if name == "029_v5_7_chapter_version_fields":
+        # 029 adds source, base_version_id, summary, metadata to chapter_versions
+        cursor = conn.execute("PRAGMA table_info(chapter_versions)")
+        columns = [row[1] for row in cursor.fetchall()]
+        return {"source", "base_version_id", "summary", "metadata"}.issubset(columns)
+
     return False
 
 

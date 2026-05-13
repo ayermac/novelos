@@ -24,6 +24,7 @@ from .story_facts import router as story_facts_router
 from .skills import router as skills_router
 from .project_skill_overrides import router as project_skill_overrides_router
 from .production import router as production_router
+from .versions import router as versions_router
 
 __all__ = [
     "health_router",
@@ -50,4 +51,5 @@ __all__ = [
     "skills_router",
     "project_skill_overrides_router",
     "production_router",
+    "versions_router",
 ]

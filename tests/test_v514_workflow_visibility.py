@@ -6,7 +6,7 @@ Tests for:
 3. Run success result contains "查看工作流" link
 4. Project recent runs contains "查看工作流" entry
 5. /api/runs/{run_id} returns complete steps
-6. /runs/:runId page displays 5 agent step labels
+6. /runs/:runId page displays workflow step labels
 7. UI does not show raw stub/blocked/completed/published
 8. Continue generate next chapter preselects next chapter
 9. Settings copy draft has feedback text
@@ -64,10 +64,12 @@ class TestRunDetailAPI:
         assert data["ok"] is True
         assert "steps" in data["data"]
         steps = data["data"]["steps"]
-        assert len(steps) == 5
+        assert len(steps) >= 5
 
         # Check step labels are Chinese
         labels = [s["label"] for s in steps]
+        if any(s["key"] == "planner" for s in steps):
+            assert "规划" in labels
         assert "编剧" in labels
         assert "执笔" in labels
         assert "润色" in labels
@@ -176,7 +178,7 @@ class TestRunDetailPage:
         assert detail_file.exists()
 
     def test_run_detail_has_five_steps(self):
-        """RunDetail.tsx should display 5 workflow steps via WorkflowTimeline component."""
+        """RunDetail.tsx should display workflow steps via WorkflowTimeline component."""
         frontend_src = Path(__file__).parent.parent / "frontend" / "src"
         detail_file = frontend_src / "pages" / "RunDetail.tsx"
         content = detail_file.read_text()

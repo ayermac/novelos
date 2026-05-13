@@ -4,9 +4,11 @@ import { get, post } from '../lib/api'
 import { useApiQuery } from '../hooks/useApiQuery'
 import ErrorState from '../components/ErrorState'
 import { useSSEStream, SSEEvent, StepStatus } from '../hooks/useSSEStream'
+import { buildProjectModuleSearchParams, ensureChapterSearchParams } from '../lib/project-routing'
 import type { ProjectModule } from '../components/project/ProjectModuleNav'
 import ProjectShell from '../components/project/ProjectShell'
-import ChapterWorkspace, { ChapterTabKey } from '../components/project/ChapterWorkspace'
+import AuthorWorkbench from '../components/project/AuthorWorkbench'
+import type { SurfaceTabKey } from '../components/project/AuthorWritingSurface'
 import WorldSettingsModule from '../components/project/WorldSettingsModule'
 import CharactersModule from '../components/project/CharactersModule'
 import FactionsModule from '../components/project/FactionsModule'
@@ -21,6 +23,7 @@ import FactLedgerModule from '../components/project/FactLedgerModule'
 import StyleGuideModule from '../components/project/StyleGuideModule'
 import ReviewModule from '../components/project/ReviewModule'
 import RunsModule from '../components/project/RunsModule'
+import { useAppDialog } from '../components/AppDialogContext'
 
 // v5.4: Chapter UI moved into ChapterWorkspace. Keep these acceptance anchors
 // here because older frontend closure tests inspect ProjectDetail.tsx directly:
@@ -95,14 +98,17 @@ interface RunDetailData {
   chapter_status: string
   current_node?: string | null
   llm_mode: string
+  started_at?: string
+  completed_at?: string
   steps: Step[]
 }
 
-type TabKey = ChapterTabKey
+type TabKey = SurfaceTabKey
 
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
+  const dialog = useAppDialog()
 
 
   const { data: workspace, isLoading: loading, error: wsError, refetch: refetchWorkspace } = useApiQuery<Workspace>(
@@ -122,11 +128,14 @@ export default function ProjectDetail() {
   const [genError, setGenError] = useState('')
   const [genErrorDetails, setGenErrorDetails] = useState<{ missing?: string[]; actions?: string[] } | null>(null)
   const [sseSteps, setSseSteps] = useState<Record<string, StepStatus>>({})
+  const [publishPending, setPublishPending] = useState(false)
+  const [markStuckPending, setMarkStuckPending] = useState(false)
+  const [resetRecoveryPending, setResetRecoveryPending] = useState(false)
   const currentChapterRef = useRef<number>(1)
   const streamingChapterRef = useRef<number | null>(null)
 
   const currentChapter = parseInt(searchParams.get('chapter') || '1', 10)
-  const activeModule: ProjectModule = (searchParams.get('module') as ProjectModule) || 'overview'
+  const activeModule: ProjectModule = (searchParams.get('module') as ProjectModule) || 'chapters'
   const requestedView = searchParams.get('view') as TabKey | null
   const requestedAutoGenerate = searchParams.get('auto_generate') === '1'
 
@@ -138,23 +147,26 @@ export default function ProjectDetail() {
 
   useEffect(() => {
     if (activeModule !== 'chapters') return
-    if (requestedView && ['content', 'workflow', 'artifacts', 'history'].includes(requestedView)) {
+    if (requestedView && ['content', 'workflow', 'artifacts', 'history', 'versions'].includes(requestedView)) {
       setActiveTab(requestedView)
     } else if (!requestedView) {
       setActiveTab('content')
     }
   }, [activeModule, requestedView])
 
-  // Set initial chapter
+  // Set initial chapter (default to workbench / chapters module)
   useEffect(() => {
     if (workspace && !searchParams.get('chapter') && workspace.chapters.length > 0) {
-      setSearchParams({ chapter: String(workspace.chapters[0].chapter_number), module: activeModule }, { replace: true })
+      setSearchParams(
+        ensureChapterSearchParams(searchParams, workspace.chapters[0].chapter_number),
+        { replace: true }
+      )
     }
   }, [workspace]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load chapter detail when chapter changes (only for chapters module)
+  // Load chapter detail when chapter changes (for workbench and chapters module)
   useEffect(() => {
-    if (!id || !currentChapter || activeModule !== 'chapters') return
+    if (!id || !currentChapter) return
     setChapterLoading(true)
     setChapterDetail(null)
     setRunDetail(null)
@@ -166,20 +178,21 @@ export default function ProjectDetail() {
       })
       .catch(() => setGenError('获取章节详情失败'))
       .finally(() => setChapterLoading(false))
-  }, [id, currentChapter, activeModule])
+  }, [id, currentChapter])
 
-  const loadRunDetail = useCallback((runId: string) => {
-    setRunDetail(null)
-    get<RunDetailData>(`/runs/${runId}`)
+  const loadRunDetail = useCallback((runId: string, options?: { silent?: boolean }) => {
+    if (!options?.silent) setRunDetail(null)
+    return get<RunDetailData>(`/runs/${runId}`)
       .then((res) => {
         if (res.ok && res.data) setRunDetail(res.data)
-        else setGenError(res.error?.message || '获取运行详情失败')
+        else if (!options?.silent) setGenError(res.error?.message || '获取运行详情失败')
       })
-      .catch(() => setGenError('获取运行详情失败'))
+      .catch(() => {
+        if (!options?.silent) setGenError('获取运行详情失败')
+      })
   }, [])
 
   useEffect(() => {
-    if (activeModule !== 'chapters') return
     if (activeTab !== 'workflow' && activeTab !== 'artifacts') return
 
     const runsForCurrentChapter = (workspace?.recent_runs || [])
@@ -187,7 +200,33 @@ export default function ProjectDetail() {
     const latestRun = runsForCurrentChapter.length > 0 ? runsForCurrentChapter[0] : null
     if (latestRun) loadRunDetail(latestRun.run_id)
     else setRunDetail(null)
-  }, [activeModule, activeTab, currentChapter, workspace?.recent_runs, loadRunDetail])
+  }, [activeTab, currentChapter, workspace?.recent_runs, loadRunDetail])
+
+  useEffect(() => {
+    if ((activeModule !== 'chapters' && activeModule !== 'overview') || activeTab !== 'workflow') return
+    const runsForCurrentChapter = (workspace?.recent_runs || [])
+      .filter((r) => r.chapter_number === currentChapter)
+    const latestRun = runsForCurrentChapter.length > 0 ? runsForCurrentChapter[0] : null
+    const pollingRunId = runDetail?.run_id || latestRun?.run_id
+    const shouldPoll = runDetail?.workflow_status === 'running' || latestRun?.status === 'running'
+    if (!pollingRunId || !shouldPoll) return
+
+    const timer = window.setInterval(() => {
+      loadRunDetail(pollingRunId, { silent: true })
+      refetchWorkspace()
+    }, 5000)
+
+    return () => window.clearInterval(timer)
+  }, [
+    activeModule,
+    activeTab,
+    currentChapter,
+    loadRunDetail,
+    refetchWorkspace,
+    runDetail?.run_id,
+    runDetail?.workflow_status,
+    workspace?.recent_runs,
+  ])
 
   // SSE streaming hook for real-time generation progress
   const handleSSEComplete = useCallback((event: SSEEvent) => {
@@ -241,68 +280,71 @@ export default function ProjectDetail() {
     setSseSteps(sseHookSteps)
   }, [sseHookSteps])
 
-  const handleSelectChapter = (chapterNumber: number) => {
-    setSearchParams({ chapter: String(chapterNumber), module: 'chapters' }, { replace: true })
+  const handleSelectChapter = useCallback((chapterNumber: number) => {
+    setSearchParams({ chapter: String(chapterNumber) }, { replace: true })
     setActiveTab('content')
-  }
+  }, [setSearchParams])
 
-  const handleTabChange = (tab: TabKey) => {
+  const handleOpenChapterView = useCallback((chapterNumber: number, tab: TabKey) => {
     setActiveTab(tab)
     setSearchParams({
-      module: 'chapters',
-      chapter: String(currentChapter),
+      chapter: String(chapterNumber),
       ...(tab === 'content' ? {} : { view: tab }),
     }, { replace: true })
     if (tab === 'workflow' || tab === 'artifacts') {
       const runsForChapter = (workspace?.recent_runs || [])
-        .filter((r) => r.chapter_number === currentChapter)
+        .filter((r) => r.chapter_number === chapterNumber)
       const latestRun = runsForChapter.length > 0 ? runsForChapter[0] : null
       if (latestRun) loadRunDetail(latestRun.run_id)
+      else setRunDetail(null)
     }
-  }
+  }, [loadRunDetail, setSearchParams, workspace?.recent_runs])
 
-  const handleGenerate = useCallback(() => {
+  const handleTabChange = useCallback((tab: TabKey) => {
+    handleOpenChapterView(currentChapter, tab)
+  }, [currentChapter, handleOpenChapterView])
+
+  const handleGenerateChapter = useCallback((chapterNumber: number) => {
     if (!id || !workspace) return
+    const chapter = workspace.chapters.find((c) => c.chapter_number === chapterNumber)
+    if (chapter && ['reviewed', 'awaiting_publish', 'published'].includes(chapter.status)) return
     // Guard: don't start generation if chapter already has a running workflow
     const hasRunningRun = workspace.recent_runs?.some(
-      (r) => r.chapter_number === currentChapter && r.status === 'running'
+      (r) => r.chapter_number === chapterNumber && r.status === 'running'
     )
     if (hasRunningRun) return
     setGenerating(true)
-    setGeneratingChapter(currentChapter)
-    streamingChapterRef.current = currentChapter
+    setGeneratingChapter(chapterNumber)
+    streamingChapterRef.current = chapterNumber
     setGenError('')
     setGenErrorDetails(null)
     setSseSteps({})
     setActiveTab('workflow')
     setSearchParams({
-      module: 'chapters',
-      chapter: String(currentChapter),
+      chapter: String(chapterNumber),
       view: 'workflow',
     }, { replace: true })
-    startStream(id, currentChapter)
-  }, [currentChapter, id, setSearchParams, startStream, workspace])
+    startStream(id, chapterNumber)
+  }, [id, setSearchParams, startStream, workspace])
+
+  const handleGenerate = useCallback(() => {
+    handleGenerateChapter(currentChapter)
+  }, [currentChapter, handleGenerateChapter])
 
   const handleViewWorkflow = (runId: string) => {
     loadRunDetail(runId)
     setActiveTab('workflow')
     setSearchParams({
-      module: 'chapters',
       chapter: String(currentChapter),
       view: 'workflow',
     }, { replace: true })
   }
 
-  const handleViewContent = () => {
-    setActiveTab('content')
-    setSearchParams({
-      module: 'chapters',
-      chapter: String(currentChapter),
-    }, { replace: true })
-  }
+  const handleViewContent = useCallback(() => {
+    handleOpenChapterView(currentChapter, 'content')
+  }, [currentChapter, handleOpenChapterView])
 
   useEffect(() => {
-    if (activeModule !== 'chapters') return
     if (requestedView !== 'workflow' || !requestedAutoGenerate) return
     if (!id || !workspace || generating || isStreaming) return
     // Guard: don't auto-generate if chapter already has a running workflow
@@ -311,52 +353,157 @@ export default function ProjectDetail() {
     )
     if (hasRunningRun) return
     handleGenerate()
-  }, [activeModule, requestedView, requestedAutoGenerate, id, generating, isStreaming, handleGenerate, workspace, currentChapter])
+  }, [requestedView, requestedAutoGenerate, id, generating, isStreaming, handleGenerate, workspace, currentChapter])
 
-  const handleResetChapter = async (chapterNumber: number) => {
-    if (!id) return
-    const res = await post<{
-      reset: boolean
-      previous_status: string
-      new_status: string
-      retry_count_before?: number
-      retry_count_after?: number
-      retries_cleared?: number
-    }>(
-      `/projects/${id}/chapters/${chapterNumber}/reset`
-    )
-    if (res.ok && res.data) {
-      refetchWorkspace()
-      get<ChapterDetail>(`/projects/${id}/chapters/${chapterNumber}`)
-        .then((r) => {
-          if (r.ok && r.data) setChapterDetail(r.data)
+  const handlePublishChapter = useCallback(async (chapterNumber: number) => {
+    if (!id || publishPending) return
+    setPublishPending(true)
+    try {
+      const res = await post(`/publish/chapter`, { project_id: id, chapter: chapterNumber })
+      if (res.ok) {
+        await refetchWorkspace()
+      } else {
+        await dialog.alert({
+          title: '发布章节失败',
+          message: res.error?.message || '发布章节失败',
+          tone: 'danger',
         })
-    } else {
-      alert(res.error?.message || '重置章节失败')
+      }
+    } catch (err: unknown) {
+      await dialog.alert({
+        title: '发布章节失败',
+        message: err instanceof Error ? err.message : '发布章节失败',
+        tone: 'danger',
+      })
+    } finally {
+      setPublishPending(false)
     }
-  }
+  }, [dialog, id, publishPending, refetchWorkspace])
 
   const handlePublish = useCallback(async () => {
+    await handlePublishChapter(currentChapter)
+  }, [currentChapter, handlePublishChapter])
+
+  const handleGenerateNextFromChapter = useCallback((chapterNumber: number) => {
     if (!id) return
-    const res = await post(`/publish/chapter`, { project_id: id, chapter: currentChapter })
-    if (res.ok) {
-      refetchWorkspace()
-    } else {
-      alert(res.error?.message || '发布章节失败')
-    }
-  }, [id, currentChapter, refetchWorkspace])
+    const nextCh = chapterNumber + 1
+    setSearchParams({ chapter: String(nextCh), view: 'workflow', auto_generate: '1' }, { replace: true })
+  }, [id, setSearchParams])
 
   const handleGenerateNext = useCallback(() => {
-    if (!id) return
-    const nextCh = currentChapter + 1
-    setSearchParams({ module: 'chapters', chapter: String(nextCh), view: 'workflow', auto_generate: '1' }, { replace: true })
-  }, [id, currentChapter, setSearchParams])
+    handleGenerateNextFromChapter(currentChapter)
+  }, [currentChapter, handleGenerateNextFromChapter])
+
+  const handleMarkRunStuck = useCallback(async (runId: string) => {
+    if (markStuckPending) return
+    const ok = await dialog.confirm({
+      title: '标记卡住运行',
+      message: '确认将这条超时运行标记为阻塞？这不会删除正文或过程稿，之后可以清除阻塞并重新生成。',
+      tone: 'warning',
+      confirmLabel: '标记为阻塞',
+    })
+    if (!ok) return
+    setMarkStuckPending(true)
+    try {
+      const res = await post(`/runs/${runId}/recovery/mark-stuck`, { confirm: true })
+      if (res.ok) {
+        setGenError('')
+        await refetchWorkspace()
+        loadRunDetail(runId)
+      } else {
+        await dialog.alert({
+          title: '标记卡住运行失败',
+          message: res.error?.message || '标记卡住运行失败',
+          tone: 'danger',
+        })
+      }
+    } catch (err: unknown) {
+      await dialog.alert({
+        title: '标记卡住运行失败',
+        message: err instanceof Error ? err.message : '标记卡住运行失败',
+        tone: 'danger',
+      })
+    } finally {
+      setMarkStuckPending(false)
+    }
+  }, [dialog, loadRunDetail, markStuckPending, refetchWorkspace])
+
+  const handleResetRunRecovery = useCallback(async (runId: string) => {
+    if (resetRecoveryPending) return
+    const ok = await dialog.confirm({
+      title: '清除阻塞并重置',
+      message: '确认清除本章阻塞/返修状态并回到 planned？正文、运行记录和过程稿会保留。',
+      tone: 'warning',
+      confirmLabel: '清除并重置',
+    })
+    if (!ok) return
+    setResetRecoveryPending(true)
+    try {
+      const res = await post(`/runs/${runId}/recovery/reset`, { confirm: true })
+      if (res.ok) {
+        setGenError('')
+        await refetchWorkspace()
+        loadRunDetail(runId)
+      } else {
+        await dialog.alert({
+          title: '恢复运行失败',
+          message: res.error?.message || '恢复运行失败',
+          tone: 'danger',
+        })
+      }
+    } catch (err: unknown) {
+      await dialog.alert({
+        title: '恢复运行失败',
+        message: err instanceof Error ? err.message : '恢复运行失败',
+        tone: 'danger',
+      })
+    } finally {
+      setResetRecoveryPending(false)
+    }
+  }, [dialog, loadRunDetail, refetchWorkspace, resetRecoveryPending])
+
+  const handleResetRunRecoveryForChapter = useCallback(async (chapterNumber: number) => {
+    if (!id || resetRecoveryPending) return
+    const ok = await dialog.confirm({
+      title: '清除阻塞并重置',
+      message: '确认清除本章阻塞/返修状态并回到 planned？正文、运行记录和过程稿会保留。',
+      tone: 'warning',
+      confirmLabel: '清除并重置',
+    })
+    if (!ok) return
+    setResetRecoveryPending(true)
+    try {
+      const res = await post(`/projects/${id}/chapters/${chapterNumber}/reset`, {})
+      if (res.ok) {
+        setGenError('')
+        await refetchWorkspace()
+        // If the current workflow view is for this chapter, clear its run detail.
+        if (runDetail && runDetail.chapter_number === chapterNumber) {
+          setRunDetail(null)
+        }
+      } else {
+        await dialog.alert({
+          title: '恢复失败',
+          message: res.error?.message || '恢复失败',
+          tone: 'danger',
+        })
+      }
+    } catch (err: unknown) {
+      await dialog.alert({
+        title: '恢复失败',
+        message: err instanceof Error ? err.message : '恢复失败',
+        tone: 'danger',
+      })
+    } finally {
+      setResetRecoveryPending(false)
+    }
+  }, [dialog, id, refetchWorkspace, resetRecoveryPending, runDetail])
 
   const handleModuleChange = (module: ProjectModule) => {
-    setSearchParams({ module, ...(module === 'chapters' ? { chapter: String(currentChapter) } : {}) }, { replace: true })
+    setSearchParams(buildProjectModuleSearchParams(searchParams, module, currentChapter), { replace: true })
   }
 
-  if (loading) return <div style={{ padding: '40px', textAlign: 'center' }}>加载中...</div>
+  if (loading) return <div className="module-loading">加载项目工作台...</div>
   if (error || !workspace) return <ErrorState title="加载失败" message={error || '项目不存在'} onRetry={refetchWorkspace} />
 
   const currentCh = workspace.chapters.find((c) => c.chapter_number === currentChapter) || null
@@ -364,22 +511,23 @@ export default function ProjectDetail() {
   const runsForChapter = workspace.recent_runs.filter((r) => r.chapter_number === currentChapter)
   const isCurrentChapterGenerating = (generating || isStreaming) && generatingChapter === currentChapter
   const isCurrentChapterWorkflowRunning = runsForChapter.some((r) => r.status === 'running')
+  const isChapterWorkflowRunning = (chapterNumber: number) => {
+    return workspace.recent_runs.some((r) => r.chapter_number === chapterNumber && r.status === 'running')
+  }
   const currentChapterSseSteps = isCurrentChapterGenerating ? sseSteps : {}
 
   return (
     <ProjectShell
       activeModule={activeModule}
       onModuleChange={handleModuleChange}
-      currentChapter={currentChapter}
       projectId={id || ''}
       projectName={workspace.project.name}
-      publishedCount={workspace.stats.status_counts?.published || 0}
       isStub={isStub}
     >
       <div className="workspace-layout">
       {activeModule === 'chapters' ? (
-        <ChapterWorkspace
-          activeTab={activeTab}
+        <AuthorWorkbench
+          activeTab={activeTab as SurfaceTabKey}
           chapterDetail={chapterDetail}
           chapterLoading={chapterLoading}
           chapters={workspace.chapters}
@@ -391,6 +539,7 @@ export default function ProjectDetail() {
           isStub={isStub}
           isStreaming={isCurrentChapterGenerating}
           isWorkflowRunning={isCurrentChapterWorkflowRunning}
+          isChapterWorkflowRunning={isChapterWorkflowRunning}
           llmMode={llmMode}
           projectId={id || ''}
           runDetail={runDetail}
@@ -398,12 +547,28 @@ export default function ProjectDetail() {
           sseSteps={currentChapterSseSteps}
           onGenerate={handleGenerate}
           onGenerateNext={handleGenerateNext}
+          onMarkRunStuck={handleMarkRunStuck}
           onPublish={handlePublish}
-          onResetChapter={handleResetChapter}
+          onResetRunRecovery={handleResetRunRecovery}
+          onResetRunRecoveryForChapter={handleResetRunRecoveryForChapter}
+          publishPending={publishPending}
+          markStuckPending={markStuckPending}
+          resetRecoveryPending={resetRecoveryPending}
+          onGenerateChapter={handleGenerateChapter}
+          onGenerateNextFromChapter={handleGenerateNextFromChapter}
+          onPublishChapter={handlePublishChapter}
+          onOpenChapterView={handleOpenChapterView}
           onSelectChapter={handleSelectChapter}
           onTabChange={handleTabChange}
           onViewContent={handleViewContent}
           onViewWorkflow={handleViewWorkflow}
+          onRefreshContent={() => {
+            if (!id || !currentChapter) return
+            get<ChapterDetail>(`/projects/${id}/chapters/${currentChapter}`)
+              .then((r) => { if (r.ok && r.data) setChapterDetail(r.data) })
+              .catch(() => {})
+            refetchWorkspace()
+          }}
         />
       ) : (
         <div className="ws-body">
@@ -482,48 +647,29 @@ function ModuleRouter({
 function WorkspaceStyles() {
   return (
     <style>{`
-      .project-shell { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height)); margin: calc(-1 * var(--spacing-lg)); overflow: hidden; background: linear-gradient(180deg, #f8fbff 0%, #eef3f8 100%); width: calc(100% + (2 * var(--spacing-lg))); }
-      .project-header { min-height: 66px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 11px 20px; background: rgba(255, 255, 255, 0.92); backdrop-filter: blur(12px); border-bottom: 1px solid rgba(15, 118, 110, 0.1); }
+      /* v5.6: Workbench layout styles moved to AuthorWorkbench.css */
+      .project-shell { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height)); margin: calc(-1 * var(--spacing-lg)); overflow: hidden; background: var(--paper-bg, #f5f1e8); width: calc(100% + (2 * var(--spacing-lg))); }
+      .project-header { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 20px; background: var(--paper-surface, #fffefa); border-bottom: 1px solid var(--border-color, #ddd4c4); }
       .project-header-main { display: flex; align-items: center; gap: 18px; min-width: 0; }
-      .project-header-back { color: var(--text-secondary); text-decoration: none; font-size: 13px; white-space: nowrap; padding: 6px 9px; border: 1px solid rgba(15, 118, 110, 0.12); border-radius: 8px; background: #ffffff; }
+      .project-header-back { color: var(--text-secondary); text-decoration: none; font-size: 13px; white-space: nowrap; padding: 6px 9px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--paper-surface); }
       .project-header-back:hover { color: var(--primary); }
       .project-header-title { min-width: 0; }
-      .project-header h1 { margin: 0; font-size: 16px; font-weight: 600; color: var(--text-primary); line-height: 1.3; overflow-wrap: anywhere; }
+      .project-header h1 { margin: 0; font-size: 15px; font-weight: 600; color: var(--text-primary); line-height: 1.3; overflow-wrap: anywhere; }
       .project-header-meta { display: flex; gap: 12px; margin-top: 2px; font-size: 12px; color: var(--text-muted); flex-wrap: wrap; }
       .project-shell-body { display: flex; flex: 1; min-height: 0; overflow: hidden; }
-      .project-side-nav { width: 196px; flex-shrink: 0; overflow-y: auto; padding: 14px 10px; background: rgba(255, 255, 255, 0.82); border-right: 1px solid rgba(15, 118, 110, 0.1); }
-      .project-side-nav-group + .project-side-nav-group { margin-top: 18px; }
-      .project-side-nav-label { padding: 0 10px 6px; font-size: 11px; font-weight: 700; color: var(--text-muted); letter-spacing: 0; display: flex; align-items: center; justify-content: space-between; gap: 4px; }
-      .project-side-nav-label.collapsible { cursor: pointer; user-select: none; }
-      .project-side-nav-label.collapsible:hover { color: var(--text-secondary); }
-      .project-side-nav-items { display: flex; flex-direction: column; gap: 3px; }
-      .project-side-nav-item { width: 100%; min-height: 38px; display: flex; align-items: center; gap: 8px; padding: 8px 10px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text-secondary); cursor: pointer; font-size: 13px; text-align: left; transition: background 0.15s, color 0.15s, border-color 0.15s, transform 0.15s; }
-      .project-side-nav-item span { min-width: 0; overflow-wrap: anywhere; }
-      .project-side-nav-item:hover { background: #ffffff; color: var(--text-primary); border-color: rgba(15, 118, 110, 0.12); transform: translateX(1px); }
-      .project-side-nav-item:focus-visible { outline: 2px solid rgba(59, 130, 246, 0.45); outline-offset: 2px; }
-      .project-side-nav-item.active { background: rgba(20, 184, 166, 0.1); color: #0f766e; border-color: rgba(15, 118, 110, 0.2); font-weight: 600; }
       .project-shell-main { flex: 1; min-width: 0; width: 100%; overflow: hidden; }
       .workspace-layout { display: flex; flex-direction: column; height: 100%; overflow-x: hidden; width: 100%; box-sizing: border-box; }
       .ws-body { display: flex; flex: 1; overflow: hidden; min-width: 0; }
-      .ws-left { width: clamp(220px, 13vw, 300px); flex-shrink: 0; overflow-y: auto; }
-      .ws-center { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
-      .ws-right { width: clamp(260px, 16vw, 360px); flex-shrink: 0; overflow-y: auto; }
-      .ws-module-content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 20px 24px; max-width: 100%; min-width: 0; }
+      .ws-module-content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 24px 28px; max-width: 100%; min-width: 0; background: #f4f4f3; }
       @media (min-width: 1440px) {
-        .project-shell .ws-tab-content { padding: 20px 28px; }
         .project-shell .chapter-content-body { max-width: 860px; font-size: 17px; line-height: 2; }
       }
       @media (min-width: 1920px) {
         .project-shell .project-header { padding-left: 28px; padding-right: 28px; }
-        .project-shell .ws-left { width: clamp(260px, 12vw, 340px); }
-        .project-shell .ws-right { width: clamp(320px, 15vw, 420px); }
-        .project-shell .ws-tab-content { padding: 24px 36px; }
         .project-shell .chapter-content-body { max-width: 980px; }
         .project-shell .project-module { max-width: 1440px; }
       }
       @media (min-width: 2560px) {
-        .project-shell .ws-left { width: 360px; }
-        .project-shell .ws-right { width: 460px; }
         .project-shell .chapter-content-body { max-width: 1080px; }
         .project-shell .project-module { max-width: 1680px; }
       }
@@ -532,19 +678,12 @@ function WorkspaceStyles() {
         .project-header { align-items: flex-start; flex-direction: column; padding: 10px 14px; }
         .project-header-main { width: 100%; flex-wrap: wrap; gap: 8px; }
         .project-shell-body { flex-direction: column; min-width: 0; overflow-x: hidden; }
-        .project-side-nav { width: 100%; max-width: 100%; min-width: 0; box-sizing: border-box; display: flex; gap: 14px; overflow-x: auto; overflow-y: hidden; padding: 10px 12px; border-right: none; border-bottom: 1px solid var(--border-color); }
-        .project-side-nav-group { min-width: max-content; }
-        .project-side-nav-group + .project-side-nav-group { margin-top: 0; }
-        .project-side-nav-items { flex-direction: row; }
-        .project-side-nav-item { width: auto; white-space: nowrap; }
         .ws-body { flex-direction: column; }
-        .ws-left { width: 100%; max-height: 200px; border-right: none; border-bottom: 1px solid var(--border-color); }
-        .ws-right { width: 100%; max-height: 200px; border-left: none; border-top: 1px solid var(--border-color); }
         .ws-module-content { padding: 16px; width: 100%; min-width: 0; }
         .data-grid { grid-template-columns: 1fr; }
-        .project-module { max-width: 100%; min-width: 0; }
+        .project-module { max-width: 100%; min-width: 0; margin-left: auto; margin-right: auto; }
       }
-      .project-overview-grid { display: flex; flex-direction: column; gap: 14px; }
+      .project-overview-grid { display: flex; flex-direction: column; gap: 14px; width: 100%; margin-left: auto; margin-right: auto; }
       .project-overview-grid .overview-main { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
       .project-overview-grid .overview-sidebar { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
       @media (min-width: 1440px) {
@@ -553,39 +692,28 @@ function WorkspaceStyles() {
       }
       @media (min-width: 1920px) { .project-overview-grid { grid-template-columns: 1fr 400px; } }
       @media (min-width: 2560px) { .project-overview-grid { grid-template-columns: 1fr 440px; } }
-      .ws-tabs { display: flex; border-bottom: 1px solid var(--border-color); background: var(--bg-primary); padding: 0 16px; }
-      .ws-tab { padding: 10px 16px; border: none; background: none; cursor: pointer; font-size: 14px; color: var(--text-secondary); border-bottom: 2px solid transparent; transition: all 0.15s; }
-      .ws-tab:hover { color: var(--text-primary); }
-      .ws-tab.active { color: var(--primary); border-bottom-color: var(--primary); font-weight: 500; }
-      .ws-tab-disabled { color: var(--text-muted); cursor: default; }
-      .ws-tab-content { flex: 1; overflow-y: auto; padding: 16px; }
-      .empty-chapter { text-align: center; padding: 60px 20px; }
-      .empty-chapter-num { font-size: 24px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px; }
-      .empty-chapter-title { font-size: 18px; color: var(--text-secondary); margin-bottom: 16px; }
-      .empty-chapter-hint { font-size: 16px; color: var(--text-secondary); margin-bottom: 8px; }
-      .empty-chapter-desc { font-size: 14px; color: var(--text-muted); }
       .chapter-meta { display: flex; gap: 16px; font-size: 12px; color: var(--text-muted); margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--border-color); }
       .chapter-content-title { font-size: 22px; font-weight: 600; margin-bottom: 24px; text-align: center; }
       .chapter-content-body { max-width: 720px; margin: 0 auto; font-size: 16px; line-height: 1.9; color: var(--text-primary); white-space: pre-wrap; word-break: break-word; }
       .gen-step { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 6px; background: var(--bg-secondary); margin-bottom: 6px; }
       .gen-step-icon { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; background: #e5e7eb; color: #6b7280; }
-      .gen-step-active .gen-step-icon { background: #dbeafe; color: #2563eb; animation: gen-pulse 1.5s infinite; }
-      .gen-step-complete .gen-step-icon { background: #dcfce7; color: #16a34a; }
-      .gen-step-failed .gen-step-icon { background: #fee2e2; color: #dc2626; }
+      .gen-step-active .gen-step-icon { background: #e7f2f4; color: var(--status-info); animation: gen-pulse 1.5s infinite; }
+      .gen-step-complete .gen-step-icon { background: #dcfce7; color: var(--status-success); }
+      .gen-step-failed .gen-step-icon { background: #fee2e2; color: var(--status-danger); }
       .gen-step-label { font-size: 14px; color: var(--text-secondary); }
       .gen-step-complete .gen-step-label { color: var(--text-primary); }
-      .gen-step-failed .gen-step-label { color: #dc2626; }
+      .gen-step-failed .gen-step-label { color: var(--status-danger); }
       @keyframes gen-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
       .artifacts-empty { text-align: center; padding: 60px 20px; }
       .artifacts-empty-icon { display: inline-flex; align-items: center; justify-content: center; min-width: 52px; height: 28px; padding: 0 10px; border-radius: 999px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 13px; margin-bottom: 16px; }
       .artifacts-empty-title { font-size: 16px; font-weight: 500; margin-bottom: 8px; }
       .artifacts-empty-desc { font-size: 14px; color: var(--text-muted); max-width: 480px; margin: 0 auto; line-height: 1.7; }
       .artifacts-grid { display: flex; flex-direction: column; gap: 12px; }
-      .artifact-card { padding: 16px; border-radius: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); }
+      .artifact-card { padding: 16px; border-radius: 6px; background: #fffefc; border: 1px solid #dedbd4; }
       .artifact-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
       .artifact-icon { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--bg-tertiary); color: var(--primary); font-size: 12px; font-weight: 600; }
       .artifact-label { font-weight: 500; font-size: 14px; flex: 1; }
-      .artifact-status { color: #16a34a; font-size: 14px; }
+      .artifact-status { color: var(--status-success); font-size: 14px; }
       .artifact-summary { font-size: 13px; color: var(--text-primary); line-height: 1.6; padding: 10px 12px; background: #f0fdf4; border-radius: 4px; }
       .artifact-preview-section { margin-top: 10px; }
       .preview-toggle { padding: 4px 12px; font-size: 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; transition: all 0.15s; }
@@ -593,43 +721,43 @@ function WorkspaceStyles() {
       .artifact-preview-expanded { background: var(--bg-tertiary); border-radius: 4px; padding: 10px 12px; }
       .artifact-preview-expanded .preview-content { font-size: 12px; color: var(--text-secondary); white-space: pre-wrap; line-height: 1.6; }
       .artifact-preview-expanded .preview-toggle { margin-top: 8px; }
-      .history-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 6px; background: var(--bg-secondary); margin-bottom: 6px; }
+      .history-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 6px; background: #fffefc; border: 1px solid #dedbd4; margin-bottom: 6px; }
       .history-item-left { display: flex; align-items: center; gap: 12px; }
       .history-item-time { font-size: 12px; color: var(--text-muted); }
-      .project-module { max-width: 960px; width: 100%; box-sizing: border-box; }
+      .project-module { max-width: 1040px; width: 100%; box-sizing: border-box; margin-left: auto; margin-right: auto; }
       .module-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-      .module-header h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; font-weight: 600; }
+      .module-header h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-family: Georgia, 'Times New Roman', 'Songti SC', serif; font-size: 22px; font-weight: 500; color: #191715; }
       .module-loading { padding: 40px; text-align: center; color: var(--text-muted); }
       .data-empty { text-align: center; padding: 40px 20px; }
-      .data-empty-icon { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: var(--bg-tertiary); color: var(--text-muted); margin-bottom: 16px; }
+      .data-empty-icon { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: #f7f4ef; color: #8b837b; margin-bottom: 16px; }
       .data-empty-title { font-size: 16px; font-weight: 500; margin-bottom: 8px; }
       .data-empty-desc { font-size: 14px; color: var(--text-muted); }
       .data-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 12px; }
-      .data-card { padding: 14px; border-radius: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); }
+      .data-card { padding: 16px; border-radius: 6px; background: #fffefc; border: 1px solid #dedbd4; box-shadow: 0 1px 2px rgba(31,27,25,0.03); }
       .data-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-      .data-card-category { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-secondary); }
-      .data-card-badge { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: #dbeafe; color: #1d4ed8; }
+      .data-card-category { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: #f7f4ef; color: #554f49; }
+      .data-card-badge { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: #f3e8eb; color: #761a34; }
       .data-card-range { font-size: 12px; color: var(--text-muted); }
       .data-card-actions { margin-left: auto; display: flex; gap: 4px; }
-      .data-card-title { font-weight: 500; font-size: 15px; margin-bottom: 6px; }
+      .data-card-title { font-weight: 650; font-size: 15px; margin-bottom: 6px; color: #191715; }
       .data-card-content { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 6px; }
       .data-card-traits { font-size: 12px; color: var(--text-muted); }
       .btn-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: none; background: none; cursor: pointer; border-radius: 4px; color: var(--text-secondary); transition: all 0.15s; }
-      .btn-icon:hover { background: var(--bg-tertiary); color: var(--primary); }
+      .btn-icon:hover { background: #f6f2f0; color: #761a34; }
       .btn-icon-danger:hover { background: #fee2e2; color: #dc2626; }
       .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-      .modal { background: var(--bg-primary); border-radius: 8px; width: 90%; max-width: 520px; max-height: 80vh; overflow-y: auto; padding: 24px; }
+      .modal { background: #fffefc; border: 1px solid #dedbd4; border-radius: 8px; width: 90%; max-width: 520px; max-height: 80vh; overflow-y: auto; padding: 24px; }
       .modal h3 { margin: 0 0 20px; font-size: 16px; }
       .form-group { margin-bottom: 14px; }
       .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; color: var(--text-secondary); }
-      .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px; background: var(--bg-primary); color: var(--text-primary); box-sizing: border-box; }
-      .form-group input:focus, .form-group textarea:focus, .form-group select:focus { outline: none; border-color: var(--primary); }
+      .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 8px 10px; border: 1px solid #dedbd4; border-radius: 6px; font-size: 14px; background: #fffefc; color: #191715; box-sizing: border-box; }
+      .form-group input:focus, .form-group textarea:focus, .form-group select:focus { outline: none; border-color: rgba(118, 26, 52, 0.42); box-shadow: 0 0 0 3px rgba(118,26,52,0.08); }
       .form-group input:disabled { opacity: 0.6; cursor: not-allowed; }
       .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
       .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
       .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
-      .status-stub { background: #fef3c7; color: #92400e; }
-      .status-real { background: #dcfce7; color: #166534; }
+      .status-stub { background: #f8eee0; color: #8b4b0f; }
+      .status-real { background: #e9f4ed; color: #166e40; }
     `}</style>
   )
 }

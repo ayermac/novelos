@@ -510,6 +510,12 @@ class StubLLM(LLMProvider):
                 "summary": "架构改进提案摘要",
                 "total_proposals": 1,
             }
+        if "LocalRevisionOutput" in schema_name:
+            return {
+                "replacement_text": "（返修后）这是局部返修的候选替换文本。",
+                "change_summary": "stub 模式：确定性局部返修结果",
+                "risk_notes": [],
+            }
         return {}
 
     def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:

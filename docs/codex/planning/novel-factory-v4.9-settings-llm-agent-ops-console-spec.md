@@ -186,7 +186,7 @@ P2 修复（v4.9 review 返工）：
 - novel_factory/web/routes/settings.py：Web 路由（284 行）
 - novel_factory/web/templates/settings.html：模板（366 行）
 - tests/test_v49_settings_llm_agent_ops_console.py：测试（22 个测试用例）
-- docs/codex/novel-factory-v4.9-settings-llm-agent-ops-console-spec.md：规格文档
+- docs/codex/planning/novel-factory-v4.9-settings-llm-agent-ops-console-spec.md：规格文档
 
 遵守禁止范围：
 - ✅ 不新增生产写入逻辑

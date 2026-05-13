@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, post, put, del } from '../../lib/api'
 import { Sparkles, Plus, Pencil, Trash2 } from 'lucide-react'
+import { useAppDialog } from '../AppDialogContext'
 
 interface PlotHole {
   id: number
@@ -27,6 +28,7 @@ const STATUS_LABELS: Record<string, string> = {
 }
 
 export default function PlotHolesModule({ projectId }: Props) {
+  const dialog = useAppDialog()
   const [items, setItems] = useState<PlotHole[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -64,7 +66,13 @@ export default function PlotHolesModule({ projectId }: Props) {
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm('确定删除此伏笔？')) return
+    const ok = await dialog.confirm({
+      title: '删除伏笔',
+      message: '确定删除此伏笔？',
+      tone: 'danger',
+      confirmLabel: '删除',
+    })
+    if (!ok) return
     const res = await del(`/projects/${projectId}/plot-holes/${id}`)
     if (res.ok) load()
   }

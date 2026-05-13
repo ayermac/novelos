@@ -5,6 +5,7 @@ import { tGenre } from '../lib/i18n'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
+import { useAppDialog } from '../components/AppDialogContext'
 
 interface Project {
   project_id: string
@@ -16,10 +17,17 @@ interface Project {
 }
 
 function ProjectCard({ project, onDelete }: { project: Project; onDelete: (id: string) => void }) {
-  const handleDelete = (e: React.MouseEvent) => {
+  const dialog = useAppDialog()
+  const handleDelete = async (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
-    if (window.confirm(`确定要删除项目「${project.name || project.project_id}」吗？此操作不可撤销。`)) {
+    const ok = await dialog.confirm({
+      title: '删除项目',
+      message: `确定要删除项目「${project.name || project.project_id}」吗？此操作不可撤销。`,
+      tone: 'danger',
+      confirmLabel: '删除项目',
+    })
+    if (ok) {
       onDelete(project.project_id)
     }
   }

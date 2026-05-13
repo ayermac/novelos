@@ -37,6 +37,7 @@ class RunHealthMarkStuckRequest(BaseModel):
 
 # Agent step configuration
 AGENT_STEPS = [
+    {"key": "planner", "label": "规划", "description": "生成章节目标、关键事件和伏笔要求"},
     {"key": "screenwriter", "label": "编剧", "description": "规划章节场景和情节"},
     {"key": "author", "label": "执笔", "description": "撰写章节正文"},
     {"key": "polisher", "label": "润色", "description": "优化文字表达"},
@@ -53,6 +54,92 @@ STATUS_TO_AGENT = {
     "reviewed": "editor",
     "published": "publish",
 }
+
+AGENT_DISPLAY_NAMES = {
+    "planner": "规划",
+    "screenwriter": "编剧",
+    "author": "执笔",
+    "polisher": "润色",
+    "editor": "审稿",
+    "publish": "发布",
+    "publisher": "发布",
+    "human_review": "人工审核",
+    "memory_curator": "记忆整理",
+    "continuity_checker": "连续性检查",
+    "scout": "选题侦察",
+    "secretary": "资料整理",
+    "architect": "系统诊断",
+    "system": "系统",
+    "human": "人工处理",
+}
+
+ARTIFACT_TYPE_DISPLAY_NAMES = {
+    "chapter_brief": "章节规划",
+    "scene_plan": "分场规划",
+    "draft": "正文初稿",
+    "polished_draft": "润色稿",
+    "review": "审稿报告",
+    "published_chapter": "发布记录",
+    "memory_update": "记忆更新",
+    "style_report": "风格报告",
+    "fact_snapshot": "事实快照",
+}
+
+TASK_TYPE_DISPLAY_NAMES = {
+    "create": "生成任务",
+    "write": "写作任务",
+    "revise": "返修任务",
+    "reset": "重置恢复",
+    "recover": "卡住恢复",
+    "generate": "生成任务",
+    "publish": "发布任务",
+    "review": "审核任务",
+}
+
+
+def _humanize_key(value: str) -> str:
+    """Fallback display for unknown internal keys."""
+    return value.replace("_", " ").strip() or "产物"
+
+
+def _agent_display_name(agent_id: str) -> str:
+    """Return user-facing agent name."""
+    return AGENT_DISPLAY_NAMES.get(agent_id, _humanize_key(agent_id))
+
+
+def _artifact_type_display_name(artifact_type: str) -> str:
+    """Return user-facing artifact type label."""
+    return ARTIFACT_TYPE_DISPLAY_NAMES.get(artifact_type, _humanize_key(artifact_type))
+
+
+def _task_type_display_name(task_type: str) -> str:
+    """Return user-facing task type label."""
+    return TASK_TYPE_DISPLAY_NAMES.get(task_type, _humanize_key(task_type))
+
+
+def _build_artifact_display_summary(artifacts_list: list[dict]) -> dict:
+    """Build human-readable artifact labels instead of leaking raw DB keys."""
+    labels: list[str] = []
+    raw_types: list[str] = []
+    for artifact in artifacts_list:
+        artifact_type = artifact.get("artifact_type", "") or "artifact"
+        agent_id = artifact.get("agent_id", "") or ""
+        raw_types.append(artifact_type)
+        type_label = _artifact_type_display_name(artifact_type)
+        agent_label = _agent_display_name(agent_id)
+        label = f"{type_label} · {agent_label}" if agent_label else type_label
+        if label not in labels:
+            labels.append(label)
+
+    if not labels:
+        labels = ["Agent 产物"]
+
+    return {
+        "summary": "、".join(labels),
+        "artifact_count": len(artifacts_list),
+        "artifact_types": raw_types,
+        "artifact_labels": labels,
+    }
 
 
 @router.get("/runs/health")
@@ -156,7 +243,12 @@ def _generate_stub_artifacts(step_key: str, chapter_number: int) -> dict | None:
 
     base_word_count = 2800 + (chapter_number % 5) * 200  # 2800-3600 range
 
-    if step_key == "screenwriter":
+    if step_key == "planner":
+        return {
+            "summary": f"生成第 {chapter_number} 章写作目标、关键事件和伏笔要求",
+            "output_preview": f"章节目标：推进主线冲突，保留第 {chapter_number + 1} 章钩子"
+        }
+    elif step_key == "screenwriter":
         return {
             "summary": f"本章规划了 {len(scenes)} 个场景：{char}{scenes[0]}、{scenes[1]}、{scenes[2]}",
             "scenes": len(scenes),
@@ -231,6 +323,23 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
 
         # Get chapter info
         chapter = repo.get_chapter(run_data["project_id"], run_data["chapter_number"])
+        reconciliation = {"runs": 0, "tasks": 0, "run_ids": []}
+        if (
+            chapter
+            and run_data.get("status") == "running"
+            and chapter.get("status") in ("reviewed", "awaiting_publish", "published")
+            and hasattr(repo, "reconcile_terminal_chapter_running_workflows")
+        ):
+            reconciliation = repo.reconcile_terminal_chapter_running_workflows(
+                project_id=run_data["project_id"],
+                chapter_number=run_data["chapter_number"],
+                run_id=run_id,
+            )
+            if reconciliation.get("runs"):
+                refreshed = _get_run_by_id(repo, run_id)
+                if refreshed:
+                    run_data = refreshed
+
         error_message = _resolve_run_error_message(repo, run_data, chapter)
         if error_message and not run_data.get("error_message"):
             run_data = dict(run_data)
@@ -257,6 +366,8 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             "completion_tokens": run_data.get("completion_tokens", 0),
             "total_tokens": run_data.get("total_tokens", 0),
             "duration_ms": run_data.get("duration_ms", 0),
+            "reconciled_terminal_run": bool(reconciliation.get("runs")),
+            "reconciled_running_tasks": reconciliation.get("tasks", 0),
         })
 
     except Exception as e:
@@ -406,9 +517,27 @@ def _get_run_by_id(repo, run_id: str) -> dict | None:
     conn = repo._conn()
     try:
         row = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
-        return dict(row) if row else None
+        run_data = dict(row) if row else None
     finally:
         conn.close()
+    if not run_data:
+        return None
+
+    chapter = repo.get_chapter(run_data["project_id"], run_data["chapter_number"])
+    if (
+        chapter
+        and run_data.get("status") == "running"
+        and chapter.get("status") in ("reviewed", "awaiting_publish", "published")
+        and hasattr(repo, "reconcile_terminal_chapter_running_workflows")
+    ):
+        reconciliation = repo.reconcile_terminal_chapter_running_workflows(
+            project_id=run_data["project_id"],
+            chapter_number=run_data["chapter_number"],
+            run_id=run_id,
+        )
+        if reconciliation.get("runs"):
+            return _get_run_by_id(repo, run_id)
+    return run_data
 
 
 def _checkpoint_exists(repo, project_id: str, chapter_number: int) -> bool:
@@ -423,6 +552,8 @@ def _checkpoint_exists(repo, project_id: str, chapter_number: int) -> bool:
 
 def _list_run_health_rows(repo, project_id: str | None, limit: int) -> list[dict]:
     """List recent issue-bearing runs for the health dashboard."""
+    if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
+        repo.reconcile_terminal_chapter_running_workflows(project_id=project_id)
     conn = repo._conn()
     try:
         where = "WHERE wr.status IN ('running', 'blocked', 'failed')"
@@ -686,10 +817,14 @@ def _detect_stuck_run(repo, run_data: dict, timeout_minutes: int) -> dict:
             ).fetchall()
             for row in rows:
                 task_elapsed = _elapsed_minutes_since(row["started_at"])
+                task_type = row["task_type"]
+                agent_id = row["agent_id"]
                 task = {
                     "id": row["id"],
-                    "task_type": row["task_type"],
-                    "agent_id": row["agent_id"],
+                    "task_type": task_type,
+                    "task_label": _task_type_display_name(task_type),
+                    "agent_id": agent_id,
+                    "agent_label": _agent_display_name(agent_id),
                     "started_at": row["started_at"],
                     "elapsed_minutes": task_elapsed,
                     "stuck": task_elapsed is not None and task_elapsed >= timeout_minutes,
@@ -838,7 +973,7 @@ def _build_steps_timeline(
     1. workflow_runs.current_node (last running agent)
     2. chapter.status (final status)
     3. STATUS_ROUTE (expected flow)
-    4. task_status table (per-agent error messages)
+    4. task_status table (per-agent lifecycle and error messages)
     5. agent_artifacts table (per-agent artifact summaries)
     """
     workflow_status = run_data.get("status", "unknown")
@@ -849,11 +984,16 @@ def _build_steps_timeline(
 
     # Determine final chapter status
     final_status = chapter.get("status", "planned") if chapter else "planned"
+    if workflow_status == "running" and final_status in ("reviewed", "awaiting_publish", "published"):
+        workflow_status = "completed"
+        current_node = "publish" if final_status == "published" else "awaiting_publish"
+        error_message = None
 
     # Fetch task_status for per-agent error info
     # P1: Prefer run-isolated rows; fallback to chapter-level for legacy data.
     task_errors: dict[str, str] = {}
     task_errors_legacy: dict[str, str] = {}
+    task_logs: dict[str, list[dict]] = {}
     if repo:
         try:
             conn = repo._conn()
@@ -882,6 +1022,40 @@ def _build_steps_timeline(
                     agent_id = r["agent_id"]
                     if r["error_message"]:
                         task_errors_legacy[agent_id] = r["error_message"]
+
+                if run_id:
+                    lifecycle_rows = conn.execute(
+                        "SELECT agent_id, task_type, status, error_message, started_at, completed_at "
+                        "FROM task_status "
+                        "WHERE project_id=? AND chapter_number=? AND workflow_run_id=? "
+                        "ORDER BY started_at ASC, id ASC",
+                        (project_id, chapter_number, run_id),
+                    ).fetchall()
+                else:
+                    lifecycle_rows = []
+                for r in lifecycle_rows:
+                    agent_id = r["agent_id"]
+                    task_label = _task_type_display_name(r["task_type"])
+                    if agent_id not in task_logs:
+                        task_logs[agent_id] = []
+                    if r["started_at"]:
+                        task_logs[agent_id].append({
+                            "timestamp": r["started_at"],
+                            "level": "info",
+                            "message": f"{task_label}已开始处理。",
+                        })
+                    if r["status"] == "completed" and r["completed_at"]:
+                        task_logs[agent_id].append({
+                            "timestamp": r["completed_at"],
+                            "level": "success",
+                            "message": f"{task_label}已完成。",
+                        })
+                    elif r["status"] == "failed":
+                        task_logs[agent_id].append({
+                            "timestamp": r["completed_at"] or r["started_at"],
+                            "level": "error",
+                            "message": r["error_message"] or f"{task_label}失败。",
+                        })
             finally:
                 conn.close()
         except Exception:
@@ -926,7 +1100,7 @@ def _build_steps_timeline(
         completed_agents.append("editor")
     if final_status == "published":
         completed_agents.append("publish")
-    for key in ("screenwriter", "author", "polisher", "editor", "publish"):
+    for key in ("planner", "screenwriter", "author", "polisher", "editor", "publish"):
         if key in agent_artifacts and key not in completed_agents:
             completed_agents.append(key)
 
@@ -941,13 +1115,23 @@ def _build_steps_timeline(
         elif "screenwriter" in agent_artifacts:
             blocked_agent = "screenwriter"
 
-    # Build steps
+    # Build steps. Planner is an optional pre-step: only show it when it
+    # actually participated in the run, otherwise the normal chapter workflow
+    # remains the compact five-step timeline.
+    visible_step_configs = [
+        step for step in AGENT_STEPS
+        if step["key"] != "planner"
+        or current_node == "planner"
+        or "planner" in completed_agents
+        or "planner" in agent_artifacts
+    ]
     steps = []
-    for step_config in AGENT_STEPS:
+    for step_config in visible_step_configs:
         key = step_config["key"]
         is_completed = key in completed_agents
-        is_running = (current_node == key) and workflow_status == "running"
-        is_failed = (current_node == key) and workflow_status == "failed"
+        is_publish_node = key == "publish" and current_node in ("publish", "publisher", "awaiting_publish")
+        is_running = (current_node == key or is_publish_node) and workflow_status == "running"
+        is_failed = (current_node == key or is_publish_node) and workflow_status == "failed"
         is_blocked = (blocked_agent == key) and workflow_status == "blocked"
 
         if is_failed:
@@ -969,6 +1153,27 @@ def _build_steps_timeline(
             "agent_id": key,
         }
 
+        logs = list(task_logs.get(key, []))
+        if not logs:
+            if step_status == "running":
+                logs.append({
+                    "timestamp": run_data.get("started_at"),
+                    "level": "info",
+                    "message": f"{step_config['label']}节点运行中，正在等待模型或工具返回。",
+                })
+            elif step_status == "completed":
+                logs.append({
+                    "timestamp": run_data.get("completed_at") or run_data.get("started_at"),
+                    "level": "success",
+                    "message": f"{step_config['label']}节点已完成。",
+                })
+            elif step_status in ("failed", "blocked"):
+                logs.append({
+                    "timestamp": run_data.get("completed_at") or run_data.get("started_at"),
+                    "level": "error" if step_status == "failed" else "warning",
+                    "message": error_message or f"{step_config['label']}节点需要人工处理。",
+                })
+
         # Add error message for failed step
         if (is_failed or is_blocked) and error_message:
             step["error_message"] = error_message
@@ -979,25 +1184,27 @@ def _build_steps_timeline(
             step["error_is_legacy"] = True
 
         # Add artifacts for completed steps
-        if is_completed and llm_mode == "stub":
-            step["artifacts"] = _generate_stub_artifacts(key, chapter_number)
+        stub_artifacts = _generate_stub_artifacts(key, chapter_number) if is_completed and llm_mode == "stub" else None
+        if stub_artifacts:
+            step["artifacts"] = stub_artifacts
         elif key in agent_artifacts and agent_artifacts[key]:
             # Build artifacts summary from DB
             artifacts_list = agent_artifacts[key]
-            summary_parts = []
-            for a in artifacts_list:
-                atype = a.get("artifact_type", "")
-                aid = a.get("agent_id", "")
-                summary_parts.append(f"{atype} ({aid})")
-            step["artifacts"] = {
-                "summary": ", ".join(summary_parts) if summary_parts else "Agent 产物",
-                "artifact_count": len(artifacts_list),
-                "artifact_types": [a.get("artifact_type", "") for a in artifacts_list],
-                # P1: indicate if artifacts came from legacy fallback (not run-isolated)
-                "is_legacy_fallback": artifacts_source == "chapter_fallback",
-            }
+            step["artifacts"] = _build_artifact_display_summary(artifacts_list)
+            # P1: indicate if artifacts came from legacy fallback (not run-isolated)
+            step["artifacts"]["is_legacy_fallback"] = artifacts_source == "chapter_fallback"
         else:
             step["artifacts"] = None
+
+        if step["artifacts"] and step_status == "completed":
+            logs.append({
+                "timestamp": run_data.get("completed_at") or run_data.get("started_at"),
+                "level": "info",
+                "message": f"已生成产物：{step['artifacts'].get('summary', 'Agent 产物')}",
+            })
+
+        if logs:
+            step["logs"] = logs
 
         steps.append(step)
 
@@ -1027,6 +1234,22 @@ async def run_chapter_stream(
         repo = get_repo(request)
         settings = get_settings(request)
         llm_mode = get_llm_mode(request)
+
+        # v5.5.15: Unified run guard — same checks as POST /run/chapter.
+        # For SSE, guard violations are returned as structured error events
+        # rather than HTTP error responses so the client can display them.
+        from ._run_guards import check_chapter_run_guard
+
+        guard_error = check_chapter_run_guard(repo, project_id, chapter)
+        if guard_error:
+
+            async def guard_event():
+                yield f"data: {json.dumps({'type': 'run_error', 'error': guard_error.message, 'code': guard_error.code, 'details': guard_error.details}, ensure_ascii=False)}\n\n"
+
+            return StreamingResponse(
+                guard_event(),
+                media_type="text/event-stream",
+            )
 
         def next_stream_event(iterator):
             try:

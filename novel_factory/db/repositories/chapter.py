@@ -377,6 +377,10 @@ class ChapterRepositoryMixin:
         content: str,
         created_by: str = "author",
         notes: str | None = None,
+        source: str | None = None,
+        base_version_id: int | None = None,
+        summary: str | None = None,
+        metadata: dict | None = None,
     ) -> int:
         """Save a chapter version with content hash for idempotency.
 
@@ -384,18 +388,28 @@ class ChapterRepositoryMixin:
         content_hash already exists, returns the existing version id
         without inserting a duplicate.
 
+        Args:
+            source: Version source (ai_generation, manual_edit, local_revision,
+                     rollback, publish_snapshot). Defaults to ai_generation.
+            base_version_id: The version this one was based on.
+            summary: Human-readable change summary.
+            metadata: Optional JSON-serializable metadata dict.
+
         Returns:
             Version id (integer).
         """
         conn = self._conn()
         try:
             content_hash = stable_json_hash({"content": content})
+            effective_source = source or "ai_generation"
+            metadata_str = json.dumps(metadata, ensure_ascii=False) if metadata else None
 
-            # Check for existing version with same hash
+            # Check for existing version with same hash + source
             existing = conn.execute(
                 "SELECT id FROM chapter_versions "
-                "WHERE project_id=? AND chapter=? AND created_by=? AND content_hash=?",
-                (project_id, chapter, created_by, content_hash),
+                "WHERE project_id=? AND chapter=? AND created_by=? AND content_hash=? "
+                "AND source=?",
+                (project_id, chapter, created_by, content_hash, effective_source),
             ).fetchone()
             if existing:
                 return existing["id"]
@@ -407,10 +421,12 @@ class ChapterRepositoryMixin:
             ).fetchone()["v"] or 0
             cursor = conn.execute(
                 "INSERT INTO chapter_versions "
-                "(project_id, chapter, version, content, word_count, created_by, notes, content_hash) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                "(project_id, chapter, version, content, word_count, created_by, "
+                "notes, content_hash, source, base_version_id, summary, metadata) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (project_id, chapter, max_ver + 1, content, count_words(content),
-                 created_by, notes, content_hash),
+                 created_by, notes, content_hash, effective_source,
+                 base_version_id, summary, metadata_str),
             )
             conn.commit()
             return cursor.lastrowid
@@ -433,12 +449,22 @@ class ChapterRepositoryMixin:
         try:
             rows = conn.execute(
                 "SELECT id, project_id, chapter, version, word_count, "
-                "created_by, notes, content_hash, created_at "
+                "created_by, notes, content_hash, source, base_version_id, "
+                "summary, metadata, created_at "
                 "FROM chapter_versions "
                 "WHERE project_id=? AND chapter=? ORDER BY version DESC",
                 (project_id, chapter_number),
             ).fetchall()
-            return [row_to_dict(r) for r in rows]
+            results = []
+            for r in rows:
+                d = row_to_dict(r)
+                if d and d.get("metadata") and isinstance(d["metadata"], str):
+                    try:
+                        d["metadata"] = json.loads(d["metadata"])
+                    except (json.JSONDecodeError, TypeError):
+                        pass
+                results.append(d)
+            return results
         finally:
             conn.close()
 
@@ -460,9 +486,101 @@ class ChapterRepositoryMixin:
                 "SELECT * FROM chapter_versions WHERE project_id=? AND id=?",
                 (project_id, version_id),
             ).fetchone()
-            return row_to_dict(row)
+            d = row_to_dict(row)
+            if d and d.get("metadata") and isinstance(d["metadata"], str):
+                try:
+                    d["metadata"] = json.loads(d["metadata"])
+                except (json.JSONDecodeError, TypeError):
+                    pass
+            return d
         finally:
             conn.close()
+
+    def get_latest_version_id(
+        self, project_id: str, chapter_number: int
+    ) -> int | None:
+        """Get the id of the latest version for a chapter.
+
+        Returns:
+            Version id or None if no versions exist.
+        """
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT id FROM chapter_versions "
+                "WHERE project_id=? AND chapter=? ORDER BY version DESC LIMIT 1",
+                (project_id, chapter_number),
+            ).fetchone()
+            return row["id"] if row else None
+        finally:
+            conn.close()
+
+    def get_version_diff(
+        self,
+        project_id: str,
+        left_version_id: int,
+        right_version_id: int,
+    ) -> dict | None:
+        """Get a structured diff between two versions.
+
+        Uses Python difflib for line-by-line comparison.
+
+        Returns:
+            Dict with added, removed, unchanged, changed_blocks, word_count_delta,
+            or None if either version not found.
+        """
+        import difflib
+
+        left = self.get_version_by_id(project_id, left_version_id)
+        right = self.get_version_by_id(project_id, right_version_id)
+        if not left or not right:
+            return None
+
+        left_lines = (left.get("content") or "").splitlines(keepends=True)
+        right_lines = (right.get("content") or "").splitlines(keepends=True)
+
+        diff = difflib.SequenceMatcher(None, left_lines, right_lines)
+        added = []
+        removed = []
+        unchanged = []
+        changed_blocks = []
+
+        for tag, i1, i2, j1, j2 in diff.get_opcodes():
+            if tag == "equal":
+                unchanged.extend(left_lines[i1:i2])
+            elif tag == "replace":
+                removed.extend(left_lines[i1:i2])
+                added.extend(right_lines[j1:j2])
+                changed_blocks.append({
+                    "type": "changed",
+                    "removed_lines": left_lines[i1:i2],
+                    "added_lines": right_lines[j1:j2],
+                })
+            elif tag == "delete":
+                removed.extend(left_lines[i1:i2])
+                changed_blocks.append({
+                    "type": "removed",
+                    "lines": left_lines[i1:i2],
+                })
+            elif tag == "insert":
+                added.extend(right_lines[j1:j2])
+                changed_blocks.append({
+                    "type": "added",
+                    "lines": right_lines[j1:j2],
+                })
+
+        left_wc = left.get("word_count", 0) or 0
+        right_wc = right.get("word_count", 0) or 0
+
+        return {
+            "left_version_id": left_version_id,
+            "right_version_id": right_version_id,
+            "added": "".join(added),
+            "removed": "".join(removed),
+            "unchanged": "".join(unchanged),
+            "changed_blocks": changed_blocks,
+            "word_count_delta": right_wc - left_wc,
+        }
 
     # ── Polish reports ────────────────────────────────────────
 
