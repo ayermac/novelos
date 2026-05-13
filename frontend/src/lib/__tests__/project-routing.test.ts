@@ -11,8 +11,20 @@ describe('project routing helpers', () => {
 
     expect(next.get('module')).toBe('overview')
     expect(next.get('chapter')).toBe('4')
-    expect(next.get('view')).toBe('workflow')
+    expect(next.get('view')).toBeNull()
     expect(next.get('auto_generate')).toBeNull()
+  })
+
+  it('keeps chapter sub-view only inside the chapter writing module', () => {
+    const next = buildProjectModuleSearchParams(
+      new URLSearchParams('chapter=4&view=workflow'),
+      'chapters',
+      4
+    )
+
+    expect(next.get('module')).toBe('chapters')
+    expect(next.get('chapter')).toBe('4')
+    expect(next.get('view')).toBe('workflow')
   })
 
   it('keeps chapter context while switching to project data modules', () => {

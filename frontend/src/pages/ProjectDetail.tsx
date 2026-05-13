@@ -452,7 +452,7 @@ export default function ProjectDetail() {
       isStub={isStub}
     >
       <div className="workspace-layout">
-      {activeModule === 'chapters' || activeModule === 'overview' ? (
+      {activeModule === 'chapters' ? (
         <AuthorWorkbench
           activeTab={activeTab as SurfaceTabKey}
           chapterDetail={chapterDetail}

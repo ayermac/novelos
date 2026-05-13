@@ -225,6 +225,14 @@ describe('v5.5.13 wide-screen grid structure', () => {
     expect(content).toContain('view=workflow')
   })
 
+  it('ProjectDetail routes overview menu to ProjectOverviewModule, not chapter workbench', () => {
+    const content = readFileSync(projectDetailPath, 'utf-8')
+    expect(content).toContain("activeModule === 'chapters' ?")
+    expect(content).not.toContain("activeModule === 'chapters' || activeModule === 'overview'")
+    expect(content).toContain("case 'overview':")
+    expect(content).toContain('return <ProjectOverviewModule')
+  })
+
   it('ProjectOverviewModule disables main CTA when any target workflow is running', () => {
     const content = readFileSync(overviewPath, 'utf-8')
     expect(content).toContain('has_running_target_workflow')

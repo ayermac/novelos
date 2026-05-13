@@ -1,6 +1,6 @@
 import type { ProjectModule } from '../components/project/ProjectModuleNav'
 
-const WORKBENCH_MODULES = new Set<ProjectModule>(['overview', 'chapters'])
+const CHAPTER_WORKBENCH_MODULES = new Set<ProjectModule>(['chapters'])
 
 function isValidChapter(chapterNumber: number): boolean {
   return Number.isFinite(chapterNumber) && chapterNumber > 0
@@ -30,7 +30,7 @@ export function buildProjectModuleSearchParams(
     next.set('chapter', String(currentChapter))
   }
 
-  if (!WORKBENCH_MODULES.has(module)) {
+  if (!CHAPTER_WORKBENCH_MODULES.has(module)) {
     next.delete('view')
   }
 
