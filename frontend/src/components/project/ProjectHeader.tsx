@@ -1,20 +1,16 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Activity, Download, FileText, BookOpen, Feather, ChevronDown } from 'lucide-react'
+import { Activity, Download, FileText, BookOpen, ChevronDown } from 'lucide-react'
 
 interface ProjectHeaderProps {
   projectId: string
   projectName: string
-  currentChapter: number
-  publishedCount: number
   isStub: boolean
 }
 
 export default function ProjectHeader({
   projectId,
   projectName,
-  currentChapter,
-  publishedCount,
   isStub,
 }: ProjectHeaderProps) {
   const [showExport, setShowExport] = useState(false)
@@ -46,21 +42,14 @@ export default function ProjectHeader({
           <span className="project-console-title">生产控制台</span>
           <span className="project-console-subtitle">Auto-Run Resilience</span>
         </div>
-        <div className="project-brand-mark" aria-hidden="true">
-          <Feather size={17} />
+        <div className="project-header-title">
+          <h1>{projectName}</h1>
         </div>
+      </div>
+      <div className="project-header-actions">
         <Link to="/projects" className="project-header-back">
           返回项目列表
         </Link>
-        <div className="project-header-title">
-          <h1>{projectName}</h1>
-          <div className="project-header-meta">
-            <span>第 {currentChapter} 章</span>
-            <span>已发布 {publishedCount} 章</span>
-          </div>
-        </div>
-      </div>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <span className="badge badge-neutral project-header-runtime">
           <Activity size={13} />
           工厂在线

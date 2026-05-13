@@ -520,10 +520,8 @@ export default function ProjectDetail() {
     <ProjectShell
       activeModule={activeModule}
       onModuleChange={handleModuleChange}
-      currentChapter={currentChapter}
       projectId={id || ''}
       projectName={workspace.project.name}
-      publishedCount={workspace.stats.status_counts?.published || 0}
       isStub={isStub}
     >
       <div className="workspace-layout">
