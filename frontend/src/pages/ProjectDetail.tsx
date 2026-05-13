@@ -478,9 +478,8 @@ export default function ProjectDetail() {
         setGenError('')
         await refetchWorkspace()
         // If the current workflow view is for this chapter, clear its run detail.
-        const currentRun = runDetail
-        if (currentRun && currentRun.chapter_number === chapterNumber) {
-          loadRunDetail('')
+        if (runDetail && runDetail.chapter_number === chapterNumber) {
+          setRunDetail(null)
         }
       } else {
         await dialog.alert({
