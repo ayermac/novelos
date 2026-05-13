@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import io
 from enum import Enum
+from urllib.parse import quote
 
 from fastapi import APIRouter, Query, Request, HTTPException
 from fastapi.responses import StreamingResponse
@@ -419,11 +420,20 @@ async def export_project(
 
     suffix = "md" if format == ExportFormat.markdown else "txt"
     filename = f"{project_name}.{suffix}"
+    fallback_stem = "".join(
+        ch if ch.isascii() and (ch.isalnum() or ch in "-_.") else "_"
+        for ch in project_id
+    ).strip("._") or "project"
+    fallback_filename = f"{fallback_stem}.{suffix}"
+    encoded_filename = quote(filename.encode("utf-8"))
 
     return StreamingResponse(
         io.BytesIO(content.encode("utf-8")),
         media_type="text/plain; charset=utf-8",
         headers={
-            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Content-Disposition": (
+                f'attachment; filename="{fallback_filename}"; '
+                f"filename*=UTF-8''{encoded_filename}"
+            ),
         },
     )
