@@ -72,6 +72,9 @@ interface AuthorAgentPanelProps {
   onPublish?: () => void
   onGenerateNext?: () => void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
+  publishPending?: boolean
+  markStuckPending?: boolean
+  resetRecoveryPending?: boolean
   onViewContent: () => void
   onViewWorkflow: (runId: string) => void
 }
@@ -90,6 +93,9 @@ export default function AuthorAgentPanel({
   onPublish,
   onGenerateNext,
   onResetRunRecovery,
+  publishPending,
+  markStuckPending,
+  resetRecoveryPending,
   onViewContent,
   onViewWorkflow,
 }: AuthorAgentPanelProps) {
@@ -113,8 +119,12 @@ export default function AuthorAgentPanel({
           <div className="author-agent-next-action">
             <div className="action-label">等待人工发布</div>
             <div className="action-desc">本章已通过 AI 审核，点击确认发布。</div>
-            <button className="btn btn-primary btn-sm" onClick={onPublish} style={{ marginTop: 8, width: '100%' }}>
-              <CheckCircle2 size={12} /> 确认发布
+            <button className="btn btn-primary btn-sm" onClick={onPublish} disabled={publishPending} style={{ marginTop: 8, width: '100%' }}>
+              {publishPending ? (
+                <><Loader2 size={12} className="spin" /> 发布中...</>
+              ) : (
+                <><CheckCircle2 size={12} /> 确认发布</>
+              )}
             </button>
           </div>
         )}
@@ -159,18 +169,28 @@ export default function AuthorAgentPanel({
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={() => onMarkRunStuck(runDetail.run_id)}
+                disabled={markStuckPending}
                 style={{ marginTop: 8, width: '100%' }}
               >
-                标记为阻塞
+                {markStuckPending ? (
+                  <><Loader2 size={12} className="spin" /> 处理中...</>
+                ) : (
+                  <>标记为阻塞</>
+                )}
               </button>
             )}
             {(status === 'blocking' || status === 'revision') && runDetail && onResetRunRecovery && (
               <button
                 className="btn btn-secondary btn-sm"
                 onClick={() => onResetRunRecovery(runDetail.run_id)}
+                disabled={resetRecoveryPending}
                 style={{ marginTop: 8, width: '100%' }}
               >
-                清除阻塞并重置
+                {resetRecoveryPending ? (
+                  <><Loader2 size={12} className="spin" /> 处理中...</>
+                ) : (
+                  <>清除阻塞并重置</>
+                )}
               </button>
             )}
           </div>

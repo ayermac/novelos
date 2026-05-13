@@ -142,6 +142,9 @@ interface AuthorWritingSurfaceProps {
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onPublish?: () => void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
+  publishPending?: boolean
+  markStuckPending?: boolean
+  resetRecoveryPending?: boolean
   onTabChange: (tab: SurfaceTabKey) => void
   onViewContent: () => void
   onViewWorkflow: (runId: string) => void
@@ -169,6 +172,9 @@ export default function AuthorWritingSurface({
   onMarkRunStuck,
   onPublish,
   onResetRunRecovery,
+  publishPending,
+  markStuckPending,
+  resetRecoveryPending,
   onTabChange,
   onViewWorkflow,
 }: AuthorWritingSurfaceProps) {
@@ -210,8 +216,12 @@ export default function AuthorWritingSurface({
         </div>
         <div className="author-surface-actions">
           {isReviewedReal && onPublish && (
-            <button className="btn btn-primary btn-sm" onClick={onPublish}>
-              <CheckCircle2 size={12} /> 确认发布
+            <button className="btn btn-primary btn-sm" onClick={onPublish} disabled={publishPending}>
+              {publishPending ? (
+                <><Loader2 size={12} className="spin" /> 发布中...</>
+              ) : (
+                <><CheckCircle2 size={12} /> 确认发布</>
+              )}
             </button>
           )}
           {status === 'published' && onGenerateNext && (
@@ -275,6 +285,8 @@ export default function AuthorWritingSurface({
             sseSteps={sseSteps}
             onMarkRunStuck={onMarkRunStuck}
             onResetRunRecovery={onResetRunRecovery}
+            markStuckPending={markStuckPending}
+            resetRecoveryPending={resetRecoveryPending}
           />
         )}
         {activeTab === 'artifacts' && (
@@ -446,6 +458,8 @@ function WorkflowBody({
   sseSteps,
   onMarkRunStuck,
   onResetRunRecovery,
+  markStuckPending,
+  resetRecoveryPending,
 }: {
   runDetail: RunDetailData | null
   isLaunching: boolean
@@ -453,6 +467,8 @@ function WorkflowBody({
   sseSteps: Record<string, StepStatus>
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
+  markStuckPending?: boolean
+  resetRecoveryPending?: boolean
 }) {
   if (runDetail && !isStreaming) {
     const nodeLabel = tWorkflowNodeLabel(runDetail.current_node)
@@ -506,16 +522,24 @@ function WorkflowBody({
               <span className={`status-badge status-${runDetail.chapter_status}`}>{chapterStatusLabel}</span>
             </div>
           </div>
-          {(isStaleRunning || runDetail.chapter_status === 'blocking' || runDetail.chapter_status === 'revision') && (
+          {(isStaleRunning || isContradictory || runDetail.chapter_status === 'blocking' || runDetail.chapter_status === 'revision') && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-              {isStaleRunning && onMarkRunStuck && (
-                <button className="btn btn-secondary btn-sm" onClick={() => onMarkRunStuck(runDetail.run_id)}>
-                  标记为阻塞
+              {(isStaleRunning || isContradictory) && onMarkRunStuck && (
+                <button className="btn btn-secondary btn-sm" onClick={() => onMarkRunStuck(runDetail.run_id)} disabled={markStuckPending}>
+                  {markStuckPending ? (
+                    <><Loader2 size={12} className="spin" /> 处理中...</>
+                  ) : (
+                    <>标记为阻塞</>
+                  )}
                 </button>
               )}
               {(runDetail.chapter_status === 'blocking' || runDetail.chapter_status === 'revision') && onResetRunRecovery && (
-                <button className="btn btn-primary btn-sm" onClick={() => onResetRunRecovery(runDetail.run_id)}>
-                  清除阻塞并重置
+                <button className="btn btn-primary btn-sm" onClick={() => onResetRunRecovery(runDetail.run_id)} disabled={resetRecoveryPending}>
+                  {resetRecoveryPending ? (
+                    <><Loader2 size={12} className="spin" /> 处理中...</>
+                  ) : (
+                    <>清除阻塞并重置</>
+                  )}
                 </button>
               )}
               <Link to={`/runs/${runDetail.run_id}`} className="btn btn-secondary btn-sm">

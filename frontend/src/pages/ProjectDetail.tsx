@@ -128,6 +128,9 @@ export default function ProjectDetail() {
   const [genError, setGenError] = useState('')
   const [genErrorDetails, setGenErrorDetails] = useState<{ missing?: string[]; actions?: string[] } | null>(null)
   const [sseSteps, setSseSteps] = useState<Record<string, StepStatus>>({})
+  const [publishPending, setPublishPending] = useState(false)
+  const [markStuckPending, setMarkStuckPending] = useState(false)
+  const [resetRecoveryPending, setResetRecoveryPending] = useState(false)
   const currentChapterRef = useRef<number>(1)
   const streamingChapterRef = useRef<number | null>(null)
 
@@ -353,10 +356,11 @@ export default function ProjectDetail() {
   }, [requestedView, requestedAutoGenerate, id, generating, isStreaming, handleGenerate, workspace, currentChapter])
 
   const handlePublishChapter = useCallback(async (chapterNumber: number) => {
-    if (!id) return
+    if (!id || publishPending) return
+    setPublishPending(true)
     const res = await post(`/publish/chapter`, { project_id: id, chapter: chapterNumber })
     if (res.ok) {
-      refetchWorkspace()
+      await refetchWorkspace()
     } else {
       await dialog.alert({
         title: '发布章节失败',
@@ -364,7 +368,8 @@ export default function ProjectDetail() {
         tone: 'danger',
       })
     }
-  }, [dialog, id, refetchWorkspace])
+    setPublishPending(false)
+  }, [dialog, id, publishPending, refetchWorkspace])
 
   const handlePublish = useCallback(async () => {
     await handlePublishChapter(currentChapter)
@@ -381,6 +386,7 @@ export default function ProjectDetail() {
   }, [currentChapter, handleGenerateNextFromChapter])
 
   const handleMarkRunStuck = useCallback(async (runId: string) => {
+    if (markStuckPending) return
     const ok = await dialog.confirm({
       title: '标记卡住运行',
       message: '确认将这条超时运行标记为阻塞？这不会删除正文或过程稿，之后可以清除阻塞并重新生成。',
@@ -388,6 +394,7 @@ export default function ProjectDetail() {
       confirmLabel: '标记为阻塞',
     })
     if (!ok) return
+    setMarkStuckPending(true)
     const res = await post(`/runs/${runId}/recovery/mark-stuck`, { confirm: true })
     if (res.ok) {
       setGenError('')
@@ -400,9 +407,11 @@ export default function ProjectDetail() {
         tone: 'danger',
       })
     }
-  }, [dialog, loadRunDetail, refetchWorkspace])
+    setMarkStuckPending(false)
+  }, [dialog, loadRunDetail, markStuckPending, refetchWorkspace])
 
   const handleResetRunRecovery = useCallback(async (runId: string) => {
+    if (resetRecoveryPending) return
     const ok = await dialog.confirm({
       title: '清除阻塞并重置',
       message: '确认清除本章阻塞/返修状态并回到 planned？正文、运行记录和过程稿会保留。',
@@ -410,6 +419,7 @@ export default function ProjectDetail() {
       confirmLabel: '清除并重置',
     })
     if (!ok) return
+    setResetRecoveryPending(true)
     const res = await post(`/runs/${runId}/recovery/reset`, { confirm: true })
     if (res.ok) {
       setGenError('')
@@ -422,7 +432,8 @@ export default function ProjectDetail() {
         tone: 'danger',
       })
     }
-  }, [dialog, loadRunDetail, refetchWorkspace])
+    setResetRecoveryPending(false)
+  }, [dialog, loadRunDetail, refetchWorkspace, resetRecoveryPending])
 
   const handleResetRunRecoveryForChapter = useCallback(async (chapterNumber: number) => {
     if (!id || !workspace) return
@@ -492,6 +503,9 @@ export default function ProjectDetail() {
           onPublish={handlePublish}
           onResetRunRecovery={handleResetRunRecovery}
           onResetRunRecoveryForChapter={handleResetRunRecoveryForChapter}
+          publishPending={publishPending}
+          markStuckPending={markStuckPending}
+          resetRecoveryPending={resetRecoveryPending}
           onGenerateChapter={handleGenerateChapter}
           onGenerateNextFromChapter={handleGenerateNextFromChapter}
           onPublishChapter={handlePublishChapter}
