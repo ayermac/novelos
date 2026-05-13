@@ -1,6 +1,20 @@
 import { useEffect, useState } from 'react'
 import { Outlet, NavLink, useLocation } from 'react-router-dom'
-import { FolderPlus, CheckSquare, Palette, Settings, LayoutDashboard, FolderOpen, LucideIcon, Factory, Menu, X, Activity } from 'lucide-react'
+import {
+  FolderPlus,
+  CheckSquare,
+  Palette,
+  Settings,
+  LayoutDashboard,
+  FolderOpen,
+  LucideIcon,
+  Factory,
+  Menu,
+  X,
+  Activity,
+  PanelLeftClose,
+  PanelLeftOpen,
+} from 'lucide-react'
 import { get } from '../lib/api'
 
 interface NavItem {
@@ -24,6 +38,7 @@ const navItems: NavItem[] = [
 export default function Layout() {
   const [llmMode, setLlmMode] = useState<string>('stub')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const location = useLocation()
 
   useEffect(() => {
@@ -56,7 +71,10 @@ export default function Layout() {
 
       {sidebarOpen && <div className="sidebar-overlay" onClick={() => setSidebarOpen(false)} />}
 
-      <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
+      <aside
+        className={`sidebar ${sidebarOpen ? 'open' : ''} ${sidebarCollapsed ? 'collapsed' : ''}`}
+        aria-label="主菜单"
+      >
         <div className="sidebar-brand">
           <div className="brand-icon">
             <Factory size={22} />
@@ -66,6 +84,16 @@ export default function Layout() {
             <span className="brand-tagline">长篇小说生产系统</span>
           </div>
           <span className="version">v5.5.9</span>
+          <button
+            type="button"
+            className="sidebar-collapse-toggle"
+            onClick={() => setSidebarCollapsed((value) => !value)}
+            aria-label={sidebarCollapsed ? '展开主菜单' : '收起主菜单'}
+            aria-expanded={!sidebarCollapsed}
+            title={sidebarCollapsed ? '展开主菜单' : '收起主菜单'}
+          >
+            {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+          </button>
         </div>
 
         <nav className="sidebar-nav">
@@ -82,6 +110,8 @@ export default function Layout() {
                 key={item.to}
                 to={item.to}
                 end={item.to === '/'}
+                aria-label={sidebarCollapsed ? item.label : undefined}
+                title={sidebarCollapsed ? item.label : undefined}
                 className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
               >
                 {({ isActive }) => (
@@ -104,7 +134,7 @@ export default function Layout() {
         </div>
       </aside>
 
-      <div className="main-area">
+      <div className={`main-area ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
         <header className="topbar">
           <div className="topbar-gradient" />
           <div className="topbar-content">
@@ -155,7 +185,14 @@ export default function Layout() {
           top: 0;
           bottom: 0;
           z-index: 200;
-          transition: transform var(--duration-slow) var(--ease-out);
+          transition:
+            width var(--duration-slow) var(--ease-out),
+            transform var(--duration-slow) var(--ease-out);
+          overflow: hidden;
+        }
+
+        .sidebar.collapsed {
+          width: 72px;
         }
 
         .sidebar-brand {
@@ -164,6 +201,13 @@ export default function Layout() {
           align-items: center;
           gap: var(--space-3);
           border-bottom: 1px solid var(--border-color);
+        }
+
+        .sidebar.collapsed .sidebar-brand {
+          flex-direction: column;
+          justify-content: center;
+          gap: var(--space-2);
+          padding: var(--space-4) var(--space-3);
         }
 
         .brand-icon {
@@ -175,12 +219,14 @@ export default function Layout() {
           background: var(--gradient-ink);
           border-radius: var(--radius-md);
           color: white;
+          flex: 0 0 auto;
         }
 
         .brand-text {
           display: flex;
           flex-direction: column;
           flex: 1;
+          min-width: 0;
         }
 
         .brand-name {
@@ -207,10 +253,49 @@ export default function Layout() {
           font-weight: var(--font-semibold);
         }
 
+        .sidebar-collapse-toggle {
+          width: 34px;
+          height: 34px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid rgba(124, 95, 52, 0.16);
+          border-radius: var(--radius-md);
+          background: rgba(255, 254, 250, 0.72);
+          color: var(--text-charcoal);
+          cursor: pointer;
+          flex: 0 0 auto;
+          transition:
+            background var(--duration-fast) var(--ease-out),
+            color var(--duration-fast) var(--ease-out),
+            border-color var(--duration-fast) var(--ease-out);
+        }
+
+        .sidebar-collapse-toggle:hover {
+          background: var(--paper-hover);
+          color: var(--ink-accent);
+          border-color: rgba(124, 95, 52, 0.28);
+        }
+
+        .sidebar-collapse-toggle:focus-visible {
+          outline: 2px solid rgba(124, 95, 52, 0.34);
+          outline-offset: 2px;
+        }
+
+        .sidebar.collapsed .brand-text,
+        .sidebar.collapsed .version {
+          display: none;
+        }
+
         .sidebar-nav {
           flex: 1;
           padding: var(--space-4) var(--space-3);
           overflow-y: auto;
+          overflow-x: hidden;
+        }
+
+        .sidebar.collapsed .sidebar-nav {
+          padding: var(--space-4) var(--space-2);
         }
 
         .nav-section {
@@ -228,6 +313,19 @@ export default function Layout() {
           margin-top: 0;
         }
 
+        .sidebar.collapsed .nav-section {
+          height: 1px;
+          margin: var(--space-3) var(--space-2);
+          padding: 0;
+          background: var(--border-color);
+          color: transparent;
+          overflow: hidden;
+        }
+
+        .sidebar.collapsed .nav-section:first-child {
+          margin-top: 0;
+        }
+
         .nav-link {
           display: flex;
           align-items: center;
@@ -239,6 +337,16 @@ export default function Layout() {
           transition: all var(--duration-fast) var(--ease-out);
           margin-bottom: var(--space-1);
           position: relative;
+        }
+
+        .sidebar.collapsed .nav-link {
+          justify-content: center;
+          gap: 0;
+          padding: var(--space-3);
+        }
+
+        .sidebar.collapsed .nav-link span {
+          display: none;
         }
 
         .nav-link:hover {
@@ -280,12 +388,22 @@ export default function Layout() {
           border-top: 1px solid var(--border-color);
         }
 
+        .sidebar.collapsed .sidebar-footer {
+          display: flex;
+          justify-content: center;
+          padding: var(--space-4) var(--space-2);
+        }
+
         .status-indicator {
           display: flex;
           align-items: center;
           gap: var(--space-2);
           font-size: var(--text-sm);
           color: var(--text-charcoal);
+        }
+
+        .sidebar.collapsed .status-indicator span {
+          display: none;
         }
 
         .mode-dot {
@@ -374,6 +492,11 @@ export default function Layout() {
           display: flex;
           flex-direction: column;
           min-height: 100vh;
+          transition: margin-left var(--duration-slow) var(--ease-out);
+        }
+
+        .main-area.sidebar-collapsed {
+          margin-left: 72px;
         }
 
         .content {
@@ -435,13 +558,60 @@ export default function Layout() {
 
           .sidebar {
             transform: translateX(-100%);
+            width: var(--sidebar-width);
           }
 
           .sidebar.open {
             transform: translateX(0);
           }
 
+          .sidebar.collapsed {
+            width: var(--sidebar-width);
+          }
+
+          .sidebar.collapsed .sidebar-brand {
+            flex-direction: row;
+            justify-content: flex-start;
+            gap: var(--space-3);
+            padding: var(--space-5) var(--space-5) var(--space-4);
+          }
+
+          .sidebar.collapsed .brand-text,
+          .sidebar.collapsed .version,
+          .sidebar.collapsed .nav-link span,
+          .sidebar.collapsed .status-indicator span {
+            display: flex;
+          }
+
+          .sidebar.collapsed .version {
+            display: inline-flex;
+          }
+
+          .sidebar.collapsed .nav-section {
+            height: auto;
+            margin-top: var(--space-4);
+            margin-bottom: var(--space-2);
+            padding: 0 var(--space-3);
+            background: transparent;
+            color: var(--text-gray);
+            overflow: visible;
+          }
+
+          .sidebar.collapsed .nav-link {
+            justify-content: flex-start;
+            gap: var(--space-3);
+            padding: var(--space-3) var(--space-4);
+          }
+
+          .sidebar-collapse-toggle {
+            display: none;
+          }
+
           .main-area {
+            margin-left: 0;
+          }
+
+          .main-area.sidebar-collapsed {
             margin-left: 0;
           }
 
