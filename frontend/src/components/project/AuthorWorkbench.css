@@ -496,6 +496,31 @@
   color: var(--wb-danger);
 }
 
+.content-generation-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 16px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--wb-paper-soft);
+  border: 1px solid var(--wb-border-soft);
+  color: var(--wb-accent);
+}
+
+.content-generation-title {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--wb-ink);
+}
+
+.content-generation-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--wb-ink-secondary);
+  line-height: 1.5;
+}
+
 .workflow-running-banner {
   display: flex;
   align-items: center;

@@ -173,14 +173,16 @@ export default function ProjectDetail() {
       .finally(() => setChapterLoading(false))
   }, [id, currentChapter])
 
-  const loadRunDetail = useCallback((runId: string) => {
-    setRunDetail(null)
-    get<RunDetailData>(`/runs/${runId}`)
+  const loadRunDetail = useCallback((runId: string, options?: { silent?: boolean }) => {
+    if (!options?.silent) setRunDetail(null)
+    return get<RunDetailData>(`/runs/${runId}`)
       .then((res) => {
         if (res.ok && res.data) setRunDetail(res.data)
-        else setGenError(res.error?.message || '获取运行详情失败')
+        else if (!options?.silent) setGenError(res.error?.message || '获取运行详情失败')
       })
-      .catch(() => setGenError('获取运行详情失败'))
+      .catch(() => {
+        if (!options?.silent) setGenError('获取运行详情失败')
+      })
   }, [])
 
   useEffect(() => {
@@ -192,6 +194,32 @@ export default function ProjectDetail() {
     if (latestRun) loadRunDetail(latestRun.run_id)
     else setRunDetail(null)
   }, [activeTab, currentChapter, workspace?.recent_runs, loadRunDetail])
+
+  useEffect(() => {
+    if ((activeModule !== 'chapters' && activeModule !== 'overview') || activeTab !== 'workflow') return
+    const runsForCurrentChapter = (workspace?.recent_runs || [])
+      .filter((r) => r.chapter_number === currentChapter)
+    const latestRun = runsForCurrentChapter.length > 0 ? runsForCurrentChapter[0] : null
+    const pollingRunId = runDetail?.run_id || latestRun?.run_id
+    const shouldPoll = runDetail?.workflow_status === 'running' || latestRun?.status === 'running'
+    if (!pollingRunId || !shouldPoll) return
+
+    const timer = window.setInterval(() => {
+      loadRunDetail(pollingRunId, { silent: true })
+      refetchWorkspace()
+    }, 5000)
+
+    return () => window.clearInterval(timer)
+  }, [
+    activeModule,
+    activeTab,
+    currentChapter,
+    loadRunDetail,
+    refetchWorkspace,
+    runDetail?.run_id,
+    runDetail?.workflow_status,
+    workspace?.recent_runs,
+  ])
 
   // SSE streaming hook for real-time generation progress
   const handleSSEComplete = useCallback((event: SSEEvent) => {

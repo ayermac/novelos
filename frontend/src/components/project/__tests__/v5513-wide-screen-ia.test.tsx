@@ -265,6 +265,14 @@ describe('v5.5.13 wide-screen grid structure', () => {
     // auto_generate effect should bail if workspace is undefined
     expect(pdContent).toMatch(/if.*!workspace.*generating.*isStreaming/s)
   })
+
+  it('ProjectDetail polls running workflow details while workflow view stays open', () => {
+    const pdContent = readFileSync(resolve(__dirname, '../../../pages/ProjectDetail.tsx'), 'utf-8')
+    expect(pdContent).toContain('window.setInterval')
+    expect(pdContent).toContain("activeTab !== 'workflow'")
+    expect(pdContent).toContain("workflow_status === 'running'")
+    expect(pdContent).toContain('loadRunDetail(pollingRunId, { silent: true })')
+  })
 })
 
 /* ------------------------------------------------------------------ */

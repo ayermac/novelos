@@ -260,7 +260,6 @@ export default function AuthorWritingSurface({
             isStreaming={isStreaming}
             isWorkflowRunning={isWorkflowRunning}
             projectId={projectId}
-            sseSteps={sseSteps}
             onGenerate={onGenerate}
           />
         )}
@@ -301,7 +300,6 @@ function ContentBody({
   isStreaming,
   isWorkflowRunning,
   projectId,
-  sseSteps,
   onGenerate,
 }: {
   chapterDetail: ChapterDetail | null
@@ -315,7 +313,6 @@ function ContentBody({
   isStreaming: boolean
   isWorkflowRunning?: boolean
   projectId: string
-  sseSteps: Record<string, StepStatus>
   onGenerate: () => void
 }) {
   const [filling, setFilling] = useState(false)
@@ -339,38 +336,15 @@ function ContentBody({
     setFilling(false)
   }
 
-  const getStepStatusText = (status: StepStatus, index: number): string => {
-    if (status.status === 'running') return '处理中...'
-    if (status.status === 'completed') return `完成 (${status.duration_ms || 0}ms)`
-    if (status.status === 'failed') return '失败'
-    const stepKeys = getGeneratingStepKeys(sseSteps)
-    const currentRunningIndex = stepKeys.findIndex((k) => sseSteps[k]?.status === 'running')
-    if (currentRunningIndex >= 0 && index > currentRunningIndex) return '等待中...'
-    return '等待中...'
-  }
-
   return (
     <div>
       {isStreaming && (
-        <div style={{ marginBottom: 16 }}>
-          {getGeneratingSteps(sseSteps).map((step, i) => {
-            const stepStatus = sseSteps[step.key]
-            const isActive = stepStatus?.status === 'running'
-            const isCompleted = stepStatus?.status === 'completed'
-            const isFailed = stepStatus?.status === 'failed'
-            const statusText = stepStatus ? getStepStatusText(stepStatus, i) : '等待中...'
-            return (
-              <div
-                key={step.key}
-                className={`gen-step ${isActive ? 'gen-step-active' : ''} ${isCompleted ? 'gen-step-complete' : ''} ${isFailed ? 'gen-step-failed' : ''}`}
-              >
-                <div className="gen-step-icon">
-                {isCompleted ? '✓' : isFailed ? '✗' : '●'}
-                </div>
-                <div className="gen-step-label">{step.label} &mdash; {statusText}</div>
-              </div>
-            )
-          })}
+        <div className="content-generation-banner">
+          <Loader2 size={16} className="spin" />
+          <div>
+            <div className="content-generation-title">正文生成中</div>
+            <div className="content-generation-desc">完成后会自动刷新正文内容。</div>
+          </div>
         </div>
       )}
 
