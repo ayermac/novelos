@@ -192,6 +192,8 @@ class TestTimelineRunIsolation:
         assert author_step is not None
         assert author_step.get("logs")
         assert any("已开始处理" in log["message"] for log in author_step["logs"])
+        assert any("写作任务已开始处理。" == log["message"] for log in author_step["logs"])
+        assert all("write" not in log["message"] for log in author_step["logs"])
 
         repo.complete_task(task, success=False, error="author failed")
         run_data = self._get_run_data(repo, run1)

@@ -55,6 +55,92 @@ STATUS_TO_AGENT = {
     "published": "publish",
 }
 
+AGENT_DISPLAY_NAMES = {
+    "planner": "规划",
+    "screenwriter": "编剧",
+    "author": "执笔",
+    "polisher": "润色",
+    "editor": "审稿",
+    "publish": "发布",
+    "publisher": "发布",
+    "human_review": "人工审核",
+    "memory_curator": "记忆整理",
+    "continuity_checker": "连续性检查",
+    "scout": "选题侦察",
+    "secretary": "资料整理",
+    "architect": "系统诊断",
+    "system": "系统",
+    "human": "人工处理",
+}
+
+ARTIFACT_TYPE_DISPLAY_NAMES = {
+    "chapter_brief": "章节规划",
+    "scene_plan": "分场规划",
+    "draft": "正文初稿",
+    "polished_draft": "润色稿",
+    "review": "审稿报告",
+    "published_chapter": "发布记录",
+    "memory_update": "记忆更新",
+    "style_report": "风格报告",
+    "fact_snapshot": "事实快照",
+}
+
+TASK_TYPE_DISPLAY_NAMES = {
+    "create": "生成任务",
+    "write": "写作任务",
+    "revise": "返修任务",
+    "reset": "重置恢复",
+    "recover": "卡住恢复",
+    "generate": "生成任务",
+    "publish": "发布任务",
+    "review": "审核任务",
+}
+
+
+def _humanize_key(value: str) -> str:
+    """Fallback display for unknown internal keys."""
+    return value.replace("_", " ").strip() or "产物"
+
+
+def _agent_display_name(agent_id: str) -> str:
+    """Return user-facing agent name."""
+    return AGENT_DISPLAY_NAMES.get(agent_id, _humanize_key(agent_id))
+
+
+def _artifact_type_display_name(artifact_type: str) -> str:
+    """Return user-facing artifact type label."""
+    return ARTIFACT_TYPE_DISPLAY_NAMES.get(artifact_type, _humanize_key(artifact_type))
+
+
+def _task_type_display_name(task_type: str) -> str:
+    """Return user-facing task type label."""
+    return TASK_TYPE_DISPLAY_NAMES.get(task_type, _humanize_key(task_type))
+
+
+def _build_artifact_display_summary(artifacts_list: list[dict]) -> dict:
+    """Build human-readable artifact labels instead of leaking raw DB keys."""
+    labels: list[str] = []
+    raw_types: list[str] = []
+    for artifact in artifacts_list:
+        artifact_type = artifact.get("artifact_type", "") or "artifact"
+        agent_id = artifact.get("agent_id", "") or ""
+        raw_types.append(artifact_type)
+        type_label = _artifact_type_display_name(artifact_type)
+        agent_label = _agent_display_name(agent_id)
+        label = f"{type_label} · {agent_label}" if agent_label else type_label
+        if label not in labels:
+            labels.append(label)
+
+    if not labels:
+        labels = ["Agent 产物"]
+
+    return {
+        "summary": "、".join(labels),
+        "artifact_count": len(artifacts_list),
+        "artifact_types": raw_types,
+        "artifact_labels": labels,
+    }
+
 
 @router.get("/runs/health")
 async def get_runs_health(
@@ -692,10 +778,14 @@ def _detect_stuck_run(repo, run_data: dict, timeout_minutes: int) -> dict:
             ).fetchall()
             for row in rows:
                 task_elapsed = _elapsed_minutes_since(row["started_at"])
+                task_type = row["task_type"]
+                agent_id = row["agent_id"]
                 task = {
                     "id": row["id"],
-                    "task_type": row["task_type"],
-                    "agent_id": row["agent_id"],
+                    "task_type": task_type,
+                    "task_label": _task_type_display_name(task_type),
+                    "agent_id": agent_id,
+                    "agent_label": _agent_display_name(agent_id),
                     "started_at": row["started_at"],
                     "elapsed_minutes": task_elapsed,
                     "stuck": task_elapsed is not None and task_elapsed >= timeout_minutes,
@@ -902,25 +992,26 @@ def _build_steps_timeline(
                     lifecycle_rows = []
                 for r in lifecycle_rows:
                     agent_id = r["agent_id"]
+                    task_label = _task_type_display_name(r["task_type"])
                     if agent_id not in task_logs:
                         task_logs[agent_id] = []
                     if r["started_at"]:
                         task_logs[agent_id].append({
                             "timestamp": r["started_at"],
                             "level": "info",
-                            "message": f"{r['task_type']} 已开始处理。",
+                            "message": f"{task_label}已开始处理。",
                         })
                     if r["status"] == "completed" and r["completed_at"]:
                         task_logs[agent_id].append({
                             "timestamp": r["completed_at"],
                             "level": "success",
-                            "message": f"{r['task_type']} 已完成。",
+                            "message": f"{task_label}已完成。",
                         })
                     elif r["status"] == "failed":
                         task_logs[agent_id].append({
                             "timestamp": r["completed_at"] or r["started_at"],
                             "level": "error",
-                            "message": r["error_message"] or f"{r['task_type']} 失败。",
+                            "message": r["error_message"] or f"{task_label}失败。",
                         })
             finally:
                 conn.close()
@@ -1056,18 +1147,9 @@ def _build_steps_timeline(
         elif key in agent_artifacts and agent_artifacts[key]:
             # Build artifacts summary from DB
             artifacts_list = agent_artifacts[key]
-            summary_parts = []
-            for a in artifacts_list:
-                atype = a.get("artifact_type", "")
-                aid = a.get("agent_id", "")
-                summary_parts.append(f"{atype} ({aid})")
-            step["artifacts"] = {
-                "summary": ", ".join(summary_parts) if summary_parts else "Agent 产物",
-                "artifact_count": len(artifacts_list),
-                "artifact_types": [a.get("artifact_type", "") for a in artifacts_list],
-                # P1: indicate if artifacts came from legacy fallback (not run-isolated)
-                "is_legacy_fallback": artifacts_source == "chapter_fallback",
-            }
+            step["artifacts"] = _build_artifact_display_summary(artifacts_list)
+            # P1: indicate if artifacts came from legacy fallback (not run-isolated)
+            step["artifacts"]["is_legacy_fallback"] = artifacts_source == "chapter_fallback"
         else:
             step["artifacts"] = None
 
