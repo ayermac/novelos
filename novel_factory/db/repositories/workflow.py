@@ -168,6 +168,75 @@ class WorkflowRepositoryMixin:
         finally:
             conn.close()
 
+    def reconcile_terminal_chapter_running_workflows(
+        self,
+        project_id: str | None = None,
+        chapter_number: int | None = None,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Close running workflow rows when the chapter is already terminal.
+
+        Chapter state is the source of truth for terminal statuses. If a
+        workflow_run remains ``running`` after the chapter reached reviewed,
+        awaiting_publish, or published, the run is stale bookkeeping rather
+        than active work.
+        """
+        terminal_statuses = ("reviewed", "awaiting_publish", "published")
+        conn = self._conn()
+        try:
+            query = (
+                "SELECT wr.id, wr.project_id, wr.chapter_number, c.status AS chapter_status "
+                "FROM workflow_runs wr "
+                "JOIN chapters c ON c.project_id = wr.project_id "
+                "AND c.chapter_number = wr.chapter_number "
+                "WHERE wr.status='running' "
+                "AND c.status IN (?, ?, ?)"
+            )
+            params: list[Any] = list(terminal_statuses)
+            if project_id is not None:
+                query += " AND wr.project_id=?"
+                params.append(project_id)
+            if chapter_number is not None:
+                query += " AND wr.chapter_number=?"
+                params.append(chapter_number)
+            if run_id is not None:
+                query += " AND wr.id=?"
+                params.append(run_id)
+
+            rows = conn.execute(query, params).fetchall()
+            run_ids: list[str] = []
+            task_count = 0
+            for row in rows:
+                resolved_node = (
+                    "publish"
+                    if row["chapter_status"] == "published"
+                    else "awaiting_publish"
+                )
+                cursor = conn.execute(
+                    "UPDATE workflow_runs SET status='completed', current_node=?, "
+                    "error_message=NULL, completed_at=datetime('now','+8 hours') "
+                    "WHERE id=? AND status='running'",
+                    (resolved_node, row["id"]),
+                )
+                if cursor.rowcount:
+                    run_ids.append(row["id"])
+                    task_cursor = conn.execute(
+                        "UPDATE task_status SET status='completed', "
+                        "completed_at=COALESCE(completed_at, datetime('now','+8 hours')), "
+                        "error_message=NULL "
+                        "WHERE workflow_run_id=? AND status='running'",
+                        (row["id"],),
+                    )
+                    task_count += task_cursor.rowcount
+            conn.commit()
+            return {
+                "runs": len(run_ids),
+                "tasks": task_count,
+                "run_ids": run_ids,
+            }
+        finally:
+            conn.close()
+
     def get_project_workflow_token_total(self, project_id: str) -> int:
         """Return total workflow tokens already recorded for a project."""
         conn = self._conn()

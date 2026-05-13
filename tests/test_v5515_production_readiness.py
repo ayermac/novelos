@@ -267,10 +267,9 @@ def test_obsolete_session_action_points_to_cleanup():
             os.unlink(db_path)
 
 
-def test_chapter_workflow_contradiction_detected():
-    """When a chapter is in a terminal state (reviewed/published) but
-    still has a running workflow_run, the health-summary must report
-    a blocking contradiction item."""
+def test_terminal_chapter_running_workflow_is_reconciled_by_health_summary():
+    """When a terminal chapter still has a running workflow_run, health-summary
+    must reconcile the stale run instead of keeping a phantom running state."""
     client, repo, db_path = _client_with_repo()
     try:
         project_id = "v5515-contradiction"
@@ -301,14 +300,23 @@ def test_chapter_workflow_contradiction_detected():
         resp = client.get(f"/api/projects/{project_id}/production/health-summary")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["summary"]["contradictions"] >= 1
-        contradiction_item = next(
+        assert data["summary"]["contradictions"] == 0
+        assert not [
             item for item in data["items"]
             if item["key"].startswith("chapter_workflow_contradiction:")
-        )
-        assert contradiction_item["severity"] == "blocking"
-        assert "矛盾" in contradiction_item["label"]
-        assert contradiction_item["chapter_number"] == 1
+        ]
+
+        conn = repo._conn()
+        try:
+            row = conn.execute(
+                "SELECT status, current_node, completed_at FROM workflow_runs WHERE id=?",
+                (run_id,),
+            ).fetchone()
+            assert row["status"] == "completed"
+            assert row["current_node"] == "awaiting_publish"
+            assert row["completed_at"]
+        finally:
+            conn.close()
     finally:
         if os.path.exists(db_path):
             os.unlink(db_path)
@@ -370,6 +378,62 @@ def test_stream_endpoint_rejects_running_workflow():
             os.unlink(db_path)
 
 
+def test_run_detail_reconciles_terminal_running_workflow_and_tasks():
+    """Opening run detail for a terminal chapter must not keep showing
+    a stale running workflow or running node."""
+    client, repo, db_path = _client_with_repo()
+    try:
+        project_id = "v5515-run-detail-reconcile"
+        repo.create_project(
+            project_id=project_id,
+            name="Run Detail Reconcile Test",
+            genre="fantasy",
+            description="test",
+            target_words=30000,
+            total_chapters_planned=10,
+        )
+        repo.add_chapter(project_id, 1, "第一章", status="published")
+        run_id = repo.create_workflow_run(project_id, 1)
+        repo.update_workflow_run(run_id, status="running", current_node="polisher")
+        task_id = repo.start_task(
+            project_id,
+            1,
+            "write",
+            "polisher",
+            workflow_run_id=run_id,
+        )
+
+        resp = client.get(f"/api/runs/{run_id}")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["workflow_status"] == "completed"
+        assert data["chapter_status"] == "published"
+        assert data["current_node"] == "publish"
+        assert data["reconciled_terminal_run"] is True
+        assert data["reconciled_running_tasks"] == 1
+        assert all(step["status"] != "running" for step in data["steps"])
+
+        conn = repo._conn()
+        try:
+            run = conn.execute(
+                "SELECT status, current_node FROM workflow_runs WHERE id=?",
+                (run_id,),
+            ).fetchone()
+            task = conn.execute(
+                "SELECT status, completed_at FROM task_status WHERE id=?",
+                (task_id,),
+            ).fetchone()
+            assert run["status"] == "completed"
+            assert run["current_node"] == "publish"
+            assert task["status"] == "completed"
+            assert task["completed_at"]
+        finally:
+            conn.close()
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
 def test_unified_guard_covers_all_entry_points():
     """All three generation entry points must import the shared guard module."""
     base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -385,9 +449,9 @@ def test_unified_guard_covers_all_entry_points():
         assert "check_chapter_run_guard" in content, f"{name} must import check_chapter_run_guard"
 
 
-def test_published_chapter_with_stale_workflow_contradiction():
-    """A published chapter with a stale running workflow should have
-    both a stale_run item and a contradiction item."""
+def test_published_chapter_with_stale_workflow_is_auto_closed():
+    """A published chapter with a stale running workflow should be closed
+    automatically so it does not appear as still running."""
     client, repo, db_path = _client_with_repo()
     try:
         project_id = "v5515-published-stale"
@@ -416,11 +480,23 @@ def test_published_chapter_with_stale_workflow_contradiction():
         resp = client.get(f"/api/projects/{project_id}/production/health-summary")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        # Should have both a stale_run and a contradiction
         keys = [item["key"].split(":")[0] for item in data["items"]]
-        assert "stale_run" in keys
-        assert "chapter_workflow_contradiction" in keys
-        assert data["status"] == "blocking"
+        assert "stale_run" not in keys
+        assert "chapter_workflow_contradiction" not in keys
+        assert data["summary"]["stale_runs"] == 0
+        assert data["summary"]["contradictions"] == 0
+
+        conn = repo._conn()
+        try:
+            row = conn.execute(
+                "SELECT status, current_node, completed_at FROM workflow_runs WHERE id=?",
+                (run_id,),
+            ).fetchone()
+            assert row["status"] == "completed"
+            assert row["current_node"] == "publish"
+            assert row["completed_at"]
+        finally:
+            conn.close()
     finally:
         if os.path.exists(db_path):
             os.unlink(db_path)
@@ -445,6 +521,9 @@ def test_terminal_chapter_cannot_be_regenerated():
             ch_num = {"reviewed": 1, "awaiting_publish": 2, "published": 3}[status]
             repo.add_chapter(project_id, ch_num, f"第{ch_num}章", status=status)
 
+        stale_run_id = repo.create_workflow_run(project_id, 1)
+        repo.update_workflow_run(stale_run_id, status="running", current_node="editor")
+
         for status, ch_num in [("reviewed", 1), ("awaiting_publish", 2), ("published", 3)]:
             resp = client.post("/api/run/chapter", json={
                 "project_id": project_id,
@@ -455,6 +534,17 @@ def test_terminal_chapter_cannot_be_regenerated():
             assert data["ok"] is False, f"Expected error for {status} chapter {ch_num}"
             assert data["error"]["code"] == "CHAPTER_ALREADY_COMPLETED"
             assert "终态" in data["error"]["message"] or status in data["error"]["message"]
+
+        conn = repo._conn()
+        try:
+            row = conn.execute(
+                "SELECT status, current_node FROM workflow_runs WHERE id=?",
+                (stale_run_id,),
+            ).fetchone()
+            assert row["status"] == "completed"
+            assert row["current_node"] == "awaiting_publish"
+        finally:
+            conn.close()
     finally:
         if os.path.exists(db_path):
             os.unlink(db_path)

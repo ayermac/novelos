@@ -39,7 +39,26 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
     Guard 1: WORKFLOW_ALREADY_RUNNING — a running workflow_run already exists.
     Guard 2: CHAPTER_ALREADY_COMPLETED — the chapter is in a terminal status.
     """
-    # Guard 1: Running workflow check
+    # Guard 1: Terminal status check. Terminal chapter state wins over stale
+    # running workflow rows; reconcile first so UI/health endpoints stop
+    # showing phantom work.
+    chapter = repo.get_chapter(project_id, chapter_number)
+    if chapter and chapter.get("status") in TERMINAL_STATUSES:
+        if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
+            repo.reconcile_terminal_chapter_running_workflows(
+                project_id=project_id,
+                chapter_number=chapter_number,
+            )
+        return RunGuardError(
+            "CHAPTER_ALREADY_COMPLETED",
+            f"第 {chapter_number} 章已处于终态（{chapter.get('status')}），不能重复启动生成。如需重新生成，请先重置章节。",
+            details={
+                "chapter_status": chapter.get("status"),
+                "hint": "reset_chapter",
+            },
+        )
+
+    # Guard 2: Running workflow check
     existing_runs = repo.get_workflow_runs_for_project(
         project_id, chapter_number=chapter_number, limit=5
     )
@@ -53,18 +72,6 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
                 "run_id": running_run.get("id"),
                 "current_node": running_run.get("current_node"),
                 "started_at": running_run.get("started_at"),
-            },
-        )
-
-    # Guard 2: Terminal status check
-    chapter = repo.get_chapter(project_id, chapter_number)
-    if chapter and chapter.get("status") in TERMINAL_STATUSES:
-        return RunGuardError(
-            "CHAPTER_ALREADY_COMPLETED",
-            f"第 {chapter_number} 章已处于终态（{chapter.get('status')}），不能重复启动生成。如需重新生成，请先重置章节。",
-            details={
-                "chapter_status": chapter.get("status"),
-                "hint": "reset_chapter",
             },
         )
 

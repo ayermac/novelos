@@ -20,7 +20,7 @@ def _client_with_repo():
     return TestClient(app), Repository(db_path), db_path
 
 
-def test_health_summary_reports_stale_run_and_obsolete_session():
+def test_health_summary_reconciles_terminal_stale_run_and_reports_obsolete_session():
     client, repo, db_path = _client_with_repo()
     try:
         project_id = "stabilize-health"
@@ -72,14 +72,26 @@ def test_health_summary_reports_stale_run_and_obsolete_session():
         resp = client.get(f"/api/projects/{project_id}/production/health-summary")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["status"] == "blocking"
-        assert data["summary"]["stale_runs"] == 1
+        assert data["status"] == "attention"
+        assert data["summary"]["stale_runs"] == 0
         assert data["summary"]["obsolete_sessions"] == 1
         keys = {item["key"].split(":")[0] for item in data["items"]}
-        assert "stale_run" in keys
+        assert "stale_run" not in keys
         assert "obsolete_session" in keys
         obsolete_item = next(item for item in data["items"] if item["key"].startswith("obsolete_session:"))
         assert obsolete_item["action_url"].endswith(f"/sessions/{session['id']}")
+
+        conn = repo._conn()
+        try:
+            row = conn.execute(
+                "SELECT status, current_node, completed_at FROM workflow_runs WHERE id=?",
+                (run_id,),
+            ).fetchone()
+            assert row["status"] == "completed"
+            assert row["current_node"] == "awaiting_publish"
+            assert row["completed_at"]
+        finally:
+            conn.close()
     finally:
         if os.path.exists(db_path):
             os.unlink(db_path)

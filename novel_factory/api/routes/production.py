@@ -99,12 +99,22 @@ def _has_pending_memory_updates(repo, project_id: str) -> bool:
 
 def _has_running_chapter_workflow(repo, project_id: str, chapter_number: int) -> bool:
     """Check if a chapter has a currently running workflow run."""
+    if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
+        repo.reconcile_terminal_chapter_running_workflows(
+            project_id=project_id,
+            chapter_number=chapter_number,
+        )
     runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=5)
     return any(r.get("status") == "running" for r in runs)
 
 
 def _get_running_chapter_workflow(repo, project_id: str, chapter_number: int) -> dict | None:
     """Return the latest running workflow run for a chapter, if any."""
+    if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
+        repo.reconcile_terminal_chapter_running_workflows(
+            project_id=project_id,
+            chapter_number=chapter_number,
+        )
     runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=5)
     for run in runs:
         if run.get("status") == "running":
@@ -168,6 +178,8 @@ def _is_obsolete_disconnected_session(repo, project_id: str, session: dict, step
 
 def _list_stale_running_workflows(repo, project_id: str, timeout_minutes: int) -> list[dict]:
     """List running workflow runs that exceeded the project timeout."""
+    if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
+        repo.reconcile_terminal_chapter_running_workflows(project_id=project_id)
     rows = repo.get_workflow_runs_for_project(project_id, limit=100)
     stale: list[dict] = []
     for row in rows:
@@ -196,6 +208,9 @@ def _detect_chapter_workflow_contradictions(repo, project_id: str) -> list[dict]
     2. Chapter is in a terminal state but has a stale running workflow that should have completed
     3. Chapter status contradicts the most recent workflow status
     """
+    if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
+        repo.reconcile_terminal_chapter_running_workflows(project_id=project_id)
+
     items: list[dict] = []
     chapters = repo.list_chapters(project_id)
     terminal_statuses = {"reviewed", "published", "awaiting_publish"}
@@ -245,6 +260,9 @@ def _detect_chapter_workflow_contradictions(repo, project_id: str) -> list[dict]
 
 def _build_project_health_summary(repo, project_id: str, timeout_minutes: int) -> dict:
     """Build a concise author-facing project health summary."""
+    if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
+        repo.reconcile_terminal_chapter_running_workflows(project_id=project_id)
+
     project = repo.get_project(project_id)
     current_chapter = project.get("current_chapter", 1) if project else 1
     health = _build_health(repo, project_id, current_chapter)

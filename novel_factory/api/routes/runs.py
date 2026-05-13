@@ -323,6 +323,23 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
 
         # Get chapter info
         chapter = repo.get_chapter(run_data["project_id"], run_data["chapter_number"])
+        reconciliation = {"runs": 0, "tasks": 0, "run_ids": []}
+        if (
+            chapter
+            and run_data.get("status") == "running"
+            and chapter.get("status") in ("reviewed", "awaiting_publish", "published")
+            and hasattr(repo, "reconcile_terminal_chapter_running_workflows")
+        ):
+            reconciliation = repo.reconcile_terminal_chapter_running_workflows(
+                project_id=run_data["project_id"],
+                chapter_number=run_data["chapter_number"],
+                run_id=run_id,
+            )
+            if reconciliation.get("runs"):
+                refreshed = _get_run_by_id(repo, run_id)
+                if refreshed:
+                    run_data = refreshed
+
         error_message = _resolve_run_error_message(repo, run_data, chapter)
         if error_message and not run_data.get("error_message"):
             run_data = dict(run_data)
@@ -349,6 +366,8 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             "completion_tokens": run_data.get("completion_tokens", 0),
             "total_tokens": run_data.get("total_tokens", 0),
             "duration_ms": run_data.get("duration_ms", 0),
+            "reconciled_terminal_run": bool(reconciliation.get("runs")),
+            "reconciled_running_tasks": reconciliation.get("tasks", 0),
         })
 
     except Exception as e:
@@ -498,9 +517,27 @@ def _get_run_by_id(repo, run_id: str) -> dict | None:
     conn = repo._conn()
     try:
         row = conn.execute("SELECT * FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
-        return dict(row) if row else None
+        run_data = dict(row) if row else None
     finally:
         conn.close()
+    if not run_data:
+        return None
+
+    chapter = repo.get_chapter(run_data["project_id"], run_data["chapter_number"])
+    if (
+        chapter
+        and run_data.get("status") == "running"
+        and chapter.get("status") in ("reviewed", "awaiting_publish", "published")
+        and hasattr(repo, "reconcile_terminal_chapter_running_workflows")
+    ):
+        reconciliation = repo.reconcile_terminal_chapter_running_workflows(
+            project_id=run_data["project_id"],
+            chapter_number=run_data["chapter_number"],
+            run_id=run_id,
+        )
+        if reconciliation.get("runs"):
+            return _get_run_by_id(repo, run_id)
+    return run_data
 
 
 def _checkpoint_exists(repo, project_id: str, chapter_number: int) -> bool:
@@ -515,6 +552,8 @@ def _checkpoint_exists(repo, project_id: str, chapter_number: int) -> bool:
 
 def _list_run_health_rows(repo, project_id: str | None, limit: int) -> list[dict]:
     """List recent issue-bearing runs for the health dashboard."""
+    if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
+        repo.reconcile_terminal_chapter_running_workflows(project_id=project_id)
     conn = repo._conn()
     try:
         where = "WHERE wr.status IN ('running', 'blocked', 'failed')"
@@ -945,6 +984,10 @@ def _build_steps_timeline(
 
     # Determine final chapter status
     final_status = chapter.get("status", "planned") if chapter else "planned"
+    if workflow_status == "running" and final_status in ("reviewed", "awaiting_publish", "published"):
+        workflow_status = "completed"
+        current_node = "publish" if final_status == "published" else "awaiting_publish"
+        error_message = None
 
     # Fetch task_status for per-agent error info
     # P1: Prefer run-isolated rows; fallback to chapter-level for legacy data.
