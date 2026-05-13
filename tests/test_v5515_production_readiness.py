@@ -172,6 +172,37 @@ def test_running_chapter_cannot_be_restarted():
             os.unlink(db_path)
 
 
+def test_planned_chapter_with_existing_content_cannot_be_generated():
+    """A recovered planned chapter with preserved content must not be treated
+    as an empty chapter generation slot."""
+    client, repo, db_path = _client_with_repo()
+    try:
+        project_id = "v571-planned-with-content"
+        repo.create_project(
+            project_id=project_id,
+            name="Planned Existing Content Test",
+            genre="fantasy",
+            description="test",
+            target_words=30000,
+            total_chapters_planned=10,
+        )
+        repo.add_chapter(project_id, 1, "第一章", status="planned")
+        repo.save_chapter(project_id, 1, "第一章", "已有正文内容" * 20, 120, "planned")
+
+        resp = client.post("/api/run/chapter", json={
+            "project_id": project_id,
+            "chapter": 1,
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is False
+        assert data["error"]["code"] == "CHAPTER_HAS_EXISTING_CONTENT"
+        assert data["error"]["details"]["hint"] == "review_existing_content"
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
 def test_pending_memory_updates_surface_in_health_summary():
     """Pending memory items must appear in the health summary with
     an action that navigates to the memory inbox."""

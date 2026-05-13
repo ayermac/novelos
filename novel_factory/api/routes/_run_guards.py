@@ -7,6 +7,9 @@ preconditions before starting a workflow.
 This module provides a single check_chapter_run_guard() function that:
 1. Rejects chapters that already have a running workflow_run
 2. Rejects chapters in a terminal status (reviewed / awaiting_publish / published)
+3. Rejects planned chapters that already contain content, which usually means a
+   recovery reset preserved author-visible content and direct generation would
+   risk overwriting it.
 
 Callers should use this instead of ad-hoc inline checks.
 """
@@ -58,7 +61,25 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
             },
         )
 
-    # Guard 2: Running workflow check
+    # Guard 2: A planned chapter with content is not an empty generation slot.
+    # This can happen after recovery reset: reset only clears workflow state and
+    # preserves the author's current text. Starting generation directly would
+    # make the UI look safe while risking an overwrite.
+    if chapter and chapter.get("status") == "planned":
+        content = (chapter.get("content") or "").strip()
+        word_count = chapter.get("word_count") or 0
+        if content or word_count > 0:
+            return RunGuardError(
+                "CHAPTER_HAS_EXISTING_CONTENT",
+                f"第 {chapter_number} 章已有正文内容，不能按空白 planned 章节直接生成。请先查看正文并决定编辑、回滚或显式重置。",
+                details={
+                    "chapter_status": chapter.get("status"),
+                    "word_count": word_count,
+                    "hint": "review_existing_content",
+                },
+            )
+
+    # Guard 3: Running workflow check
     existing_runs = repo.get_workflow_runs_for_project(
         project_id, chapter_number=chapter_number, limit=5
     )

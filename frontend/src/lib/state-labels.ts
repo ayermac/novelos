@@ -83,6 +83,7 @@ export const ACTION_KEY_LABEL: Record<string, string> = {
   continue_next_chapter: '继续下一章',
   review_chapter: '审核章节',
   recover_blocked_run: '恢复阻塞运行',
+  review_existing_chapter_content: '检查已有正文',
   generate_arc_plan: '生成弧线规划',
   none: '无待办',
 }

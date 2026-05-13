@@ -234,6 +234,149 @@ class TestProductionNextAPI:
         assert data["next_action"]["key"] == "apply_memory_updates"
         os.unlink(db_path)
 
+    def test_running_target_chapter_takes_priority_over_pending_memory(self, client, project_id):
+        """Running workflow on the current target chapter must outrank memory updates."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "prio-test", "name": "Prio Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 10, "target_words": 30000,
+        })
+        tc.post("/api/projects/prio-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
+        })
+        gid = tc.get("/api/projects/prio-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/prio-test/genesis/{gid}/approve")
+        tc.post("/api/projects/prio-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        run_id = repo.create_workflow_run("prio-test", 1)
+        repo.update_workflow_run(run_id, status="running", current_node="screenwriter")
+        batch = repo.create_memory_batch("prio-test", chapter_number=1, summary="test batch")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id="prio-test",
+            target_table="characters",
+            operation="update",
+            after_json='{"name":"Test"}',
+            target_id="1",
+        )
+
+        resp = tc.get("/api/projects/prio-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["health"]["has_stuck_run"] is True
+        assert data["next_action"]["key"] == "recover_blocked_run"
+        assert data["next_action"]["target_chapter"] == 1
+        os.unlink(db_path)
+
+    def test_project_stale_running_workflow_takes_priority_over_pending_memory(self, client, project_id):
+        """A stale running workflow on any chapter must outrank memory updates."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "stale-prio-test", "name": "Stale Prio Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 10, "target_words": 30000,
+        })
+        tc.post("/api/projects/stale-prio-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
+        })
+        gid = tc.get("/api/projects/stale-prio-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/stale-prio-test/genesis/{gid}/approve")
+        tc.post("/api/projects/stale-prio-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        repo.update_chapter_status("stale-prio-test", 4, "scripted")
+        run_id = repo.create_workflow_run("stale-prio-test", 4)
+        repo.update_workflow_run(run_id, status="running", current_node="screenwriter")
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "UPDATE workflow_runs SET started_at=datetime('now','-2 hours','+8 hours') WHERE id=?",
+                (run_id,),
+            )
+            conn.execute("UPDATE projects SET current_chapter=? WHERE project_id=?", (5, "stale-prio-test"))
+            conn.commit()
+        finally:
+            conn.close()
+        batch = repo.create_memory_batch("stale-prio-test", chapter_number=5, summary="test batch")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id="stale-prio-test",
+            target_table="characters",
+            operation="update",
+            after_json='{"name":"Test"}',
+            target_id="1",
+        )
+
+        resp = tc.get("/api/projects/stale-prio-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["health"]["has_pending_memory_updates"] is True
+        assert data["next_action"]["key"] == "recover_blocked_run"
+        assert data["next_action"]["target_chapter"] == 4
+        assert data["next_action"]["run_id"] == run_id
+        os.unlink(db_path)
+
+    def test_planned_chapter_with_content_suggests_review_existing_content(self, client, project_id):
+        """Planned chapters with preserved content should not suggest generation."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "existing-content-test", "name": "Existing Content Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 10, "target_words": 30000,
+        })
+        tc.post("/api/projects/existing-content-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
+        })
+        gid = tc.get("/api/projects/existing-content-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/existing-content-test/genesis/{gid}/approve")
+        tc.post("/api/projects/existing-content-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        repo.save_chapter(
+            "existing-content-test",
+            1,
+            "第 1 章",
+            "恢复后保留的正文" * 20,
+            160,
+            "planned",
+        )
+
+        resp = tc.get("/api/projects/existing-content-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "review_existing_chapter_content"
+        assert data["next_action"]["target_chapter"] == 1
+        os.unlink(db_path)
+
     def test_old_failure_after_success_ignored(self, client, project_id):
         """7. Same-chapter old failure after later success should NOT suggest recovery."""
         from novel_factory.api_app import create_api_app
