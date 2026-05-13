@@ -27,7 +27,28 @@ export async function api<T = unknown>(
     },
   })
 
-  const data = await response.json()
+  let data: unknown
+  try {
+    data = await response.json()
+  } catch {
+    return {
+      ok: false,
+      error: {
+        code: `HTTP_${response.status}`,
+        message: response.statusText || '请求失败',
+      },
+    }
+  }
+  const maybeEnvelope = data as { ok?: unknown; detail?: unknown }
+  if (typeof maybeEnvelope.ok !== 'boolean') {
+    return {
+      ok: false,
+      error: {
+        code: `HTTP_${response.status}`,
+        message: typeof maybeEnvelope.detail === 'string' ? maybeEnvelope.detail : response.statusText || '请求失败',
+      },
+    }
+  }
   return data as EnvelopeResponse<T>
 }
 
@@ -60,4 +81,65 @@ export async function put<T = unknown>(
     method: 'PUT',
     body: body ? JSON.stringify(body) : undefined,
   })
+}
+
+// ── v5.7 Version API types ────────────────────────────────
+
+export interface VersionSummary {
+  version_id: number
+  version: number
+  source: string
+  source_label: string
+  created_by: string
+  word_count: number
+  summary: string | null
+  created_at: string
+  is_current: boolean
+}
+
+export interface EditorState {
+  project_id: string
+  chapter_number: number
+  title: string
+  content: string
+  word_count: number
+  status: string
+  editable: boolean
+  edit_restriction: string | null
+  current_version_id: number | null
+  recent_versions: VersionSummary[]
+}
+
+export interface VersionDetail {
+  version_id: number
+  version: number
+  content: string
+  word_count: number
+  source: string
+  source_label: string
+  created_by: string
+  base_version_id: number | null
+  summary: string | null
+  metadata: unknown
+  created_at: string
+  is_current: boolean
+}
+
+export interface VersionDiff {
+  left_version_id: number
+  right_version_id: number
+  added: string
+  removed: string
+  unchanged: string
+  changed_blocks: { type: string; lines?: string[]; removed_lines?: string[]; added_lines?: string[] }[]
+  word_count_delta: number
+}
+
+export interface LocalRevisionResult {
+  replacement_text: string
+  change_summary: string
+  risk_notes: string[]
+  selection_start: number
+  selection_end: number
+  mode: string
 }

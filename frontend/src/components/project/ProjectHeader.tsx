@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Download, FileText, BookOpen } from 'lucide-react'
+import { Activity, Download, FileText, BookOpen, Feather, ChevronDown } from 'lucide-react'
 
 interface ProjectHeaderProps {
   projectId: string
@@ -42,6 +42,13 @@ export default function ProjectHeader({
   return (
     <header className="project-header">
       <div className="project-header-main">
+        <div className="project-console-lockup">
+          <span className="project-console-title">生产控制台</span>
+          <span className="project-console-subtitle">Auto-Run Resilience</span>
+        </div>
+        <div className="project-brand-mark" aria-hidden="true">
+          <Feather size={17} />
+        </div>
         <Link to="/projects" className="project-header-back">
           返回项目列表
         </Link>
@@ -54,31 +61,31 @@ export default function ProjectHeader({
         </div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+        <span className="badge badge-neutral project-header-runtime">
+          <Activity size={13} />
+          工厂在线
+        </span>
         <div ref={menuRef} style={{ position: 'relative' }}>
           <button
             type="button"
             onClick={() => setShowExport(!showExport)}
-            style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '5px 10px', border: '1px solid rgba(15,118,110,0.15)', borderRadius: 7, background: '#fff', color: 'var(--text-secondary)', cursor: 'pointer', fontSize: 12 }}
+            className="project-export-button"
           >
-            <Download size={13} /> 导出
+            <Download size={13} /> 导出 <ChevronDown size={12} />
           </button>
           {showExport && (
-            <div style={{ position: 'absolute', top: '100%', right: 0, marginTop: 4, background: '#fff', border: '1px solid rgba(15,118,110,0.12)', borderRadius: 8, boxShadow: '0 4px 12px rgba(0,0,0,0.08)', zIndex: 100, minWidth: 140 }}>
+            <div className="project-export-menu">
               <button
                 type="button"
                 onClick={() => handleExport('txt')}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)', textAlign: 'left' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = '#f0fdfa' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
+                className="project-export-menu-item"
               >
                 <FileText size={14} /> 纯文本 (.txt)
               </button>
               <button
                 type="button"
                 onClick={() => handleExport('markdown')}
-                style={{ display: 'flex', alignItems: 'center', gap: 6, width: '100%', padding: '8px 12px', border: 'none', background: 'none', cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)', textAlign: 'left' }}
-                onMouseEnter={(e) => { e.currentTarget.style.background = '#f0fdfa' }}
-                onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
+                className="project-export-menu-item"
               >
                 <BookOpen size={14} /> Markdown (.md)
               </button>

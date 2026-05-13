@@ -108,3 +108,31 @@ export function tStepResult(result: string | undefined | null): string {
   if (!result) return '—'
   return STEP_RESULT_LABEL[result] || result
 }
+
+// ── v5.7 Version source labels ───────────────────────────────────
+
+export const VERSION_SOURCE_LABEL: Record<string, string> = {
+  ai_generation: 'AI 生成',
+  manual_edit: '人工编辑',
+  local_revision: '局部返修',
+  rollback: '回滚',
+  publish_snapshot: '发布快照',
+}
+
+export function tVersionSource(source: string | null | undefined): string {
+  if (!source) return '未知'
+  return VERSION_SOURCE_LABEL[source] || source
+}
+
+export const LOCAL_REVISION_MODE_LABEL: Record<string, string> = {
+  rewrite: '重写',
+  polish: '润色',
+  shorten: '精简',
+  expand: '扩写',
+  tone: '调整语气',
+}
+
+export function tRevisionMode(mode: string | null | undefined): string {
+  if (!mode) return '返修'
+  return LOCAL_REVISION_MODE_LABEL[mode] || mode
+}

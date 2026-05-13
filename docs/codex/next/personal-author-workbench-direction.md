@@ -24,9 +24,9 @@ v5.5.15 completed the production-readiness closure line:
 - real-project acceptance,
 - short-term usable stable baseline.
 
-v5.6 then introduced the personal author workbench as the default project experience. Follow-up fixes through `4f1e05b` restored project module navigation, preserved chapter context during module switches, made raw workflow artifacts author-readable, fixed sidebar compression, and routed the `工作台` menu item to the project overview rather than the chapter workbench.
+v5.6 introduced the personal author workbench as the default project experience. v5.6.1 then stabilized the workbench with routing, chapter context preservation, readable artifacts, non-native dialogs, loading states, stuck-run recovery, and terminal-workflow contradiction handling.
 
-The immediate next step should stabilize this workbench before expanding into larger writing features.
+The immediate next step is to turn the stable workbench into a daily writing loop: editing, saving, versioning, diff, rollback, and local AI revision.
 
 ## Product Principles
 
@@ -128,26 +128,25 @@ Do not open a broad "v6" by default. After v5.6 Phase 1, keep the next steps nar
 Recommended sequence:
 
 ```text
-v5.6.1 Workbench Stabilization
 v5.7 Daily Writing Editing and Versioning
 v5.8 Workflow Observability and Recovery
 ```
 
 Rationale:
 
-- It prevents scattered UI patching from continuing indefinitely.
-- It locks down the routes, menus, workflow states, and recovery paths the author already touches daily.
+- It moves the product from "AI can generate chapters" to "authors can safely write with AI every day."
+- It makes human edits, AI edits, and publication decisions traceable and reversible.
 - It avoids premature multi-tenant or enterprise scope.
 - It creates a better foundation for memory, revision, RAG, and evaluation work.
 
 The active executable planning spec is:
 
 ```text
-docs/codex/planning/novel-factory-v5.6.1-workbench-stabilization-spec.md
+docs/codex/planning/novel-factory-v5.7-daily-writing-editing-versioning-spec.md
 ```
 
-Later candidate lines remain useful, but should wait until v5.6.1 proves the current workbench is stable:
+Later candidate lines remain useful, but should wait until v5.7 proves the author editing loop is strong:
 
 - `Longform Memory Consistency Closure`
-- `Local Revision Studio`
+- `Workflow Observability and Recovery`
 - `Creator Knowledge Base / RAG`

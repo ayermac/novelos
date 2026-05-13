@@ -100,6 +100,7 @@ interface AuthorWorkbenchProps {
   onTabChange: (tab: SurfaceTabKey) => void
   onViewContent: () => void
   onViewWorkflow: (runId: string) => void
+  onRefreshContent?: () => void
 }
 
 export default function AuthorWorkbench({
@@ -138,6 +139,7 @@ export default function AuthorWorkbench({
   onTabChange,
   onViewContent,
   onViewWorkflow,
+  onRefreshContent,
 }: AuthorWorkbenchProps) {
   return (
     <div className="author-workbench">
@@ -181,6 +183,7 @@ export default function AuthorWorkbench({
         onTabChange={onTabChange}
         onViewContent={onViewContent}
         onViewWorkflow={onViewWorkflow}
+        onRefreshContent={onRefreshContent}
       />
       <AuthorAgentPanel
         currentChapter={currentChapter}

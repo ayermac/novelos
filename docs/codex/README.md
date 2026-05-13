@@ -15,14 +15,17 @@
 
 - **生产稳定基线**: v5.5.15 Production Readiness Closure
 - **当前 WebUI 基线**: v5.6.1 Workbench Stabilization
-- **状态**: v5.5.15 和 v5.6.1 全部通过 Review 与真实项目验收；工作台已稳定
-- **测试基线**: pytest 1847/1847 passed；vitest 115/115 passed；frontend typecheck/lint/build passed
+- **当前创作者闭环基线**: v5.7 Daily Writing Editing and Versioning
+- **状态**: v5.7 Review fixes completed — 编辑器接入、站内弹窗、diff 边界校验、异步保护、局部返修输出归一化均已验证
+- **测试基线**: pytest 1859/1859 passed；vitest 125/125 passed；frontend typecheck/lint/build passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
 - **v5.6 Review 记录**: [reviews/novel-factory-v5.6-author-workbench-review.md](reviews/novel-factory-v5.6-author-workbench-review.md)
 - **v5.6.1 完成报告**: [reports/novel-factory-v5.6.1-workbench-stabilization-completion-report.md](reports/novel-factory-v5.6.1-workbench-stabilization-completion-report.md)
 - **v5.6.1 Review 记录**: [reviews/novel-factory-v5.6.1-workbench-stabilization-review.md](reviews/novel-factory-v5.6.1-workbench-stabilization-review.md)
+- **v5.7 完成报告**: [reports/novel-factory-v5.7-completion-report.md](reports/novel-factory-v5.7-completion-report.md)
+- **v5.7 Review 记录**: [reviews/novel-factory-v5.7-review.md](reviews/novel-factory-v5.7-review.md)
 
 ## 当前执行规则
 
@@ -39,6 +42,7 @@
 - v5.5.15 规格: [planning/novel-factory-v5.5.15-production-readiness-closure-spec.md](planning/novel-factory-v5.5.15-production-readiness-closure-spec.md)
 - v5.6 WebUI 重构规格: [planning/novel-factory-v5.6-webui-author-workbench-rework-spec.md](planning/novel-factory-v5.6-webui-author-workbench-rework-spec.md)
 - v5.6.1 工作台稳定化规格: [planning/novel-factory-v5.6.1-workbench-stabilization-spec.md](planning/novel-factory-v5.6.1-workbench-stabilization-spec.md)
+- v5.7 日常写作编辑与版本管理规格: [planning/novel-factory-v5.7-daily-writing-editing-versioning-spec.md](planning/novel-factory-v5.7-daily-writing-editing-versioning-spec.md)
 - v5.6 完成报告: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
 - v5.6 Review: [reviews/novel-factory-v5.6-author-workbench-review.md](reviews/novel-factory-v5.6-author-workbench-review.md)
 - 下一阶段方向: [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)
@@ -53,13 +57,12 @@ v5.5.15 和 v5.6 Phase 1 完成后，下一阶段不优先展开多租户、企�
 
 近期优先级：
 
-1. v5.6.1 工作台稳定化：真实路径验收、菜单与路由、工作流刷新、卡住恢复、加载态、非原生弹窗、产物文案。
-2. v5.7 日常写作闭环：正文编辑、保存、版本对比、局部返修。
-3. v5.8 工作流可观测与恢复增强：节点日志、恢复边界、运行复盘。
-4. 长篇记忆与设定一致性。
-5. 审核问题定位与局部返修。
-6. 创作者资料库 / RAG。
-7. 导出与发布流水线。
+1. v5.7 日常写作闭环：正文编辑、保存、版本列表、版本对比、回滚、局部返修。
+2. v5.8 工作流可观测与恢复增强：节点日志、恢复边界、运行复盘。
+3. 长篇记忆与设定一致性。
+4. 审核问题定位与局部返修增强。
+5. 创作者资料库 / RAG。
+6. 导出与发布流水线。
 
 详细方向见 [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)。
 
@@ -89,3 +92,23 @@ npm run dev
 ```
 
 访问 http://localhost:5173 即可使用。
+
+### 分层验证策略
+
+全量测试（1859+ pytest / 125+ vitest）应作为稳定基线声明或提交前闸门，不应作为每次小改动后的默认验证方式。推荐使用分层验证入口：
+
+```bash
+python3 scripts/verify.py smoke     # 快速后端关键回归（日常小改动后）
+python3 scripts/verify.py v57       # v5.7 编辑/版本相关测试（编辑器改动后）
+python3 scripts/verify.py frontend  # 前端 typecheck + lint + vitest（前端改动后）
+python3 scripts/verify.py full      # 全量后端 + 前端（稳定基线声明或提交前）
+python3 scripts/verify.py durations # 查看 pytest 最慢用例耗时
+```
+
+| 场景 | 推荐命令 | 说明 |
+|------|----------|------|
+| 后端小改动后 | `smoke` | 跑关键回归测试，秒级反馈 |
+| 编辑器/版本相关改动后 | `v57` | 跑 v5.7 后端测试 + 前端 ChapterEditorSurface 测试 |
+| 前端改动后 | `frontend` | typecheck + lint + vitest，不跑后端 |
+| 准备提交或声明稳定基线 | `full` | pytest 全量 + 前端 typecheck + lint + build + vitest |
+| 排查测试耗时 | `durations` | 查看最慢的 30 个 pytest 用例 |

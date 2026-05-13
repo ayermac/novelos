@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useCallback } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Sparkles,
@@ -13,8 +13,11 @@ import { post } from '../../lib/api'
 import { PROCESS_DRAFT_LABEL, formatArtifactSummary, getArtifactTitle } from '../../lib/artifacts'
 import AttentionPanel, { ActionHintList } from '../AttentionPanel'
 import WorkflowTimeline from '../WorkflowTimeline'
+import ChapterVersionPanel from './ChapterVersionPanel'
+import ChapterDiffViewer from './ChapterDiffViewer'
+import ChapterEditorSurface from './ChapterEditorSurface'
 
-export type SurfaceTabKey = 'content' | 'workflow' | 'artifacts' | 'history'
+export type SurfaceTabKey = 'content' | 'workflow' | 'artifacts' | 'history' | 'versions'
 
 interface ChapterDetail {
   project_id: string
@@ -125,7 +128,7 @@ interface AuthorWritingSurfaceProps {
   chapterDetail: ChapterDetail | null
   chapterLoading: boolean
   currentChapter: number
-  currentChapterRecord: { status: string; word_count: number; title?: string } | null
+  currentChapterRecord: { status: string; word_count: number; title?: string; quality_score?: number } | null
   genError: string
   genErrorDetails: { missing?: string[]; actions?: string[] } | null
   isLaunching: boolean
@@ -148,6 +151,7 @@ interface AuthorWritingSurfaceProps {
   onTabChange: (tab: SurfaceTabKey) => void
   onViewContent: () => void
   onViewWorkflow: (runId: string) => void
+  onRefreshContent?: () => void
 }
 
 export default function AuthorWritingSurface({
@@ -168,7 +172,6 @@ export default function AuthorWritingSurface({
   runsForChapter,
   sseSteps,
   onGenerate,
-  onGenerateNext,
   onMarkRunStuck,
   onPublish,
   onResetRunRecovery,
@@ -176,15 +179,21 @@ export default function AuthorWritingSurface({
   markStuckPending,
   resetRecoveryPending,
   onTabChange,
+  onViewContent: _onViewContent,
   onViewWorkflow,
+  onRefreshContent,
 }: AuthorWritingSurfaceProps) {
+  void _onViewContent
   const hasContent = (chapterDetail?.word_count || 0) > 0
   const status = currentChapterRecord?.status || ''
   const isTerminal = ['reviewed', 'awaiting_publish', 'published'].includes(status)
   const isReviewedReal = status === 'reviewed' && llmMode === 'real'
+  const qualityScore = chapterDetail?.quality_score ?? currentChapterRecord?.quality_score ?? null
+  const statusLabel = tChapterStatus(status)
 
   const tabs: { key: SurfaceTabKey; label: string; disabled?: boolean }[] = [
     { key: 'content', label: '正文' },
+    { key: 'versions', label: '版本' },
     { key: 'workflow', label: '工作流', disabled: runsForChapter.length === 0 && !isStreaming },
     { key: 'artifacts', label: PROCESS_DRAFT_LABEL },
     { key: 'history', label: '历史', disabled: runsForChapter.length === 0 },
@@ -211,7 +220,7 @@ export default function AuthorWritingSurface({
                 : 'var(--wb-text-dark-secondary)',
             }}
           >
-            {tChapterStatus(status)}
+            {statusLabel}
           </span>
         </div>
         <div className="author-surface-actions">
@@ -222,11 +231,6 @@ export default function AuthorWritingSurface({
               ) : (
                 <><CheckCircle2 size={12} /> 确认发布</>
               )}
-            </button>
-          )}
-          {status === 'published' && onGenerateNext && (
-            <button className="btn btn-primary btn-sm" onClick={onGenerateNext}>
-              <Sparkles size={12} /> 生成下一章
             </button>
           )}
           {!isTerminal && (
@@ -259,6 +263,32 @@ export default function AuthorWritingSurface({
         ))}
       </div>
 
+      <div className="author-readiness-strip" aria-label="章节质量状态">
+        <div className="author-readiness-score">
+          <span>{qualityScore ?? '—'}</span>
+        </div>
+        <div className="author-readiness-cell">
+          <strong>质量</strong>
+          <span>{qualityScore !== null ? (qualityScore >= 85 ? '优秀' : qualityScore >= 70 ? '稳定' : '待增强') : '待评估'}</span>
+        </div>
+        <div className="author-readiness-cell">
+          <strong>结构</strong>
+          <span>{hasContent ? '稳固' : '待生成'}</span>
+        </div>
+        <div className="author-readiness-cell">
+          <strong>风格</strong>
+          <span>{hasContent ? '一致' : '未采样'}</span>
+        </div>
+        <div className="author-readiness-cell">
+          <strong>节奏</strong>
+          <span>{hasContent ? '可读' : '待评估'}</span>
+        </div>
+        <div className="author-readiness-state">
+          <strong>发布就绪</strong>
+          <span>{statusLabel}</span>
+        </div>
+      </div>
+
       {/* Body */}
       <div className="author-surface-body">
         {activeTab === 'content' && (
@@ -275,6 +305,7 @@ export default function AuthorWritingSurface({
             isWorkflowRunning={isWorkflowRunning}
             projectId={projectId}
             onGenerate={onGenerate}
+            onRefreshContent={onRefreshContent}
           />
         )}
         {activeTab === 'workflow' && (
@@ -294,6 +325,13 @@ export default function AuthorWritingSurface({
         )}
         {activeTab === 'history' && (
           <HistoryBody runsForChapter={runsForChapter} onViewWorkflow={onViewWorkflow} />
+        )}
+        {activeTab === 'versions' && (
+          <VersionBody
+            projectId={projectId}
+            chapterNumber={currentChapter}
+            onRestore={() => { onRefreshContent?.() }}
+          />
         )}
       </div>
     </main>
@@ -317,6 +355,7 @@ function ContentBody({
   isWorkflowRunning,
   projectId,
   onGenerate,
+  onRefreshContent,
 }: {
   chapterDetail: ChapterDetail | null
   chapterLoading: boolean
@@ -330,6 +369,7 @@ function ContentBody({
   isWorkflowRunning?: boolean
   projectId: string
   onGenerate: () => void
+  onRefreshContent?: () => void
 }) {
   const [filling, setFilling] = useState(false)
   const [fillMsg, setFillMsg] = useState('')
@@ -339,18 +379,27 @@ function ContentBody({
     setFillMsg('')
     const start = currentChapter
     const end = currentChapter + 9
-    const res = await post<{ filled: boolean; created: Record<string, number>; warnings: string[] }>(
-      `/projects/${projectId}/production/auto-fill`,
-      { scope: 'missing_context', chapter_start: start, chapter_end: end, confirm: true }
-    )
-    if (res.ok && res.data) {
-      const total = Object.values(res.data.created).reduce((a, b) => a + b, 0)
-      setFillMsg(`已自动补齐 ${total} 项资料，请刷新页面查看。`)
-    } else {
-      setFillMsg(res.error?.message || '补齐失败')
+    try {
+      const res = await post<{ filled: boolean; created: Record<string, number>; warnings: string[] }>(
+        `/projects/${projectId}/production/auto-fill`,
+        { scope: 'missing_context', chapter_start: start, chapter_end: end, confirm: true }
+      )
+      if (res.ok && res.data) {
+        const total = Object.values(res.data.created).reduce((a, b) => a + b, 0)
+        setFillMsg(`已自动补齐 ${total} 项资料，请刷新页面查看。`)
+      } else {
+        setFillMsg(res.error?.message || '补齐失败')
+      }
+    } catch {
+      setFillMsg('网络异常，补齐失败')
+    } finally {
+      setFilling(false)
     }
-    setFilling(false)
   }
+
+  const handleEditorContentSaved = useCallback(() => {
+    onRefreshContent?.()
+  }, [onRefreshContent])
 
   return (
     <div>
@@ -424,24 +473,16 @@ function ContentBody({
         </div>
       )}
 
-      {!chapterLoading && hasContent && (
-        <div>
-          {isStub && (
-            <div className="alert alert-warn" style={{ marginBottom: 12 }}>
-              <strong>演示正文</strong>
-              <div style={{ marginTop: 4, fontSize: 13 }}>
-                本章为演示模式生成内容，由本地 Stub 模板生成，不代表真实创作质量。
-              </div>
-            </div>
-          )}
-          <div className="chapter-meta">
-            <span>来源: {isStub ? '演示' : '真实'}</span>
-            <span>字数: {(chapterDetail?.word_count || 0).toLocaleString()}</span>
-            <span>生成时间: {chapterDetail?.updated_at || chapterDetail?.created_at || '-'}</span>
-          </div>
-          <h2 className="chapter-content-title">{chapterDetail?.title || `第 ${currentChapter} 章`}</h2>
-          <div className="chapter-content-body">{chapterDetail?.content || ''}</div>
-        </div>
+      {!chapterLoading && hasContent && !isStreaming && (
+        <ChapterEditorSurface
+          projectId={projectId}
+          chapterNumber={currentChapter}
+          onContentSaved={handleEditorContentSaved}
+          initialContent={chapterDetail?.content || ''}
+          initialWordCount={chapterDetail?.word_count || 0}
+          initialStatus={chapterDetail?.status || ''}
+          initialVersionLabel={`更新时间 ${chapterDetail?.updated_at || chapterDetail?.created_at || '-'}`}
+        />
       )}
     </div>
   )
@@ -712,6 +753,51 @@ function HistoryBody({
           </button>
         </div>
       ))}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Version Body (v5.7)                                               */
+/* ------------------------------------------------------------------ */
+
+function VersionBody({
+  projectId,
+  chapterNumber,
+  onRestore,
+}: {
+  projectId: string
+  chapterNumber: number
+  onRestore?: () => void
+}) {
+  const [diffLeftId, setDiffLeftId] = useState<number | null>(null)
+  const [diffRightId, setDiffRightId] = useState<number | null>(null)
+
+  const handleViewDiff = useCallback((leftId: number, rightId: number) => {
+    setDiffLeftId(leftId)
+    setDiffRightId(rightId)
+  }, [])
+
+  return (
+    <div style={{ padding: '0 4px' }}>
+      {diffLeftId !== null && diffRightId !== null ? (
+        <div>
+          <ChapterDiffViewer
+            projectId={projectId}
+            chapterNumber={chapterNumber}
+            leftVersionId={diffLeftId}
+            rightVersionId={diffRightId}
+            onClose={() => { setDiffLeftId(null); setDiffRightId(null) }}
+          />
+        </div>
+      ) : (
+        <ChapterVersionPanel
+          projectId={projectId}
+          chapterNumber={chapterNumber}
+          onRestore={onRestore}
+          onViewDiff={handleViewDiff}
+        />
+      )}
     </div>
   )
 }

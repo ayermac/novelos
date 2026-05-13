@@ -8,7 +8,7 @@ import {
   LayoutDashboard,
   FolderOpen,
   LucideIcon,
-  Factory,
+  Feather,
   Menu,
   X,
   Activity,
@@ -35,10 +35,18 @@ const navItems: NavItem[] = [
   { to: '/settings', label: '配置', icon: Settings },
 ]
 
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'novelos.mainSidebar.collapsed'
+
 export default function Layout() {
   const [llmMode, setLlmMode] = useState<string>('stub')
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    try {
+      return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1'
+    } catch {
+      return false
+    }
+  })
   const location = useLocation()
 
   useEffect(() => {
@@ -57,6 +65,14 @@ export default function Layout() {
   useEffect(() => {
     setSidebarOpen(false)
   }, [location.pathname])
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, sidebarCollapsed ? '1' : '0')
+    } catch {
+      // Ignore storage failures; the sidebar still works for the current session.
+    }
+  }, [sidebarCollapsed])
 
   return (
     <div className="app-layout">
@@ -77,7 +93,7 @@ export default function Layout() {
       >
         <div className="sidebar-brand">
           <div className="brand-icon">
-            <Factory size={22} />
+            <Feather size={22} />
           </div>
           <div className="brand-text">
             <span className="brand-name">墨流工厂</span>
@@ -112,12 +128,14 @@ export default function Layout() {
                 end={item.to === '/'}
                 aria-label={sidebarCollapsed ? item.label : undefined}
                 title={sidebarCollapsed ? item.label : undefined}
+                data-tooltip={sidebarCollapsed ? item.label : undefined}
                 className={({ isActive }) => `nav-link ${isActive ? 'active' : ''}`}
               >
                 {({ isActive }) => (
                   <>
                     {item.icon && <item.icon size={18} />}
-                    <span>{item.label}</span>
+                    <span className="nav-label">{item.label}</span>
+                    <span className="nav-tooltip" aria-hidden="true">{item.label}</span>
                     {isActive && <div className="nav-indicator" />}
                   </>
                 )}
@@ -135,32 +153,34 @@ export default function Layout() {
       </aside>
 
       <div className={`main-area ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
-        <header className="topbar">
-          <div className="topbar-gradient" />
-          <div className="topbar-content">
-            <div className="topbar-left">
-              <span className="topbar-title">生产控制台</span>
-              <span className="topbar-subtitle">Auto-Run Resilience</span>
-            </div>
-            <div className="topbar-right">
-              <span className="badge badge-neutral">
-                <Activity size={13} />
-                工厂在线
-              </span>
-              {isStub ? (
-                <span className="badge badge-warning">
-                  <span className="badge-dot" />
-                  演示模式
+        {!isProjectWorkspace && (
+          <header className="topbar">
+            <div className="topbar-gradient" />
+            <div className="topbar-content">
+              <div className="topbar-left">
+                <span className="topbar-title">生产控制台</span>
+                <span className="topbar-subtitle">Auto-Run Resilience</span>
+              </div>
+              <div className="topbar-right">
+                <span className="badge badge-neutral">
+                  <Activity size={13} />
+                  工厂在线
                 </span>
-              ) : (
-                <span className="badge badge-success">
-                  <span className="badge-dot" />
-                  真实模式
-                </span>
-              )}
+                {isStub ? (
+                  <span className="badge badge-warning">
+                    <span className="badge-dot" />
+                    演示模式
+                  </span>
+                ) : (
+                  <span className="badge badge-success">
+                    <span className="badge-dot" />
+                    真实模式
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
-        </header>
+          </header>
+        )}
 
         <main className={`content ${isProjectWorkspace ? 'content-project-workspace' : ''}`}>
           <Outlet />
@@ -171,13 +191,13 @@ export default function Layout() {
         .app-layout {
           display: flex;
           min-height: 100vh;
-          background: var(--paper-bg);
+          background: #f4f4f3;
         }
 
         .sidebar {
           width: var(--sidebar-width);
-          background: linear-gradient(180deg, var(--paper-surface) 0%, var(--paper-bg) 100%);
-          border-right: 1px solid var(--border-color);
+          background: #fbfbfa;
+          border-right: 1px solid #dedbd4;
           display: flex;
           flex-direction: column;
           position: fixed;
@@ -193,10 +213,11 @@ export default function Layout() {
 
         .sidebar.collapsed {
           width: 72px;
+          overflow: visible;
         }
 
         .sidebar-brand {
-          padding: var(--space-5) var(--space-4) var(--space-4);
+          padding: 22px 16px 18px;
           display: grid;
           grid-template-columns: 42px minmax(0, 1fr) 34px;
           grid-template-areas:
@@ -205,7 +226,7 @@ export default function Layout() {
           align-items: center;
           column-gap: var(--space-3);
           row-gap: var(--space-2);
-          border-bottom: 1px solid var(--border-color);
+          border-bottom: 1px solid #dedbd4;
         }
 
         .sidebar.collapsed .sidebar-brand {
@@ -223,9 +244,9 @@ export default function Layout() {
           display: flex;
           align-items: center;
           justify-content: center;
-          background: var(--gradient-ink);
-          border-radius: var(--radius-md);
-          color: white;
+          background: #102338;
+          border-radius: 8px;
+          color: #fffefc;
           flex: 0 0 auto;
         }
 
@@ -239,10 +260,10 @@ export default function Layout() {
         }
 
         .brand-name {
-          font-family: var(--font-brand);
-          font-size: var(--text-lg);
-          font-weight: var(--font-bold);
-          color: var(--text-ink);
+          font-family: Georgia, 'Times New Roman', 'Songti SC', serif;
+          font-size: 20px;
+          font-weight: 600;
+          color: #191715;
           letter-spacing: 0;
           white-space: nowrap;
           overflow: hidden;
@@ -250,8 +271,8 @@ export default function Layout() {
         }
 
         .brand-tagline {
-          font-size: var(--text-xs);
-          color: var(--text-gray);
+          font-size: 12px;
+          color: #68615b;
           margin-top: 2px;
           white-space: nowrap;
           overflow: hidden;
@@ -262,13 +283,13 @@ export default function Layout() {
           grid-area: version;
           justify-self: start;
           align-self: start;
-          font-size: var(--text-xs);
-          color: var(--ink-accent);
-          background: rgba(176, 138, 75, 0.12);
-          border: 1px solid rgba(124, 95, 52, 0.18);
+          font-size: 11px;
+          color: #761a34;
+          background: #f5eef1;
+          border: 1px solid rgba(118, 26, 52, 0.18);
           padding: 3px 8px;
-          border-radius: var(--radius-md);
-          font-weight: var(--font-semibold);
+          border-radius: 4px;
+          font-weight: 650;
           white-space: nowrap;
         }
 
@@ -279,10 +300,10 @@ export default function Layout() {
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          border: 1px solid rgba(124, 95, 52, 0.16);
-          border-radius: var(--radius-md);
-          background: rgba(255, 254, 250, 0.72);
-          color: var(--text-charcoal);
+          border: 1px solid #dedbd4;
+          border-radius: 6px;
+          background: #fffefc;
+          color: #554f49;
           cursor: pointer;
           flex: 0 0 auto;
           align-self: center;
@@ -293,13 +314,13 @@ export default function Layout() {
         }
 
         .sidebar-collapse-toggle:hover {
-          background: var(--paper-hover);
-          color: var(--ink-accent);
-          border-color: rgba(124, 95, 52, 0.28);
+          background: #f6f2f0;
+          color: #761a34;
+          border-color: rgba(118, 26, 52, 0.26);
         }
 
         .sidebar-collapse-toggle:focus-visible {
-          outline: 2px solid rgba(124, 95, 52, 0.34);
+          outline: 2px solid rgba(118, 26, 52, 0.24);
           outline-offset: 2px;
         }
 
@@ -310,24 +331,25 @@ export default function Layout() {
 
         .sidebar-nav {
           flex: 1;
-          padding: var(--space-4) var(--space-3);
+          padding: 16px 12px;
           overflow-y: auto;
           overflow-x: hidden;
         }
 
         .sidebar.collapsed .sidebar-nav {
-          padding: var(--space-4) var(--space-2);
+          padding: 16px 8px;
+          overflow: visible;
         }
 
         .nav-section {
           font-size: 11px;
-          font-weight: var(--font-semibold);
-          color: var(--text-gray);
+          font-weight: 720;
+          color: #8b837b;
           text-transform: uppercase;
           letter-spacing: 0.08em;
-          margin-top: var(--space-4);
-          margin-bottom: var(--space-2);
-          padding: 0 var(--space-3);
+          margin-top: 18px;
+          margin-bottom: 8px;
+          padding: 0 12px;
         }
 
         .nav-section:first-child {
@@ -336,9 +358,9 @@ export default function Layout() {
 
         .sidebar.collapsed .nav-section {
           height: 1px;
-          margin: var(--space-3) var(--space-2);
+          margin: 12px 8px;
           padding: 0;
-          background: var(--border-color);
+          background: #dedbd4;
           color: transparent;
           overflow: hidden;
         }
@@ -350,35 +372,66 @@ export default function Layout() {
         .nav-link {
           display: flex;
           align-items: center;
-          gap: var(--space-3);
-          padding: var(--space-3) var(--space-4);
-          color: var(--text-charcoal);
+          gap: 10px;
+          min-height: 38px;
+          padding: 0 12px;
+          color: #554f49;
           text-decoration: none;
-          border-radius: var(--radius-md);
+          border-radius: 6px;
           transition: all var(--duration-fast) var(--ease-out);
-          margin-bottom: var(--space-1);
+          margin-bottom: 4px;
           position: relative;
         }
 
         .sidebar.collapsed .nav-link {
           justify-content: center;
           gap: 0;
-          padding: var(--space-3);
+          padding: 0;
         }
 
-        .sidebar.collapsed .nav-link span {
+        .nav-tooltip {
+          display: none;
+          position: absolute;
+          top: 50%;
+          left: 56px;
+          transform: translateY(-50%);
+          z-index: 500;
+          min-width: max-content;
+          max-width: 180px;
+          padding: 6px 9px;
+          border: 1px solid rgba(34, 28, 24, 0.1);
+          border-radius: 4px;
+          background: #191715;
+          color: #fffefc;
+          box-shadow: 0 12px 28px rgba(31, 27, 25, 0.18);
+          font-size: 12px;
+          font-weight: 620;
+          line-height: 1;
+          opacity: 0;
+          pointer-events: none;
+          transition: opacity var(--duration-fast) var(--ease-out);
+        }
+
+        .sidebar.collapsed .nav-link:hover .nav-tooltip,
+        .sidebar.collapsed .nav-link:focus .nav-tooltip,
+        .sidebar.collapsed .nav-link:focus-visible .nav-tooltip {
+          display: block;
+          opacity: 1;
+        }
+
+        .sidebar.collapsed .nav-link .nav-label {
           display: none;
         }
 
         .nav-link:hover {
-          background: var(--paper-hover);
-          color: var(--text-ink);
+          background: #f6f2f0;
+          color: #191715;
         }
 
         .nav-link.active {
-          background: rgba(124, 95, 52, 0.10);
-          color: var(--ink-accent);
-          font-weight: var(--font-medium);
+          background: #f3e8eb;
+          color: #761a34;
+          font-weight: 650;
         }
 
         .nav-link.active::before {
@@ -389,8 +442,8 @@ export default function Layout() {
           transform: translateY(-50%);
           width: 3px;
           height: 20px;
-          background: var(--gradient-glow);
-          border-radius: 0 var(--radius-full) var(--radius-full) 0;
+          background: #761a34;
+          border-radius: 0 999px 999px 0;
         }
 
         .nav-indicator {
@@ -400,13 +453,13 @@ export default function Layout() {
           transform: translateY(-50%);
           width: 3px;
           height: 20px;
-          background: var(--gradient-glow);
-          border-radius: 0 var(--radius-full) var(--radius-full) 0;
+          background: #761a34;
+          border-radius: 0 999px 999px 0;
         }
 
         .sidebar-footer {
-          padding: var(--space-4) var(--space-5);
-          border-top: 1px solid var(--border-color);
+          padding: 14px 18px;
+          border-top: 1px solid #dedbd4;
         }
 
         .sidebar.collapsed .sidebar-footer {
@@ -419,8 +472,8 @@ export default function Layout() {
           display: flex;
           align-items: center;
           gap: var(--space-2);
-          font-size: var(--text-sm);
-          color: var(--text-charcoal);
+          font-size: 12px;
+          color: #554f49;
         }
 
         .sidebar.collapsed .status-indicator span {
@@ -435,11 +488,11 @@ export default function Layout() {
         }
 
         .mode-dot.stub {
-          background: var(--status-warning);
+          background: #b46b18;
         }
 
         .mode-dot.real {
-          background: var(--status-success);
+          background: #1d7b46;
         }
 
         .mode-dot.real::after {
@@ -447,18 +500,18 @@ export default function Layout() {
           position: absolute;
           inset: -4px;
           border-radius: 50%;
-          border: 1px solid var(--status-success);
+          border: 1px solid #1d7b46;
           animation: pulse-ring 2s ease-out infinite;
         }
 
         .topbar {
           height: var(--topbar-height);
-          background: rgba(255, 254, 250, 0.94);
-          backdrop-filter: blur(12px);
+          background: rgba(252, 252, 250, 0.96);
+          backdrop-filter: blur(14px);
           position: relative;
           display: flex;
           align-items: center;
-          border-bottom: 1px solid var(--border-color);
+          border-bottom: 1px solid #dedbd4;
         }
 
         .topbar-gradient {
@@ -467,7 +520,7 @@ export default function Layout() {
           left: 0;
           right: 0;
           height: 3px;
-          background: var(--gradient-ink);
+          background: linear-gradient(90deg, #102338 0%, #761a34 58%, #118384 100%);
         }
 
         .topbar-content {
@@ -476,7 +529,7 @@ export default function Layout() {
           display: flex;
           align-items: center;
           justify-content: space-between;
-          padding: 0 var(--space-6);
+          padding: 0 48px;
         }
 
         .topbar-left {
@@ -486,19 +539,19 @@ export default function Layout() {
         }
 
         .topbar-title {
-          font-family: var(--font-brand);
-          font-size: var(--text-lg);
-          font-weight: var(--font-semibold);
-          color: var(--text-ink);
+          font-family: Georgia, 'Times New Roman', 'Songti SC', serif;
+          font-size: 18px;
+          font-weight: 600;
+          color: #191715;
         }
 
         .topbar-subtitle {
-          font-size: var(--text-xs);
-          color: var(--text-gray);
+          font-size: 12px;
+          color: #6f6862;
           padding: 3px 8px;
-          border: 1px solid rgba(124, 95, 52, 0.16);
-          background: rgba(176, 138, 75, 0.10);
-          border-radius: var(--radius-md);
+          border: 1px solid #dedbd4;
+          background: #f7f4ef;
+          border-radius: 6px;
         }
 
         .topbar-right {
@@ -510,6 +563,7 @@ export default function Layout() {
         .main-area {
           flex: 1;
           margin-left: var(--sidebar-width);
+          width: calc(100vw - var(--sidebar-width));
           display: flex;
           flex-direction: column;
           min-height: 100vh;
@@ -518,6 +572,7 @@ export default function Layout() {
 
         .main-area.sidebar-collapsed {
           margin-left: 72px;
+          width: calc(100vw - 72px);
         }
 
         .content {
@@ -635,10 +690,12 @@ export default function Layout() {
 
           .main-area {
             margin-left: 0;
+            width: 100vw;
           }
 
           .main-area.sidebar-collapsed {
             margin-left: 0;
+            width: 100vw;
           }
 
           .content {

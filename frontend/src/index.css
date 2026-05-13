@@ -1,4 +1,4 @@
-/* v5.5.9 Design System - Chinese Novel Production Factory */
+/* v5.8 Design System - premium editorial production console */
 
 :root {
   /* Layout */
@@ -6,31 +6,31 @@
   --topbar-height: 56px;
 
   /* Colors */
-  --primary: #0f766e;
-  --primary-dark: #16324f;
-  --secondary: #64748b;
-  --success: #10b981;
-  --warning: #f59e0b;
-  --danger: #ef4444;
-  --info: #06b6d4;
+  --primary: #761a34;
+  --primary-dark: #5f0f28;
+  --secondary: #68615b;
+  --success: #1d7b46;
+  --warning: #b46b18;
+  --danger: #a33138;
+  --info: #118384;
 
   /* Backgrounds */
-  --bg-primary: #ffffff;
-  --bg-secondary: #f6f8fb;
-  --bg-tertiary: #eef3f8;
+  --bg-primary: #fffefc;
+  --bg-secondary: #f4f4f3;
+  --bg-tertiary: #f7f4ef;
 
   /* Text */
-  --text-primary: #0f172a;
-  --text-secondary: #64748b;
-  --text-muted: #94a3b8;
+  --text-primary: #191715;
+  --text-secondary: #554f49;
+  --text-muted: #8b837b;
 
   /* Borders */
-  --border-color: #e2e8f0;
-  --border-radius: 8px;
+  --border-color: #dedbd4;
+  --border-radius: 6px;
 
   /* Shadows */
-  --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  --shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1);
+  --shadow-sm: 0 1px 2px rgba(31, 27, 25, 0.04);
+  --shadow-md: 0 18px 42px rgba(31, 27, 25, 0.10);
 
   /* Spacing */
   --spacing-xs: 4px;
@@ -363,6 +363,7 @@ body {
   border: 1px solid var(--border-color);
   border-radius: var(--border-radius);
   margin-bottom: var(--spacing-lg);
+  box-shadow: none;
 }
 
 .card-header {
@@ -374,9 +375,10 @@ body {
 }
 
 .card-header h3 {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: 13px;
+  font-weight: 700;
   margin: 0;
+  color: var(--text-primary);
 }
 
 .card-body {
@@ -391,30 +393,34 @@ body {
   padding: var(--spacing-sm) var(--spacing-md);
   border: 1px solid transparent;
   border-radius: var(--border-radius);
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 13px;
+  font-weight: 650;
   cursor: pointer;
   transition: all 0.2s;
   text-decoration: none;
 }
 
 .btn-primary {
-  background: var(--primary);
+  background: linear-gradient(180deg, #8a2140 0%, #72172f 100%);
   color: white;
+  border-color: #72172f;
 }
 
 .btn-primary:hover {
   background: var(--primary-dark);
+  border-color: var(--primary-dark);
 }
 
 .btn-secondary {
-  background: var(--bg-tertiary);
+  background: #fff;
   color: var(--text-primary);
   border-color: var(--border-color);
 }
 
 .btn-secondary:hover {
-  background: var(--border-color);
+  background: #f6f2f0;
+  color: var(--primary);
+  border-color: rgba(118, 26, 52, 0.26);
 }
 
 .btn-sm {
