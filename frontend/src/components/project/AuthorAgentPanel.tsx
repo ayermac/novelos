@@ -224,17 +224,24 @@ export default function AuthorAgentPanel({
           )}
 
           {/* Streaming indicator */}
-          {isStreaming && sseStepEntries.length > 0 && (
+          {isStreaming && (
             <div style={{ marginTop: 8, borderTop: '1px solid var(--wb-panel-border)', paddingTop: 8 }}>
               <div style={{ fontSize: 11, color: 'var(--wb-text-muted)', marginBottom: 6 }}>实时进度</div>
-              {sseStepEntries.map(([key, step]) => (
-                <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  {step.status === 'running' && <span className="author-agent-status-light info pulse" />}
-                  {step.status === 'completed' && <span className="author-agent-status-light success" />}
-                  {step.status === 'failed' && <span className="author-agent-status-light danger" />}
-                  <span style={{ fontSize: 11, color: 'var(--wb-text-muted)' }}>{key}</span>
+              {sseStepEntries.length === 0 ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--wb-text-muted)' }}>
+                  <span className="author-agent-status-light info pulse" />
+                  正在启动节点日志...
                 </div>
-              ))}
+              ) : (
+                sseStepEntries.map(([key, step]) => (
+                  <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                    {step.status === 'running' && <span className="author-agent-status-light info pulse" />}
+                    {step.status === 'completed' && <span className="author-agent-status-light success" />}
+                    {step.status === 'failed' && <span className="author-agent-status-light danger" />}
+                    <span style={{ fontSize: 11, color: 'var(--wb-text-muted)' }}>{tWorkflowNodeLabel(key)}</span>
+                  </div>
+                ))
+              )}
             </div>
           )}
         </div>

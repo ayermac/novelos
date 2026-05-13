@@ -5,6 +5,7 @@ import { tWorkflowStatus, tChapterStatus, tLlmMode } from '../lib/i18n'
 import WorkflowTimeline from '../components/WorkflowTimeline'
 import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
+import { useAppDialog } from '../components/AppDialogContext'
 
 interface Step {
   key: string
@@ -100,6 +101,7 @@ interface RunRecoveryMarkStuckResult {
 
 export default function RunDetail() {
   const { runId } = useParams<{ runId: string }>()
+  const dialog = useAppDialog()
   const [data, setData] = useState<RunDetail | null>(null)
   const [recovery, setRecovery] = useState<RunRecovery | null>(null)
   const [loading, setLoading] = useState(true)
@@ -139,7 +141,12 @@ export default function RunDetail() {
 
   const handleResetRecovery = async () => {
     if (!runId || !recovery?.can_reset) return
-    const ok = window.confirm('确认清除本章阻塞/返修状态并回到 planned？正文、运行记录和 artifacts 会保留。')
+    const ok = await dialog.confirm({
+      title: '清除阻塞并重置',
+      message: '确认清除本章阻塞/返修状态并回到 planned？正文、运行记录和 artifacts 会保留。',
+      tone: 'warning',
+      confirmLabel: '清除并重置',
+    })
     if (!ok) return
 
     setRecovering(true)
@@ -161,7 +168,12 @@ export default function RunDetail() {
 
   const handleMarkStuck = async () => {
     if (!runId || !recovery?.stuck) return
-    const ok = window.confirm('确认将该 running 运行标记为阻塞？之后可以使用恢复操作回到 planned。')
+    const ok = await dialog.confirm({
+      title: '标记卡住运行',
+      message: '确认将该 running 运行标记为阻塞？之后可以使用恢复操作回到 planned。',
+      tone: 'warning',
+      confirmLabel: '标记为阻塞',
+    })
     if (!ok) return
 
     setMarkingStuck(true)
@@ -179,7 +191,7 @@ export default function RunDetail() {
     }
   }
 
-  if (loading) return <div><PageHeader title="运行详情" /><div className="card"><div className="card-body" style={{ textAlign: 'center', padding: '40px' }}>加载中...</div></div></div>
+  if (loading) return <div><PageHeader title="运行详情" /><div className="card"><div className="card-body module-loading">加载运行详情...</div></div></div>
   if (error && !data) return <div><PageHeader title="运行详情" /><ErrorState title="加载失败" message={error} onRetry={load} /></div>
   if (!data) return <div><PageHeader title="运行详情" /><ErrorState title="加载失败" message="无法获取运行详情" onRetry={load} /></div>
 

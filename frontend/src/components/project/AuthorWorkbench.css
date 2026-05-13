@@ -496,6 +496,30 @@
   color: var(--wb-danger);
 }
 
+.workflow-running-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 8px;
+  background: var(--wb-info-soft);
+  border: 1px solid #cadde9;
+  color: var(--wb-info);
+}
+
+.workflow-running-title {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--wb-ink);
+}
+
+.workflow-running-desc {
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--wb-ink-secondary);
+  line-height: 1.5;
+}
+
 /* Right agent panel */
 .author-agent {
   width: clamp(292px, 22vw, 390px);

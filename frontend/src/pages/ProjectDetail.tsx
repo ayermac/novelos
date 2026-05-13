@@ -22,6 +22,7 @@ import FactLedgerModule from '../components/project/FactLedgerModule'
 import StyleGuideModule from '../components/project/StyleGuideModule'
 import ReviewModule from '../components/project/ReviewModule'
 import RunsModule from '../components/project/RunsModule'
+import { useAppDialog } from '../components/AppDialogContext'
 
 // v5.4: Chapter UI moved into ChapterWorkspace. Keep these acceptance anchors
 // here because older frontend closure tests inspect ProjectDetail.tsx directly:
@@ -106,6 +107,7 @@ type TabKey = SurfaceTabKey
 export default function ProjectDetail() {
   const { id } = useParams<{ id: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
+  const dialog = useAppDialog()
 
 
   const { data: workspace, isLoading: loading, error: wsError, refetch: refetchWorkspace } = useApiQuery<Workspace>(
@@ -324,9 +326,13 @@ export default function ProjectDetail() {
     if (res.ok) {
       refetchWorkspace()
     } else {
-      alert(res.error?.message || '发布章节失败')
+      await dialog.alert({
+        title: '发布章节失败',
+        message: res.error?.message || '发布章节失败',
+        tone: 'danger',
+      })
     }
-  }, [id, refetchWorkspace])
+  }, [dialog, id, refetchWorkspace])
 
   const handlePublish = useCallback(async () => {
     await handlePublishChapter(currentChapter)
@@ -343,7 +349,12 @@ export default function ProjectDetail() {
   }, [currentChapter, handleGenerateNextFromChapter])
 
   const handleMarkRunStuck = useCallback(async (runId: string) => {
-    const ok = window.confirm('确认将这条超时运行标记为阻塞？这不会删除正文或产物，之后可以清除阻塞并重新生成。')
+    const ok = await dialog.confirm({
+      title: '标记卡住运行',
+      message: '确认将这条超时运行标记为阻塞？这不会删除正文或产物，之后可以清除阻塞并重新生成。',
+      tone: 'warning',
+      confirmLabel: '标记为阻塞',
+    })
     if (!ok) return
     const res = await post(`/runs/${runId}/recovery/mark-stuck`, { confirm: true })
     if (res.ok) {
@@ -351,12 +362,21 @@ export default function ProjectDetail() {
       await refetchWorkspace()
       loadRunDetail(runId)
     } else {
-      alert(res.error?.message || '标记卡住运行失败')
+      await dialog.alert({
+        title: '标记卡住运行失败',
+        message: res.error?.message || '标记卡住运行失败',
+        tone: 'danger',
+      })
     }
-  }, [loadRunDetail, refetchWorkspace])
+  }, [dialog, loadRunDetail, refetchWorkspace])
 
   const handleResetRunRecovery = useCallback(async (runId: string) => {
-    const ok = window.confirm('确认清除本章阻塞/返修状态并回到 planned？正文、运行记录和产物会保留。')
+    const ok = await dialog.confirm({
+      title: '清除阻塞并重置',
+      message: '确认清除本章阻塞/返修状态并回到 planned？正文、运行记录和产物会保留。',
+      tone: 'warning',
+      confirmLabel: '清除并重置',
+    })
     if (!ok) return
     const res = await post(`/runs/${runId}/recovery/reset`, { confirm: true })
     if (res.ok) {
@@ -364,15 +384,19 @@ export default function ProjectDetail() {
       await refetchWorkspace()
       loadRunDetail(runId)
     } else {
-      alert(res.error?.message || '恢复运行失败')
+      await dialog.alert({
+        title: '恢复运行失败',
+        message: res.error?.message || '恢复运行失败',
+        tone: 'danger',
+      })
     }
-  }, [loadRunDetail, refetchWorkspace])
+  }, [dialog, loadRunDetail, refetchWorkspace])
 
   const handleModuleChange = (module: ProjectModule) => {
     setSearchParams({ module, ...(module === 'chapters' ? { chapter: String(currentChapter) } : {}) }, { replace: true })
   }
 
-  if (loading) return <div style={{ padding: '40px', textAlign: 'center' }}>加载中...</div>
+  if (loading) return <div className="module-loading">加载项目工作台...</div>
   if (error || !workspace) return <ErrorState title="加载失败" message={error || '项目不存在'} onRetry={refetchWorkspace} />
 
   const currentCh = workspace.chapters.find((c) => c.chapter_number === currentChapter) || null

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, post, put, del } from '../../lib/api'
 import { Globe, Plus, Pencil, Trash2 } from 'lucide-react'
+import { useAppDialog } from '../AppDialogContext'
 
 interface WorldSetting {
   id: number
@@ -15,6 +16,7 @@ interface Props {
 }
 
 export default function WorldSettingsModule({ projectId }: Props) {
+  const dialog = useAppDialog()
   const [items, setItems] = useState<WorldSetting[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -44,7 +46,13 @@ export default function WorldSettingsModule({ projectId }: Props) {
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm('确定删除此世界观设定？')) return
+    const ok = await dialog.confirm({
+      title: '删除世界观设定',
+      message: '确定删除此世界观设定？',
+      tone: 'danger',
+      confirmLabel: '删除',
+    })
+    if (!ok) return
     const res = await del(`/projects/${projectId}/world-settings/${id}`)
     if (res.ok) load()
   }

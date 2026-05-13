@@ -42,6 +42,12 @@ interface Step {
   description: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
   error_message?: string
+  logs?: {
+    id?: string
+    timestamp?: string
+    level?: 'info' | 'success' | 'warning' | 'error'
+    message: string
+  }[]
   artifacts?: {
     summary: string
     output_preview?: string
@@ -555,11 +561,13 @@ function WorkflowBody({
       const stepStatus = sseSteps[s.key]
       let status: Step['status'] = 'pending'
       let description = '等待中...'
+      let logs: Step['logs'] = []
       if (stepStatus) {
         status = stepStatus.status as Step['status']
         if (status === 'running') description = '处理中...'
         else if (status === 'completed') description = `完成 (${stepStatus.duration_ms || 0}ms)`
         else if (status === 'failed') description = '失败'
+        logs = stepStatus.logs
       } else if (hasSseData) {
         const currentIndex = stepKeys.findIndex((k) => sseSteps[k]?.status === 'running')
         const myIndex = stepKeys.indexOf(s.key)
@@ -568,21 +576,21 @@ function WorkflowBody({
           description = '等待中...'
         }
       }
-      return { key: s.key, label: s.label, description, status }
+      if (status === 'running' && (!logs || logs.length === 0)) {
+        logs = [{ level: 'info', message: '节点运行中，正在等待模型或工具返回。' }]
+      }
+      return { key: s.key, label: s.label, description, status, logs }
     })
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-        {steps.map((step) => (
-          <div
-            key={step.key}
-            className={`gen-step ${step.status === 'running' ? 'gen-step-active' : ''} ${step.status === 'completed' ? 'gen-step-complete' : ''} ${step.status === 'failed' ? 'gen-step-failed' : ''}`}
-          >
-            <div className="gen-step-icon">
-              {step.status === 'completed' ? '✓' : step.status === 'failed' ? '✗' : '●'}
-            </div>
-            <div className="gen-step-label">{step.label} &mdash; {step.description}</div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="workflow-running-banner">
+          <Loader2 size={16} className="spin" />
+          <div>
+            <div className="workflow-running-title">工作流运行中</div>
+            <div className="workflow-running-desc">每个节点的开始、完成和失败信息会实时写入节点日志。</div>
           </div>
-        ))}
+        </div>
+        <WorkflowTimeline steps={steps} />
       </div>
     )
   }

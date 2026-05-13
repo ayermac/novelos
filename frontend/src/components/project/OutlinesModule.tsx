@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, post, put, del } from '../../lib/api'
 import { ListTree, Plus, Pencil, Trash2 } from 'lucide-react'
+import { useAppDialog } from '../AppDialogContext'
 
 interface Outline {
   id: number
@@ -17,6 +18,7 @@ interface Props {
 }
 
 export default function OutlinesModule({ projectId }: Props) {
+  const dialog = useAppDialog()
   const [items, setItems] = useState<Outline[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -46,7 +48,13 @@ export default function OutlinesModule({ projectId }: Props) {
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm('确定删除此大纲？')) return
+    const ok = await dialog.confirm({
+      title: '删除大纲',
+      message: '确定删除此大纲？',
+      tone: 'danger',
+      confirmLabel: '删除',
+    })
+    if (!ok) return
     const res = await del(`/projects/${projectId}/outlines/${id}`)
     if (res.ok) load()
   }

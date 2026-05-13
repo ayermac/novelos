@@ -4,6 +4,7 @@ import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
+import { useAppDialog } from '../components/AppDialogContext'
 
 interface StyleBible {
   project_id: string
@@ -39,6 +40,7 @@ interface StyleData {
 }
 
 export default function Style() {
+  const dialog = useAppDialog()
   const [data, setData] = useState<StyleData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
@@ -215,8 +217,13 @@ export default function Style() {
                   <div style={{ marginTop: '12px', textAlign: 'center' }}>
                     <button
                       className="btn btn-primary"
-                      onClick={() => {
-                        const projectId = prompt('请输入项目 ID:')
+                      onClick={async () => {
+                        const projectId = await dialog.prompt({
+                          title: '初始化 Style Bible',
+                          message: '请输入需要初始化风格圣经的项目 ID。',
+                          placeholder: 'project_id',
+                          confirmLabel: '开始初始化',
+                        })
                         if (projectId) handleInitStyleBible(projectId)
                       }}
                       disabled={initLoading !== null}

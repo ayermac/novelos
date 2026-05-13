@@ -7,10 +7,12 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 export interface SSEEvent {
-  type: 'step_start' | 'step_complete' | 'run_complete' | 'run_error';
+  type: 'step_start' | 'step_complete' | 'step_log' | 'run_complete' | 'run_error';
   agent?: string;
   timestamp?: string;
   duration_ms?: number;
+  message?: string;
+  level?: 'info' | 'success' | 'warning' | 'error';
   chapter_status?: string;
   run_id?: string;
   awaiting_publish?: boolean;
@@ -24,6 +26,16 @@ export interface SSEEvent {
 export interface StepStatus {
   status: 'pending' | 'running' | 'completed' | 'failed';
   duration_ms?: number;
+  started_at?: string;
+  completed_at?: string;
+  logs?: WorkflowNodeLog[];
+}
+
+export interface WorkflowNodeLog {
+  id: string;
+  timestamp: string;
+  level: 'info' | 'success' | 'warning' | 'error';
+  message: string;
 }
 
 export interface UseSSEStreamResult {
@@ -40,6 +52,20 @@ function normalizeAgentKey(agent?: string): string {
   if (!agent) return ''
   if (agent === 'publisher' || agent === 'awaiting_publish') return 'publish'
   return agent
+}
+
+function appendStepLog(
+  step: StepStatus | undefined,
+  log: Omit<WorkflowNodeLog, 'id'>,
+): WorkflowNodeLog[] {
+  const logs = step?.logs || [];
+  return [
+    ...logs,
+    {
+      ...log,
+      id: `${log.timestamp}-${logs.length}-${log.message}`,
+    },
+  ];
 }
 
 /**
@@ -93,7 +119,16 @@ export function useSSEStream(
           case 'step_start':
             setSteps((prev) => ({
               ...prev,
-              [normalizeAgentKey(event.agent)]: { status: 'running' },
+              [normalizeAgentKey(event.agent)]: {
+                ...prev[normalizeAgentKey(event.agent)],
+                status: 'running',
+                started_at: event.timestamp || new Date().toISOString(),
+                logs: appendStepLog(prev[normalizeAgentKey(event.agent)], {
+                  timestamp: event.timestamp || new Date().toISOString(),
+                  level: 'info',
+                  message: event.message || '节点已开始处理，正在等待模型或工具返回。',
+                }),
+              },
             }));
             break;
 
@@ -101,10 +136,36 @@ export function useSSEStream(
             setSteps((prev) => ({
               ...prev,
               [normalizeAgentKey(event.agent)]: {
+                ...prev[normalizeAgentKey(event.agent)],
                 status: 'completed',
                 duration_ms: event.duration_ms,
+                completed_at: event.timestamp || new Date().toISOString(),
+                logs: appendStepLog(prev[normalizeAgentKey(event.agent)], {
+                  timestamp: event.timestamp || new Date().toISOString(),
+                  level: 'success',
+                  message: event.message || `节点处理完成${event.duration_ms ? `，耗时 ${event.duration_ms}ms` : ''}。`,
+                }),
               },
             }));
+            break;
+
+          case 'step_log':
+            setSteps((prev) => {
+              const agentKey = normalizeAgentKey(event.agent);
+              if (!agentKey) return prev;
+              return {
+                ...prev,
+                [agentKey]: {
+                  ...prev[agentKey],
+                  status: prev[agentKey]?.status || 'running',
+                  logs: appendStepLog(prev[agentKey], {
+                    timestamp: event.timestamp || new Date().toISOString(),
+                    level: event.level || 'info',
+                    message: event.message || '节点运行中。',
+                  }),
+                },
+              };
+            });
             break;
 
           case 'run_complete':
@@ -115,6 +176,37 @@ export function useSSEStream(
 
           case 'run_error':
             setError(event.error || '未知错误');
+            setSteps((prev) => {
+              const agentKey = normalizeAgentKey(event.agent);
+              if (agentKey) {
+                return {
+                  ...prev,
+                  [agentKey]: {
+                    ...prev[agentKey],
+                    status: 'failed',
+                    logs: appendStepLog(prev[agentKey], {
+                      timestamp: event.timestamp || new Date().toISOString(),
+                      level: 'error',
+                      message: event.error || '节点运行失败。',
+                    }),
+                  },
+                };
+              }
+              const runningKey = Object.entries(prev).find(([, step]) => step.status === 'running')?.[0];
+              if (!runningKey) return prev;
+              return {
+                ...prev,
+                [runningKey]: {
+                  ...prev[runningKey],
+                  status: 'failed',
+                  logs: appendStepLog(prev[runningKey], {
+                    timestamp: event.timestamp || new Date().toISOString(),
+                    level: 'error',
+                    message: event.error || '节点运行失败。',
+                  }),
+                },
+              };
+            });
             setIsStreaming(false);
             eventSource.close();
             onError?.(event.error || '未知错误', event);

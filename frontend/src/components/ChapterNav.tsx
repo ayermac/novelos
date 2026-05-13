@@ -1,4 +1,5 @@
 import { tChapterStatusLabel } from '../lib/i18n'
+import { useAppDialog } from './AppDialogContext'
 
 interface Chapter {
   chapter_number: number
@@ -64,6 +65,8 @@ function chapterStatusColor(status: string): string {
 }
 
 export default function ChapterNav({ chapters, currentChapter, onSelect, onReset, llmMode }: Props) {
+  const dialog = useAppDialog()
+
   if (chapters.length === 0) {
     return (
       <div style={{ padding: '16px', color: 'var(--text-muted)', fontSize: '13px', textAlign: 'center' }}>
@@ -99,9 +102,15 @@ export default function ChapterNav({ chapters, currentChapter, onSelect, onReset
               {canReset && onReset && (
                 <button
                   className="chapter-nav-reset"
-                  onClick={(e) => {
+                  onClick={async (e) => {
                     e.stopPropagation()
-                    if (window.confirm(`确定要解除「${title}」的阻塞吗？本章会回到待生成状态，并清空本轮返修计数。`)) {
+                    const ok = await dialog.confirm({
+                      title: '解除章节阻塞',
+                      message: `确定要解除「${title}」的阻塞吗？本章会回到待生成状态，并清空本轮返修计数。`,
+                      tone: 'warning',
+                      confirmLabel: '解除阻塞',
+                    })
+                    if (ok) {
                       onReset(ch.chapter_number)
                     }
                   }}

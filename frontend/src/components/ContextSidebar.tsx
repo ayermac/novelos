@@ -1,6 +1,7 @@
 import { tChapterStatusLabel, tWorkflowStatus } from '../lib/i18n'
 import { post } from '../lib/api'
 import { useState } from 'react'
+import { useAppDialog } from './AppDialogContext'
 
 interface Chapter {
   chapter_number: number
@@ -49,6 +50,7 @@ export default function ContextSidebar({
   onNavigateToRun,
   onPublish,
 }: Props) {
+  const dialog = useAppDialog()
   const isStub = llmMode === 'stub'
   const hasContent = (currentChapter?.word_count || 0) > 0
   const isPublished = currentChapter?.status === 'published'
@@ -101,7 +103,11 @@ export default function ContextSidebar({
     if (res.ok) {
       onPublish()
     } else {
-      alert(res.error?.message || '发布失败')
+      await dialog.alert({
+        title: '发布失败',
+        message: res.error?.message || '发布失败',
+        tone: 'danger',
+      })
     }
     setPublishing(false)
   }

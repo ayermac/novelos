@@ -844,7 +844,7 @@ def _build_steps_timeline(
     1. workflow_runs.current_node (last running agent)
     2. chapter.status (final status)
     3. STATUS_ROUTE (expected flow)
-    4. task_status table (per-agent error messages)
+    4. task_status table (per-agent lifecycle and error messages)
     5. agent_artifacts table (per-agent artifact summaries)
     """
     workflow_status = run_data.get("status", "unknown")
@@ -860,6 +860,7 @@ def _build_steps_timeline(
     # P1: Prefer run-isolated rows; fallback to chapter-level for legacy data.
     task_errors: dict[str, str] = {}
     task_errors_legacy: dict[str, str] = {}
+    task_logs: dict[str, list[dict]] = {}
     if repo:
         try:
             conn = repo._conn()
@@ -888,6 +889,39 @@ def _build_steps_timeline(
                     agent_id = r["agent_id"]
                     if r["error_message"]:
                         task_errors_legacy[agent_id] = r["error_message"]
+
+                if run_id:
+                    lifecycle_rows = conn.execute(
+                        "SELECT agent_id, task_type, status, error_message, started_at, completed_at "
+                        "FROM task_status "
+                        "WHERE project_id=? AND chapter_number=? AND workflow_run_id=? "
+                        "ORDER BY started_at ASC, id ASC",
+                        (project_id, chapter_number, run_id),
+                    ).fetchall()
+                else:
+                    lifecycle_rows = []
+                for r in lifecycle_rows:
+                    agent_id = r["agent_id"]
+                    if agent_id not in task_logs:
+                        task_logs[agent_id] = []
+                    if r["started_at"]:
+                        task_logs[agent_id].append({
+                            "timestamp": r["started_at"],
+                            "level": "info",
+                            "message": f"{r['task_type']} 已开始处理。",
+                        })
+                    if r["status"] == "completed" and r["completed_at"]:
+                        task_logs[agent_id].append({
+                            "timestamp": r["completed_at"],
+                            "level": "success",
+                            "message": f"{r['task_type']} 已完成。",
+                        })
+                    elif r["status"] == "failed":
+                        task_logs[agent_id].append({
+                            "timestamp": r["completed_at"] or r["started_at"],
+                            "level": "error",
+                            "message": r["error_message"] or f"{r['task_type']} 失败。",
+                        })
             finally:
                 conn.close()
         except Exception:
@@ -985,6 +1019,27 @@ def _build_steps_timeline(
             "agent_id": key,
         }
 
+        logs = list(task_logs.get(key, []))
+        if not logs:
+            if step_status == "running":
+                logs.append({
+                    "timestamp": run_data.get("started_at"),
+                    "level": "info",
+                    "message": f"{step_config['label']}节点运行中，正在等待模型或工具返回。",
+                })
+            elif step_status == "completed":
+                logs.append({
+                    "timestamp": run_data.get("completed_at") or run_data.get("started_at"),
+                    "level": "success",
+                    "message": f"{step_config['label']}节点已完成。",
+                })
+            elif step_status in ("failed", "blocked"):
+                logs.append({
+                    "timestamp": run_data.get("completed_at") or run_data.get("started_at"),
+                    "level": "error" if step_status == "failed" else "warning",
+                    "message": error_message or f"{step_config['label']}节点需要人工处理。",
+                })
+
         # Add error message for failed step
         if (is_failed or is_blocked) and error_message:
             step["error_message"] = error_message
@@ -1015,6 +1070,16 @@ def _build_steps_timeline(
             }
         else:
             step["artifacts"] = None
+
+        if step["artifacts"] and step_status == "completed":
+            logs.append({
+                "timestamp": run_data.get("completed_at") or run_data.get("started_at"),
+                "level": "info",
+                "message": f"已生成产物：{step['artifacts'].get('summary', 'Agent 产物')}",
+            })
+
+        if logs:
+            step["logs"] = logs
 
         steps.append(step)
 

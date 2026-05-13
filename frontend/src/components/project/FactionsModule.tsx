@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, post, put, del } from '../../lib/api'
 import { Swords, Plus, Pencil, Trash2 } from 'lucide-react'
+import { useAppDialog } from '../AppDialogContext'
 
 interface Faction {
   id: number
@@ -16,6 +17,7 @@ interface Props {
 }
 
 export default function FactionsModule({ projectId }: Props) {
+  const dialog = useAppDialog()
   const [items, setItems] = useState<Faction[]>([])
   const [loading, setLoading] = useState(true)
   const [showModal, setShowModal] = useState(false)
@@ -45,7 +47,13 @@ export default function FactionsModule({ projectId }: Props) {
   }
 
   const handleDelete = async (id: number) => {
-    if (!confirm('确定删除此势力？')) return
+    const ok = await dialog.confirm({
+      title: '删除势力',
+      message: '确定删除此势力？',
+      tone: 'danger',
+      confirmLabel: '删除',
+    })
+    if (!ok) return
     const res = await del(`/projects/${projectId}/factions/${id}`)
     if (res.ok) load()
   }

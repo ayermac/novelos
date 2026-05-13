@@ -187,6 +187,34 @@ describe('AuthorWorkbench', () => {
     expect(screen.getByText('完成正文')).toBeInTheDocument()
   })
 
+  it('renders node logs while workflow is streaming', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        isStreaming
+        sseSteps={{
+          polisher: {
+            status: 'running',
+            started_at: '2026-05-13T10:00:00Z',
+            logs: [
+              {
+                id: 'log-1',
+                timestamp: '2026-05-13T10:00:00Z',
+                level: 'info',
+                message: '润色节点已开始处理。',
+              },
+            ],
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByText('工作流运行中')).toBeInTheDocument()
+    expect(screen.getByText('节点日志')).toBeInTheDocument()
+    expect(screen.getByText('润色节点已开始处理。')).toBeInTheDocument()
+  })
+
   it('labels long-running workflow as possibly stuck', () => {
     render(
       <AuthorWorkbench
