@@ -37,6 +37,7 @@ class RunHealthMarkStuckRequest(BaseModel):
 
 # Agent step configuration
 AGENT_STEPS = [
+    {"key": "planner", "label": "规划", "description": "生成章节目标、关键事件和伏笔要求"},
     {"key": "screenwriter", "label": "编剧", "description": "规划章节场景和情节"},
     {"key": "author", "label": "执笔", "description": "撰写章节正文"},
     {"key": "polisher", "label": "润色", "description": "优化文字表达"},
@@ -156,7 +157,12 @@ def _generate_stub_artifacts(step_key: str, chapter_number: int) -> dict | None:
 
     base_word_count = 2800 + (chapter_number % 5) * 200  # 2800-3600 range
 
-    if step_key == "screenwriter":
+    if step_key == "planner":
+        return {
+            "summary": f"生成第 {chapter_number} 章写作目标、关键事件和伏笔要求",
+            "output_preview": f"章节目标：推进主线冲突，保留第 {chapter_number + 1} 章钩子"
+        }
+    elif step_key == "screenwriter":
         return {
             "summary": f"本章规划了 {len(scenes)} 个场景：{char}{scenes[0]}、{scenes[1]}、{scenes[2]}",
             "scenes": len(scenes),
@@ -926,7 +932,7 @@ def _build_steps_timeline(
         completed_agents.append("editor")
     if final_status == "published":
         completed_agents.append("publish")
-    for key in ("screenwriter", "author", "polisher", "editor", "publish"):
+    for key in ("planner", "screenwriter", "author", "polisher", "editor", "publish"):
         if key in agent_artifacts and key not in completed_agents:
             completed_agents.append(key)
 
@@ -941,13 +947,23 @@ def _build_steps_timeline(
         elif "screenwriter" in agent_artifacts:
             blocked_agent = "screenwriter"
 
-    # Build steps
+    # Build steps. Planner is an optional pre-step: only show it when it
+    # actually participated in the run, otherwise the normal chapter workflow
+    # remains the compact five-step timeline.
+    visible_step_configs = [
+        step for step in AGENT_STEPS
+        if step["key"] != "planner"
+        or current_node == "planner"
+        or "planner" in completed_agents
+        or "planner" in agent_artifacts
+    ]
     steps = []
-    for step_config in AGENT_STEPS:
+    for step_config in visible_step_configs:
         key = step_config["key"]
         is_completed = key in completed_agents
-        is_running = (current_node == key) and workflow_status == "running"
-        is_failed = (current_node == key) and workflow_status == "failed"
+        is_publish_node = key == "publish" and current_node in ("publish", "publisher", "awaiting_publish")
+        is_running = (current_node == key or is_publish_node) and workflow_status == "running"
+        is_failed = (current_node == key or is_publish_node) and workflow_status == "failed"
         is_blocked = (blocked_agent == key) and workflow_status == "blocked"
 
         if is_failed:
@@ -979,8 +995,9 @@ def _build_steps_timeline(
             step["error_is_legacy"] = True
 
         # Add artifacts for completed steps
-        if is_completed and llm_mode == "stub":
-            step["artifacts"] = _generate_stub_artifacts(key, chapter_number)
+        stub_artifacts = _generate_stub_artifacts(key, chapter_number) if is_completed and llm_mode == "stub" else None
+        if stub_artifacts:
+            step["artifacts"] = stub_artifacts
         elif key in agent_artifacts and agent_artifacts[key]:
             # Build artifacts summary from DB
             artifacts_list = agent_artifacts[key]

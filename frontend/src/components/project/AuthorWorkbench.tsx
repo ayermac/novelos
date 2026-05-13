@@ -77,6 +77,7 @@ interface AuthorWorkbenchProps {
   isStub: boolean
   isStreaming: boolean
   isWorkflowRunning?: boolean
+  isChapterWorkflowRunning?: (chapterNumber: number) => boolean
   llmMode: string
   projectId: string
   runDetail: RunDetailData | null
@@ -84,7 +85,13 @@ interface AuthorWorkbenchProps {
   sseSteps: Record<string, StepStatus>
   onGenerate: () => void
   onGenerateNext?: () => void
+  onMarkRunStuck?: (runId: string) => Promise<void> | void
   onPublish?: () => void
+  onResetRunRecovery?: (runId: string) => Promise<void> | void
+  onGenerateChapter?: (chapterNumber: number) => void
+  onGenerateNextFromChapter?: (chapterNumber: number) => void
+  onPublishChapter?: (chapterNumber: number) => void
+  onOpenChapterView?: (chapterNumber: number, tab: SurfaceTabKey) => void
   onSelectChapter: (chapterNumber: number) => void
   onTabChange: (tab: SurfaceTabKey) => void
   onViewContent: () => void
@@ -104,6 +111,7 @@ export default function AuthorWorkbench({
   isStub,
   isStreaming,
   isWorkflowRunning,
+  isChapterWorkflowRunning,
   llmMode,
   projectId,
   runDetail,
@@ -111,7 +119,13 @@ export default function AuthorWorkbench({
   sseSteps,
   onGenerate,
   onGenerateNext,
+  onMarkRunStuck,
   onPublish,
+  onResetRunRecovery,
+  onGenerateChapter,
+  onGenerateNextFromChapter,
+  onPublishChapter,
+  onOpenChapterView,
   onSelectChapter,
   onTabChange,
   onViewContent,
@@ -123,8 +137,12 @@ export default function AuthorWorkbench({
         chapters={chapters}
         currentChapter={currentChapter}
         llmMode={llmMode}
-        isWorkflowRunning={isWorkflowRunning}
+        isChapterWorkflowRunning={isChapterWorkflowRunning}
         onSelectChapter={onSelectChapter}
+        onGenerateChapter={onGenerateChapter}
+        onGenerateNextFromChapter={onGenerateNextFromChapter}
+        onPublishChapter={onPublishChapter}
+        onOpenChapterView={onOpenChapterView}
       />
       <AuthorWritingSurface
         activeTab={activeTab}
@@ -145,7 +163,9 @@ export default function AuthorWorkbench({
         sseSteps={sseSteps}
         onGenerate={onGenerate}
         onGenerateNext={onGenerateNext}
+        onMarkRunStuck={onMarkRunStuck}
         onPublish={onPublish}
+        onResetRunRecovery={onResetRunRecovery}
         onTabChange={onTabChange}
         onViewContent={onViewContent}
         onViewWorkflow={onViewWorkflow}
@@ -161,8 +181,10 @@ export default function AuthorWorkbench({
         sseSteps={sseSteps}
         genError={genError}
         onGenerate={onGenerate}
+        onMarkRunStuck={onMarkRunStuck}
         onPublish={onPublish}
         onGenerateNext={onGenerateNext}
+        onResetRunRecovery={onResetRunRecovery}
         onViewContent={onViewContent}
         onViewWorkflow={onViewWorkflow}
       />

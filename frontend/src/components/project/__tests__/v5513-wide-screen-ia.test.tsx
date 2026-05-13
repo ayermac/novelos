@@ -81,10 +81,12 @@ describe('v5.5.13 state-labels', () => {
 
   describe('tWorkflowNodeLabel', () => {
     it('returns Chinese labels for all known nodes', () => {
-      expect(tWorkflowNodeLabel('screenwriter')).toBe('策划')
+      expect(tWorkflowNodeLabel('planner')).toBe('规划')
+      expect(tWorkflowNodeLabel('screenwriter')).toBe('编剧')
       expect(tWorkflowNodeLabel('author')).toBe('执笔')
       expect(tWorkflowNodeLabel('polisher')).toBe('润色')
       expect(tWorkflowNodeLabel('editor')).toBe('审稿')
+      expect(tWorkflowNodeLabel('publisher')).toBe('发布')
       expect(tWorkflowNodeLabel('publish')).toBe('发布')
       expect(tWorkflowNodeLabel('human_review')).toBe('人工审核')
     })

@@ -67,13 +67,24 @@ interface RunDetailData {
 
 export type ChapterTabKey = 'content' | 'workflow' | 'artifacts' | 'history'
 
-const GENERATING_STEPS = [
+const BASE_GENERATING_STEPS = [
   { key: 'screenwriter', label: '编剧' },
   { key: 'author', label: '执笔' },
   { key: 'polisher', label: '润色' },
   { key: 'editor', label: '审核' },
   { key: 'publish', label: '发布' },
 ]
+
+function getGeneratingSteps(sseSteps: Record<string, StepStatus>) {
+  if (sseSteps.planner) {
+    return [{ key: 'planner', label: '规划' }, ...BASE_GENERATING_STEPS]
+  }
+  return BASE_GENERATING_STEPS
+}
+
+function getGeneratingStepKeys(sseSteps: Record<string, StepStatus>) {
+  return getGeneratingSteps(sseSteps).map((step) => step.key)
+}
 
 const MISSING_TO_MODULE: Record<string, string> = {
   '项目简介': 'settings',
@@ -508,7 +519,7 @@ function ContentTab({ generating, genError, genErrorDetails, chapterLoading, has
     if (status.status === 'running') return '处理中...'
     if (status.status === 'completed') return `完成 (${status.duration_ms || 0}ms)`
     if (status.status === 'failed') return '失败'
-    const stepKeys = ['screenwriter', 'author', 'polisher', 'editor', 'publish']
+    const stepKeys = getGeneratingStepKeys(sseSteps)
     const currentRunningIndex = stepKeys.findIndex(k => sseSteps[k]?.status === 'running')
     if (currentRunningIndex >= 0 && index > currentRunningIndex) return '等待中...'
     return '等待中...'
@@ -518,7 +529,7 @@ function ContentTab({ generating, genError, genErrorDetails, chapterLoading, has
     <div>
       {generating && (
         <div style={{ marginBottom: '16px' }}>
-          {GENERATING_STEPS.map((step, i) => {
+          {getGeneratingSteps(sseSteps).map((step, i) => {
             const stepStatus = sseSteps[step.key]
             const isActive = stepStatus?.status === 'running'
             const isCompleted = stepStatus?.status === 'completed'
@@ -685,9 +696,9 @@ function WorkflowTab({ runDetail, generating, isLaunching, sseSteps, isStreaming
 
   if (generating || isStreaming) {
     const hasSseData = Object.keys(sseSteps).length > 0
-    const stepKeys = ['screenwriter', 'author', 'polisher', 'editor', 'publish']
+    const stepKeys = getGeneratingStepKeys(sseSteps)
 
-    const steps: Step[] = GENERATING_STEPS.map((s) => {
+    const steps: Step[] = getGeneratingSteps(sseSteps).map((s) => {
       const stepStatus = sseSteps[s.key]
       let status: Step['status'] = 'pending'
       let description = '等待中...'
@@ -723,6 +734,7 @@ function ArtifactsTab({ runDetail }: { runDetail: RunDetailData | null }) {
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
 
   const agentMarks: Record<string, string> = {
+    planner: '规',
     screenwriter: '编',
     author: '执',
     polisher: '润',

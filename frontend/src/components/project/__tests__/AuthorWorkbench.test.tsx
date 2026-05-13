@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { beforeEach, describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent } from '@testing-library/react'
 import AuthorWorkbench from '../AuthorWorkbench'
 
 // Mock API
@@ -41,7 +41,14 @@ const baseProps = {
   sseSteps: {},
   onGenerate: vi.fn(),
   onGenerateNext: vi.fn(),
+  onMarkRunStuck: vi.fn(),
   onPublish: vi.fn(),
+  onResetRunRecovery: vi.fn(),
+  onGenerateChapter: vi.fn(),
+  onGenerateNextFromChapter: vi.fn(),
+  onPublishChapter: vi.fn(),
+  onOpenChapterView: vi.fn(),
+  isChapterWorkflowRunning: vi.fn().mockReturnValue(false),
   onSelectChapter: vi.fn(),
   onTabChange: vi.fn(),
   onViewContent: vi.fn(),
@@ -49,6 +56,11 @@ const baseProps = {
 }
 
 describe('AuthorWorkbench', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    baseProps.isChapterWorkflowRunning.mockReturnValue(false)
+  })
+
   it('renders three zones: chapter rail, writing surface, agent panel', () => {
     render(<AuthorWorkbench {...baseProps} />)
     expect(screen.getByLabelText('章节导航')).toBeInTheDocument()
@@ -209,5 +221,152 @@ describe('AuthorWorkbench', () => {
     )
     expect(screen.getByText('工作流疑似卡住')).toBeInTheDocument()
     expect(screen.getAllByText(/超过卡住阈值 30 分钟/).length).toBeGreaterThan(0)
+    expect(screen.getAllByRole('button', { name: /标记为阻塞/ }).length).toBeGreaterThan(0)
+    expect(screen.getByText('打开恢复详情')).toBeInTheDocument()
+  })
+
+  it('shows reset recovery action for blocking chapter workflow', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        currentChapterRecord={{ chapter_number: 3, status: 'blocking', word_count: 3800, title: '第三章' }}
+        runDetail={{
+          run_id: 'run-blocked',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'blocked',
+          chapter_status: 'blocking',
+          current_node: 'human_review',
+          llm_mode: 'real',
+          started_at: '2026-05-13 10:00:00',
+          steps: [
+            {
+              key: 'editor',
+              label: '审核',
+              description: '需要人工处理',
+              status: 'blocked',
+            },
+          ],
+        }}
+        runsForChapter={[{
+          run_id: 'run-blocked',
+          chapter_number: 3,
+          status: 'blocked',
+          created_at: '2026-05-13T10:00:00',
+        }]}
+      />
+    )
+    expect(screen.getAllByRole('button', { name: /清除阻塞并重置/ }).length).toBeGreaterThan(0)
+  })
+
+  /* Chapter menu tests ------------------------------------------------ */
+
+  it('renders chapter menu buttons with aria-label', () => {
+    render(<AuthorWorkbench {...baseProps} />)
+    expect(screen.getByLabelText('第 4 章操作')).toBeInTheDocument()
+    expect(screen.getByLabelText('第 1 章操作')).toBeInTheDocument()
+  })
+
+  it('clicking menu button does not trigger onSelectChapter', () => {
+    render(<AuthorWorkbench {...baseProps} />)
+    const menuBtn = screen.getByLabelText('第 4 章操作')
+    fireEvent.click(menuBtn)
+    expect(baseProps.onSelectChapter).not.toHaveBeenCalled()
+  })
+
+  it('published chapter menu shows generate-next and not generate', () => {
+    render(<AuthorWorkbench {...baseProps} currentChapter={1} currentChapterRecord={baseProps.chapters[0]} />)
+    fireEvent.click(screen.getByLabelText('第 1 章操作'))
+    expect(screen.getByRole('menuitem', { name: /生成下一章/ })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /生成本章/ })).not.toBeInTheDocument()
+  })
+
+  it('reviewed + real mode menu shows confirm publish', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        currentChapter={2}
+        currentChapterRecord={baseProps.chapters[1]}
+        llmMode="real"
+      />
+    )
+    fireEvent.click(screen.getByLabelText('第 2 章操作'))
+    expect(screen.getByRole('menuitem', { name: /确认发布/ })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /生成本章/ })).not.toBeInTheDocument()
+  })
+
+  it('running workflow disables generate action in menu', () => {
+    baseProps.isChapterWorkflowRunning.mockImplementation((chapterNumber: number) => chapterNumber === 3)
+    render(<AuthorWorkbench {...baseProps} isWorkflowRunning />)
+    fireEvent.click(screen.getByLabelText('第 3 章操作'))
+    expect(screen.getByText(/已有运行中工作流/)).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /生成本章/ })).not.toBeInTheDocument()
+  })
+
+  it('menu view workflow triggers onTabChange', () => {
+    render(<AuthorWorkbench {...baseProps} />)
+    fireEvent.click(screen.getByLabelText('第 4 章操作'))
+    fireEvent.click(screen.getByRole('menuitem', { name: /查看工作流/ }))
+    expect(baseProps.onOpenChapterView).toHaveBeenCalledWith(4, 'workflow')
+  })
+
+  it('menu generate targets the clicked inactive chapter', () => {
+    render(<AuthorWorkbench {...baseProps} />)
+    fireEvent.click(screen.getByLabelText('第 4 章操作'))
+    fireEvent.click(screen.getByRole('menuitem', { name: /生成本章/ }))
+    expect(baseProps.onGenerateChapter).toHaveBeenCalledWith(4)
+    expect(baseProps.onGenerate).not.toHaveBeenCalled()
+  })
+
+  it('menu publish targets the clicked reviewed chapter', () => {
+    render(<AuthorWorkbench {...baseProps} llmMode="real" />)
+    fireEvent.click(screen.getByLabelText('第 2 章操作'))
+    fireEvent.click(screen.getByRole('menuitem', { name: /确认发布/ }))
+    expect(baseProps.onPublishChapter).toHaveBeenCalledWith(2)
+    expect(baseProps.onPublish).not.toHaveBeenCalled()
+  })
+
+  it('menu generate-next targets the clicked published chapter', () => {
+    render(<AuthorWorkbench {...baseProps} />)
+    fireEvent.click(screen.getByLabelText('第 1 章操作'))
+    fireEvent.click(screen.getByRole('menuitem', { name: /生成下一章/ }))
+    expect(baseProps.onGenerateNextFromChapter).toHaveBeenCalledWith(1)
+    expect(baseProps.onGenerateNext).not.toHaveBeenCalled()
+  })
+
+  it('running workflow state is evaluated per chapter in menu', () => {
+    baseProps.isChapterWorkflowRunning.mockImplementation((chapterNumber: number) => chapterNumber === 4)
+    render(<AuthorWorkbench {...baseProps} />)
+    fireEvent.click(screen.getByLabelText('第 4 章操作'))
+    expect(screen.getByText(/已有运行中工作流/)).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /生成本章/ })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByLabelText('第 4 章操作'))
+    fireEvent.click(screen.getByLabelText('第 3 章操作'))
+    expect(screen.queryByText(/已有运行中工作流/)).not.toBeInTheDocument()
+  })
+
+  it('terminal chapters do not show generate chapter in menu', () => {
+    // reviewed (stub) is terminal for generate
+    render(<AuthorWorkbench {...baseProps} currentChapter={2} currentChapterRecord={baseProps.chapters[1]} />)
+    fireEvent.click(screen.getByLabelText('第 2 章操作'))
+    expect(screen.queryByRole('menuitem', { name: /生成本章/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /继续生成/ })).not.toBeInTheDocument()
+
+    // awaiting_publish
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        chapters={[
+          ...baseProps.chapters,
+          { chapter_number: 5, status: 'awaiting_publish', word_count: 4000, title: '第五章' },
+        ]}
+        currentChapter={5}
+        currentChapterRecord={{ chapter_number: 5, status: 'awaiting_publish', word_count: 4000, title: '第五章' }}
+      />
+    )
+    fireEvent.click(screen.getByLabelText('第 5 章操作'))
+    expect(screen.queryByRole('menuitem', { name: /生成本章/ })).not.toBeInTheDocument()
   })
 })

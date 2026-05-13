@@ -146,8 +146,8 @@ export default function Layout() {
 
         .sidebar {
           width: var(--sidebar-width);
-          background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
-          border-right: 1px solid rgba(15, 118, 110, 0.1);
+          background: linear-gradient(180deg, var(--paper-surface) 0%, var(--paper-bg) 100%);
+          border-right: 1px solid var(--border-color);
           display: flex;
           flex-direction: column;
           position: fixed;
@@ -163,7 +163,7 @@ export default function Layout() {
           display: flex;
           align-items: center;
           gap: var(--space-3);
-          border-bottom: 1px solid rgba(15, 118, 110, 0.1);
+          border-bottom: 1px solid var(--border-color);
         }
 
         .brand-icon {
@@ -199,9 +199,9 @@ export default function Layout() {
 
         .version {
           font-size: var(--text-xs);
-          color: #0f766e;
-          background: rgba(20, 184, 166, 0.12);
-          border: 1px solid rgba(15, 118, 110, 0.16);
+          color: var(--ink-accent);
+          background: rgba(176, 138, 75, 0.12);
+          border: 1px solid rgba(124, 95, 52, 0.18);
           padding: 3px 8px;
           border-radius: var(--radius-md);
           font-weight: var(--font-semibold);
@@ -247,7 +247,7 @@ export default function Layout() {
         }
 
         .nav-link.active {
-          background: rgba(15, 118, 110, 0.1);
+          background: rgba(124, 95, 52, 0.10);
           color: var(--ink-accent);
           font-weight: var(--font-medium);
         }
@@ -277,7 +277,7 @@ export default function Layout() {
 
         .sidebar-footer {
           padding: var(--space-4) var(--space-5);
-          border-top: 1px solid rgba(15, 118, 110, 0.1);
+          border-top: 1px solid var(--border-color);
         }
 
         .status-indicator {
@@ -314,12 +314,12 @@ export default function Layout() {
 
         .topbar {
           height: var(--topbar-height);
-          background: rgba(255, 255, 255, 0.92);
+          background: rgba(255, 254, 250, 0.94);
           backdrop-filter: blur(12px);
           position: relative;
           display: flex;
           align-items: center;
-          border-bottom: 1px solid rgba(30, 58, 95, 0.06);
+          border-bottom: 1px solid var(--border-color);
         }
 
         .topbar-gradient {
@@ -357,8 +357,8 @@ export default function Layout() {
           font-size: var(--text-xs);
           color: var(--text-gray);
           padding: 3px 8px;
-          border: 1px solid rgba(15, 118, 110, 0.14);
-          background: rgba(20, 184, 166, 0.08);
+          border: 1px solid rgba(124, 95, 52, 0.16);
+          background: rgba(176, 138, 75, 0.10);
           border-radius: var(--radius-md);
         }
 
@@ -389,6 +389,7 @@ export default function Layout() {
           margin: 0;
           padding: var(--space-6);
           min-width: 0;
+          background: transparent;
         }
 
         .mobile-toggle {

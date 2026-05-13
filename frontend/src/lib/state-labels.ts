@@ -49,11 +49,19 @@ export function tSessionStopLabel(status: string, stopReason?: string): string {
 // ── Workflow node labels ──────────────────────────────────────────
 
 export const WORKFLOW_NODE_LABEL: Record<string, string> = {
-  screenwriter: '策划',
+  health_check: '预检',
+  task_discovery: '任务识别',
+  planner: '规划',
+  screenwriter: '编剧',
   author: '执笔',
   polisher: '润色',
   editor: '审稿',
+  memory_curator: '记忆整理',
+  publisher: '发布',
   publish: '发布',
+  awaiting_publish: '等待发布',
+  archive: '归档',
+  revision_router: '返修路由',
   human_review: '人工审核',
 }
 

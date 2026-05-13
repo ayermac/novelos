@@ -243,45 +243,56 @@ export default function ProjectDetail() {
     setSseSteps(sseHookSteps)
   }, [sseHookSteps])
 
-  const handleSelectChapter = (chapterNumber: number) => {
+  const handleSelectChapter = useCallback((chapterNumber: number) => {
     setSearchParams({ chapter: String(chapterNumber) }, { replace: true })
     setActiveTab('content')
-  }
+  }, [setSearchParams])
 
-  const handleTabChange = (tab: TabKey) => {
+  const handleOpenChapterView = useCallback((chapterNumber: number, tab: TabKey) => {
     setActiveTab(tab)
     setSearchParams({
-      chapter: String(currentChapter),
+      chapter: String(chapterNumber),
       ...(tab === 'content' ? {} : { view: tab }),
     }, { replace: true })
     if (tab === 'workflow' || tab === 'artifacts') {
       const runsForChapter = (workspace?.recent_runs || [])
-        .filter((r) => r.chapter_number === currentChapter)
+        .filter((r) => r.chapter_number === chapterNumber)
       const latestRun = runsForChapter.length > 0 ? runsForChapter[0] : null
       if (latestRun) loadRunDetail(latestRun.run_id)
+      else setRunDetail(null)
     }
-  }
+  }, [loadRunDetail, setSearchParams, workspace?.recent_runs])
 
-  const handleGenerate = useCallback(() => {
+  const handleTabChange = useCallback((tab: TabKey) => {
+    handleOpenChapterView(currentChapter, tab)
+  }, [currentChapter, handleOpenChapterView])
+
+  const handleGenerateChapter = useCallback((chapterNumber: number) => {
     if (!id || !workspace) return
+    const chapter = workspace.chapters.find((c) => c.chapter_number === chapterNumber)
+    if (chapter && ['reviewed', 'awaiting_publish', 'published'].includes(chapter.status)) return
     // Guard: don't start generation if chapter already has a running workflow
     const hasRunningRun = workspace.recent_runs?.some(
-      (r) => r.chapter_number === currentChapter && r.status === 'running'
+      (r) => r.chapter_number === chapterNumber && r.status === 'running'
     )
     if (hasRunningRun) return
     setGenerating(true)
-    setGeneratingChapter(currentChapter)
-    streamingChapterRef.current = currentChapter
+    setGeneratingChapter(chapterNumber)
+    streamingChapterRef.current = chapterNumber
     setGenError('')
     setGenErrorDetails(null)
     setSseSteps({})
     setActiveTab('workflow')
     setSearchParams({
-      chapter: String(currentChapter),
+      chapter: String(chapterNumber),
       view: 'workflow',
     }, { replace: true })
-    startStream(id, currentChapter)
-  }, [currentChapter, id, setSearchParams, startStream, workspace])
+    startStream(id, chapterNumber)
+  }, [id, setSearchParams, startStream, workspace])
+
+  const handleGenerate = useCallback(() => {
+    handleGenerateChapter(currentChapter)
+  }, [currentChapter, handleGenerateChapter])
 
   const handleViewWorkflow = (runId: string) => {
     loadRunDetail(runId)
@@ -292,12 +303,9 @@ export default function ProjectDetail() {
     }, { replace: true })
   }
 
-  const handleViewContent = () => {
-    setActiveTab('content')
-    setSearchParams({
-      chapter: String(currentChapter),
-    }, { replace: true })
-  }
+  const handleViewContent = useCallback(() => {
+    handleOpenChapterView(currentChapter, 'content')
+  }, [currentChapter, handleOpenChapterView])
 
   useEffect(() => {
     if (requestedView !== 'workflow' || !requestedAutoGenerate) return
@@ -310,21 +318,55 @@ export default function ProjectDetail() {
     handleGenerate()
   }, [requestedView, requestedAutoGenerate, id, generating, isStreaming, handleGenerate, workspace, currentChapter])
 
-  const handlePublish = useCallback(async () => {
+  const handlePublishChapter = useCallback(async (chapterNumber: number) => {
     if (!id) return
-    const res = await post(`/publish/chapter`, { project_id: id, chapter: currentChapter })
+    const res = await post(`/publish/chapter`, { project_id: id, chapter: chapterNumber })
     if (res.ok) {
       refetchWorkspace()
     } else {
       alert(res.error?.message || '发布章节失败')
     }
-  }, [id, currentChapter, refetchWorkspace])
+  }, [id, refetchWorkspace])
+
+  const handlePublish = useCallback(async () => {
+    await handlePublishChapter(currentChapter)
+  }, [currentChapter, handlePublishChapter])
+
+  const handleGenerateNextFromChapter = useCallback((chapterNumber: number) => {
+    if (!id) return
+    const nextCh = chapterNumber + 1
+    setSearchParams({ chapter: String(nextCh), view: 'workflow', auto_generate: '1' }, { replace: true })
+  }, [id, setSearchParams])
 
   const handleGenerateNext = useCallback(() => {
-    if (!id) return
-    const nextCh = currentChapter + 1
-    setSearchParams({ chapter: String(nextCh), view: 'workflow', auto_generate: '1' }, { replace: true })
-  }, [id, currentChapter, setSearchParams])
+    handleGenerateNextFromChapter(currentChapter)
+  }, [currentChapter, handleGenerateNextFromChapter])
+
+  const handleMarkRunStuck = useCallback(async (runId: string) => {
+    const ok = window.confirm('确认将这条超时运行标记为阻塞？这不会删除正文或产物，之后可以清除阻塞并重新生成。')
+    if (!ok) return
+    const res = await post(`/runs/${runId}/recovery/mark-stuck`, { confirm: true })
+    if (res.ok) {
+      setGenError('')
+      await refetchWorkspace()
+      loadRunDetail(runId)
+    } else {
+      alert(res.error?.message || '标记卡住运行失败')
+    }
+  }, [loadRunDetail, refetchWorkspace])
+
+  const handleResetRunRecovery = useCallback(async (runId: string) => {
+    const ok = window.confirm('确认清除本章阻塞/返修状态并回到 planned？正文、运行记录和产物会保留。')
+    if (!ok) return
+    const res = await post(`/runs/${runId}/recovery/reset`, { confirm: true })
+    if (res.ok) {
+      setGenError('')
+      await refetchWorkspace()
+      loadRunDetail(runId)
+    } else {
+      alert(res.error?.message || '恢复运行失败')
+    }
+  }, [loadRunDetail, refetchWorkspace])
 
   const handleModuleChange = (module: ProjectModule) => {
     setSearchParams({ module, ...(module === 'chapters' ? { chapter: String(currentChapter) } : {}) }, { replace: true })
@@ -338,6 +380,9 @@ export default function ProjectDetail() {
   const runsForChapter = workspace.recent_runs.filter((r) => r.chapter_number === currentChapter)
   const isCurrentChapterGenerating = (generating || isStreaming) && generatingChapter === currentChapter
   const isCurrentChapterWorkflowRunning = runsForChapter.some((r) => r.status === 'running')
+  const isChapterWorkflowRunning = (chapterNumber: number) => {
+    return workspace.recent_runs.some((r) => r.chapter_number === chapterNumber && r.status === 'running')
+  }
   const currentChapterSseSteps = isCurrentChapterGenerating ? sseSteps : {}
 
   return (
@@ -365,6 +410,7 @@ export default function ProjectDetail() {
           isStub={isStub}
           isStreaming={isCurrentChapterGenerating}
           isWorkflowRunning={isCurrentChapterWorkflowRunning}
+          isChapterWorkflowRunning={isChapterWorkflowRunning}
           llmMode={llmMode}
           projectId={id || ''}
           runDetail={runDetail}
@@ -372,7 +418,13 @@ export default function ProjectDetail() {
           sseSteps={currentChapterSseSteps}
           onGenerate={handleGenerate}
           onGenerateNext={handleGenerateNext}
+          onMarkRunStuck={handleMarkRunStuck}
           onPublish={handlePublish}
+          onResetRunRecovery={handleResetRunRecovery}
+          onGenerateChapter={handleGenerateChapter}
+          onGenerateNextFromChapter={handleGenerateNextFromChapter}
+          onPublishChapter={handlePublishChapter}
+          onOpenChapterView={handleOpenChapterView}
           onSelectChapter={handleSelectChapter}
           onTabChange={handleTabChange}
           onViewContent={handleViewContent}
@@ -456,10 +508,10 @@ function WorkspaceStyles() {
   return (
     <style>{`
       /* v5.6: Workbench layout styles moved to AuthorWorkbench.css */
-      .project-shell { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height)); margin: calc(-1 * var(--spacing-lg)); overflow: hidden; background: var(--paper-bg, #f6f8fb); width: calc(100% + (2 * var(--spacing-lg))); }
-      .project-header { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 20px; background: var(--paper-surface, #ffffff); border-bottom: 1px solid rgba(30, 58, 95, 0.08); }
+      .project-shell { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height)); margin: calc(-1 * var(--spacing-lg)); overflow: hidden; background: var(--paper-bg, #f5f1e8); width: calc(100% + (2 * var(--spacing-lg))); }
+      .project-header { min-height: 52px; display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 10px 20px; background: var(--paper-surface, #fffefa); border-bottom: 1px solid var(--border-color, #ddd4c4); }
       .project-header-main { display: flex; align-items: center; gap: 18px; min-width: 0; }
-      .project-header-back { color: var(--text-secondary); text-decoration: none; font-size: 13px; white-space: nowrap; padding: 6px 9px; border: 1px solid rgba(30, 58, 95, 0.1); border-radius: 6px; background: var(--paper-surface); }
+      .project-header-back { color: var(--text-secondary); text-decoration: none; font-size: 13px; white-space: nowrap; padding: 6px 9px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--paper-surface); }
       .project-header-back:hover { color: var(--primary); }
       .project-header-title { min-width: 0; }
       .project-header h1 { margin: 0; font-size: 15px; font-weight: 600; color: var(--text-primary); line-height: 1.3; overflow-wrap: anywhere; }
@@ -505,12 +557,12 @@ function WorkspaceStyles() {
       .chapter-content-body { max-width: 720px; margin: 0 auto; font-size: 16px; line-height: 1.9; color: var(--text-primary); white-space: pre-wrap; word-break: break-word; }
       .gen-step { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 6px; background: var(--bg-secondary); margin-bottom: 6px; }
       .gen-step-icon { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; background: #e5e7eb; color: #6b7280; }
-      .gen-step-active .gen-step-icon { background: #dbeafe; color: #2563eb; animation: gen-pulse 1.5s infinite; }
-      .gen-step-complete .gen-step-icon { background: #dcfce7; color: #16a34a; }
-      .gen-step-failed .gen-step-icon { background: #fee2e2; color: #dc2626; }
+      .gen-step-active .gen-step-icon { background: #e7f2f4; color: var(--status-info); animation: gen-pulse 1.5s infinite; }
+      .gen-step-complete .gen-step-icon { background: #dcfce7; color: var(--status-success); }
+      .gen-step-failed .gen-step-icon { background: #fee2e2; color: var(--status-danger); }
       .gen-step-label { font-size: 14px; color: var(--text-secondary); }
       .gen-step-complete .gen-step-label { color: var(--text-primary); }
-      .gen-step-failed .gen-step-label { color: #dc2626; }
+      .gen-step-failed .gen-step-label { color: var(--status-danger); }
       @keyframes gen-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
       .artifacts-empty { text-align: center; padding: 60px 20px; }
       .artifacts-empty-icon { display: inline-flex; align-items: center; justify-content: center; min-width: 52px; height: 28px; padding: 0 10px; border-radius: 999px; background: var(--bg-tertiary); color: var(--text-secondary); font-size: 13px; margin-bottom: 16px; }
@@ -521,7 +573,7 @@ function WorkspaceStyles() {
       .artifact-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
       .artifact-icon { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--bg-tertiary); color: var(--primary); font-size: 12px; font-weight: 600; }
       .artifact-label { font-weight: 500; font-size: 14px; flex: 1; }
-      .artifact-status { color: #16a34a; font-size: 14px; }
+      .artifact-status { color: var(--status-success); font-size: 14px; }
       .artifact-summary { font-size: 13px; color: var(--text-primary); line-height: 1.6; padding: 10px 12px; background: #f0fdf4; border-radius: 4px; }
       .artifact-preview-section { margin-top: 10px; }
       .preview-toggle { padding: 4px 12px; font-size: 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; transition: all 0.15s; }
@@ -544,7 +596,7 @@ function WorkspaceStyles() {
       .data-card { padding: 14px; border-radius: 8px; background: var(--bg-secondary); border: 1px solid var(--border-color); }
       .data-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
       .data-card-category { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-secondary); }
-      .data-card-badge { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: #dbeafe; color: #1d4ed8; }
+      .data-card-badge { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: #ede6da; color: #4b5563; }
       .data-card-range { font-size: 12px; color: var(--text-muted); }
       .data-card-actions { margin-left: auto; display: flex; gap: 4px; }
       .data-card-title { font-weight: 500; font-size: 15px; margin-bottom: 6px; }

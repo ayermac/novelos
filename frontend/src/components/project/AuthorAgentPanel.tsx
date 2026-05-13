@@ -1,8 +1,6 @@
 import {
   Loader2,
   CheckCircle2,
-  XCircle,
-  AlertCircle,
   Sparkles,
   Play,
   FileText,
@@ -70,8 +68,10 @@ interface AuthorAgentPanelProps {
   sseSteps: Record<string, StepStatus>
   genError: string
   onGenerate: () => void
+  onMarkRunStuck?: (runId: string) => Promise<void> | void
   onPublish?: () => void
   onGenerateNext?: () => void
+  onResetRunRecovery?: (runId: string) => Promise<void> | void
   onViewContent: () => void
   onViewWorkflow: (runId: string) => void
 }
@@ -86,8 +86,10 @@ export default function AuthorAgentPanel({
   sseSteps,
   genError,
   onGenerate,
+  onMarkRunStuck,
   onPublish,
   onGenerateNext,
+  onResetRunRecovery,
   onViewContent,
   onViewWorkflow,
 }: AuthorAgentPanelProps) {
@@ -153,6 +155,24 @@ export default function AuthorAgentPanel({
                 <><Play size={12} /> 生成本章</>
               )}
             </button>
+            {isStaleRunning && runDetail && onMarkRunStuck && (
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => onMarkRunStuck(runDetail.run_id)}
+                style={{ marginTop: 8, width: '100%' }}
+              >
+                标记为阻塞
+              </button>
+            )}
+            {(status === 'blocking' || status === 'revision') && runDetail && onResetRunRecovery && (
+              <button
+                className="btn btn-secondary btn-sm"
+                onClick={() => onResetRunRecovery(runDetail.run_id)}
+                style={{ marginTop: 8, width: '100%' }}
+              >
+                清除阻塞并重置
+              </button>
+            )}
           </div>
         )}
 
@@ -169,12 +189,12 @@ export default function AuthorAgentPanel({
           {runDetail ? (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                {workflowStatus === 'running' && !isStaleRunning && <Loader2 size={14} className="spin" color="#3b82f6" />}
-                {isStaleRunning && <AlertCircle size={14} color="#f59e0b" />}
-                {workflowStatus === 'completed' && <CheckCircle2 size={14} color="#10b981" />}
-                {workflowStatus === 'failed' && <XCircle size={14} color="#ef4444" />}
-                {workflowStatus === 'blocked' && <AlertCircle size={14} color="#f59e0b" />}
-                <span style={{ fontSize: 13, fontWeight: 500 }}>
+                {workflowStatus === 'running' && !isStaleRunning && <span className="author-agent-status-light info pulse" />}
+                {isStaleRunning && <span className="author-agent-status-light warning" />}
+                {workflowStatus === 'completed' && <span className="author-agent-status-light success" />}
+                {workflowStatus === 'failed' && <span className="author-agent-status-light danger" />}
+                {workflowStatus === 'blocked' && <span className="author-agent-status-light warning" />}
+                <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--wb-text)' }}>
                   {isStaleRunning ? '疑似卡住'
                     : workflowStatus === 'running' ? '执行中'
                     : workflowStatus === 'completed' ? '已完成'
@@ -184,35 +204,35 @@ export default function AuthorAgentPanel({
                 </span>
               </div>
               {currentNode && (
-                <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginBottom: 4 }}>
+                <div style={{ fontSize: 12, color: 'var(--wb-text-muted)', marginBottom: 4 }}>
                   当前节点：{tWorkflowNodeLabel(currentNode)}
                 </div>
               )}
               {runDetail.chapter_status && (
-                <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                <div style={{ fontSize: 12, color: 'var(--wb-text-muted)' }}>
                   章节状态：{tChapterStatus(runDetail.chapter_status)}
                 </div>
               )}
               {isStaleRunning && elapsedMinutes !== null && (
-                <div style={{ fontSize: 12, color: '#92400e', marginTop: 6 }}>
+                <div style={{ fontSize: 12, color: 'var(--wb-warning)', marginTop: 6 }}>
                   已运行约 {elapsedMinutes} 分钟，超过卡住阈值 {STUCK_RUN_THRESHOLD_MINUTES} 分钟。
                 </div>
               )}
             </>
           ) : (
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>暂无运行记录</div>
+            <div style={{ fontSize: 12, color: 'var(--wb-text-muted)' }}>暂无运行记录</div>
           )}
 
           {/* Streaming indicator */}
           {isStreaming && sseStepEntries.length > 0 && (
-            <div style={{ marginTop: 8, borderTop: '1px solid var(--border-color)', paddingTop: 8 }}>
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 6 }}>实时进度</div>
+            <div style={{ marginTop: 8, borderTop: '1px solid var(--wb-panel-border)', paddingTop: 8 }}>
+              <div style={{ fontSize: 11, color: 'var(--wb-text-muted)', marginBottom: 6 }}>实时进度</div>
               {sseStepEntries.map(([key, step]) => (
                 <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
-                  {step.status === 'running' && <Loader2 size={11} className="spin" color="#3b82f6" />}
-                  {step.status === 'completed' && <CheckCircle2 size={11} color="#10b981" />}
-                  {step.status === 'failed' && <XCircle size={11} color="#ef4444" />}
-                  <span style={{ fontSize: 11, color: 'var(--text-secondary)' }}>{key}</span>
+                  {step.status === 'running' && <span className="author-agent-status-light info pulse" />}
+                  {step.status === 'completed' && <span className="author-agent-status-light success" />}
+                  {step.status === 'failed' && <span className="author-agent-status-light danger" />}
+                  <span style={{ fontSize: 11, color: 'var(--wb-text-muted)' }}>{key}</span>
                 </div>
               ))}
             </div>
@@ -233,11 +253,11 @@ export default function AuthorAgentPanel({
           </div>
         )}
 
-        {/* Run stats */}
-        {runDetail && (runDetail.total_tokens || runDetail.duration_ms) && (
+          {/* Run stats */}
+        {runDetail && (Boolean(runDetail.total_tokens) || Boolean(runDetail.duration_ms)) && (
           <div className="author-agent-card">
             <div className="author-agent-card-title">运行统计</div>
-            <div style={{ display: 'flex', gap: 12, fontSize: 12, color: 'var(--text-muted)' }}>
+            <div style={{ display: 'flex', gap: 12, fontSize: 12, color: 'var(--wb-text-muted)' }}>
               {runDetail.total_tokens ? <span>Token: {runDetail.total_tokens.toLocaleString()}</span> : null}
               {runDetail.duration_ms ? <span>耗时: {Math.round(runDetail.duration_ms / 1000)}s</span> : null}
             </div>
@@ -266,32 +286,20 @@ export default function AuthorAgentPanel({
               {runsForChapter.slice(0, 5).map((run) => (
                 <div
                   key={run.run_id}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                    padding: '6px 8px',
-                    background: 'var(--bg-tertiary)',
-                    borderRadius: 6,
-                    cursor: 'pointer',
-                  }}
+                  className="author-agent-run-item"
                   onClick={() => onViewWorkflow(run.run_id)}
                 >
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    <div style={{ fontSize: 12, fontWeight: 500, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--wb-text)' }}>
                       {run.run_id.slice(0, 8)}
                     </div>
-                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{run.created_at}</div>
+                    <div style={{ fontSize: 11, color: 'var(--wb-text-muted)' }}>{run.created_at}</div>
                   </div>
                   <span
+                    className="author-agent-run-badge"
                     style={{
-                      fontSize: 10,
-                      padding: '2px 6px',
-                      borderRadius: 4,
-                      background: run.status === 'completed' ? '#d1fae5' : run.status === 'failed' ? '#fee2e2' : '#dbeafe',
-                      color: run.status === 'completed' ? '#065f46' : run.status === 'failed' ? '#991b1b' : '#1e40af',
-                      flexShrink: 0,
+                      background: run.status === 'completed' ? 'var(--wb-success-soft)' : run.status === 'failed' ? 'var(--wb-danger-soft)' : 'rgba(255,255,255,0.06)',
+                      color: run.status === 'completed' ? 'var(--wb-success)' : run.status === 'failed' ? 'var(--wb-danger)' : 'var(--wb-text-muted)',
                     }}
                   >
                     {tWorkflowStatus(run.status)}

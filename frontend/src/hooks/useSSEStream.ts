@@ -36,6 +36,12 @@ export interface UseSSEStreamResult {
   stopStream: () => void;
 }
 
+function normalizeAgentKey(agent?: string): string {
+  if (!agent) return ''
+  if (agent === 'publisher' || agent === 'awaiting_publish') return 'publish'
+  return agent
+}
+
 /**
  * Hook for SSE streaming of chapter generation progress.
  */
@@ -87,14 +93,14 @@ export function useSSEStream(
           case 'step_start':
             setSteps((prev) => ({
               ...prev,
-              [event.agent || '']: { status: 'running' },
+              [normalizeAgentKey(event.agent)]: { status: 'running' },
             }));
             break;
 
           case 'step_complete':
             setSteps((prev) => ({
               ...prev,
-              [event.agent || '']: {
+              [normalizeAgentKey(event.agent)]: {
                 status: 'completed',
                 duration_ms: event.duration_ms,
               },

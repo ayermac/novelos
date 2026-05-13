@@ -98,19 +98,6 @@ export default function ProjectSideNav({ activeModule, onModuleChange, compact }
 
   return (
     <nav className={`project-side-nav${compact ? ' project-side-nav--compact' : ''}`} aria-label="项目导航">
-      {compact && (
-        <div className="project-side-nav-compact-header">
-          <button
-            type="button"
-            className={`project-side-nav-item${activeModule === 'chapters' || activeModule === 'overview' ? ' active' : ''}`}
-            onClick={() => onModuleChange('chapters')}
-            title="工作台"
-          >
-            <LayoutDashboard size={16} />
-            <span>工作台</span>
-          </button>
-        </div>
-      )}
       {MODULE_GROUPS.map((group) => {
         const collapsed = collapsedGroups.has(group.label) && !isGroupActive(group)
         return (
@@ -151,42 +138,103 @@ export default function ProjectSideNav({ activeModule, onModuleChange, compact }
           </section>
         )
       })}
-      {compact && (
-        <style>{`
+      <style>{`
+        .project-side-nav {
+          width: 196px;
+          flex-shrink: 0;
+          overflow-y: auto;
+          padding: 12px 10px;
+          border-right: 1px solid var(--border-color, #e2e8f0);
+          background: var(--paper-surface, #fff);
+        }
+        .project-side-nav--compact {
+          width: 172px;
+          padding: 10px 8px;
+        }
+        .project-side-nav-group + .project-side-nav-group {
+          margin-top: 14px;
+        }
+        .project-side-nav-label {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 6px;
+          padding: 0 8px 6px;
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--text-muted, #94a3b8);
+        }
+        .project-side-nav-label.collapsible {
+          cursor: pointer;
+          border-radius: 6px;
+        }
+        .project-side-nav-label.collapsible:hover {
+          color: var(--text-secondary, #64748b);
+          background: var(--bg-secondary, #f6f8fb);
+        }
+        .project-side-nav-items {
+          display: flex;
+          flex-direction: column;
+          gap: 3px;
+        }
+        .project-side-nav-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          width: 100%;
+          min-height: 34px;
+          padding: 7px 8px;
+          border: 1px solid transparent;
+          border-radius: 7px;
+          background: transparent;
+          color: var(--text-secondary, #64748b);
+          cursor: pointer;
+          font-size: 13px;
+          text-align: left;
+          transition: background 0.12s ease, border-color 0.12s ease, color 0.12s ease;
+        }
+        .project-side-nav-item:hover {
+          background: var(--bg-secondary, #f6f8fb);
+          color: var(--text-primary, #0f172a);
+        }
+        .project-side-nav-item.active {
+          background: rgba(15, 118, 110, 0.09);
+          border-color: rgba(15, 118, 110, 0.16);
+          color: var(--primary, #0f766e);
+          font-weight: 600;
+        }
+        .project-side-nav-item svg {
+          flex-shrink: 0;
+        }
+        .project-side-nav-item span {
+          min-width: 0;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+        @media (max-width: 768px) {
+          .project-side-nav,
           .project-side-nav--compact {
-            width: 56px !important;
-            padding: 8px 4px !important;
+            width: 100%;
+            max-height: 180px;
+            padding: 8px 12px;
+            border-right: none;
+            border-bottom: 1px solid var(--border-color, #e2e8f0);
           }
-          .project-side-nav--compact .project-side-nav-group {
-            display: none;
+          .project-side-nav-group + .project-side-nav-group {
+            margin-top: 8px;
           }
-          .project-side-nav--compact .project-side-nav-compact-header {
-            display: flex;
-            flex-direction: column;
-            gap: 4px;
+          .project-side-nav-items {
+            flex-direction: row;
+            overflow-x: auto;
+            padding-bottom: 2px;
           }
-          .project-side-nav--compact .project-side-nav-item {
-            padding: 8px;
-            justify-content: center;
+          .project-side-nav-item {
+            width: auto;
+            flex-shrink: 0;
           }
-          .project-side-nav--compact .project-side-nav-item span {
-            display: none;
-          }
-          @media (max-width: 768px) {
-            .project-side-nav--compact {
-              width: 100% !important;
-              flex-direction: row;
-              padding: 8px 12px !important;
-            }
-            .project-side-nav--compact .project-side-nav-compact-header {
-              flex-direction: row;
-            }
-            .project-side-nav--compact .project-side-nav-item span {
-              display: inline;
-            }
-          }
-        `}</style>
-      )}
+        }
+      `}</style>
     </nav>
   )
 }

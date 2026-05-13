@@ -75,13 +75,24 @@ function elapsedMinutesSince(value?: string | null): number | null {
   return Math.max(0, Math.floor((Date.now() - timestamp) / 60000))
 }
 
-const GENERATING_STEPS = [
+const BASE_GENERATING_STEPS = [
   { key: 'screenwriter', label: '编剧' },
   { key: 'author', label: '执笔' },
   { key: 'polisher', label: '润色' },
   { key: 'editor', label: '审核' },
   { key: 'publish', label: '发布' },
 ]
+
+function getGeneratingSteps(sseSteps: Record<string, StepStatus>) {
+  if (sseSteps.planner) {
+    return [{ key: 'planner', label: '规划' }, ...BASE_GENERATING_STEPS]
+  }
+  return BASE_GENERATING_STEPS
+}
+
+function getGeneratingStepKeys(sseSteps: Record<string, StepStatus>) {
+  return getGeneratingSteps(sseSteps).map((step) => step.key)
+}
 
 const MISSING_TO_MODULE: Record<string, string> = {
   '项目简介': 'settings',
@@ -118,7 +129,9 @@ interface AuthorWritingSurfaceProps {
   sseSteps: Record<string, StepStatus>
   onGenerate: () => void
   onGenerateNext?: () => void
+  onMarkRunStuck?: (runId: string) => Promise<void> | void
   onPublish?: () => void
+  onResetRunRecovery?: (runId: string) => Promise<void> | void
   onTabChange: (tab: SurfaceTabKey) => void
   onViewContent: () => void
   onViewWorkflow: (runId: string) => void
@@ -143,7 +156,9 @@ export default function AuthorWritingSurface({
   sseSteps,
   onGenerate,
   onGenerateNext,
+  onMarkRunStuck,
   onPublish,
+  onResetRunRecovery,
   onTabChange,
   onViewWorkflow,
 }: AuthorWritingSurfaceProps) {
@@ -170,14 +185,14 @@ export default function AuthorWritingSurface({
             style={{
               background: isTerminal
                 ? status === 'published'
-                  ? '#d1fae5'
-                  : '#fef3c7'
-                : '#dbeafe',
+                  ? 'var(--wb-success-soft)'
+                  : 'var(--wb-warning-soft)'
+                : 'var(--wb-paper-muted)',
               color: isTerminal
                 ? status === 'published'
-                  ? '#065f46'
-                  : '#92400e'
-                : '#1e40af',
+                  ? 'var(--wb-success)'
+                  : 'var(--wb-warning)'
+                : 'var(--wb-text-dark-secondary)',
             }}
           >
             {tChapterStatus(status)}
@@ -249,6 +264,8 @@ export default function AuthorWritingSurface({
             isLaunching={isLaunching}
             isStreaming={isStreaming}
             sseSteps={sseSteps}
+            onMarkRunStuck={onMarkRunStuck}
+            onResetRunRecovery={onResetRunRecovery}
           />
         )}
         {activeTab === 'artifacts' && (
@@ -320,7 +337,7 @@ function ContentBody({
     if (status.status === 'running') return '处理中...'
     if (status.status === 'completed') return `完成 (${status.duration_ms || 0}ms)`
     if (status.status === 'failed') return '失败'
-    const stepKeys = ['screenwriter', 'author', 'polisher', 'editor', 'publish']
+    const stepKeys = getGeneratingStepKeys(sseSteps)
     const currentRunningIndex = stepKeys.findIndex((k) => sseSteps[k]?.status === 'running')
     if (currentRunningIndex >= 0 && index > currentRunningIndex) return '等待中...'
     return '等待中...'
@@ -330,7 +347,7 @@ function ContentBody({
     <div>
       {isStreaming && (
         <div style={{ marginBottom: 16 }}>
-          {GENERATING_STEPS.map((step, i) => {
+          {getGeneratingSteps(sseSteps).map((step, i) => {
             const stepStatus = sseSteps[step.key]
             const isActive = stepStatus?.status === 'running'
             const isCompleted = stepStatus?.status === 'completed'
@@ -342,7 +359,7 @@ function ContentBody({
                 className={`gen-step ${isActive ? 'gen-step-active' : ''} ${isCompleted ? 'gen-step-complete' : ''} ${isFailed ? 'gen-step-failed' : ''}`}
               >
                 <div className="gen-step-icon">
-                  {isCompleted ? '✓' : isFailed ? '✗' : '●'}
+                {isCompleted ? '✓' : isFailed ? '✗' : '●'}
                 </div>
                 <div className="gen-step-label">{step.label} &mdash; {statusText}</div>
               </div>
@@ -374,7 +391,7 @@ function ContentBody({
                 {filling ? <><Loader2 size={12} className="spin" /> 补齐中...</> : <><Sparkles size={12} /> 让 AI 补齐缺失资料</>}
               </button>
               {fillMsg && (
-                <div style={{ marginTop: 6, fontSize: 12, color: fillMsg.includes('失败') ? '#dc2626' : '#16a34a' }}>
+                <div style={{ marginTop: 6, fontSize: 12, color: fillMsg.includes('失败') ? 'var(--wb-danger)' : 'var(--wb-success)' }}>
                   {fillMsg}
                 </div>
               )}
@@ -391,13 +408,13 @@ function ContentBody({
       )}
 
       {chapterLoading && !isStreaming && (
-        <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>加载中...</div>
+        <div style={{ padding: 40, textAlign: 'center', color: 'var(--wb-text-dark-muted)' }}>加载中...</div>
       )}
 
       {!chapterLoading && !hasContent && !isStreaming && (
         <div className="author-surface-empty">
           <h3>第 {currentChapter} 章</h3>
-          {chapterDetail?.title && <p style={{ fontSize: 16, color: 'var(--text-secondary)', marginBottom: 8 }}>{chapterDetail.title}</p>}
+          {chapterDetail?.title && <p style={{ fontSize: 16, color: 'var(--wb-text-dark-secondary)', marginBottom: 8 }}>{chapterDetail.title}</p>}
           <p>本章尚未生成</p>
           <p style={{ fontSize: 13 }}>编剧将规划章节场景和情节，执笔将撰写章节正文</p>
           {!isTerminal && (
@@ -405,7 +422,7 @@ function ContentBody({
               {isWorkflowRunning ? '生成中...' : '生成本章'}
             </button>
           )}
-          <div style={{ marginTop: 12, fontSize: 12, color: 'var(--text-muted)' }}>
+          <div style={{ marginTop: 12, fontSize: 12, color: 'var(--wb-text-dark-muted)' }}>
             预计字数: 2,000-4,000 &middot; 生成模式: {isStub ? '演示模式' : '真实 LLM'}
           </div>
         </div>
@@ -443,11 +460,15 @@ function WorkflowBody({
   isLaunching,
   isStreaming,
   sseSteps,
+  onMarkRunStuck,
+  onResetRunRecovery,
 }: {
   runDetail: RunDetailData | null
   isLaunching: boolean
   isStreaming: boolean
   sseSteps: Record<string, StepStatus>
+  onMarkRunStuck?: (runId: string) => Promise<void> | void
+  onResetRunRecovery?: (runId: string) => Promise<void> | void
 }) {
   if (runDetail && !isStreaming) {
     const nodeLabel = tWorkflowNodeLabel(runDetail.current_node)
@@ -484,16 +505,33 @@ function WorkflowBody({
               <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>当前节点：{nodeLabel}</div>
               <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>{statusDescription}</div>
               {isStaleRunning && elapsedMinutes !== null && (
-                <div style={{ fontSize: 12, color: '#92400e', marginTop: 4 }}>
+                <div style={{ fontSize: 12, color: 'var(--wb-warning)', marginTop: 4 }}>
                   已运行约 {elapsedMinutes} 分钟，超过卡住阈值 {STUCK_RUN_THRESHOLD_MINUTES} 分钟。
                 </div>
               )}
             </div>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 }}>
               <span className={`status-badge status-${runDetail.workflow_status}`}>{statusLabel}</span>
               <span className={`status-badge status-${runDetail.chapter_status}`}>{chapterStatusLabel}</span>
             </div>
           </div>
+          {(isStaleRunning || runDetail.chapter_status === 'blocking' || runDetail.chapter_status === 'revision') && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+              {isStaleRunning && onMarkRunStuck && (
+                <button className="btn btn-secondary btn-sm" onClick={() => onMarkRunStuck(runDetail.run_id)}>
+                  标记为阻塞
+                </button>
+              )}
+              {(runDetail.chapter_status === 'blocking' || runDetail.chapter_status === 'revision') && onResetRunRecovery && (
+                <button className="btn btn-primary btn-sm" onClick={() => onResetRunRecovery(runDetail.run_id)}>
+                  清除阻塞并重置
+                </button>
+              )}
+              <Link to={`/runs/${runDetail.run_id}`} className="btn btn-secondary btn-sm">
+                打开恢复详情
+              </Link>
+            </div>
+          )}
         </div>
         <WorkflowTimeline steps={runDetail.steps} />
       </div>
@@ -503,17 +541,17 @@ function WorkflowBody({
   if (isLaunching && !isStreaming) {
     return (
       <div style={{ padding: '48px 24px', textAlign: 'center' }}>
-        <Loader2 size={24} className="spin" style={{ color: 'var(--primary)', marginBottom: 12 }} />
+        <Loader2 size={24} className="spin" style={{ color: 'var(--wb-accent)', marginBottom: 12 }} />
         <div style={{ fontSize: 15, fontWeight: 500, marginBottom: 6 }}>正在启动生成流程...</div>
-        <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>准备章节数据和 AI 模型，即将开始</div>
+        <div style={{ fontSize: 13, color: 'var(--wb-text-dark-muted)' }}>准备章节数据和 AI 模型，即将开始</div>
       </div>
     )
   }
 
   if (isStreaming) {
     const hasSseData = Object.keys(sseSteps).length > 0
-    const stepKeys = ['screenwriter', 'author', 'polisher', 'editor', 'publish']
-    const steps = GENERATING_STEPS.map((s) => {
+    const stepKeys = getGeneratingStepKeys(sseSteps)
+    const steps = getGeneratingSteps(sseSteps).map((s) => {
       const stepStatus = sseSteps[s.key]
       let status: Step['status'] = 'pending'
       let description = '等待中...'
@@ -550,7 +588,7 @@ function WorkflowBody({
   }
 
   return (
-    <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>
+    <div style={{ padding: 24, textAlign: 'center', color: 'var(--wb-text-dark-muted)' }}>
       暂无工作流数据。生成章节后可查看工作流步骤。
     </div>
   )
@@ -563,6 +601,7 @@ function WorkflowBody({
 function ArtifactsBody({ runDetail }: { runDetail: RunDetailData | null }) {
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
   const agentMarks: Record<string, string> = {
+    planner: '规',
     screenwriter: '编',
     author: '执',
     polisher: '润',
@@ -636,7 +675,7 @@ function HistoryBody({
 }) {
   if (runsForChapter.length === 0) {
     return (
-      <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>
+      <div style={{ padding: 24, textAlign: 'center', color: 'var(--wb-text-dark-muted)' }}>
         暂无运行历史。生成章节后可查看记录。
       </div>
     )
