@@ -91,7 +91,7 @@ UI 可以提示 workflow 疑似卡住，但用户仍然需要自己推断如何�
 - `npm run typecheck`: passed
 - `npm run lint`: passed
 - `npm run build`: passed
-- `npm run test -- --run`: 95/95 passed
+- `npm run test -- --run`: 108/108 passed
 
 后端：
 

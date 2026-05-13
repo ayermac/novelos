@@ -14,13 +14,15 @@
 ## 当前进度
 
 - **生产稳定基线**: v5.5.15 Production Readiness Closure
-- **当前 WebUI 基线**: v5.6 Author Workbench Phase 1
-- **状态**: v5.5.15 Review + 真实项目验收通过；v5.6 已完成个人创作工作台第一阶段
-- **测试基线**: pytest 1844/1844 passed；vitest 95/95 passed；frontend typecheck/lint/build passed
+- **当前 WebUI 基线**: v5.6.1 Workbench Stabilization
+- **状态**: v5.5.15 和 v5.6.1 全部通过 Review 与真实项目验收；工作台已稳定
+- **测试基线**: pytest 1847/1847 passed；vitest 112/112 passed；frontend typecheck/lint/build passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
 - **v5.6 Review 记录**: [reviews/novel-factory-v5.6-author-workbench-review.md](reviews/novel-factory-v5.6-author-workbench-review.md)
+- **v5.6.1 完成报告**: [reports/novel-factory-v5.6.1-workbench-stabilization-completion-report.md](reports/novel-factory-v5.6.1-workbench-stabilization-completion-report.md)
+- **v5.6.1 Review 记录**: [reviews/novel-factory-v5.6.1-workbench-stabilization-review.md](reviews/novel-factory-v5.6.1-workbench-stabilization-review.md)
 
 ## 当前执行规则
 
@@ -36,6 +38,7 @@
 - API 规范: [planning/novel-factory-api-contract-guidelines.md](planning/novel-factory-api-contract-guidelines.md)
 - v5.5.15 规格: [planning/novel-factory-v5.5.15-production-readiness-closure-spec.md](planning/novel-factory-v5.5.15-production-readiness-closure-spec.md)
 - v5.6 WebUI 重构规格: [planning/novel-factory-v5.6-webui-author-workbench-rework-spec.md](planning/novel-factory-v5.6-webui-author-workbench-rework-spec.md)
+- v5.6.1 工作台稳定化规格: [planning/novel-factory-v5.6.1-workbench-stabilization-spec.md](planning/novel-factory-v5.6.1-workbench-stabilization-spec.md)
 - v5.6 完成报告: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
 - v5.6 Review: [reviews/novel-factory-v5.6-author-workbench-review.md](reviews/novel-factory-v5.6-author-workbench-review.md)
 - 下一阶段方向: [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)
@@ -50,12 +53,12 @@ v5.5.15 和 v5.6 Phase 1 完成后，下一阶段不优先展开多租户、企�
 
 近期优先级：
 
-1. 让 v5.6 工作台支持真实日常写作：正文编辑、保存、版本对比、局部返修。
-2. 运行恢复闭环：卡住原因、恢复建议、重跑边界和用户确认。
-3. 长篇记忆与设定一致性。
-4. 审核问题定位与局部返修。
-5. 创作者资料库 / RAG。
-6. AgentOps 运行复盘与评测。
+1. v5.6.1 工作台稳定化：真实路径验收、菜单与路由、工作流刷新、卡住恢复、加载态、非原生弹窗、产物文案。
+2. v5.7 日常写作闭环：正文编辑、保存、版本对比、局部返修。
+3. v5.8 工作流可观测与恢复增强：节点日志、恢复边界、运行复盘。
+4. 长篇记忆与设定一致性。
+5. 审核问题定位与局部返修。
+6. 创作者资料库 / RAG。
 7. 导出与发布流水线。
 
 详细方向见 [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)。

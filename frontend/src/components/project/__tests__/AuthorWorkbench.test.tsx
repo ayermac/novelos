@@ -44,6 +44,7 @@ const baseProps = {
   onMarkRunStuck: vi.fn(),
   onPublish: vi.fn(),
   onResetRunRecovery: vi.fn(),
+  onResetRunRecoveryForChapter: vi.fn(),
   onGenerateChapter: vi.fn(),
   onGenerateNextFromChapter: vi.fn(),
   onPublishChapter: vi.fn(),
@@ -472,5 +473,89 @@ describe('AuthorWorkbench', () => {
     )
     fireEvent.click(screen.getByLabelText('第 5 章操作'))
     expect(screen.queryByRole('menuitem', { name: /生成本章/ })).not.toBeInTheDocument()
+  })
+
+  it('blocking chapter menu shows reset recovery and not generate', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        chapters={[
+          ...baseProps.chapters,
+          { chapter_number: 5, status: 'blocking', word_count: 3800, title: '第五章' },
+        ]}
+        currentChapter={5}
+        currentChapterRecord={{ chapter_number: 5, status: 'blocking', word_count: 3800, title: '第五章' }}
+      />
+    )
+    fireEvent.click(screen.getByLabelText('第 5 章操作'))
+    expect(screen.getByRole('menuitem', { name: /清除阻塞并重置/ })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /生成本章/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /继续生成/ })).not.toBeInTheDocument()
+  })
+
+  it('revision chapter menu shows reset recovery and continue generate', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        chapters={[
+          ...baseProps.chapters,
+          { chapter_number: 5, status: 'revision', word_count: 3800, title: '第五章' },
+        ]}
+        currentChapter={5}
+        currentChapterRecord={{ chapter_number: 5, status: 'revision', word_count: 3800, title: '第五章' }}
+      />
+    )
+    fireEvent.click(screen.getByLabelText('第 5 章操作'))
+    expect(screen.getByRole('menuitem', { name: /清除阻塞并重置/ })).toBeInTheDocument()
+    expect(screen.getByRole('menuitem', { name: /继续生成/ })).toBeInTheDocument()
+  })
+
+  it('menu reset recovery targets the clicked chapter', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        chapters={[
+          ...baseProps.chapters,
+          { chapter_number: 5, status: 'blocking', word_count: 3800, title: '第五章' },
+        ]}
+        currentChapter={5}
+        currentChapterRecord={{ chapter_number: 5, status: 'blocking', word_count: 3800, title: '第五章' }}
+      />
+    )
+    fireEvent.click(screen.getByLabelText('第 5 章操作'))
+    fireEvent.click(screen.getByRole('menuitem', { name: /清除阻塞并重置/ }))
+    expect(baseProps.onResetRunRecoveryForChapter).toHaveBeenCalledWith(5)
+    expect(baseProps.onResetRunRecovery).not.toHaveBeenCalled()
+  })
+
+  it('warns contradictory state when terminal chapter has running workflow', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        currentChapter={1}
+        currentChapterRecord={baseProps.chapters[0]}
+        runDetail={{
+          run_id: 'run-contra',
+          project_id: 'test-proj',
+          chapter_number: 1,
+          workflow_status: 'running',
+          chapter_status: 'published',
+          current_node: 'author',
+          llm_mode: 'real',
+          started_at: new Date().toISOString(),
+          steps: [],
+        }}
+        runsForChapter={[{
+          run_id: 'run-contra',
+          chapter_number: 1,
+          status: 'running',
+          created_at: new Date().toISOString(),
+        }]}
+        isWorkflowRunning
+      />
+    )
+    expect(screen.getByText('状态矛盾：终态章节仍有运行中工作流')).toBeInTheDocument()
+    expect(screen.getByText(/本章状态已经是 已发布/)).toBeInTheDocument()
   })
 })

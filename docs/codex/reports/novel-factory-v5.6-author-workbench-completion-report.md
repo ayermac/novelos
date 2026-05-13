@@ -84,7 +84,7 @@ UI 不再把 `screenwriter` 显示成“策划”。节点映射调整为：
 - `npm run typecheck`: passed
 - `npm run lint`: passed
 - `npm run build`: passed
-- `npm run test -- --run`: 95/95 passed
+- `npm run test -- --run`: 108/108 passed
 
 后端：
 
@@ -95,6 +95,15 @@ UI 不再把 `screenwriter` 显示成“策划”。节点映射调整为：
 
 - `b725bde`: `feat(v5.6): introduce author workbench webui`
 - `4d59b04`: `fix(v5.6): polish workbench navigation and recovery UI`
+- `d8482c0`: `fix(v5.6): improve dialogs and workflow feedback`
+- `b787cfa`: `fix(v5.6): humanize run artifacts and task labels`
+- `57cb0fc`: `fix(v5.6): improve workbench navigation and workflow refresh`
+- `aba9d16`: `fix(v5.6): reconcile terminal chapter workflow runs`
+- `990860c`: `fix(v5.6): add collapsible app sidebar`
+- `c76ac75`: `fix(v5.6): prevent sidebar brand compression`
+- `0bd1950`: `fix(v5.6): make workflow artifacts author-readable`
+- `5b1464a`: `fix(v5.6): keep chapter context when switching project menu`
+- `4f1e05b`: `fix(v5.6): route workbench menu to overview`
 
 ## 当前状态
 

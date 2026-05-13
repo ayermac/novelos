@@ -88,6 +88,7 @@ interface AuthorWorkbenchProps {
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onPublish?: () => void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
+  onResetRunRecoveryForChapter?: (chapterNumber: number) => Promise<void> | void
   onGenerateChapter?: (chapterNumber: number) => void
   onGenerateNextFromChapter?: (chapterNumber: number) => void
   onPublishChapter?: (chapterNumber: number) => void
@@ -122,6 +123,7 @@ export default function AuthorWorkbench({
   onMarkRunStuck,
   onPublish,
   onResetRunRecovery,
+  onResetRunRecoveryForChapter,
   onGenerateChapter,
   onGenerateNextFromChapter,
   onPublishChapter,
@@ -142,6 +144,7 @@ export default function AuthorWorkbench({
         onGenerateChapter={onGenerateChapter}
         onGenerateNextFromChapter={onGenerateNextFromChapter}
         onPublishChapter={onPublishChapter}
+        onResetRunRecoveryForChapter={onResetRunRecoveryForChapter}
         onOpenChapterView={onOpenChapterView}
       />
       <AuthorWritingSurface

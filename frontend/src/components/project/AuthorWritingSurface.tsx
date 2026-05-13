@@ -460,25 +460,32 @@ function WorkflowBody({
     const chapterStatusLabel = tChapterStatus(runDetail.chapter_status)
     const elapsedMinutes = elapsedMinutesSince(runDetail.started_at)
     const isStaleRunning = runDetail.workflow_status === 'running' && elapsedMinutes !== null && elapsedMinutes >= STUCK_RUN_THRESHOLD_MINUTES
-    const statusTone = isStaleRunning || runDetail.workflow_status === 'blocked' ? 'warning' : runDetail.workflow_status === 'failed' ? 'error' : 'info'
-    const statusHeadline = isStaleRunning
-      ? '工作流疑似卡住'
-      : runDetail.workflow_status === 'running'
-        ? '工作流正在推进'
-      : runDetail.workflow_status === 'blocked'
-        ? '工作流已阻塞'
-        : runDetail.workflow_status === 'completed' && runDetail.chapter_status === 'reviewed'
-          ? '审核已完成'
-          : '最近一次运行'
-    const statusDescription = isStaleRunning
-      ? `当前节点：${nodeLabel} 已超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未完成，建议进入运行恢复处理卡住运行。`
-      : runDetail.workflow_status === 'running'
-        ? `当前节点：${nodeLabel}，仍在处理。若超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未变化，请按卡住运行处理。`
-      : runDetail.workflow_status === 'blocked'
-        ? `本次运行已阻塞，需要先处理最近的失败或返修原因。`
-        : runDetail.workflow_status === 'completed' && runDetail.chapter_status === 'reviewed'
-          ? 'AI 审核已完成，当前等待人工发布。'
-          : '最近一次运行记录如下。'
+    const isTerminalChapter = ['published', 'awaiting_publish', 'reviewed'].includes(runDetail.chapter_status)
+    const isRunning = runDetail.workflow_status === 'running'
+    const isContradictory = isTerminalChapter && isRunning && !isStaleRunning
+    const statusTone = isContradictory || isStaleRunning || runDetail.workflow_status === 'blocked' ? 'warning' : runDetail.workflow_status === 'failed' ? 'error' : 'info'
+    const statusHeadline = isContradictory
+      ? '状态矛盾：终态章节仍有运行中工作流'
+      : isStaleRunning
+        ? '工作流疑似卡住'
+        : runDetail.workflow_status === 'running'
+          ? '工作流正在推进'
+          : runDetail.workflow_status === 'blocked'
+            ? '工作流已阻塞'
+            : runDetail.workflow_status === 'completed' && runDetail.chapter_status === 'reviewed'
+              ? '审核已完成'
+              : '最近一次运行'
+    const statusDescription = isContradictory
+      ? `本章状态已经是 ${chapterStatusLabel}，但工作流仍在运行。这通常是状态不同步导致的，建议先标记为阻塞，再清除并重置。`
+      : isStaleRunning
+        ? `当前节点：${nodeLabel} 已超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未完成，建议进入运行恢复处理卡住运行。`
+        : runDetail.workflow_status === 'running'
+          ? `当前节点：${nodeLabel}，仍在处理。若超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未变化，请按卡住运行处理。`
+          : runDetail.workflow_status === 'blocked'
+            ? `本次运行已阻塞，需要先处理最近的失败或返修原因。`
+            : runDetail.workflow_status === 'completed' && runDetail.chapter_status === 'reviewed'
+              ? 'AI 审核已完成，当前等待人工发布。'
+              : '最近一次运行记录如下。'
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

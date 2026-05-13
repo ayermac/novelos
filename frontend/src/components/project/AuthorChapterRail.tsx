@@ -19,6 +19,7 @@ interface AuthorChapterRailProps {
   onGenerateChapter?: (chapterNumber: number) => void
   onGenerateNextFromChapter?: (chapterNumber: number) => void
   onPublishChapter?: (chapterNumber: number) => void
+  onResetRunRecoveryForChapter?: (chapterNumber: number) => Promise<void> | void
   onOpenChapterView?: (chapterNumber: number, tab: 'content' | 'workflow' | 'artifacts' | 'history') => void
 }
 
@@ -82,6 +83,7 @@ function ChapterMenu({
   onGenerateChapter,
   onGenerateNextFromChapter,
   onPublishChapter,
+  onResetRunRecoveryForChapter,
   onOpenChapterView,
 }: {
   chapter: Chapter
@@ -91,6 +93,7 @@ function ChapterMenu({
   onGenerateChapter?: (chapterNumber: number) => void
   onGenerateNextFromChapter?: (chapterNumber: number) => void
   onPublishChapter?: (chapterNumber: number) => void
+  onResetRunRecoveryForChapter?: (chapterNumber: number) => Promise<void> | void
   onOpenChapterView?: (chapterNumber: number, tab: 'content' | 'workflow' | 'artifacts' | 'history') => void
 }) {
   const menuRef = useRef<HTMLDivElement>(null)
@@ -188,7 +191,13 @@ function ChapterMenu({
         </button>
       )}
 
-      {!isWorkflowRunning && !isTerminal && onGenerateChapter && (
+      {!isWorkflowRunning && (status === 'blocking' || status === 'revision') && onResetRunRecoveryForChapter && (
+        <button className="author-rail-dropdown-item" role="menuitem" onClick={() => { onResetRunRecoveryForChapter(chapter.chapter_number); onClose(); }}>
+          <AlertCircle size={13} /> 清除阻塞并重置
+        </button>
+      )}
+
+      {!isWorkflowRunning && !isTerminal && status !== 'blocking' && onGenerateChapter && (
         <button className="author-rail-dropdown-item" role="menuitem" onClick={handleGenerate}>
           <Play size={13} /> {status === 'planned' ? '生成本章' : '继续生成'}
         </button>
@@ -213,6 +222,7 @@ export default function AuthorChapterRail({
   onGenerateChapter,
   onGenerateNextFromChapter,
   onPublishChapter,
+  onResetRunRecoveryForChapter,
   onOpenChapterView,
 }: AuthorChapterRailProps) {
   const publishedCount = chapters.filter((c) => c.status === 'published').length
@@ -299,6 +309,7 @@ export default function AuthorChapterRail({
                   onGenerateChapter={onGenerateChapter}
                   onGenerateNextFromChapter={onGenerateNextFromChapter}
                   onPublishChapter={onPublishChapter}
+                  onResetRunRecoveryForChapter={onResetRunRecoveryForChapter}
                   onOpenChapterView={onOpenChapterView}
                 />
               )}

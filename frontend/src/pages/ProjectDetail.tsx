@@ -424,6 +424,20 @@ export default function ProjectDetail() {
     }
   }, [dialog, loadRunDetail, refetchWorkspace])
 
+  const handleResetRunRecoveryForChapter = useCallback(async (chapterNumber: number) => {
+    if (!id || !workspace) return
+    const run = workspace.recent_runs.find((r) => r.chapter_number === chapterNumber && (r.status === 'running' || r.status === 'blocked'))
+    if (!run) {
+      await dialog.alert({
+        title: '恢复失败',
+        message: `未找到第 ${chapterNumber} 章的待恢复运行记录。`,
+        tone: 'danger',
+      })
+      return
+    }
+    await handleResetRunRecovery(run.run_id)
+  }, [dialog, handleResetRunRecovery, id, workspace])
+
   const handleModuleChange = (module: ProjectModule) => {
     setSearchParams(buildProjectModuleSearchParams(searchParams, module, currentChapter), { replace: true })
   }
@@ -477,6 +491,7 @@ export default function ProjectDetail() {
           onMarkRunStuck={handleMarkRunStuck}
           onPublish={handlePublish}
           onResetRunRecovery={handleResetRunRecovery}
+          onResetRunRecoveryForChapter={handleResetRunRecoveryForChapter}
           onGenerateChapter={handleGenerateChapter}
           onGenerateNextFromChapter={handleGenerateNextFromChapter}
           onPublishChapter={handlePublishChapter}

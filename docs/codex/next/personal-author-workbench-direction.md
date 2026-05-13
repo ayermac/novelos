@@ -24,7 +24,9 @@ v5.5.15 completed the production-readiness closure line:
 - real-project acceptance,
 - short-term usable stable baseline.
 
-The next stage should move from recovery and guardrail closure back toward author-facing creative productivity.
+v5.6 then introduced the personal author workbench as the default project experience. Follow-up fixes through `4f1e05b` restored project module navigation, preserved chapter context during module switches, made raw workflow artifacts author-readable, fixed sidebar compression, and routed the `工作台` menu item to the project overview rather than the chapter workbench.
+
+The immediate next step should stabilize this workbench before expanding into larger writing features.
 
 ## Product Principles
 
@@ -119,27 +121,33 @@ Candidate capabilities:
 - title, synopsis, chapter summary generation,
 - final archive and version locking.
 
-## Suggested Next Version Selection
+## Suggested Next Version Sequence
 
-Do not open a broad "v6" by default. After v5.5.15, choose one concrete next spec from the priorities above.
+Do not open a broad "v6" by default. After v5.6 Phase 1, keep the next steps narrow and author-facing.
 
-Recommended first candidate:
+Recommended sequence:
 
 ```text
-v5.5.16 Daily Writing Workbench Closure
+v5.6.1 Workbench Stabilization
+v5.7 Daily Writing Editing and Versioning
+v5.8 Workflow Observability and Recovery
 ```
 
 Rationale:
 
-- It directly improves daily usability.
-- It builds on the current stable baseline.
+- It prevents scattered UI patching from continuing indefinitely.
+- It locks down the routes, menus, workflow states, and recovery paths the author already touches daily.
 - It avoids premature multi-tenant or enterprise scope.
 - It creates a better foundation for memory, revision, RAG, and evaluation work.
 
-Alternative candidates:
+The active executable planning spec is:
 
-- `v5.5.16 Longform Memory Consistency Closure`
-- `v5.5.16 Local Revision Studio`
-- `v5.6 Creator Knowledge Base / RAG`
+```text
+docs/codex/planning/novel-factory-v5.6.1-workbench-stabilization-spec.md
+```
 
-The next executable spec should be created only after choosing one of these directions.
+Later candidate lines remain useful, but should wait until v5.6.1 proves the current workbench is stable:
+
+- `Longform Memory Consistency Closure`
+- `Local Revision Studio`
+- `Creator Knowledge Base / RAG`
