@@ -252,7 +252,7 @@ class TestFrontendArtifacts:
         content = timeline_file.read_text()
 
         assert "artifacts" in content, "WorkflowTimeline should handle artifacts"
-        assert "查看产物" in content or "展开" in content, (
+        assert "查看过程稿" in content or "查看产物" in content or "展开" in content, (
             "WorkflowTimeline should have expand button for artifacts"
         )
 

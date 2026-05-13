@@ -1,10 +1,5 @@
 import { useState } from 'react'
-
-interface Artifacts {
-  summary: string
-  output_preview?: string
-  [key: string]: unknown
-}
+import { formatArtifactSummary, WorkflowArtifacts } from '../lib/artifacts'
 
 interface Step {
   key: string
@@ -19,7 +14,7 @@ interface Step {
     level?: 'info' | 'success' | 'warning' | 'error'
     message: string
   }[]
-  artifacts?: Artifacts | null
+  artifacts?: WorkflowArtifacts | null
 }
 
 interface Props {
@@ -121,16 +116,16 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
                     className="step-expand-btn"
                     onClick={() => toggleExpand(step.key)}
                   >
-                    {isExpanded ? '收起' : '查看产物'}
+                    {isExpanded ? '收起' : '查看过程稿'}
                   </button>
                 )}
               </div>
               {hasArtifacts && isExpanded && (
                 <div className="step-artifacts">
-                  <div className="artifacts-summary">{step.artifacts!.summary}</div>
+                  <div className="artifacts-summary">{formatArtifactSummary(step.artifacts)}</div>
                   {step.artifacts!.output_preview && (
                     <div className="artifacts-preview">
-                      <div className="preview-label">预览:</div>
+                      <div className="preview-label">内容预览:</div>
                       <div className="preview-content">{step.artifacts!.output_preview}</div>
                     </div>
                   )}

@@ -243,6 +243,54 @@ describe('AuthorWorkbench', () => {
     expect(screen.queryByText('润色节点已开始处理。')).not.toBeInTheDocument()
   })
 
+  it('shows readable process draft labels instead of raw artifact keys', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="artifacts"
+        runDetail={{
+          run_id: 'run-artifacts',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'completed',
+          chapter_status: 'polished',
+          current_node: 'editor',
+          llm_mode: 'real',
+          steps: [
+            {
+              key: 'screenwriter',
+              label: '编剧',
+              description: '完成分场',
+              status: 'completed',
+              artifacts: {
+                summary: 'scene_plan (screenwriter), scene_plan (screenwriter), scene_plan (screenwriter)',
+                artifact_count: 3,
+              },
+            },
+            {
+              key: 'author',
+              label: '执笔',
+              description: '完成正文',
+              status: 'completed',
+              artifacts: {
+                summary: 'draft (author), draft (author)',
+                artifact_count: 2,
+              },
+            },
+          ],
+        }}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: '过程稿' })).toBeInTheDocument()
+    expect(screen.getByText('分场大纲')).toBeInTheDocument()
+    expect(screen.getByText('正文初稿')).toBeInTheDocument()
+    expect(screen.getByText('已生成：分场规划 · 编剧（3 条记录）')).toBeInTheDocument()
+    expect(screen.getByText('已生成：正文初稿 · 执笔（2 条记录）')).toBeInTheDocument()
+    expect(screen.queryByText(/scene_plan/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/draft \(author\)/)).not.toBeInTheDocument()
+  })
+
   it('labels long-running workflow as possibly stuck', () => {
     render(
       <AuthorWorkbench

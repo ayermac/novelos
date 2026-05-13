@@ -379,7 +379,7 @@ export default function ProjectDetail() {
   const handleMarkRunStuck = useCallback(async (runId: string) => {
     const ok = await dialog.confirm({
       title: '标记卡住运行',
-      message: '确认将这条超时运行标记为阻塞？这不会删除正文或产物，之后可以清除阻塞并重新生成。',
+      message: '确认将这条超时运行标记为阻塞？这不会删除正文或过程稿，之后可以清除阻塞并重新生成。',
       tone: 'warning',
       confirmLabel: '标记为阻塞',
     })
@@ -401,7 +401,7 @@ export default function ProjectDetail() {
   const handleResetRunRecovery = useCallback(async (runId: string) => {
     const ok = await dialog.confirm({
       title: '清除阻塞并重置',
-      message: '确认清除本章阻塞/返修状态并回到 planned？正文、运行记录和产物会保留。',
+      message: '确认清除本章阻塞/返修状态并回到 planned？正文、运行记录和过程稿会保留。',
       tone: 'warning',
       confirmLabel: '清除并重置',
     })

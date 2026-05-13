@@ -8,6 +8,7 @@ import { StepStatus } from '../../hooks/useSSEStream'
 import { tWorkflowNodeLabel } from '../../lib/state-labels'
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
 import { post } from '../../lib/api'
+import { PROCESS_DRAFT_LABEL, formatArtifactSummary, getArtifactTitle } from '../../lib/artifacts'
 
 interface Chapter {
   chapter_number: number
@@ -47,6 +48,9 @@ interface Step {
   artifacts?: {
     summary: string
     output_preview?: string
+    artifact_labels?: unknown
+    artifact_count?: unknown
+    artifact_types?: unknown
     [key: string]: unknown
   } | null
 }
@@ -434,7 +438,7 @@ function ChapterTabBar({ activeTab, onTabChange, hasRuns }: {
   const tabs: { key: ChapterTabKey; label: string; disabled?: boolean }[] = [
     { key: 'content', label: '正文' },
     { key: 'workflow', label: '工作流', disabled: !hasRuns },
-    { key: 'artifacts', label: '产物' },
+    { key: 'artifacts', label: PROCESS_DRAFT_LABEL },
     { key: 'history', label: '历史', disabled: !hasRuns },
   ]
   return (
@@ -745,9 +749,9 @@ function ArtifactsTab({ runDetail }: { runDetail: RunDetailData | null }) {
   if (!runDetail) {
     return (
       <div className="artifacts-empty">
-        <div className="artifacts-empty-icon">产物</div>
+        <div className="artifacts-empty-icon">{PROCESS_DRAFT_LABEL}</div>
         <div className="artifacts-empty-title">尚未生成章节</div>
-        <div className="artifacts-empty-desc">生成章节后，可在此查看各 Agent 的产出摘要</div>
+        <div className="artifacts-empty-desc">生成章节后，可在此查看每一步 AI 的中间结果，例如分场大纲、初稿、润色稿和审稿意见。</div>
       </div>
     )
   }
@@ -759,9 +763,9 @@ function ArtifactsTab({ runDetail }: { runDetail: RunDetailData | null }) {
   if (stepsWithArtifacts.length === 0) {
     return (
       <div className="artifacts-empty">
-        <div className="artifacts-empty-icon">产物</div>
-        <div className="artifacts-empty-title">暂无产物数据</div>
-        <div className="artifacts-empty-desc">当前章节尚未完成生成流程，完成后可查看产物</div>
+        <div className="artifacts-empty-icon">{PROCESS_DRAFT_LABEL}</div>
+        <div className="artifacts-empty-title">暂无过程稿数据</div>
+        <div className="artifacts-empty-desc">当前章节尚未完成生成流程，完成后可查看过程稿。</div>
       </div>
     )
   }
@@ -771,15 +775,17 @@ function ArtifactsTab({ runDetail }: { runDetail: RunDetailData | null }) {
       {stepsWithArtifacts.map((step) => {
         const isExpanded = expandedKey === step.key
         const mark = agentMarks[step.key] || '文'
+        const title = getArtifactTitle(step.key, step.label)
+        const summary = formatArtifactSummary(step.artifacts)
 
         return (
           <div key={step.key} className="artifact-card">
             <div className="artifact-header">
               <span className="artifact-icon">{mark}</span>
-              <span className="artifact-label">{step.label}产物</span>
+              <span className="artifact-label">{title}</span>
               <span className="artifact-status">{'✓'}</span>
             </div>
-            <div className="artifact-summary">{step.artifacts!.summary}</div>
+            <div className="artifact-summary">{summary}</div>
             {step.artifacts!.output_preview && (
               <div className="artifact-preview-section">
                 {isExpanded ? (
@@ -788,7 +794,7 @@ function ArtifactsTab({ runDetail }: { runDetail: RunDetailData | null }) {
                     <button className="preview-toggle" onClick={() => setExpandedKey(null)}>收起</button>
                   </div>
                 ) : (
-                  <button className="preview-toggle" onClick={() => setExpandedKey(step.key)}>展开预览</button>
+                  <button className="preview-toggle" onClick={() => setExpandedKey(step.key)}>展开内容预览</button>
                 )}
               </div>
             )}
