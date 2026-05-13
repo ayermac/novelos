@@ -196,14 +196,20 @@ export default function Layout() {
         }
 
         .sidebar-brand {
-          padding: var(--space-5) var(--space-5) var(--space-4);
-          display: flex;
+          padding: var(--space-5) var(--space-4) var(--space-4);
+          display: grid;
+          grid-template-columns: 42px minmax(0, 1fr) 34px;
+          grid-template-areas:
+            "icon text toggle"
+            "icon version toggle";
           align-items: center;
-          gap: var(--space-3);
+          column-gap: var(--space-3);
+          row-gap: var(--space-2);
           border-bottom: 1px solid var(--border-color);
         }
 
         .sidebar.collapsed .sidebar-brand {
+          display: flex;
           flex-direction: column;
           justify-content: center;
           gap: var(--space-2);
@@ -211,6 +217,7 @@ export default function Layout() {
         }
 
         .brand-icon {
+          grid-area: icon;
           width: 42px;
           height: 42px;
           display: flex;
@@ -223,10 +230,12 @@ export default function Layout() {
         }
 
         .brand-text {
+          grid-area: text;
           display: flex;
           flex-direction: column;
           flex: 1;
           min-width: 0;
+          align-self: end;
         }
 
         .brand-name {
@@ -234,16 +243,25 @@ export default function Layout() {
           font-size: var(--text-lg);
           font-weight: var(--font-bold);
           color: var(--text-ink);
-          letter-spacing: -0.02em;
+          letter-spacing: 0;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .brand-tagline {
           font-size: var(--text-xs);
           color: var(--text-gray);
           margin-top: 2px;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
         }
 
         .version {
+          grid-area: version;
+          justify-self: start;
+          align-self: start;
           font-size: var(--text-xs);
           color: var(--ink-accent);
           background: rgba(176, 138, 75, 0.12);
@@ -251,9 +269,11 @@ export default function Layout() {
           padding: 3px 8px;
           border-radius: var(--radius-md);
           font-weight: var(--font-semibold);
+          white-space: nowrap;
         }
 
         .sidebar-collapse-toggle {
+          grid-area: toggle;
           width: 34px;
           height: 34px;
           display: inline-flex;
@@ -265,6 +285,7 @@ export default function Layout() {
           color: var(--text-charcoal);
           cursor: pointer;
           flex: 0 0 auto;
+          align-self: center;
           transition:
             background var(--duration-fast) var(--ease-out),
             color var(--duration-fast) var(--ease-out),
@@ -570,9 +591,14 @@ export default function Layout() {
           }
 
           .sidebar.collapsed .sidebar-brand {
-            flex-direction: row;
+            display: grid;
+            grid-template-columns: 42px minmax(0, 1fr);
+            grid-template-areas:
+              "icon text"
+              "icon version";
             justify-content: flex-start;
-            gap: var(--space-3);
+            column-gap: var(--space-3);
+            row-gap: var(--space-2);
             padding: var(--space-5) var(--space-5) var(--space-4);
           }
 
