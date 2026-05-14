@@ -17,7 +17,7 @@
 - **当前 WebUI 基线**: v5.6.1 Workbench Stabilization
 - **当前创作者闭环基线**: v5.7 Daily Writing Editing and Versioning
 - **当前稳定版本**: v5.8 Workflow Observability and Recovery
-- **状态**: v5.8.1 real LLM acceptance completed；下一阶段候选为 v5.9 Writing Skills and Prompt Template System
+- **状态**: v5.9.1 Skill Console UX completed；下一小版本候选为 v5.9.2 UI Controls Standardization
 - **测试基线**: pytest 1892/1892 passed；vitest 130/130 passed；frontend typecheck/lint/build passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
@@ -53,6 +53,7 @@
 - v5.7 日常写作编辑与版本管理规格: [planning/novel-factory-v5.7-daily-writing-editing-versioning-spec.md](planning/novel-factory-v5.7-daily-writing-editing-versioning-spec.md)
 - v5.7.1 内部构建完整与稳定规格: [planning/novel-factory-v5.7.1-internal-hardening-spec.md](planning/novel-factory-v5.7.1-internal-hardening-spec.md)
 - v5.8 工作流可观测与恢复增强规格: [planning/novel-factory-v5.8-workflow-observability-recovery-spec.md](planning/novel-factory-v5.8-workflow-observability-recovery-spec.md)
+- v5.9.2 UI 控件统一规格: [planning/novel-factory-v5.9.2-ui-controls-standardization-spec.md](planning/novel-factory-v5.9.2-ui-controls-standardization-spec.md)
 - v5.6 完成报告: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
 - v5.6 Review: [reviews/novel-factory-v5.6-author-workbench-review.md](reviews/novel-factory-v5.6-author-workbench-review.md)
 - 下一阶段方向: [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)
