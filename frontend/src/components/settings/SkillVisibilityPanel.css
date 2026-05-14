@@ -134,7 +134,8 @@
   padding: 8px;
   border: 1px solid var(--skill-border);
   border-radius: 8px;
-  background: #20252e;
+  background: #f7f8f7;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.72);
 }
 
 .skill-console-nav-item {
@@ -148,22 +149,23 @@
   border: 1px solid transparent;
   border-radius: 6px;
   background: transparent;
-  color: rgba(255, 255, 255, 0.78);
+  color: #344054;
   text-align: left;
   cursor: pointer;
 }
 
 .skill-console-nav-item:hover,
 .skill-console-nav-item:focus-visible {
-  border-color: rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(47, 111, 115, 0.2);
+  background: rgba(47, 111, 115, 0.06);
   outline: none;
-  box-shadow: 0 0 0 3px rgba(47, 111, 115, 0.24);
+  box-shadow: 0 0 0 3px rgba(47, 111, 115, 0.12);
 }
 
 .skill-console-nav-item.active {
-  background: #f7f3ea;
-  color: #1f2933;
+  border-color: rgba(47, 111, 115, 0.22);
+  background: #edf5f3;
+  color: #172033;
 }
 
 .nav-icon {
@@ -195,10 +197,11 @@
   min-width: 24px;
   padding: 2px 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(102, 112, 133, 0.14);
   font-size: 11px;
   font-weight: 700;
   text-align: center;
+  color: #475467;
 }
 
 .skill-console-nav-item.active .nav-badge {
@@ -601,10 +604,20 @@
 
 .orchestration-scroll {
   overflow-x: auto;
+  padding-bottom: 8px;
+  scrollbar-gutter: stable;
 }
 
 .agent-group-section + .agent-group-section {
   margin-top: 18px;
+}
+
+.agent-group-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 
 .agent-group-section h5 {
@@ -613,8 +626,17 @@
   font-size: 13px;
 }
 
+.agent-group-heading h5 {
+  margin-bottom: 0;
+}
+
+.agent-group-heading span {
+  color: var(--skill-muted);
+  font-size: 12px;
+}
+
 .orchestration-matrix {
-  min-width: 820px;
+  min-width: max(100%, var(--matrix-min-width, 820px));
   border: 1px solid var(--skill-border);
   border-radius: 8px;
   overflow: hidden;
@@ -622,7 +644,7 @@
 
 .matrix-row {
   display: grid;
-  grid-template-columns: 150px repeat(var(--stage-count, 4), minmax(180px, 1fr));
+  grid-template-columns: 140px repeat(var(--stage-count, 4), minmax(220px, 1fr));
 }
 
 .matrix-row:not(:last-child) {

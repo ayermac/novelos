@@ -676,7 +676,20 @@ export default function SkillVisibilityPanel() {
       return true
     })
   const filteredRuntimeSkills = skills.filter(searchMatchesSkill)
-  const allStages = Array.from(new Set(Object.values(skillConfig?.stages || {}).flat())).sort()
+  const getStagesForAgents = (agents: string[]) => {
+    const seen = new Set<string>()
+    const stages: string[] = []
+    agents.forEach((agent) => {
+      const agentStages = skillConfig?.stages[agent] || []
+      agentStages.forEach((stage) => {
+        if (!seen.has(stage)) {
+          seen.add(stage)
+          stages.push(stage)
+        }
+      })
+    })
+    return stages
+  }
   const groupAgents = AGENT_GROUPS.map((group) => ({
     ...group,
     agents: group.agents.filter((agent) => skillConfig?.agents.includes(agent)),
@@ -997,18 +1010,26 @@ export default function SkillVisibilityPanel() {
           ) : null}
 
           <div className="orchestration-scroll">
-            {agentGroups.map((group) => (
+            {agentGroups.map((group) => {
+              const groupStages = getStagesForAgents(group.agents)
+              return (
               <section key={group.key} className="agent-group-section">
-                <h5>{group.label}</h5>
+                <div className="agent-group-heading">
+                  <h5>{group.label}</h5>
+                  {groupStages.length > 4 && <span>可横向滚动查看全部阶段</span>}
+                </div>
                 <div
                   className="orchestration-matrix"
                   role="table"
                   aria-label={`${group.label} Skill matrix`}
-                  style={{ '--stage-count': allStages.length } as CSSProperties}
+                  style={{
+                    '--stage-count': groupStages.length,
+                    '--matrix-min-width': `${140 + groupStages.length * 220}px`,
+                  } as CSSProperties}
                 >
                   <div className="matrix-row matrix-head-row" role="row">
                     <div className="matrix-agent-cell" role="columnheader">Agent</div>
-                    {allStages.map((stage) => (
+                    {groupStages.map((stage) => (
                       <div key={stage} className="matrix-stage-head" role="columnheader">{stage}</div>
                     ))}
                   </div>
@@ -1019,7 +1040,7 @@ export default function SkillVisibilityPanel() {
                         <div className="matrix-agent-cell" role="rowheader">
                           <strong>{agent}</strong>
                         </div>
-                        {allStages.map((stage) => {
+                        {groupStages.map((stage) => {
                           const stageAllowed = (skillConfig.stages[agent] || []).includes(stage)
                           const mountedSkills = agentMounts[stage] || []
                           const available = stageAllowed ? getAvailableSkillsForStage(agent, stage) : []
@@ -1094,7 +1115,7 @@ export default function SkillVisibilityPanel() {
                   })}
                 </div>
               </section>
-            ))}
+            )})}
           </div>
         </div>
       )}
