@@ -28,6 +28,9 @@ def cmd_api(args) -> None:
     # Log startup info
     logger.info(f"Starting Novel Factory API server on {args.host}:{args.port}")
     logger.info(f"LLM mode: {args.llm_mode}")
+    logger.info(f"Log level: {args.log_level}")
+    if args.no_access_log:
+        logger.info("Access log: disabled")
     if args.db_path:
         logger.info(f"Database: {args.db_path}")
     if args.config:
@@ -38,5 +41,6 @@ def cmd_api(args) -> None:
         app,
         host=args.host,
         port=args.port,
-        log_level="info",
+        log_level=args.log_level,
+        access_log=not args.no_access_log,
     )

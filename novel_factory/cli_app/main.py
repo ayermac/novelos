@@ -759,6 +759,17 @@ def build_parser() -> argparse.ArgumentParser:
     api_parser.add_argument("--config", help="Path to config YAML file")
     api_parser.add_argument("--skills-config", help="Path to skills YAML config file (default: novel_factory/config/skills.yaml)")
     api_parser.add_argument("--llm-mode", choices=["stub", "real"], default="stub", help="LLM mode: stub for demo, real for actual LLM (default: stub)")
+    api_parser.add_argument(
+        "--log-level",
+        choices=["critical", "error", "warning", "info", "debug", "trace"],
+        default="info",
+        help="Uvicorn log level (default: info)",
+    )
+    api_parser.add_argument(
+        "--no-access-log",
+        action="store_true",
+        help="Disable per-request access logs for long-running local validation",
+    )
     api_parser.set_defaults(func=cmd_api)
 
     # Legacy aliases: 'init' → 'init-db', 'run' → 'run-chapter'

@@ -498,8 +498,8 @@ class TestNodeErrorPropagation:
             ("editor", editor_node, ChapterStatus.POLISHED.value),
         ]
 
-        for agent_name, node_func, status in test_cases:
-            chapter_num = hash(agent_name) % 1000 + 1
+        for idx, (agent_name, node_func, status) in enumerate(test_cases, start=1):
+            chapter_num = idx
             repo.add_chapter(project_id, chapter_num, title=f"Chapter {chapter_num}", status=status)
 
             state: FactoryState = {

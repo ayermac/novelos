@@ -457,6 +457,62 @@ class TestProductionNextAPI:
         assert data["health"]["target_chapter"] == 2
         os.unlink(db_path)
 
+    def test_published_chapter_with_next_instruction_but_no_chapter_continues_next(self, client, project_id):
+        """Published chapter should not re-plan when next chapter instruction already exists."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "next-inst-test", "name": "Next Inst Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 20, "target_words": 60000,
+        })
+        tc.post("/api/projects/next-inst-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 20, "target_words": 60000,
+        })
+        gid = tc.get("/api/projects/next-inst-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/next-inst-test/genesis/{gid}/approve")
+        tc.post("/api/projects/next-inst-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        repo.update_chapter_status("next-inst-test", 10, "reviewed")
+        repo.publish_chapter("next-inst-test", 10, expected_status="reviewed")
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "UPDATE projects SET current_chapter=? WHERE project_id=?",
+                (10, "next-inst-test"),
+            )
+            conn.execute(
+                "DELETE FROM chapters WHERE project_id=? AND chapter_number=?",
+                ("next-inst-test", 11),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        repo.create_instruction(
+            "next-inst-test",
+            11,
+            objective="承接第 10 章线索继续推进。",
+            key_events="追踪线索、遭遇阻碍、做出选择",
+            emotion_tone="紧张",
+            word_target=3000,
+        )
+
+        resp = tc.get("/api/projects/next-inst-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "continue_next_chapter"
+        assert data["next_action"].get("target_chapter") == 11
+        os.unlink(db_path)
+
     def test_production_next_routes_to_running_target_chapter(self, client, project_id):
         """Published current chapter should route to the running target instead of generating again."""
         from novel_factory.api_app import create_api_app

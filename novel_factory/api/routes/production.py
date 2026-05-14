@@ -690,6 +690,18 @@ def _determine_next_action(
         next_ch = current_chapter + 1
         next_chapter = repo.get_chapter(project_id, next_ch)
         if next_chapter is None:
+            next_instruction = repo.get_instruction(project_id, next_ch)
+            if next_instruction is not None:
+                return {
+                    "key": "continue_next_chapter",
+                    "label": f"继续生成第 {next_ch} 章",
+                    "description": "下一章写作指令已就绪，继续生成章节内容。",
+                    "primary": True,
+                    "action_url": f"/api/run/chapter",
+                    "method": "POST",
+                    "requires_confirmation": True,
+                    "target_chapter": next_ch,
+                }
             return {
                 "key": "generate_arc_plan",
                 "label": f"规划第 {next_ch} 章及后续",
