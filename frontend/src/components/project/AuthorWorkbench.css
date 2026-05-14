@@ -545,6 +545,46 @@
   line-height: 1.5;
 }
 
+.workflow-checkpoint-panel {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 12px;
+  border-radius: 8px;
+  background: var(--wb-paper-soft);
+  border: 1px solid var(--wb-border-soft);
+}
+
+.workflow-checkpoint-item {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.workflow-checkpoint-item span {
+  font-size: 11px;
+  color: var(--wb-text-muted);
+}
+
+.workflow-checkpoint-item strong {
+  min-width: 0;
+  font-size: 13px;
+  color: var(--wb-ink);
+  overflow-wrap: anywhere;
+}
+
+.workflow-checkpoint-summary {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--wb-border-soft);
+  font-size: 12px;
+  color: var(--wb-ink-secondary);
+}
+
 /* Right agent panel */
 .author-agent {
   width: clamp(292px, 22vw, 390px);
@@ -1668,6 +1708,10 @@
 
   .author-surface-body {
     overflow: visible;
+  }
+
+  .workflow-checkpoint-panel {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .author-readiness-strip {

@@ -30,6 +30,28 @@ from . import nodes
 logger = logging.getLogger(__name__)
 
 
+CANONICAL_WORKFLOW_NODES: tuple[dict[str, str], ...] = (
+    {"node_name": "health_check", "label": "预检", "node_group": "system", "node_type": "system"},
+    {"node_name": "task_discovery", "label": "任务识别", "node_group": "system", "node_type": "system"},
+    {"node_name": "planner", "label": "规划", "node_group": "creative_agent", "node_type": "creative_agent"},
+    {"node_name": "screenwriter", "label": "编剧", "node_group": "creative_agent", "node_type": "creative_agent"},
+    {"node_name": "author", "label": "执笔", "node_group": "creative_agent", "node_type": "creative_agent"},
+    {"node_name": "polisher", "label": "润色", "node_group": "creative_agent", "node_type": "creative_agent"},
+    {"node_name": "editor", "label": "审核", "node_group": "creative_agent", "node_type": "creative_agent"},
+    {"node_name": "memory_curator", "label": "记忆整理", "node_group": "support_agent", "node_type": "support_agent"},
+    {"node_name": "publisher", "label": "发布", "node_group": "terminal", "node_type": "terminal"},
+    {"node_name": "awaiting_publish", "label": "等待发布", "node_group": "terminal", "node_type": "terminal"},
+    {"node_name": "archive", "label": "归档", "node_group": "terminal", "node_type": "terminal"},
+    {"node_name": "revision_router", "label": "返修路由", "node_group": "router", "node_type": "router"},
+    {"node_name": "human_review", "label": "人工审核", "node_group": "terminal", "node_type": "terminal"},
+)
+
+
+def get_canonical_workflow_nodes() -> list[dict[str, str]]:
+    """Return the canonical LangGraph chapter workflow node skeleton."""
+    return [dict(node) for node in CANONICAL_WORKFLOW_NODES]
+
+
 def build_graph(
     settings: Settings | None = None,
     repo: Repository | None = None,

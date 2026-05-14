@@ -668,6 +668,8 @@ describe('AuthorWorkbench', () => {
             {
               node_name: 'screenwriter',
               label: '编剧',
+              node_group: 'creative_agent',
+              node_type: 'creative_agent',
               status: 'completed',
               started_at: '2026-05-13T10:00:00',
               completed_at: '2026-05-13T10:05:00',
@@ -678,6 +680,8 @@ describe('AuthorWorkbench', () => {
             {
               node_name: 'author',
               label: '执笔',
+              node_group: 'creative_agent',
+              node_type: 'creative_agent',
               status: 'completed',
               started_at: '2026-05-13T10:05:00',
               completed_at: '2026-05-13T10:10:00',
@@ -690,10 +694,163 @@ describe('AuthorWorkbench', () => {
       />
     )
     expect(screen.getByText('编剧')).toBeInTheDocument()
-    expect(screen.getByText('执笔')).toBeInTheDocument()
+    expect(screen.getAllByText('执笔').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('已生成章节场景规划').length).toBeGreaterThanOrEqual(1)
     expect(screen.queryAllByText(/章节场景规划/).length).toBeGreaterThanOrEqual(1)
     expect(screen.queryByText('scene_plan')).not.toBeInTheDocument()
+  })
+
+  it('workflow tab renders canonical LangGraph labels and groups from timeline', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-canon',
+          run_status: 'running',
+          current_node: 'memory_curator',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 4,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          checkpoint: {
+            checkpoint_exists: false,
+            checkpoint_node: null,
+            current_node: null,
+            checkpoint_summary: null,
+            state_keys: [],
+            recovery_available: false,
+          },
+          nodes: [
+            { node_name: 'health_check', label: '预检', node_group: 'system', node_type: 'system', status: 'completed', started_at: null, completed_at: null, duration_ms: null, messages: [], artifacts: [] },
+            { node_name: 'screenwriter', label: '编剧', node_group: 'creative_agent', node_type: 'creative_agent', status: 'completed', started_at: null, completed_at: null, duration_ms: null, messages: [], artifacts: [] },
+            { node_name: 'memory_curator', label: '记忆整理', node_group: 'support_agent', node_type: 'support_agent', status: 'running', started_at: null, completed_at: null, duration_ms: null, messages: ['开始记忆整理'], artifacts: [] },
+            { node_name: 'awaiting_publish', label: '等待发布', node_group: 'terminal', node_type: 'terminal', status: 'pending', started_at: null, completed_at: null, duration_ms: null, messages: [], artifacts: [] },
+            { node_name: 'archive', label: '归档', node_group: 'terminal', node_type: 'terminal', status: 'pending', started_at: null, completed_at: null, duration_ms: null, messages: [], artifacts: [] },
+            { node_name: 'revision_router', label: '返修路由', node_group: 'router', node_type: 'router', status: 'pending', started_at: null, completed_at: null, duration_ms: null, messages: [], artifacts: [] },
+            { node_name: 'human_review', label: '人工审核', node_group: 'terminal', node_type: 'terminal', status: 'pending', started_at: null, completed_at: null, duration_ms: null, messages: [], artifacts: [] },
+          ],
+        }}
+      />
+    )
+
+    expect(screen.getByText('系统节点')).toBeInTheDocument()
+    expect(screen.getByText('创作 Agent')).toBeInTheDocument()
+    expect(screen.getByText('支撑 Agent')).toBeInTheDocument()
+    expect(screen.getByText('终态/人工节点')).toBeInTheDocument()
+    expect(screen.getAllByText('记忆整理').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('等待发布')).toBeInTheDocument()
+    expect(screen.getByText('归档')).toBeInTheDocument()
+    expect(screen.getByText('返修路由')).toBeInTheDocument()
+    expect(screen.getByText('人工审核')).toBeInTheDocument()
+  })
+
+  it('checkpoint panel renders available and unavailable states', () => {
+    const timelineBase = {
+      project_id: 'test-proj',
+      chapter_number: 3,
+      run_id: 'run-checkpoint',
+      run_status: 'running',
+      current_node: 'author',
+      started_at: '2026-05-13T10:00:00',
+      elapsed_minutes: 1,
+      is_stale: false,
+      recovery: { recommended_action: null, reason: null, safe_actions: [] },
+      nodes: [],
+    }
+
+    const { rerender } = render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          ...timelineBase,
+          checkpoint: {
+            checkpoint_exists: true,
+            checkpoint_node: 'author',
+            current_node: 'author',
+            checkpoint_summary: 'node=author, status=drafted',
+            state_keys: ['chapter_status', 'current_node'],
+            recovery_available: true,
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByText('Checkpoint')).toBeInTheDocument()
+    expect(screen.getByText('存在')).toBeInTheDocument()
+    expect(screen.getByText('可从 checkpoint 恢复')).toBeInTheDocument()
+    expect(screen.getByText(/state keys：chapter_status、current_node/)).toBeInTheDocument()
+
+    rerender(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          ...timelineBase,
+          checkpoint: {
+            checkpoint_exists: false,
+            checkpoint_node: null,
+            current_node: null,
+            checkpoint_summary: null,
+            state_keys: [],
+            recovery_available: false,
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByText('不可用')).toBeInTheDocument()
+    expect(screen.getByText('无 checkpoint 恢复')).toBeInTheDocument()
+  })
+
+  it('legacy runDetail fallback is clearly labeled', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        runDetail={{
+          run_id: 'run-legacy',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'completed',
+          chapter_status: 'reviewed',
+          current_node: 'editor',
+          llm_mode: 'stub',
+          started_at: '2026-05-13T10:00:00',
+          steps: [{ key: 'editor', label: '审核', description: '完成', status: 'completed' }],
+        }}
+      />
+    )
+
+    expect(screen.getByText(/Legacy fallback/)).toBeInTheDocument()
+    expect(screen.getByText(/可能缺少 memory_curator、awaiting_publish、archive/)).toBeInTheDocument()
+  })
+
+  it('running workflow fallback uses canonical nodes beyond the old five steps', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        isStreaming
+        sseSteps={{
+          author: {
+            status: 'running',
+            started_at: '2026-05-13T10:00:00',
+            logs: [{ id: 'log-1', timestamp: '2026-05-13T10:00:00', level: 'info', message: '开始执笔撰写' }],
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByText('实时事件备用视图')).toBeInTheDocument()
+    expect(screen.getByText('预检')).toBeInTheDocument()
+    expect(screen.getByText('任务识别')).toBeInTheDocument()
+    expect(screen.getByText('记忆整理')).toBeInTheDocument()
+    expect(screen.getByText('等待发布')).toBeInTheDocument()
+    expect(screen.getByText('归档')).toBeInTheDocument()
   })
 
   it('shows running node loading animation in timeline', () => {
@@ -737,7 +894,9 @@ describe('AuthorWorkbench', () => {
       />
     )
     // Running node should have loading indicator (pulse animation class)
-    const runningStep = screen.getByText('润色').closest('.step-item')
+    const runningStep = screen.getAllByText('润色')
+      .map((node) => node.closest('.step-item'))
+      .find(Boolean)
     expect(runningStep).toHaveClass('step-running')
   })
 

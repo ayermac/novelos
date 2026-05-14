@@ -148,6 +148,80 @@ def checkpoint_thread_exists(
         return False
 
 
+def inspect_checkpoint_thread(
+    repo_db_path: str | Path | None,
+    project_id: str,
+    chapter_number: int,
+) -> dict[str, Any]:
+    """Return a safe, UI-facing checkpoint summary for a chapter thread."""
+    summary: dict[str, Any] = {
+        "checkpoint_exists": False,
+        "checkpoint_node": None,
+        "current_node": None,
+        "checkpoint_summary": None,
+        "state_keys": [],
+        "recovery_available": False,
+    }
+    checkpoint_db_path = derive_checkpoint_db_path(repo_db_path)
+    if checkpoint_db_path is None or not checkpoint_db_path.exists():
+        return summary
+
+    thread_id = get_checkpoint_thread_id(project_id, chapter_number)
+    config = {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}}
+    try:
+        with get_sqlite_checkpointer(db_path=checkpoint_db_path) as checkpointer:
+            checkpoint_tuple = None
+            if hasattr(checkpointer, "get_tuple"):
+                checkpoint_tuple = checkpointer.get_tuple(config)
+            checkpoint = checkpoint_tuple.checkpoint if checkpoint_tuple else checkpointer.get(config)
+            metadata = getattr(checkpoint_tuple, "metadata", None) if checkpoint_tuple else None
+    except Exception as e:
+        logger.warning(
+            "Failed to summarize checkpoint thread %s from %s: %s",
+            thread_id,
+            checkpoint_db_path,
+            e,
+        )
+        return summary
+
+    if not checkpoint:
+        return summary
+
+    state_values: dict[str, Any] = {}
+    if isinstance(checkpoint, dict):
+        channel_values = checkpoint.get("channel_values")
+        if isinstance(channel_values, dict):
+            state_values = channel_values
+
+    checkpoint_node = None
+    if isinstance(metadata, dict):
+        writes = metadata.get("writes")
+        if isinstance(writes, dict) and writes:
+            checkpoint_node = next(iter(writes.keys()), None)
+        checkpoint_node = checkpoint_node or metadata.get("source")
+    current_node = state_values.get("current_node") or checkpoint_node
+    state_keys = sorted(str(key) for key in state_values.keys())[:30]
+    status = state_values.get("chapter_status") or state_values.get("current_stage")
+    checkpoint_summary = None
+    if status or current_node:
+        parts = []
+        if current_node:
+            parts.append(f"node={current_node}")
+        if status:
+            parts.append(f"status={status}")
+        checkpoint_summary = ", ".join(parts)
+
+    summary.update({
+        "checkpoint_exists": True,
+        "checkpoint_node": checkpoint_node,
+        "current_node": current_node,
+        "checkpoint_summary": checkpoint_summary,
+        "state_keys": state_keys,
+        "recovery_available": True,
+    })
+    return summary
+
+
 def resume_from_checkpoint(
     graph: Any,
     project_id: str,

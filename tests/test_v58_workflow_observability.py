@@ -156,7 +156,14 @@ class TestWorkflowTimelineApi:
         assert data["chapter_number"] == 1
         assert data["run_id"] is None
         assert data["run_status"] is None
-        assert data["nodes"] == []
+        node_names = [node["node_name"] for node in data["nodes"]]
+        assert "health_check" in node_names
+        assert "memory_curator" in node_names
+        assert "awaiting_publish" in node_names
+        assert "archive" in node_names
+        assert all(node["status"] == "pending" for node in data["nodes"])
+        assert data["checkpoint"]["checkpoint_exists"] is False
+        assert data["checkpoint"]["recovery_available"] is False
         assert data["is_stale"] is False
 
     def test_timeline_returns_nodes_and_artifacts(self, tmp_path):
@@ -190,10 +197,11 @@ class TestWorkflowTimelineApi:
         data = resp.json()["data"]
         assert data["run_id"] == run_id
         assert data["run_status"] == "completed"
-        assert len(data["nodes"]) == 2
+        assert len(data["nodes"]) >= 13
 
         screenwriter_node = next(n for n in data["nodes"] if n["node_name"] == "screenwriter")
         assert screenwriter_node["label"] == "编剧"
+        assert screenwriter_node["node_group"] == "creative_agent"
         assert screenwriter_node["status"] == "completed"
         assert "已生成章节场景规划" in screenwriter_node["messages"]
         assert len(screenwriter_node["artifacts"]) == 1
@@ -203,6 +211,130 @@ class TestWorkflowTimelineApi:
         author_node = next(n for n in data["nodes"] if n["node_name"] == "author")
         assert author_node["label"] == "执笔"
         assert author_node["status"] == "completed"
+        memory_node = next(n for n in data["nodes"] if n["node_name"] == "memory_curator")
+        awaiting_node = next(n for n in data["nodes"] if n["node_name"] == "awaiting_publish")
+        assert memory_node["label"] == "记忆整理"
+        assert memory_node["node_group"] == "support_agent"
+        assert memory_node["status"] == "pending"
+        assert awaiting_node["label"] == "等待发布"
+        assert awaiting_node["node_group"] == "terminal"
+
+    def test_timeline_includes_complete_canonical_node_skeleton(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_skeleton", status="planned")
+        _seed_run(repo, "obs_skeleton", status="running", current_node="planner")
+
+        resp = client.get("/api/projects/obs_skeleton/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        nodes = {node["node_name"]: node for node in data["nodes"]}
+        expected_groups = {
+            "health_check": "system",
+            "task_discovery": "system",
+            "planner": "creative_agent",
+            "screenwriter": "creative_agent",
+            "author": "creative_agent",
+            "polisher": "creative_agent",
+            "editor": "creative_agent",
+            "memory_curator": "support_agent",
+            "publisher": "terminal",
+            "awaiting_publish": "terminal",
+            "archive": "terminal",
+            "revision_router": "router",
+            "human_review": "terminal",
+        }
+        assert list(nodes.keys())[:13] == list(expected_groups.keys())
+        for node_name, group in expected_groups.items():
+            assert nodes[node_name]["node_group"] == group
+            assert nodes[node_name]["node_type"] == group
+        assert nodes["planner"]["status"] == "running"
+        assert nodes["screenwriter"]["status"] == "pending"
+
+    def test_timeline_overlays_events_onto_canonical_nodes(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_overlay", status="drafted")
+        run_id = _seed_run(repo, "obs_overlay", status="running", current_node="polisher")
+        repo.create_workflow_node_event(
+            run_id=run_id, project_id="obs_overlay", chapter_number=1,
+            node_name="author", event_type="started", status="running", message="开始执笔撰写",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id, project_id="obs_overlay", chapter_number=1,
+            node_name="author", event_type="completed", status="completed", message="已生成章节初稿",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id, project_id="obs_overlay", chapter_number=1,
+            node_name="polisher", event_type="started", status="running", message="开始润色",
+        )
+
+        resp = client.get("/api/projects/obs_overlay/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        nodes = {node["node_name"]: node for node in resp.json()["data"]["nodes"]}
+        assert nodes["author"]["status"] == "completed"
+        assert nodes["polisher"]["status"] == "running"
+        assert nodes["editor"]["status"] == "pending"
+        assert "已生成章节初稿" in nodes["author"]["messages"]
+
+    def test_timeline_marks_current_node_when_no_events_exist(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_current_fallback", status="drafted")
+        _seed_run(repo, "obs_current_fallback", status="running", current_node="polisher")
+
+        resp = client.get("/api/projects/obs_current_fallback/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        nodes = {node["node_name"]: node for node in resp.json()["data"]["nodes"]}
+        assert nodes["polisher"]["status"] == "running"
+        assert nodes["author"]["status"] == "pending"
+
+    def test_timeline_maps_legacy_publish_current_node_to_publisher(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_publish_alias", status="published")
+        _seed_run(repo, "obs_publish_alias", status="completed", current_node="publish")
+
+        resp = client.get("/api/projects/obs_publish_alias/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        nodes = {node["node_name"]: node for node in resp.json()["data"]["nodes"]}
+        assert nodes["publisher"]["status"] == "completed"
+
+    def test_timeline_includes_checkpoint_metadata_when_available(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_checkpoint", status="drafted")
+        _seed_run(repo, "obs_checkpoint", status="running", current_node="author")
+
+        from novel_factory.workflow.checkpoint import (
+            derive_checkpoint_db_path,
+            get_checkpoint_thread_id,
+            get_sqlite_checkpointer,
+        )
+
+        cp_path = derive_checkpoint_db_path(repo.db_path)
+        thread_id = get_checkpoint_thread_id("obs_checkpoint", 1)
+        with get_sqlite_checkpointer(cp_path) as cp:
+            cp.put(
+                {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}},
+                {
+                    "v": 1,
+                    "ts": "2026-05-13T10:00:00Z",
+                    "id": "ckpt-obs",
+                    "channel_values": {
+                        "current_node": "author",
+                        "chapter_status": "drafted",
+                    },
+                    "channel_versions": {},
+                    "versions_seen": {},
+                },
+                {"source": "author", "writes": {"author": {"chapter_status": "drafted"}}},
+                {},
+            )
+
+        resp = client.get("/api/projects/obs_checkpoint/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        checkpoint = resp.json()["data"]["checkpoint"]
+        assert checkpoint["checkpoint_exists"] is True
+        assert checkpoint["checkpoint_node"] == "author"
+        assert checkpoint["current_node"] == "author"
+        assert checkpoint["recovery_available"] is True
+        assert "chapter_status" in checkpoint["state_keys"]
 
     def test_timeline_returns_recovery_for_stale_run(self, tmp_path):
         client, repo = _make_client(tmp_path)

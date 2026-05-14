@@ -155,6 +155,8 @@ export interface WorkflowTimelineArtifact {
 export interface WorkflowTimelineNode {
   node_name: string
   label: string
+  node_group?: 'system' | 'creative_agent' | 'support_agent' | 'terminal' | 'router' | 'unknown'
+  node_type?: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
   started_at: string | null
   completed_at: string | null
@@ -174,6 +176,15 @@ export interface WorkflowTimelineRecovery {
   }[]
 }
 
+export interface WorkflowTimelineCheckpoint {
+  checkpoint_exists: boolean
+  checkpoint_node: string | null
+  current_node: string | null
+  checkpoint_summary: string | null
+  state_keys: string[]
+  recovery_available: boolean
+}
+
 export interface WorkflowTimelineData {
   project_id: string
   chapter_number: number
@@ -184,5 +195,6 @@ export interface WorkflowTimelineData {
   elapsed_minutes: number | null
   is_stale: boolean
   recovery: WorkflowTimelineRecovery
+  checkpoint?: WorkflowTimelineCheckpoint
   nodes: WorkflowTimelineNode[]
 }

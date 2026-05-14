@@ -45,6 +45,8 @@ interface Step {
   key: string
   label: string
   description: string
+  node_group?: 'system' | 'creative_agent' | 'support_agent' | 'terminal' | 'router' | 'unknown'
+  node_type?: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
   error_message?: string
   logs?: {
@@ -89,19 +91,30 @@ function elapsedMinutesSince(value?: string | null): number | null {
   return Math.max(0, Math.floor((Date.now() - timestamp) / 60000))
 }
 
-const BASE_GENERATING_STEPS = [
-  { key: 'screenwriter', label: '编剧' },
-  { key: 'author', label: '执笔' },
-  { key: 'polisher', label: '润色' },
-  { key: 'editor', label: '审核' },
-  { key: 'publish', label: '发布' },
+const CANONICAL_GENERATING_STEPS = [
+  { key: 'health_check', label: '预检', node_group: 'system' as const },
+  { key: 'task_discovery', label: '任务识别', node_group: 'system' as const },
+  { key: 'planner', label: '规划', node_group: 'creative_agent' as const },
+  { key: 'screenwriter', label: '编剧', node_group: 'creative_agent' as const },
+  { key: 'author', label: '执笔', node_group: 'creative_agent' as const },
+  { key: 'polisher', label: '润色', node_group: 'creative_agent' as const },
+  { key: 'editor', label: '审核', node_group: 'creative_agent' as const },
+  { key: 'memory_curator', label: '记忆整理', node_group: 'support_agent' as const },
+  { key: 'publisher', label: '发布', node_group: 'terminal' as const },
+  { key: 'awaiting_publish', label: '等待发布', node_group: 'terminal' as const },
+  { key: 'archive', label: '归档', node_group: 'terminal' as const },
+  { key: 'revision_router', label: '返修路由', node_group: 'router' as const },
+  { key: 'human_review', label: '人工审核', node_group: 'terminal' as const },
 ]
 
 function getGeneratingSteps(sseSteps: Record<string, StepStatus>) {
-  if (sseSteps.planner) {
-    return [{ key: 'planner', label: '规划' }, ...BASE_GENERATING_STEPS]
-  }
-  return BASE_GENERATING_STEPS
+  const activeKeys = Object.keys(sseSteps)
+  if (activeKeys.length === 0) return CANONICAL_GENERATING_STEPS
+  const knownKeys = new Set(CANONICAL_GENERATING_STEPS.map((step) => step.key))
+  const customSteps = activeKeys
+    .filter((key) => key !== 'publish' && !knownKeys.has(key))
+    .map((key) => ({ key, label: tWorkflowNodeLabel(key), node_group: 'unknown' as const }))
+  return [...CANONICAL_GENERATING_STEPS, ...customSteps]
 }
 
 function getGeneratingStepKeys(sseSteps: Record<string, StepStatus>) {
@@ -522,8 +535,8 @@ function WorkflowBody({
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
 }) {
-  // v5.8: Prefer timeline data when available
-  if (timeline && !isStreaming) {
+  // v5.8.2: Timeline API is the primary workflow truth when available.
+  if (timeline) {
     const nodeLabel = tWorkflowNodeLabel(timeline.current_node)
     const statusLabel = timeline.run_status ? tWorkflowStatus(timeline.run_status) : '—'
     const isStale = timeline.is_stale
@@ -549,12 +562,15 @@ function WorkflowBody({
             : '最近一次运行记录如下。'
 
     const recovery = timeline.recovery
+    const checkpoint = timeline.checkpoint
 
     // Convert timeline nodes to WorkflowTimeline Step format
     const timelineSteps: Step[] = timeline.nodes.map((n) => ({
       key: n.node_name,
       label: n.label,
       description: n.messages[0] || '',
+      node_group: n.node_group,
+      node_type: n.node_type,
       status: n.status as Step['status'],
       logs: n.messages.map((m) => ({ level: 'info' as const, message: m })),
       artifacts: n.artifacts.length > 0 ? {
@@ -619,6 +635,31 @@ function WorkflowBody({
                   )}
                 </button>
               )}
+            </div>
+          )}
+        </div>
+        <div className="workflow-checkpoint-panel">
+          <div className="workflow-checkpoint-item">
+            <span>当前节点</span>
+            <strong>{nodeLabel}</strong>
+          </div>
+          <div className="workflow-checkpoint-item">
+            <span>运行状态</span>
+            <strong>{statusLabel}</strong>
+          </div>
+          <div className="workflow-checkpoint-item">
+            <span>Checkpoint</span>
+            <strong>{checkpoint?.checkpoint_exists ? '存在' : '不可用'}</strong>
+          </div>
+          <div className="workflow-checkpoint-item">
+            <span>恢复能力</span>
+            <strong>{checkpoint?.recovery_available ? '可从 checkpoint 恢复' : '无 checkpoint 恢复'}</strong>
+          </div>
+          {(checkpoint?.checkpoint_node || checkpoint?.checkpoint_summary || (checkpoint?.state_keys?.length || 0) > 0) && (
+            <div className="workflow-checkpoint-summary">
+              {checkpoint?.checkpoint_node && <span>checkpoint 节点：{tWorkflowNodeLabel(checkpoint.checkpoint_node)}</span>}
+              {checkpoint?.checkpoint_summary && <span>{checkpoint.checkpoint_summary}</span>}
+              {(checkpoint?.state_keys?.length || 0) > 0 && <span>state keys：{checkpoint?.state_keys.slice(0, 8).join('、')}</span>}
             </div>
           )}
         </div>
@@ -719,6 +760,12 @@ function WorkflowBody({
             </div>
           )}
         </div>
+        <div className="alert alert-warn" style={{ marginBottom: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>Legacy fallback：正在显示运行详情旧版步骤</div>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+            工作流时间线暂不可用，此视图可能缺少 memory_curator、awaiting_publish、archive 等 LangGraph 节点。
+          </div>
+        </div>
         <WorkflowTimeline steps={runDetail.steps} />
       </div>
     )
@@ -738,7 +785,7 @@ function WorkflowBody({
     const hasSseData = Object.keys(sseSteps).length > 0
     const stepKeys = getGeneratingStepKeys(sseSteps)
     const steps = getGeneratingSteps(sseSteps).map((s) => {
-      const stepStatus = sseSteps[s.key]
+      const stepStatus = sseSteps[s.key] || (s.key === 'publisher' ? sseSteps.publish : undefined)
       let status: Step['status'] = 'pending'
       let description = '等待中...'
       let logs: Step['logs'] = []
@@ -759,7 +806,7 @@ function WorkflowBody({
       if (status === 'running' && (!logs || logs.length === 0)) {
         logs = [{ level: 'info', message: '节点运行中，正在等待模型或工具返回。' }]
       }
-      return { key: s.key, label: s.label, description, status, logs }
+      return { key: s.key, label: s.label, node_group: s.node_group, description, status, logs }
     })
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -768,6 +815,12 @@ function WorkflowBody({
           <div>
             <div className="workflow-running-title">工作流运行中</div>
             <div className="workflow-running-desc">每个节点的开始、完成和失败信息会实时写入节点日志。</div>
+          </div>
+        </div>
+        <div className="alert alert-warn" style={{ marginBottom: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 600 }}>实时事件备用视图</div>
+          <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+            正在等待工作流时间线刷新，先按 canonical 节点骨架显示实时事件。
           </div>
         </div>
         <WorkflowTimeline steps={steps} />

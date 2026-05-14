@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Request
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ...workflow.graph import get_canonical_workflow_nodes
 
 router = APIRouter()
 
@@ -147,8 +148,10 @@ def _build_recovery(
 def _build_node_timeline(
     events: list[dict],
     artifacts: list[dict],
+    run_status: str | None = None,
+    current_node: str | None = None,
 ) -> list[dict]:
-    """Build node timeline from workflow_node_events.
+    """Build canonical node timeline overlaid with workflow_node_events.
 
     Groups events by node_name and derives status, duration, messages, artifacts.
     """
@@ -168,7 +171,14 @@ def _build_node_timeline(
             node_artifacts.setdefault(aid, []).append(art)
 
     nodes = []
-    for node_name, evs in node_events.items():
+    seen_nodes: set[str] = set()
+    canonical_nodes = get_canonical_workflow_nodes()
+
+    current_node_for_timeline = "publisher" if current_node == "publish" else current_node
+
+    def build_node(base: dict[str, Any]) -> dict[str, Any]:
+        node_name = base["node_name"]
+        evs = node_events.get(node_name, [])
         # Sort by created_at
         evs = sorted(evs, key=lambda e: e.get("created_at") or "")
         started_ev = next((e for e in evs if e.get("event_type") == "started"), None)
@@ -181,6 +191,13 @@ def _build_node_timeline(
             status = "completed"
         elif started_ev:
             status = "running"
+        elif node_name == current_node_for_timeline and run_status in {"running", "blocked", "failed", "completed"}:
+            status = {
+                "running": "running",
+                "blocked": "blocked",
+                "failed": "failed",
+                "completed": "completed",
+            }[run_status]
         else:
             status = "pending"
 
@@ -210,18 +227,50 @@ def _build_node_timeline(
                 "artifact_id": art.get("id", ""),
             })
 
-        nodes.append({
+        return {
             "node_name": node_name,
-            "label": _node_label(node_name),
+            "label": base.get("label") or _node_label(node_name),
+            "node_group": base.get("node_group", "unknown"),
+            "node_type": base.get("node_type", base.get("node_group", "unknown")),
             "status": status,
             "started_at": started_at,
             "completed_at": completed_at,
             "duration_ms": duration_ms,
             "messages": messages,
             "artifacts": artifact_refs,
-        })
+        }
+
+    for base in canonical_nodes:
+        nodes.append(build_node(base))
+        seen_nodes.add(base["node_name"])
+
+    # Preserve visibility for any legacy/custom node events not in the canonical graph.
+    for node_name in node_events:
+        if node_name in seen_nodes:
+            continue
+        nodes.append(build_node({
+            "node_name": node_name,
+            "label": _node_label(node_name),
+            "node_group": "unknown",
+            "node_type": "unknown",
+        }))
 
     return nodes
+
+
+def _checkpoint_metadata(repo: Any, project_id: str, chapter_number: int) -> dict[str, Any]:
+    try:
+        from ...workflow.checkpoint import inspect_checkpoint_thread
+        return inspect_checkpoint_thread(repo.db_path, project_id, chapter_number)
+    except Exception:
+        return {
+            "checkpoint_exists": False,
+            "checkpoint_node": None,
+            "current_node": None,
+            "checkpoint_summary": None,
+            "state_keys": [],
+            "recovery_available": False,
+        }
 
 
 @router.get("/projects/{project_id}/chapters/{chapter_number}/workflow-timeline")
@@ -300,6 +349,7 @@ async def get_workflow_timeline(
 
         # No run -> empty timeline
         if not target_run:
+            checkpoint = _checkpoint_metadata(repo, project_id, chapter_number)
             return envelope_response({
                 "project_id": project_id,
                 "chapter_number": chapter_number,
@@ -314,7 +364,8 @@ async def get_workflow_timeline(
                     "reason": None,
                     "safe_actions": [],
                 },
-                "nodes": [],
+                "checkpoint": checkpoint,
+                "nodes": _build_node_timeline([], []),
             })
 
         run_id_str = target_run.get("id") or target_run.get("run_id", "")
@@ -340,7 +391,13 @@ async def get_workflow_timeline(
         except Exception:
             artifacts = []
 
-        nodes = _build_node_timeline(events, artifacts)
+        nodes = _build_node_timeline(
+            events,
+            artifacts,
+            run_status=run_status,
+            current_node=current_node,
+        )
+        checkpoint = _checkpoint_metadata(repo, project_id, chapter_number)
 
         return envelope_response({
             "project_id": project_id,
@@ -352,6 +409,7 @@ async def get_workflow_timeline(
             "elapsed_minutes": stale_info.get("elapsed_minutes"),
             "is_stale": stale_info.get("is_stale", False),
             "recovery": recovery,
+            "checkpoint": checkpoint,
             "nodes": nodes,
         })
 

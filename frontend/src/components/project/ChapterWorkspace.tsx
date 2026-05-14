@@ -43,6 +43,8 @@ interface Step {
   key: string
   label: string
   description: string
+  node_group?: 'system' | 'creative_agent' | 'support_agent' | 'terminal' | 'router' | 'unknown'
+  node_type?: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
   error_message?: string
   artifacts?: {
@@ -71,19 +73,30 @@ interface RunDetailData {
 
 export type ChapterTabKey = 'content' | 'workflow' | 'artifacts' | 'history'
 
-const BASE_GENERATING_STEPS = [
-  { key: 'screenwriter', label: '编剧' },
-  { key: 'author', label: '执笔' },
-  { key: 'polisher', label: '润色' },
-  { key: 'editor', label: '审核' },
-  { key: 'publish', label: '发布' },
+const CANONICAL_GENERATING_STEPS = [
+  { key: 'health_check', label: '预检', node_group: 'system' as const },
+  { key: 'task_discovery', label: '任务识别', node_group: 'system' as const },
+  { key: 'planner', label: '规划', node_group: 'creative_agent' as const },
+  { key: 'screenwriter', label: '编剧', node_group: 'creative_agent' as const },
+  { key: 'author', label: '执笔', node_group: 'creative_agent' as const },
+  { key: 'polisher', label: '润色', node_group: 'creative_agent' as const },
+  { key: 'editor', label: '审核', node_group: 'creative_agent' as const },
+  { key: 'memory_curator', label: '记忆整理', node_group: 'support_agent' as const },
+  { key: 'publisher', label: '发布', node_group: 'terminal' as const },
+  { key: 'awaiting_publish', label: '等待发布', node_group: 'terminal' as const },
+  { key: 'archive', label: '归档', node_group: 'terminal' as const },
+  { key: 'revision_router', label: '返修路由', node_group: 'router' as const },
+  { key: 'human_review', label: '人工审核', node_group: 'terminal' as const },
 ]
 
 function getGeneratingSteps(sseSteps: Record<string, StepStatus>) {
-  if (sseSteps.planner) {
-    return [{ key: 'planner', label: '规划' }, ...BASE_GENERATING_STEPS]
-  }
-  return BASE_GENERATING_STEPS
+  const activeKeys = Object.keys(sseSteps)
+  if (activeKeys.length === 0) return CANONICAL_GENERATING_STEPS
+  const knownKeys = new Set(CANONICAL_GENERATING_STEPS.map((step) => step.key))
+  const customSteps = activeKeys
+    .filter((key) => key !== 'publish' && !knownKeys.has(key))
+    .map((key) => ({ key, label: tWorkflowNodeLabel(key), node_group: 'unknown' as const }))
+  return [...CANONICAL_GENERATING_STEPS, ...customSteps]
 }
 
 function getGeneratingStepKeys(sseSteps: Record<string, StepStatus>) {
@@ -703,7 +716,7 @@ function WorkflowTab({ runDetail, generating, isLaunching, sseSteps, isStreaming
     const stepKeys = getGeneratingStepKeys(sseSteps)
 
     const steps: Step[] = getGeneratingSteps(sseSteps).map((s) => {
-      const stepStatus = sseSteps[s.key]
+      const stepStatus = sseSteps[s.key] || (s.key === 'publisher' ? sseSteps.publish : undefined)
       let status: Step['status'] = 'pending'
       let description = '等待中...'
 
@@ -721,7 +734,7 @@ function WorkflowTab({ runDetail, generating, isLaunching, sseSteps, isStreaming
         }
       }
 
-      return { key: s.key, label: s.label, description, status }
+      return { key: s.key, label: s.label, node_group: s.node_group, description, status }
     })
 
     return <WorkflowTimeline steps={steps} />
