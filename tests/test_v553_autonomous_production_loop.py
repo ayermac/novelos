@@ -457,8 +457,8 @@ class TestProductionNextAPI:
         assert data["health"]["target_chapter"] == 2
         os.unlink(db_path)
 
-    def test_production_next_reports_running_target_chapter(self, client, project_id):
-        """Published current chapter should report running workflow on target next chapter."""
+    def test_production_next_routes_to_running_target_chapter(self, client, project_id):
+        """Published current chapter should route to the running target instead of generating again."""
         from novel_factory.api_app import create_api_app
         from novel_factory.db.repository import Repository
         from novel_factory.db.connection import init_db
@@ -492,8 +492,10 @@ class TestProductionNextAPI:
         resp = tc.get("/api/projects/target-run-test/production-next")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["next_action"]["key"] == "continue_next_chapter"
+        assert data["next_action"]["key"] == "view_running_workflow"
         assert data["next_action"]["target_chapter"] == 2
+        assert data["next_action"]["run_id"] == run_id
+        assert data["next_action"]["method"] == "GET"
         assert data["health"]["has_running_chapter_workflow"] is False
         assert data["health"]["has_running_target_workflow"] is True
         assert data["health"]["target_workflow_run_id"] == run_id

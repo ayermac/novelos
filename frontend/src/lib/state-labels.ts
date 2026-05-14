@@ -81,6 +81,7 @@ export const ACTION_KEY_LABEL: Record<string, string> = {
   apply_memory_updates: '应用记忆更新',
   generate_chapter: '生成章节',
   continue_next_chapter: '继续下一章',
+  view_running_workflow: '查看运行进度',
   review_chapter: '审核章节',
   recover_blocked_run: '恢复阻塞运行',
   review_existing_chapter_content: '检查已有正文',

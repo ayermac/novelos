@@ -150,6 +150,23 @@ def _target_workflow_health(repo, project_id: str, target_chapter: int, timeout_
     }
 
 
+def _view_running_workflow_action(project_id: str, chapter_number: int, run: dict | None) -> dict:
+    """Return a non-generating action for a chapter that is already running."""
+    current_node = run.get("current_node") if run else None
+    node_desc = f"当前节点：{current_node}。" if current_node else ""
+    return {
+        "key": "view_running_workflow",
+        "label": f"查看第 {chapter_number} 章运行进度",
+        "description": f"第 {chapter_number} 章已有工作流正在运行，{node_desc}请先查看进度，不要重复启动生成。",
+        "primary": True,
+        "action_url": f"/projects/{project_id}?module=chapters&chapter={chapter_number}&view=workflow",
+        "method": "GET",
+        "requires_confirmation": False,
+        "target_chapter": chapter_number,
+        "run_id": run.get("id") if run else None,
+    }
+
+
 def _is_obsolete_disconnected_session(repo, project_id: str, session: dict, steps: list[dict], next_action: dict) -> bool:
     """Return True when a paused disconnected session no longer matches project truth."""
     if session.get("status") != "paused" or session.get("stop_reason") != "client_disconnected":
@@ -642,6 +659,10 @@ def _determine_next_action(
     chapter = repo.get_chapter(project_id, current_chapter)
     chapter_status = chapter.get("status") if chapter else "planned"
 
+    running_current = _get_running_chapter_workflow(repo, project_id, current_chapter)
+    if running_current:
+        return _view_running_workflow_action(project_id, current_chapter, running_current)
+
     if chapter_status in ("planned", "scripted", "drafted", "polished", "revision"):
         return {
             "key": "generate_chapter",
@@ -678,6 +699,9 @@ def _determine_next_action(
                 "method": "POST",
                 "requires_confirmation": True,
             }
+        running_next = _get_running_chapter_workflow(repo, project_id, next_ch)
+        if running_next:
+            return _view_running_workflow_action(project_id, next_ch, running_next)
         return {
             "key": "continue_next_chapter",
             "label": f"继续生成第 {next_ch} 章",
