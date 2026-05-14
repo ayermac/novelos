@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Save, Settings } from 'lucide-react'
 import { get, put } from '../../lib/api'
 import ProjectSkillOverridesModule from './ProjectSkillOverridesModule'
+import { NumberInput, TextArea, TextInput } from '../ui'
 
 interface ProjectSettings {
   project_id: string
@@ -86,15 +87,15 @@ export default function ProjectSettingsModule({ projectId, onSaved }: Props) {
       <div className="data-card">
         <div className="form-group">
           <label>项目名称</label>
-          <input value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
+          <TextInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} />
         </div>
         <div className="form-group">
           <label>类型</label>
-          <input value={form.genre} onChange={(e) => setForm({ ...form, genre: e.target.value })} />
+          <TextInput value={form.genre} onChange={(e) => setForm({ ...form, genre: e.target.value })} />
         </div>
         <div className="form-group">
           <label>项目简介</label>
-          <textarea
+          <TextArea
             value={form.description}
             onChange={(e) => setForm({ ...form, description: e.target.value })}
             rows={5}
@@ -104,16 +105,14 @@ export default function ProjectSettingsModule({ projectId, onSaved }: Props) {
         <div className="form-row">
           <div className="form-group">
             <label>目标总字数</label>
-            <input
-              type="number"
+            <NumberInput
               value={form.target_words}
               onChange={(e) => setForm({ ...form, target_words: e.target.value })}
             />
           </div>
           <div className="form-group">
             <label>预计章节数</label>
-            <input
-              type="number"
+            <NumberInput
               value={form.total_chapters_planned}
               onChange={(e) => setForm({ ...form, total_chapters_planned: e.target.value })}
             />

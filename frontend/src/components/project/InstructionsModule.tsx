@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { get, post, put, del } from '../../lib/api'
 import { FileText, Plus, Pencil, Trash2 } from 'lucide-react'
 import { useAppDialog } from '../AppDialogContext'
+import { NumberInput, TextArea, TextInput } from '../ui'
 
 interface Instruction {
   id: number
@@ -132,39 +133,39 @@ export default function InstructionsModule({ projectId }: Props) {
             <h3>{editingItem ? '编辑章节指令' : '新增章节指令'}</h3>
             <div className="form-group">
               <label>章节号</label>
-              <input type="number" value={form.chapter_number} onChange={(e) => setForm({ ...form, chapter_number: e.target.value })} placeholder="章节号" disabled={!!editingItem} />
+              <NumberInput value={form.chapter_number} onChange={(e) => setForm({ ...form, chapter_number: e.target.value })} placeholder="章节号" disabled={!!editingItem} />
             </div>
             <div className="form-group">
               <label>写作目标</label>
-              <textarea value={form.objective} onChange={(e) => setForm({ ...form, objective: e.target.value })} placeholder="本章要达成的目标" rows={2} />
+              <TextArea value={form.objective} onChange={(e) => setForm({ ...form, objective: e.target.value })} placeholder="本章要达成的目标" rows={2} />
             </div>
             <div className="form-group">
               <label>关键事件</label>
-              <textarea value={form.key_events} onChange={(e) => setForm({ ...form, key_events: e.target.value })} placeholder="本章关键事件" rows={2} />
+              <TextArea value={form.key_events} onChange={(e) => setForm({ ...form, key_events: e.target.value })} placeholder="本章关键事件" rows={2} />
             </div>
             <div className="form-row">
               <div className="form-group">
                 <label>需回收伏笔</label>
-                <input type="text" value={form.plots_to_resolve} onChange={(e) => setForm({ ...form, plots_to_resolve: e.target.value })} placeholder="伏笔编码，逗号分隔" />
+                <TextInput value={form.plots_to_resolve} onChange={(e) => setForm({ ...form, plots_to_resolve: e.target.value })} placeholder="伏笔编码，逗号分隔" />
               </div>
               <div className="form-group">
                 <label>需埋设伏笔</label>
-                <input type="text" value={form.plots_to_plant} onChange={(e) => setForm({ ...form, plots_to_plant: e.target.value })} placeholder="伏笔编码，逗号分隔" />
+                <TextInput value={form.plots_to_plant} onChange={(e) => setForm({ ...form, plots_to_plant: e.target.value })} placeholder="伏笔编码，逗号分隔" />
               </div>
             </div>
             <div className="form-row">
               <div className="form-group">
                 <label>情感基调</label>
-                <input type="text" value={form.emotion_tone} onChange={(e) => setForm({ ...form, emotion_tone: e.target.value })} placeholder="如：紧张、温馨、悲壮" />
+                <TextInput value={form.emotion_tone} onChange={(e) => setForm({ ...form, emotion_tone: e.target.value })} placeholder="如：紧张、温馨、悲壮" />
               </div>
               <div className="form-group">
                 <label>目标字数</label>
-                <input type="number" value={form.word_target} onChange={(e) => setForm({ ...form, word_target: e.target.value })} placeholder="如：3000" />
+                <NumberInput value={form.word_target} onChange={(e) => setForm({ ...form, word_target: e.target.value })} placeholder="如：3000" />
               </div>
             </div>
             <div className="form-group">
               <label>结尾钩子</label>
-              <input type="text" value={form.ending_hook} onChange={(e) => setForm({ ...form, ending_hook: e.target.value })} placeholder="章节结尾的悬念或钩子" />
+              <TextInput value={form.ending_hook} onChange={(e) => setForm({ ...form, ending_hook: e.target.value })} placeholder="章节结尾的悬念或钩子" />
             </div>
             <div className="form-actions">
               <button className="btn btn-secondary" onClick={() => setShowModal(false)}>取消</button>

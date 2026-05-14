@@ -17,8 +17,8 @@
 - **当前 WebUI 基线**: v5.6.1 Workbench Stabilization
 - **当前创作者闭环基线**: v5.7 Daily Writing Editing and Versioning
 - **当前稳定版本**: v5.8 Workflow Observability and Recovery
-- **状态**: v5.9.1 Skill Console UX completed；下一小版本候选为 v5.9.2 UI Controls Standardization
-- **测试基线**: pytest 1892/1892 passed；vitest 130/130 passed；frontend typecheck/lint/build passed
+- **状态**: v5.9.2 UI Controls Standardization completed；下一阶段候选为 v5.9 Writing Skills and Prompt Template System
+- **测试基线**: pytest 1892/1892 passed；v5.9.2 smoke passed；vitest 146/146 passed；frontend typecheck/lint/build passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
@@ -34,6 +34,8 @@
 - **v5.8 Review 记录**: [reviews/novel-factory-v5.8-review.md](reviews/novel-factory-v5.8-review.md)
 - **v5.8.1 真实 LLM 验收**: [reports/novel-factory-v5.8.1-real-llm-acceptance-report.md](reports/novel-factory-v5.8.1-real-llm-acceptance-report.md)
 - **Pi 启发的 Agent 工程路线**: [next/pi-inspired-agent-engineering-roadmap.md](next/pi-inspired-agent-engineering-roadmap.md)
+- **v5.9.2 完成报告**: [reports/novel-factory-v5.9.2-completion-report.md](reports/novel-factory-v5.9.2-completion-report.md)
+- **v5.9.2 Review 记录**: [reviews/novel-factory-v5.9.2-review.md](reviews/novel-factory-v5.9.2-review.md)
 
 ## 当前执行规则
 

@@ -23,6 +23,7 @@ import {
   XCircle,
 } from 'lucide-react'
 import { get, post, del } from '../../lib/api'
+import { DataTable, FormField, InlineMessage, Select, TextArea, TextInput } from '../ui'
 import './SkillVisibilityPanel.css'
 
 interface SkillMount {
@@ -808,7 +809,7 @@ export default function SkillVisibilityPanel() {
             </div>
             <label className="skill-search">
               <Search size={14} />
-              <input
+              <TextInput
                 aria-label="搜索 Skill"
                 value={skillSearch}
                 onChange={(event) => setSkillSearch(event.target.value)}
@@ -824,16 +825,7 @@ export default function SkillVisibilityPanel() {
           )}
 
       {validateResult && !validateResult.ok && (
-        <div
-          style={{
-            marginBottom: 'var(--space-4)',
-            padding: '12px',
-            borderRadius: '6px',
-            background: '#fef2f2',
-            color: '#991b1b',
-            fontSize: '13px',
-          }}
-        >
+        <InlineMessage variant="danger" className="skill-validation-message">
           {validateResult.errors.map((e, i) => (
             <div key={`err-${i}`} style={{ marginBottom: 4 }}>
               {e}
@@ -844,26 +836,17 @@ export default function SkillVisibilityPanel() {
               {w}
             </div>
           ))}
-        </div>
+        </InlineMessage>
       )}
 
       {validateResult && validateResult.ok && validateResult.warnings.length > 0 && (
-        <div
-          style={{
-            marginBottom: 'var(--space-4)',
-            padding: '12px',
-            borderRadius: '6px',
-            background: '#fef3c7',
-            color: '#92400e',
-            fontSize: '13px',
-          }}
-        >
+        <InlineMessage variant="warning" className="skill-validation-message">
           {validateResult.warnings.map((w, i) => (
             <div key={`warn-${i}`} style={{ marginBottom: 4 }}>
               {w}
             </div>
           ))}
-        </div>
+        </InlineMessage>
       )}
 
           {activeView === 'overview' && (
@@ -1075,8 +1058,7 @@ export default function SkillVisibilityPanel() {
                                   </div>
                                   {available.length > 0 ? (
                                     <div className="matrix-add-control">
-                                      <select
-                                        className="form-control"
+                                      <Select
                                         value={selectedAddSkill[selectKey] || ''}
                                         onChange={(event) => setSelectedAddSkill((prev) => ({ ...prev, [selectKey]: event.target.value }))}
                                         disabled={savingMount}
@@ -1086,7 +1068,7 @@ export default function SkillVisibilityPanel() {
                                         {available.map((skill) => (
                                           <option key={skill.id} value={skill.id}>{skill.id}</option>
                                         ))}
-                                      </select>
+                                      </Select>
                                       <button
                                         type="button"
                                         className="btn btn-secondary"
@@ -1308,10 +1290,8 @@ export default function SkillVisibilityPanel() {
         <div className="test-section-title"><PlayCircle size={16} /> Manual run</div>
         <p className="test-section-copy">选择一个 Skill，以文本或 JSON payload 进行一次手动试运行。</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: '12px', marginBottom: '12px' }}>
-          <div className="form-group">
-            <label>选择 Skill</label>
-            <select
-              className="form-control"
+          <FormField label="选择 Skill">
+            <Select
               value={runSkillId}
               onChange={(e) => setRunSkillId(e.target.value)}
             >
@@ -1321,33 +1301,25 @@ export default function SkillVisibilityPanel() {
                   {s.id}
                 </option>
               ))}
-            </select>
-          </div>
-          <div className="form-group">
-            <label>输入文本</label>
-            <textarea
-              className="form-control"
+            </Select>
+          </FormField>
+          <FormField label="输入文本">
+            <TextArea
               rows={4}
               value={runText}
               onChange={(e) => setRunText(e.target.value)}
               placeholder="输入要测试的文本..."
             />
-          </div>
-          <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-            <label>Custom Payload (JSON)</label>
-            <textarea
-              className="form-control"
+          </FormField>
+          <FormField label="Custom Payload (JSON)" error={runPayloadError || undefined} className="manual-run-payload">
+            <TextArea
               rows={4}
               value={runPayload}
               onChange={(e) => { setRunPayload(e.target.value); setRunPayloadError('') }}
               placeholder={'例如: {\n  "style_bible": {\n    "tone": "正式"\n  }\n}'}
+              invalid={Boolean(runPayloadError)}
             />
-            {runPayloadError && (
-              <div style={{ color: 'var(--danger)', fontSize: '12px', marginTop: 4 }}>
-                {runPayloadError}
-              </div>
-            )}
-          </div>
+          </FormField>
         </div>
         <button
           onClick={handleRun}
@@ -1402,66 +1374,51 @@ export default function SkillVisibilityPanel() {
         >
           Skill 列表
         </h4>
-        <div style={{ overflowX: 'auto' }}>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>名称</th>
-                <th>类型</th>
-                <th>版本</th>
-                <th>Package</th>
-                <th>Class</th>
-                <th>状态</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredRuntimeSkills.map((skill) => (
-                <tr key={skill.id}>
-                  <td>
-                    <code style={compactCodeStyle}>{skill.id}</code>
-                  </td>
-                  <td>{skill.name || '-'}</td>
-                  <td>{skill.kind || skill.type || '-'}</td>
-                  <td>{skill.version || '-'}</td>
-                  <td>
-                    <code style={{ ...compactCodeStyle, fontSize: '11px' }}>{skill.package || '-'}</code>
-                  </td>
-                  <td>
-                    <code style={{ ...compactCodeStyle, fontSize: '11px' }}>{skill.class_name || skill.class || '-'}</code>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          background: skill.enabled ? 'var(--success)' : 'var(--text-muted)',
-                        }}
-                      />
-                      <span style={{ fontSize: '12px' }}>
-                        {skill.enabled ? '已启用' : '已禁用'}
-                      </span>
-                      {skill.enabled && !skill.is_mounted && (
-                        <span
-                          style={{
-                            ...statusChipStyle('warn'),
-                            padding: '1px 6px',
-                            fontSize: '11px',
-                          }}
-                        >
-                          未挂载
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          compact
+          data={filteredRuntimeSkills}
+          getRowKey={(skill) => skill.id}
+          emptyTitle="没有匹配的 Skill"
+          columns={[
+            { key: 'id', header: 'ID', render: (skill) => <code style={compactCodeStyle}>{skill.id}</code> },
+            { key: 'name', header: '名称', render: (skill) => skill.name || '-' },
+            { key: 'kind', header: '类型', render: (skill) => skill.kind || skill.type || '-' },
+            { key: 'version', header: '版本', render: (skill) => skill.version || '-' },
+            { key: 'package', header: 'Package', render: (skill) => <code style={{ ...compactCodeStyle, fontSize: '11px' }}>{skill.package || '-'}</code> },
+            { key: 'class', header: 'Class', render: (skill) => <code style={{ ...compactCodeStyle, fontSize: '11px' }}>{skill.class_name || skill.class || '-'}</code> },
+            {
+              key: 'status',
+              header: '状态',
+              render: (skill) => (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: skill.enabled ? 'var(--success)' : 'var(--text-muted)',
+                    }}
+                  />
+                  <span style={{ fontSize: '12px' }}>
+                    {skill.enabled ? '已启用' : '已禁用'}
+                  </span>
+                  {skill.enabled && !skill.is_mounted && (
+                    <span
+                      style={{
+                        ...statusChipStyle('warn'),
+                        padding: '1px 6px',
+                        fontSize: '11px',
+                      }}
+                    >
+                      未挂载
+                    </span>
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
       </div>
       )}
 

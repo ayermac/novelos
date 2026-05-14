@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { post } from '../lib/api'
 import PageHeader from '../components/PageHeader'
+import { NumberInput, Select, TextArea, TextInput } from '../components/ui'
 
 interface ProjectResult {
   project: {
@@ -239,24 +240,11 @@ export default function Onboarding() {
                   color: 'var(--text-ink)',
                   fontSize: 'var(--text-sm)',
                 }}>小说名称</label>
-                <input
-                  type="text"
+                <TextInput
                   value={form.name}
                   onChange={(e) => handleNameChange(e.target.value)}
                   placeholder="例如：斗破苍穹"
                   required
-                  style={{
-                    width: '100%',
-                    padding: 'var(--space-3)',
-                    border: '1px solid rgba(30, 58, 95, 0.12)',
-                    borderRadius: 'var(--radius-md)',
-                    fontSize: 'var(--text-base)',
-                    background: 'var(--paper-surface)',
-                    color: 'var(--text-ink)',
-                    transition: 'border-color var(--duration-fast) var(--ease-out)',
-                  }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                 />
               </div>
 
@@ -268,24 +256,11 @@ export default function Onboarding() {
                   color: 'var(--text-ink)',
                   fontSize: 'var(--text-sm)',
                 }}>项目 ID</label>
-                <input
-                  type="text"
+                <TextInput
                   value={form.project_id}
                   onChange={(e) => handleIdChange(e.target.value)}
                   placeholder="根据名称自动生成，可手动修改"
                   required
-                  style={{
-                    width: '100%',
-                    padding: 'var(--space-3)',
-                    border: '1px solid rgba(30, 58, 95, 0.12)',
-                    borderRadius: 'var(--radius-md)',
-                    fontSize: 'var(--text-base)',
-                    background: 'var(--paper-surface)',
-                    color: 'var(--text-ink)',
-                    transition: 'border-color var(--duration-fast) var(--ease-out)',
-                  }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                 />
                 <div style={{
                   marginTop: 'var(--space-1)',
@@ -304,23 +279,10 @@ export default function Onboarding() {
                 }}>
                   类型 / 题材 <span style={{ color: 'var(--status-danger)' }}>*</span>
                 </label>
-                <select
+                <Select
                   value={form.genre}
                   onChange={(e) => setForm({ ...form, genre: e.target.value })}
                   required
-                  style={{
-                    width: '100%',
-                    padding: 'var(--space-3)',
-                    border: '1px solid rgba(30, 58, 95, 0.12)',
-                    borderRadius: 'var(--radius-md)',
-                    fontSize: 'var(--text-base)',
-                    background: 'var(--paper-surface)',
-                    color: 'var(--text-ink)',
-                    transition: 'border-color var(--duration-fast) var(--ease-out)',
-                    cursor: 'pointer',
-                  }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                 >
                   <option value="urban">都市</option>
                   <option value="fantasy">奇幻</option>
@@ -328,7 +290,7 @@ export default function Onboarding() {
                   <option value="xianxia">仙侠</option>
                   <option value="romance">言情</option>
                   <option value="mystery">悬疑</option>
-                </select>
+                </Select>
               </div>
 
               <div style={{ marginBottom: 'var(--space-4)' }}>
@@ -339,24 +301,11 @@ export default function Onboarding() {
                   color: 'var(--text-ink)',
                   fontSize: 'var(--text-sm)',
                 }}>简介</label>
-                <textarea
+                <TextArea
                   rows={3}
                   value={form.description}
                   onChange={(e) => setForm({ ...form, description: e.target.value })}
                   placeholder="简要描述故事背景和大纲"
-                  style={{
-                    width: '100%',
-                    padding: 'var(--space-3)',
-                    border: '1px solid rgba(30, 58, 95, 0.12)',
-                    borderRadius: 'var(--radius-md)',
-                    fontSize: 'var(--text-base)',
-                    background: 'var(--paper-surface)',
-                    color: 'var(--text-ink)',
-                    transition: 'border-color var(--duration-fast) var(--ease-out)',
-                    resize: 'vertical',
-                  }}
-                  onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
-                  onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                 />
               </div>
             </div>
@@ -394,25 +343,12 @@ export default function Onboarding() {
                     color: 'var(--text-ink)',
                     fontSize: 'var(--text-sm)',
                   }}>计划总章节数</label>
-                  <input
-                    type="number"
+                  <NumberInput
                     value={form.total_chapters_planned}
                     onChange={(e) =>
                       setForm({ ...form, total_chapters_planned: parseInt(e.target.value) })
                     }
                     min={1}
-                    style={{
-                      width: '100%',
-                      padding: 'var(--space-3)',
-                      border: '1px solid rgba(30, 58, 95, 0.12)',
-                      borderRadius: 'var(--radius-md)',
-                      fontSize: 'var(--text-base)',
-                      background: 'var(--paper-surface)',
-                      color: 'var(--text-ink)',
-                      transition: 'border-color var(--duration-fast) var(--ease-out)',
-                    }}
-                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
-                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                   />
                 </div>
                 <div style={{ marginBottom: 'var(--space-4)' }}>
@@ -423,25 +359,12 @@ export default function Onboarding() {
                     color: 'var(--text-ink)',
                     fontSize: 'var(--text-sm)',
                   }}>目标总字数</label>
-                  <input
-                    type="number"
+                  <NumberInput
                     value={form.target_words}
                     onChange={(e) =>
                       setForm({ ...form, target_words: parseInt(e.target.value) })
                     }
                     min={1}
-                    style={{
-                      width: '100%',
-                      padding: 'var(--space-3)',
-                      border: '1px solid rgba(30, 58, 95, 0.12)',
-                      borderRadius: 'var(--radius-md)',
-                      fontSize: 'var(--text-base)',
-                      background: 'var(--paper-surface)',
-                      color: 'var(--text-ink)',
-                      transition: 'border-color var(--duration-fast) var(--ease-out)',
-                    }}
-                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
-                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                   />
                 </div>
               </div>
@@ -480,25 +403,12 @@ export default function Onboarding() {
                     color: 'var(--text-ink)',
                     fontSize: 'var(--text-sm)',
                   }}>起始章节号</label>
-                  <input
-                    type="number"
+                  <NumberInput
                     value={form.start_chapter}
                     onChange={(e) =>
                       setForm({ ...form, start_chapter: parseInt(e.target.value) })
                     }
                     min={1}
-                    style={{
-                      width: '100%',
-                      padding: 'var(--space-3)',
-                      border: '1px solid rgba(30, 58, 95, 0.12)',
-                      borderRadius: 'var(--radius-md)',
-                      fontSize: 'var(--text-base)',
-                      background: 'var(--paper-surface)',
-                      color: 'var(--text-ink)',
-                      transition: 'border-color var(--duration-fast) var(--ease-out)',
-                    }}
-                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
-                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                   />
                 </div>
                 <div style={{ marginBottom: 'var(--space-4)' }}>
@@ -509,25 +419,12 @@ export default function Onboarding() {
                     color: 'var(--text-ink)',
                     fontSize: 'var(--text-sm)',
                   }}>初始章节数</label>
-                  <input
-                    type="number"
+                  <NumberInput
                     value={form.initial_chapter_count}
                     onChange={(e) =>
                       setForm({ ...form, initial_chapter_count: parseInt(e.target.value) })
                     }
                     min={1}
-                    style={{
-                      width: '100%',
-                      padding: 'var(--space-3)',
-                      border: '1px solid rgba(30, 58, 95, 0.12)',
-                      borderRadius: 'var(--radius-md)',
-                      fontSize: 'var(--text-base)',
-                      background: 'var(--paper-surface)',
-                      color: 'var(--text-ink)',
-                      transition: 'border-color var(--duration-fast) var(--ease-out)',
-                    }}
-                    onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
-                    onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                   />
                   <div style={{
                     marginTop: 'var(--space-1)',
@@ -595,24 +492,11 @@ export default function Onboarding() {
                       color: 'var(--text-ink)',
                       fontSize: 'var(--text-sm)',
                     }}>世界观设定</label>
-                    <textarea
+                    <TextArea
                       rows={3}
                       value={form.world_setting}
                       onChange={(e) => setForm({ ...form, world_setting: e.target.value })}
                       placeholder="描述力量体系、社会结构等核心世界观...&#10;例如：斗气大陆以斗气为尊，修炼等级从斗之气到斗帝共十阶..."
-                      style={{
-                        width: '100%',
-                        padding: 'var(--space-3)',
-                        border: '1px solid rgba(30, 58, 95, 0.12)',
-                        borderRadius: 'var(--radius-md)',
-                        fontSize: 'var(--text-base)',
-                        background: 'var(--paper-surface)',
-                        color: 'var(--text-ink)',
-                        transition: 'border-color var(--duration-fast) var(--ease-out)',
-                        resize: 'vertical',
-                      }}
-                      onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
-                      onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                     />
                   </div>
 
@@ -633,23 +517,10 @@ export default function Onboarding() {
                       color: 'var(--text-ink)',
                       fontSize: 'var(--text-sm)',
                     }}>主角名称</label>
-                    <input
-                      type="text"
+                    <TextInput
                       value={form.main_character_name}
                       onChange={(e) => setForm({ ...form, main_character_name: e.target.value })}
                       placeholder="例如：萧炎"
-                      style={{
-                        width: '100%',
-                        padding: 'var(--space-3)',
-                        border: '1px solid rgba(30, 58, 95, 0.12)',
-                        borderRadius: 'var(--radius-md)',
-                        fontSize: 'var(--text-base)',
-                        background: 'var(--paper-surface)',
-                        color: 'var(--text-ink)',
-                        transition: 'border-color var(--duration-fast) var(--ease-out)',
-                      }}
-                      onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
-                      onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                     />
                   </div>
 
@@ -661,24 +532,11 @@ export default function Onboarding() {
                       color: 'var(--text-ink)',
                       fontSize: 'var(--text-sm)',
                     }}>主角简介</label>
-                    <textarea
+                    <TextArea
                       rows={2}
                       value={form.main_character_description}
                       onChange={(e) => setForm({ ...form, main_character_description: e.target.value })}
                       placeholder="描述主角的背景、经历..."
-                      style={{
-                        width: '100%',
-                        padding: 'var(--space-3)',
-                        border: '1px solid rgba(30, 58, 95, 0.12)',
-                        borderRadius: 'var(--radius-md)',
-                        fontSize: 'var(--text-base)',
-                        background: 'var(--paper-surface)',
-                        color: 'var(--text-ink)',
-                        transition: 'border-color var(--duration-fast) var(--ease-out)',
-                        resize: 'vertical',
-                      }}
-                      onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
-                      onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                     />
                   </div>
 
@@ -690,23 +548,10 @@ export default function Onboarding() {
                       color: 'var(--text-ink)',
                       fontSize: 'var(--text-sm)',
                     }}>性格特征</label>
-                    <input
-                      type="text"
+                    <TextInput
                       value={form.main_character_traits}
                       onChange={(e) => setForm({ ...form, main_character_traits: e.target.value })}
                       placeholder="用逗号分隔，例如：坚韧、重情义、不服输"
-                      style={{
-                        width: '100%',
-                        padding: 'var(--space-3)',
-                        border: '1px solid rgba(30, 58, 95, 0.12)',
-                        borderRadius: 'var(--radius-md)',
-                        fontSize: 'var(--text-base)',
-                        background: 'var(--paper-surface)',
-                        color: 'var(--text-ink)',
-                        transition: 'border-color var(--duration-fast) var(--ease-out)',
-                      }}
-                      onFocus={(e) => { e.currentTarget.style.borderColor = 'var(--ink-accent)' }}
-                      onBlur={(e) => { e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)' }}
                     />
                   </div>
                 </div>

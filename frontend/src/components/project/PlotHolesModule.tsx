@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { get, post, put, del } from '../../lib/api'
 import { Sparkles, Plus, Pencil, Trash2 } from 'lucide-react'
 import { useAppDialog } from '../AppDialogContext'
+import { NumberInput, Select, TextArea, TextInput } from '../ui'
 
 interface PlotHole {
   id: number
@@ -138,41 +139,41 @@ export default function PlotHolesModule({ projectId }: Props) {
             <h3>{editingItem ? '编辑伏笔' : '新增伏笔'}</h3>
             <div className="form-group">
               <label>编码</label>
-              <input type="text" value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="如：PH-001" />
+              <TextInput value={form.code} onChange={(e) => setForm({ ...form, code: e.target.value })} placeholder="如：PH-001" />
             </div>
             <div className="form-group">
               <label>标题</label>
-              <input type="text" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="伏笔标题" />
+              <TextInput value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="伏笔标题" />
             </div>
             <div className="form-group">
               <label>类型</label>
-              <input type="text" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="如：悬念、铺垫、误导" />
+              <TextInput value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="如：悬念、铺垫、误导" />
             </div>
             <div className="form-group">
               <label>描述</label>
-              <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="伏笔描述" rows={3} />
+              <TextArea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="伏笔描述" rows={3} />
             </div>
             <div className="form-row">
               <div className="form-group">
                 <label>埋设章节</label>
-                <input type="number" value={form.planted_chapter} onChange={(e) => setForm({ ...form, planted_chapter: e.target.value })} placeholder="章节号" />
+                <NumberInput value={form.planted_chapter} onChange={(e) => setForm({ ...form, planted_chapter: e.target.value })} placeholder="章节号" />
               </div>
               <div className="form-group">
                 <label>计划回收章节</label>
-                <input type="number" value={form.planned_resolve_chapter} onChange={(e) => setForm({ ...form, planned_resolve_chapter: e.target.value })} placeholder="章节号" />
+                <NumberInput value={form.planned_resolve_chapter} onChange={(e) => setForm({ ...form, planned_resolve_chapter: e.target.value })} placeholder="章节号" />
               </div>
             </div>
             <div className="form-group">
               <label>状态</label>
-              <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
+              <Select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })}>
                 <option value="planted">已埋</option>
                 <option value="resolved">已收</option>
                 <option value="abandoned">已弃</option>
-              </select>
+              </Select>
             </div>
             <div className="form-group">
               <label>备注</label>
-              <textarea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="备注信息" rows={2} />
+              <TextArea value={form.notes} onChange={(e) => setForm({ ...form, notes: e.target.value })} placeholder="备注信息" rows={2} />
             </div>
             <div className="form-actions">
               <button className="btn btn-secondary" onClick={() => setShowModal(false)}>取消</button>

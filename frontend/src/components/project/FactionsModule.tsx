@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { get, post, put, del } from '../../lib/api'
 import { Swords, Plus, Pencil, Trash2 } from 'lucide-react'
 import { useAppDialog } from '../AppDialogContext'
+import { TextArea, TextInput } from '../ui'
 
 interface Faction {
   id: number
@@ -114,19 +115,19 @@ export default function FactionsModule({ projectId }: Props) {
             <h3>{editingItem ? '编辑势力' : '新增势力'}</h3>
             <div className="form-group">
               <label>名称</label>
-              <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="势力名称" />
+              <TextInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="势力名称" />
             </div>
             <div className="form-group">
               <label>类型</label>
-              <input type="text" value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="如：宗门、国家、组织" />
+              <TextInput value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} placeholder="如：宗门、国家、组织" />
             </div>
             <div className="form-group">
               <label>描述</label>
-              <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="势力描述" rows={3} />
+              <TextArea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="势力描述" rows={3} />
             </div>
             <div className="form-group">
               <label>与主角关系</label>
-              <input type="text" value={form.relationship_with_protagonist} onChange={(e) => setForm({ ...form, relationship_with_protagonist: e.target.value })} placeholder="如：盟友、敌对、中立" />
+              <TextInput value={form.relationship_with_protagonist} onChange={(e) => setForm({ ...form, relationship_with_protagonist: e.target.value })} placeholder="如：盟友、敌对、中立" />
             </div>
             <div className="form-actions">
               <button className="btn btn-secondary" onClick={() => setShowModal(false)}>取消</button>

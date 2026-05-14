@@ -4,6 +4,7 @@ import {
   BookOpen, ChevronDown, ChevronRight, Edit3, Save, X,
   CheckCircle2, AlertCircle, Filter,
 } from 'lucide-react'
+import { Select, TextArea, TextInput } from '../ui'
 
 interface StoryFact {
   id: string
@@ -176,7 +177,7 @@ export default function FactLedgerModule({ projectId }: Props) {
       {/* Filters */}
       <div className="fact-filters">
         <Filter size={14} />
-        <select
+        <Select
           value={filterType}
           onChange={(e) => setFilterType(e.target.value)}
           className="fact-filter-select"
@@ -185,8 +186,8 @@ export default function FactLedgerModule({ projectId }: Props) {
           {factTypes.map((t) => (
             <option key={t} value={t}>{FACT_TYPE_LABELS[t] || t}</option>
           ))}
-        </select>
-        <select
+        </Select>
+        <Select
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
           className="fact-filter-select"
@@ -195,7 +196,7 @@ export default function FactLedgerModule({ projectId }: Props) {
           <option value="active">有效</option>
           <option value="deprecated">已废弃</option>
           <option value="corrected">已修正</option>
-        </select>
+        </Select>
         <span className="fact-count">{facts.length} 条事实</span>
       </div>
 
@@ -242,7 +243,7 @@ export default function FactLedgerModule({ projectId }: Props) {
                 <div className="fact-edit">
                   <label>
                     <span>值 (JSON)</span>
-                    <textarea
+                    <TextArea
                       value={editValue}
                       onChange={(e) => setEditValue(e.target.value)}
                       rows={3}
@@ -250,8 +251,7 @@ export default function FactLedgerModule({ projectId }: Props) {
                   </label>
                   <label>
                     <span>修正说明</span>
-                    <input
-                      type="text"
+                    <TextInput
                       value={editNote}
                       onChange={(e) => setEditNote(e.target.value)}
                       placeholder="修正原因..."

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { get } from '../../lib/api'
 import { History, ExternalLink } from 'lucide-react'
 import { tWorkflowStatus } from '../../lib/i18n'
+import { DataTable } from '../ui'
 
 interface Run {
   run_id: string
@@ -58,61 +59,48 @@ export default function RunsModule({ projectId }: Props) {
           <div className="data-empty-desc">生成章节后，工作流运行记录会显示在此处</div>
         </div>
       ) : (
-        <div style={{ overflowX: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-            <thead>
-              <tr style={{ borderBottom: '2px solid var(--border-color)', textAlign: 'left' }}>
-                <th style={{ padding: '8px 10px' }}>章节</th>
-                <th style={{ padding: '8px 10px' }}>状态</th>
-                <th style={{ padding: '8px 10px' }}>当前节点</th>
-                <th style={{ padding: '8px 10px' }}>Token</th>
-                <th style={{ padding: '8px 10px' }}>耗时</th>
-                <th style={{ padding: '8px 10px' }}>开始时间</th>
-                <th style={{ padding: '8px 10px' }}>错误</th>
-                <th style={{ padding: '8px 10px' }}>详情</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runs.map((run) => (
-                <tr key={run.run_id || run.id} style={{ borderBottom: '1px solid var(--border-color)' }}>
-                  <td style={{ padding: '8px 10px' }}>第 {run.chapter_number} 章</td>
-                  <td style={{ padding: '8px 10px' }}>
-                    <span className={`status-badge status-${run.status}`}>
-                      {tWorkflowStatus(run.status)}
-                    </span>
-                  </td>
-                  <td style={{ padding: '8px 10px', color: 'var(--text-secondary)' }}>
-                    {run.current_node || '-'}
-                  </td>
-                  <td style={{ padding: '8px 10px', color: 'var(--text-secondary)' }}>
-                    {run.total_tokens ? run.total_tokens.toLocaleString() : '-'}
-                  </td>
-                  <td style={{ padding: '8px 10px', color: 'var(--text-secondary)' }}>
-                    {run.duration_ms ? `${(run.duration_ms / 1000).toFixed(1)}s` : '-'}
-                  </td>
-                  <td style={{ padding: '8px 10px', color: 'var(--text-muted)', fontSize: 12 }}>
-                    {run.started_at || '-'}
-                  </td>
-                  <td style={{ padding: '8px 10px', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {run.error_message ? (
-                      <span style={{ color: '#dc2626', fontSize: 12 }} title={run.error_message}>
-                        {run.error_message}
-                      </span>
-                    ) : '-'}
-                  </td>
-                  <td style={{ padding: '8px 10px' }}>
-                    <a
-                      href={`/runs/${run.run_id || run.id}`}
-                      style={{ color: 'var(--primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
-                    >
-                      详情 <ExternalLink size={12} />
-                    </a>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          compact
+          data={runs}
+          getRowKey={(run) => run.run_id || run.id}
+          columns={[
+            { key: 'chapter', header: '章节', render: (run) => `第 ${run.chapter_number} 章` },
+            {
+              key: 'status',
+              header: '状态',
+              render: (run) => (
+                <span className={`status-badge status-${run.status}`}>
+                  {tWorkflowStatus(run.status)}
+                </span>
+              ),
+            },
+            { key: 'node', header: '当前节点', render: (run) => <span style={{ color: 'var(--text-secondary)' }}>{run.current_node || '-'}</span> },
+            { key: 'tokens', header: 'Token', render: (run) => <span style={{ color: 'var(--text-secondary)' }}>{run.total_tokens ? run.total_tokens.toLocaleString() : '-'}</span> },
+            { key: 'duration', header: '耗时', render: (run) => <span style={{ color: 'var(--text-secondary)' }}>{run.duration_ms ? `${(run.duration_ms / 1000).toFixed(1)}s` : '-'}</span> },
+            { key: 'started', header: '开始时间', render: (run) => <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>{run.started_at || '-'}</span> },
+            {
+              key: 'error',
+              header: '错误',
+              render: (run) => run.error_message ? (
+                <span style={{ color: '#dc2626', display: 'inline-block', maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }} title={run.error_message}>
+                  {run.error_message}
+                </span>
+              ) : '-',
+            },
+            {
+              key: 'detail',
+              header: '详情',
+              render: (run) => (
+                <a
+                  href={`/runs/${run.run_id || run.id}`}
+                  style={{ color: 'var(--primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
+                >
+                  详情 <ExternalLink size={12} />
+                </a>
+              ),
+            },
+          ]}
+        />
       )}
     </div>
   )

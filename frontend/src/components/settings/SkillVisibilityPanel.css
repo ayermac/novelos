@@ -251,13 +251,17 @@
   color: var(--skill-muted);
 }
 
-.skill-search input {
+.skill-search input,
+.skill-search .ui-control {
   width: 100%;
   border: 0;
   background: transparent;
   color: var(--skill-ink);
   font: inherit;
   outline: none;
+  min-height: 36px;
+  padding: 0;
+  box-shadow: none;
 }
 
 .skill-search:focus-within {
@@ -731,6 +735,24 @@
   min-width: 0;
   font-size: 12px;
   padding: 5px 8px;
+}
+
+.matrix-add-control .ui-select-shell {
+  min-width: 0;
+}
+
+.matrix-add-control .ui-select {
+  min-height: 34px;
+  padding: 5px 28px 5px 8px;
+  font-size: 12px;
+}
+
+.skill-validation-message {
+  margin-bottom: 12px;
+}
+
+.manual-run-payload {
+  grid-column: 1 / -1;
 }
 
 .review-console-grid {

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, post } from '../../lib/api'
 import { Sparkles, CheckCircle2, XCircle, Loader2, RotateCcw } from 'lucide-react'
+import { NumberInput, TextArea, TextInput } from '../ui'
 
 interface GenesisRun {
   id: string
@@ -156,8 +157,7 @@ export default function GenesisModule({ projectId }: Props) {
           <div className="form-grid">
             <label>
               <span>标题</span>
-              <input
-                type="text"
+              <TextInput
                 value={form.title}
                 onChange={(e) => setForm({ ...form, title: e.target.value })}
                 placeholder="项目标题"
@@ -165,8 +165,7 @@ export default function GenesisModule({ projectId }: Props) {
             </label>
             <label>
               <span>类型</span>
-              <input
-                type="text"
+              <TextInput
                 value={form.genre}
                 onChange={(e) => setForm({ ...form, genre: e.target.value })}
                 placeholder="玄幻、都市、科幻..."
@@ -174,7 +173,7 @@ export default function GenesisModule({ projectId }: Props) {
             </label>
             <label className="form-full">
               <span>创意/前提</span>
-              <textarea
+              <TextArea
                 value={form.premise}
                 onChange={(e) => setForm({ ...form, premise: e.target.value })}
                 placeholder="描述你的故事核心创意..."
@@ -183,24 +182,21 @@ export default function GenesisModule({ projectId }: Props) {
             </label>
             <label>
               <span>目标章数</span>
-              <input
-                type="number"
+              <NumberInput
                 value={form.target_chapters}
                 onChange={(e) => setForm({ ...form, target_chapters: Number(e.target.value) })}
               />
             </label>
             <label>
               <span>目标字数</span>
-              <input
-                type="number"
+              <NumberInput
                 value={form.target_words}
                 onChange={(e) => setForm({ ...form, target_words: Number(e.target.value) })}
               />
             </label>
             <label>
               <span>目标读者</span>
-              <input
-                type="text"
+              <TextInput
                 value={form.target_audience}
                 onChange={(e) => setForm({ ...form, target_audience: e.target.value })}
                 placeholder="男频、女频、全年龄..."
@@ -208,8 +204,7 @@ export default function GenesisModule({ projectId }: Props) {
             </label>
             <label>
               <span>风格偏好</span>
-              <input
-                type="text"
+              <TextInput
                 value={form.style_preference}
                 onChange={(e) => setForm({ ...form, style_preference: e.target.value })}
                 placeholder="轻松、严肃、热血..."
