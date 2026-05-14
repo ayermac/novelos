@@ -131,8 +131,9 @@ Recommended sequence:
 v5.7 Daily Writing Editing and Versioning              (completed)
 v5.7.1 Internal Hardening                              (completed)
 v5.8 Workflow Observability and Recovery               (completed)
-v5.9 Writing Skills and Prompt Template System         (next candidate, Pi-inspired)
-v6.0 Longform Context Engineering and Memory Governance
+v5.9 Agent Skill Expansion                            (completed)
+v6.0 Agent Role Capability System                     (next candidate)
+v6.x Longform Context Engineering and Memory Governance
 ```
 
 Rationale:
@@ -151,7 +152,7 @@ docs/codex/planning/novel-factory-v5.8-workflow-observability-recovery-spec.md
 The next candidate planning line is:
 
 ```text
-docs/codex/planning/novel-factory-v5.9-writing-skills-prompt-template-spec.md
+docs/codex/planning/novel-factory-v6.0-agent-role-capability-system-spec.md
 ```
 
 Pi-inspired Agent engineering direction:
