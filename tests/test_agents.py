@@ -149,6 +149,66 @@ class TestPlannerAgent:
         instr = seeded_repo.get_instruction("test_proj", 1)
         assert instr["word_target"] == 3000
 
+    def test_planner_records_chapter_objective_checker_skill_run(self, seeded_repo):
+        from novel_factory.agents.planner import PlannerAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        stub = StubLLMProvider([{
+            "chapter_brief": {
+                "objective": "林默Lv1，本章要夺回账册并发现新的追兵",
+                "required_events": ["夺回账册"],
+                "plots_to_plant": [],
+                "plots_to_resolve": [],
+                "ending_hook": "追兵现身",
+                "constraints": ["不改变上一章数值"],
+            }
+        }])
+
+        agent = PlannerAgent(seeded_repo, stub, skill_registry=SkillRegistry())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "planned",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.PLANNED.value
+        runs = seeded_repo.get_skill_runs("test_proj", skill_id="chapter-objective-checker", agent_id="planner", chapter_number=1)
+        assert runs
+
+    def test_non_critical_planner_skill_failure_does_not_crash(self, seeded_repo):
+        from novel_factory.agents.planner import PlannerAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        stub = StubLLMProvider([{
+            "chapter_brief": {
+                "objective": "",
+                "required_events": [],
+                "plots_to_plant": [],
+                "plots_to_resolve": [],
+                "ending_hook": "",
+                "constraints": [],
+            }
+        }])
+
+        agent = PlannerAgent(seeded_repo, stub, skill_registry=SkillRegistry())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "planned",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert "error" not in result
+        runs = seeded_repo.get_skill_runs("test_proj", skill_id="chapter-objective-checker", agent_id="planner", chapter_number=1)
+        assert runs and runs[0]["ok"] == 0
+
 
 class TestScreenwriterAgent:
     def test_screenwriter_creates_beats(self, seeded_repo):
@@ -178,6 +238,31 @@ class TestScreenwriterAgent:
 
         beats = seeded_repo.get_scene_beats("test_proj", 1)
         assert len(beats) == 1
+
+    def test_screenwriter_records_scene_conflict_checker_skill_run(self, seeded_repo):
+        from novel_factory.agents.screenwriter import ScreenwriterAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        stub = StubLLMProvider([{
+            "scene_beats": [
+                {"sequence": 1, "scene_goal": "开场", "conflict": "冲突", "turn": "转折", "plot_refs": ["P001"], "hook": "钩子"},
+            ]
+        }])
+
+        seeded_repo.update_chapter_status("test_proj", 1, "planned")
+        agent = ScreenwriterAgent(seeded_repo, stub, skill_registry=SkillRegistry())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "planned",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+        assert result["chapter_status"] == ChapterStatus.SCRIPTED.value
+        runs = seeded_repo.get_skill_runs("test_proj", skill_id="scene-conflict-checker", agent_id="screenwriter", chapter_number=1)
+        assert runs
 
 
 class TestAuthorAgent:
@@ -241,6 +326,36 @@ class TestAuthorAgent:
 
         chapter = seeded_repo.get_chapter("test_proj", 1)
         assert chapter["content"] is not None
+
+    def test_author_records_event_coverage_checker_skill_run(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        base_content = "这是一段测试正文内容，用于验证 Author Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 44
+        stub = StubLLMProvider([{
+            "title": "第一章 测试",
+            "content": long_content,
+            "word_count": 2244,
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [{"sequence": 1, "scene_goal": "开场", "conflict": "冲突"}])
+        agent = AuthorAgent(seeded_repo, stub, skill_registry=SkillRegistry())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        runs = seeded_repo.get_skill_runs("test_proj", skill_id="event-coverage-checker", agent_id="author", chapter_number=1)
+        assert runs
 
     def test_author_recomputes_llm_declared_word_count(self, seeded_repo):
         """LLM word_count guesses should not block otherwise valid content."""
@@ -718,6 +833,36 @@ class TestEditorAgent:
 
 
 class TestMemoryCuratorAgent:
+    def test_memory_curator_records_memory_patch_validator_skill_run(self, seeded_repo):
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        seeded_repo.save_chapter_content("test_proj", 1, "林默夺回账册。", "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "reviewed")
+        stub = StubLLMProvider([{
+            "patches": [{
+                "target_table": "story_facts",
+                "operation": "create",
+                "target_name": "linmo.asset.ledger",
+                "data": {"fact_key": "linmo.asset.ledger", "fact_type": "asset", "subject": "林默", "attribute": "账册", "value": {"state": "recovered"}},
+                "confidence": 0.9,
+                "evidence_text": "林默夺回账册",
+                "rationale": "本章明确夺回账册",
+            }]
+        }])
+        agent = MemoryCuratorAgent(seeded_repo, stub, skill_registry=SkillRegistry())
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-memory-skill",
+        })
+
+        assert result["memory_curator_processed"] is True
+        runs = seeded_repo.get_skill_runs("test_proj", skill_id="memory-patch-validator", agent_id="memory_curator", chapter_number=1)
+        assert runs
+
     def test_memory_curator_timeout_degrades_to_noop(self, seeded_repo):
         from novel_factory.agents.memory_curator import MemoryCuratorAgent
         from novel_factory.llm.openai_compatible import LLMTimeoutError

@@ -8,8 +8,10 @@ from typing import Any
 
 from ..models.schemas import PlannerOutput
 from ..models.state import ChapterStatus, FactoryState
+from ..skills.registry import SkillRegistry
 from ..validators.chapter_checker import derive_word_target
 from .base import BaseAgent
+from .skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +42,10 @@ class PlannerAgent(BaseAgent):
     """Planner: creates writing instructions for a chapter."""
 
     agent_id = "planner"
+
+    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None):
+        super().__init__(repo, llm)
+        self.skill_registry = skill_registry
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
@@ -109,6 +115,19 @@ class PlannerAgent(BaseAgent):
 
         # Save instruction to DB, preserving word_target if one already exists
         brief = output.chapter_brief
+        project_skill_overrides = self._get_project_skill_overrides(project_id)
+        run_agent_skills(
+            repo=self.repo,
+            skill_registry=self.skill_registry,
+            project_id=project_id,
+            chapter_number=chapter_number,
+            agent="planner",
+            stage="after_llm",
+            payload=brief.model_dump(),
+            project_overrides=project_skill_overrides,
+            skill_type_hint="validator",
+        )
+
         existing = self.repo.get_instruction(project_id, chapter_number)
         project = self.repo.get_project(project_id)
         word_target = existing.get("word_target") if existing else None

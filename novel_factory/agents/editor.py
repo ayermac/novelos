@@ -15,6 +15,7 @@ from ..skills.registry import SkillRegistry
 from ..llm.openai_compatible import LLMTimeoutError, OutputValidationError
 from ..llm.provider import is_configured_live_provider
 from .base import BaseAgent
+from .skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
 
@@ -225,32 +226,22 @@ class EditorAgent(BaseAgent):
 
             project_skill_overrides = self._get_project_skill_overrides(project_id)
 
-            before_review_result = self.skill_registry.run_skills_for_agent(
+            before_review_hook = run_agent_skills(
+                repo=self.repo,
+                skill_registry=self.skill_registry,
+                project_id=project_id,
+                chapter_number=chapter_number,
                 agent="editor",
                 stage="before_review",
                 payload=skill_payload,
                 project_overrides=project_skill_overrides,
+                skill_type_hint="validator",
             )
             
             # Process skill results
-            for skill_item in before_review_result:
+            for skill_item in before_review_hook.skill_results:
                 skill_id = skill_item.get("skill_id", "")
-                result = skill_item.get("result", {})
-                
-                # Save skill run to database
-                try:
-                    self.repo.save_skill_run(
-                        project_id=project_id,
-                        skill_id=skill_id,
-                        skill_type="validator",
-                        ok=result.get("ok", False),
-                        error=result.get("error"),
-                        input_json={"text": content[:500]},  # Truncate for storage
-                        output_json=result.get("data"),
-                        chapter_number=chapter_number,
-                    )
-                except Exception as e:
-                    logger.warning("Editor: failed to save skill_run: %s", e)
+                result = {"ok": skill_item.get("ok"), "error": skill_item.get("error"), "data": skill_item.get("data") or {}}
                 
                 if not result.get("ok"):
                     logger.warning("Editor: skill %s failed: %s", skill_id, result.get("error"))

@@ -228,6 +228,23 @@ def _handle_retryable_quality_gate(
 # ── v5.1.6: Node factory for LLMRouter-based injection ────────────────
 
 
+def _ensure_skill_registry(skill_registry: Any | None) -> Any | None:
+    """Create a default SkillRegistry when runtime hooks need one.
+
+    The API/CLI graph path often does not pass a registry explicitly. Without
+    this fallback, Agent-level Skill mounts appear in configuration but never
+    execute in the real LangGraph runner.
+    """
+    if skill_registry is not None:
+        return skill_registry
+    try:
+        from ..skills.registry import SkillRegistry
+        return SkillRegistry()
+    except Exception as e:
+        logger.warning(f"Failed to create SkillRegistry: {e}")
+        return None
+
+
 def create_node_runners(
     settings: Any,
     repo: Repository,
@@ -248,6 +265,7 @@ def create_node_runners(
     Returns:
         Dictionary mapping agent names to node functions.
     """
+    effective_skill_registry = _ensure_skill_registry(skill_registry)
 
     def _run_agent_node(
         agent_name: str,
@@ -277,9 +295,9 @@ def create_node_runners(
                 "requires_human": True,
             }
 
-        # Inject skill_registry for Polisher and Editor
-        if agent_name in ("polisher", "editor") and skill_registry is not None:
-            agent = agent_cls(repo, llm, skill_registry=skill_registry)
+        # Inject skill_registry for runtime Skill-capable agents.
+        if agent_name in ("planner", "screenwriter", "author", "polisher", "editor", "memory_curator"):
+            agent = agent_cls(repo, llm, skill_registry=effective_skill_registry)
         else:
             agent = agent_cls(repo, llm)
 
@@ -397,11 +415,11 @@ def task_discovery_node(state: FactoryState, repo: Repository) -> dict[str, Any]
     return {"has_instruction": has_instruction}
 
 
-def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
+def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Planner agent."""
     _update_run_node(state, repo, "planner")
     _log_node_event(state, repo, "planner", "started", status="running")
-    agent = PlannerAgent(repo, llm)
+    agent = PlannerAgent(repo, llm, skill_registry=_ensure_skill_registry(skill_registry))
     result = agent.run(state)
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
@@ -419,11 +437,11 @@ def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dic
     return result
 
 
-def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
+def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Screenwriter agent."""
     _update_run_node(state, repo, "screenwriter")
     _log_node_event(state, repo, "screenwriter", "started", status="running")
-    agent = ScreenwriterAgent(repo, llm)
+    agent = ScreenwriterAgent(repo, llm, skill_registry=_ensure_skill_registry(skill_registry))
     result = agent.run(state)
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
@@ -441,11 +459,11 @@ def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider) -
     return result
 
 
-def author_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
+def author_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Author agent."""
     _update_run_node(state, repo, "author")
     _log_node_event(state, repo, "author", "started", status="running")
-    agent = AuthorAgent(repo, llm)
+    agent = AuthorAgent(repo, llm, skill_registry=_ensure_skill_registry(skill_registry))
     result = _handle_retryable_quality_gate(state, repo, agent.run(state))
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
@@ -467,14 +485,7 @@ def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill
     """Run the Polisher agent."""
     _update_run_node(state, repo, "polisher")
     _log_node_event(state, repo, "polisher", "started", status="running")
-    # R4: Support skill_registry injection
-    if skill_registry is None:
-        try:
-            from ..skills.registry import SkillRegistry
-            skill_registry = SkillRegistry()
-        except Exception as e:
-            logger.warning(f"Failed to create SkillRegistry: {e}")
-    agent = PolisherAgent(repo, llm, skill_registry=skill_registry)
+    agent = PolisherAgent(repo, llm, skill_registry=_ensure_skill_registry(skill_registry))
     result = _handle_retryable_quality_gate(state, repo, agent.run(state))
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
@@ -496,14 +507,7 @@ def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
     """Run the Editor agent."""
     _update_run_node(state, repo, "editor")
     _log_node_event(state, repo, "editor", "started", status="running")
-    # R4: Support skill_registry injection
-    if skill_registry is None:
-        try:
-            from ..skills.registry import SkillRegistry
-            skill_registry = SkillRegistry()
-        except Exception as e:
-            logger.warning(f"Failed to create SkillRegistry: {e}")
-    agent = EditorAgent(repo, llm, skill_registry=skill_registry)
+    agent = EditorAgent(repo, llm, skill_registry=_ensure_skill_registry(skill_registry))
     result = agent.run(state)
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
@@ -521,7 +525,7 @@ def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
     return result
 
 
-def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
+def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Memory Curator agent to extract story facts from reviewed chapter.
 
     v5.3.2 closure: In real mode, failure is blocking (requires_human=True).
@@ -529,7 +533,7 @@ def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider)
     """
     _update_run_node(state, repo, "memory_curator")
     _log_node_event(state, repo, "memory_curator", "started", status="running")
-    agent = MemoryCuratorAgent(repo, llm)
+    agent = MemoryCuratorAgent(repo, llm, skill_registry=_ensure_skill_registry(skill_registry))
     result = agent.run(state)
     # Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)

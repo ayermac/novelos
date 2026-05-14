@@ -297,6 +297,81 @@
   margin-bottom: 12px;
 }
 
+.core-agent-coverage {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 14px;
+  border: 1px solid var(--skill-border);
+  border-radius: 8px;
+  background: var(--skill-panel);
+}
+
+.coverage-label {
+  display: block;
+  color: var(--skill-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.core-agent-coverage strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.core-agent-coverage p {
+  margin: 6px 0 0;
+  color: var(--skill-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.coverage-chip-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.coverage-chip {
+  display: flex;
+  min-height: 46px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--skill-border);
+  border-radius: 7px;
+  background: var(--skill-soft);
+  color: var(--skill-ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.coverage-chip.covered {
+  border-color: rgba(47, 111, 115, 0.22);
+  background: rgba(47, 111, 115, 0.08);
+}
+
+.coverage-chip.missing {
+  border-color: rgba(163, 58, 58, 0.28);
+  background: rgba(163, 58, 58, 0.07);
+}
+
+.coverage-chip span {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.coverage-chip small {
+  color: var(--skill-muted);
+  font-size: 11px;
+}
+
 .skill-overview-card {
   appearance: none;
   text-align: left;
@@ -602,6 +677,36 @@
   font-size: 12px;
 }
 
+.stage-explanation-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.stage-explanation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--skill-border);
+  border-radius: 7px;
+  background: var(--skill-soft);
+}
+
+.stage-explanation code {
+  color: var(--skill-accent);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.stage-explanation span {
+  color: var(--skill-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .orchestration-scroll {
   overflow-x: auto;
   padding-bottom: 8px;
@@ -871,6 +976,7 @@
   }
 
   .skill-console-metrics,
+  .core-agent-coverage,
   .skill-overview-grid {
     grid-template-columns: 1fr;
   }

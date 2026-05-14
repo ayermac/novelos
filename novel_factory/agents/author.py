@@ -24,7 +24,9 @@ from ..validators.death_penalty import (
 from ..validators.plot_verifier import check_plot_coverage
 from ..llm.openai_compatible import OutputValidationError
 from ..llm.provider import is_configured_live_provider
+from ..skills.registry import SkillRegistry
 from .base import BaseAgent
+from .skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +55,10 @@ class AuthorAgent(BaseAgent):
     """Author: writes chapter content."""
 
     agent_id = "author"
+
+    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None):
+        super().__init__(repo, llm)
+        self.skill_registry = skill_registry
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
@@ -155,6 +161,22 @@ class AuthorAgent(BaseAgent):
         output = self._sanitize_output(output, state)
 
         self.validate_output(output.model_dump())
+        instruction = self._get_instruction(state) or {}
+        run_agent_skills(
+            repo=self.repo,
+            skill_registry=self.skill_registry,
+            project_id=project_id,
+            chapter_number=chapter_number,
+            agent="author",
+            stage="after_llm",
+            payload={
+                "content": output.content,
+                "required_events": instruction.get("key_events"),
+                "implemented_events": output.implemented_events,
+            },
+            project_overrides=self._get_project_skill_overrides(project_id),
+            skill_type_hint="validator",
+        )
 
         # v5.3.0: Word count quality gate
         word_target = self._get_word_target(state)

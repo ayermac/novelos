@@ -55,8 +55,52 @@ skills:
     config:
       blocking_threshold: 50
 
+  chapter-objective-checker:
+    enabled: true
+    manifest: config/skills/manifest/chapter-objective-checker.yaml
+    type: validator
+    class: ChapterObjectiveCheckerSkill
+    description: "检查 Planner 章节目标是否具体、可执行"
+    config: {}
+
+  scene-conflict-checker:
+    enabled: true
+    manifest: config/skills/manifest/scene-conflict-checker.yaml
+    type: validator
+    class: SceneConflictCheckerSkill
+    description: "检查 Screenwriter 场景 beat 是否具备目标、冲突、转折和钩子"
+    config: {}
+
+  event-coverage-checker:
+    enabled: true
+    manifest: config/skills/manifest/event-coverage-checker.yaml
+    type: validator
+    class: EventCoverageCheckerSkill
+    description: "检查 Author 正文是否覆盖写作指令中的必需事件"
+    config: {}
+
+  memory-patch-validator:
+    enabled: true
+    manifest: config/skills/manifest/memory-patch-validator.yaml
+    type: validator
+    class: MemoryPatchValidatorSkill
+    description: "检查 Memory Curator 抽取的记忆 patch 是否结构完整"
+    config: {}
+
 # Agent挂载配置
 agent_skills:
+  planner:
+    after_llm:
+      - chapter-objective-checker
+
+  screenwriter:
+    after_llm:
+      - scene-conflict-checker
+
+  author:
+    after_llm:
+      - event-coverage-checker
+
   polisher:
     after_llm:
       - humanizer-zh
@@ -68,3 +112,7 @@ agent_skills:
       - ai-style-detector
       - narrative-quality
       - style-bible-checker
+
+  memory_curator:
+    after_extract:
+      - memory-patch-validator

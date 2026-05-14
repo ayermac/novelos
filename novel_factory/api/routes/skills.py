@@ -158,7 +158,7 @@ def _skill_summary(skill: dict[str, Any] | None, skill_id: str) -> dict[str, Any
         "enabled": skill.get("enabled", True),
         "missing": False,
         "package": skill.get("package"),
-        "legacy": not bool(skill.get("package")),
+        "legacy": not bool(skill.get("package") or skill.get("has_manifest")),
         "kind": skill.get("kind") or skill.get("type"),
     }
 
@@ -275,7 +275,7 @@ def _build_config_view(registry) -> dict[str, Any]:
             "enabled": skill.get("enabled", True),
             "kind": skill.get("kind") or skill.get("type"),
             "package": skill.get("package"),
-            "legacy": not bool(skill.get("package")),
+            "legacy": not bool(skill.get("package") or skill.get("has_manifest")),
             "class_name": skill.get("class_name") or skill.get("class"),
             "allowed_targets": allowed_targets,
             "mountable_targets": _skill_mountable_targets(registry, skill["id"], allowed_targets),

@@ -44,17 +44,23 @@ const skills = [
 ]
 
 const skillConfig = {
-  agents: ['planner', 'author', 'memory_curator', 'scout'],
+  agents: ['planner', 'screenwriter', 'author', 'polisher', 'editor', 'memory_curator', 'scout'],
   stages: {
-    planner: ['plan'],
-    author: ['draft', 'revise'],
-    memory_curator: ['after_review'],
+    planner: ['plan', 'after_llm'],
+    screenwriter: ['after_llm'],
+    author: ['draft', 'revise', 'after_llm'],
+    polisher: ['after_llm', 'before_save'],
+    editor: ['before_review'],
+    memory_curator: ['after_review', 'after_extract'],
     scout: ['research'],
   },
   agent_skills: {
-    planner: { plan: ['disabled-mounted'] },
-    author: { draft: ['style-polisher', 'fresh-add'], revise: ['missing-skill'] },
-    memory_curator: { after_review: [] },
+    planner: { plan: ['disabled-mounted'], after_llm: ['chapter-objective-checker'] },
+    screenwriter: { after_llm: ['scene-conflict-checker'] },
+    author: { draft: ['style-polisher', 'fresh-add'], revise: ['missing-skill'], after_llm: ['event-coverage-checker'] },
+    polisher: { after_llm: ['humanizer-zh'], before_save: [] },
+    editor: { before_review: ['ai-style-detector'] },
+    memory_curator: { after_review: [], after_extract: ['memory-patch-validator'] },
     scout: { research: [] },
   },
   available_skills: [
@@ -113,12 +119,78 @@ const skillConfig = {
       allowed_targets: [{ agent: 'author', stage: 'draft' }],
       mountable_targets: [{ agent: 'author', stage: 'draft' }],
     },
+    {
+      id: 'chapter-objective-checker',
+      name: 'Chapter Objective Checker',
+      enabled: true,
+      kind: 'validator',
+      package: null,
+      legacy: false,
+      class_name: 'ChapterObjectiveCheckerSkill',
+      allowed_targets: [{ agent: 'planner', stage: 'after_llm' }],
+      mountable_targets: [{ agent: 'planner', stage: 'after_llm' }],
+    },
+    {
+      id: 'scene-conflict-checker',
+      name: 'Scene Conflict Checker',
+      enabled: true,
+      kind: 'validator',
+      package: null,
+      legacy: false,
+      class_name: 'SceneConflictCheckerSkill',
+      allowed_targets: [{ agent: 'screenwriter', stage: 'after_llm' }],
+      mountable_targets: [{ agent: 'screenwriter', stage: 'after_llm' }],
+    },
+    {
+      id: 'event-coverage-checker',
+      name: 'Event Coverage Checker',
+      enabled: true,
+      kind: 'validator',
+      package: null,
+      legacy: false,
+      class_name: 'EventCoverageCheckerSkill',
+      allowed_targets: [{ agent: 'author', stage: 'after_llm' }],
+      mountable_targets: [{ agent: 'author', stage: 'after_llm' }],
+    },
+    {
+      id: 'memory-patch-validator',
+      name: 'Memory Patch Validator',
+      enabled: true,
+      kind: 'validator',
+      package: null,
+      legacy: false,
+      class_name: 'MemoryPatchValidatorSkill',
+      allowed_targets: [{ agent: 'memory_curator', stage: 'after_extract' }],
+      mountable_targets: [{ agent: 'memory_curator', stage: 'after_extract' }],
+    },
+    {
+      id: 'humanizer-zh',
+      name: 'Humanizer',
+      enabled: true,
+      kind: 'transform',
+      package: 'skill_packages/humanizer_zh',
+      legacy: false,
+      class_name: 'HumanizerZhSkill',
+      allowed_targets: [{ agent: 'polisher', stage: 'after_llm' }],
+      mountable_targets: [{ agent: 'polisher', stage: 'after_llm' }],
+    },
+    {
+      id: 'ai-style-detector',
+      name: 'AI Style Detector',
+      enabled: true,
+      kind: 'validator',
+      package: 'skill_packages/ai_style_detector',
+      legacy: false,
+      class_name: 'AIStyleDetectorSkill',
+      allowed_targets: [{ agent: 'editor', stage: 'before_review' }],
+      mountable_targets: [{ agent: 'editor', stage: 'before_review' }],
+    },
   ],
   missing_skills: [{ id: 'missing-skill', agent: 'author', stage: 'revise' }],
   disabled_skills: [{ id: 'disabled-mounted', name: 'Disabled Mounted' }],
   config_path: 'config/local.yaml',
-  total_skills: 4,
-  total_mounted: 3,
+  total_skills: 10,
+  total_mounted: 9,
 }
 
 const agentMatrix = {
@@ -131,6 +203,23 @@ const agentMatrix = {
           skill_ids: ['disabled-mounted'],
           skills: [{ id: 'disabled-mounted', name: 'Disabled Mounted', enabled: false, missing: false, package: 'pkg.guard', legacy: false, kind: 'guard' }],
           warnings: [{ code: 'disabled', message: 'disabled-mounted is disabled' }],
+        },
+        {
+          stage: 'after_llm',
+          skill_ids: ['chapter-objective-checker'],
+          skills: [{ id: 'chapter-objective-checker', name: 'Chapter Objective Checker', enabled: true, missing: false, package: null, legacy: false, kind: 'validator' }],
+          warnings: [],
+        },
+      ],
+    },
+    {
+      agent: 'screenwriter',
+      stages: [
+        {
+          stage: 'after_llm',
+          skill_ids: ['scene-conflict-checker'],
+          skills: [{ id: 'scene-conflict-checker', name: 'Scene Conflict Checker', enabled: true, missing: false, package: null, legacy: false, kind: 'validator' }],
+          warnings: [],
         },
       ],
     },
@@ -151,6 +240,39 @@ const agentMatrix = {
           skill_ids: ['missing-skill'],
           skills: [{ id: 'missing-skill', name: null, enabled: false, missing: true, package: null, legacy: false, kind: null }],
           warnings: [{ code: 'missing', message: 'missing-skill is missing' }],
+        },
+      ],
+    },
+    {
+      agent: 'polisher',
+      stages: [
+        {
+          stage: 'after_llm',
+          skill_ids: ['humanizer-zh'],
+          skills: [{ id: 'humanizer-zh', name: 'Humanizer', enabled: true, missing: false, package: 'skill_packages/humanizer_zh', legacy: false, kind: 'transform' }],
+          warnings: [],
+        },
+      ],
+    },
+    {
+      agent: 'editor',
+      stages: [
+        {
+          stage: 'before_review',
+          skill_ids: ['ai-style-detector'],
+          skills: [{ id: 'ai-style-detector', name: 'AI Style Detector', enabled: true, missing: false, package: 'skill_packages/ai_style_detector', legacy: false, kind: 'validator' }],
+          warnings: [],
+        },
+      ],
+    },
+    {
+      agent: 'memory_curator',
+      stages: [
+        {
+          stage: 'after_extract',
+          skill_ids: ['memory-patch-validator'],
+          skills: [{ id: 'memory-patch-validator', name: 'Memory Patch Validator', enabled: true, missing: false, package: null, legacy: false, kind: 'validator' }],
+          warnings: [],
         },
       ],
     },
@@ -243,6 +365,28 @@ describe('SkillVisibilityPanel', () => {
     expect(screen.getAllByText('draft').length).toBeGreaterThan(0)
     expect(screen.getByText('style-polisher')).toBeInTheDocument()
     expect(screen.getByText('missing')).toBeInTheDocument()
+  })
+
+  it('shows core Agent coverage and stage explanations', async () => {
+    render(<SkillVisibilityPanel />)
+    expect(await screen.findByText('Core Agent coverage')).toBeInTheDocument()
+    expect(screen.getByText('6/6')).toBeInTheDocument()
+    expect(screen.getByText(/planner、screenwriter、author/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /Agent 编排/ }))
+    expect(screen.getByText('生成前上下文增强')).toBeInTheDocument()
+    expect(screen.getByText('生成后校验/改写')).toBeInTheDocument()
+    expect(screen.getByText('记忆抽取后校验')).toBeInTheDocument()
+    expect(screen.getByText('审稿前质量检查')).toBeInTheDocument()
+  })
+
+  it('renders default core Agent mounts in the matrix', async () => {
+    render(<SkillVisibilityPanel />)
+    fireEvent.click(await screen.findByRole('button', { name: /Agent 编排/ }))
+    expect(screen.getByText('chapter-objective-checker')).toBeInTheDocument()
+    expect(screen.getByText('scene-conflict-checker')).toBeInTheDocument()
+    expect(screen.getByText('event-coverage-checker')).toBeInTheDocument()
+    expect(screen.getByText('memory-patch-validator')).toBeInTheDocument()
   })
 
   it('add, remove, and reorder controls call existing APIs', async () => {

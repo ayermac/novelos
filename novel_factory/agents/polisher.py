@@ -15,6 +15,7 @@ from ..validators.death_penalty import check_death_penalty, check_death_penalty_
 from ..validators.fact_lock import check_fact_integrity, extract_fact_lock
 from ..skills.registry import SkillRegistry
 from .base import BaseAgent
+from .skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
 
@@ -102,7 +103,11 @@ class PolisherAgent(BaseAgent):
         polished_content = output.content
         if self.skill_registry:
             project_skill_overrides = self._get_project_skill_overrides(project_id)
-            after_llm_result = self.skill_registry.run_skills_for_agent(
+            after_llm_hook = run_agent_skills(
+                repo=self.repo,
+                skill_registry=self.skill_registry,
+                project_id=project_id,
+                chapter_number=chapter_number,
                 agent="polisher",
                 stage="after_llm",
                 payload={
@@ -110,41 +115,18 @@ class PolisherAgent(BaseAgent):
                     "fact_lock": {"key_events": [f.content for f in fact_lock] if fact_lock else []},
                 },
                 project_overrides=project_skill_overrides,
+                skill_type_hint="transform",
+                fail_closed_ids={"humanizer-zh", "ai-style-detector"},
             )
-            
-            # Process skill results
-            for skill_item in after_llm_result:
-                skill_id = skill_item.get("skill_id", "")
-                result = skill_item.get("result", {})
-                
-                # Save skill run to database
-                try:
-                    self.repo.save_skill_run(
-                        project_id=project_id,
-                        skill_id=skill_id,
-                        skill_type="transform",
-                        ok=result.get("ok", False),
-                        error=result.get("error"),
-                        input_json={"text": polished_content[:500]},  # Truncate for storage
-                        output_json=result.get("data"),
-                        chapter_number=chapter_number,
-                    )
-                except Exception as e:
-                    logger.warning("Polisher: failed to save skill_run: %s", e)
-                
-                # Check if critical skill failed
-                if not result.get("ok"):
-                    logger.error("Polisher: critical skill %s failed: %s", skill_id, result.get("error"))
-                    # Critical skills (humanizer-zh, ai-style-detector) must block on failure
-                    if skill_id in ("humanizer-zh", "ai-style-detector"):
-                        return {
-                            "error": f"Polisher: critical skill {skill_id} failed: {result.get('error')}",
-                            "chapter_status": state.get("chapter_status"),
-                        }
-                
-                # Handle HumanizerZh skill (transform skill)
-                if skill_id == "humanizer-zh" and result.get("ok") and result.get("data"):
-                    polished_content = result["data"].get("humanized_text", polished_content)
+            if not after_llm_hook.ok:
+                return {
+                    "error": f"Polisher: critical skill failed: {after_llm_hook.blocking_error}",
+                    "chapter_status": state.get("chapter_status"),
+                }
+
+            for transform in after_llm_hook.transforms:
+                if transform.get("skill_id") == "humanizer-zh":
+                    polished_content = transform.get("content", polished_content)
 
         if fact_lock:
             integrity = check_fact_integrity(original_content, polished_content, fact_lock)
@@ -195,45 +177,28 @@ class PolisherAgent(BaseAgent):
         # Apply skills from config (before_save stage)
         if self.skill_registry:
             project_skill_overrides = self._get_project_skill_overrides(project_id)
-            before_save_result = self.skill_registry.run_skills_for_agent(
+            before_save_hook = run_agent_skills(
+                repo=self.repo,
+                skill_registry=self.skill_registry,
+                project_id=project_id,
+                chapter_number=chapter_number,
                 agent="polisher",
                 stage="before_save",
                 payload={"text": polished_content},
                 project_overrides=project_skill_overrides,
+                skill_type_hint="validator",
+                fail_closed_ids={"humanizer-zh", "ai-style-detector"},
             )
-            
+            if not before_save_hook.ok:
+                return {
+                    "error": f"Polisher: critical skill failed: {before_save_hook.blocking_error}",
+                    "chapter_status": state.get("chapter_status"),
+                }
+
             # Check AI trace score from AIStyleDetector
-            for skill_item in before_save_result:
-                skill_id = skill_item.get("skill_id", "")
-                result = skill_item.get("result", {})
-                
-                # Save skill run to database
-                try:
-                    self.repo.save_skill_run(
-                        project_id=project_id,
-                        skill_id=skill_id,
-                        skill_type="validator",
-                        ok=result.get("ok", False),
-                        error=result.get("error"),
-                        input_json={"text": polished_content[:500]},  # Truncate for storage
-                        output_json=result.get("data"),
-                        chapter_number=chapter_number,
-                    )
-                except Exception as e:
-                    logger.warning("Polisher: failed to save skill_run: %s", e)
-                
-                # Check if critical skill failed
-                if not result.get("ok"):
-                    logger.error("Polisher: critical skill %s failed: %s", skill_id, result.get("error"))
-                    # Critical skills must block on failure
-                    if skill_id in ("humanizer-zh", "ai-style-detector"):
-                        return {
-                            "error": f"Polisher: critical skill {skill_id} failed: {result.get('error')}",
-                            "chapter_status": state.get("chapter_status"),
-                        }
-                
-                if skill_id == "ai-style-detector" and result.get("ok") and result.get("data"):
-                    ai_trace_score = result["data"].get("ai_trace_score", 0)
+            for skill_item in before_save_hook.skill_results:
+                if skill_item.get("skill_id") == "ai-style-detector" and skill_item.get("ok") and skill_item.get("data"):
+                    ai_trace_score = skill_item["data"].get("ai_trace_score", 0)
                     if ai_trace_score > 70:  # TODO: move to config
                         logger.error(
                             "Polisher: AI trace score too high: %d > 70",

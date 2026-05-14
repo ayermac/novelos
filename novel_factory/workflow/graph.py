@@ -117,15 +117,15 @@ def build_graph(
         )
         graph.add_node(
             "planner",
-            lambda s: nodes.planner_node(s, repo, llm),
+            lambda s: nodes.planner_node(s, repo, llm, skill_registry),
         )
         graph.add_node(
             "screenwriter",
-            lambda s: nodes.screenwriter_node(s, repo, llm),
+            lambda s: nodes.screenwriter_node(s, repo, llm, skill_registry),
         )
         graph.add_node(
             "author",
-            lambda s: nodes.author_node(s, repo, llm),
+            lambda s: nodes.author_node(s, repo, llm, skill_registry),
         )
         graph.add_node(
             "polisher",
@@ -137,7 +137,7 @@ def build_graph(
         )
         graph.add_node(
             "memory_curator",
-            lambda s: nodes.memory_curator_node(s, repo, llm),
+            lambda s: nodes.memory_curator_node(s, repo, llm, skill_registry),
         )
         graph.add_node(
             "publisher",

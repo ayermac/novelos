@@ -20,6 +20,11 @@ class TestSkillConfiguration:
         assert "humanizer-zh" in skill_ids
         assert "ai-style-detector" in skill_ids
         assert "narrative-quality" in skill_ids
+        assert len(skill_ids) >= 8
+        assert "chapter-objective-checker" in skill_ids
+        assert "scene-conflict-checker" in skill_ids
+        assert "event-coverage-checker" in skill_ids
+        assert "memory-patch-validator" in skill_ids
     
     def test_skill_types(self):
         """Test that skills have correct types."""
@@ -46,6 +51,21 @@ class TestSkillConfiguration:
         # Check editor skills
         editor_before_review = registry.get_skills_for_agent("editor", "before_review")
         assert isinstance(editor_before_review, list)
+
+        assert registry.get_skills_for_agent("planner", "after_llm") == ["chapter-objective-checker"]
+        assert registry.get_skills_for_agent("screenwriter", "after_llm") == ["scene-conflict-checker"]
+        assert registry.get_skills_for_agent("author", "after_llm") == ["event-coverage-checker"]
+        assert registry.get_skills_for_agent("memory_curator", "after_extract") == ["memory-patch-validator"]
+
+    def test_new_agent_skills_have_manifests(self):
+        registry = SkillRegistry()
+        for skill_id in (
+            "chapter-objective-checker",
+            "scene-conflict-checker",
+            "event-coverage-checker",
+            "memory-patch-validator",
+        ):
+            assert registry.get_manifest(skill_id) is not None
     
     def test_disabled_skill_not_in_agent_list(self, tmp_path):
         """Test that disabled skills are not included in agent skill list."""

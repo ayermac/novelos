@@ -8,7 +8,9 @@ from typing import Any
 
 from ..models.schemas import ScreenwriterOutput
 from ..models.state import ChapterStatus, FactoryState
+from ..skills.registry import SkillRegistry
 from .base import BaseAgent
+from .skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +39,10 @@ class ScreenwriterAgent(BaseAgent):
     """Screenwriter: decomposes chapter instructions into scene beats."""
 
     agent_id = "screenwriter"
+
+    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None):
+        super().__init__(repo, llm)
+        self.skill_registry = skill_registry
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
@@ -81,6 +87,18 @@ class ScreenwriterAgent(BaseAgent):
         output = ScreenwriterOutput(**raw)
 
         self.validate_output(output.model_dump())
+        beats_data = [b.model_dump() for b in output.scene_beats]
+        run_agent_skills(
+            repo=self.repo,
+            skill_registry=self.skill_registry,
+            project_id=project_id,
+            chapter_number=chapter_number,
+            agent="screenwriter",
+            stage="after_llm",
+            payload={"scene_beats": beats_data},
+            project_overrides=self._get_project_skill_overrides(project_id),
+            skill_type_hint="validator",
+        )
 
         # Advance status FIRST to lock the transition; abort if stale
         ok = self.repo.update_chapter_status(
@@ -93,7 +111,6 @@ class ScreenwriterAgent(BaseAgent):
 
         # Save scene beats (only after status advance succeeds)
         try:
-            beats_data = [b.model_dump() for b in output.scene_beats]
             self.repo.save_scene_beats(project_id, chapter_number, beats_data)
 
             # Save artifact (bind to workflow run for isolation)

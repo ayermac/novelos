@@ -15,7 +15,9 @@ from typing import Any
 from ..models.state import ChapterStatus, FactoryState
 from ..llm.openai_compatible import LLMTimeoutError, OutputValidationError
 from ..llm.provider import is_configured_live_provider
+from ..skills.registry import SkillRegistry
 from .base import BaseAgent
+from .skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,10 @@ class MemoryCuratorAgent(BaseAgent):
     """Memory Curator: extracts story facts from reviewed chapters."""
 
     agent_id = "memory_curator"
+
+    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None):
+        super().__init__(repo, llm)
+        self.skill_registry = skill_registry
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
@@ -182,6 +188,17 @@ class MemoryCuratorAgent(BaseAgent):
                 "memory_curator_warning": str(e),
             }
         patches = raw.get("patches", raw.get("facts", []))
+        run_agent_skills(
+            repo=self.repo,
+            skill_registry=self.skill_registry,
+            project_id=project_id,
+            chapter_number=chapter_number,
+            agent="memory_curator",
+            stage="after_extract",
+            payload={"patches": patches},
+            project_overrides=self._get_project_skill_overrides(project_id),
+            skill_type_hint="validator",
+        )
 
         if not patches:
             logger.info(

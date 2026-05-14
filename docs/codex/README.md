@@ -17,8 +17,8 @@
 - **当前 WebUI 基线**: v5.6.1 Workbench Stabilization
 - **当前创作者闭环基线**: v5.7 Daily Writing Editing and Versioning
 - **当前稳定版本**: v5.8 Workflow Observability and Recovery
-- **状态**: v5.9.2 UI Controls Standardization completed；下一阶段候选为 v5.9.3 Agent Skill Expansion
-- **测试基线**: pytest 1892/1892 passed；v5.9.2 smoke passed；vitest 146/146 passed；frontend typecheck/lint/build passed
+- **状态**: v5.9.3 Agent Skill Expansion completed；下一阶段候选为 v6.0 Long-form Context Engineering
+- **测试基线**: v5.9.3 targeted pytest 107/107 passed；LangGraph activation pytest 14/14 passed；Skill package pytest 43/43 passed；smoke passed；vitest 148/148 passed；frontend typecheck/lint/build passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
@@ -37,6 +37,8 @@
 - **v5.9.2 完成报告**: [reports/novel-factory-v5.9.2-completion-report.md](reports/novel-factory-v5.9.2-completion-report.md)
 - **v5.9.2 Review 记录**: [reviews/novel-factory-v5.9.2-review.md](reviews/novel-factory-v5.9.2-review.md)
 - **v5.9.3 Agent Skill Expansion 规格**: [planning/novel-factory-v5.9.3-agent-skill-expansion-spec.md](planning/novel-factory-v5.9.3-agent-skill-expansion-spec.md)
+- **v5.9.3 完成报告**: [reports/novel-factory-v5.9.3-completion-report.md](reports/novel-factory-v5.9.3-completion-report.md)
+- **v5.9.3 Review 记录**: [reviews/novel-factory-v5.9.3-review.md](reviews/novel-factory-v5.9.3-review.md)
 
 ## 当前执行规则
 
@@ -72,10 +74,9 @@ v5.5.15 和 v5.6 Phase 1 完成后，下一阶段不优先展开多租户、企�
 
 近期优先级：
 
-1. v5.9.3 Agent Skill Expansion：把 Skill 从 Polisher/Editor 的后置质量插件扩展为覆盖 Planner、Screenwriter、Author、MemoryCurator 的创作能力层。
-2. v6.0 长篇 Context Engineering 与记忆治理：上下文清单、压缩策略、记忆审核、token 预算和注入可解释性。
-3. 创作者资料库 / RAG。
-4. 导出与发布流水线。
+1. v6.0 长篇 Context Engineering 与记忆治理：上下文清单、压缩策略、记忆审核、token 预算和注入可解释性。
+2. 创作者资料库 / RAG。
+3. 导出与发布流水线。
 
 详细方向见 [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)。
 Pi 启发的 Agent 工程路线见 [next/pi-inspired-agent-engineering-roadmap.md](next/pi-inspired-agent-engineering-roadmap.md)。

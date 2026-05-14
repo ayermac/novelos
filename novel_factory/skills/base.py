@@ -17,6 +17,10 @@ BUILTIN_SKILLS = {
     "NarrativeQualityScorer": None,
     "ImportedInstructionSkill": None,  # v3.8: imported skill handler
     "StyleBibleCheckerSkill": None,  # v4.0: style bible checker
+    "ChapterObjectiveCheckerSkill": None,
+    "SceneConflictCheckerSkill": None,
+    "EventCoverageCheckerSkill": None,
+    "MemoryPatchValidatorSkill": None,
 }
 
 
@@ -41,6 +45,18 @@ def _get_skill_class(class_name: str):
     elif class_name == "StyleBibleCheckerSkill":
         from .style_bible_checker import StyleBibleCheckerSkill
         return StyleBibleCheckerSkill
+    elif class_name == "ChapterObjectiveCheckerSkill":
+        from .agent_validators import ChapterObjectiveCheckerSkill
+        return ChapterObjectiveCheckerSkill
+    elif class_name == "SceneConflictCheckerSkill":
+        from .agent_validators import SceneConflictCheckerSkill
+        return SceneConflictCheckerSkill
+    elif class_name == "EventCoverageCheckerSkill":
+        from .agent_validators import EventCoverageCheckerSkill
+        return EventCoverageCheckerSkill
+    elif class_name == "MemoryPatchValidatorSkill":
+        from .agent_validators import MemoryPatchValidatorSkill
+        return MemoryPatchValidatorSkill
     
     return None
 
