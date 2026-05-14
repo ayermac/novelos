@@ -33,6 +33,14 @@ Agent 有角色名，但角色专业能力还不够厚。
 
 因此，v6.0 不再规划为“再加几个 Skill”或“再补一个 Prompt 系统”，而是一次性完成 Agent 角色能力系统。
 
+补充判断：Novelos 当前确实更接近 Workflow 系统，而不是真正的 Agent 系统。v6.0 的目标不是抛弃 Workflow，而是在稳定专业流程上增加 **bounded autonomy**：
+
+```text
+Workflow 负责专业生产边界和状态安全；
+Agent 负责感知、规划、决策、工具调用、反思和局部修复；
+Human-in-the-loop 负责最终控制和高风险决策。
+```
+
 ## 设计原则
 
 1. **按完整能力闭环规划，不按小功能碎片迭代。**
@@ -42,6 +50,7 @@ Agent 有角色名，但角色专业能力还不够厚。
 5. 所有新增 LLM 调用必须有成本预算、降级策略和可观测记录。
 6. 人工创作者拥有最终控制权；Agent 自主性必须可解释、可撤销。
 7. 不追求企业多租户；优先服务个人创作者的长篇生产稳定性和质量。
+8. 自主性必须有边界。Agent 可以建议、局部修复、请求补充资料、拒绝不合理任务，但不能绕过状态机、发布门禁和人工确认。
 
 ## 非目标
 
@@ -138,6 +147,48 @@ v5.8 已有 workflow timeline，但 Agent 内部决策仍不够透明。
 - MemoryCurator eval；
 - 端到端创作流程 eval。
 
+### 8. Agent 自主性不足
+
+当前状态转换是硬编码的：
+
+```text
+planned -> scripted -> drafted -> polished -> review
+```
+
+这保证了稳定性，但 Agent 缺少自主判断能力：
+
+- 不能拒绝不合理任务；
+- 不能在中间结果不够好时调整策略；
+- 不能主动请求补充世界观/角色信息；
+- 不能提出“需要回到 Planner/Screenwriter”的理由；
+- 不能把异常情况升级为具体的人类决策问题。
+
+v6.0 需要补的是 **有边界的自主决策**，不是完全自由的 Agent Loop。
+
+### 9. 工具系统不足
+
+当前工具主要是：
+
+```text
+Repository read/write
+LLMProvider
+SkillRegistry
+```
+
+对于创作 Agent 来说还不够。需要一个受控工具层：
+
+- 项目资料查询工具；
+- 章节/版本/diff 工具；
+- 伏笔债务查询工具；
+- Agent Memory 工具；
+- Genre Strategy 查询工具；
+- Web/reference search 工具；
+- 文件导入工具；
+- 局部改写工具；
+- Eval 执行工具。
+
+外部工具如搜索、文件、bash/API 必须显式授权、审计和限制，不能默认给 Agent 无限环境权限。
+
 ## 完整能力目标
 
 v6.0 完成后，系统应具备：
@@ -146,6 +197,8 @@ v6.0 完成后，系统应具备：
 Agent Role Profile
 Agent Capability Pack
 Agent Memory
+Bounded Autonomy Policy
+Agent Tool Runtime
 Self-check and Local Repair Loop
 Agent Collaboration Contract
 Agent Decision Trace
@@ -384,7 +437,96 @@ updated_at
 3. Agent Memory 注入 prompt 时必须可解释。
 4. 每条记忆必须有来源和置信度。
 
-### 4. Self-check and Local Repair Loop
+### 4. Bounded Autonomy Policy
+
+新增自主性策略层：
+
+```text
+novel_factory/agents/autonomy.py
+novel_factory/config/agent_autonomy.yaml
+```
+
+策略目标：让 Agent 能自主判断下一步，但不破坏工作流安全边界。
+
+Agent 可做的自主决策：
+
+| Decision | 示例 |
+| --- | --- |
+| continue | 当前输出通过自检，继续下一阶段 |
+| local_repair | 当前问题局部可修，先修复再保存 |
+| request_context | 缺少角色/世界观/大纲，向用户或资料库请求补充 |
+| reroute | 问题属于上游，建议返回 Planner/Screenwriter |
+| refuse | 任务违反约束、事实锁或发布门禁，拒绝执行 |
+| ask_human | 不确定性高，进入人工确认 |
+
+每个决策必须包含：
+
+```json
+{
+  "decision": "local_repair",
+  "reason": "正文遗漏 required_events 中的夺回账册",
+  "confidence": 0.82,
+  "risk": "low",
+  "allowed_by_policy": true,
+  "next_action": "repair_author_event_coverage"
+}
+```
+
+硬约束：
+
+1. Agent 不能绕过 `reviewed -> awaiting_publish/published` 发布门禁。
+2. Agent 不能在未授权情况下调用外部网络、文件、bash。
+3. Agent 不能自行删除项目、章节或版本。
+4. Agent 不能无限循环 repair；默认最多一次。
+5. 高风险决策必须 Human-in-the-loop。
+
+### 5. Agent Tool Runtime
+
+新增受控工具运行时：
+
+```text
+novel_factory/tools/
+  base.py
+  registry.py
+  project_tools.py
+  chapter_tools.py
+  memory_tools.py
+  search_tools.py
+  file_tools.py
+  eval_tools.py
+```
+
+工具类型：
+
+| Tool | 默认权限 | 用途 |
+| --- | --- | --- |
+| `project_context.query` | allow | 查询角色、世界观、伏笔、事实 |
+| `chapter.version_diff` | allow | 对比版本和局部变化 |
+| `foreshadowing.debt_report` | allow | 生成伏笔债务报告 |
+| `agent_memory.query/write` | allow with trace | 查询/写入 Agent 记忆 |
+| `local_rewrite.apply` | allow with versioning | 局部修复正文 |
+| `web_search.query` | opt-in | 查外部资料 |
+| `file.import_reference` | opt-in | 导入本地资料 |
+| `http.request` | deny by default | 外部 API |
+| `bash.run` | deny by default | shell 命令，只允许开发/诊断场景 |
+
+每个工具必须有：
+
+```yaml
+tool_id:
+description:
+input_schema:
+output_schema:
+permissions:
+allowed_agents:
+audit_policy:
+cost_policy:
+failure_policy:
+```
+
+工具调用必须写入 Agent Decision Trace。
+
+### 6. Self-check and Local Repair Loop
 
 每个创作 Agent 必须支持：
 
@@ -410,7 +552,7 @@ generate -> self_check -> local_repair -> final_check -> save
 3. repair 失败不能静默吞掉。
 4. 真实 LLM 模式下 repair 必须纳入 token 预算。
 
-### 5. Agent Collaboration Contract
+### 7. Agent Collaboration Contract
 
 新增协作契约：
 
@@ -441,7 +583,7 @@ failure_escalation:
 | editor -> planner/screenwriter/author/polisher | 返修单必须明确归因 |
 | memory_curator -> planner | 记忆变化影响后续规划时提醒 Planner |
 
-### 6. Agent Decision Trace
+### 8. Agent Decision Trace
 
 扩展 v5.8 timeline，新增 Agent 内部决策记录。
 
@@ -481,7 +623,7 @@ UI 中应展示：
 4. 是否做了局部修复。
 5. 为什么进入下一阶段或阻塞。
 
-### 7. Agent Evaluation Harness
+### 9. Agent Evaluation Harness
 
 新增评测目录：
 
@@ -528,7 +670,7 @@ python3 scripts/eval_agents.py planner
 python3 scripts/eval_agents.py all
 ```
 
-### 8. Project Genre Strategy
+### 10. Project Genre Strategy
 
 Agent 能力必须受项目类型策略影响。
 
@@ -569,7 +711,7 @@ author_style_bias:
 3. Editor 评分权重受 genre strategy 影响。
 4. Strategy 注入必须在 trace 中可见。
 
-### 9. AgentOps Role Console
+### 11. AgentOps Role Console
 
 WebUI 新增或增强 Agent 能力视图，不做运维化堆表。
 
@@ -598,7 +740,65 @@ Project -> AgentOps / 能力诊断
 3. 支持“为什么这章失败/为什么返修”的解释链。
 4. 支持按 Agent 过滤。
 
-### 10. Migration and Backward Compatibility
+### 12. Pi / External Agent Loop Integration
+
+Pi 这类 Agent Loop 可以强化 Novelos，但不建议完全迁移或替换主系统。
+
+推荐采用混合模式：
+
+```text
+Pi / External Agent Supervisor
+        |
+        | HTTP/RPC tools
+        v
+Novelos Professional Agent APIs
+        |
+        v
+Workflow + Repository + Skill/Capability + Trace
+```
+
+定位：
+
+- Novelos 负责专业小说生产、状态安全、版本、记忆、评测。
+- Pi 负责对话式上层编排、外部工具扩展、探索性任务和开发/诊断自动化。
+
+不推荐：
+
+1. 不推荐把 Novelos LLMProvider 简单替换为 Pi；这样拿不到 Agent Loop 价值。
+2. 不推荐完全迁移到 Pi；成本高且会丢掉 Novelos 已有的专业领域模型。
+3. 不推荐让 Pi 直接改数据库；必须通过 Novelos API/工具。
+
+建议新增：
+
+```text
+novel_factory/api/routes/agent_tools.py
+integrations/pi/
+  README.md
+  tools.ts
+  extension.ts
+```
+
+暴露给 Pi 的工具：
+
+| Tool | 能力 |
+| --- | --- |
+| `novelos_get_project_status` | 查看项目/章节/运行状态 |
+| `novelos_plan_chapter` | 调用 Planner 生成/修复章节计划 |
+| `novelos_design_scenes` | 调用 Screenwriter 生成/修复场景 |
+| `novelos_write_chapter` | 调用 Author 生成/局部修复正文 |
+| `novelos_review_chapter` | 调用 Editor 审核 |
+| `novelos_query_memory` | 查询事实/角色/伏笔/Agent Memory |
+| `novelos_get_trace` | 获取 Agent 决策链 |
+
+Pi 集成验收：
+
+1. Pi 可以通过工具读取项目状态。
+2. Pi 可以发起一个受控章节生产建议，但不能绕过 Novelos 工作流。
+3. Pi 的每次调用在 Novelos 中有 audit trace。
+4. Pi 无权直接发布、删除、覆盖版本。
+5. Pi 集成是可选功能，Novelos 本身不依赖 Pi 才能运行。
+
+### 13. Migration and Backward Compatibility
 
 本版本会引入新表和新配置，但必须兼容旧项目：
 
@@ -616,9 +816,17 @@ novel_factory/
   agents/
     roles/
     contracts/
+    autonomy.py
     capability_runtime.py
     self_check.py
     decision_trace.py
+  tools/
+    registry.py
+    project_tools.py
+    chapter_tools.py
+    memory_tools.py
+    search_tools.py
+    eval_tools.py
   skill_packages/
     chapter_objective_checker/
     scene_conflict_checker/
@@ -632,6 +840,9 @@ novel_factory/
   api/routes/
     agent_ops.py
     agent_memory.py
+    agent_tools.py
+  integrations/
+    pi/
 ```
 
 ## 实施阶段
@@ -658,27 +869,41 @@ novel_factory/
 3. 在 Agent prompt/context 中注入可解释的角色记忆和类型策略。
 4. UI 可查看和清理 Agent Memory。
 
-### Phase 4: Self-check and Local Repair
+### Phase 4: Bounded Autonomy and Tool Runtime
+
+1. 新增 Agent autonomy policy。
+2. 新增受控工具 registry。
+3. 为核心 Agent 接入项目资料、章节版本、记忆、伏笔债务等内部工具。
+4. 外部搜索/文件/http/bash 默认关闭，必须配置授权。
+
+### Phase 5: Self-check and Local Repair
 
 1. 为核心 Agent 接入 self_check。
 2. 为 Author/Screenwriter/MemoryCurator 优先实现局部修复。
 3. 记录 repair trace。
 4. 限制 repair 次数和成本。
 
-### Phase 5: Collaboration Contract and Revision Routing
+### Phase 6: Collaboration Contract and Revision Routing
 
 1. 定义 handoff artifact 质量标准。
 2. Editor 返修单必须归因到具体 Agent。
 3. MemoryCurator 对 Planner 产生设定变化提醒。
 4. 局部返修优先于整章重跑。
 
-### Phase 6: Decision Trace and AgentOps UI
+### Phase 7: Decision Trace and AgentOps UI
 
 1. 扩展 trace 持久化。
 2. WebUI 展示 Agent role、capability、memory、trace。
 3. 工作流页面能解释每个 Agent 做了什么、为什么这么做。
 
-### Phase 7: Evaluation Harness and Real Project Acceptance
+### Phase 8: Pi Integration and External Supervisor Bridge
+
+1. 定义 Novelos Agent Tool API。
+2. 提供 Pi extension/tool 示例。
+3. 确保外部 Agent 只能通过受控 API 调用。
+4. 记录 audit trace。
+
+### Phase 9: Evaluation Harness and Real Project Acceptance
 
 1. 建立 eval fixtures。
 2. 增加 `scripts/eval_agents.py`。
@@ -708,6 +933,8 @@ novel_factory/
 3. Agent Memory 和 Genre Strategy 注入 trace 可见。
 4. Self-check 和 local repair 有记录。
 5. Editor 返修单可归因到具体 Agent。
+6. Agent 能输出 bounded autonomy decision，并受 policy 约束。
+7. 工具调用写入 trace，外部工具默认不可用。
 
 ### AgentOps UI 验收
 
@@ -723,6 +950,14 @@ novel_factory/
 2. 每个核心 Agent 至少 5 个 eval case。
 3. E2E eval 覆盖一章完整生成。
 4. 真实项目验收覆盖至少 1 个新小说项目、真实 LLM、人工创作流程。
+
+### Pi 集成验收
+
+1. `integrations/pi/` 提供可运行的工具定义或明确的接入说明。
+2. Pi 可以读取项目状态和 trace。
+3. Pi 可以建议/触发受控生产动作。
+4. Pi 不能直接发布、删除、覆盖版本。
+5. Novelos 在不安装 Pi 的情况下仍能完整运行。
 
 ### 回归验收
 
@@ -775,19 +1010,25 @@ python3 scripts/eval_agents.py all
 
 ## 风险
 
-1. **范围过大风险**  
+1. **范围过大风险**
    这是大版本，但必须完整规划。执行可阶段化，产品版本不能碎片化。
 
-2. **LLM 成本风险**  
+2. **LLM 成本风险**
    默认能力应优先 rule-based。LLM-based 能力必须有预算和开关。
 
-3. **过度自动化风险**  
+3. **过度自动化风险**
    Agent Memory 和 local repair 不应绕过人工控制。
 
-4. **评测空转风险**  
+4. **外部工具风险**
+   搜索、文件、HTTP、bash 必须默认关闭，配置授权后才能使用。
+
+5. **Pi 依赖风险**
+   Pi 集成只能作为可选上层 Supervisor，不能成为 Novelos 核心运行依赖。
+
+6. **评测空转风险**
    Eval 必须能发现真实缺陷，不能只验证 schema。
 
-5. **UI 运维化风险**  
+7. **UI 运维化风险**
    AgentOps UI 不能变成工程日志墙，必须为创作者解释问题。
 
 ## 完成后的预期
@@ -844,19 +1085,24 @@ Implement the full v6.0 capability:
    - memory_patch_validator
 4. Add role-specific capability packs listed in the spec, with manifest, handler, README, fixtures, and tests.
 5. Add Agent Memory storage, repository, API, and UI.
-6. Add Genre Strategy config and inject it into Agent context with trace visibility.
-7. Add self-check and local repair loop for core creative Agents.
-8. Add collaboration contracts and use them for handoff validation and Editor revision attribution.
-9. Add Agent Decision Trace persistence and UI.
-10. Add AgentOps Role Console showing role goals, capability packs, memory, trace, eval status, and recent failure reasons.
-11. Add Agent eval harness and fixtures.
-12. Run a real-project acceptance flow with a new project and real LLM, then document findings.
+6. Add bounded autonomy policy and decision objects.
+7. Add controlled Agent Tool Runtime with internal tools enabled and external tools opt-in.
+8. Add Genre Strategy config and inject it into Agent context with trace visibility.
+9. Add self-check and local repair loop for core creative Agents.
+10. Add collaboration contracts and use them for handoff validation and Editor revision attribution.
+11. Add Agent Decision Trace persistence and UI.
+12. Add optional Pi/external Agent supervisor bridge through controlled Novelos API tools.
+13. Add AgentOps Role Console showing role goals, capability packs, memory, trace, eval status, and recent failure reasons.
+14. Add Agent eval harness and fixtures.
+15. Run a real-project acceptance flow with a new project and real LLM, then document findings.
 
 Constraints:
 
 - Do not implement only one thin slice and call it complete.
 - Do not leave new Skills outside `skill_packages/`.
 - Do not add uncontrolled LLM calls.
+- Do not add uncontrolled external tools. Search/file/http/bash must be opt-in and audited.
+- Do not make Pi a hard dependency.
 - Do not break v5.9.3 Skill runtime or project-specific overrides.
 - Do not turn AgentOps UI into raw JSON/log dump.
 - Preserve existing workflow order unless the spec explicitly requires a contract/trace insertion that does not alter user-visible chapter state transitions.
