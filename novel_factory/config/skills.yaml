@@ -46,6 +46,9 @@ skills:
 
   style-bible-checker:
     enabled: true
+    # v2.2 兼容: Style Bible Checker 仍是 legacy class，但必须显式绑定 manifest
+    manifest: config/skills/manifest/style-bible-checker.yaml
+    # v2.1 兼容字段
     type: validator
     class: StyleBibleCheckerSkill
     description: "Style Bible风格合规检查，用于Editor和Polisher"
