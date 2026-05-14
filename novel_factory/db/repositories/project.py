@@ -273,9 +273,11 @@ class ProjectRepositoryMixin:
                     (project_id, chapter_number),
                 )
             if cursor.rowcount > 0:
-                # Also update project current_chapter
+                # Publishing an older chapter during recovery/regeneration must not
+                # move the project progress marker backwards.
                 conn.execute(
-                    "UPDATE projects SET current_chapter=? WHERE project_id=?",
+                    "UPDATE projects SET current_chapter=MAX(COALESCE(current_chapter, 0), ?), "
+                    "updated_at=datetime('now','+8 hours') WHERE project_id=?",
                     (chapter_number, project_id),
                 )
             conn.commit()

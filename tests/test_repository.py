@@ -179,3 +179,23 @@ class TestPublish:
         ok = seeded_repo.publish_chapter("test_proj", 1)
         assert ok
         assert seeded_repo.get_chapter_status("test_proj", 1) == "published"
+        assert seeded_repo.get_project("test_proj")["current_chapter"] == 1
+
+    def test_publish_old_chapter_does_not_move_current_chapter_backward(self, seeded_repo):
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE projects SET current_chapter=? WHERE project_id=?",
+            (5, "test_proj"),
+        )
+        conn.execute(
+            "INSERT INTO chapters (project_id, chapter_number, title, status) VALUES (?, ?, ?, ?)",
+            ("test_proj", 4, "第四章 重跑", "reviewed"),
+        )
+        conn.commit()
+        conn.close()
+
+        ok = seeded_repo.publish_chapter("test_proj", 4)
+
+        assert ok
+        assert seeded_repo.get_chapter_status("test_proj", 4) == "published"
+        assert seeded_repo.get_project("test_proj")["current_chapter"] == 5
