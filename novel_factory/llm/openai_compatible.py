@@ -198,6 +198,7 @@ class OpenAICompatibleProvider(LLMProvider):
         messages: list[dict[str, str]],
         schema: type | None = None,
         temperature: float | None = None,
+        max_tokens: int | None = None,
         max_retries: int = 1,
     ) -> dict[str, Any]:
         """Invoke LLM and parse JSON from the response.
@@ -210,6 +211,8 @@ class OpenAICompatibleProvider(LLMProvider):
         kwargs: dict[str, Any] = {}
         if temperature is not None:
             kwargs["temperature"] = temperature
+        if max_tokens is not None:
+            kwargs["max_tokens"] = max_tokens
 
         # Add JSON instruction to the last user message if schema is given
         if schema:

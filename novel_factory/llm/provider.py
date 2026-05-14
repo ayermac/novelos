@@ -15,6 +15,7 @@ class LLMProvider(ABC):
         messages: list[dict[str, str]],
         schema: type | None = None,
         temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """Invoke the LLM and return structured JSON output.
 
@@ -22,6 +23,7 @@ class LLMProvider(ABC):
             messages: Chat messages in [{"role": "...", "content": "..."}] format.
             schema: Optional Pydantic model class for structured output validation.
             temperature: Override default temperature.
+            max_tokens: Override default max tokens.
 
         Returns:
             Parsed JSON dict.

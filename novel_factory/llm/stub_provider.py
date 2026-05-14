@@ -404,7 +404,7 @@ class StubLLM(LLMProvider):
         """Initialize stub LLM with token usage tracking (v5.2)."""
         self.last_token_usage: TokenUsage | None = None
 
-    def invoke_json(self, messages, schema=None, temperature=None) -> dict:
+    def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
         # Set mock token usage for tracking (v5.2)
         self.last_token_usage = TokenUsage(
             prompt_tokens=100,

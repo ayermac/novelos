@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import asyncio
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -237,13 +238,18 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
         "5. 世界观、角色、大纲和章节指令必须严格兑现【书名契约】，不得生成与书名无关的通用故事模板\n"
     )
 
-    return llm.invoke_json([
-        {
-            "role": "system",
-            "content": "你只输出纯 JSON 对象，不要输出任何 Markdown 代码块、注释或解释文字。不要在 JSON 中添加尾逗号。",
-        },
-        {"role": "user", "content": prompt},
-    ], max_retries=2)
+    return await asyncio.to_thread(
+        llm.invoke_json,
+        [
+            {
+                "role": "system",
+                "content": "你只输出纯 JSON 对象，不要输出任何 Markdown 代码块、注释或解释文字。不要在 JSON 中添加尾逗号。",
+            },
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=5000,
+        max_retries=2,
+    )
 
 
 def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:

@@ -89,6 +89,27 @@ class TestAPIE2ESmoke:
         assert data["ok"] is True
         assert data["data"]["project"]["project_id"] == "test_novel_001"
 
+    def test_onboarding_create_project_with_serial_plan(self, test_client):
+        """Onboarding should create the optional serial plan without a server error."""
+        client, db_path = test_client  # v5.3.0
+        resp = client.post(
+            "/api/onboarding/projects",
+            json={
+                "project_id": "test_novel_serial_001",
+                "name": "测试连载小说",
+                "genre": "悬疑",
+                "target_words": 120000,
+                "total_chapters_planned": 12,
+                "initial_chapter_count": 6,
+                "create_serial_plan": True,
+                "serial_batch_size": 3,
+            },
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["serial_plan"].startswith("serial_")
+
     def test_dashboard_with_project(self, test_client):
         """Test dashboard shows created project."""
         client, db_path = test_client  # v5.3.0
