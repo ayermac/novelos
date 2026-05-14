@@ -33,7 +33,6 @@
 - **v5.8 完成报告**: [reports/novel-factory-v5.8-completion-report.md](reports/novel-factory-v5.8-completion-report.md)
 - **v5.8 Review 记录**: [reviews/novel-factory-v5.8-review.md](reviews/novel-factory-v5.8-review.md)
 - **v5.8.1 真实 LLM 验收**: [reports/novel-factory-v5.8.1-real-llm-acceptance-report.md](reports/novel-factory-v5.8.1-real-llm-acceptance-report.md)
-- **Pi 启发的 Agent 工程路线**: [next/pi-inspired-agent-engineering-roadmap.md](next/pi-inspired-agent-engineering-roadmap.md)
 - **v5.9.2 完成报告**: [reports/novel-factory-v5.9.2-completion-report.md](reports/novel-factory-v5.9.2-completion-report.md)
 - **v5.9.2 Review 记录**: [reviews/novel-factory-v5.9.2-review.md](reviews/novel-factory-v5.9.2-review.md)
 - **v5.9.3 Agent Skill Expansion 规格**: [planning/novel-factory-v5.9.3-agent-skill-expansion-spec.md](planning/novel-factory-v5.9.3-agent-skill-expansion-spec.md)
@@ -81,7 +80,6 @@ v5.5.15 和 v5.6 Phase 1 完成后，下一阶段不优先展开多租户、企�
 3. 导出与发布流水线。
 
 详细方向见 [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)。
-Pi 启发的 Agent 工程路线见 [next/pi-inspired-agent-engineering-roadmap.md](next/pi-inspired-agent-engineering-roadmap.md)。
 
 ## 本地启动与验收
 

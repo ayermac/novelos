@@ -155,12 +155,6 @@ The next candidate planning line is:
 docs/codex/planning/novel-factory-v6.0-agent-role-capability-system-spec.md
 ```
 
-Pi-inspired Agent engineering direction:
-
-```text
-docs/codex/next/pi-inspired-agent-engineering-roadmap.md
-```
-
 Later candidate lines remain useful, but should wait until workflow observability and writing skills are stable:
 
 - `Creator Knowledge Base / RAG`

@@ -740,65 +740,7 @@ Project -> AgentOps / 能力诊断
 3. 支持“为什么这章失败/为什么返修”的解释链。
 4. 支持按 Agent 过滤。
 
-### 12. Pi / External Agent Loop Integration
-
-Pi 这类 Agent Loop 可以强化 Novelos，但不建议完全迁移或替换主系统。
-
-推荐采用混合模式：
-
-```text
-Pi / External Agent Supervisor
-        |
-        | HTTP/RPC tools
-        v
-Novelos Professional Agent APIs
-        |
-        v
-Workflow + Repository + Skill/Capability + Trace
-```
-
-定位：
-
-- Novelos 负责专业小说生产、状态安全、版本、记忆、评测。
-- Pi 负责对话式上层编排、外部工具扩展、探索性任务和开发/诊断自动化。
-
-不推荐：
-
-1. 不推荐把 Novelos LLMProvider 简单替换为 Pi；这样拿不到 Agent Loop 价值。
-2. 不推荐完全迁移到 Pi；成本高且会丢掉 Novelos 已有的专业领域模型。
-3. 不推荐让 Pi 直接改数据库；必须通过 Novelos API/工具。
-
-建议新增：
-
-```text
-novel_factory/api/routes/agent_tools.py
-integrations/pi/
-  README.md
-  tools.ts
-  extension.ts
-```
-
-暴露给 Pi 的工具：
-
-| Tool | 能力 |
-| --- | --- |
-| `novelos_get_project_status` | 查看项目/章节/运行状态 |
-| `novelos_plan_chapter` | 调用 Planner 生成/修复章节计划 |
-| `novelos_design_scenes` | 调用 Screenwriter 生成/修复场景 |
-| `novelos_write_chapter` | 调用 Author 生成/局部修复正文 |
-| `novelos_review_chapter` | 调用 Editor 审核 |
-| `novelos_query_memory` | 查询事实/角色/伏笔/Agent Memory |
-| `novelos_get_trace` | 获取 Agent 决策链 |
-
-Pi 集成验收：
-
-1. Pi 可以通过工具读取项目状态。
-2. Pi 可以发起一个受控章节生产建议，但不能绕过 Novelos 工作流。
-3. Pi 的每次调用在 Novelos 中有 audit trace。
-4. Pi 无权直接发布、删除、覆盖版本。
-5. Pi 集成是可选功能，Novelos 本身不依赖 Pi 才能运行。
-
-### 13. Migration and Backward Compatibility
+### 12. Migration and Backward Compatibility
 
 本版本会引入新表和新配置，但必须兼容旧项目：
 
@@ -841,8 +783,6 @@ novel_factory/
     agent_ops.py
     agent_memory.py
     agent_tools.py
-  integrations/
-    pi/
 ```
 
 ## 实施阶段
@@ -896,14 +836,7 @@ novel_factory/
 2. WebUI 展示 Agent role、capability、memory、trace。
 3. 工作流页面能解释每个 Agent 做了什么、为什么这么做。
 
-### Phase 8: Pi Integration and External Supervisor Bridge
-
-1. 定义 Novelos Agent Tool API。
-2. 提供 Pi extension/tool 示例。
-3. 确保外部 Agent 只能通过受控 API 调用。
-4. 记录 audit trace。
-
-### Phase 9: Evaluation Harness and Real Project Acceptance
+### Phase 8: Evaluation Harness and Real Project Acceptance
 
 1. 建立 eval fixtures。
 2. 增加 `scripts/eval_agents.py`。
@@ -950,14 +883,6 @@ novel_factory/
 2. 每个核心 Agent 至少 5 个 eval case。
 3. E2E eval 覆盖一章完整生成。
 4. 真实项目验收覆盖至少 1 个新小说项目、真实 LLM、人工创作流程。
-
-### Pi 集成验收
-
-1. `integrations/pi/` 提供可运行的工具定义或明确的接入说明。
-2. Pi 可以读取项目状态和 trace。
-3. Pi 可以建议/触发受控生产动作。
-4. Pi 不能直接发布、删除、覆盖版本。
-5. Novelos 在不安装 Pi 的情况下仍能完整运行。
 
 ### 回归验收
 
@@ -1022,13 +947,10 @@ python3 scripts/eval_agents.py all
 4. **外部工具风险**
    搜索、文件、HTTP、bash 必须默认关闭，配置授权后才能使用。
 
-5. **Pi 依赖风险**
-   Pi 集成只能作为可选上层 Supervisor，不能成为 Novelos 核心运行依赖。
-
-6. **评测空转风险**
+5. **评测空转风险**
    Eval 必须能发现真实缺陷，不能只验证 schema。
 
-7. **UI 运维化风险**
+6. **UI 运维化风险**
    AgentOps UI 不能变成工程日志墙，必须为创作者解释问题。
 
 ## 完成后的预期
@@ -1091,10 +1013,9 @@ Implement the full v6.0 capability:
 9. Add self-check and local repair loop for core creative Agents.
 10. Add collaboration contracts and use them for handoff validation and Editor revision attribution.
 11. Add Agent Decision Trace persistence and UI.
-12. Add optional Pi/external Agent supervisor bridge through controlled Novelos API tools.
-13. Add AgentOps Role Console showing role goals, capability packs, memory, trace, eval status, and recent failure reasons.
-14. Add Agent eval harness and fixtures.
-15. Run a real-project acceptance flow with a new project and real LLM, then document findings.
+12. Add AgentOps Role Console showing role goals, capability packs, memory, trace, eval status, and recent failure reasons.
+13. Add Agent eval harness and fixtures.
+14. Run a real-project acceptance flow with a new project and real LLM, then document findings.
 
 Constraints:
 
@@ -1102,7 +1023,7 @@ Constraints:
 - Do not leave new Skills outside `skill_packages/`.
 - Do not add uncontrolled LLM calls.
 - Do not add uncontrolled external tools. Search/file/http/bash must be opt-in and audited.
-- Do not make Pi a hard dependency.
+- Do not introduce Pi or another external Agent framework as part of v6.0.
 - Do not break v5.9.3 Skill runtime or project-specific overrides.
 - Do not turn AgentOps UI into raw JSON/log dump.
 - Preserve existing workflow order unless the spec explicitly requires a contract/trace insertion that does not alter user-visible chapter state transitions.
