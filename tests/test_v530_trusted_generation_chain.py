@@ -389,10 +389,18 @@ class TestDeriveWordTarget:
         result = derive_word_target(instruction, project)
         assert result == 3000
 
-    def test_minimum_2000(self):
-        """Should enforce minimum of 2000."""
+    def test_explicit_short_instruction_word_target_is_respected(self):
+        """Explicit short-form instruction targets should be respected."""
         instruction = {"word_target": 1000}  # Below minimum
         project = {"target_words": 1500000, "total_chapters_planned": 500}
+
+        result = derive_word_target(instruction, project)
+        assert result == 1000
+
+    def test_project_derived_word_target_keeps_web_serial_minimum(self):
+        """Project-derived targets still keep the web-serial minimum of 2000."""
+        instruction = {"objective": "test"}
+        project = {"target_words": 1000, "total_chapters_planned": 10}
 
         result = derive_word_target(instruction, project)
         assert result == 2000

@@ -149,11 +149,13 @@ def derive_word_target(
         project: Project dict with target_words and total_chapters_planned.
 
     Returns:
-        Derived word_target, minimum 2000.
+        Derived word_target. Explicit instruction targets are respected for
+        short-form projects; project-derived targets keep the web-serial
+        minimum of 2000.
     """
     # First check if instruction has explicit word_target
     if instruction and instruction.get("word_target"):
-        return max(_coerce_positive_int(instruction.get("word_target"), 2500), 2000)
+        return max(_coerce_positive_int(instruction.get("word_target"), 2500), 300)
 
     # Derive from project settings
     target_words = _coerce_positive_int(project.get("target_words"), 0)

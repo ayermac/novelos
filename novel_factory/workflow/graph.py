@@ -199,6 +199,7 @@ def build_graph(
         {
             "publish": "publisher",
             "awaiting_publish": "awaiting_publish",
+            "human_review": "human_review",
         },
     )
 

@@ -158,6 +158,77 @@ class TestProductionNextAPI:
         # With approved genesis and instructions present, next action must be generate_chapter
         assert data["next_action"]["key"] == "generate_chapter"
 
+    def test_manual_context_ready_does_not_require_genesis(self, client):
+        """Manual world/character/outline/instruction context should allow writing."""
+        resp = client.post("/api/onboarding/projects", json={
+            "project_id": "manual-ready-test",
+            "name": "雾城回声",
+            "genre": "悬疑科幻",
+            "description": "失踪者的声音在午夜广播中重现，前刑警追查城市记忆异常。",
+            "world_setting": "雾港被异常海雾笼罩，EchoNet 会播出失踪者声音。",
+            "main_character_name": "林澈",
+            "main_character_description": "前刑警，擅长声音取证。",
+            "initial_chapter_count": 3,
+        })
+        assert resp.status_code == 200
+        client.post("/api/projects/manual-ready-test/instructions", json={
+            "chapter_number": 1,
+            "objective": "建立雾港、午夜广播和林澈的创伤背景。",
+            "key_events": "午夜广播出现失踪者声音；林澈接到不可能的来电。",
+            "emotion_tone": "冷峻、悬疑、压抑",
+            "ending_hook": "来电者是三年前已经死亡的人。",
+            "word_target": 3000,
+        })
+
+        resp = client.get("/api/projects/manual-ready-test/production-next")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        data = body["data"]
+        assert data["health"]["has_approved_genesis"] is False
+        assert data["health"]["manual_context_ready"] is True
+        assert data["next_action"]["key"] == "generate_chapter"
+        assert all(item["key"] != "genesis" for item in data["missing"])
+
+    def test_failed_run_on_planned_chapter_does_not_block_retry(self, client):
+        """A stale failed run should not block a planned chapter from retrying."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "planned-retry-test",
+            "name": "雾城回声",
+            "genre": "悬疑科幻",
+            "description": "失踪者的声音在午夜广播中重现。",
+            "world_setting": "雾港被异常海雾笼罩，EchoNet 会播出失踪者声音。",
+            "main_character_name": "林澈",
+            "main_character_description": "前刑警，擅长声音取证。",
+            "initial_chapter_count": 3,
+        })
+        tc.post("/api/projects/planned-retry-test/instructions", json={
+            "chapter_number": 1,
+            "objective": "建立雾港和异常广播。",
+            "key_events": "午夜广播出现失踪者声音。",
+            "emotion_tone": "悬疑",
+            "word_target": 3000,
+        })
+        repo = Repository(db_path)
+        run_id = repo.create_workflow_run("planned-retry-test", 1)
+        repo.update_workflow_run(run_id, status="failed", current_node="screenwriter", error_message="bad json")
+
+        resp = tc.get("/api/projects/planned-retry-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["health"]["has_stuck_run"] is False
+        assert data["next_action"]["key"] == "generate_chapter"
+        os.unlink(db_path)
+
     def test_blocking_chapter_returns_recover_blocked_run(self, client, project_id):
         """5. Blocking chapter should suggest recover_blocked_run."""
         from novel_factory.api_app import create_api_app
@@ -274,9 +345,10 @@ class TestProductionNextAPI:
         resp = tc.get("/api/projects/prio-test/production-next")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["health"]["has_stuck_run"] is True
-        assert data["next_action"]["key"] == "recover_blocked_run"
+        assert data["health"]["has_stuck_run"] is False
+        assert data["next_action"]["key"] == "view_running_workflow"
         assert data["next_action"]["target_chapter"] == 1
+        assert data["next_action"]["run_id"] == run_id
         os.unlink(db_path)
 
     def test_project_stale_running_workflow_takes_priority_over_pending_memory(self, client, project_id):

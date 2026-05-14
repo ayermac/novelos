@@ -60,6 +60,61 @@ class TestLLMCLICommands:
         assert args.llm_command == "validate"
         assert args.json is True
 
+    def test_llm_smoke_json_output(self):
+        """llm smoke --json parses diagnostic arguments."""
+        parser = build_parser()
+        args = parser.parse_args([
+            "--llm-mode", "stub",
+            "llm", "smoke",
+            "--agent", "planner",
+            "--timeout-seconds", "3",
+            "--max-tokens", "8",
+            "--json",
+        ])
+
+        assert args.llm_command == "smoke"
+        assert args.global_llm_mode == "stub"
+        assert args.agent == "planner"
+        assert args.timeout_seconds == 3
+        assert args.max_tokens == 8
+        assert args.json is True
+
+    def test_api_command_preserves_global_config_and_llm_mode(self):
+        """api command does not overwrite global config/llm-mode defaults."""
+        parser = build_parser()
+        args = parser.parse_args([
+            "--config", "config/local.yaml",
+            "--db-path", "acceptance_novel_factory.db",
+            "--llm-mode", "real",
+            "api",
+            "--host", "127.0.0.1",
+            "--port", "8765",
+        ])
+
+        assert args.config == "config/local.yaml"
+        assert args.db_path == "acceptance_novel_factory.db"
+        assert args.global_llm_mode == "real"
+        assert args.api_config is None
+        assert args.api_db_path is None
+        assert args.api_llm_mode is None
+
+    def test_api_command_accepts_subcommand_config_and_llm_mode(self):
+        """api command keeps compatibility with options placed after api."""
+        parser = build_parser()
+        args = parser.parse_args([
+            "api",
+            "--config", "config/local.yaml",
+            "--db-path", "acceptance_novel_factory.db",
+            "--llm-mode", "real",
+        ])
+
+        assert args.config is None
+        assert args.db_path is None
+        assert args.global_llm_mode is None
+        assert args.api_config == "config/local.yaml"
+        assert args.api_db_path == "acceptance_novel_factory.db"
+        assert args.api_llm_mode == "real"
+
     def test_llm_profiles_masks_keys(self, tmp_path, monkeypatch):
         """llm profiles does not leak API keys."""
         # Create a config file with profiles

@@ -10,6 +10,7 @@ from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ...agents.title_contract import build_title_contract
+from ...llm.provider import is_configured_live_provider
 
 router = APIRouter()
 
@@ -237,6 +238,10 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
         "4. 数值字段（planted_chapter, planned_resolve_chapter, chapter_number, word_target, sequence）必须是整数，不要用引号包裹\n"
         "5. 世界观、角色、大纲和章节指令必须严格兑现【书名契约】，不得生成与书名无关的通用故事模板\n"
     )
+
+    if is_configured_live_provider(llm):
+        llm.config.request_timeout_seconds = 45
+        llm.config.retry_attempts = 1
 
     return await asyncio.to_thread(
         llm.invoke_json,

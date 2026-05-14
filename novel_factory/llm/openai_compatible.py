@@ -375,4 +375,22 @@ class OpenAICompatibleProvider(LLMProvider):
         # Replace single-quoted keys/values with double-quoted (simple heuristic)
         text = re.sub(r"(?<=[\[{,:\s])'([^']*)'(?=[\]},:\s])", r'"\1"', text)
 
+        def quote_unquoted_value(match: re.Match) -> str:
+            prefix = match.group(1)
+            value = match.group(2).strip()
+            if not value:
+                return match.group(0)
+            if value[0] in '"{[0123456789-tfn':
+                return match.group(0)
+            escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+            return f'{prefix}"{escaped}"'
+
+        # Some models emit prose scalar values without quotes, for example:
+        # {"turn": 林澈发现线索}. Wrap those values before json.loads().
+        text = re.sub(
+            r'(:[^\S\r\n]*)([^,\n\r}\]]+)(?=,|\n|\r|}|\])',
+            quote_unquoted_value,
+            text,
+        )
+
         return text

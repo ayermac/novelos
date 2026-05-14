@@ -33,6 +33,8 @@ class LLMProfile(BaseModel):
     model: str
     temperature: float = 0.7
     max_tokens: int = 4096
+    request_timeout_seconds: int = 60
+    retry_attempts: int = 3
     
     def get_resolved_base_url(self, env_getter) -> Optional[str]:
         """Resolve base_url from direct value or environment variable.
@@ -85,6 +87,8 @@ class LLMProfile(BaseModel):
             "model": self.model,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
+            "request_timeout_seconds": self.request_timeout_seconds,
+            "retry_attempts": self.retry_attempts,
         }
         
         # Show resolved values

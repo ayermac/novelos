@@ -60,6 +60,17 @@ def _has_running_genesis(repo, project_id: str) -> bool:
     return latest is not None and latest.get("status") == "running"
 
 
+def _has_manual_context_ready(health: dict) -> bool:
+    """Return true when manually entered project context is enough to write."""
+    return (
+        health.get("has_world_settings")
+        and health.get("has_characters")
+        and health.get("has_outlines")
+        and health.get("has_instructions_for_current_chapter")
+        and health.get("title_contract_aligned", True)
+    )
+
+
 def _get_blocking_chapter(repo, project_id: str) -> dict | None:
     """Find a chapter in blocking or revision status."""
     chapters = repo.list_chapters(project_id)
@@ -81,9 +92,9 @@ def _get_stuck_run(repo, project_id: str, current_chapter: int) -> dict | None:
         return None
     # runs are ordered by started_at DESC (most recent first)
     latest = runs[0]
-    if latest.get("status") in ("failed", "blocked"):
-        return latest
-    if latest.get("status") == "running":
+    chapter = repo.get_chapter(project_id, current_chapter)
+    chapter_status = chapter.get("status") if chapter else None
+    if latest.get("status") in ("failed", "blocked") and chapter_status in ("blocking", "revision"):
         return latest
     return None
 
@@ -437,6 +448,7 @@ def _build_health(repo, project_id: str, current_chapter: int) -> dict:
         "has_running_chapter_workflow": _has_running_chapter_workflow(repo, project_id, current_chapter),
         "title_contract": title_alignment,
         "title_contract_aligned": title_alignment["aligned"],
+        "manual_context_ready": False,
     }
 
 
@@ -444,7 +456,10 @@ def _build_missing(health: dict, project_id: str, current_chapter: int) -> list[
     """Build list of missing items with AI action suggestions."""
     missing = []
 
-    if not health["has_approved_genesis"]:
+    manual_context_ready = _has_manual_context_ready(health)
+    health["manual_context_ready"] = manual_context_ready
+
+    if not health["has_approved_genesis"] and not manual_context_ready:
         missing.append({
             "key": "genesis",
             "label": "项目创世设定",
@@ -456,7 +471,7 @@ def _build_missing(health: dict, project_id: str, current_chapter: int) -> list[
             },
         })
 
-    if health["has_approved_genesis"]:
+    if health["has_approved_genesis"] or manual_context_ready:
         if not health.get("title_contract_aligned", True):
             missing.append({
                 "key": "title_contract",
@@ -562,6 +577,10 @@ def _determine_next_action(
             "run_id": stale_running.get("run_id"),
         }
 
+    running_current = _get_running_chapter_workflow(repo, project_id, current_chapter)
+    if running_current:
+        return _view_running_workflow_action(project_id, current_chapter, running_current)
+
     if planned_with_content:
         ch_num = planned_with_content.get("chapter_number", current_chapter)
         return {
@@ -589,7 +608,10 @@ def _determine_next_action(
         }
 
     # 2. Genesis flow
-    if not health["has_approved_genesis"]:
+    manual_context_ready = _has_manual_context_ready(health)
+    health["manual_context_ready"] = manual_context_ready
+
+    if not health["has_approved_genesis"] and not manual_context_ready:
         if _has_running_genesis(repo, project_id):
             return {
                 "key": "wait_genesis",

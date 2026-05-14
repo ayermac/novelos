@@ -22,6 +22,8 @@ from ..validators.death_penalty import (
     sanitize_death_penalty_text,
 )
 from ..validators.plot_verifier import check_plot_coverage
+from ..llm.openai_compatible import OutputValidationError
+from ..llm.provider import is_configured_live_provider
 from .base import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -136,8 +138,20 @@ class AuthorAgent(BaseAgent):
             {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n任务: {task_desc}\n\n{context}\n\n请{task_desc}第{chapter_number}章。"},
         ]
 
-        raw = self.llm.invoke_json(messages, schema=AuthorOutput)
-        output = AuthorOutput(**normalize_declared_word_count(raw))
+        if self._should_use_plain_text_primary(state):
+            output = self._try_plain_text_draft(state, task_desc, context)
+        else:
+            try:
+                raw = self.llm.invoke_json(messages, schema=AuthorOutput)
+                output = AuthorOutput(**normalize_declared_word_count(raw))
+            except OutputValidationError:
+                if state.get("llm_mode") != "real":
+                    raise
+                logger.warning(
+                    "Author: structured JSON output failed; retrying with plain-text drafting fallback"
+                )
+                output = self._try_plain_text_draft(state, task_desc, context)
+
         output = self._sanitize_output(output, state)
 
         self.validate_output(output.model_dump())
@@ -288,6 +302,160 @@ class AuthorAgent(BaseAgent):
         except Exception as e:
             logger.warning("Author: expand-short-output retry failed: %s", e)
             return None
+
+    def _try_plain_text_draft(
+        self,
+        state: FactoryState,
+        task_desc: str,
+        context: str,
+    ) -> AuthorOutput:
+        """Generate prose directly when real models fail long-form JSON output.
+
+        Long prose is much more likely than short structured outputs to be
+        wrapped in Markdown or truncated before the closing JSON brace. For
+        production writing, preserve progress by generating plain chapter text
+        and deriving the small metadata fields deterministically.
+        """
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+        instruction = self._get_instruction(state) or {}
+        word_target = self._get_word_target(state)
+        minimum_required = int(word_target * 0.85)
+        prose_max_tokens = max(384, min(900, int(word_target * 1.4)))
+        compact_context = self._build_plain_text_context(state, context)
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是网文工厂的执笔。现在只输出章节正文纯文本。"
+                    "禁止输出 JSON、Markdown 代码块、字段名、解释或清单。"
+                    "直接从正文第一句开始，到正文最后一句结束。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"项目ID: {project_id}\n章节号: {chapter_number}\n任务: {task_desc}\n"
+                    f"正文至少 {minimum_required} 字符，建议接近 {word_target} 字符；"
+                    f"最多不要超过 {max(word_target + 250, minimum_required + 250)} 字符。\n\n"
+                    f"{compact_context}\n\n"
+                    f"请直接写第{chapter_number}章正文。"
+                ),
+            },
+        ]
+
+        content = self.llm.invoke_text(messages, temperature=0.7, max_tokens=prose_max_tokens).strip()
+        content = self._coerce_plain_text_content(content)
+        if not content:
+            raise OutputValidationError("Author 纯正文兜底生成空内容")
+
+        title = self._derive_title(state, instruction)
+        return AuthorOutput(
+            title=title,
+            content=content,
+            word_count=len(content),
+            implemented_events=self._instruction_items(instruction.get("key_events", "")),
+            used_plot_refs=self._instruction_items(instruction.get("plots_to_plant", "")),
+        )
+
+    def _should_use_plain_text_primary(self, state: FactoryState) -> bool:
+        """Use prose-first authoring for live providers.
+
+        Stub tests and deterministic demo providers still exercise the legacy
+        JSON path. Real OpenAI-compatible providers expose ``config`` and are
+        better served by plain text for long-form chapter prose.
+        """
+        return state.get("llm_mode") == "real" and is_configured_live_provider(self.llm)
+
+    def _build_plain_text_context(self, state: FactoryState, fallback_context: str) -> str:
+        """Build a compact prompt for direct prose generation."""
+        instruction = self._get_instruction(state) or {}
+        parts = []
+        if instruction:
+            parts.append(
+                "【写作指令】\n"
+                f"目标: {instruction.get('objective', '')}\n"
+                f"关键事件: {instruction.get('key_events', '')}\n"
+                f"情绪基调: {instruction.get('emotion_tone', '')}\n"
+                f"章末钩子: {instruction.get('ending_hook', '')}\n"
+                f"伏笔: {instruction.get('plots_to_plant', '')}"
+            )
+
+        beats = self._get_scene_beats(state)
+        if beats:
+            beat_lines = []
+            for beat in beats[:5]:
+                beat_lines.append(
+                    f"{beat.get('sequence')}. {beat.get('scene_goal', '')}"
+                    f" / 冲突: {beat.get('conflict', '')}"
+                    f" / 转折: {beat.get('turn', '')}"
+                    f" / 钩子: {beat.get('hook', '')}"
+                )
+            parts.append("【场景 Beat】\n" + "\n".join(beat_lines))
+
+        characters = self.repo.get_characters(state["project_id"])
+        if characters:
+            char_lines = [
+                f"- {c['name']}({c['role']}): {c.get('description', '')}"
+                for c in characters[:5]
+            ]
+            parts.append("【角色】\n" + "\n".join(char_lines))
+
+        if parts:
+            return "\n\n".join(parts)
+        return fallback_context
+
+    @staticmethod
+    def _coerce_plain_text_content(text: str) -> str:
+        """Strip accidental wrappers from a plain-text fallback response."""
+        cleaned = text.strip()
+        if cleaned.startswith("```"):
+            lines = cleaned.splitlines()
+            if lines and lines[0].startswith("```"):
+                lines = lines[1:]
+            if lines and lines[-1].strip().startswith("```"):
+                lines = lines[:-1]
+            cleaned = "\n".join(lines).strip()
+
+        if cleaned.startswith("{"):
+            try:
+                data = json.loads(cleaned)
+                if isinstance(data, dict) and data.get("content"):
+                    return str(data["content"]).strip()
+            except Exception:
+                pass
+
+        return cleaned
+
+    def _derive_title(self, state: FactoryState, instruction: dict) -> str:
+        chapter = self._get_chapter_info(state) or {}
+        title = chapter.get("title") or ""
+        if title and not title.startswith("第 ") and title != f"第 {state['chapter_number']} 章":
+            return title
+        objective = str(instruction.get("objective") or "").strip()
+        if objective:
+            return f"第{state['chapter_number']}章 {objective[:12]}"
+        return f"第{state['chapter_number']}章"
+
+    @staticmethod
+    def _instruction_items(value: Any) -> list[str]:
+        """Normalize instruction list-ish fields for fallback metadata."""
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if not value:
+            return []
+        text = str(value).strip()
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, list):
+                return [str(item).strip() for item in parsed if str(item).strip()]
+        except Exception:
+            pass
+        for sep in ("；", ";", "\n", "，", ","):
+            if sep in text:
+                return [item.strip() for item in text.split(sep) if item.strip()]
+        return [text]
 
     def _sanitize_output(self, output: AuthorOutput, state: FactoryState) -> AuthorOutput:
         """Apply deterministic safe rewrites before hard death-penalty validation."""

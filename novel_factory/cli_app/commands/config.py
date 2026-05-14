@@ -7,6 +7,7 @@ import importlib.util
 import json
 import platform
 import sys
+import time
 from pathlib import Path
 
 from ..common import (
@@ -17,6 +18,7 @@ from ..common import (
     Repository,
     validate_settings,
 )
+from ...llm.provider import is_configured_live_provider
 from ..output import _print_output
 
 
@@ -222,6 +224,167 @@ def cmd_llm_validate(args) -> None:
                 print("\nWarnings:")
                 for warning in result["warnings"]:
                     print(f"  - {warning}")
+
+
+def _classify_llm_smoke_error(error: Exception) -> str:
+    """Classify live LLM smoke errors into stable diagnostic buckets."""
+    name = error.__class__.__name__
+    text = str(error).lower()
+    if name == "InvalidAPIKeyError" or "unauthorized" in text or "401" in text or "api key" in text:
+        return "auth"
+    if name == "InsufficientBalanceError" or "quota" in text or "balance" in text or "insufficient" in text:
+        return "billing"
+    if name == "RateLimitError" or "rate" in text or "429" in text or "limit" in text:
+        return "rate_limit"
+    if name == "LLMTimeoutError" or "timeout" in text or "timed out" in text:
+        return "timeout"
+    if "empty response" in text or "空响应" in text:
+        return "empty_response"
+    if isinstance(error, ValueError):
+        return "configuration"
+    return "provider_error"
+
+
+def _build_llm_smoke_router(settings, llm_mode: str):
+    """Build the same router used by production, with dotenv-aware env resolution."""
+    from ...config.env_loader import load_dotenv, create_env_getter
+    from ...llm.profiles import LLMProfilesConfig
+    from ...llm.router import LLMRouter
+
+    dotenv_vars = load_dotenv()
+    env_getter = create_env_getter(dotenv_vars)
+    config = LLMProfilesConfig(
+        default_llm=settings.default_llm,
+        llm_profiles=settings.llm_profiles,
+        agent_llm=settings.agent_llm,
+    )
+    stub_llm = _StubLLM() if llm_mode == "stub" else None
+    return LLMRouter(config, stub_provider=stub_llm, llm_mode=llm_mode, env_getter=env_getter)
+
+
+def _legacy_llm_smoke_provider(settings, llm_mode: str):
+    """Fallback provider for projects without llm_profiles."""
+    if llm_mode == "stub":
+        return _StubLLM(), {
+            "agent": "legacy",
+            "profile": "legacy",
+            "provider": "stub",
+            "base_url": "",
+            "api_key": "",
+            "model": "stub",
+            "temperature": 0,
+            "max_tokens": 0,
+        }
+
+    from ...config.env_loader import load_dotenv, create_env_getter, mask_api_key
+    from ...llm.openai_compatible import OpenAICompatibleProvider
+
+    dotenv_vars = load_dotenv()
+    env_getter = create_env_getter(dotenv_vars)
+    api_key = settings.llm.api_key or env_getter("OPENAI_API_KEY")
+    base_url = settings.llm.base_url or env_getter("OPENAI_BASE_URL")
+    if api_key:
+        settings.llm.api_key = api_key
+    if base_url:
+        settings.llm.base_url = base_url
+    provider = OpenAICompatibleProvider(settings.llm)
+    return provider, {
+        "agent": "legacy",
+        "profile": "legacy",
+        "provider": settings.llm.provider,
+        "base_url": settings.llm.base_url,
+        "api_key": mask_api_key(settings.llm.api_key),
+        "model": settings.llm.model,
+        "temperature": settings.llm.temperature,
+        "max_tokens": settings.llm.max_tokens,
+    }
+
+
+def cmd_llm_smoke(args) -> None:
+    """Run a tiny live LLM completion and report latency/error classification."""
+    settings = _get_settings(args)
+    llm_mode = _get_effective_llm_mode(args)
+    use_json = getattr(args, "json", False)
+    agent = getattr(args, "agent", "planner")
+    timeout_seconds = max(1, int(getattr(args, "timeout_seconds", 8)))
+    max_tokens = max(1, int(getattr(args, "max_tokens", 32)))
+    prompt = getattr(args, "prompt", None) or "请只回复 OK"
+
+    started = time.perf_counter()
+    route_info = {}
+    data = {
+        "llm_mode": llm_mode,
+        "agent": agent,
+        "timeout_seconds": timeout_seconds,
+        "max_tokens": max_tokens,
+    }
+
+    try:
+        if settings.llm_profiles:
+            router = _build_llm_smoke_router(settings, llm_mode)
+            route_info = router.get_route_info(agent)
+            provider = router.for_agent(agent)
+        else:
+            provider, route_info = _legacy_llm_smoke_provider(settings, llm_mode)
+
+        if is_configured_live_provider(provider):
+            provider.config.request_timeout_seconds = timeout_seconds
+            provider.config.retry_attempts = 1
+
+        text = provider.invoke_text(
+            [
+                {"role": "system", "content": "你是 LLM 连通性测试助手。"},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0,
+            max_tokens=max_tokens,
+        )
+        if not (text or "").strip():
+            raise RuntimeError("LLM returned empty response")
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        usage = getattr(getattr(provider, "last_token_usage", None), "to_dict", lambda: None)()
+        data.update({
+            "ok": True,
+            "profile": route_info.get("profile"),
+            "provider": route_info.get("provider"),
+            "base_url": route_info.get("base_url"),
+            "model": route_info.get("model"),
+            "duration_ms": duration_ms,
+            "usage": usage,
+            "response_preview": (text or "")[:120],
+        })
+
+        if use_json:
+            print(json.dumps({"ok": True, "error": None, "data": data}, ensure_ascii=False, indent=2))
+        else:
+            print("LLM live smoke passed:")
+            print(f"  agent: {agent}")
+            print(f"  profile: {data['profile']}")
+            print(f"  model: {data['model']}")
+            print(f"  duration_ms: {duration_ms}")
+            print(f"  response: {data['response_preview']}")
+
+    except Exception as e:
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        error_type = _classify_llm_smoke_error(e)
+        data.update({
+            "ok": False,
+            "profile": route_info.get("profile"),
+            "provider": route_info.get("provider"),
+            "base_url": route_info.get("base_url"),
+            "model": route_info.get("model"),
+            "duration_ms": duration_ms,
+            "error_type": error_type,
+            "error_message": str(e),
+        })
+        if use_json:
+            print(json.dumps({"ok": False, "error": str(e), "data": data}, ensure_ascii=False, indent=2))
+        else:
+            print("LLM live smoke failed:")
+            print(f"  error_type: {error_type}")
+            print(f"  error: {e}")
+            print(f"  duration_ms: {duration_ms}")
+        sys.exit(1)
 
 
 def cmd_doctor(args) -> None:

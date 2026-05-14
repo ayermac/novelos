@@ -128,6 +128,8 @@ class LLMRouter:
             model=profile.model,
             temperature=profile.temperature,
             max_tokens=profile.max_tokens,
+            request_timeout_seconds=profile.request_timeout_seconds,
+            retry_attempts=profile.retry_attempts,
         )
         
         logger.info(
@@ -171,6 +173,8 @@ class LLMRouter:
             "model": profile.model,
             "temperature": profile.temperature,
             "max_tokens": profile.max_tokens,
+            "request_timeout_seconds": profile.request_timeout_seconds,
+            "retry_attempts": profile.retry_attempts,
         }
     
     def list_profiles(self) -> dict[str, dict[str, Any]]:
@@ -193,6 +197,8 @@ class LLMRouter:
                 "model": profile.model,
                 "temperature": profile.temperature,
                 "max_tokens": profile.max_tokens,
+                "request_timeout_seconds": profile.request_timeout_seconds,
+                "retry_attempts": profile.retry_attempts,
             }
         
         return result

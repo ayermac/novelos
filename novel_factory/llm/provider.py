@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any
+from unittest.mock import Mock
 
 
 class LLMProvider(ABC):
@@ -48,3 +49,13 @@ class LLMProvider(ABC):
             Raw text response.
         """
         ...
+
+
+def is_configured_live_provider(provider: Any) -> bool:
+    """Return true for real provider instances that expose runtime config.
+
+    ``MagicMock`` answers ``hasattr(mock, "config")`` as true for arbitrary
+    attributes, so use this helper when deciding whether to take live-provider
+    fast paths.
+    """
+    return not isinstance(provider, Mock) and getattr(provider, "config", None) is not None
