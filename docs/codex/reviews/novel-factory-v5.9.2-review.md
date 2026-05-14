@@ -69,6 +69,23 @@ v5.9.2 达成“小版本控件统一”的目标：新增 UI 控件层，迁移
 
 - `.ui-check` / `.ui-switch` 增加 `position: relative`。
 
+### P4: Skill Console 左侧导航视觉过重，矩阵列过多
+
+问题：
+
+用户截图反馈 Agent 编排页左侧深色导航与右侧白色控制台割裂，矩阵使用全局 stage 导致列过多、右侧内容被挤压。
+
+修复：
+
+- 左侧导航改为浅色控制台样式，降低色块突兀感。
+- 每个 Agent 分组只渲染该组实际涉及的 stage。
+- 矩阵列宽和横向滚动提示优化。
+
+验证：
+
+- `SkillVisibilityPanel.test.tsx` 6 passed。
+- `npm run typecheck/lint/build` passed。
+
 ## 验证结果
 
 ```text
@@ -80,4 +97,3 @@ python3 scripts/verify.py smoke passed
 ```
 
 Build 仍有既有 Vite chunk-size warning。
-

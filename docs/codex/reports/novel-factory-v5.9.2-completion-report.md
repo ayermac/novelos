@@ -68,6 +68,25 @@ Review 发现并修复：
 3. `Checkbox/Switch` 的隐藏 input 没有相对定位容器。
    - 修复：为 `.ui-check` / `.ui-switch` 增加 `position: relative`。
 
+## 截图反馈后 UI 收口
+
+用户在 Skill Console Agent 编排页截图反馈：
+
+1. 左侧导航深色块过于突兀。
+2. 右侧 Agent × Stage 矩阵显示不全，列过多且内容被挤压。
+
+修复：
+
+- 左侧 Skill Console 导航由深色块改为浅灰绿色控制台导航，active 项使用轻量青绿色背景。
+- Agent 编排矩阵由“每个分组展示全局所有 stage”改为“每个分组只展示该组 Agent 实际涉及的 stage”。
+- 矩阵列宽调整为更稳定的 `minmax(220px, 1fr)`，并保留横向滚动提示。
+
+提交：
+
+```text
+c7d5d4d fix(v5.9.2): soften skill console nav and matrix layout
+```
+
 ## 验证结果
 
 前端：
@@ -77,6 +96,7 @@ npm run typecheck     passed
 npm run lint          passed
 npm run build         passed
 npm run test -- --run 146 passed
+SkillVisibilityPanel targeted test 6 passed
 ```
 
 后端 smoke：
@@ -109,4 +129,3 @@ rg "<input|<select|<textarea|<table|data-table|form-control|window\\.alert|windo
 - `index.css` 仍保留 legacy 表单/表格样式，后续可以在确认无引用后删除。
 - UI 控件层当前是轻量组件库，未引入 storybook 或视觉回归截图。
 - 部分页面仍保留 inline layout style，但原生控件观感已收口。
-
