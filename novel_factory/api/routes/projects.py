@@ -229,6 +229,11 @@ async def delete_project(request: Request, project_id: str) -> EnvelopeResponse:
         return envelope_response({"deleted": True})
 
     except Exception as e:
+        if "database is locked" in str(e).lower():
+            return error_response(
+                "DATABASE_LOCKED",
+                "数据库正在被运行任务或后台服务占用，请稍后重试；如果仍失败，请先停止正在运行的工作流或重启本地 API 服务。",
+            )
         return error_response("INTERNAL_ERROR", f"删除项目失败: {str(e)}")
 
 
