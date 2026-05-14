@@ -123,13 +123,16 @@ Candidate capabilities:
 
 ## Suggested Next Version Sequence
 
-Do not open a broad "v6" by default. After v5.6 Phase 1, keep the next steps narrow and author-facing.
+Do not open a broad "v6" by default. Keep the next steps narrow and author-facing.
 
 Recommended sequence:
 
 ```text
-v5.7 Daily Writing Editing and Versioning
-v5.8 Workflow Observability and Recovery
+v5.7 Daily Writing Editing and Versioning              (completed)
+v5.7.1 Internal Hardening                              (completed)
+v5.8 Workflow Observability and Recovery               (completed)
+v5.9 Writing Skills and Prompt Template System         (next candidate, Pi-inspired)
+v6.0 Longform Context Engineering and Memory Governance
 ```
 
 Rationale:
@@ -139,14 +142,26 @@ Rationale:
 - It avoids premature multi-tenant or enterprise scope.
 - It creates a better foundation for memory, revision, RAG, and evaluation work.
 
-The active executable planning spec is:
+The latest completed executable planning spec is:
 
 ```text
-docs/codex/planning/novel-factory-v5.7-daily-writing-editing-versioning-spec.md
+docs/codex/planning/novel-factory-v5.8-workflow-observability-recovery-spec.md
 ```
 
-Later candidate lines remain useful, but should wait until v5.7 proves the author editing loop is strong:
+The next candidate planning line is:
 
-- `Longform Memory Consistency Closure`
-- `Workflow Observability and Recovery`
+```text
+docs/codex/planning/novel-factory-v5.9-writing-skills-prompt-template-spec.md
+```
+
+Pi-inspired Agent engineering direction:
+
+```text
+docs/codex/next/pi-inspired-agent-engineering-roadmap.md
+```
+
+Later candidate lines remain useful, but should wait until workflow observability and writing skills are stable:
+
 - `Creator Knowledge Base / RAG`
+- `Export and Publishing Pipeline`
+- `Advanced Evaluation and AgentOps Replay`

@@ -420,4 +420,96 @@ class WorkflowRepositoryMixin:
         finally:
             conn.close()
 
+    # ── Workflow Node Events (v5.8) ──────────────────────────
+
+    def create_workflow_node_event(
+        self,
+        run_id: str,
+        project_id: str,
+        chapter_number: int,
+        node_name: str,
+        event_type: str,
+        status: str | None = None,
+        message: str | None = None,
+        input_summary: str | None = None,
+        output_summary: str | None = None,
+        artifact_refs_json: str | None = None,
+        token_count: int | None = None,
+        latency_ms: int | None = None,
+        cost_estimate: float | None = None,
+        error_code: str | None = None,
+        error_message: str | None = None,
+        metadata_json: str | None = None,
+    ) -> int:
+        """Create a workflow node event. Returns event id."""
+        conn = self._conn()
+        try:
+            cursor = conn.execute(
+                "INSERT INTO workflow_node_events "
+                "(run_id, project_id, chapter_number, node_name, event_type, status, "
+                "message, input_summary, output_summary, artifact_refs_json, "
+                "token_count, latency_ms, cost_estimate, error_code, error_message, metadata_json) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    run_id, project_id, chapter_number, node_name, event_type, status,
+                    message, input_summary, output_summary, artifact_refs_json,
+                    token_count, latency_ms, cost_estimate, error_code, error_message, metadata_json,
+                ),
+            )
+            conn.commit()
+            return cursor.lastrowid
+        finally:
+            conn.close()
+
+    def get_workflow_node_events(
+        self,
+        run_id: str,
+        node_name: str | None = None,
+    ) -> list[dict]:
+        """Get node events for a workflow run, ordered by creation time."""
+        conn = self._conn()
+        try:
+            query = (
+                "SELECT * FROM workflow_node_events WHERE run_id=? "
+                "ORDER BY created_at ASC, id ASC"
+            )
+            params: list[Any] = [run_id]
+            if node_name:
+                query = (
+                    "SELECT * FROM workflow_node_events WHERE run_id=? AND node_name=? "
+                    "ORDER BY created_at ASC, id ASC"
+                )
+                params = [run_id, node_name]
+            rows = conn.execute(query, params).fetchall()
+            return [row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_workflow_node_events_for_chapter(
+        self,
+        project_id: str,
+        chapter_number: int,
+        run_id: str | None = None,
+    ) -> list[dict]:
+        """Get node events for a chapter, optionally filtered by run_id."""
+        conn = self._conn()
+        try:
+            if run_id:
+                rows = conn.execute(
+                    "SELECT * FROM workflow_node_events "
+                    "WHERE project_id=? AND chapter_number=? AND run_id=? "
+                    "ORDER BY created_at ASC, id ASC",
+                    (project_id, chapter_number, run_id),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM workflow_node_events "
+                    "WHERE project_id=? AND chapter_number=? "
+                    "ORDER BY created_at ASC, id ASC",
+                    (project_id, chapter_number),
+                ).fetchall()
+            return [row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+
     # ── Artifacts ─────────────────────────────────────────────

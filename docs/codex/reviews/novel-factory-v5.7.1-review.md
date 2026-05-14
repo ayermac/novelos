@@ -76,13 +76,36 @@ npm run lint
 
 结果：通过。
 
-## 当前风险
+## 收尾 Review 补充（2026-05-14）
 
-1. 第 4 章仍处于 `planned + 有正文` 的保护态，需要作者决策下一步。
-2. v5.7 编辑器 UI 的完整人工验收尚未全部执行。
-3. pending memory updates 仍存在，可能影响后续 production-next 推荐。
-4. 尚未跑 full 基线，不能声明 v5.7.1 完成。
+在后续真实项目验收中继续处理了以下问题：
+
+1. 第 4 章已按用户要求显式清空并重新生成，当前真实项目已继续推进到第 10 章发布。
+2. 第 8、9、10 章生成后的 memory batches 已处理，`production-next` 不再被 pending memory 抢占。
+3. 修复第 10 章发布后已有第 11 章写作指令但未创建章节行时，`production-next` 错误推荐重复规划的问题。
+4. 为本地长时间验收增加 API 低日志启动参数，降低 access log 堆积对本地服务稳定性的干扰。
+5. 修复 `test_p1_error_handling.py` 中由 Python hash 随机化导致的偶发章节号冲突。
+
+最终验证：
+
+```bash
+python3 scripts/verify.py full
+```
+
+结果：
+
+```text
+1866 passed
+frontend typecheck passed
+frontend lint passed
+frontend build passed
+vitest 125 passed
+```
+
+最终提交：
+
+- `c85c172` — `fix(v5.7.1): stabilize production validation loop`
 
 ## 结论
 
-本轮 Review 修复了真实项目暴露出的两个 P1 稳定性问题。v5.7.1 还不能宣布完成，但内部状态已经从“幽灵 running + 错误 next action”收敛到“明确保护态 + 可解释下一步”。
+v5.7.1 Review 通过。真实项目运行状态、恢复入口、已有正文保护、production-next 推荐、导出 smoke 和全量验证均已收敛。v5.7.1 可以作为当前稳定分支，下一阶段进入 v5.8 工作流可观测与恢复增强。

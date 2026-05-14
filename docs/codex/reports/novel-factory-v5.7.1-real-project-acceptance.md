@@ -146,16 +146,46 @@ npm run lint
 
 结果：通过。
 
-## 当前剩余事项
+## 收尾验收补充（2026-05-14）
 
-1. 第 4 章处于 `planned + 有正文` 的保护态，需要作者决定：
-   - 保留并继续人工编辑；
-   - 回滚到某个版本；
-   - 显式清空/重置后重新生成。
-2. 仍有 3 条 pending memory updates，当前作为 attention 项保留。
-3. v5.7 编辑保存、回滚、局部返修还需要继续做完整人工 UI 验收。
-4. 本轮尚未跑 `python3 scripts/verify.py full`，待 v5.7.1 收尾时执行。
+后续继续对 `novel_3v2o` 执行真实项目验收：
+
+1. 第 4 章已按用户要求显式清空后重新生成并发布。
+2. 第 5 到第 10 章均已发布。
+3. 第 8、9、10 章生成后的记忆批次已处理。
+4. Markdown 导出包含第 10 章内容。
+5. `production-next` 当前推荐 `continue_next_chapter`，目标第 11 章，不再重复推荐规划。
+6. 本地 API 使用 `--log-level warning --no-access-log` 后可稳定支撑长时间验收。
+
+最终真实项目状态：
+
+| 项 | 结果 |
+| --- | --- |
+| 当前章节 | 第 10 章 |
+| 已发布章节 | 1-10 |
+| pending memory updates | 0 |
+| production-next | `continue_next_chapter`，目标第 11 章 |
+| Markdown 导出 | 通过，包含第 10 章 |
+| API health | 通过 |
+
+最终全量验证：
+
+```bash
+python3 scripts/verify.py full
+```
+
+结果：
+
+```text
+1866 passed
+frontend typecheck passed
+frontend lint passed
+frontend build passed
+vitest 125 passed
+```
 
 ## 相关提交
 
 - `9e79c1e` — `fix(v5.7.1): prioritize stale run recovery and protect existing content`
+- `a62ebc0` — `fix(v5.7.1): route running target chapters to workflow progress`
+- `c85c172` — `fix(v5.7.1): stabilize production validation loop`

@@ -3,6 +3,7 @@ import AuthorChapterRail from './AuthorChapterRail'
 import AuthorWritingSurface, { SurfaceTabKey } from './AuthorWritingSurface'
 import AuthorAgentPanel from './AuthorAgentPanel'
 import { StepStatus } from '../../hooks/useSSEStream'
+import type { WorkflowTimelineData } from '../../lib/api'
 
 export type { SurfaceTabKey }
 
@@ -83,6 +84,8 @@ interface AuthorWorkbenchProps {
   runDetail: RunDetailData | null
   runsForChapter: Run[]
   sseSteps: Record<string, StepStatus>
+  timeline?: WorkflowTimelineData | null
+  timelineError?: string
   onGenerate: () => void
   onGenerateNext?: () => void
   onMarkRunStuck?: (runId: string) => Promise<void> | void
@@ -122,6 +125,8 @@ export default function AuthorWorkbench({
   runDetail,
   runsForChapter,
   sseSteps,
+  timeline,
+  timelineError,
   onGenerate,
   onGenerateNext,
   onMarkRunStuck,
@@ -172,6 +177,8 @@ export default function AuthorWorkbench({
         runDetail={runDetail}
         runsForChapter={runsForChapter}
         sseSteps={sseSteps}
+        timeline={timeline}
+        timelineError={timelineError}
         onGenerate={onGenerate}
         onGenerateNext={onGenerateNext}
         onMarkRunStuck={onMarkRunStuck}
@@ -195,6 +202,7 @@ export default function AuthorWorkbench({
         isWorkflowRunning={isWorkflowRunning}
         sseSteps={sseSteps}
         genError={genError}
+        timeline={timeline}
         onGenerate={onGenerate}
         onMarkRunStuck={onMarkRunStuck}
         onPublish={onPublish}

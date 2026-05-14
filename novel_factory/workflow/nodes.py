@@ -26,6 +26,74 @@ logger = logging.getLogger(__name__)
 # ── Helper ──────────────────────────────────────────────────────
 
 
+# v5.8: Chinese-facing node messages for observability
+_NODE_MESSAGES: dict[str, dict[str, str]] = {
+    "health_check": {"started": "开始工作流预检", "completed": "预检通过"},
+    "task_discovery": {"started": "识别章节任务状态", "completed": "任务状态识别完成"},
+    "planner": {"started": "开始章节规划", "completed": "已生成章节规划", "failed": "章节规划失败"},
+    "screenwriter": {"started": "开始编剧", "completed": "已生成章节场景规划", "failed": "编剧失败"},
+    "author": {"started": "开始执笔撰写", "completed": "已生成章节初稿", "failed": "执笔撰写失败"},
+    "polisher": {"started": "开始润色", "completed": "润色完成", "failed": "润色失败"},
+    "editor": {"started": "开始审核", "completed": "审核完成", "failed": "审核失败"},
+    "memory_curator": {"started": "开始记忆整理", "completed": "记忆更新完成", "failed": "记忆整理失败"},
+    "publisher": {"started": "开始发布", "completed": "章节已发布", "failed": "发布失败"},
+    "awaiting_publish": {"started": "等待人工发布", "completed": "已到达等待发布状态"},
+    "revision_router": {"started": "返修路由", "completed": "返修路由完成"},
+    "human_review": {"started": "进入人工审核", "completed": "人工审核处理完成", "failed": "需要人工干预"},
+    "archive": {"started": "开始归档", "completed": "归档完成"},
+}
+
+
+def _node_message(node_name: str, event_type: str) -> str:
+    """Get author-facing Chinese message for a node event."""
+    msgs = _NODE_MESSAGES.get(node_name, {})
+    return msgs.get(event_type, f"{node_name} {event_type}")
+
+
+def _log_node_event(
+    state: FactoryState,
+    repo: Repository,
+    node_name: str,
+    event_type: str,
+    status: str | None = None,
+    error_message: str | None = None,
+    artifact_refs: list[dict] | None = None,
+) -> None:
+    """Best-effort log a workflow node event. Never raises.
+
+    v5.8: Node-level observability. Failures are logged as warnings
+    but do not block the main workflow.
+    """
+    run_id = state.get("workflow_run_id")
+    project_id = state.get("project_id", "")
+    chapter_number = state.get("chapter_number", 0)
+    if not run_id or not project_id or not chapter_number:
+        return
+    try:
+        import json
+        message = _node_message(node_name, event_type)
+        if error_message:
+            message = f"{message}：{error_message}"
+        artifact_refs_json = json.dumps(artifact_refs, ensure_ascii=False) if artifact_refs else None
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id=project_id,
+            chapter_number=chapter_number,
+            node_name=node_name,
+            event_type=event_type,
+            status=status,
+            message=message,
+            error_message=error_message,
+            artifact_refs_json=artifact_refs_json,
+        )
+    except Exception:
+        logger.warning(
+            "Failed to log node event for %s/%s node=%s event=%s",
+            project_id, chapter_number, node_name, event_type,
+            exc_info=True,
+        )
+
+
 def _update_run_node(state: FactoryState, repo: Repository, node_name: str) -> None:
     """Update workflow_runs.current_node if a run_id exists in state."""
     run_id = state.get("workflow_run_id")
@@ -191,6 +259,7 @@ def create_node_runners(
         Equivalent to dispatch/chapter.py ChapterDispatchMixin._run_agent().
         """
         _update_run_node(state, repo, agent_name)
+        _log_node_event(state, repo, agent_name, "started", status="running")
 
         # Record step before running (for run_with_graph return value)
         status_before = state.get("chapter_status", "")
@@ -200,6 +269,7 @@ def create_node_runners(
             llm = llm_router.for_agent(agent_name)
         except ValueError as e:
             logger.error(f"LLM configuration error for agent '{agent_name}': {e}")
+            _log_node_event(state, repo, agent_name, "failed", status="failed", error_message=str(e))
             _finalize_run(state, repo, "failed", str(e))
             return {
                 "error": str(e),
@@ -225,10 +295,13 @@ def create_node_runners(
 
         # Handle error - set requires_human to stop downstream execution
         if "error" in result:
+            _log_node_event(state, repo, agent_name, "failed", status="failed", error_message=result["error"])
             _finalize_run(state, repo, "failed", result["error"])
             # P1 fix: Ensure requires_human is set so route_by_chapter_status
             # safety gate catches this and routes to human_review
             result["requires_human"] = True
+        else:
+            _log_node_event(state, repo, agent_name, "completed", status="completed")
 
         # Record step after running
         step_info = {
@@ -272,7 +345,12 @@ def health_check_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
         updates["workflow_run_id"] = run_id
         logger.info("Created workflow_run %s for project=%s chapter=%s", run_id, project_id, chapter_number)
     else:
-        _update_run_node(state, repo, "health_check")
+        updates["workflow_run_id"] = run_id
+
+    event_state = {**state, "workflow_run_id": run_id}
+    _update_run_node(event_state, repo, "health_check")
+    _log_node_event(event_state, repo, "health_check", "started", status="running")
+    _log_node_event(event_state, repo, "health_check", "completed", status="completed")
 
     return updates
 
@@ -287,15 +365,18 @@ def task_discovery_node(state: FactoryState, repo: Repository) -> dict[str, Any]
     v5.3.0: Also checks if instruction exists for Planner 必经 routing.
     """
     _update_run_node(state, repo, "task_discovery")
+    _log_node_event(state, repo, "task_discovery", "started", status="running")
 
     project_id = state.get("project_id", "")
     chapter_number = state.get("chapter_number", 0)
     if not project_id or not chapter_number:
+        _log_node_event(state, repo, "task_discovery", "failed", status="failed", error_message="Missing project_id or chapter_number")
         _finalize_run(state, repo, "failed", "Missing project_id or chapter_number")
         return {"error": "Missing project_id or chapter_number"}
 
     db_status = repo.get_chapter_status(project_id, chapter_number)
     if not db_status:
+        _log_node_event(state, repo, "task_discovery", "failed", status="failed", error_message="Chapter not found in DB")
         _finalize_run(state, repo, "blocked", "Chapter not found in DB")
         return {"error": "Chapter not found in DB", "requires_human": True, "chapter_status": "blocking"}
 
@@ -309,14 +390,17 @@ def task_discovery_node(state: FactoryState, repo: Repository) -> dict[str, Any]
             "task_discovery: DB status '%s' overrides state status '%s'",
             db_status, state_status,
         )
+        _log_node_event(state, repo, "task_discovery", "completed", status="completed")
         return {"chapter_status": db_status, "has_instruction": has_instruction}
 
+    _log_node_event(state, repo, "task_discovery", "completed", status="completed")
     return {"has_instruction": has_instruction}
 
 
 def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
     """Run the Planner agent."""
     _update_run_node(state, repo, "planner")
+    _log_node_event(state, repo, "planner", "started", status="running")
     agent = PlannerAgent(repo, llm)
     result = agent.run(state)
     # v5.2: Accumulate token usage
@@ -327,14 +411,18 @@ def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dic
         if budget_error:
             result = budget_error
     if "error" in result:
+        _log_node_event(state, repo, "planner", "failed", status="failed", error_message=result["error"])
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
+    else:
+        _log_node_event(state, repo, "planner", "completed", status="completed")
     return result
 
 
 def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
     """Run the Screenwriter agent."""
     _update_run_node(state, repo, "screenwriter")
+    _log_node_event(state, repo, "screenwriter", "started", status="running")
     agent = ScreenwriterAgent(repo, llm)
     result = agent.run(state)
     # v5.2: Accumulate token usage
@@ -345,14 +433,18 @@ def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider) -
         if budget_error:
             result = budget_error
     if "error" in result:
+        _log_node_event(state, repo, "screenwriter", "failed", status="failed", error_message=result["error"])
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
+    else:
+        _log_node_event(state, repo, "screenwriter", "completed", status="completed")
     return result
 
 
 def author_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
     """Run the Author agent."""
     _update_run_node(state, repo, "author")
+    _log_node_event(state, repo, "author", "started", status="running")
     agent = AuthorAgent(repo, llm)
     result = _handle_retryable_quality_gate(state, repo, agent.run(state))
     # v5.2: Accumulate token usage
@@ -363,14 +455,18 @@ def author_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict
         if budget_error:
             result = budget_error
     if "error" in result:
+        _log_node_event(state, repo, "author", "failed", status="failed", error_message=result["error"])
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
+    else:
+        _log_node_event(state, repo, "author", "completed", status="completed")
     return result
 
 
 def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Polisher agent."""
     _update_run_node(state, repo, "polisher")
+    _log_node_event(state, repo, "polisher", "started", status="running")
     # R4: Support skill_registry injection
     if skill_registry is None:
         try:
@@ -388,14 +484,18 @@ def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill
         if budget_error:
             result = budget_error
     if "error" in result:
+        _log_node_event(state, repo, "polisher", "failed", status="failed", error_message=result["error"])
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
+    else:
+        _log_node_event(state, repo, "polisher", "completed", status="completed")
     return result
 
 
 def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Editor agent."""
     _update_run_node(state, repo, "editor")
+    _log_node_event(state, repo, "editor", "started", status="running")
     # R4: Support skill_registry injection
     if skill_registry is None:
         try:
@@ -413,8 +513,11 @@ def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
         if budget_error:
             result = budget_error
     if "error" in result:
+        _log_node_event(state, repo, "editor", "failed", status="failed", error_message=result["error"])
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
+    else:
+        _log_node_event(state, repo, "editor", "completed", status="completed")
     return result
 
 
@@ -425,6 +528,7 @@ def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider)
     In stub mode, failure is non-blocking (log and continue).
     """
     _update_run_node(state, repo, "memory_curator")
+    _log_node_event(state, repo, "memory_curator", "started", status="running")
     agent = MemoryCuratorAgent(repo, llm)
     result = agent.run(state)
     # Accumulate token usage
@@ -439,28 +543,35 @@ def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider)
         if llm_mode == "real":
             # Real mode: memory extraction failure blocks publish
             logger.error("MemoryCurator failed (real mode): %s", result["error"])
+            _log_node_event(state, repo, "memory_curator", "failed", status="failed", error_message=result["error"])
             _finalize_run(state, repo, "failed", result["error"])
             result["requires_human"] = True
         else:
             # Stub mode: non-blocking, log and continue
             logger.warning("MemoryCurator failed (stub mode): %s", result["error"])
+            _log_node_event(state, repo, "memory_curator", "failed", status="failed", error_message=result["error"])
             result.pop("error", None)
             result["requires_human"] = False
+    else:
+        _log_node_event(state, repo, "memory_curator", "completed", status="completed")
     return result
 
 
 def publisher_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
     """Publish a reviewed chapter."""
     _update_run_node(state, repo, "publisher")
+    _log_node_event(state, repo, "publisher", "started", status="running")
 
     project_id = state.get("project_id", "")
     chapter_number = state.get("chapter_number", 0)
 
     ok = repo.publish_chapter(project_id, chapter_number)
     if not ok:
+        _log_node_event(state, repo, "publisher", "failed", status="failed", error_message="Failed to publish chapter")
         _finalize_run(state, repo, "failed", "Failed to publish chapter")
         return {"error": "Failed to publish chapter"}
 
+    _log_node_event(state, repo, "publisher", "completed", status="completed")
     return {
         "chapter_status": ChapterStatus.PUBLISHED.value,
         "current_stage": "published",
@@ -474,6 +585,7 @@ def awaiting_publish_node(state: FactoryState, repo: Repository) -> dict[str, An
     The chapter stays in 'reviewed' status until manually published.
     """
     _update_run_node(state, repo, "awaiting_publish")
+    _log_node_event(state, repo, "awaiting_publish", "started", status="running")
 
     project_id = state.get("project_id", "")
     chapter_number = state.get("chapter_number", 0)
@@ -485,6 +597,7 @@ def awaiting_publish_node(state: FactoryState, repo: Repository) -> dict[str, An
 
     # Mark workflow run as completed (review done, but not published)
     _finalize_run(state, repo, "completed")
+    _log_node_event(state, repo, "awaiting_publish", "completed", status="completed")
 
     return {
         "chapter_status": ChapterStatus.REVIEWED.value,
@@ -502,6 +615,7 @@ def revision_router_node(state: FactoryState) -> dict[str, Any]:
 def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
     """Handle blocking/human intervention scenarios."""
     _update_run_node(state, repo, "human_review")
+    _log_node_event(state, repo, "human_review", "started", status="running")
     project_id = state.get("project_id", "")
     chapter_number = state.get("chapter_number", 0)
     gate = state.get("quality_gate", {}) or {}
@@ -534,6 +648,7 @@ def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
             repo.update_chapter_status(project_id, chapter_number, ChapterStatus.BLOCKING.value)
 
     _finalize_run(state, repo, "blocked", error=error)
+    _log_node_event(state, repo, "human_review", "failed", status="failed", error_message=error)
     logger.warning(
         "Human intervention required: project=%s chapter=%s",
         project_id, chapter_number,
@@ -548,8 +663,10 @@ def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
 def archive_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
     """Archive after publishing. Marks workflow run as completed."""
     _update_run_node(state, repo, "archive")
+    _log_node_event(state, repo, "archive", "started", status="running")
     # P1 fix: Clear error_message when marking as completed
     _finalize_run(state, repo, "completed", error=None)
+    _log_node_event(state, repo, "archive", "completed", status="completed")
     logger.info(
         "Archive: project=%s chapter=%s published",
         state.get("project_id"), state.get("chapter_number"),

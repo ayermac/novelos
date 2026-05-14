@@ -3,10 +3,12 @@
 ## 状态
 
 - 类型：可执行规划规格
-- 状态：planned
+- 状态：completed
 - 基线：v5.7 Daily Writing Editing and Versioning
 - 产品目标：把现有个人作者工作台压实到“自己每天可用、可恢复、可验证”的内部稳定状态
 - 技术目标：完成真实项目验收、修复真实数据路径问题、统一验证入口和文档基线，为 v5.8 工作流可观测增强做准备
+- 完成日期：2026-05-14
+- 最终验证：`python3 scripts/verify.py full` 通过，pytest `1866 passed`，vitest `125 passed`，frontend typecheck/lint/build passed
 
 ## 背景
 

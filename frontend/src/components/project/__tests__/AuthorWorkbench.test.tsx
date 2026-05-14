@@ -646,4 +646,178 @@ describe('AuthorWorkbench', () => {
     expect(resetBtn).toBeDefined()
     expect(resetBtn).toBeDisabled()
   })
+
+  /* v5.8 Workflow Observability tests ----------------------------------- */
+
+  it('renders timeline nodes with chinese labels from timeline data', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-tl',
+          run_status: 'completed',
+          current_node: 'author',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 12,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          nodes: [
+            {
+              node_name: 'screenwriter',
+              label: '编剧',
+              status: 'completed',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: '2026-05-13T10:05:00',
+              duration_ms: 300000,
+              messages: ['已生成章节场景规划'],
+              artifacts: [{ type: 'scene_plan', label: '章节场景规划', artifact_id: 'art-1' }],
+            },
+            {
+              node_name: 'author',
+              label: '执笔',
+              status: 'completed',
+              started_at: '2026-05-13T10:05:00',
+              completed_at: '2026-05-13T10:10:00',
+              duration_ms: 300000,
+              messages: ['已生成章节初稿'],
+              artifacts: [],
+            },
+          ],
+        }}
+      />
+    )
+    expect(screen.getByText('编剧')).toBeInTheDocument()
+    expect(screen.getByText('执笔')).toBeInTheDocument()
+    expect(screen.getAllByText('已生成章节场景规划').length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryAllByText(/章节场景规划/).length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText('scene_plan')).not.toBeInTheDocument()
+  })
+
+  it('shows running node loading animation in timeline', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-run',
+          run_status: 'running',
+          current_node: 'polisher',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 5,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          nodes: [
+            {
+              node_name: 'screenwriter',
+              label: '编剧',
+              status: 'completed',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: '2026-05-13T10:02:00',
+              duration_ms: 120000,
+              messages: ['已生成章节场景规划'],
+              artifacts: [],
+            },
+            {
+              node_name: 'polisher',
+              label: '润色',
+              status: 'running',
+              started_at: '2026-05-13T10:02:00',
+              completed_at: null,
+              duration_ms: null,
+              messages: ['开始润色'],
+              artifacts: [],
+            },
+          ],
+        }}
+      />
+    )
+    // Running node should have loading indicator (pulse animation class)
+    const runningStep = screen.getByText('润色').closest('.step-item')
+    expect(runningStep).toHaveClass('step-running')
+  })
+
+  it('shows stale run recovery suggestions in timeline', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-stale-tl',
+          run_status: 'running',
+          current_node: 'author',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 35,
+          is_stale: true,
+          recovery: {
+            recommended_action: 'mark_stuck',
+            reason: '运行已超过 30 分钟仍处于 running',
+            safe_actions: [
+              { key: 'mark_stuck', label: '标记为阻塞', safe: true },
+              { key: 'reset_chapter', label: '清除阻塞并重置', safe: true, note: '保留当前正文和版本' },
+            ],
+          },
+          nodes: [
+            {
+              node_name: 'author',
+              label: '执笔',
+              status: 'running',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: null,
+              duration_ms: null,
+              messages: ['开始执笔撰写'],
+              artifacts: [],
+            },
+          ],
+        }}
+      />
+    )
+    expect(screen.getByText('工作流疑似卡住')).toBeInTheDocument()
+    expect(screen.getByText(/恢复建议/)).toBeInTheDocument()
+    expect(screen.getAllByText('标记为阻塞').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('清除阻塞并重置').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText(/保留当前正文和版本/)).toBeInTheDocument()
+  })
+
+  it('shows inline error when timeline refresh fails', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timelineError="获取工作流时间线失败"
+      />
+    )
+    expect(screen.getByText(/刷新失败：获取工作流时间线失败/)).toBeInTheDocument()
+  })
+
+  it('does not show generate button for terminal chapter with timeline', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        currentChapter={1}
+        currentChapterRecord={baseProps.chapters[0]}
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 1,
+          run_id: 'run-pub',
+          run_status: 'completed',
+          current_node: 'publish',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: null,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          nodes: [],
+        }}
+      />
+    )
+    expect(screen.queryByRole('button', { name: /生成本章/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /继续生成/ })).not.toBeInTheDocument()
+  })
 })

@@ -9,6 +9,7 @@ import {
 import { StepStatus } from '../../hooks/useSSEStream'
 import { tWorkflowNodeLabel } from '../../lib/state-labels'
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
+import type { WorkflowTimelineData } from '../../lib/api'
 
 interface Run {
   run_id: string
@@ -67,6 +68,7 @@ interface AuthorAgentPanelProps {
   isWorkflowRunning?: boolean
   sseSteps: Record<string, StepStatus>
   genError: string
+  timeline?: WorkflowTimelineData | null
   onGenerate: () => void
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onPublish?: () => void
@@ -88,6 +90,7 @@ export default function AuthorAgentPanel({
   isWorkflowRunning,
   sseSteps,
   genError,
+  timeline,
   onGenerate,
   onMarkRunStuck,
   onPublish,
@@ -101,12 +104,17 @@ export default function AuthorAgentPanel({
 }: AuthorAgentPanelProps) {
   const status = currentChapterRecord?.status || ''
   const hasContent = (currentChapterRecord?.word_count || 0) > 0
+  // v5.8: Prefer timeline for status info
+  const effectiveRunStatus = timeline?.run_status || runDetail?.workflow_status
+  const effectiveElapsed = timeline?.elapsed_minutes !== undefined && timeline?.elapsed_minutes !== null
+    ? timeline.elapsed_minutes
+    : elapsedMinutesSince(runDetail?.started_at)
   const workflowStatus = runDetail?.workflow_status
   const currentNode = runDetail?.current_node
   const sseStepEntries = Object.entries(sseSteps)
   const isReviewedReal = status === 'reviewed' && llmMode === 'real'
   const elapsedMinutes = elapsedMinutesSince(runDetail?.started_at)
-  const isStaleRunning = runDetail?.workflow_status === 'running' && elapsedMinutes !== null && elapsedMinutes >= STUCK_RUN_THRESHOLD_MINUTES
+  const isStaleRunning = effectiveRunStatus === 'running' && effectiveElapsed !== null && effectiveElapsed >= STUCK_RUN_THRESHOLD_MINUTES
 
   return (
     <aside className="author-agent" aria-label="AI 助手面板">

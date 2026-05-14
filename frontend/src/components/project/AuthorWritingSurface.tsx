@@ -10,6 +10,7 @@ import { StepStatus } from '../../hooks/useSSEStream'
 import { tWorkflowNodeLabel } from '../../lib/state-labels'
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
 import { post } from '../../lib/api'
+import type { WorkflowTimelineData } from '../../lib/api'
 import { PROCESS_DRAFT_LABEL, formatArtifactSummary, getArtifactTitle } from '../../lib/artifacts'
 import AttentionPanel, { ActionHintList } from '../AttentionPanel'
 import WorkflowTimeline from '../WorkflowTimeline'
@@ -140,6 +141,8 @@ interface AuthorWritingSurfaceProps {
   runDetail: RunDetailData | null
   runsForChapter: Run[]
   sseSteps: Record<string, StepStatus>
+  timeline?: WorkflowTimelineData | null
+  timelineError?: string
   onGenerate: () => void
   onGenerateNext?: () => void
   onMarkRunStuck?: (runId: string) => Promise<void> | void
@@ -171,6 +174,8 @@ export default function AuthorWritingSurface({
   runDetail,
   runsForChapter,
   sseSteps,
+  timeline,
+  timelineError,
   onGenerate,
   onMarkRunStuck,
   onPublish,
@@ -311,6 +316,8 @@ export default function AuthorWritingSurface({
         {activeTab === 'workflow' && (
           <WorkflowBody
             runDetail={runDetail}
+            timeline={timeline}
+            timelineError={timelineError}
             isLaunching={isLaunching}
             isStreaming={isStreaming}
             sseSteps={sseSteps}
@@ -494,6 +501,8 @@ function ContentBody({
 
 function WorkflowBody({
   runDetail,
+  timeline,
+  timelineError,
   isLaunching,
   isStreaming,
   sseSteps,
@@ -503,6 +512,8 @@ function WorkflowBody({
   resetRecoveryPending,
 }: {
   runDetail: RunDetailData | null
+  timeline?: WorkflowTimelineData | null
+  timelineError?: string
   isLaunching: boolean
   isStreaming: boolean
   sseSteps: Record<string, StepStatus>
@@ -511,6 +522,125 @@ function WorkflowBody({
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
 }) {
+  // v5.8: Prefer timeline data when available
+  if (timeline && !isStreaming) {
+    const nodeLabel = tWorkflowNodeLabel(timeline.current_node)
+    const statusLabel = timeline.run_status ? tWorkflowStatus(timeline.run_status) : '—'
+    const isStale = timeline.is_stale
+    const isRunning = timeline.run_status === 'running'
+    const statusTone = isStale || timeline.run_status === 'blocked' ? 'warning' : timeline.run_status === 'failed' ? 'error' : 'info'
+    const statusHeadline = isStale
+      ? '工作流疑似卡住'
+      : isRunning
+        ? '工作流正在推进'
+        : timeline.run_status === 'blocked'
+          ? '工作流已阻塞'
+          : timeline.run_status === 'completed'
+            ? '工作流已完成'
+            : '最近一次运行'
+    const statusDescription = isStale
+      ? `当前节点：${nodeLabel} 已超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未完成，建议进入运行恢复处理卡住运行。`
+      : isRunning
+        ? `当前节点：${nodeLabel}，仍在处理。若超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未变化，请按卡住运行处理。`
+        : timeline.run_status === 'blocked'
+          ? `本次运行已阻塞，需要先处理最近的失败或返修原因。`
+          : timeline.run_status === 'completed'
+            ? '工作流已完成，可查看产物或继续下一章。'
+            : '最近一次运行记录如下。'
+
+    const recovery = timeline.recovery
+
+    // Convert timeline nodes to WorkflowTimeline Step format
+    const timelineSteps: Step[] = timeline.nodes.map((n) => ({
+      key: n.node_name,
+      label: n.label,
+      description: n.messages[0] || '',
+      status: n.status as Step['status'],
+      logs: n.messages.map((m) => ({ level: 'info' as const, message: m })),
+      artifacts: n.artifacts.length > 0 ? {
+        summary: n.artifacts.map((a) => a.label).join('、'),
+        artifact_labels: n.artifacts.map((a) => a.label),
+        artifact_count: n.artifacts.length,
+        artifact_types: n.artifacts.map((a) => a.type),
+      } : null,
+    }))
+
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        {timelineError && (
+          <div className="alert alert-error" style={{ marginBottom: 0 }}>
+            <div style={{ fontSize: 13 }}>刷新失败：{timelineError}</div>
+          </div>
+        )}
+        <div className={`alert ${statusTone === 'warning' ? 'alert-warn' : statusTone === 'error' ? 'alert-error' : 'alert-info'}`} style={{ marginBottom: 0 }}>
+          <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 8, alignItems: 'flex-start' }}>
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 4 }}>{statusHeadline}</div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)' }}>当前节点：{nodeLabel}</div>
+              <div style={{ fontSize: 13, color: 'var(--text-secondary)', marginTop: 2 }}>{statusDescription}</div>
+              {timeline.elapsed_minutes !== null && timeline.elapsed_minutes >= 0 && (
+                <div style={{ fontSize: 12, color: 'var(--wb-text-muted)', marginTop: 4 }}>
+                  已运行约 {Math.round(timeline.elapsed_minutes)} 分钟
+                </div>
+              )}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 }}>
+              <span className={`status-badge status-${timeline.run_status || 'unknown'}`}>{statusLabel}</span>
+            </div>
+          </div>
+          {recovery.recommended_action && recovery.safe_actions.length > 0 && (
+            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
+              <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>恢复建议：{recovery.reason}</div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {recovery.safe_actions.map((action) => (
+                  <span key={action.key} style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '2px 8px', background: 'var(--bg-tertiary)', borderRadius: 4 }}>
+                    {action.label}
+                    {action.note && <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>({action.note})</span>}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+          {(isStale || recovery.recommended_action === 'mark_stuck') && onMarkRunStuck && timeline.run_id && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+              <button className="btn btn-secondary btn-sm" onClick={() => onMarkRunStuck(timeline.run_id!)} disabled={markStuckPending}>
+                {markStuckPending ? (
+                  <><Loader2 size={12} className="spin" /> 处理中...</>
+                ) : (
+                  <>标记为阻塞</>
+                )}
+              </button>
+              {onResetRunRecovery && (
+                <button className="btn btn-primary btn-sm" onClick={() => onResetRunRecovery(timeline.run_id!)} disabled={resetRecoveryPending}>
+                  {resetRecoveryPending ? (
+                    <><Loader2 size={12} className="spin" /> 处理中...</>
+                  ) : (
+                    <>清除阻塞并重置</>
+                  )}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+        <WorkflowTimeline steps={timelineSteps} />
+      </div>
+    )
+  }
+
+  // v5.8: Show timeline error even when no run or timeline data
+  if (timelineError && !isStreaming) {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div className="alert alert-error" style={{ marginBottom: 0 }}>
+          <div style={{ fontSize: 13 }}>刷新失败：{timelineError}</div>
+        </div>
+        <div style={{ padding: 24, textAlign: 'center', color: 'var(--wb-text-dark-muted)' }}>
+          暂无工作流数据。生成章节后可查看工作流步骤。
+        </div>
+      </div>
+    )
+  }
+
   if (runDetail && !isStreaming) {
     const nodeLabel = tWorkflowNodeLabel(runDetail.current_node)
     const statusLabel = tWorkflowStatus(runDetail.workflow_status)

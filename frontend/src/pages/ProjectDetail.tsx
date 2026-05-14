@@ -24,6 +24,7 @@ import StyleGuideModule from '../components/project/StyleGuideModule'
 import ReviewModule from '../components/project/ReviewModule'
 import RunsModule from '../components/project/RunsModule'
 import { useAppDialog } from '../components/AppDialogContext'
+import type { WorkflowTimelineData } from '../lib/api'
 
 // v5.4: Chapter UI moved into ChapterWorkspace. Keep these acceptance anchors
 // here because older frontend closure tests inspect ProjectDetail.tsx directly:
@@ -121,6 +122,8 @@ export default function ProjectDetail() {
 
   const [chapterDetail, setChapterDetail] = useState<ChapterDetail | null>(null)
   const [runDetail, setRunDetail] = useState<RunDetailData | null>(null)
+  const [timeline, setTimeline] = useState<WorkflowTimelineData | null>(null)
+  const [timelineError, setTimelineError] = useState('')
   const [activeTab, setActiveTab] = useState<TabKey>('content')
   const [chapterLoading, setChapterLoading] = useState(false)
   const [generating, setGenerating] = useState(false)
@@ -170,6 +173,8 @@ export default function ProjectDetail() {
     setChapterLoading(true)
     setChapterDetail(null)
     setRunDetail(null)
+    setTimeline(null)
+    setTimelineError('')
     setGenError('')
     get<ChapterDetail>(`/projects/${id}/chapters/${currentChapter}`)
       .then((res) => {
@@ -192,6 +197,25 @@ export default function ProjectDetail() {
       })
   }, [])
 
+  const loadTimeline = useCallback((projectId: string, chapterNumber: number, options?: { silent?: boolean }) => {
+    if (!options?.silent) {
+      setTimeline(null)
+      setTimelineError('')
+    }
+    return get<WorkflowTimelineData>(`/projects/${projectId}/chapters/${chapterNumber}/workflow-timeline`)
+      .then((res) => {
+        if (res.ok && res.data) {
+          setTimeline(res.data)
+          setTimelineError('')
+        } else if (!options?.silent) {
+          setTimelineError(res.error?.message || '获取工作流时间线失败')
+        }
+      })
+      .catch(() => {
+        if (!options?.silent) setTimelineError('获取工作流时间线失败')
+      })
+  }, [])
+
   useEffect(() => {
     if (activeTab !== 'workflow' && activeTab !== 'artifacts') return
 
@@ -200,8 +224,37 @@ export default function ProjectDetail() {
     const latestRun = runsForCurrentChapter.length > 0 ? runsForCurrentChapter[0] : null
     if (latestRun) loadRunDetail(latestRun.run_id)
     else setRunDetail(null)
-  }, [activeTab, currentChapter, workspace?.recent_runs, loadRunDetail])
 
+    // v5.8: Load timeline for workflow/artifacts tabs
+    if (activeTab === 'workflow' && id) {
+      loadTimeline(id, currentChapter)
+    }
+  }, [activeTab, currentChapter, workspace?.recent_runs, loadRunDetail, loadTimeline, id])
+
+  // v5.8: Auto-refresh timeline when in workflow view
+  useEffect(() => {
+    if ((activeModule !== 'chapters' && activeModule !== 'overview') || activeTab !== 'workflow') return
+    if (!id) return
+
+    const shouldPoll = timeline?.run_status === 'running' || runDetail?.workflow_status === 'running'
+    if (!shouldPoll) return
+
+    const timer = window.setInterval(() => {
+      loadTimeline(id, currentChapter, { silent: true })
+    }, 5000)
+
+    return () => window.clearInterval(timer)
+  }, [
+    activeModule,
+    activeTab,
+    currentChapter,
+    id,
+    loadTimeline,
+    timeline?.run_status,
+    runDetail?.workflow_status,
+  ])
+
+  // Legacy run detail polling (keep for backward compatibility)
   useEffect(() => {
     if ((activeModule !== 'chapters' && activeModule !== 'overview') || activeTab !== 'workflow') return
     const runsForCurrentChapter = (workspace?.recent_runs || [])
@@ -297,8 +350,11 @@ export default function ProjectDetail() {
       const latestRun = runsForChapter.length > 0 ? runsForChapter[0] : null
       if (latestRun) loadRunDetail(latestRun.run_id)
       else setRunDetail(null)
+      if (tab === 'workflow' && id) {
+        loadTimeline(id, chapterNumber)
+      }
     }
-  }, [loadRunDetail, setSearchParams, workspace?.recent_runs])
+  }, [loadRunDetail, loadTimeline, setSearchParams, workspace?.recent_runs, id])
 
   const handleTabChange = useCallback((tab: TabKey) => {
     handleOpenChapterView(currentChapter, tab)
@@ -545,6 +601,8 @@ export default function ProjectDetail() {
           runDetail={runDetail}
           runsForChapter={runsForChapter}
           sseSteps={currentChapterSseSteps}
+          timeline={timeline}
+          timelineError={timelineError}
           onGenerate={handleGenerate}
           onGenerateNext={handleGenerateNext}
           onMarkRunStuck={handleMarkRunStuck}
