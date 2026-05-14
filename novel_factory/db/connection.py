@@ -219,6 +219,13 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         columns = [row[1] for row in cursor.fetchall()]
         return {"source", "base_version_id", "summary", "metadata"}.issubset(columns)
 
+    if name == "030_v5_8_workflow_node_events":
+        # 030 adds workflow_node_events table
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='workflow_node_events'"
+        )
+        return cursor.fetchone() is not None
+
     return False
 
 

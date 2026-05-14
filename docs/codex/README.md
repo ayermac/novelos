@@ -16,8 +16,9 @@
 - **生产稳定基线**: v5.5.15 Production Readiness Closure
 - **当前 WebUI 基线**: v5.6.1 Workbench Stabilization
 - **当前创作者闭环基线**: v5.7 Daily Writing Editing and Versioning
-- **状态**: v5.7 Review fixes completed — 编辑器接入、站内弹窗、diff 边界校验、异步保护、局部返修输出归一化均已验证
-- **测试基线**: pytest 1859/1859 passed；vitest 125/125 passed；frontend typecheck/lint/build passed
+- **当前稳定版本**: v5.8 Workflow Observability and Recovery
+- **状态**: v5.9.2 UI Controls Standardization completed；下一阶段候选为 v5.9 Writing Skills and Prompt Template System
+- **测试基线**: pytest 1892/1892 passed；v5.9.2 smoke passed；vitest 146/146 passed；frontend typecheck/lint/build passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
@@ -26,6 +27,15 @@
 - **v5.6.1 Review 记录**: [reviews/novel-factory-v5.6.1-workbench-stabilization-review.md](reviews/novel-factory-v5.6.1-workbench-stabilization-review.md)
 - **v5.7 完成报告**: [reports/novel-factory-v5.7-completion-report.md](reports/novel-factory-v5.7-completion-report.md)
 - **v5.7 Review 记录**: [reviews/novel-factory-v5.7-review.md](reviews/novel-factory-v5.7-review.md)
+- **v5.7.1 完成报告**: [reports/novel-factory-v5.7.1-completion-report.md](reports/novel-factory-v5.7.1-completion-report.md)
+- **v5.7.1 真实项目验收**: [reports/novel-factory-v5.7.1-real-project-acceptance.md](reports/novel-factory-v5.7.1-real-project-acceptance.md)
+- **v5.7.1 Review 记录**: [reviews/novel-factory-v5.7.1-review.md](reviews/novel-factory-v5.7.1-review.md)
+- **v5.8 完成报告**: [reports/novel-factory-v5.8-completion-report.md](reports/novel-factory-v5.8-completion-report.md)
+- **v5.8 Review 记录**: [reviews/novel-factory-v5.8-review.md](reviews/novel-factory-v5.8-review.md)
+- **v5.8.1 真实 LLM 验收**: [reports/novel-factory-v5.8.1-real-llm-acceptance-report.md](reports/novel-factory-v5.8.1-real-llm-acceptance-report.md)
+- **Pi 启发的 Agent 工程路线**: [next/pi-inspired-agent-engineering-roadmap.md](next/pi-inspired-agent-engineering-roadmap.md)
+- **v5.9.2 完成报告**: [reports/novel-factory-v5.9.2-completion-report.md](reports/novel-factory-v5.9.2-completion-report.md)
+- **v5.9.2 Review 记录**: [reviews/novel-factory-v5.9.2-review.md](reviews/novel-factory-v5.9.2-review.md)
 
 ## 当前执行规则
 
@@ -43,6 +53,9 @@
 - v5.6 WebUI 重构规格: [planning/novel-factory-v5.6-webui-author-workbench-rework-spec.md](planning/novel-factory-v5.6-webui-author-workbench-rework-spec.md)
 - v5.6.1 工作台稳定化规格: [planning/novel-factory-v5.6.1-workbench-stabilization-spec.md](planning/novel-factory-v5.6.1-workbench-stabilization-spec.md)
 - v5.7 日常写作编辑与版本管理规格: [planning/novel-factory-v5.7-daily-writing-editing-versioning-spec.md](planning/novel-factory-v5.7-daily-writing-editing-versioning-spec.md)
+- v5.7.1 内部构建完整与稳定规格: [planning/novel-factory-v5.7.1-internal-hardening-spec.md](planning/novel-factory-v5.7.1-internal-hardening-spec.md)
+- v5.8 工作流可观测与恢复增强规格: [planning/novel-factory-v5.8-workflow-observability-recovery-spec.md](planning/novel-factory-v5.8-workflow-observability-recovery-spec.md)
+- v5.9.2 UI 控件统一规格: [planning/novel-factory-v5.9.2-ui-controls-standardization-spec.md](planning/novel-factory-v5.9.2-ui-controls-standardization-spec.md)
 - v5.6 完成报告: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
 - v5.6 Review: [reviews/novel-factory-v5.6-author-workbench-review.md](reviews/novel-factory-v5.6-author-workbench-review.md)
 - 下一阶段方向: [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)
@@ -57,14 +70,13 @@ v5.5.15 和 v5.6 Phase 1 完成后，下一阶段不优先展开多租户、企�
 
 近期优先级：
 
-1. v5.7 日常写作闭环：正文编辑、保存、版本列表、版本对比、回滚、局部返修。
-2. v5.8 工作流可观测与恢复增强：节点日志、恢复边界、运行复盘。
-3. 长篇记忆与设定一致性。
-4. 审核问题定位与局部返修增强。
-5. 创作者资料库 / RAG。
-6. 导出与发布流水线。
+1. v5.9 写作 Skills 与 Prompt Template 系统：把伏笔检查、人物口吻、局部润色、爽点增强等能力做成可插拔创作技能。
+2. v6.0 长篇 Context Engineering 与记忆治理：上下文清单、压缩策略、记忆审核、token 预算和注入可解释性。
+3. 创作者资料库 / RAG。
+4. 导出与发布流水线。
 
 详细方向见 [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)。
+Pi 启发的 Agent 工程路线见 [next/pi-inspired-agent-engineering-roadmap.md](next/pi-inspired-agent-engineering-roadmap.md)。
 
 ## 本地启动与验收
 
@@ -95,7 +107,7 @@ npm run dev
 
 ### 分层验证策略
 
-全量测试（1859+ pytest / 125+ vitest）应作为稳定基线声明或提交前闸门，不应作为每次小改动后的默认验证方式。推荐使用分层验证入口：
+全量测试（1892+ pytest / 130+ vitest）应作为稳定基线声明或提交前闸门，不应作为每次小改动后的默认验证方式。推荐使用分层验证入口：
 
 ```bash
 python3 scripts/verify.py smoke     # 快速后端关键回归（日常小改动后）

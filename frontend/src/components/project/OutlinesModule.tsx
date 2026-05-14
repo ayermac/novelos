@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { get, post, put, del } from '../../lib/api'
 import { ListTree, Plus, Pencil, Trash2 } from 'lucide-react'
 import { useAppDialog } from '../AppDialogContext'
+import { NumberInput, Select, TextArea, TextInput } from '../ui'
 
 interface Outline {
   id: number
@@ -116,27 +117,27 @@ export default function OutlinesModule({ projectId }: Props) {
             <h3>{editingItem ? '编辑大纲' : '新增大纲'}</h3>
             <div className="form-group">
               <label>层级</label>
-              <select value={form.level} onChange={(e) => setForm({ ...form, level: e.target.value })}>
+              <Select value={form.level} onChange={(e) => setForm({ ...form, level: e.target.value })}>
                 <option value="volume">卷</option>
                 <option value="arc">篇章</option>
                 <option value="chapter">章节</option>
-              </select>
+              </Select>
             </div>
             <div className="form-group">
               <label>标题</label>
-              <input type="text" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="如：第一卷 起源" />
+              <TextInput value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="如：第一卷 起源" />
             </div>
             <div className="form-group">
               <label>顺序</label>
-              <input type="number" value={form.sequence} onChange={(e) => setForm({ ...form, sequence: Number(e.target.value) || 1 })} min={1} />
+              <NumberInput value={form.sequence} onChange={(e) => setForm({ ...form, sequence: Number(e.target.value) || 1 })} min={1} />
             </div>
             <div className="form-group">
               <label>章节范围</label>
-              <input type="text" value={form.chapters_range} onChange={(e) => setForm({ ...form, chapters_range: e.target.value })} placeholder="如：1-10" />
+              <TextInput value={form.chapters_range} onChange={(e) => setForm({ ...form, chapters_range: e.target.value })} placeholder="如：1-10" />
             </div>
             <div className="form-group">
               <label>概要</label>
-              <textarea value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} placeholder="本段落主要内容" rows={4} />
+              <TextArea value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} placeholder="本段落主要内容" rows={4} />
             </div>
             <div className="form-actions">
               <button className="btn btn-secondary" onClick={() => setShowModal(false)}>取消</button>

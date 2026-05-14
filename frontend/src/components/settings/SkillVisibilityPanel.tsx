@@ -1,6 +1,30 @@
 import { useEffect, useState } from 'react'
 import type { CSSProperties } from 'react'
+import {
+  Activity,
+  AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  Boxes,
+  CheckCircle2,
+  ClipboardCheck,
+  FlaskConical,
+  LayoutGrid,
+  ListChecks,
+  PackageCheck,
+  PlayCircle,
+  Plus,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  SlidersHorizontal,
+  Trash2,
+  Workflow,
+  XCircle,
+} from 'lucide-react'
 import { get, post, del } from '../../lib/api'
+import { DataTable, FormField, InlineMessage, Select, TextArea, TextInput } from '../ui'
+import './SkillVisibilityPanel.css'
 
 interface SkillMount {
   agent: string
@@ -139,13 +163,24 @@ interface SkillReviewResult {
   mountable_targets: SkillMount[]
 }
 
-const panelStyle: CSSProperties = {
-  marginBottom: 'var(--space-4)',
-  padding: 'var(--space-4)',
-  borderRadius: 'var(--radius-md)',
-  background: 'var(--bg-secondary)',
-  border: '1px solid rgba(30, 58, 95, 0.06)',
-}
+type SkillConsoleView = 'overview' | 'enable' | 'mounts' | 'test' | 'catalog'
+type CapabilityFilter = 'all' | 'enabled' | 'disabled' | 'mounted' | 'unmounted' | 'risky' | 'legacy'
+
+const CAPABILITY_FILTERS: { key: CapabilityFilter; label: string }[] = [
+  { key: 'all', label: '全部' },
+  { key: 'enabled', label: '已启用' },
+  { key: 'disabled', label: '已禁用' },
+  { key: 'mounted', label: '已挂载' },
+  { key: 'unmounted', label: '未挂载' },
+  { key: 'risky', label: '缺失/风险' },
+  { key: 'legacy', label: 'Legacy' },
+]
+
+const AGENT_GROUPS = [
+  { key: 'creative', label: 'Creative Agents', agents: ['planner', 'screenwriter', 'author', 'polisher', 'editor'] },
+  { key: 'support', label: 'Support Agents', agents: ['memory_curator', 'continuity_checker', 'publisher', 'archive'] },
+  { key: 'diagnostic', label: 'Diagnostic/Research Agents', agents: ['scout', 'architect', 'secretary'] },
+]
 
 const sectionTitleStyle: CSSProperties = {
   fontSize: 'var(--text-sm)',
@@ -181,29 +216,13 @@ function statusChipStyle(kind: 'ok' | 'warn' | 'danger' | 'muted' = 'ok'): CSSPr
   }
 }
 
-function matrixSkillChipStyle(skill: MatrixSkill): CSSProperties {
-  if (skill.missing) return statusChipStyle('danger')
-  if (!skill.enabled) return statusChipStyle('muted')
-  return {
-    ...statusChipStyle('ok'),
-    background: 'rgba(59, 130, 246, 0.1)',
-    color: '#1e40af',
-  }
-}
-
-function configSkillChipStyle(skill: { missing?: boolean; enabled?: boolean; legacy?: boolean }): CSSProperties {
-  if (skill.missing) return statusChipStyle('danger')
-  if (skill.enabled === false) return statusChipStyle('muted')
-  return {
-    ...statusChipStyle('ok'),
-    background: 'rgba(59, 130, 246, 0.1)',
-    color: '#1e40af',
-  }
+function getRequestErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message) return error.message
+  return fallback
 }
 
 export default function SkillVisibilityPanel() {
   const [skills, setSkills] = useState<SkillInfo[]>([])
-  const [mounts, setMounts] = useState<MountMap>({})
   const [agentMatrix, setAgentMatrix] = useState<AgentMatrix | null>(null)
   const [skillConfig, setSkillConfig] = useState<SkillConfig | null>(null)
   const [loading, setLoading] = useState(true)
@@ -235,37 +254,39 @@ export default function SkillVisibilityPanel() {
   const [reviewingSkill, setReviewingSkill] = useState<string | null>(null)
   const [skillReviewError, setSkillReviewError] = useState('')
   const [skillReviewResults, setSkillReviewResults] = useState<Record<string, SkillReviewResult>>({})
+  const [activeView, setActiveView] = useState<SkillConsoleView>('overview')
+  const [skillSearch, setSkillSearch] = useState('')
+  const [capabilityFilter, setCapabilityFilter] = useState<CapabilityFilter>('all')
 
   const load = async () => {
     setLoading(true)
     setError('')
 
-    const [skillsRes, mountsRes, matrixRes, configRes] = await Promise.all([
-      get<{ skills: SkillInfo[] }>('/skills'),
-      get<MountMap>('/skills/mounts'),
-      get<AgentMatrix>('/skills/agent-matrix'),
-      get<SkillConfig>('/skills/config'),
-    ])
+    try {
+      const [skillsRes, matrixRes, configRes] = await Promise.all([
+        get<{ skills: SkillInfo[] }>('/skills'),
+        get<AgentMatrix>('/skills/agent-matrix'),
+        get<SkillConfig>('/skills/config'),
+      ])
 
-    if (skillsRes.ok && skillsRes.data) {
-      setSkills(skillsRes.data.skills)
-    } else {
-      setError(skillsRes.error?.message || '获取 Skill 列表失败')
+      if (skillsRes.ok && skillsRes.data) {
+        setSkills(skillsRes.data.skills)
+      } else {
+        setError(skillsRes.error?.message || '获取 Skill 列表失败')
+      }
+
+      if (matrixRes.ok && matrixRes.data) {
+        setAgentMatrix(matrixRes.data)
+      }
+
+      if (configRes.ok && configRes.data) {
+        setSkillConfig(configRes.data)
+      }
+    } catch (err) {
+      setError(getRequestErrorMessage(err, '获取 Skill 信息失败'))
+    } finally {
+      setLoading(false)
     }
-
-    if (mountsRes.ok && mountsRes.data) {
-      setMounts(mountsRes.data)
-    }
-
-    if (matrixRes.ok && matrixRes.data) {
-      setAgentMatrix(matrixRes.data)
-    }
-
-    if (configRes.ok && configRes.data) {
-      setSkillConfig(configRes.data)
-    }
-
-    setLoading(false)
   }
 
   useEffect(() => {
@@ -276,13 +297,18 @@ export default function SkillVisibilityPanel() {
     setValidating(true)
     setValidateResult(null)
 
-    const res = await post<ValidateResult>('/skills/validate')
-    setValidating(false)
+    try {
+      const res = await post<ValidateResult>('/skills/validate')
 
-    if (res.ok && res.data) {
-      setValidateResult(res.data)
-    } else {
-      setValidateResult({ ok: false, errors: [res.error?.message || '验证请求失败'], warnings: [] })
+      if (res.ok && res.data) {
+        setValidateResult(res.data)
+      } else {
+        setValidateResult({ ok: false, errors: [res.error?.message || '验证请求失败'], warnings: [] })
+      }
+    } catch (err) {
+      setValidateResult({ ok: false, errors: [getRequestErrorMessage(err, '验证请求失败')], warnings: [] })
+    } finally {
+      setValidating(false)
     }
   }
 
@@ -291,33 +317,46 @@ export default function SkillVisibilityPanel() {
     setTestAllResult(null)
     setTestAllError('')
 
-    const res = await post<TestAllResult>('/skills/test', { all: true })
-    setTestingAll(false)
+    try {
+      const res = await post<TestAllResult>('/skills/test', { all: true })
 
-    if (res.ok && res.data) {
-      setTestAllResult(res.data)
-    } else {
+      if (res.ok && res.data) {
+        setTestAllResult(res.data)
+      } else {
+        setTestAllResult({ total: 0, passed: 0, failed: 0, skipped: 0, skipped_ids: [], results: {} })
+        setTestAllError(res.error?.message || '测试全部 Package Skill 失败')
+      }
+    } catch (err) {
       setTestAllResult({ total: 0, passed: 0, failed: 0, skipped: 0, skipped_ids: [], results: {} })
-      setTestAllError(res.error?.message || '测试全部 Package Skill 失败')
+      setTestAllError(getRequestErrorMessage(err, '测试全部 Package Skill 失败'))
+    } finally {
+      setTestingAll(false)
     }
   }
 
   const handleTestSingle = async (skillId: string) => {
     setTestingSkill(skillId)
 
-    const res = await post<{ skill_id: string; result: TestSkillResult }>('/skills/test', {
-      skill_id: skillId,
-    })
+    try {
+      const res = await post<{ skill_id: string; result: TestSkillResult }>('/skills/test', {
+        skill_id: skillId,
+      })
 
-    setTestingSkill(null)
-
-    if (res.ok && res.data) {
-      setTestSingleResult((prev) => ({ ...prev, [skillId]: res.data!.result }))
-    } else {
+      if (res.ok && res.data) {
+        setTestSingleResult((prev) => ({ ...prev, [skillId]: res.data!.result }))
+      } else {
+        setTestSingleResult((prev) => ({
+          ...prev,
+          [skillId]: { ok: false, error: res.error?.message || '测试失败' },
+        }))
+      }
+    } catch (err) {
       setTestSingleResult((prev) => ({
         ...prev,
-        [skillId]: { ok: false, error: res.error?.message || '测试失败' },
+        [skillId]: { ok: false, error: getRequestErrorMessage(err, '测试失败') },
       }))
+    } finally {
+      setTestingSkill(null)
     }
   }
 
@@ -354,17 +393,24 @@ export default function SkillVisibilityPanel() {
     if (hasText) reqBody.text = runText
     if (customPayload) reqBody.payload = customPayload
 
-    const res = await post<RunResult>('/skills/run', reqBody)
+    try {
+      const res = await post<RunResult>('/skills/run', reqBody)
 
-    setRunning(false)
-
-    if (res.ok && res.data) {
-      setRunResult(res.data)
-    } else {
+      if (res.ok && res.data) {
+        setRunResult(res.data)
+      } else {
+        setRunResult({
+          skill_id: runSkillId,
+          result: { ok: false, error: res.error?.message || '运行失败' },
+        })
+      }
+    } catch (err) {
       setRunResult({
         skill_id: runSkillId,
-        result: { ok: false, error: res.error?.message || '运行失败' },
+        result: { ok: false, error: getRequestErrorMessage(err, '运行失败') },
       })
+    } finally {
+      setRunning(false)
     }
   }
 
@@ -374,19 +420,23 @@ export default function SkillVisibilityPanel() {
     setSavingMount(true)
     setMountError('')
 
-    const res = await post<{ agent: string; stage: string; skill_id: string }>('/skills/mount', {
-      agent,
-      stage,
-      skill_id: skillId,
-    })
+    try {
+      const res = await post<{ agent: string; stage: string; skill_id: string }>('/skills/mount', {
+        agent,
+        stage,
+        skill_id: skillId,
+      })
 
-    setSavingMount(false)
-
-    if (res.ok && res.data) {
-      setSelectedAddSkill((prev) => ({ ...prev, [`${agent}-${stage}`]: '' }))
-      await load()
-    } else {
-      setMountError(res.error?.message || '挂载失败')
+      if (res.ok && res.data) {
+        setSelectedAddSkill((prev) => ({ ...prev, [`${agent}-${stage}`]: '' }))
+        await load()
+      } else {
+        setMountError(res.error?.message || '挂载失败')
+      }
+    } catch (err) {
+      setMountError(getRequestErrorMessage(err, '挂载失败'))
+    } finally {
+      setSavingMount(false)
     }
   }
 
@@ -394,18 +444,22 @@ export default function SkillVisibilityPanel() {
     setSavingMount(true)
     setMountError('')
 
-    const res = await del<{ agent: string; stage: string; skill_id: string }>('/skills/mount', {
-      agent,
-      stage,
-      skill_id: skillId,
-    })
+    try {
+      const res = await del<{ agent: string; stage: string; skill_id: string }>('/skills/mount', {
+        agent,
+        stage,
+        skill_id: skillId,
+      })
 
-    setSavingMount(false)
-
-    if (res.ok && res.data) {
-      await load()
-    } else {
-      setMountError(res.error?.message || '卸载失败')
+      if (res.ok && res.data) {
+        await load()
+      } else {
+        setMountError(res.error?.message || '卸载失败')
+      }
+    } catch (err) {
+      setMountError(getRequestErrorMessage(err, '卸载失败'))
+    } finally {
+      setSavingMount(false)
     }
   }
 
@@ -424,18 +478,22 @@ export default function SkillVisibilityPanel() {
     setSavingMount(true)
     setMountError('')
 
-    const res = await post<{ agent: string; stage: string; skill_ids: string[] }>('/skills/reorder', {
-      agent,
-      stage,
-      skill_ids: reordered,
-    })
+    try {
+      const res = await post<{ agent: string; stage: string; skill_ids: string[] }>('/skills/reorder', {
+        agent,
+        stage,
+        skill_ids: reordered,
+      })
 
-    setSavingMount(false)
-
-    if (res.ok && res.data) {
-      await load()
-    } else {
-      setMountError(res.error?.message || '排序失败')
+      if (res.ok && res.data) {
+        await load()
+      } else {
+        setMountError(res.error?.message || '排序失败')
+      }
+    } catch (err) {
+      setMountError(getRequestErrorMessage(err, '排序失败'))
+    } finally {
+      setSavingMount(false)
     }
   }
 
@@ -443,17 +501,21 @@ export default function SkillVisibilityPanel() {
     setTogglingSkill(skillId)
     setSkillEnableError('')
 
-    const res = await post<SkillEnabledResult>('/skills/enabled', {
-      skill_id: skillId,
-      enabled,
-    })
+    try {
+      const res = await post<SkillEnabledResult>('/skills/enabled', {
+        skill_id: skillId,
+        enabled,
+      })
 
-    setTogglingSkill(null)
-
-    if (res.ok && res.data) {
-      await load()
-    } else {
-      setSkillEnableError(res.error?.message || '更新 Skill 启用状态失败')
+      if (res.ok && res.data) {
+        await load()
+      } else {
+        setSkillEnableError(res.error?.message || '更新 Skill 启用状态失败')
+      }
+    } catch (err) {
+      setSkillEnableError(getRequestErrorMessage(err, '更新 Skill 启用状态失败'))
+    } finally {
+      setTogglingSkill(null)
     }
   }
 
@@ -461,16 +523,20 @@ export default function SkillVisibilityPanel() {
     setReviewingSkill(skillId)
     setSkillReviewError('')
 
-    const res = await post<SkillReviewResult>('/skills/review', {
-      skill_id: skillId,
-    })
+    try {
+      const res = await post<SkillReviewResult>('/skills/review', {
+        skill_id: skillId,
+      })
 
-    setReviewingSkill(null)
-
-    if (res.ok && res.data) {
-      setSkillReviewResults((prev) => ({ ...prev, [skillId]: res.data! }))
-    } else {
-      setSkillReviewError(res.error?.message || 'Skill 安全审查失败')
+      if (res.ok && res.data) {
+        setSkillReviewResults((prev) => ({ ...prev, [skillId]: res.data! }))
+      } else {
+        setSkillReviewError(res.error?.message || 'Skill 安全审查失败')
+      }
+    } catch (err) {
+      setSkillReviewError(getRequestErrorMessage(err, 'Skill 安全审查失败'))
+    } finally {
+      setReviewingSkill(null)
     }
   }
 
@@ -493,7 +559,37 @@ export default function SkillVisibilityPanel() {
     )
   }
 
-  const enabledUnmounted = skills.filter((s) => s.enabled && !s.is_mounted)
+  const skillMountById = new Map(skills.map((skill) => [skill.id, skill]))
+  const configSkillById = new Map((skillConfig?.available_skills || []).map((skill) => [skill.id, skill]))
+  const mountedIds = new Set<string>()
+  Object.values(skillConfig?.agent_skills || {}).forEach((stages) => {
+    Object.values(stages).forEach((ids) => ids.forEach((id) => mountedIds.add(id)))
+  })
+  skills.forEach((skill) => {
+    if (skill.is_mounted) mountedIds.add(skill.id)
+  })
+  const allCapabilityIds = Array.from(new Set([
+    ...skills.map((skill) => skill.id),
+    ...(skillConfig?.available_skills || []).map((skill) => skill.id),
+    ...(skillConfig?.missing_skills || []).map((skill) => skill.id),
+  ])).sort()
+  const missingIds = new Set(skillConfig?.missing_skills.map((skill) => skill.id) || [])
+  agentMatrix?.agents.forEach((agent) => {
+    agent.stages.forEach((stage) => {
+      stage.skills.forEach((skill) => {
+        if (skill.missing) missingIds.add(skill.id)
+      })
+    })
+  })
+  const enabledCount = skills.filter((skill) => skill.enabled).length
+  const mountedSkillCount = mountedIds.size
+  const disabledCount = skillConfig?.disabled_skills.length ?? skills.filter((skill) => !skill.enabled).length
+  const enabledUnmounted = allCapabilityIds
+    .map((id) => ({ id, runtime: skillMountById.get(id), config: configSkillById.get(id) }))
+    .filter(({ runtime, config, id }) => (runtime?.enabled ?? config?.enabled ?? false) && !mountedIds.has(id))
+  const mountedDisabled = allCapabilityIds
+    .map((id) => ({ id, runtime: skillMountById.get(id), config: configSkillById.get(id) }))
+    .filter(({ runtime, config, id }) => mountedIds.has(id) && (runtime?.enabled === false || config?.enabled === false))
   const matrixStats = agentMatrix
     ? {
         agents: agentMatrix.agents.length,
@@ -511,6 +607,9 @@ export default function SkillVisibilityPanel() {
         ),
       }
     : null
+  const validationIssueCount = validateResult && !validateResult.ok ? validateResult.errors.length : 0
+  const matrixWarningCount = agentMatrix?.warnings.length ?? 0
+  const warningCount = matrixWarningCount + enabledUnmounted.length + mountedDisabled.length + missingIds.size + validationIssueCount
 
   // Build available skills for each agent/stage from config
   const getAvailableSkillsForStage = (agent: string, stage: string) => {
@@ -525,44 +624,221 @@ export default function SkillVisibilityPanel() {
     })
   }
 
-  const skillMountById = new Map(skills.map((skill) => [skill.id, skill]))
-  const reviewStatusKind = (verdict: SkillReviewResult['verdict']): 'ok' | 'warn' | 'danger' => {
-    if (verdict === 'pass') return 'ok'
-    if (verdict === 'warn') return 'warn'
-    return 'danger'
+  const normalizedSearch = skillSearch.trim().toLowerCase()
+  const searchMatchesSkill = (skill: { id: string; name?: string | null; package?: string | null; class_name?: string | null; class?: string | null; description?: string | null }) => {
+    if (!normalizedSearch) return true
+    return [
+      skill.id,
+      skill.name || '',
+      skill.package || '',
+      skill.class_name || '',
+      skill.class || '',
+      skill.description || '',
+    ].some((value) => value.toLowerCase().includes(normalizedSearch))
   }
+  const capabilities = allCapabilityIds.map((id) => {
+    const runtime = skillMountById.get(id)
+    const config = configSkillById.get(id)
+    const review = skillReviewResults[id]
+    const enabled = runtime?.enabled ?? config?.enabled ?? false
+    const isMounted = mountedIds.has(id)
+    const legacy = config?.legacy ?? !runtime?.package
+    return {
+      id,
+      name: runtime?.name || config?.name || id,
+      description: runtime?.description || '',
+      kind: runtime?.kind || runtime?.type || config?.kind || 'skill',
+      package: runtime?.package || config?.package || '',
+      class_name: runtime?.class_name || runtime?.class || config?.class_name || '',
+      enabled,
+      isMounted,
+      legacy,
+      missing: missingIds.has(id),
+      review,
+      allowed_targets: review?.allowed_targets || config?.allowed_targets || [],
+      mountable_targets: review?.mountable_targets || config?.mountable_targets || [],
+    }
+  })
+  const filteredCapabilities = capabilities
+    .filter(searchMatchesSkill)
+    .filter((skill) => {
+      if (capabilityFilter === 'enabled') return skill.enabled
+      if (capabilityFilter === 'disabled') return !skill.enabled
+      if (capabilityFilter === 'mounted') return skill.isMounted
+      if (capabilityFilter === 'unmounted') return !skill.isMounted
+      if (capabilityFilter === 'legacy') return skill.legacy
+      if (capabilityFilter === 'risky') {
+        const reviewRisk = skill.review
+          ? skill.review.verdict === 'warn' || skill.review.verdict === 'block' || !skill.review.manifest || !skill.review.imported
+          : false
+        return skill.missing || (skill.isMounted && !skill.enabled) || reviewRisk
+      }
+      return true
+    })
+  const filteredRuntimeSkills = skills.filter(searchMatchesSkill)
+  const getStagesForAgents = (agents: string[]) => {
+    const seen = new Set<string>()
+    const stages: string[] = []
+    agents.forEach((agent) => {
+      const agentStages = skillConfig?.stages[agent] || []
+      agentStages.forEach((stage) => {
+        if (!seen.has(stage)) {
+          seen.add(stage)
+          stages.push(stage)
+        }
+      })
+    })
+    return stages
+  }
+  const groupAgents = AGENT_GROUPS.map((group) => ({
+    ...group,
+    agents: group.agents.filter((agent) => skillConfig?.agents.includes(agent)),
+  })).filter((group) => group.agents.length > 0)
+  const groupedKnownAgents = new Set(groupAgents.flatMap((group) => group.agents))
+  const otherAgents = (skillConfig?.agents || []).filter((agent) => !groupedKnownAgents.has(agent))
+  const agentGroups = otherAgents.length > 0
+    ? [...groupAgents, { key: 'other', label: 'Other Agents', agents: otherAgents }]
+    : groupAgents
+  const overviewIssues = [
+    {
+      key: 'validation',
+      tone: validationIssueCount > 0 ? 'danger' : validateResult?.warnings.length ? 'warn' : 'ok',
+      icon: validationIssueCount > 0 ? <XCircle size={16} /> : <ClipboardCheck size={16} />,
+      title: validationIssueCount > 0 ? '配置验证失败' : validateResult ? '配置已验证' : '尚未验证配置',
+      count: validateResult ? (validationIssueCount || validateResult.warnings.length) : 0,
+      detail: validateResult ? (validationIssueCount > 0 ? validateResult.errors[0] : validateResult.warnings[0] || '当前没有验证阻塞项。') : '运行一次验证，先确认配置文件没有结构性问题。',
+      target: 'test' as SkillConsoleView,
+    },
+    {
+      key: 'enabled-unmounted',
+      tone: enabledUnmounted.length > 0 ? 'warn' : 'ok',
+      icon: <PackageCheck size={16} />,
+      title: '已启用但未挂载',
+      count: enabledUnmounted.length,
+      detail: enabledUnmounted.length > 0 ? `${enabledUnmounted[0].id} 等能力尚未进入任何 Agent 阶段。` : '已启用能力都有明确去向。',
+      target: 'mounts' as SkillConsoleView,
+    },
+    {
+      key: 'mounted-disabled',
+      tone: mountedDisabled.length > 0 ? 'danger' : 'ok',
+      icon: <AlertTriangle size={16} />,
+      title: '已挂载但被禁用',
+      count: mountedDisabled.length,
+      detail: mountedDisabled.length > 0 ? `${mountedDisabled[0].id} 正在挂载位中但不可执行。` : '挂载链路没有禁用能力。',
+      target: 'mounts' as SkillConsoleView,
+    },
+    {
+      key: 'missing',
+      tone: missingIds.size > 0 ? 'danger' : 'ok',
+      icon: <XCircle size={16} />,
+      title: '缺失引用',
+      count: missingIds.size,
+      detail: missingIds.size > 0 ? `${Array.from(missingIds)[0]} 在挂载配置中找不到可用 Skill。` : '未发现缺失引用。',
+      target: 'mounts' as SkillConsoleView,
+    },
+    {
+      key: 'matrix-warning',
+      tone: matrixWarningCount > 0 ? 'warn' : 'ok',
+      icon: <Workflow size={16} />,
+      title: '编排警告',
+      count: matrixWarningCount,
+      detail: matrixWarningCount > 0 ? agentMatrix!.warnings[0].message : 'Agent × Stage 编排没有额外警告。',
+      target: 'mounts' as SkillConsoleView,
+    },
+  ]
+  const consoleViews: { key: SkillConsoleView; label: string; hint: string; icon: JSX.Element; badge?: string }[] = [
+    { key: 'overview', label: '总览', hint: '健康状态与待处理事项', icon: <LayoutGrid size={16} />, badge: warningCount ? `${warningCount}` : undefined },
+    { key: 'enable', label: '能力库', hint: '查找、启停、审查与目标范围', icon: <ShieldCheck size={16} />, badge: `${enabledCount}/${skills.length}` },
+    { key: 'mounts', label: 'Agent 编排', hint: 'Agent × Stage 挂载矩阵', icon: <Workflow size={16} />, badge: `${mountedSkillCount}` },
+    { key: 'test', label: 'Review/Test', hint: '验证、安全审查、fixtures 与手动试运行', icon: <FlaskConical size={16} /> },
+    { key: 'catalog', label: '目录', hint: '完整清单与描述', icon: <Boxes size={16} />, badge: `${skills.length}` },
+  ]
 
   return (
-    <div style={{ padding: 'var(--space-5)' }}>
-      {/* Validate button */}
-      <div style={{ marginBottom: 'var(--space-4)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-        <button onClick={handleValidate} className="btn btn-secondary" disabled={validating}>
-          {validating ? '验证中...' : '验证 Skill 配置'}
-        </button>
-        {validateResult && (
-          <span
-            style={{
-              fontSize: '13px',
-              fontWeight: 500,
-              color: validateResult.ok ? 'var(--success)' : 'var(--danger)',
-            }}
-          >
-            {validateResult.ok ? 'Skill 配置有效' : `发现 ${validateResult.errors.length} 个错误`}
-          </span>
-        )}
+    <div className="skill-console">
+      <div className="skill-console-hero">
+        <div>
+          <div className="skill-console-kicker"><SlidersHorizontal size={14} /> Skill Operations</div>
+          <h3>Skill 管理工作台</h3>
+          <p>按启用、挂载、测试和目录分区管理创作技能，避免在一个长页面里处理所有配置。</p>
+        </div>
+        <div className="skill-console-actions">
+          <button onClick={handleValidate} className="btn btn-secondary" disabled={validating}>
+            {validating ? '验证中...' : '验证配置'}
+          </button>
+          <button onClick={load} className="btn btn-secondary" disabled={loading || savingMount}>
+            <RefreshCw size={14} /> 刷新
+          </button>
+        </div>
       </div>
 
+      <div className="skill-console-metrics">
+        <div className="skill-console-metric">
+          <span className="metric-icon"><Boxes size={16} /></span>
+          <span className="metric-label">已加载</span>
+          <strong>{skills.length}</strong>
+        </div>
+        <div className="skill-console-metric">
+          <span className="metric-icon success"><CheckCircle2 size={16} /></span>
+          <span className="metric-label">已启用</span>
+          <strong>{enabledCount}</strong>
+        </div>
+        <div className="skill-console-metric">
+          <span className="metric-icon info"><Workflow size={16} /></span>
+          <span className="metric-label">已挂载</span>
+          <strong>{mountedSkillCount}</strong>
+        </div>
+        <div className="skill-console-metric">
+          <span className="metric-icon muted"><Activity size={16} /></span>
+          <span className="metric-label">禁用</span>
+          <strong>{disabledCount}</strong>
+        </div>
+      </div>
+
+      <div className="skill-console-shell">
+        <aside className="skill-console-nav" aria-label="Skill 管理分区">
+          {consoleViews.map((view) => (
+            <button
+              key={view.key}
+              type="button"
+              className={`skill-console-nav-item ${activeView === view.key ? 'active' : ''}`}
+              onClick={() => setActiveView(view.key)}
+            >
+              <span className="nav-icon">{view.icon}</span>
+              <span className="nav-copy">
+                <span>{view.label}</span>
+                <small>{view.hint}</small>
+              </span>
+              {view.badge && <span className="nav-badge">{view.badge}</span>}
+            </button>
+          ))}
+        </aside>
+
+        <main className="skill-console-main">
+          <div className="skill-console-toolbar">
+            <div>
+              <strong>{consoleViews.find((view) => view.key === activeView)?.label}</strong>
+              <span>{consoleViews.find((view) => view.key === activeView)?.hint}</span>
+            </div>
+            <label className="skill-search">
+              <Search size={14} />
+              <TextInput
+                aria-label="搜索 Skill"
+                value={skillSearch}
+                onChange={(event) => setSkillSearch(event.target.value)}
+                placeholder="搜索 id、名称、package、描述或 class"
+              />
+            </label>
+          </div>
+
+          {validateResult && (
+            <div className={`skill-inline-status ${validateResult.ok ? 'ok' : 'danger'}`}>
+              {validateResult.ok ? 'Skill 配置有效' : `发现 ${validateResult.errors.length} 个错误`}
+            </div>
+          )}
+
       {validateResult && !validateResult.ok && (
-        <div
-          style={{
-            marginBottom: 'var(--space-4)',
-            padding: '12px',
-            borderRadius: '6px',
-            background: '#fef2f2',
-            color: '#991b1b',
-            fontSize: '13px',
-          }}
-        >
+        <InlineMessage variant="danger" className="skill-validation-message">
           {validateResult.errors.map((e, i) => (
             <div key={`err-${i}`} style={{ marginBottom: 4 }}>
               {e}
@@ -573,513 +849,338 @@ export default function SkillVisibilityPanel() {
               {w}
             </div>
           ))}
-        </div>
+        </InlineMessage>
       )}
 
       {validateResult && validateResult.ok && validateResult.warnings.length > 0 && (
-        <div
-          style={{
-            marginBottom: 'var(--space-4)',
-            padding: '12px',
-            borderRadius: '6px',
-            background: '#fef3c7',
-            color: '#92400e',
-            fontSize: '13px',
-          }}
-        >
+        <InlineMessage variant="warning" className="skill-validation-message">
           {validateResult.warnings.map((w, i) => (
             <div key={`warn-${i}`} style={{ marginBottom: 4 }}>
               {w}
             </div>
           ))}
-        </div>
+        </InlineMessage>
       )}
 
-      {/* Unmounted reminder */}
-      {enabledUnmounted.length > 0 && (
-        <div
-          style={{
-            marginBottom: 'var(--space-4)',
-            padding: '12px',
-            borderRadius: '6px',
-            background: '#fef3c7',
-            color: '#92400e',
-            fontSize: '13px',
-          }}
-        >
-          <strong>以下 Skill 已启用，但未挂载到工作流：</strong>
-          <div style={{ marginTop: 6, display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {enabledUnmounted.map((s) => (
-              <span
-                key={s.id}
-                style={{
-                  ...statusChipStyle('warn'),
-                  background: '#fde68a',
-                }}
-              >
-                {s.id}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {/* Skill Enable Console */}
-      {skillConfig && (
-        <div style={panelStyle}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
-            <h4 style={{ ...sectionTitleStyle, marginBottom: 0 }}>Skill 启用状态</h4>
-            <span style={statusChipStyle('muted')}>{skillConfig.disabled_skills.length} disabled</span>
-          </div>
-
-          {skillEnableError && (
-            <div
-              style={{
-                marginBottom: 'var(--space-3)',
-                padding: '10px 12px',
-                borderRadius: '6px',
-                background: '#fef2f2',
-                color: '#991b1b',
-                fontSize: '13px',
-              }}
-            >
-              {skillEnableError}
-              <button
-                onClick={() => setSkillEnableError('')}
-                style={{ marginLeft: 8, fontSize: '12px', background: 'none', border: 'none', color: '#991b1b', cursor: 'pointer', textDecoration: 'underline' }}
-              >
-                清除
-              </button>
-            </div>
-          )}
-
-          {skillReviewError && (
-            <div
-              style={{
-                marginBottom: 'var(--space-3)',
-                padding: '10px 12px',
-                borderRadius: '6px',
-                background: '#fef2f2',
-                color: '#991b1b',
-                fontSize: '13px',
-              }}
-            >
-              {skillReviewError}
-              <button
-                onClick={() => setSkillReviewError('')}
-                style={{ marginLeft: 8, fontSize: '12px', background: 'none', border: 'none', color: '#991b1b', cursor: 'pointer', textDecoration: 'underline' }}
-              >
-                清除
-              </button>
-            </div>
-          )}
-
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: 'var(--space-2)' }}>
-            {skillConfig.available_skills.map((skill) => {
-              const mountInfo = skillMountById.get(skill.id)
-              const isMounted = mountInfo?.is_mounted || false
-              const review = skillReviewResults[skill.id]
-              return (
-                <div
-                  key={`enabled-${skill.id}`}
-                  style={{
-                    padding: '8px 12px',
-                    borderRadius: '6px',
-                    background: 'var(--paper-surface)',
-                    border: '1px solid rgba(30, 58, 95, 0.06)',
-                    minWidth: 0,
-                  }}
+          {activeView === 'overview' && (
+            <div className="skill-overview-grid">
+              {overviewIssues.map((issue) => (
+                <button
+                  key={issue.key}
+                  type="button"
+                  className={`skill-overview-card issue-${issue.tone}`}
+                  onClick={() => setActiveView(issue.target)}
                 >
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 10, minWidth: 0 }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
-                        <code style={compactCodeStyle}>{skill.id}</code>
-                        <span style={statusChipStyle(skill.enabled ? 'ok' : 'muted')}>
-                          {skill.enabled ? '已启用' : '已禁用'}
-                        </span>
-                        {isMounted && <span style={statusChipStyle(skill.enabled ? 'ok' : 'warn')}>已挂载</span>}
+                  <div className="overview-card-title">{issue.icon} {issue.title}</div>
+                  <div className="overview-card-number">{issue.count}</div>
+                  <p>{issue.detail}</p>
+                </button>
+              ))}
+              <div className="skill-overview-card primary">
+                <div className="overview-card-title"><ListChecks size={16} /> 下一步建议</div>
+                <div className="overview-card-number">{warningCount > 0 ? '需处理' : '健康'}</div>
+                <p>{warningCount > 0 ? '优先处理红色和黄色 issue，再进入 Agent 编排或 Review/Test。' : '当前没有明显阻塞项，可以继续扩展能力库或运行 fixtures。'}</p>
+                <button onClick={handleValidate} className="btn btn-secondary" disabled={validating}>
+                  {validating ? '验证中...' : '重新验证'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {activeView === 'enable' && (
+            <div className="skill-section-panel">
+              <div className="skill-filter-row" role="group" aria-label="能力筛选">
+                {CAPABILITY_FILTERS.map((filter) => (
+                  <button
+                    key={filter.key}
+                    type="button"
+                    className={`skill-filter-chip ${capabilityFilter === filter.key ? 'active' : ''}`}
+                    onClick={() => setCapabilityFilter(filter.key)}
+                  >
+                    {filter.label}
+                  </button>
+                ))}
+              </div>
+
+              {(skillEnableError || skillReviewError) && (
+                <div className="skill-message danger">
+                  {skillEnableError || skillReviewError}
+                  <button type="button" onClick={() => { setSkillEnableError(''); setSkillReviewError('') }}>
+                    清除
+                  </button>
+                </div>
+              )}
+
+              <div className="capability-grid">
+                {filteredCapabilities.map((skill) => (
+                  <article key={`cap-${skill.id}`} className={`capability-card ${skill.enabled ? 'enabled' : 'disabled'} ${skill.missing ? 'missing' : ''}`}>
+                    <div className="capability-card-head">
+                      <div className="capability-title">
+                        <code>{skill.id}</code>
+                        <strong>{skill.name}</strong>
                       </div>
-                      <div style={{ marginTop: 3, fontSize: '12px', color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>
-                        {skill.package ? skill.package : 'legacy'}
+                      <span className={`capability-state ${skill.enabled ? 'on' : 'off'}`}>
+                        {skill.enabled ? 'Enabled' : 'Disabled'}
+                      </span>
+                    </div>
+                    <p>{skill.description || '暂无描述。'}</p>
+                    <div className="capability-tags">
+                      <span>{skill.kind}</span>
+                      <span>{skill.package || 'legacy'}</span>
+                      <span>{skill.isMounted ? 'Mounted' : 'Unmounted'}</span>
+                      {skill.missing && <span className="danger">Missing</span>}
+                      {skill.legacy && <span>Legacy</span>}
+                      {skill.review && (
+                        <span className={skill.review.verdict === 'block' ? 'danger' : skill.review.verdict === 'warn' ? 'warn' : 'ok'}>
+                          Review {skill.review.verdict}
+                        </span>
+                      )}
+                    </div>
+                    <div className="capability-meta">
+                      <span>Class</span>
+                      <code>{skill.class_name || '-'}</code>
+                    </div>
+                    <div className="capability-targets">
+                      <span>可挂载目标</span>
+                      <div>
+                        {(skill.mountable_targets.length > 0 ? skill.mountable_targets : skill.allowed_targets).slice(0, 6).map((target) => (
+                          <small key={`${skill.id}-${target.agent}-${target.stage}`}>{target.agent}.{target.stage}</small>
+                        ))}
+                        {(skill.mountable_targets.length === 0 && skill.allowed_targets.length === 0) && <small>未声明</small>}
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                    <div className="capability-actions">
                       <button
-                        onClick={() => handleSkillReview(skill.id)}
+                        type="button"
                         className="btn btn-secondary"
-                        disabled={reviewingSkill === skill.id}
-                        style={{ fontSize: '12px', padding: '4px 10px' }}
-                        title="审查 manifest、权限、package 和挂载安全性"
+                        onClick={() => handleSkillReview(skill.id)}
+                        disabled={reviewingSkill === skill.id || skill.missing}
                       >
-                        {reviewingSkill === skill.id ? '审查中...' : '安全审查'}
+                        <ShieldCheck size={13} /> {reviewingSkill === skill.id ? '审查中...' : '审查'}
                       </button>
                       <button
-                        onClick={() => handleSkillEnabled(skill.id, !skill.enabled)}
+                        type="button"
                         className="btn btn-secondary"
-                        disabled={togglingSkill === skill.id}
-                        style={{ fontSize: '12px', padding: '4px 10px' }}
-                        title={skill.enabled ? '禁用 Skill；不会自动卸载' : '启用 Skill；不会自动挂载'}
+                        onClick={() => handleSkillEnabled(skill.id, !skill.enabled)}
+                        disabled={togglingSkill === skill.id || skill.missing}
                       >
+                        {skill.enabled ? <XCircle size={13} /> : <CheckCircle2 size={13} />}
                         {togglingSkill === skill.id ? '保存中...' : skill.enabled ? '禁用' : '启用'}
                       </button>
                     </div>
-                  </div>
-                  {review && (
-                    <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid rgba(30, 58, 95, 0.06)' }}>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', marginBottom: 6 }}>
-                        <span style={statusChipStyle(reviewStatusKind(review.verdict))}>
-                          {review.verdict === 'pass' ? '审查通过' : review.verdict === 'warn' ? '需要注意' : '阻止挂载'}
-                        </span>
-                        {review.imported && <span style={statusChipStyle('warn')}>imported</span>}
-                        {!review.manifest && <span style={statusChipStyle('warn')}>no manifest</span>}
-                      </div>
-                      {review.findings.length > 0 && (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                          {review.findings.slice(0, 3).map((finding) => (
-                            <span
-                              key={`${skill.id}-${finding.code}`}
-                              style={{
-                                fontSize: '12px',
-                                color: finding.severity === 'block' ? '#991b1b' : '#92400e',
-                                overflowWrap: 'anywhere',
-                              }}
-                            >
-                              {finding.message}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {review.mountable_targets.length > 0 && (
-                        <div style={{ marginTop: 6, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                          {review.mountable_targets.slice(0, 4).map((target) => (
-                            <span key={`${skill.id}-${target.agent}-${target.stage}`} style={statusChipStyle('muted')}>
-                              {target.agent}.{target.stage}
-                            </span>
-                          ))}
-                        </div>
-                      )}
-                      {review.recommended_actions.length > 0 && (
-                        <div style={{ marginTop: 6, fontSize: '12px', color: 'var(--text-muted)', overflowWrap: 'anywhere' }}>
-                          {review.recommended_actions[0]}
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {agentMatrix && (
-        <div style={panelStyle}>
-          <div
-            style={{
-              display: 'flex',
-              alignItems: 'flex-start',
-              justifyContent: 'space-between',
-              gap: '12px',
-              marginBottom: 'var(--space-3)',
-              flexWrap: 'wrap',
-            }}
-          >
-            <h4 style={{ ...sectionTitleStyle, marginBottom: 0 }}>
-              Agent Skill Matrix
-            </h4>
-            {matrixStats && (
-              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-                <span style={statusChipStyle('muted')}>{matrixStats.agents} agents</span>
-                <span style={statusChipStyle('muted')}>{matrixStats.stages} stages</span>
-                <span style={statusChipStyle(matrixStats.missing > 0 ? 'warn' : 'ok')}>
-                  {matrixStats.mounted} mounted
-                </span>
-                {matrixStats.missing > 0 && (
-                  <span style={statusChipStyle('danger')}>{matrixStats.missing} missing</span>
-                )}
+                  </article>
+                ))}
               </div>
-            )}
-          </div>
-          {agentMatrix.warnings.length > 0 && (
-            <div
-              style={{
-                marginBottom: 'var(--space-3)',
-                padding: '10px 12px',
-                borderRadius: '6px',
-                background: '#fef3c7',
-                color: '#92400e',
-                fontSize: '13px',
-              }}
-            >
-              {agentMatrix.warnings.slice(0, 4).map((warning, index) => (
-                <div key={`${warning.code}-${index}`} style={{ overflowWrap: 'anywhere' }}>
-                  {warning.message}
-                </div>
-              ))}
-              {agentMatrix.warnings.length > 4 && (
-                <div style={{ marginTop: 4, color: '#78350f' }}>
-                  另有 {agentMatrix.warnings.length - 4} 条警告，请在 Skill 列表中继续排查。
-                </div>
+              {filteredCapabilities.length === 0 && (
+                <div className="skill-empty-panel">没有匹配当前搜索和筛选条件的 Skill。</div>
               )}
             </div>
           )}
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 280px), 1fr))', gap: '12px' }}>
-            {agentMatrix.agents.map((agent) => (
-              <div
-                key={agent.agent}
-                style={{
-                  padding: '12px',
-                  borderRadius: '8px',
-                  background: 'var(--paper-surface)',
-                  border: '1px solid rgba(30, 58, 95, 0.06)',
-                  minWidth: 0,
-                }}
-              >
-                <div style={{ fontWeight: 600, marginBottom: 10, textTransform: 'capitalize' }}>
-                  {agent.agent}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {agent.stages.map((stage) => (
-                    <div
-                      key={`${agent.agent}-${stage.stage}`}
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'minmax(88px, 0.35fr) minmax(0, 1fr)',
-                        gap: 8,
-                        alignItems: 'start',
-                        minWidth: 0,
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: '12px',
-                          color: 'var(--text-secondary)',
-                          fontFamily: 'monospace',
-                          overflowWrap: 'anywhere',
-                        }}
-                      >
-                        {stage.stage}
-                      </div>
-                      {stage.skills.length > 0 ? (
-                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, minWidth: 0 }}>
-                          {stage.skills.map((skill) => (
-                            <span
-                              key={skill.id}
-                              title={skill.name || skill.id}
-                              style={matrixSkillChipStyle(skill)}
-                            >
-                              {skill.id}{skill.legacy ? ' · legacy' : ''}
-                            </span>
-                          ))}
-                        </div>
-                      ) : (
-                        <span style={{ fontSize: '12px', color: 'var(--text-muted)' }}>未挂载</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
+
+      {activeView === 'mounts' && skillConfig && (
+        <div className="skill-section-panel orchestration-panel">
+          <div className="matrix-header">
+            <div>
+              <h4>Agent × Stage Orchestration</h4>
+              <p>按 Agent 和执行阶段编排能力，挂载顺序即运行顺序。</p>
+            </div>
+            {matrixStats && (
+              <div className="matrix-stats">
+                <span>{matrixStats.agents} agents</span>
+                <span>{matrixStats.stages} stages</span>
+                <span>{matrixStats.mounted} mounted</span>
+                {matrixStats.missing > 0 && <span className="danger">{matrixStats.missing} missing</span>}
               </div>
-            ))}
+            )}
+          </div>
+
+          {mountError && (
+            <div className="skill-message danger">
+              {mountError}
+              <button type="button" onClick={() => setMountError('')}>清除</button>
+            </div>
+          )}
+          {savingMount && <div className="skill-message info">正在保存挂载变更...</div>}
+          {agentMatrix?.warnings.length ? (
+            <div className="skill-message warn">
+              {agentMatrix.warnings.slice(0, 4).map((warning, index) => (
+                <div key={`${warning.code}-${index}`}>{warning.message}</div>
+              ))}
+            </div>
+          ) : null}
+
+          <div className="orchestration-scroll">
+            {agentGroups.map((group) => {
+              const groupStages = getStagesForAgents(group.agents)
+              return (
+              <section key={group.key} className="agent-group-section">
+                <div className="agent-group-heading">
+                  <h5>{group.label}</h5>
+                  {groupStages.length > 4 && <span>可横向滚动查看全部阶段</span>}
+                </div>
+                <div
+                  className="orchestration-matrix"
+                  role="table"
+                  aria-label={`${group.label} Skill matrix`}
+                  style={{
+                    '--stage-count': groupStages.length,
+                    '--matrix-min-width': `${140 + groupStages.length * 220}px`,
+                  } as CSSProperties}
+                >
+                  <div className="matrix-row matrix-head-row" role="row">
+                    <div className="matrix-agent-cell" role="columnheader">Agent</div>
+                    {groupStages.map((stage) => (
+                      <div key={stage} className="matrix-stage-head" role="columnheader">{stage}</div>
+                    ))}
+                  </div>
+                  {group.agents.map((agent) => {
+                    const agentMounts = skillConfig.agent_skills[agent] || {}
+                    return (
+                      <div key={agent} className="matrix-row" role="row">
+                        <div className="matrix-agent-cell" role="rowheader">
+                          <strong>{agent}</strong>
+                        </div>
+                        {groupStages.map((stage) => {
+                          const stageAllowed = (skillConfig.stages[agent] || []).includes(stage)
+                          const mountedSkills = agentMounts[stage] || []
+                          const available = stageAllowed ? getAvailableSkillsForStage(agent, stage) : []
+                          const selectKey = `${agent}-${stage}`
+                          return (
+                            <div key={`${agent}-${stage}`} className={`matrix-stage-cell ${stageAllowed ? '' : 'not-applicable'}`} role="cell">
+                              {stageAllowed ? (
+                                <>
+                                  <div className="matrix-chip-stack">
+                                    {mountedSkills.length > 0 ? mountedSkills.map((skillId, idx) => {
+                                      const skillInfo = configSkillById.get(skillId)
+                                      const missing = !skillInfo
+                                      const disabled = skillInfo?.enabled === false
+                                      return (
+                                        <div key={skillId} className={`matrix-skill-chip ${missing ? 'missing' : ''} ${disabled ? 'disabled' : ''}`}>
+                                          <span title={skillId}>{skillId}</span>
+                                          {missing && <small>missing</small>}
+                                          {disabled && <small>disabled</small>}
+                                          {skillInfo?.legacy && <small>legacy</small>}
+                                          <div className="matrix-chip-actions">
+                                            <button type="button" onClick={() => handleMove(agent, stage, skillId, 'up')} disabled={savingMount || idx === 0} title="上移" aria-label={`${skillId} 上移`}>
+                                              <ArrowUp size={12} />
+                                            </button>
+                                            <button type="button" onClick={() => handleMove(agent, stage, skillId, 'down')} disabled={savingMount || idx === mountedSkills.length - 1} title="下移" aria-label={`${skillId} 下移`}>
+                                              <ArrowDown size={12} />
+                                            </button>
+                                            <button type="button" onClick={() => handleUnmount(agent, stage, skillId)} disabled={savingMount} title="移除" aria-label={`${skillId} 移除`}>
+                                              <Trash2 size={12} />
+                                            </button>
+                                          </div>
+                                        </div>
+                                      )
+                                    }) : (
+                                      <span className="matrix-empty">未挂载</span>
+                                    )}
+                                  </div>
+                                  {available.length > 0 ? (
+                                    <div className="matrix-add-control">
+                                      <Select
+                                        value={selectedAddSkill[selectKey] || ''}
+                                        onChange={(event) => setSelectedAddSkill((prev) => ({ ...prev, [selectKey]: event.target.value }))}
+                                        disabled={savingMount}
+                                        aria-label={`${agent} ${stage} 添加 Skill`}
+                                      >
+                                        <option value="">添加 Skill</option>
+                                        {available.map((skill) => (
+                                          <option key={skill.id} value={skill.id}>{skill.id}</option>
+                                        ))}
+                                      </Select>
+                                      <button
+                                        type="button"
+                                        className="btn btn-secondary"
+                                        onClick={() => handleMount(agent, stage, selectedAddSkill[selectKey] || '')}
+                                        disabled={savingMount || !selectedAddSkill[selectKey]}
+                                        aria-label={`${agent} ${stage} 确认添加`}
+                                      >
+                                        <Plus size={13} />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <span className="matrix-no-options">无可添加 Skill</span>
+                                  )}
+                                </>
+                              ) : (
+                                <span className="matrix-empty">—</span>
+                              )}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+            )})}
           </div>
         </div>
       )}
 
-      {/* Mount Editor */}
-      <div style={panelStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
-          <h4 style={{ ...sectionTitleStyle, marginBottom: 0 }}>挂载编辑器 / Mount Editor</h4>
-          <button onClick={load} className="btn btn-secondary" disabled={savingMount} style={{ fontSize: '12px', padding: '4px 10px' }}>
-            刷新
-          </button>
-        </div>
-
-        {mountError && (
-          <div
-            style={{
-              marginBottom: 'var(--space-3)',
-              padding: '10px 12px',
-              borderRadius: '6px',
-              background: '#fef2f2',
-              color: '#991b1b',
-              fontSize: '13px',
-            }}
-          >
-            {mountError}
-            <button
-              onClick={() => setMountError('')}
-              style={{ marginLeft: 8, fontSize: '12px', background: 'none', border: 'none', color: '#991b1b', cursor: 'pointer', textDecoration: 'underline' }}
-            >
-              清除
+      {activeView === 'test' && (
+        <div className="review-console-grid">
+          <section className="skill-section-panel">
+            <div className="test-section-title"><ClipboardCheck size={16} /> Config validation</div>
+            <p className="test-section-copy">先检查 Skill 配置结构、缺失引用和可恢复警告。</p>
+            <button onClick={handleValidate} className="btn btn-secondary" disabled={validating}>
+              {validating ? '验证中...' : '运行配置验证'}
             </button>
-          </div>
-        )}
-
-        {savingMount && (
-          <div style={{ marginBottom: 'var(--space-3)', fontSize: '13px', color: 'var(--text-secondary)' }}>
-            保存中...
-          </div>
-        )}
-
-        {/* OpenClaw / skill count explanation */}
-        <div
-          style={{
-            marginBottom: 'var(--space-3)',
-            padding: '10px 12px',
-            borderRadius: '6px',
-            background: '#eff6ff',
-            color: '#1e40af',
-            fontSize: '13px',
-          }}
-        >
-          <strong>关于 Skill 数量</strong>
-          <div style={{ marginTop: 4 }}>
-            当前仅展示已被 Novelos SkillRegistry 加载的 Skill（共 {skillConfig?.total_skills ?? 0} 个）。通用 SKILL.md 可先进入导入候选池，适配后再注册或挂载。
-            {skillConfig && skillConfig.available_skills.filter((s) => !s.enabled).length > 0 && (
-              <span> 另有 {skillConfig.available_skills.filter((s) => !s.enabled).length} 个已禁用 Skill。</span>
+            {validateResult && (
+              <div className={`test-summary ${validateResult.ok ? 'ok' : 'danger'}`}>
+                <strong>{validateResult.ok ? '验证通过' : `${validateResult.errors.length} 个错误`}</strong>
+                {[...validateResult.errors, ...validateResult.warnings].slice(0, 4).map((item, index) => (
+                  <span key={`validation-${index}`}>{item}</span>
+                ))}
+              </div>
             )}
-          </div>
+          </section>
+
+          <section className="skill-section-panel">
+            <div className="test-section-title"><ShieldCheck size={16} /> Safety review</div>
+            <p className="test-section-copy">审查 manifest、导入状态、package 安全信息和目标范围。</p>
+            {skillReviewError && (
+              <div className="skill-message danger">
+                {skillReviewError}
+                <button type="button" onClick={() => setSkillReviewError('')}>清除</button>
+              </div>
+            )}
+            <div className="review-list">
+              {filteredCapabilities.slice(0, 8).map((skill) => {
+                const review = skillReviewResults[skill.id]
+                return (
+                  <div key={`review-${skill.id}`} className="review-row">
+                    <div>
+                      <code>{skill.id}</code>
+                      <span>{skill.package || 'legacy'}</span>
+                    </div>
+                    {review && (
+                      <span className={`review-verdict ${review.verdict}`}>
+                        {review.verdict}
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => handleSkillReview(skill.id)}
+                      disabled={reviewingSkill === skill.id || skill.missing}
+                    >
+                      {reviewingSkill === skill.id ? '审查中...' : '审查'}
+                    </button>
+                  </div>
+                )
+              })}
+            </div>
+          </section>
         </div>
+      )}
 
-        {skillConfig && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 320px), 1fr))', gap: '12px' }}>
-            {skillConfig.agents.map((agent) => {
-              const stages = skillConfig.stages[agent] || []
-              const agentMounts = skillConfig.agent_skills[agent] || {}
-              return (
-                <div
-                  key={agent}
-                  style={{
-                    padding: '12px',
-                    borderRadius: '8px',
-                    background: 'var(--paper-surface)',
-                    border: '1px solid rgba(30, 58, 95, 0.06)',
-                    minWidth: 0,
-                  }}
-                >
-                  <div style={{ fontWeight: 600, marginBottom: 10, textTransform: 'capitalize' }}>
-                    {agent}
-                  </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-                    {stages.map((stage) => {
-                      const mountedSkills = agentMounts[stage] || []
-                      const available = getAvailableSkillsForStage(agent, stage)
-                      const selectKey = `${agent}-${stage}`
-                      return (
-                        <div key={selectKey} style={{ minWidth: 0 }}>
-                          <div
-                            style={{
-                              fontSize: '12px',
-                              color: 'var(--text-secondary)',
-                              fontFamily: 'monospace',
-                              marginBottom: 6,
-                              overflowWrap: 'anywhere',
-                            }}
-                          >
-                            {stage}
-                          </div>
-                          {mountedSkills.length > 0 ? (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 8 }}>
-                              {mountedSkills.map((skillId, idx) => {
-                                const skillInfo = skillConfig.available_skills.find((s) => s.id === skillId)
-                                const chipSkill = skillInfo
-                                  ? { missing: false, enabled: skillInfo.enabled, legacy: skillInfo.legacy }
-                                  : { missing: true, enabled: false, legacy: false }
-                                return (
-                                  <div
-                                    key={skillId}
-                                    style={{
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      gap: 6,
-                                      flexWrap: 'wrap',
-                                      minWidth: 0,
-                                    }}
-                                  >
-                                    <span style={configSkillChipStyle(chipSkill)}>
-                                      {skillId}
-                                      {chipSkill.missing && ' · missing'}
-                                      {!chipSkill.missing && !chipSkill.enabled && ' · disabled'}
-                                      {!chipSkill.missing && chipSkill.legacy && ' · legacy'}
-                                    </span>
-                                    <div style={{ display: 'flex', gap: 4 }}>
-                                      <button
-                                        onClick={() => handleMove(agent, stage, skillId, 'up')}
-                                        disabled={savingMount || idx === 0}
-                                        className="btn btn-secondary"
-                                        style={{ fontSize: '11px', padding: '2px 6px' }}
-                                        title="上移"
-                                      >
-                                        ↑
-                                      </button>
-                                      <button
-                                        onClick={() => handleMove(agent, stage, skillId, 'down')}
-                                        disabled={savingMount || idx === mountedSkills.length - 1}
-                                        className="btn btn-secondary"
-                                        style={{ fontSize: '11px', padding: '2px 6px' }}
-                                        title="下移"
-                                      >
-                                        ↓
-                                      </button>
-                                      <button
-                                        onClick={() => handleUnmount(agent, stage, skillId)}
-                                        disabled={savingMount}
-                                        className="btn btn-secondary"
-                                        style={{ fontSize: '11px', padding: '2px 6px', color: '#991b1b' }}
-                                        title="移除"
-                                      >
-                                        ×
-                                      </button>
-                                    </div>
-                                  </div>
-                                )
-                              })}
-                            </div>
-                          ) : (
-                            <div style={{ fontSize: '12px', color: 'var(--text-muted)', marginBottom: 8 }}>
-                              未挂载
-                            </div>
-                          )}
-                          {available.length > 0 && (
-                            <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                              <select
-                                className="form-control"
-                                value={selectedAddSkill[selectKey] || ''}
-                                onChange={(e) => setSelectedAddSkill((prev) => ({ ...prev, [selectKey]: e.target.value }))}
-                                disabled={savingMount}
-                                style={{ fontSize: '12px', padding: '4px 8px', minWidth: 120, flex: 1 }}
-                              >
-                                <option value="">-- 选择 Skill --</option>
-                              {available.map((s) => (
-                                  <option key={s.id} value={s.id}>
-                                    {s.id}
-                                    {s.mountable_targets?.length ? ` (${s.mountable_targets.map((t) => `${t.agent}.${t.stage}`).join(', ')})` : ''}
-                                  </option>
-                                ))}
-                              </select>
-                              <button
-                                onClick={() => handleMount(agent, stage, selectedAddSkill[selectKey] || '')}
-                                disabled={savingMount || !selectedAddSkill[selectKey]}
-                                className="btn btn-secondary"
-                                style={{ fontSize: '12px', padding: '4px 10px' }}
-                              >
-                                添加
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })}
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
-
-      {/* Fixtures Test Bench */}
-      <div style={panelStyle}>
-        <h4 style={sectionTitleStyle}>Fixtures 测试</h4>
+      {activeView === 'test' && (
+      <div className="skill-section-panel">
+        <div className="test-section-title"><FlaskConical size={16} /> Fixtures tests</div>
+        <p className="test-section-copy">运行 package Skill 的 fixtures，快速确认输入输出契约仍然可用。</p>
         <div
           style={{
             marginBottom: 'var(--space-3)',
@@ -1146,7 +1247,7 @@ export default function SkillVisibilityPanel() {
         )}
 
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 260px), 1fr))', gap: 'var(--space-2)' }}>
-          {skills.map((skill) => {
+          {filteredRuntimeSkills.map((skill) => {
             const singleRes = testSingleResult[skill.id]
             return (
               <div
@@ -1202,51 +1303,44 @@ export default function SkillVisibilityPanel() {
           })}
         </div>
       </div>
+      )}
 
       {/* Manual Run Bench */}
-      <div style={panelStyle}>
-        <h4 style={sectionTitleStyle}>手动试运行</h4>
+      {activeView === 'test' && (
+      <div className="skill-section-panel">
+        <div className="test-section-title"><PlayCircle size={16} /> Manual run</div>
+        <p className="test-section-copy">选择一个 Skill，以文本或 JSON payload 进行一次手动试运行。</p>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))', gap: '12px', marginBottom: '12px' }}>
-          <div className="form-group">
-            <label>选择 Skill</label>
-            <select
-              className="form-control"
+          <FormField label="选择 Skill">
+            <Select
               value={runSkillId}
               onChange={(e) => setRunSkillId(e.target.value)}
             >
               <option value="">-- 请选择 --</option>
-              {skills.map((s) => (
+              {filteredRuntimeSkills.map((s) => (
                 <option key={s.id} value={s.id}>
                   {s.id}
                 </option>
               ))}
-            </select>
-          </div>
-          <div className="form-group">
-            <label>输入文本</label>
-            <textarea
-              className="form-control"
+            </Select>
+          </FormField>
+          <FormField label="输入文本">
+            <TextArea
               rows={4}
               value={runText}
               onChange={(e) => setRunText(e.target.value)}
               placeholder="输入要测试的文本..."
             />
-          </div>
-          <div className="form-group" style={{ gridColumn: '1 / -1' }}>
-            <label>Custom Payload (JSON)</label>
-            <textarea
-              className="form-control"
+          </FormField>
+          <FormField label="Custom Payload (JSON)" error={runPayloadError || undefined} className="manual-run-payload">
+            <TextArea
               rows={4}
               value={runPayload}
               onChange={(e) => { setRunPayload(e.target.value); setRunPayloadError('') }}
               placeholder={'例如: {\n  "style_bible": {\n    "tone": "正式"\n  }\n}'}
+              invalid={Boolean(runPayloadError)}
             />
-            {runPayloadError && (
-              <div style={{ color: 'var(--danger)', fontSize: '12px', marginTop: 4 }}>
-                {runPayloadError}
-              </div>
-            )}
-          </div>
+          </FormField>
         </div>
         <button
           onClick={handleRun}
@@ -1291,149 +1385,68 @@ export default function SkillVisibilityPanel() {
           </div>
         )}
       </div>
-
-      {/* Mount relationships */}
-      {Object.keys(mounts).length > 0 && (
-        <div style={{ marginBottom: 'var(--space-4)' }}>
-          <h4 style={sectionTitleStyle}>挂载关系</h4>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
-            {Object.entries(mounts).map(([agent, stages]) => (
-              <div
-                key={agent}
-                style={{
-                  padding: 'var(--space-3)',
-                  borderRadius: 'var(--radius-md)',
-                  background: 'var(--bg-secondary)',
-                  border: '1px solid rgba(30, 58, 95, 0.06)',
-                  minWidth: 0,
-                }}
-              >
-                <div
-                  style={{
-                    fontWeight: 'var(--font-semibold)',
-                    fontSize: 'var(--text-sm)',
-                    marginBottom: 'var(--space-2)',
-                    textTransform: 'capitalize',
-                  }}
-                >
-                  {agent}
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  {Object.entries(stages).map(([stage, skillIds]) => (
-                    <div
-                      key={stage}
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'minmax(92px, 0.25fr) minmax(0, 1fr)',
-                        gap: 8,
-                        alignItems: 'baseline',
-                      }}
-                    >
-                      <span
-                        style={{
-                          fontSize: '12px',
-                          color: 'var(--text-secondary)',
-                          fontFamily: 'monospace',
-                          overflowWrap: 'anywhere',
-                        }}
-                      >
-                        {stage}
-                      </span>
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                        {skillIds.map((id) => (
-                          <span
-                            key={id}
-                            style={{
-                              ...statusChipStyle('ok'),
-                              background: 'rgba(59, 130, 246, 0.1)',
-                              color: '#1e40af',
-                            }}
-                          >
-                            {id}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
       )}
 
       {/* Skill list table */}
+      {activeView === 'catalog' && (
       <div>
         <h4
           style={sectionTitleStyle}
         >
           Skill 列表
         </h4>
-        <div style={{ overflowX: 'auto' }}>
-          <table className="data-table">
-            <thead>
-              <tr>
-                <th>ID</th>
-                <th>名称</th>
-                <th>类型</th>
-                <th>版本</th>
-                <th>Package</th>
-                <th>Class</th>
-                <th>状态</th>
-              </tr>
-            </thead>
-            <tbody>
-              {skills.map((skill) => (
-                <tr key={skill.id}>
-                  <td>
-                    <code style={compactCodeStyle}>{skill.id}</code>
-                  </td>
-                  <td>{skill.name || '-'}</td>
-                  <td>{skill.kind || skill.type || '-'}</td>
-                  <td>{skill.version || '-'}</td>
-                  <td>
-                    <code style={{ ...compactCodeStyle, fontSize: '11px' }}>{skill.package || '-'}</code>
-                  </td>
-                  <td>
-                    <code style={{ ...compactCodeStyle, fontSize: '11px' }}>{skill.class_name || skill.class || '-'}</code>
-                  </td>
-                  <td>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          background: skill.enabled ? 'var(--success)' : 'var(--text-muted)',
-                        }}
-                      />
-                      <span style={{ fontSize: '12px' }}>
-                        {skill.enabled ? '已启用' : '已禁用'}
-                      </span>
-                      {skill.enabled && !skill.is_mounted && (
-                        <span
-                          style={{
-                            ...statusChipStyle('warn'),
-                            padding: '1px 6px',
-                            fontSize: '11px',
-                          }}
-                        >
-                          未挂载
-                        </span>
-                      )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <DataTable
+          compact
+          data={filteredRuntimeSkills}
+          getRowKey={(skill) => skill.id}
+          emptyTitle="没有匹配的 Skill"
+          columns={[
+            { key: 'id', header: 'ID', render: (skill) => <code style={compactCodeStyle}>{skill.id}</code> },
+            { key: 'name', header: '名称', render: (skill) => skill.name || '-' },
+            { key: 'kind', header: '类型', render: (skill) => skill.kind || skill.type || '-' },
+            { key: 'version', header: '版本', render: (skill) => skill.version || '-' },
+            { key: 'package', header: 'Package', render: (skill) => <code style={{ ...compactCodeStyle, fontSize: '11px' }}>{skill.package || '-'}</code> },
+            { key: 'class', header: 'Class', render: (skill) => <code style={{ ...compactCodeStyle, fontSize: '11px' }}>{skill.class_name || skill.class || '-'}</code> },
+            {
+              key: 'status',
+              header: '状态',
+              render: (skill) => (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span
+                    style={{
+                      display: 'inline-block',
+                      width: 8,
+                      height: 8,
+                      borderRadius: '50%',
+                      background: skill.enabled ? 'var(--success)' : 'var(--text-muted)',
+                    }}
+                  />
+                  <span style={{ fontSize: '12px' }}>
+                    {skill.enabled ? '已启用' : '已禁用'}
+                  </span>
+                  {skill.enabled && !skill.is_mounted && (
+                    <span
+                      style={{
+                        ...statusChipStyle('warn'),
+                        padding: '1px 6px',
+                        fontSize: '11px',
+                      }}
+                    >
+                      未挂载
+                    </span>
+                  )}
+                </div>
+              ),
+            },
+          ]}
+        />
       </div>
+      )}
 
       {/* Descriptions */}
+      {activeView === 'catalog' && (
       <div style={{ marginTop: 'var(--space-4)' }}>
-        {skills.map((skill) => (
+        {filteredRuntimeSkills.map((skill) => (
           <div
             key={`desc-${skill.id}`}
             style={{
@@ -1458,6 +1471,9 @@ export default function SkillVisibilityPanel() {
             )}
           </div>
         ))}
+      </div>
+      )}
+        </main>
       </div>
     </div>
   )

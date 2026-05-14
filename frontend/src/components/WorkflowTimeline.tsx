@@ -5,6 +5,8 @@ interface Step {
   key: string
   label: string
   description: string
+  node_group?: 'system' | 'creative_agent' | 'support_agent' | 'terminal' | 'router' | 'unknown'
+  node_type?: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
   error_message?: string
   error_is_legacy?: boolean
@@ -52,6 +54,17 @@ function stepStatusClass(status: string): string {
   }
 }
 
+const NODE_GROUP_LABELS: Record<string, string> = {
+  system: '系统节点',
+  creative_agent: '创作 Agent',
+  support_agent: '支撑 Agent',
+  terminal: '终态/人工节点',
+  router: '路由节点',
+  unknown: '其他节点',
+}
+
+const NODE_GROUP_ORDER = ['system', 'creative_agent', 'support_agent', 'terminal', 'router', 'unknown']
+
 export default function WorkflowTimeline({ steps, compact = false }: Props) {
   const [expandedStep, setExpandedStep] = useState<string | null>(null)
 
@@ -67,73 +80,87 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
     )
   }
 
+  const hasGroups = steps.some((step) => step.node_group)
+  const groupedSteps = hasGroups
+    ? NODE_GROUP_ORDER.map((group) => ({
+        group,
+        label: NODE_GROUP_LABELS[group] || group,
+        steps: steps.filter((step) => (step.node_group || 'unknown') === group),
+      })).filter((group) => group.steps.length > 0)
+    : [{ group: 'ungrouped', label: '', steps }]
+
   return (
     <div className="wf-timeline">
       <div className="steps-timeline">
-        {steps.map((step) => {
-          const isExpanded = expandedStep === step.key
-          const hasArtifacts = step.status === 'completed' && step.artifacts
-          const logs = step.logs || []
+        {groupedSteps.map((group) => (
+          <div key={group.group} className="step-group">
+            {hasGroups && <div className="step-group-title">{group.label}</div>}
+            {group.steps.map((step) => {
+              const isExpanded = expandedStep === step.key
+              const hasArtifacts = step.status === 'completed' && step.artifacts
+              const logs = step.logs || []
 
-          return (
-            <div key={step.key} className={`step-item ${stepStatusClass(step.status)}`}>
-              <div className="step-header">
-                <div className="step-icon">{stepStatusIcon(step.status)}</div>
-                <div className="step-content">
-                  <div className="step-label">{step.label}</div>
-                  {!compact && (
-                    <div className="step-description">{step.description}</div>
-                  )}
-                  {step.error_message && (
-                    <div className={`step-error ${step.error_is_legacy ? 'step-error-legacy' : ''}`}>
-                      {step.error_message}
-                      {step.error_is_legacy && (
-                        <span className="legacy-tag">（历史记录）</span>
+              return (
+                <div key={step.key} className={`step-item ${stepStatusClass(step.status)}`}>
+                  <div className="step-header">
+                    <div className="step-icon">{stepStatusIcon(step.status)}</div>
+                    <div className="step-content">
+                      <div className="step-label">{step.label}</div>
+                      {!compact && (
+                        <div className="step-description">{step.description}</div>
+                      )}
+                      {step.error_message && (
+                        <div className={`step-error ${step.error_is_legacy ? 'step-error-legacy' : ''}`}>
+                          {step.error_message}
+                          {step.error_is_legacy && (
+                            <span className="legacy-tag">（历史记录）</span>
+                          )}
+                        </div>
+                      )}
+                      {(logs.length > 0 || step.status === 'running') && (
+                        <div className="step-logs" aria-live={step.status === 'running' ? 'polite' : undefined}>
+                          <div className="step-logs-title">节点日志</div>
+                          {logs.map((log, index) => (
+                            <div key={log.id || `${step.key}-log-${index}`} className={`step-log step-log-${log.level || 'info'}`}>
+                              <span className="step-log-dot" />
+                              <span className="step-log-message">{log.message}</span>
+                              {log.timestamp && <span className="step-log-time">{log.timestamp}</span>}
+                            </div>
+                          ))}
+                          {step.status === 'running' && logs.length === 0 && (
+                            <div className="step-log step-log-info">
+                              <span className="step-log-dot step-log-dot-pulse" />
+                              <span className="step-log-message">节点运行中，正在等待模型或工具返回。</span>
+                            </div>
+                          )}
+                        </div>
                       )}
                     </div>
-                  )}
-                  {(logs.length > 0 || step.status === 'running') && (
-                    <div className="step-logs" aria-live={step.status === 'running' ? 'polite' : undefined}>
-                      <div className="step-logs-title">节点日志</div>
-                      {logs.map((log, index) => (
-                        <div key={log.id || `${step.key}-log-${index}`} className={`step-log step-log-${log.level || 'info'}`}>
-                          <span className="step-log-dot" />
-                          <span className="step-log-message">{log.message}</span>
-                          {log.timestamp && <span className="step-log-time">{log.timestamp}</span>}
-                        </div>
-                      ))}
-                      {step.status === 'running' && logs.length === 0 && (
-                        <div className="step-log step-log-info">
-                          <span className="step-log-dot step-log-dot-pulse" />
-                          <span className="step-log-message">节点运行中，正在等待模型或工具返回。</span>
+                    {hasArtifacts && (
+                      <button
+                        className="step-expand-btn"
+                        onClick={() => toggleExpand(step.key)}
+                      >
+                        {isExpanded ? '收起' : '查看过程稿'}
+                      </button>
+                    )}
+                  </div>
+                  {hasArtifacts && isExpanded && (
+                    <div className="step-artifacts">
+                      <div className="artifacts-summary">{formatArtifactSummary(step.artifacts)}</div>
+                      {step.artifacts!.output_preview && (
+                        <div className="artifacts-preview">
+                          <div className="preview-label">内容预览:</div>
+                          <div className="preview-content">{step.artifacts!.output_preview}</div>
                         </div>
                       )}
                     </div>
                   )}
                 </div>
-                {hasArtifacts && (
-                  <button
-                    className="step-expand-btn"
-                    onClick={() => toggleExpand(step.key)}
-                  >
-                    {isExpanded ? '收起' : '查看过程稿'}
-                  </button>
-                )}
-              </div>
-              {hasArtifacts && isExpanded && (
-                <div className="step-artifacts">
-                  <div className="artifacts-summary">{formatArtifactSummary(step.artifacts)}</div>
-                  {step.artifacts!.output_preview && (
-                    <div className="artifacts-preview">
-                      <div className="preview-label">内容预览:</div>
-                      <div className="preview-content">{step.artifacts!.output_preview}</div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )
-        })}
+              )
+            })}
+          </div>
+        ))}
       </div>
 
       <style>{`
@@ -141,6 +168,20 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           display: flex;
           flex-direction: column;
           gap: 8px;
+        }
+        .wf-timeline .step-group {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .wf-timeline .step-group + .step-group {
+          margin-top: 8px;
+        }
+        .wf-timeline .step-group-title {
+          font-size: 12px;
+          font-weight: 600;
+          color: var(--text-muted);
+          padding: 2px 2px 0;
         }
         .wf-timeline .step-item {
           display: flex;

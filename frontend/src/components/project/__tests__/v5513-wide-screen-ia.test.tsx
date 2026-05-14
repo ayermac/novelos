@@ -147,7 +147,7 @@ describe('v5.5.13 state-labels', () => {
           'generate_genesis', 'review_genesis', 'wait_genesis',
           'repair_title_contract', 'generate_missing_context',
           'apply_memory_updates', 'generate_chapter', 'continue_next_chapter',
-          'review_chapter', 'recover_blocked_run', 'generate_arc_plan', 'none',
+          'view_running_workflow', 'review_chapter', 'recover_blocked_run', 'generate_arc_plan', 'none',
         ])
       )
     })

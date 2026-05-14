@@ -12,6 +12,8 @@ from ..validators.chapter_checker import count_words, check_word_count_quality_g
 from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured
 from ..validators.revision_classifier import classify_issues
 from ..skills.registry import SkillRegistry
+from ..llm.openai_compatible import LLMTimeoutError, OutputValidationError
+from ..llm.provider import is_configured_live_provider
 from .base import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -102,21 +104,83 @@ class EditorAgent(BaseAgent):
 
         return "\n\n".join(parts)
 
+    def _build_compact_review_context(self, state: FactoryState) -> str:
+        """Build a short review prompt for live LLM calls."""
+        parts = []
+
+        chapter = self._get_chapter_info(state)
+        if chapter and chapter.get("content"):
+            content = chapter["content"]
+            parts.append(f"【本章正文】\n{content[:3000]}")
+
+        instruction = self._get_instruction(state)
+        if instruction:
+            parts.append(
+                "【写作指令】\n"
+                f"目标: {instruction.get('objective', '')}\n"
+                f"关键事件: {instruction.get('key_events', '')}\n"
+                f"伏笔: {instruction.get('plots_to_plant', '')}\n"
+                f"钩子: {instruction.get('ending_hook', '')}"
+            )
+
+        characters = self.repo.get_characters(state["project_id"])
+        if characters:
+            char_str = "\n".join(
+                f"- {c['name']}({c['role']}): {c.get('description', '')}"
+                for c in characters[:5]
+            )
+            parts.append(f"【角色】\n{char_str}")
+
+        parts.append(
+            "【输出要求】\n"
+            "只返回紧凑 JSON。issues 和 suggestions 各最多 3 条；"
+            "state_card 只保留本章新增事实、角色状态和悬念，不要复述正文。"
+        )
+        return "\n\n".join(parts)
+
+    def _fallback_rule_review(self, content: str, reason: str) -> EditorOutput:
+        """Fallback review when live editor LLM cannot return a usable result."""
+        dp_result = check_death_penalty_structured(content)
+        has_content = bool(content.strip())
+        passed = has_content and not dp_result.has_critical
+        score = 88 if passed else 60
+        issues = []
+        if not has_content:
+            issues.append("正文为空")
+        if dp_result.has_critical:
+            issues.extend([f"CRITICAL 死刑红线: {v}" for v in dp_result.violations])
+        if reason:
+            issues.append(f"AI 审核降级为规则检查: {reason}")
+
+        return EditorOutput(
+            pass_=passed,
+            score=score,
+            scores={
+                "setting": 22 if passed else 15,
+                "logic": 22 if passed else 15,
+                "poison": 18 if passed else 10,
+                "text": 13 if passed else 10,
+                "pacing": 13 if passed else 10,
+            },
+            issues=issues,
+            suggestions=[] if passed else ["请人工检查正文后再继续。"],
+            revision_target=None if passed else "polisher",
+            state_card={
+                "summary": "AI 审核不可用，已完成规则兜底检查；请人工发布前复核。",
+            } if passed else {},
+        )
+
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
 
-        context = self.build_context(state)
+        use_compact_review = state.get("llm_mode") == "real" and is_configured_live_provider(self.llm)
+        context = self._build_compact_review_context(state) if use_compact_review else self.build_context(state)
 
         messages = [
             {"role": "system", "content": EDITOR_SYSTEM_PROMPT},
             {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请执行五层审校并评分。"},
         ]
-
-        raw = self.llm.invoke_json(messages, schema=EditorOutput)
-        output = EditorOutput(**raw)
-
-        self.validate_output(output.model_dump())
 
         # Q2: Enhanced death penalty check with severity
         chapter = self._get_chapter_info(state)
@@ -124,6 +188,21 @@ class EditorAgent(BaseAgent):
             raise ValueError("Chapter not found in DB")
 
         content = chapter.get("content", "")
+
+        try:
+            invoke_kwargs = {"max_tokens": 700} if use_compact_review else {}
+            raw = self.llm.invoke_json(
+                messages,
+                schema=EditorOutput,
+                **invoke_kwargs,
+            )
+            output = EditorOutput(**raw)
+            self.validate_output(output.model_dump())
+        except (LLMTimeoutError, OutputValidationError) as e:
+            if not use_compact_review:
+                raise
+            logger.warning("Editor: LLM review degraded to rule-based fallback: %s", e)
+            output = self._fallback_rule_review(content, str(e))
         
         dp_result = check_death_penalty_structured(content)
         if dp_result.has_critical:

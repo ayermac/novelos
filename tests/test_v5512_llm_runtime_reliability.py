@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import tempfile
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -71,6 +72,25 @@ def test_llm_provider_retries_rate_limit_with_exponential_backoff():
     assert client.calls == 2
     assert provider.last_token_usage is not None
     assert provider.last_token_usage.total_tokens == 15
+
+
+def test_llm_json_sanitizer_quotes_unquoted_prose_values():
+    raw = '''
+    {
+      "scene_beats": [
+        {
+          "sequence": 1,
+          "scene_goal": "建立雾港",
+          "turn": 林澈在广播中听见失踪者声音,
+          "hook": "电话响起"
+        }
+      ]
+    }
+    '''
+    sanitized = OpenAICompatibleProvider._sanitize_json(raw)
+
+    assert '"turn": "林澈在广播中听见失踪者声音"' in sanitized
+    assert json.loads(sanitized)["scene_beats"][0]["turn"] == "林澈在广播中听见失踪者声音"
 
 
 def test_chapter_token_budget_failure_finalizes_workflow_run(tmp_path):

@@ -80,6 +80,12 @@ def _seed_newer_project_rows(repo: Repository, project_id: str) -> None:
             (project_id, run_id),
         )
         conn.execute(
+            "INSERT INTO workflow_node_events "
+            "(run_id, project_id, chapter_number, node_name, event_type, status) "
+            "VALUES (?, ?, 1, 'author', 'started', 'running')",
+            (run_id, project_id),
+        )
+        conn.execute(
             "INSERT INTO skill_runs "
             "(project_id, chapter_number, skill_id, skill_type, ok) "
             "VALUES (?, 1, 'style-bible-checker', 'validator', 1)",
@@ -96,6 +102,12 @@ def _seed_newer_project_rows(repo: Repository, project_id: str) -> None:
             "(id, run_id, project_id, chapter_number, workflow_run_id, status, created_at, updated_at) "
             "VALUES ('prod-item-1', 'prod-1', ?, 1, ?, 'blocked', datetime('now','+8 hours'), datetime('now','+8 hours'))",
             (project_id, run_id),
+        )
+        conn.execute(
+            "INSERT INTO batch_continuity_gates "
+            "(id, run_id, project_id, from_chapter, to_chapter, status, created_at, updated_at) "
+            "VALUES ('gate-1', 'prod-1', ?, 1, 1, 'passed', datetime('now','+8 hours'), datetime('now','+8 hours'))",
+            (project_id,),
         )
         conn.execute(
             "INSERT INTO human_review_sessions "
@@ -119,6 +131,21 @@ def _seed_newer_project_rows(repo: Repository, project_id: str) -> None:
             "INSERT INTO chapter_review_notes "
             "(id, project_id, chapter_number, source_run_id, revision_run_id, notes, created_at) "
             "VALUES ('note-1', ?, 1, 'prod-1', 'revision-1', 'notes', datetime('now','+8 hours'))",
+            (project_id,),
+        )
+        chapter_id = conn.execute(
+            "SELECT id FROM chapters WHERE project_id=? AND chapter_number=1",
+            (project_id,),
+        ).fetchone()["id"]
+        conn.execute(
+            "INSERT INTO reviews (id, project_id, chapter_id, pass, score) "
+            "VALUES (9001, ?, ?, 1, 92)",
+            (project_id, chapter_id),
+        )
+        conn.execute(
+            "INSERT INTO chapter_versions "
+            "(id, project_id, chapter, version, content, review_id) "
+            "VALUES (9001, ?, 1, 1, 'content', 9001)",
             (project_id,),
         )
         conn.execute(

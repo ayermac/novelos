@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { get, post, put, del } from '../../lib/api'
 import { Globe, Plus, Pencil, Trash2 } from 'lucide-react'
 import { useAppDialog } from '../AppDialogContext'
+import { TextArea, TextInput } from '../ui'
 
 interface WorldSetting {
   id: number
@@ -107,15 +108,15 @@ export default function WorldSettingsModule({ projectId }: Props) {
             <h3>{editingItem ? '编辑世界观' : '新增世界观'}</h3>
             <div className="form-group">
               <label>分类</label>
-              <input type="text" value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="如：力量体系、社会结构" />
+              <TextInput value={form.category} onChange={(e) => setForm({ ...form, category: e.target.value })} placeholder="如：力量体系、社会结构" />
             </div>
             <div className="form-group">
               <label>标题</label>
-              <input type="text" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="设定名称" />
+              <TextInput value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} placeholder="设定名称" />
             </div>
             <div className="form-group">
               <label>内容</label>
-              <textarea value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} placeholder="详细描述" rows={4} />
+              <TextArea value={form.content} onChange={(e) => setForm({ ...form, content: e.target.value })} placeholder="详细描述" rows={4} />
             </div>
             <div className="form-actions">
               <button className="btn btn-secondary" onClick={() => setShowModal(false)}>取消</button>

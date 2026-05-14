@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Edit3, Loader2, Maximize2, Minimize2, Save, Sparkles, X } from 'lucide-react'
 import { get, post, type EditorState, type LocalRevisionResult } from '../../lib/api'
 import { tVersionSource, tRevisionMode } from '../../lib/state-labels'
+import { TextArea, TextInput } from '../ui'
 
 interface Props {
   projectId: string
@@ -302,7 +303,7 @@ export default function ChapterEditorSurface({
       {/* Content area */}
       {viewMode === 'edit' ? (
         <div className="chapter-editor-editing">
-          <textarea
+          <TextArea
             ref={textareaRef}
             value={editContent}
             onChange={(e) => setEditContent(e.target.value)}
@@ -330,8 +331,7 @@ export default function ChapterEditorSurface({
                   </button>
                 ))}
               </div>
-              <input
-                type="text"
+              <TextInput
                 value={revisionInstruction}
                 onChange={(e) => setRevisionInstruction(e.target.value)}
                 placeholder="输入返修要求（可选）"

@@ -72,6 +72,30 @@ class TestLLMCatalogCLI:
         assert "sk-" not in stdout
 
 
+class TestLLMSmokeCLI:
+    """Test novelos llm smoke command."""
+
+    def test_smoke_stub_json_envelope(self):
+        """llm smoke supports a cheap stub-mode diagnostic path."""
+        code, stdout, stderr = run_cli([
+            "--llm-mode", "stub",
+            "llm", "smoke",
+            "--timeout-seconds", "3",
+            "--max-tokens", "8",
+            "--json",
+        ])
+        assert code == 0, f"Exit code {code}, stderr: {stderr}"
+        result = _parse_json(stdout)
+        assert result["ok"] is True
+        data = result["data"]
+        assert data["llm_mode"] == "stub"
+        assert data["timeout_seconds"] == 3
+        assert data["max_tokens"] == 8
+        assert data["duration_ms"] >= 0
+        assert "api_key" not in stdout
+        assert "sk-" not in stdout
+
+
 # ── llm recommend ──────────────────────────────────────────────
 
 class TestLLMRecommendCLI:

@@ -158,6 +158,77 @@ class TestProductionNextAPI:
         # With approved genesis and instructions present, next action must be generate_chapter
         assert data["next_action"]["key"] == "generate_chapter"
 
+    def test_manual_context_ready_does_not_require_genesis(self, client):
+        """Manual world/character/outline/instruction context should allow writing."""
+        resp = client.post("/api/onboarding/projects", json={
+            "project_id": "manual-ready-test",
+            "name": "雾城回声",
+            "genre": "悬疑科幻",
+            "description": "失踪者的声音在午夜广播中重现，前刑警追查城市记忆异常。",
+            "world_setting": "雾港被异常海雾笼罩，EchoNet 会播出失踪者声音。",
+            "main_character_name": "林澈",
+            "main_character_description": "前刑警，擅长声音取证。",
+            "initial_chapter_count": 3,
+        })
+        assert resp.status_code == 200
+        client.post("/api/projects/manual-ready-test/instructions", json={
+            "chapter_number": 1,
+            "objective": "建立雾港、午夜广播和林澈的创伤背景。",
+            "key_events": "午夜广播出现失踪者声音；林澈接到不可能的来电。",
+            "emotion_tone": "冷峻、悬疑、压抑",
+            "ending_hook": "来电者是三年前已经死亡的人。",
+            "word_target": 3000,
+        })
+
+        resp = client.get("/api/projects/manual-ready-test/production-next")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        data = body["data"]
+        assert data["health"]["has_approved_genesis"] is False
+        assert data["health"]["manual_context_ready"] is True
+        assert data["next_action"]["key"] == "generate_chapter"
+        assert all(item["key"] != "genesis" for item in data["missing"])
+
+    def test_failed_run_on_planned_chapter_does_not_block_retry(self, client):
+        """A stale failed run should not block a planned chapter from retrying."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "planned-retry-test",
+            "name": "雾城回声",
+            "genre": "悬疑科幻",
+            "description": "失踪者的声音在午夜广播中重现。",
+            "world_setting": "雾港被异常海雾笼罩，EchoNet 会播出失踪者声音。",
+            "main_character_name": "林澈",
+            "main_character_description": "前刑警，擅长声音取证。",
+            "initial_chapter_count": 3,
+        })
+        tc.post("/api/projects/planned-retry-test/instructions", json={
+            "chapter_number": 1,
+            "objective": "建立雾港和异常广播。",
+            "key_events": "午夜广播出现失踪者声音。",
+            "emotion_tone": "悬疑",
+            "word_target": 3000,
+        })
+        repo = Repository(db_path)
+        run_id = repo.create_workflow_run("planned-retry-test", 1)
+        repo.update_workflow_run(run_id, status="failed", current_node="screenwriter", error_message="bad json")
+
+        resp = tc.get("/api/projects/planned-retry-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["health"]["has_stuck_run"] is False
+        assert data["next_action"]["key"] == "generate_chapter"
+        os.unlink(db_path)
+
     def test_blocking_chapter_returns_recover_blocked_run(self, client, project_id):
         """5. Blocking chapter should suggest recover_blocked_run."""
         from novel_factory.api_app import create_api_app
@@ -232,6 +303,150 @@ class TestProductionNextAPI:
         data = resp.json()["data"]
         assert data["health"]["has_pending_memory_updates"] is True
         assert data["next_action"]["key"] == "apply_memory_updates"
+        os.unlink(db_path)
+
+    def test_running_target_chapter_takes_priority_over_pending_memory(self, client, project_id):
+        """Running workflow on the current target chapter must outrank memory updates."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "prio-test", "name": "Prio Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 10, "target_words": 30000,
+        })
+        tc.post("/api/projects/prio-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
+        })
+        gid = tc.get("/api/projects/prio-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/prio-test/genesis/{gid}/approve")
+        tc.post("/api/projects/prio-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        run_id = repo.create_workflow_run("prio-test", 1)
+        repo.update_workflow_run(run_id, status="running", current_node="screenwriter")
+        batch = repo.create_memory_batch("prio-test", chapter_number=1, summary="test batch")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id="prio-test",
+            target_table="characters",
+            operation="update",
+            after_json='{"name":"Test"}',
+            target_id="1",
+        )
+
+        resp = tc.get("/api/projects/prio-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["health"]["has_stuck_run"] is False
+        assert data["next_action"]["key"] == "view_running_workflow"
+        assert data["next_action"]["target_chapter"] == 1
+        assert data["next_action"]["run_id"] == run_id
+        os.unlink(db_path)
+
+    def test_project_stale_running_workflow_takes_priority_over_pending_memory(self, client, project_id):
+        """A stale running workflow on any chapter must outrank memory updates."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "stale-prio-test", "name": "Stale Prio Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 10, "target_words": 30000,
+        })
+        tc.post("/api/projects/stale-prio-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
+        })
+        gid = tc.get("/api/projects/stale-prio-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/stale-prio-test/genesis/{gid}/approve")
+        tc.post("/api/projects/stale-prio-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        repo.update_chapter_status("stale-prio-test", 4, "scripted")
+        run_id = repo.create_workflow_run("stale-prio-test", 4)
+        repo.update_workflow_run(run_id, status="running", current_node="screenwriter")
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "UPDATE workflow_runs SET started_at=datetime('now','-2 hours','+8 hours') WHERE id=?",
+                (run_id,),
+            )
+            conn.execute("UPDATE projects SET current_chapter=? WHERE project_id=?", (5, "stale-prio-test"))
+            conn.commit()
+        finally:
+            conn.close()
+        batch = repo.create_memory_batch("stale-prio-test", chapter_number=5, summary="test batch")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id="stale-prio-test",
+            target_table="characters",
+            operation="update",
+            after_json='{"name":"Test"}',
+            target_id="1",
+        )
+
+        resp = tc.get("/api/projects/stale-prio-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["health"]["has_pending_memory_updates"] is True
+        assert data["next_action"]["key"] == "recover_blocked_run"
+        assert data["next_action"]["target_chapter"] == 4
+        assert data["next_action"]["run_id"] == run_id
+        os.unlink(db_path)
+
+    def test_planned_chapter_with_content_suggests_review_existing_content(self, client, project_id):
+        """Planned chapters with preserved content should not suggest generation."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "existing-content-test", "name": "Existing Content Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 10, "target_words": 30000,
+        })
+        tc.post("/api/projects/existing-content-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
+        })
+        gid = tc.get("/api/projects/existing-content-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/existing-content-test/genesis/{gid}/approve")
+        tc.post("/api/projects/existing-content-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        repo.save_chapter(
+            "existing-content-test",
+            1,
+            "第 1 章",
+            "恢复后保留的正文" * 20,
+            160,
+            "planned",
+        )
+
+        resp = tc.get("/api/projects/existing-content-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "review_existing_chapter_content"
+        assert data["next_action"]["target_chapter"] == 1
         os.unlink(db_path)
 
     def test_old_failure_after_success_ignored(self, client, project_id):
@@ -314,8 +529,64 @@ class TestProductionNextAPI:
         assert data["health"]["target_chapter"] == 2
         os.unlink(db_path)
 
-    def test_production_next_reports_running_target_chapter(self, client, project_id):
-        """Published current chapter should report running workflow on target next chapter."""
+    def test_published_chapter_with_next_instruction_but_no_chapter_continues_next(self, client, project_id):
+        """Published chapter should not re-plan when next chapter instruction already exists."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "next-inst-test", "name": "Next Inst Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 20, "target_words": 60000,
+        })
+        tc.post("/api/projects/next-inst-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 20, "target_words": 60000,
+        })
+        gid = tc.get("/api/projects/next-inst-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/next-inst-test/genesis/{gid}/approve")
+        tc.post("/api/projects/next-inst-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        repo.update_chapter_status("next-inst-test", 10, "reviewed")
+        repo.publish_chapter("next-inst-test", 10, expected_status="reviewed")
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "UPDATE projects SET current_chapter=? WHERE project_id=?",
+                (10, "next-inst-test"),
+            )
+            conn.execute(
+                "DELETE FROM chapters WHERE project_id=? AND chapter_number=?",
+                ("next-inst-test", 11),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        repo.create_instruction(
+            "next-inst-test",
+            11,
+            objective="承接第 10 章线索继续推进。",
+            key_events="追踪线索、遭遇阻碍、做出选择",
+            emotion_tone="紧张",
+            word_target=3000,
+        )
+
+        resp = tc.get("/api/projects/next-inst-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "continue_next_chapter"
+        assert data["next_action"].get("target_chapter") == 11
+        os.unlink(db_path)
+
+    def test_production_next_routes_to_running_target_chapter(self, client, project_id):
+        """Published current chapter should route to the running target instead of generating again."""
         from novel_factory.api_app import create_api_app
         from novel_factory.db.repository import Repository
         from novel_factory.db.connection import init_db
@@ -349,8 +620,10 @@ class TestProductionNextAPI:
         resp = tc.get("/api/projects/target-run-test/production-next")
         assert resp.status_code == 200
         data = resp.json()["data"]
-        assert data["next_action"]["key"] == "continue_next_chapter"
+        assert data["next_action"]["key"] == "view_running_workflow"
         assert data["next_action"]["target_chapter"] == 2
+        assert data["next_action"]["run_id"] == run_id
+        assert data["next_action"]["method"] == "GET"
         assert data["health"]["has_running_chapter_workflow"] is False
         assert data["health"]["has_running_target_workflow"] is True
         assert data["health"]["target_workflow_run_id"] == run_id

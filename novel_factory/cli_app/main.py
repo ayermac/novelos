@@ -25,6 +25,7 @@ from .commands.config import (
     cmd_llm_profiles,
     cmd_llm_route,
     cmd_llm_validate,
+    cmd_llm_smoke,
     cmd_doctor,
 )
 from .commands.demo import (
@@ -233,6 +234,14 @@ def build_parser() -> argparse.ArgumentParser:
     llm_validate = llm_subparsers.add_parser("validate", help="Validate LLM configuration")
     llm_validate.add_argument("--json", action="store_true", help="Output in JSON format")
     llm_validate.set_defaults(func=cmd_llm_validate)
+
+    llm_smoke = llm_subparsers.add_parser("smoke", help="Run a tiny live LLM smoke request")
+    llm_smoke.add_argument("--agent", default="planner", help="Agent ID to route through (default: planner)")
+    llm_smoke.add_argument("--timeout-seconds", type=int, default=8, help="Request timeout in seconds (default: 8)")
+    llm_smoke.add_argument("--max-tokens", type=int, default=32, help="Maximum output tokens (default: 32)")
+    llm_smoke.add_argument("--prompt", default="请只回复 OK", help="Prompt to send (default: 请只回复 OK)")
+    llm_smoke.add_argument("--json", action="store_true", help="Output in JSON format")
+    llm_smoke.set_defaults(func=cmd_llm_smoke)
 
     # v3.9: llm catalog / recommend / config-plan
     llm_catalog = llm_subparsers.add_parser("catalog", help="List LLM model catalog")
@@ -755,10 +764,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     api_parser.add_argument("--host", default="127.0.0.1", help="Host to bind (default: 127.0.0.1)")
     api_parser.add_argument("--port", type=int, default=8765, help="Port to bind (default: 8765)")
-    api_parser.add_argument("--db-path", help="Path to SQLite database file")
-    api_parser.add_argument("--config", help="Path to config YAML file")
+    api_parser.add_argument("--db-path", dest="api_db_path", help="Path to SQLite database file")
+    api_parser.add_argument("--config", dest="api_config", help="Path to config YAML file")
     api_parser.add_argument("--skills-config", help="Path to skills YAML config file (default: novel_factory/config/skills.yaml)")
-    api_parser.add_argument("--llm-mode", choices=["stub", "real"], default="stub", help="LLM mode: stub for demo, real for actual LLM (default: stub)")
+    api_parser.add_argument("--llm-mode", dest="api_llm_mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: stub)")
+    api_parser.add_argument(
+        "--log-level",
+        choices=["critical", "error", "warning", "info", "debug", "trace"],
+        default="info",
+        help="Uvicorn log level (default: info)",
+    )
+    api_parser.add_argument(
+        "--no-access-log",
+        action="store_true",
+        help="Disable per-request access logs for long-running local validation",
+    )
     api_parser.set_defaults(func=cmd_api)
 
     # Legacy aliases: 'init' → 'init-db', 'run' → 'run-chapter'

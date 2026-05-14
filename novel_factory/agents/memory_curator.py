@@ -13,6 +13,8 @@ import logging
 from typing import Any
 
 from ..models.state import ChapterStatus, FactoryState
+from ..llm.openai_compatible import LLMTimeoutError, OutputValidationError
+from ..llm.provider import is_configured_live_provider
 from .base import BaseAgent
 
 logger = logging.getLogger(__name__)
@@ -166,7 +168,19 @@ class MemoryCuratorAgent(BaseAgent):
             },
         ]
 
-        raw = self.llm.invoke_json(messages)
+        try:
+            invoke_kwargs = {"max_tokens": 700} if is_configured_live_provider(self.llm) else {}
+            raw = self.llm.invoke_json(messages, **invoke_kwargs)
+        except (LLMTimeoutError, OutputValidationError) as e:
+            logger.warning(
+                "MemoryCurator: degraded to no-op after LLM extraction failure: %s",
+                e,
+            )
+            return {
+                "memory_curator_processed": True,
+                "memory_curator_degraded": True,
+                "memory_curator_warning": str(e),
+            }
         patches = raw.get("patches", raw.get("facts", []))
 
         if not patches:

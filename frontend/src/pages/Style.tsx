@@ -5,6 +5,7 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
 import { useAppDialog } from '../components/AppDialogContext'
+import { DataTable } from '../components/ui'
 
 interface StyleBible {
   project_id: string
@@ -175,34 +176,18 @@ export default function Style() {
             </div>
             <div className="card-body">
               {data.style_bibles.length > 0 ? (
-                <div style={{ overflowX: 'auto' }}>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>项目</th>
-                        <th>状态</th>
-                        <th>版本</th>
-                        <th>更新时间</th>
-                        <th>操作</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.style_bibles.map((bible) => (
-                        <tr key={bible.project_id}>
-                          <td>{bible.project_name}</td>
-                          <td>
-                            <StatusBadge status={bible.status} />
-                          </td>
-                          <td>v{bible.version}</td>
-                          <td className="text-secondary">{bible.updated_at}</td>
-                          <td>
-                            <span className="text-secondary">已建立</span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable
+                  compact
+                  data={data.style_bibles}
+                  getRowKey={(bible) => bible.project_id}
+                  columns={[
+                    { key: 'project', header: '项目', render: (bible) => bible.project_name },
+                    { key: 'status', header: '状态', render: (bible) => <StatusBadge status={bible.status} /> },
+                    { key: 'version', header: '版本', render: (bible) => `v${bible.version}` },
+                    { key: 'updated', header: '更新时间', render: (bible) => <span className="text-secondary">{bible.updated_at}</span> },
+                    { key: 'actions', header: '操作', render: () => <span className="text-secondary">已建立</span> },
+                  ]}
+                />
               ) : (
                 <div>
                   <EmptyState
@@ -243,32 +228,24 @@ export default function Style() {
                 <h3>风格门禁</h3>
               </div>
               <div className="card-body">
-                <div style={{ overflowX: 'auto' }}>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>项目</th>
-                        <th>启用</th>
-                        <th>阈值</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.style_gate_configs.map((config) => (
-                        <tr key={config.project_id}>
-                          <td>{config.project_name}</td>
-                          <td>
-                            <span
-                              className={`status-badge ${config.enabled ? 'status-active' : 'status-inactive'}`}
-                            >
-                              {config.enabled ? '已启用' : '已停用'}
-                            </span>
-                          </td>
-                          <td>{config.threshold}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable
+                  compact
+                  data={data.style_gate_configs}
+                  getRowKey={(config) => config.project_id}
+                  columns={[
+                    { key: 'project', header: '项目', render: (config) => config.project_name },
+                    {
+                      key: 'enabled',
+                      header: '启用',
+                      render: (config) => (
+                        <span className={`status-badge ${config.enabled ? 'status-active' : 'status-inactive'}`}>
+                          {config.enabled ? '已启用' : '已停用'}
+                        </span>
+                      ),
+                    },
+                    { key: 'threshold', header: '阈值', render: (config) => config.threshold },
+                  ]}
+                />
               </div>
             </div>
           )}
@@ -280,24 +257,15 @@ export default function Style() {
                 <h3>风格样本</h3>
               </div>
               <div className="card-body">
-                <div style={{ overflowX: 'auto' }}>
-                  <table className="data-table">
-                    <thead>
-                      <tr>
-                        <th>来源</th>
-                        <th>字数</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {data.style_samples.map((sample) => (
-                        <tr key={sample.sample_id}>
-                          <td>{sample.source}</td>
-                          <td>{sample.word_count}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable
+                  compact
+                  data={data.style_samples}
+                  getRowKey={(sample) => sample.sample_id}
+                  columns={[
+                    { key: 'source', header: '来源', render: (sample) => sample.source },
+                    { key: 'words', header: '字数', render: (sample) => sample.word_count },
+                  ]}
+                />
               </div>
             </div>
           )}

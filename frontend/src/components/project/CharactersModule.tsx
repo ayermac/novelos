@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { get, post, put, del } from '../../lib/api'
 import { Users, Plus, Pencil, Trash2 } from 'lucide-react'
 import { useAppDialog } from '../AppDialogContext'
+import { Select, TextArea, TextInput } from '../ui'
 
 interface Character {
   id: number
@@ -116,27 +117,27 @@ export default function CharactersModule({ projectId }: Props) {
             <h3>{editingItem ? '编辑角色' : '新增角色'}</h3>
             <div className="form-group">
               <label>名称</label>
-              <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="角色名称" />
+              <TextInput value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="角色名称" />
             </div>
             <div className="form-group">
               <label>别名</label>
-              <input type="text" value={form.alias} onChange={(e) => setForm({ ...form, alias: e.target.value })} placeholder="别名/外号（可选）" />
+              <TextInput value={form.alias} onChange={(e) => setForm({ ...form, alias: e.target.value })} placeholder="别名/外号（可选）" />
             </div>
             <div className="form-group">
               <label>角色</label>
-              <select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+              <Select value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
                 <option value="protagonist">主角</option>
                 <option value="antagonist">反派</option>
                 <option value="supporting">配角</option>
-              </select>
+              </Select>
             </div>
             <div className="form-group">
               <label>描述</label>
-              <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="角色描述" rows={3} />
+              <TextArea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} placeholder="角色描述" rows={3} />
             </div>
             <div className="form-group">
               <label>特征</label>
-              <input type="text" value={form.traits} onChange={(e) => setForm({ ...form, traits: e.target.value })} placeholder="性格特征，用逗号分隔" />
+              <TextInput value={form.traits} onChange={(e) => setForm({ ...form, traits: e.target.value })} placeholder="性格特征，用逗号分隔" />
             </div>
             <div className="form-actions">
               <button className="btn btn-secondary" onClick={() => setShowModal(false)}>取消</button>

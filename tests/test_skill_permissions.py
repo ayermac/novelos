@@ -33,10 +33,21 @@ class TestSkillRegistryManifest:
         """Test getting narrative-quality manifest."""
         registry = SkillRegistry()
         manifest = registry.get_manifest("narrative-quality")
-        
+
         assert manifest is not None
         assert manifest.id == "narrative-quality"
         assert manifest.kind == "validator"
+
+    def test_get_manifest_style_bible_checker(self):
+        """Test getting style-bible-checker manifest."""
+        registry = SkillRegistry()
+        manifest = registry.get_manifest("style-bible-checker")
+
+        assert manifest is not None
+        assert manifest.id == "style-bible-checker"
+        assert manifest.kind == "validator"
+        assert "editor" in manifest.allowed_agents
+        assert "before_review" in manifest.allowed_stages
 
     def test_get_manifest_unknown_skill(self):
         """Test getting manifest for unknown skill."""

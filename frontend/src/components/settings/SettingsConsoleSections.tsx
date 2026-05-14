@@ -2,6 +2,7 @@ import type { Dispatch, ReactNode, SetStateAction } from 'react'
 import EmptyState from '../EmptyState'
 import SkillVisibilityPanel from './SkillVisibilityPanel'
 import { tLlmMode } from '../../lib/i18n'
+import { DataTable, FormField, Select, TextInput } from '../ui'
 
 interface LlmProfile {
   name: string
@@ -260,71 +261,52 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
       <SectionCard title="LLM 档案" subtitle={`默认: ${data.default_llm || '未设置'}`}>
         <div style={{ padding: 'var(--space-5)' }}>
           {data.llm_profiles.length > 0 ? (
-            <div style={{ overflowX: 'auto' }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>名称</th>
-                    <th>提供商</th>
-                    <th>模型</th>
-                    <th>API Key</th>
-                    <th>Base URL</th>
-                    <th>参数</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.llm_profiles.map((profile) => (
-                    <tr key={profile.name}>
-                      <td>{profile.name}</td>
-                      <td>{profile.provider}</td>
-                      <td>{profile.model}</td>
-                      <td>
-                        {profile.has_key ? (
-                          <span className="text-success">已配置</span>
-                        ) : (
-                          <span className="text-danger">未配置</span>
-                        )}
-                        {profile.api_key_env && (
-                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
-                            变量: {profile.api_key_env}
-                          </div>
-                        )}
-                        {profile.api_key_source && (
-                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                            来源: {profile.api_key_source}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        {profile.has_base_url ? (
-                          <span className="text-success">已配置</span>
-                        ) : (
-                          <span className="text-danger">未配置</span>
-                        )}
-                        {profile.resolved_base_url && (
-                          <div style={{ fontSize: '11px', color: 'var(--text-secondary)', maxWidth: 260, wordBreak: 'break-all' }}>
-                            {profile.resolved_base_url}
-                          </div>
-                        )}
-                        {profile.base_url_source && (
-                          <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>
-                            来源: {profile.base_url_source}
-                          </div>
-                        )}
-                      </td>
-                      <td>
-                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                          temperature: {profile.temperature ?? '-'}
+            <DataTable
+              compact
+              data={data.llm_profiles}
+              getRowKey={(profile) => profile.name}
+              columns={[
+                { key: 'name', header: '名称', render: (profile) => profile.name },
+                { key: 'provider', header: '提供商', render: (profile) => profile.provider },
+                { key: 'model', header: '模型', render: (profile) => profile.model },
+                {
+                  key: 'apiKey',
+                  header: 'API Key',
+                  render: (profile) => (
+                    <>
+                      {profile.has_key ? <span className="text-success">已配置</span> : <span className="text-danger">未配置</span>}
+                      {profile.api_key_env && <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>变量: {profile.api_key_env}</div>}
+                      {profile.api_key_source && <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>来源: {profile.api_key_source}</div>}
+                    </>
+                  ),
+                },
+                {
+                  key: 'baseUrl',
+                  header: 'Base URL',
+                  render: (profile) => (
+                    <>
+                      {profile.has_base_url ? <span className="text-success">已配置</span> : <span className="text-danger">未配置</span>}
+                      {profile.resolved_base_url && (
+                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', maxWidth: 260, wordBreak: 'break-all' }}>
+                          {profile.resolved_base_url}
                         </div>
-                        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                          max_tokens: {profile.max_tokens ?? '-'}
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                      )}
+                      {profile.base_url_source && <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>来源: {profile.base_url_source}</div>}
+                    </>
+                  ),
+                },
+                {
+                  key: 'params',
+                  header: '参数',
+                  render: (profile) => (
+                    <>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>temperature: {profile.temperature ?? '-'}</div>
+                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>max_tokens: {profile.max_tokens ?? '-'}</div>
+                    </>
+                  ),
+                },
+              ]}
+            />
           ) : (
             <EmptyState
               title="暂无 LLM 档案"
@@ -340,24 +322,15 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
             <h3>Agent 路由</h3>
           </div>
           <div className="card-body">
-            <div style={{ overflowX: 'auto' }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>Agent</th>
-                    <th>LLM Profile</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.agent_routes.map((route) => (
-                    <tr key={route.agent}>
-                      <td>{route.agent}</td>
-                      <td>{route.route}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <DataTable
+              compact
+              data={data.agent_routes}
+              getRowKey={(route) => route.agent}
+              columns={[
+                { key: 'agent', header: 'Agent', render: (route) => route.agent },
+                { key: 'route', header: 'LLM Profile', render: (route) => route.route },
+              ]}
+            />
           </div>
         </div>
       )}
@@ -409,82 +382,59 @@ export function ConfigDraftSection({
         </div>
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-          <div className="form-group">
-            <label>提供商 (Provider)</label>
-            <select
-              className="form-control"
+          <FormField label="提供商 (Provider)">
+            <Select
               value={wizardForm.provider}
               onChange={(e) => onProviderChange(e.target.value)}
             >
               {providerOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
-            </select>
-          </div>
-          <div className="form-group">
-            <label>模型</label>
-            <select
-              className="form-control"
+            </Select>
+          </FormField>
+          <FormField label="模型" helper={wizardForm.model === 'custom' ? '填写服务商实际支持的模型 ID，会写入配置草案的 model 字段' : undefined}>
+            <Select
               value={wizardForm.model}
               onChange={(e) => setWizardForm({ ...wizardForm, model: e.target.value })}
             >
               {modelOptions.map((opt) => (
                 <option key={opt.value} value={opt.value}>{opt.label}</option>
               ))}
-            </select>
+            </Select>
             {wizardForm.model === 'custom' && (
-              <>
-                <input
-                  type="text"
-                  className="form-control"
+              <TextInput
                   value={wizardForm.custom_model}
                   onChange={(e) => setWizardForm({ ...wizardForm, custom_model: e.target.value })}
                   placeholder="例如：Kimi-K2-Turbo"
                   style={{ marginTop: '8px' }}
                 />
-                <div className="hint">填写服务商实际支持的模型 ID，会写入配置草案的 model 字段</div>
-              </>
             )}
-          </div>
-          <div className="form-group">
-            <label>Base URL</label>
-            <input
-              type="text"
-              className="form-control"
+          </FormField>
+          <FormField label="Base URL">
+            <TextInput
               value={wizardForm.base_url}
               onChange={(e) => setWizardForm({ ...wizardForm, base_url: e.target.value })}
             />
-          </div>
-          <div className="form-group">
-            <label>API Key 环境变量名</label>
-            <input
-              type="text"
-              className="form-control"
+          </FormField>
+          <FormField label="API Key 环境变量名" helper="仅填写环境变量名，不要输入真实的 Key">
+            <TextInput
               value={wizardForm.api_key_env}
               onChange={(e) => setWizardForm({ ...wizardForm, api_key_env: e.target.value })}
             />
-            <div className="hint">仅填写环境变量名，不要输入真实的 Key</div>
-          </div>
-          <div className="form-group">
-            <label>Profile 名称</label>
-            <input
-              type="text"
-              className="form-control"
+          </FormField>
+          <FormField label="Profile 名称">
+            <TextInput
               value={wizardForm.default_llm}
               onChange={(e) => setWizardForm({ ...wizardForm, default_llm: e.target.value })}
             />
-          </div>
-          <div className="form-group">
-            <label>Agent 路由（可选）</label>
-            <input
-              type="text"
-              className="form-control"
+          </FormField>
+          <FormField label="Agent 路由（可选）" helper="格式: agent名=profile名，逗号分隔">
+            <TextInput
               value={wizardForm.agent_llm}
               onChange={(e) => setWizardForm({ ...wizardForm, agent_llm: e.target.value })}
               placeholder="author=default,editor=default"
             />
-            <div className="hint">格式: agent名=profile名，逗号分隔</div>
-          </div>
+          </FormField>
         </div>
 
         <button onClick={onGenerateDraft} className="btn btn-primary">

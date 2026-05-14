@@ -2,6 +2,9 @@
 
 import os
 import tempfile
+import asyncio
+import time
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
@@ -143,3 +146,56 @@ class TestGenesisCanonicalRoutes:
         assert resp.status_code == 200
         body = resp.json()
         assert body["ok"] is True
+
+
+@pytest.mark.asyncio
+async def test_real_genesis_generation_does_not_block_event_loop(monkeypatch):
+    """Real genesis LLM calls must be offloaded so status APIs can stay responsive."""
+    from novel_factory.api.routes import genesis as genesis_routes
+
+    class BlockingProvider:
+        def invoke_json(self, messages, max_tokens=None, max_retries=1):
+            assert max_tokens == 5000
+            time.sleep(0.2)
+            return {
+                "project_updates": {"description": "ok"},
+                "world_settings": [],
+                "characters": [],
+                "factions": [],
+                "outlines": [],
+                "plot_holes": [],
+                "instructions": [],
+            }
+
+    class Router:
+        def for_agent(self, agent_name):
+            return BlockingProvider()
+
+    monkeypatch.setattr(
+        "novel_factory.workflow.runner._build_llm_router",
+        lambda settings, llm_mode: Router(),
+    )
+
+    body = genesis_routes.GenesisGenerateRequest(
+        title="事件循环测试",
+        genre="悬疑",
+        premise="验证 real genesis 不阻塞 API 事件循环",
+    )
+    task = asyncio.create_task(
+        genesis_routes._generate_real_draft(body, SimpleNamespace())
+    )
+
+    started = time.perf_counter()
+    await asyncio.sleep(0.05)
+    elapsed = time.perf_counter() - started
+
+    assert elapsed < 0.15
+    assert await task == {
+        "project_updates": {"description": "ok"},
+        "world_settings": [],
+        "characters": [],
+        "factions": [],
+        "outlines": [],
+        "plot_holes": [],
+        "instructions": [],
+    }

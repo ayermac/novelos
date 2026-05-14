@@ -39,7 +39,7 @@ async def create_project(request: Request, body: CreateProjectRequest) -> Envelo
     This is the API equivalent of the onboarding form.
     In stub mode, does not trigger real LLM calls.
     """
-    from ..deps import get_repo, get_dispatcher, get_llm_mode
+    from ..deps import get_repo, get_llm_mode
 
     try:
         repo = get_repo(request)
@@ -76,13 +76,12 @@ async def create_project(request: Request, body: CreateProjectRequest) -> Envelo
         # Create serial plan if requested
         serial_plan = None
         if body.create_serial_plan:
-            from ..deps import get_settings
-            settings = get_settings(request)
-            dispatcher = get_dispatcher(request)
             serial_plan = repo.create_serial_plan(
                 project_id=body.project_id,
+                name=f"{body.name} 连载计划",
+                start_chapter=body.start_chapter,
+                target_chapter=body.total_chapters_planned,
                 batch_size=body.serial_batch_size,
-                total_chapters=body.total_chapters_planned,
             )
 
         # Add seed data for stub mode demonstration

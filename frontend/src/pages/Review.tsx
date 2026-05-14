@@ -4,6 +4,7 @@ import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
+import { DataTable, FormField, TextArea } from '../components/ui'
 
 interface ReviewItem {
   project_id: string
@@ -165,60 +166,39 @@ export default function Review() {
         </div>
         <div className="card-body">
           {data.queue.length > 0 ? (
-            <div style={{ overflowX: 'auto' }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>章节</th>
-                    <th>项目</th>
-                    <th>状态</th>
-                    <th>质量分</th>
-                    <th>问题数</th>
-                    <th>操作</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.queue.map((item) => {
+            <DataTable
+              compact
+              data={data.queue}
+              getRowKey={(item) => `${item.project_id}-${item.chapter_number}`}
+              columns={[
+                { key: 'chapter', header: '章节', render: (item) => `第 ${item.chapter_number} 章` },
+                { key: 'project', header: '项目', render: (item) => item.project_name },
+                { key: 'status', header: '状态', render: (item) => <StatusBadge status={item.status} /> },
+                { key: 'quality', header: '质量分', render: (item) => item.quality_score ?? '-' },
+                { key: 'issues', header: '问题数', render: (item) => item.issue_count },
+                {
+                  key: 'actions',
+                  header: '操作',
+                  render: (item) => {
                     const actionKey = `${item.project_id}-${item.chapter_number}`
                     const isActionLoading = actionLoading === actionKey
                     const canAction = item.status === 'review'
-                    return (
-                      <tr key={actionKey}>
-                        <td>第 {item.chapter_number} 章</td>
-                        <td>{item.project_name}</td>
-                        <td>
-                          <StatusBadge status={item.status} />
-                        </td>
-                        <td>{item.quality_score ?? '-'}</td>
-                        <td>{item.issue_count}</td>
-                        <td>
-                          {canAction ? (
-                            <div style={{ display: 'flex', gap: '8px' }}>
-                              <button
-                                className="btn btn-primary btn-sm"
-                                onClick={() => handleApprove(item)}
-                                disabled={isActionLoading}
-                              >
-                                {isActionLoading ? '处理中...' : '通过'}
-                              </button>
-                              <button
-                                className="btn btn-secondary btn-sm"
-                                onClick={() => setRejectModal(item)}
-                                disabled={isActionLoading}
-                              >
-                                驳回
-                              </button>
-                            </div>
-                          ) : (
-                            <span className="text-secondary">-</span>
-                          )}
-                        </td>
-                      </tr>
+                    return canAction ? (
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        <button className="btn btn-primary btn-sm" onClick={() => handleApprove(item)} disabled={isActionLoading}>
+                          {isActionLoading ? '处理中...' : '通过'}
+                        </button>
+                        <button className="btn btn-secondary btn-sm" onClick={() => setRejectModal(item)} disabled={isActionLoading}>
+                          驳回
+                        </button>
+                      </div>
+                    ) : (
+                      <span className="text-secondary">-</span>
                     )
-                  })}
-                </tbody>
-              </table>
-            </div>
+                  },
+                },
+              ]}
+            />
           ) : (
             <EmptyState
               title="暂无待审核章节"
@@ -259,16 +239,14 @@ export default function Review() {
                 驳回 <strong>{rejectModal.project_name}</strong> 第{' '}
                 <strong>{rejectModal.chapter_number}</strong> 章
               </p>
-              <div className="form-group">
-                <label className="form-label">驳回原因</label>
-                <textarea
-                  className="form-input"
+              <FormField label="驳回原因">
+                <TextArea
                   rows={3}
                   value={rejectReason}
                   onChange={(e) => setRejectReason(e.target.value)}
                   placeholder="请输入驳回原因，将发送给作者进行修改"
                 />
-              </div>
+              </FormField>
               <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
                 <button className="btn btn-secondary" onClick={() => setRejectModal(null)}>
                   取消

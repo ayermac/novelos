@@ -329,6 +329,92 @@ class TestAuthorAgent:
         chapter = seeded_repo.get_chapter("test_proj", 1)
         assert chapter["content"] == long_content
 
+    def test_author_real_mode_plain_text_fallback_when_json_invalid(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.llm.openai_compatible import OutputValidationError
+
+        class JsonFailTextLLM(LLMProvider):
+            def __init__(self):
+                self.json_calls = 0
+                self.text_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                self.json_calls += 1
+                raise OutputValidationError("bad json")
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
+                self.text_calls += 1
+                return "兜底正文内容" * 380
+
+        llm = JsonFailTextLLM()
+        agent = AuthorAgent(seeded_repo, llm)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        state: FactoryState = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        }
+
+        result = agent.run(state)
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        assert llm.json_calls == 1
+        assert llm.text_calls == 1
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["content"].startswith("兜底正文内容")
+
+    def test_author_real_openai_provider_uses_plain_text_primary(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        class LiveLikeTextLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.json_calls = 0
+                self.text_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                self.json_calls += 1
+                raise AssertionError("real provider authoring should not use JSON primary")
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
+                self.text_calls += 1
+                assert max_tokens <= 900
+                return "真实正文内容" * 380
+
+        llm = LiveLikeTextLLM()
+        agent = AuthorAgent(seeded_repo, llm)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        state: FactoryState = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        }
+
+        result = agent.run(state)
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        assert llm.json_calls == 0
+        assert llm.text_calls == 1
+
 
 class TestPolisherAgent:
     def test_polisher_polishes_content(self, seeded_repo):
@@ -505,6 +591,49 @@ class TestEditorAgent:
         assert result["chapter_status"] == ChapterStatus.REVIEWED.value
         assert result["quality_gate"]["pass"] is True
 
+    def test_editor_real_mode_timeout_degrades_to_rule_review(self, seeded_repo):
+        from novel_factory.agents.editor import EditorAgent
+        from novel_factory.llm.openai_compatible import LLMTimeoutError
+
+        class TimeoutEditorLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.json_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                self.json_calls += 1
+                assert max_tokens == 700
+                raise LLMTimeoutError("timeout")
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
+                return ""
+
+        base_content = "这是一段测试正文内容，用于验证 Editor Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 45
+
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "polished")
+
+        llm = TimeoutEditorLLM()
+        agent = EditorAgent(seeded_repo, llm)
+        state: FactoryState = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        }
+
+        result = agent.run(state)
+
+        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
+        assert result["quality_gate"]["pass"] is True
+        assert llm.json_calls == 1
+
     def test_editor_word_gate_reports_target_details(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent
 
@@ -586,3 +715,35 @@ class TestEditorAgent:
         assert review["revision_target"] == "polisher"
         issues = json.loads(review["issues"])
         assert any("字数" in i or "word" in i.lower() for i in issues)
+
+
+class TestMemoryCuratorAgent:
+    def test_memory_curator_timeout_degrades_to_noop(self, seeded_repo):
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.llm.openai_compatible import LLMTimeoutError
+
+        class TimeoutMemoryLLM(LLMProvider):
+            config = object()
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                assert max_tokens == 700
+                raise LLMTimeoutError("timeout")
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
+                return ""
+
+        seeded_repo.save_chapter_content("test_proj", 1, "测试正文" * 100, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "reviewed")
+        agent = MemoryCuratorAgent(seeded_repo, TimeoutMemoryLLM())
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-memory-timeout",
+            "llm_mode": "real",
+        })
+
+        assert result["memory_curator_processed"] is True
+        assert result["memory_curator_degraded"] is True
+        assert "error" not in result

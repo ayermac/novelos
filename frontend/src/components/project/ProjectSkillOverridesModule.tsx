@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Code2, RefreshCcw, Save, Trash2 } from 'lucide-react'
 import { del, get, put } from '../../lib/api'
+import { TextArea } from '../ui'
 
 interface ProjectSkillOverridesResponse {
   project_id: string
@@ -177,7 +178,7 @@ export default function ProjectSkillOverridesModule({ projectId }: Props) {
         <div className="data-card-content" style={{ display: 'grid', gap: 12 }}>
           <div>
             <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>覆盖 JSON</div>
-            <textarea
+            <TextArea
               value={draft}
               onChange={(e) => setDraft(e.target.value)}
               rows={18}

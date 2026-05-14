@@ -143,3 +143,58 @@ export interface LocalRevisionResult {
   selection_end: number
   mode: string
 }
+
+// ── v5.8 Workflow Timeline types ──────────────────────────
+
+export interface WorkflowTimelineArtifact {
+  type: string
+  label: string
+  artifact_id: string
+}
+
+export interface WorkflowTimelineNode {
+  node_name: string
+  label: string
+  node_group?: 'system' | 'creative_agent' | 'support_agent' | 'terminal' | 'router' | 'unknown'
+  node_type?: string
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
+  started_at: string | null
+  completed_at: string | null
+  duration_ms: number | null
+  messages: string[]
+  artifacts: WorkflowTimelineArtifact[]
+}
+
+export interface WorkflowTimelineRecovery {
+  recommended_action: string | null
+  reason: string | null
+  safe_actions: {
+    key: string
+    label: string
+    safe: boolean
+    note?: string
+  }[]
+}
+
+export interface WorkflowTimelineCheckpoint {
+  checkpoint_exists: boolean
+  checkpoint_node: string | null
+  current_node: string | null
+  checkpoint_summary: string | null
+  state_keys: string[]
+  recovery_available: boolean
+}
+
+export interface WorkflowTimelineData {
+  project_id: string
+  chapter_number: number
+  run_id: string | null
+  run_status: string | null
+  current_node: string | null
+  started_at: string | null
+  elapsed_minutes: number | null
+  is_stale: boolean
+  recovery: WorkflowTimelineRecovery
+  checkpoint?: WorkflowTimelineCheckpoint
+  nodes: WorkflowTimelineNode[]
+}

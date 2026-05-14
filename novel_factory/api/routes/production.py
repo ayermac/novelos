@@ -60,6 +60,17 @@ def _has_running_genesis(repo, project_id: str) -> bool:
     return latest is not None and latest.get("status") == "running"
 
 
+def _has_manual_context_ready(health: dict) -> bool:
+    """Return true when manually entered project context is enough to write."""
+    return (
+        health.get("has_world_settings")
+        and health.get("has_characters")
+        and health.get("has_outlines")
+        and health.get("has_instructions_for_current_chapter")
+        and health.get("title_contract_aligned", True)
+    )
+
+
 def _get_blocking_chapter(repo, project_id: str) -> dict | None:
     """Find a chapter in blocking or revision status."""
     chapters = repo.list_chapters(project_id)
@@ -70,7 +81,7 @@ def _get_blocking_chapter(repo, project_id: str) -> dict | None:
 
 
 def _get_stuck_run(repo, project_id: str, current_chapter: int) -> dict | None:
-    """Find a stuck workflow run for the current chapter (failed/blocked status).
+    """Find a stuck workflow run for the current chapter.
 
     Only considers the *latest* run for the current chapter. If the latest run
     succeeded, old failures are ignored to prevent them from permanently
@@ -81,7 +92,9 @@ def _get_stuck_run(repo, project_id: str, current_chapter: int) -> dict | None:
         return None
     # runs are ordered by started_at DESC (most recent first)
     latest = runs[0]
-    if latest.get("status") in ("failed", "blocked"):
+    chapter = repo.get_chapter(project_id, current_chapter)
+    chapter_status = chapter.get("status") if chapter else None
+    if latest.get("status") in ("failed", "blocked") and chapter_status in ("blocking", "revision"):
         return latest
     return None
 
@@ -148,6 +161,23 @@ def _target_workflow_health(repo, project_id: str, target_chapter: int, timeout_
     }
 
 
+def _view_running_workflow_action(project_id: str, chapter_number: int, run: dict | None) -> dict:
+    """Return a non-generating action for a chapter that is already running."""
+    current_node = run.get("current_node") if run else None
+    node_desc = f"当前节点：{current_node}。" if current_node else ""
+    return {
+        "key": "view_running_workflow",
+        "label": f"查看第 {chapter_number} 章运行进度",
+        "description": f"第 {chapter_number} 章已有工作流正在运行，{node_desc}请先查看进度，不要重复启动生成。",
+        "primary": True,
+        "action_url": f"/projects/{project_id}?module=chapters&chapter={chapter_number}&view=workflow",
+        "method": "GET",
+        "requires_confirmation": False,
+        "target_chapter": chapter_number,
+        "run_id": run.get("id") if run else None,
+    }
+
+
 def _is_obsolete_disconnected_session(repo, project_id: str, session: dict, steps: list[dict], next_action: dict) -> bool:
     """Return True when a paused disconnected session no longer matches project truth."""
     if session.get("status") != "paused" or session.get("stop_reason") != "client_disconnected":
@@ -196,6 +226,26 @@ def _list_stale_running_workflows(repo, project_id: str, timeout_minutes: int) -
             "started_at": row.get("started_at"),
         })
     return stale
+
+
+def _get_project_stale_running_workflow(repo, project_id: str, timeout_minutes: int) -> dict | None:
+    """Return the oldest stale running workflow for this project, if any."""
+    stale = _list_stale_running_workflows(repo, project_id, timeout_minutes)
+    if not stale:
+        return None
+    return stale[0]
+
+
+def _get_planned_chapter_with_content(repo, project_id: str) -> dict | None:
+    """Find a planned chapter that still has preserved content."""
+    for chapter in repo.list_chapters(project_id):
+        if chapter.get("status") != "planned":
+            continue
+        content = (chapter.get("content") or "").strip()
+        word_count = chapter.get("word_count") or 0
+        if content or word_count > 0:
+            return chapter
+    return None
 
 
 def _detect_chapter_workflow_contradictions(repo, project_id: str) -> list[dict]:
@@ -266,7 +316,7 @@ def _build_project_health_summary(repo, project_id: str, timeout_minutes: int) -
     project = repo.get_project(project_id)
     current_chapter = project.get("current_chapter", 1) if project else 1
     health = _build_health(repo, project_id, current_chapter)
-    next_action = _determine_next_action(repo, project_id, health, current_chapter)
+    next_action = _determine_next_action(repo, project_id, health, current_chapter, timeout_minutes)
 
     stale_runs = _list_stale_running_workflows(repo, project_id, timeout_minutes)
     pending_memory_items = repo.list_memory_items_by_project(project_id, status="pending")
@@ -398,6 +448,7 @@ def _build_health(repo, project_id: str, current_chapter: int) -> dict:
         "has_running_chapter_workflow": _has_running_chapter_workflow(repo, project_id, current_chapter),
         "title_contract": title_alignment,
         "title_contract_aligned": title_alignment["aligned"],
+        "manual_context_ready": False,
     }
 
 
@@ -405,7 +456,10 @@ def _build_missing(health: dict, project_id: str, current_chapter: int) -> list[
     """Build list of missing items with AI action suggestions."""
     missing = []
 
-    if not health["has_approved_genesis"]:
+    manual_context_ready = _has_manual_context_ready(health)
+    health["manual_context_ready"] = manual_context_ready
+
+    if not health["has_approved_genesis"] and not manual_context_ready:
         missing.append({
             "key": "genesis",
             "label": "项目创世设定",
@@ -417,7 +471,7 @@ def _build_missing(health: dict, project_id: str, current_chapter: int) -> list[
             },
         })
 
-    if health["has_approved_genesis"]:
+    if health["has_approved_genesis"] or manual_context_ready:
         if not health.get("title_contract_aligned", True):
             missing.append({
                 "key": "title_contract",
@@ -481,11 +535,19 @@ def _build_missing(health: dict, project_id: str, current_chapter: int) -> list[
     return missing
 
 
-def _determine_next_action(repo, project_id: str, health: dict, current_chapter: int) -> dict:
+def _determine_next_action(
+    repo,
+    project_id: str,
+    health: dict,
+    current_chapter: int,
+    timeout_minutes: int = 30,
+) -> dict:
     """Determine the next production action based on project state."""
 
     # 1. Recover blocked runs / blocking chapters first
     blocking_ch = _get_blocking_chapter(repo, project_id)
+    stale_running = _get_project_stale_running_workflow(repo, project_id, timeout_minutes)
+    planned_with_content = _get_planned_chapter_with_content(repo, project_id)
     stuck_run = _get_stuck_run(repo, project_id, current_chapter)
 
     if blocking_ch:
@@ -501,12 +563,43 @@ def _determine_next_action(repo, project_id: str, health: dict, current_chapter:
             "target_chapter": ch_num,
         }
 
+    if stale_running:
+        ch_num = stale_running.get("chapter_number", current_chapter)
+        return {
+            "key": "recover_blocked_run",
+            "label": f"处理卡住运行（第 {ch_num} 章）",
+            "description": f"检测到第 {ch_num} 章的运行已超过恢复阈值，建议先处理卡住运行。",
+            "primary": True,
+            "action_url": f"/projects/{project_id}?module=chapters&chapter={ch_num}&view=workflow",
+            "method": "GET",
+            "requires_confirmation": False,
+            "target_chapter": ch_num,
+            "run_id": stale_running.get("run_id"),
+        }
+
+    running_current = _get_running_chapter_workflow(repo, project_id, current_chapter)
+    if running_current:
+        return _view_running_workflow_action(project_id, current_chapter, running_current)
+
+    if planned_with_content:
+        ch_num = planned_with_content.get("chapter_number", current_chapter)
+        return {
+            "key": "review_existing_chapter_content",
+            "label": f"检查第 {ch_num} 章已有正文",
+            "description": f"第 {ch_num} 章处于 planned 状态但已有正文，建议先查看正文并决定编辑、回滚或重新生成。",
+            "primary": True,
+            "action_url": f"/projects/{project_id}?module=chapters&chapter={ch_num}&view=content",
+            "method": "GET",
+            "requires_confirmation": False,
+            "target_chapter": ch_num,
+        }
+
     if stuck_run:
         ch_num = stuck_run.get("chapter_number", current_chapter)
         return {
             "key": "recover_blocked_run",
             "label": f"恢复阻塞运行（第 {ch_num} 章）",
-            "description": f"检测到第 {ch_num} 章的运行失败，建议重置后重试。",
+            "description": f"检测到第 {ch_num} 章的运行未完成或失败，建议先处理后再继续。",
             "primary": True,
             "action_url": f"/api/projects/{project_id}/chapters/{ch_num}/reset",
             "method": "POST",
@@ -515,7 +608,10 @@ def _determine_next_action(repo, project_id: str, health: dict, current_chapter:
         }
 
     # 2. Genesis flow
-    if not health["has_approved_genesis"]:
+    manual_context_ready = _has_manual_context_ready(health)
+    health["manual_context_ready"] = manual_context_ready
+
+    if not health["has_approved_genesis"] and not manual_context_ready:
         if _has_running_genesis(repo, project_id):
             return {
                 "key": "wait_genesis",
@@ -585,6 +681,10 @@ def _determine_next_action(repo, project_id: str, health: dict, current_chapter:
     chapter = repo.get_chapter(project_id, current_chapter)
     chapter_status = chapter.get("status") if chapter else "planned"
 
+    running_current = _get_running_chapter_workflow(repo, project_id, current_chapter)
+    if running_current:
+        return _view_running_workflow_action(project_id, current_chapter, running_current)
+
     if chapter_status in ("planned", "scripted", "drafted", "polished", "revision"):
         return {
             "key": "generate_chapter",
@@ -612,6 +712,18 @@ def _determine_next_action(repo, project_id: str, health: dict, current_chapter:
         next_ch = current_chapter + 1
         next_chapter = repo.get_chapter(project_id, next_ch)
         if next_chapter is None:
+            next_instruction = repo.get_instruction(project_id, next_ch)
+            if next_instruction is not None:
+                return {
+                    "key": "continue_next_chapter",
+                    "label": f"继续生成第 {next_ch} 章",
+                    "description": "下一章写作指令已就绪，继续生成章节内容。",
+                    "primary": True,
+                    "action_url": f"/api/run/chapter",
+                    "method": "POST",
+                    "requires_confirmation": True,
+                    "target_chapter": next_ch,
+                }
             return {
                 "key": "generate_arc_plan",
                 "label": f"规划第 {next_ch} 章及后续",
@@ -621,6 +733,9 @@ def _determine_next_action(repo, project_id: str, health: dict, current_chapter:
                 "method": "POST",
                 "requires_confirmation": True,
             }
+        running_next = _get_running_chapter_workflow(repo, project_id, next_ch)
+        if running_next:
+            return _view_running_workflow_action(project_id, next_ch, running_next)
         return {
             "key": "continue_next_chapter",
             "label": f"继续生成第 {next_ch} 章",
@@ -667,9 +782,9 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
 
         health = _build_health(repo, project_id, current_chapter)
         missing = _build_missing(health, project_id, current_chapter)
-        next_action = _determine_next_action(repo, project_id, health, current_chapter)
-        target_chapter = next_action.get("target_chapter") or current_chapter
         timeout_minutes = getattr(settings.workflow, "task_timeout_minutes", 30)
+        next_action = _determine_next_action(repo, project_id, health, current_chapter, timeout_minutes)
+        target_chapter = next_action.get("target_chapter") or current_chapter
         health.update(_target_workflow_health(repo, project_id, target_chapter, timeout_minutes))
 
         # Build secondary actions
@@ -1206,6 +1321,7 @@ async def _auto_run_generator(
         repo = get_repo(request)
         llm_mode = get_llm_mode(request)
         settings = get_settings(request)
+        timeout_minutes = getattr(settings.workflow, "task_timeout_minutes", 30)
 
         project = repo.get_project(project_id)
         if not project:
@@ -1369,7 +1485,7 @@ async def _auto_run_generator(
 
             # Get current state using active_chapter for range-aware decisions
             health = _build_health(repo, project_id, active_chapter)
-            next_action = _determine_next_action(repo, project_id, health, active_chapter)
+            next_action = _determine_next_action(repo, project_id, health, active_chapter, timeout_minutes)
 
             # Check if we should stop
             if next_action["key"] == "none":
@@ -1687,7 +1803,7 @@ async def _auto_run_generator(
             status = "stopped"
             # Get final next action
             health = _build_health(repo, project_id, current_chapter)
-            final_next_action = _determine_next_action(repo, project_id, health, current_chapter)
+            final_next_action = _determine_next_action(repo, project_id, health, current_chapter, timeout_minutes)
 
         final_event_name = "auto_run_stopped" if status == "stopped" else "auto_run_completed"
 
@@ -2101,10 +2217,11 @@ async def run_auto_start(request: Request, project_id: str, body: RunAutoRequest
     The actual execution happens via the SSE stream endpoint using the
     returned session_id.
     """
-    from ..deps import get_repo
+    from ..deps import get_repo, get_settings
 
     try:
         repo = get_repo(request)
+        settings = get_settings(request)
 
         project = repo.get_project(project_id)
         if not project:
@@ -2159,10 +2276,11 @@ async def run_auto_start(request: Request, project_id: str, body: RunAutoRequest
 @router.get("/projects/{project_id}/production/run-auto/sessions")
 async def list_auto_run_sessions(request: Request, project_id: str) -> EnvelopeResponse:
     """List recent auto-run sessions for a project."""
-    from ..deps import get_repo
+    from ..deps import get_repo, get_settings
 
     try:
         repo = get_repo(request)
+        settings = get_settings(request)
         sessions = repo.list_auto_run_sessions(project_id, limit=20)
         # Light serialization: exclude heavy fields
         return envelope_response({
@@ -2177,10 +2295,11 @@ async def get_auto_run_session_detail(
     request: Request, project_id: str, session_id: str
 ) -> EnvelopeResponse:
     """Get a single auto-run session with its steps."""
-    from ..deps import get_repo
+    from ..deps import get_repo, get_settings
 
     try:
         repo = get_repo(request)
+        settings = get_settings(request)
 
         session = repo.get_auto_run_session(session_id)
         if not session or session.get("project_id") != project_id:
@@ -2205,10 +2324,11 @@ async def cancel_auto_run_session(
     Cooperative cancel: the generator checks status at the next step boundary
     and stops. This does not interrupt an in-flight LLM call.
     """
-    from ..deps import get_repo
+    from ..deps import get_repo, get_settings
 
     try:
         repo = get_repo(request)
+        settings = get_settings(request)
 
         session = repo.get_auto_run_session(session_id)
         if not session or session.get("project_id") != project_id:
@@ -2312,10 +2432,11 @@ async def get_active_auto_run_session(request: Request, project_id: str) -> Enve
 
     v5.5.9: Used by frontend to recover session state after refresh.
     """
-    from ..deps import get_repo
+    from ..deps import get_repo, get_settings
 
     try:
         repo = get_repo(request)
+        settings = get_settings(request)
 
         project = repo.get_project(project_id)
         if not project:
@@ -2328,7 +2449,8 @@ async def get_active_auto_run_session(request: Request, project_id: str) -> Enve
         steps = repo.list_auto_run_steps(session["id"])
         current_chapter = project.get("current_chapter", 1)
         health = _build_health(repo, project_id, current_chapter)
-        next_action = _determine_next_action(repo, project_id, health, current_chapter)
+        timeout_minutes = getattr(settings.workflow, "task_timeout_minutes", 30)
+        next_action = _determine_next_action(repo, project_id, health, current_chapter, timeout_minutes)
         if _is_obsolete_disconnected_session(repo, project_id, session, steps, next_action):
             repo.update_auto_run_session_status(
                 session["id"],

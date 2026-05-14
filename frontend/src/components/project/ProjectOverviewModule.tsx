@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { get, post } from '../../lib/api'
 import { tSessionStopLabel, tActionKey, tStepResult } from '../../lib/state-labels'
+import { Checkbox, NumberInput } from '../ui'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -1407,44 +1408,35 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   >
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
                       <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>最多执行几步</label>
-                      <input
-                        type="number"
+                      <NumberInput
                         min={1}
                         max={50}
                         value={autoConfig.maxSteps}
                         onChange={(e) => setAutoConfig((prev) => ({ ...prev, maxSteps: parseInt(e.target.value) || 5 }))}
                         disabled={autoRunning || filling}
-                        style={{ width: 52, minHeight: 32, padding: '4px 7px', fontSize: 12, borderRadius: 6, border: '1px solid var(--border-color)', background: 'var(--bg-primary)' }}
+                        style={{ width: 58, minHeight: 36, padding: '4px 7px', fontSize: 12 }}
                       />
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
                       <label style={{ fontSize: 12, color: 'var(--text-secondary)' }}>章节范围</label>
-                      <input
-                        type="number"
+                      <NumberInput
                         min={1}
                         value={autoConfig.chapterStart}
                         onChange={(e) => setAutoConfig((prev) => ({ ...prev, chapterStart: parseInt(e.target.value) || 1 }))}
                         disabled={autoRunning || filling}
-                        style={{ width: 46, minHeight: 32, padding: '4px 7px', fontSize: 12, borderRadius: 6, border: '1px solid var(--border-color)', background: 'var(--bg-primary)' }}
+                        style={{ width: 52, minHeight: 36, padding: '4px 7px', fontSize: 12 }}
                       />
                       <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>-</span>
-                      <input
-                        type="number"
+                      <NumberInput
                         min={1}
                         value={autoConfig.chapterEnd}
                         onChange={(e) => setAutoConfig((prev) => ({ ...prev, chapterEnd: parseInt(e.target.value) || 10 }))}
                         disabled={autoRunning || filling}
-                        style={{ width: 46, minHeight: 32, padding: '4px 7px', fontSize: 12, borderRadius: 6, border: '1px solid var(--border-color)', background: 'var(--bg-primary)' }}
+                        style={{ width: 52, minHeight: 36, padding: '4px 7px', fontSize: 12 }}
                       />
                     </div>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                      <input type="checkbox" checked={autoConfig.stopOnReview} onChange={(e) => setAutoConfig((prev) => ({ ...prev, stopOnReview: e.target.checked }))} disabled={autoRunning || filling} />
-                      遇审核停止
-                    </label>
-                    <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)', cursor: 'pointer' }}>
-                      <input type="checkbox" checked={autoConfig.dryRun} onChange={(e) => setAutoConfig((prev) => ({ ...prev, dryRun: e.target.checked }))} disabled={autoRunning || filling} />
-                      只预览，不执行
-                    </label>
+                    <Checkbox label="遇审核停止" checked={autoConfig.stopOnReview} onChange={(e) => setAutoConfig((prev) => ({ ...prev, stopOnReview: e.target.checked }))} disabled={autoRunning || filling} />
+                    <Checkbox label="只预览，不执行" checked={autoConfig.dryRun} onChange={(e) => setAutoConfig((prev) => ({ ...prev, dryRun: e.target.checked }))} disabled={autoRunning || filling} />
                   </div>
                 </>
               )}

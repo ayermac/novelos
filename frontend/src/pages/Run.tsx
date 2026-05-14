@@ -4,6 +4,7 @@ import { post, get, EnvelopeResponse } from '../lib/api'
 import { tLlmMode, tChapterStatus } from '../lib/i18n'
 import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
+import { FormField, Select } from '../components/ui'
 
 interface Project {
   project_id: string
@@ -486,10 +487,8 @@ export default function Run() {
               </div>
             ) : (
               <form onSubmit={handleSubmit}>
-                <div className="form-group">
-                  <label>项目</label>
-                  <select
-                    className="form-control"
+                <FormField label="项目">
+                  <Select
                     value={form.project_id}
                     onChange={(e) => handleProjectChange(e.target.value)}
                     required
@@ -500,13 +499,11 @@ export default function Run() {
                         {p.name} ({p.project_id})
                       </option>
                     ))}
-                  </select>
-                </div>
+                  </Select>
+                </FormField>
 
-                <div className="form-group">
-                  <label>章节</label>
-                  <select
-                    className="form-control"
+                <FormField label="章节" className="run-chapter-field">
+                  <Select
                     value={form.chapter}
                     onChange={(e) =>
                       setForm({ ...form, chapter: parseInt(e.target.value) })
@@ -519,8 +516,8 @@ export default function Run() {
                         第 {ch.chapter_number} 章（{tChapterStatus(ch.status)}）
                       </option>
                     ))}
-                  </select>
-                </div>
+                  </Select>
+                </FormField>
 
                 <div className="flex gap-2 mt-3">
                   <button

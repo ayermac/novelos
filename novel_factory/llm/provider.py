@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from typing import Any
+from unittest.mock import Mock
 
 
 class LLMProvider(ABC):
@@ -15,6 +16,7 @@ class LLMProvider(ABC):
         messages: list[dict[str, str]],
         schema: type | None = None,
         temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> dict[str, Any]:
         """Invoke the LLM and return structured JSON output.
 
@@ -22,6 +24,7 @@ class LLMProvider(ABC):
             messages: Chat messages in [{"role": "...", "content": "..."}] format.
             schema: Optional Pydantic model class for structured output validation.
             temperature: Override default temperature.
+            max_tokens: Override default max tokens.
 
         Returns:
             Parsed JSON dict.
@@ -46,3 +49,13 @@ class LLMProvider(ABC):
             Raw text response.
         """
         ...
+
+
+def is_configured_live_provider(provider: Any) -> bool:
+    """Return true for real provider instances that expose runtime config.
+
+    ``MagicMock`` answers ``hasattr(mock, "config")`` as true for arbitrary
+    attributes, so use this helper when deciding whether to take live-provider
+    fast paths.
+    """
+    return not isinstance(provider, Mock) and getattr(provider, "config", None) is not None

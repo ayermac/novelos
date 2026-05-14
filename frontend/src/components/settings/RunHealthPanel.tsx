@@ -4,6 +4,7 @@ import { Activity, RefreshCw } from 'lucide-react'
 import { get, post } from '../../lib/api'
 import { tChapterStatus, tWorkflowStatus } from '../../lib/i18n'
 import { useAppDialog } from '../AppDialogContext'
+import { Checkbox, DataTable } from '../ui'
 
 interface RunningTask {
   id: number
@@ -213,83 +214,94 @@ export default function RunHealthPanel() {
                 <div className="data-empty-desc">running / blocked / failed 运行会出现在这里</div>
               </div>
             ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table className="data-table">
-                  <thead>
-                    <tr>
-                      <th>
-                        <input
-                          type="checkbox"
-                          checked={actionableIds.length > 0 && selected.length === actionableIds.length}
-                          onChange={toggleAll}
-                          disabled={actionableIds.length === 0}
-                          aria-label="选择全部可处理运行"
-                        />
-                      </th>
-                      <th>项目 / 章节</th>
-                      <th>运行状态</th>
-                      <th>节点</th>
-                      <th>耗时</th>
-                      <th>任务</th>
-                      <th>错误</th>
-                      <th>详情</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {data.runs.map((run) => {
+              <DataTable
+                compact
+                data={data.runs}
+                getRowKey={(run) => run.run_id}
+                columns={[
+                  {
+                    key: 'select',
+                    header: (
+                      <Checkbox
+                        checked={actionableIds.length > 0 && selected.length === actionableIds.length}
+                        onChange={toggleAll}
+                        disabled={actionableIds.length === 0}
+                        aria-label="选择全部可处理运行"
+                      />
+                    ),
+                    render: (run) => {
                       const canMark = run.actions.mark_stuck_blocked.enabled
                       return (
-                        <tr key={run.run_id}>
-                          <td>
-                            <input
-                              type="checkbox"
-                              checked={selected.includes(run.run_id)}
-                              onChange={() => toggleOne(run.run_id)}
-                              disabled={!canMark}
-                              aria-label={`选择运行 ${run.run_id}`}
-                            />
-                          </td>
-                          <td>
-                            <Link to={`/projects/${run.project_id}?module=chapters&chapter=${run.chapter_number}`}>
-                              {run.project_name || run.project_id}
-                            </Link>
-                            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
-                              第 {run.chapter_number} 章 · {tChapterStatus(run.chapter_status)}
-                            </div>
-                          </td>
-                          <td>
-                            <span className={`status-badge status-${run.workflow_status}`}>
-                              {tWorkflowStatus(run.workflow_status)}
-                            </span>
-                            {run.stuck && (
-                              <div style={{ marginTop: 4, fontSize: 12, color: 'var(--danger)' }}>
-                                疑似卡住
-                              </div>
-                            )}
-                          </td>
-                          <td style={{ color: 'var(--text-secondary)' }}>{run.current_node || '-'}</td>
-                          <td style={{ color: 'var(--text-secondary)' }}>
-                            {typeof run.elapsed_minutes === 'number' ? `${run.elapsed_minutes.toFixed(1)} 分钟` : '-'}
-                          </td>
-                          <td style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
-                            {run.running_tasks.length > 0
-                              ? run.running_tasks.map((task) => `${task.agent_id}/${task.task_type}`).join(', ')
-                              : '-'}
-                          </td>
-                          <td style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                            {run.error_message || run.stuck_reason || '-'}
-                          </td>
-                          <td>
-                            <Link to={`/runs/${run.run_id}`} className="btn btn-secondary">
-                              详情
-                            </Link>
-                          </td>
-                        </tr>
+                        <Checkbox
+                          checked={selected.includes(run.run_id)}
+                          onChange={() => toggleOne(run.run_id)}
+                          disabled={!canMark}
+                          aria-label={`选择运行 ${run.run_id}`}
+                        />
                       )
-                    })}
-                  </tbody>
-                </table>
-              </div>
+                    },
+                  },
+                  {
+                    key: 'project',
+                    header: '项目 / 章节',
+                    render: (run) => (
+                      <>
+                        <Link to={`/projects/${run.project_id}?module=chapters&chapter=${run.chapter_number}`}>
+                          {run.project_name || run.project_id}
+                        </Link>
+                        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+                          第 {run.chapter_number} 章 · {tChapterStatus(run.chapter_status)}
+                        </div>
+                      </>
+                    ),
+                  },
+                  {
+                    key: 'status',
+                    header: '运行状态',
+                    render: (run) => (
+                      <>
+                        <span className={`status-badge status-${run.workflow_status}`}>
+                          {tWorkflowStatus(run.workflow_status)}
+                        </span>
+                        {run.stuck && <div style={{ marginTop: 4, fontSize: 12, color: 'var(--danger)' }}>疑似卡住</div>}
+                      </>
+                    ),
+                  },
+                  { key: 'node', header: '节点', render: (run) => <span style={{ color: 'var(--text-secondary)' }}>{run.current_node || '-'}</span> },
+                  {
+                    key: 'elapsed',
+                    header: '耗时',
+                    render: (run) => <span style={{ color: 'var(--text-secondary)' }}>{typeof run.elapsed_minutes === 'number' ? `${run.elapsed_minutes.toFixed(1)} 分钟` : '-'}</span>,
+                  },
+                  {
+                    key: 'tasks',
+                    header: '任务',
+                    render: (run) => (
+                      <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>
+                        {run.running_tasks.length > 0 ? run.running_tasks.map((task) => `${task.agent_id}/${task.task_type}`).join(', ') : '-'}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: 'error',
+                    header: '错误',
+                    render: (run) => (
+                      <span style={{ display: 'block', maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {run.error_message || run.stuck_reason || '-'}
+                      </span>
+                    ),
+                  },
+                  {
+                    key: 'detail',
+                    header: '详情',
+                    render: (run) => (
+                      <Link to={`/runs/${run.run_id}`} className="btn btn-secondary">
+                        详情
+                      </Link>
+                    ),
+                  },
+                ]}
+              />
             )}
           </>
         )}

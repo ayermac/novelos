@@ -81,8 +81,10 @@ export const ACTION_KEY_LABEL: Record<string, string> = {
   apply_memory_updates: '应用记忆更新',
   generate_chapter: '生成章节',
   continue_next_chapter: '继续下一章',
+  view_running_workflow: '查看运行进度',
   review_chapter: '审核章节',
   recover_blocked_run: '恢复阻塞运行',
+  review_existing_chapter_content: '检查已有正文',
   generate_arc_plan: '生成弧线规划',
   none: '无待办',
 }
@@ -107,6 +109,26 @@ export const STEP_RESULT_LABEL: Record<string, string> = {
 export function tStepResult(result: string | undefined | null): string {
   if (!result) return '—'
   return STEP_RESULT_LABEL[result] || result
+}
+
+// ── Artifact type labels ────────────────────────────────────────
+
+export const ARTIFACT_TYPE_LABEL: Record<string, string> = {
+  chapter_brief: '章节规划',
+  scene_plan: '章节场景规划',
+  draft: '章节初稿',
+  polished_draft: '润色稿',
+  polished_content: '润色稿',
+  review: '审核报告',
+  published_chapter: '发布记录',
+  memory_update: '记忆更新',
+  style_report: '风格报告',
+  fact_snapshot: '事实快照',
+}
+
+export function tArtifactType(type: string | null | undefined): string {
+  if (!type) return '产物'
+  return ARTIFACT_TYPE_LABEL[type] || type
 }
 
 // ── v5.7 Version source labels ───────────────────────────────────

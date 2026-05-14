@@ -646,4 +646,337 @@ describe('AuthorWorkbench', () => {
     expect(resetBtn).toBeDefined()
     expect(resetBtn).toBeDisabled()
   })
+
+  /* v5.8 Workflow Observability tests ----------------------------------- */
+
+  it('renders timeline nodes with chinese labels from timeline data', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-tl',
+          run_status: 'completed',
+          current_node: 'author',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 12,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          nodes: [
+            {
+              node_name: 'screenwriter',
+              label: '编剧',
+              node_group: 'creative_agent',
+              node_type: 'creative_agent',
+              status: 'completed',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: '2026-05-13T10:05:00',
+              duration_ms: 300000,
+              messages: ['已生成章节场景规划'],
+              artifacts: [{ type: 'scene_plan', label: '章节场景规划', artifact_id: 'art-1' }],
+            },
+            {
+              node_name: 'author',
+              label: '执笔',
+              node_group: 'creative_agent',
+              node_type: 'creative_agent',
+              status: 'completed',
+              started_at: '2026-05-13T10:05:00',
+              completed_at: '2026-05-13T10:10:00',
+              duration_ms: 300000,
+              messages: ['已生成章节初稿'],
+              artifacts: [],
+            },
+          ],
+        }}
+      />
+    )
+    expect(screen.getByText('编剧')).toBeInTheDocument()
+    expect(screen.getAllByText('执笔').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('已生成章节场景规划').length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryAllByText(/章节场景规划/).length).toBeGreaterThanOrEqual(1)
+    expect(screen.queryByText('scene_plan')).not.toBeInTheDocument()
+  })
+
+  it('workflow tab renders canonical LangGraph labels and groups from timeline', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-canon',
+          run_status: 'running',
+          current_node: 'memory_curator',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 4,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          checkpoint: {
+            checkpoint_exists: false,
+            checkpoint_node: null,
+            current_node: null,
+            checkpoint_summary: null,
+            state_keys: [],
+            recovery_available: false,
+          },
+          nodes: [
+            { node_name: 'health_check', label: '预检', node_group: 'system', node_type: 'system', status: 'completed', started_at: null, completed_at: null, duration_ms: null, messages: [], artifacts: [] },
+            { node_name: 'screenwriter', label: '编剧', node_group: 'creative_agent', node_type: 'creative_agent', status: 'completed', started_at: null, completed_at: null, duration_ms: null, messages: [], artifacts: [] },
+            { node_name: 'memory_curator', label: '记忆整理', node_group: 'support_agent', node_type: 'support_agent', status: 'running', started_at: null, completed_at: null, duration_ms: null, messages: ['开始记忆整理'], artifacts: [] },
+            { node_name: 'awaiting_publish', label: '等待发布', node_group: 'terminal', node_type: 'terminal', status: 'pending', started_at: null, completed_at: null, duration_ms: null, messages: [], artifacts: [] },
+            { node_name: 'archive', label: '归档', node_group: 'terminal', node_type: 'terminal', status: 'pending', started_at: null, completed_at: null, duration_ms: null, messages: [], artifacts: [] },
+            { node_name: 'revision_router', label: '返修路由', node_group: 'router', node_type: 'router', status: 'pending', started_at: null, completed_at: null, duration_ms: null, messages: [], artifacts: [] },
+            { node_name: 'human_review', label: '人工审核', node_group: 'terminal', node_type: 'terminal', status: 'pending', started_at: null, completed_at: null, duration_ms: null, messages: [], artifacts: [] },
+          ],
+        }}
+      />
+    )
+
+    expect(screen.getByText('系统节点')).toBeInTheDocument()
+    expect(screen.getByText('创作 Agent')).toBeInTheDocument()
+    expect(screen.getByText('支撑 Agent')).toBeInTheDocument()
+    expect(screen.getByText('终态/人工节点')).toBeInTheDocument()
+    expect(screen.getAllByText('记忆整理').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('等待发布')).toBeInTheDocument()
+    expect(screen.getByText('归档')).toBeInTheDocument()
+    expect(screen.getByText('返修路由')).toBeInTheDocument()
+    expect(screen.getByText('人工审核')).toBeInTheDocument()
+  })
+
+  it('checkpoint panel renders available and unavailable states', () => {
+    const timelineBase = {
+      project_id: 'test-proj',
+      chapter_number: 3,
+      run_id: 'run-checkpoint',
+      run_status: 'running',
+      current_node: 'author',
+      started_at: '2026-05-13T10:00:00',
+      elapsed_minutes: 1,
+      is_stale: false,
+      recovery: { recommended_action: null, reason: null, safe_actions: [] },
+      nodes: [],
+    }
+
+    const { rerender } = render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          ...timelineBase,
+          checkpoint: {
+            checkpoint_exists: true,
+            checkpoint_node: 'author',
+            current_node: 'author',
+            checkpoint_summary: 'node=author, status=drafted',
+            state_keys: ['chapter_status', 'current_node'],
+            recovery_available: true,
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByText('Checkpoint')).toBeInTheDocument()
+    expect(screen.getByText('存在')).toBeInTheDocument()
+    expect(screen.getByText('可从 checkpoint 恢复')).toBeInTheDocument()
+    expect(screen.getByText(/state keys：chapter_status、current_node/)).toBeInTheDocument()
+
+    rerender(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          ...timelineBase,
+          checkpoint: {
+            checkpoint_exists: false,
+            checkpoint_node: null,
+            current_node: null,
+            checkpoint_summary: null,
+            state_keys: [],
+            recovery_available: false,
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByText('不可用')).toBeInTheDocument()
+    expect(screen.getByText('无 checkpoint 恢复')).toBeInTheDocument()
+  })
+
+  it('legacy runDetail fallback is clearly labeled', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        runDetail={{
+          run_id: 'run-legacy',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'completed',
+          chapter_status: 'reviewed',
+          current_node: 'editor',
+          llm_mode: 'stub',
+          started_at: '2026-05-13T10:00:00',
+          steps: [{ key: 'editor', label: '审核', description: '完成', status: 'completed' }],
+        }}
+      />
+    )
+
+    expect(screen.getByText(/Legacy fallback/)).toBeInTheDocument()
+    expect(screen.getByText(/可能缺少 memory_curator、awaiting_publish、archive/)).toBeInTheDocument()
+  })
+
+  it('running workflow fallback uses canonical nodes beyond the old five steps', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        isStreaming
+        sseSteps={{
+          author: {
+            status: 'running',
+            started_at: '2026-05-13T10:00:00',
+            logs: [{ id: 'log-1', timestamp: '2026-05-13T10:00:00', level: 'info', message: '开始执笔撰写' }],
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByText('实时事件备用视图')).toBeInTheDocument()
+    expect(screen.getByText('预检')).toBeInTheDocument()
+    expect(screen.getByText('任务识别')).toBeInTheDocument()
+    expect(screen.getByText('记忆整理')).toBeInTheDocument()
+    expect(screen.getByText('等待发布')).toBeInTheDocument()
+    expect(screen.getByText('归档')).toBeInTheDocument()
+  })
+
+  it('shows running node loading animation in timeline', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-run',
+          run_status: 'running',
+          current_node: 'polisher',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 5,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          nodes: [
+            {
+              node_name: 'screenwriter',
+              label: '编剧',
+              status: 'completed',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: '2026-05-13T10:02:00',
+              duration_ms: 120000,
+              messages: ['已生成章节场景规划'],
+              artifacts: [],
+            },
+            {
+              node_name: 'polisher',
+              label: '润色',
+              status: 'running',
+              started_at: '2026-05-13T10:02:00',
+              completed_at: null,
+              duration_ms: null,
+              messages: ['开始润色'],
+              artifacts: [],
+            },
+          ],
+        }}
+      />
+    )
+    // Running node should have loading indicator (pulse animation class)
+    const runningStep = screen.getAllByText('润色')
+      .map((node) => node.closest('.step-item'))
+      .find(Boolean)
+    expect(runningStep).toHaveClass('step-running')
+  })
+
+  it('shows stale run recovery suggestions in timeline', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-stale-tl',
+          run_status: 'running',
+          current_node: 'author',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 35,
+          is_stale: true,
+          recovery: {
+            recommended_action: 'mark_stuck',
+            reason: '运行已超过 30 分钟仍处于 running',
+            safe_actions: [
+              { key: 'mark_stuck', label: '标记为阻塞', safe: true },
+              { key: 'reset_chapter', label: '清除阻塞并重置', safe: true, note: '保留当前正文和版本' },
+            ],
+          },
+          nodes: [
+            {
+              node_name: 'author',
+              label: '执笔',
+              status: 'running',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: null,
+              duration_ms: null,
+              messages: ['开始执笔撰写'],
+              artifacts: [],
+            },
+          ],
+        }}
+      />
+    )
+    expect(screen.getByText('工作流疑似卡住')).toBeInTheDocument()
+    expect(screen.getByText(/恢复建议/)).toBeInTheDocument()
+    expect(screen.getAllByText('标记为阻塞').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getAllByText('清除阻塞并重置').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText(/保留当前正文和版本/)).toBeInTheDocument()
+  })
+
+  it('shows inline error when timeline refresh fails', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timelineError="获取工作流时间线失败"
+      />
+    )
+    expect(screen.getByText(/刷新失败：获取工作流时间线失败/)).toBeInTheDocument()
+  })
+
+  it('does not show generate button for terminal chapter with timeline', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        currentChapter={1}
+        currentChapterRecord={baseProps.chapters[0]}
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 1,
+          run_id: 'run-pub',
+          run_status: 'completed',
+          current_node: 'publish',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: null,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          nodes: [],
+        }}
+      />
+    )
+    expect(screen.queryByRole('button', { name: /生成本章/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /继续生成/ })).not.toBeInTheDocument()
+  })
 })
