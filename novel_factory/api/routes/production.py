@@ -1263,6 +1263,7 @@ async def _auto_run_generator(
         repo = get_repo(request)
         llm_mode = get_llm_mode(request)
         settings = get_settings(request)
+        timeout_minutes = getattr(settings.workflow, "task_timeout_minutes", 30)
 
         project = repo.get_project(project_id)
         if not project:
