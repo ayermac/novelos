@@ -88,11 +88,63 @@ cd desktop && npm run dev
 - The app attempts to send `SIGTERM` and then `SIGKILL` after 5 seconds
 - If a process remains, kill it manually: `pkill -f "novel_factory.cli api"`
 
-## Known Limitations for M0
+## Building the Frozen Sidecar (M1)
 
-- **No packaging**: `electron-builder` is not configured yet. The app only runs from source.
-- **No PyInstaller sidecar**: The backend runs from the local Python installation.
-- **macOS only**: Windows and Linux support is not yet implemented.
+M1 adds PyInstaller-based freezing so the desktop app can run without a local Python source environment.
+
+### Prerequisites
+
+```bash
+python3 -m pip install pyinstaller
+```
+
+### Build
+
+```bash
+bash packaging/scripts/build-sidecar.sh
+```
+
+This will:
+1. Clean previous PyInstaller output.
+2. Run `pyinstaller packaging/pyinstaller/novelos-sidecar.spec --clean`.
+3. Copy the resulting `dist/novelos-sidecar/` bundle to:
+   `desktop/resources/sidecar/darwin-arm64/novelos-sidecar` (or `darwin-x64`).
+4. Mark the binary executable.
+
+### Smoke test the frozen sidecar
+
+```bash
+bash packaging/scripts/smoke-sidecar.sh
+```
+
+This will:
+1. Find the frozen binary for the current platform.
+2. Start it on a random free port with `--llm-mode stub`.
+3. Poll `/api/health` until it returns OK.
+4. Verify the SQLite database file was created.
+5. Stop the sidecar and clean up.
+
+### Sidecar resolution logic
+
+Electron chooses the sidecar executable in this priority:
+
+1. `NOVELOS_DESKTOP_SIDECAR_CMD` environment variable (always wins).
+2. **Packaged mode** (`!app.isPackaged`): look for frozen binary at:
+   `process.resourcesPath/sidecar/<platform-arch>/novelos-sidecar`
+3. **Dev mode**: fall back to `python3 -m novel_factory.desktop_sidecar`.
+
+Platform keys:
+- `darwin-arm64`
+- `darwin-x64`
+- `linux-x64`
+- `win32-x64`
+
+## Known Limitations for M1
+
+- **No Electron app packaging**: `electron-builder` is not configured yet.
+- **No DMG/NSIS/AppImage**: Distribution packaging is M2 scope.
+- **macOS only**: Windows and Linux sidecar builds are not yet verified.
+- **No code signing**: Sidecar and Electron app are unsigned.
 - **No secure API key storage**: LLM API keys continue to use `.env` or environment variables.
 - **Stub mode default**: The desktop app currently defaults to `--llm-mode stub` for safety.
 - **No auto-update**: Distribution and update mechanisms are future work.
@@ -101,22 +153,26 @@ cd desktop && npm run dev
 
 ## Next Recommended Milestone
 
-**M1 — Python Sidecar Freeze**
+**M2 — Electron App Packaging**
 
-- Add `novel_factory/desktop_sidecar.py` as a dedicated entry point
-- Create PyInstaller spec to freeze the backend into a platform binary
-- Electron dev/packaged mode detection for choosing source vs. frozen sidecar
-- macOS: verify sidecar binary can start independently and serve `/api/health`
+- Configure `electron-builder` for macOS `.app` / `.dmg`.
+- Embed `frontend/dist` as renderer resources.
+- Embed platform sidecar into app resources.
+- Code signing (optional for M2).
 
-## Summary of Changed Files
+## Summary of Changed Files (M0 + M1)
 
-- `desktop/package.json` — new Electron project manifest
-- `desktop/tsconfig.json` — new TypeScript configuration
-- `desktop/src/main.ts` — new Electron main process
-- `desktop/src/preload.ts` — new preload script with safe API injection
-- `desktop/src/sidecar.ts` — new sidecar process manager
-- `desktop/src/paths.ts` — new app directory utilities
-- `desktop/src/logging.ts` — new main process logging
-- `desktop/README.md` — new documentation
-- `novel_factory/desktop_sidecar.py` — new thin Python sidecar wrapper (optional)
-- `frontend/src/lib/api.ts` — updated API base URL resolution for desktop awareness
+- `desktop/package.json` — Electron project manifest
+- `desktop/tsconfig.json` — TypeScript configuration
+- `desktop/src/main.ts` — Electron main process with sidecar resolution
+- `desktop/src/preload.ts` — Preload script with safe API injection
+- `desktop/src/sidecar.ts` — Sidecar process manager
+- `desktop/src/paths.ts` — App directory utilities
+- `desktop/src/logging.ts` — Main process logging
+- `desktop/README.md` — Documentation
+- `desktop/resources/sidecar/.gitkeep` — Resource directory placeholder
+- `packaging/pyinstaller/novelos-sidecar.spec` — PyInstaller spec
+- `packaging/scripts/build-sidecar.sh` — macOS sidecar build script
+- `packaging/scripts/smoke-sidecar.sh` — Sidecar standalone smoke test
+- `novel_factory/desktop_sidecar.py` — Thin Python sidecar wrapper
+- `frontend/src/lib/api.ts` — API base URL resolution for desktop awareness

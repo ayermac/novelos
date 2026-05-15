@@ -93,28 +93,21 @@ Desktop App
 
 ### M1：Python sidecar 冻结
 
+状态：**已实现**
+
 目标：用 PyInstaller 把后端冻结为平台原生可执行文件。
 
 实现步骤：
 
-1. 新增 sidecar 专用入口，例如：
+1. 新增 sidecar 专用入口：
 
    ```text
    novel_factory/desktop_sidecar.py
    ```
 
 2. sidecar 入口只负责启动 API，不进入交互式 CLI。
-3. 支持通过环境变量或参数传入：
-
-   - host
-   - port
-   - db_path
-   - config_path
-   - llm_mode
-   - log_dir
-   - app_data_dir
-
-4. 新增 PyInstaller spec 文件，例如：
+3. 支持通过参数传入 host、port、db_path、config_path、llm_mode。
+4. 新增 PyInstaller spec 文件：
 
    ```text
    packaging/pyinstaller/novelos-sidecar.spec
@@ -126,16 +119,27 @@ Desktop App
    - `novel_factory/db/migrations/*.sql`
    - `novel_factory/config/*.yaml`
    - `novel_factory/config/genre_strategies/*.yaml`
+   - `novel_factory/config/skills/manifest/*.yaml`
    - `novel_factory/skill_packages/**/*`
+   - `novel_factory/agents/roles/*.yaml`
+   - `novel_factory/agents/contracts/*.yaml`
+   - `novel_factory/web/design/*.html`
 
 6. 处理 LangGraph、LangChain、FastAPI、uvicorn 的 hidden imports。
 7. 生成平台侧 sidecar：
 
    ```text
-   desktop/resources/sidecar/<platform>/novelos-sidecar
+   desktop/resources/sidecar/<platform-arch>/novelos-sidecar
    ```
 
 8. Electron 开发环境优先使用源码 Python，打包环境使用冻结后的 sidecar。
+
+文件清单：
+
+- `packaging/pyinstaller/novelos-sidecar.spec`
+- `packaging/scripts/build-sidecar.sh`
+- `packaging/scripts/smoke-sidecar.sh`
+- `desktop/resources/sidecar/.gitkeep`
 
 验收标准：
 

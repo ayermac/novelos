@@ -132,20 +132,47 @@ async function createMainWindow(): Promise<BrowserWindow> {
   return createErrorWindow(errorMsg);
 }
 
-function buildSidecarArgs(port: number, dataDir: string, configDir: string): { command: string; args: string[] } {
+function getPlatformArch(): string {
+  return `${process.platform}-${process.arch}`;
+}
+
+function getFrozenSidecarPath(): string {
+  const exeName = process.platform === 'win32' ? 'novelos-sidecar.exe' : 'novelos-sidecar';
+  return path.join(process.resourcesPath, 'sidecar', getPlatformArch(), exeName);
+}
+
+function resolveSidecar(): { command: string; args: string[] } {
+  // 1. Env override always wins for explicit binary path
+  const envCmd = process.env.NOVELOS_DESKTOP_SIDECAR_CMD;
+  if (envCmd) {
+    return { command: envCmd, args: [] };
+  }
+
+  // 2. Packaged mode: prefer frozen binary
+  if (!getIsDev()) {
+    const frozenPath = getFrozenSidecarPath();
+    if (fs.existsSync(frozenPath)) {
+      return { command: frozenPath, args: [] };
+    }
+    log('warn', `Frozen sidecar not found at ${frozenPath}, falling back to python3`);
+  }
+
+  // 3. Dev mode or fallback: python3 module
+  return { command: 'python3', args: ['-m', 'novel_factory.desktop_sidecar'] };
+}
+
+function buildSidecarArgs(port: number, dataDir: string, configDir: string): string[] {
   const dbPath = path.join(dataDir, 'novelos.db');
   const configPath = path.join(configDir, 'local.yaml');
   const hasConfig = fs.existsSync(configPath);
 
-  const args: string[] = [
-    '-m', 'novel_factory.desktop_sidecar',
+  return [
     '--host', '127.0.0.1',
     '--port', String(port),
     '--db-path', dbPath,
     ...(hasConfig ? ['--config-path', configPath] : []),
     '--llm-mode', 'stub',
   ];
-  return { command: 'python3', args };
 }
 
 async function startApp(): Promise<void> {
@@ -174,14 +201,20 @@ async function startApp(): Promise<void> {
   log('info', `Selected port: ${sidecarPort}`);
   apiBaseUrl = `http://127.0.0.1:${sidecarPort}/api`;
 
-  const { command, args } = buildSidecarArgs(sidecarPort, dataDir, configDir);
+  const { command, args: baseArgs } = resolveSidecar();
+  const sidecarArgs = buildSidecarArgs(sidecarPort, dataDir, configDir);
+  const allArgs = [...baseArgs, ...sidecarArgs];
+  const isPython = command === 'python3';
+  const cwd = isPython ? process.cwd() : process.resourcesPath;
   const stdoutLog = path.join(logsDir, 'sidecar.stdout.log');
   const stderrLog = path.join(logsDir, 'sidecar.stderr.log');
 
+  log('info', `Sidecar command: ${command} ${allArgs.join(' ')}`);
+
   sidecarManager.start({
     command,
-    args,
-    cwd: process.cwd(),
+    args: allArgs,
+    cwd,
     env: {},
     stdoutLogPath: stdoutLog,
     stderrLogPath: stderrLog,
@@ -192,7 +225,7 @@ async function startApp(): Promise<void> {
     log('error', 'Sidecar failed health check');
     sidecarManager.stop();
 
-    const errorMsg = `后端服务未能在 60 秒内启动。\n\n命令: ${command} ${args.join(' ')}\n\n日志目录: ${logsDir}\n\n请检查 sidecar.stderr.log 获取详细错误信息。`;
+    const errorMsg = `后端服务未能在 60 秒内启动。\n\n命令: ${command} ${allArgs.join(' ')}\n\n日志目录: ${logsDir}\n\n请检查 sidecar.stderr.log 获取详细错误信息。`;
     dialog.showErrorBox('启动失败', errorMsg);
     createErrorWindow(errorMsg);
     return;
