@@ -18,7 +18,7 @@ from ..models.schemas import (
     AutoFillLLMOutput,
     ArcPlanLLMOutput,
 )
-from .title_contract import build_title_contract
+from ..agent_runtime.title_contract import build_title_contract
 
 logger = logging.getLogger(__name__)
 

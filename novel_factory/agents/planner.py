@@ -10,9 +10,9 @@ from ..models.schemas import PlannerOutput
 from ..models.state import ChapterStatus, FactoryState
 from ..skills.registry import SkillRegistry
 from ..validators.chapter_checker import derive_word_target
-from .base import BaseAgent
-from .revision_context import revision_feedback_block
-from .skill_hooks import run_agent_skills
+from ..agent_runtime.base import BaseAgent
+from ..agent_runtime.revision_context import revision_feedback_block
+from ..agent_runtime.skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
 

@@ -66,9 +66,6 @@ AGENT_DISPLAY_NAMES = {
     "human_review": "人工审核",
     "memory_curator": "记忆整理",
     "continuity_checker": "连续性检查",
-    "scout": "选题侦察",
-    "secretary": "资料整理",
-    "architect": "系统诊断",
     "system": "系统",
     "human": "人工处理",
 }

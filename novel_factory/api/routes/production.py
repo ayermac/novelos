@@ -434,7 +434,7 @@ def _build_project_health_summary(repo, project_id: str, timeout_minutes: int) -
 
 def _build_health(repo, project_id: str, current_chapter: int) -> dict:
     """Build health snapshot for a project."""
-    from ...agents.title_contract import evaluate_title_alignment
+    from ...agent_runtime.title_contract import evaluate_title_alignment
 
     project = repo.get_project(project_id)
     world_settings = repo.list_world_settings(project_id)

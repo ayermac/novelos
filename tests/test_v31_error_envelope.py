@@ -170,67 +170,6 @@ agent_llm:
         assert "Traceback" not in stdout, f"stdout contains traceback: {stdout[:500]}"
 
 
-class TestScoutErrorEnvelope:
-    """Test scout returns JSON envelope on LLM config errors."""
-
-    def test_scout_real_mode_missing_env_returns_json_envelope(self, tmp_path):
-        """scout --llm-mode real --json with missing env returns JSON envelope."""
-        db_path = tmp_path / "test.db"
-        
-        # Create a config with llm_profiles but no actual env vars
-        config_path = tmp_path / "config.yaml"
-        config_path.write_text("""
-llm:
-  provider: openai_compatible
-  base_url: https://api.openai.com/v1
-  model: gpt-4o-mini
-
-default_llm: scout
-llm_profiles:
-  scout:
-    provider: openai_compatible
-    base_url_env: MISSING_BASE_URL
-    api_key_env: MISSING_API_KEY
-    model: gpt-4o-mini
-agent_llm:
-  scout: scout
-""")
-        
-        # Init DB
-        run_cli(["--db-path", str(db_path), "init-db"])
-        
-        # Run scout with real mode (will fail due to missing env)
-        code, stdout, stderr = run_cli([
-            "--db-path", str(db_path),
-            "--config", str(config_path),
-            "--llm-mode", "real",
-            "scout",
-            "--project-id", "demo",
-            "--json",
-        ], clean_env=True)
-        
-        # Should return error code
-        assert code != 0, f"Expected non-zero exit code, got {code}"
-        
-        # stdout should be valid JSON
-        try:
-            result = json.loads(stdout)
-        except json.JSONDecodeError as e:
-            raise AssertionError(f"stdout is not valid JSON: {stdout[:200]}\nError: {e}")
-        
-        # Should have envelope format
-        assert "ok" in result, f"Missing 'ok' in result: {result}"
-        assert "error" in result, f"Missing 'error' in result: {result}"
-        assert "data" in result, f"Missing 'data' in result: {result}"
-        
-        # Should indicate failure
-        assert result["ok"] is False, f"Expected ok=false, got {result['ok']}"
-        assert result["error"], f"Expected error message, got: {result['error']}"
-        
-        # Should NOT contain traceback in stdout
-        assert "Traceback" not in stdout, f"stdout contains traceback: {stdout[:500]}"
-
-
 class TestContinuityCheckErrorEnvelope:
     """Test continuity-check returns JSON envelope on LLM config errors."""
 
@@ -405,67 +344,6 @@ agent_llm:
         assert "error" in result
 
 
-class TestArchitectSuggestErrorEnvelope:
-    """Test architect suggest returns JSON envelope on LLM config errors."""
-
-    def test_architect_suggest_real_mode_missing_env_returns_json_envelope(self, tmp_path):
-        """architect suggest --llm-mode real --json with missing env returns JSON envelope."""
-        db_path = tmp_path / "test.db"
-        
-        # Create a config with llm_profiles but no actual env vars
-        config_path = tmp_path / "config.yaml"
-        config_path.write_text("""
-llm:
-  provider: openai_compatible
-  base_url: https://api.openai.com/v1
-  model: gpt-4o-mini
-
-default_llm: architect
-llm_profiles:
-  architect:
-    provider: openai_compatible
-    base_url_env: MISSING_BASE_URL
-    api_key_env: MISSING_API_KEY
-    model: gpt-4o-mini
-agent_llm:
-  architect: architect
-""")
-        
-        # Init DB
-        run_cli(["--db-path", str(db_path), "init-db"])
-        
-        # Run architect suggest with real mode (will fail due to missing env)
-        code, stdout, stderr = run_cli([
-            "--db-path", str(db_path),
-            "--config", str(config_path),
-            "--llm-mode", "real",
-            "architect", "suggest",
-            "--project-id", "demo",
-            "--json",
-        ], clean_env=True)
-        
-        # Should return error code
-        assert code != 0, f"Expected non-zero exit code, got {code}"
-        
-        # stdout should be valid JSON
-        try:
-            result = json.loads(stdout)
-        except json.JSONDecodeError as e:
-            raise AssertionError(f"stdout is not valid JSON: {stdout[:200]}\nError: {e}")
-        
-        # Should have envelope format
-        assert "ok" in result, f"Missing 'ok' in result: {result}"
-        assert "error" in result, f"Missing 'error' in result: {result}"
-        assert "data" in result, f"Missing 'data' in result: {result}"
-        
-        # Should indicate failure
-        assert result["ok"] is False, f"Expected ok=false, got {result['ok']}"
-        assert result["error"], f"Expected error message, got: {result['error']}"
-        
-        # Should NOT contain traceback in stdout
-        assert "Traceback" not in stdout, f"stdout contains traceback: {stdout[:500]}"
-
-
 class TestLLMRuntimeErrorEnvelope:
     """Test that LLM runtime exceptions (connection, auth, etc.) return JSON envelope, not traceback."""
 
@@ -535,39 +413,6 @@ agent_llm:
         assert "ok" in data, f"Missing 'ok' in envelope: {data}"
         assert "error" in data, f"Missing 'error' in envelope: {data}"
 
-    def test_scout_provider_exception_returns_envelope(self, tmp_path):
-        """scout with provider exception returns JSON envelope, not traceback."""
-        import os
-        db_path, config_path = self._make_non_openai_profile_config(tmp_path)
-
-        run_cli(["--db-path", str(db_path), "init-db"])
-
-        cmd = [sys.executable, "-m", "novel_factory.cli",
-               "--db-path", str(db_path),
-               "--config", str(config_path),
-               "scout",
-               "--project-id", "demo",
-               "--llm-mode", "real",
-               "--json"]
-        env = os.environ.copy()
-        env["NOVEL_FACTORY_DISABLE_DOTENV"] = "1"
-        env["DEEPSEEK_API_KEY"] = "sk-invalid-key-for-testing"
-        env["DEEPSEEK_BASE_URL"] = "https://httpbin.org/status/401"
-        env.pop("OPENAI_API_KEY", None)
-        env.pop("OPENAI_BASE_URL", None)
-
-        result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=60)
-        stdout = result.stdout
-
-        assert "Traceback" not in stdout, f"stdout contains traceback instead of JSON envelope: {stdout[:500]}"
-
-        try:
-            data = json.loads(stdout)
-        except json.JSONDecodeError:
-            raise AssertionError(f"stdout is not valid JSON: {stdout[:300]}")
-
-        assert "ok" in data, f"Missing 'ok' in envelope: {data}"
-        assert "error" in data, f"Missing 'error' in envelope: {data}"
 
     def test_continuity_check_provider_exception_returns_envelope(self, tmp_path):
         """continuity-check with provider exception returns JSON envelope, not traceback."""
@@ -606,39 +451,6 @@ agent_llm:
         assert "ok" in data, f"Missing 'ok' in envelope: {data}"
         assert "error" in data, f"Missing 'error' in envelope: {data}"
 
-    def test_architect_suggest_provider_exception_returns_envelope(self, tmp_path):
-        """architect suggest with provider exception returns JSON envelope, not traceback."""
-        import os
-        db_path, config_path = self._make_non_openai_profile_config(tmp_path)
-
-        run_cli(["--db-path", str(db_path), "init-db"])
-
-        cmd = [sys.executable, "-m", "novel_factory.cli",
-               "--db-path", str(db_path),
-               "--config", str(config_path),
-               "architect", "suggest",
-               "--project-id", "demo",
-               "--llm-mode", "real",
-               "--json"]
-        env = os.environ.copy()
-        env["NOVEL_FACTORY_DISABLE_DOTENV"] = "1"
-        env["DEEPSEEK_API_KEY"] = "sk-invalid-key-for-testing"
-        env["DEEPSEEK_BASE_URL"] = "https://httpbin.org/status/401"
-        env.pop("OPENAI_API_KEY", None)
-        env.pop("OPENAI_BASE_URL", None)
-
-        result = subprocess.run(cmd, capture_output=True, text=True, env=env, timeout=60)
-        stdout = result.stdout
-
-        assert "Traceback" not in stdout, f"stdout contains traceback instead of JSON envelope: {stdout[:500]}"
-
-        try:
-            data = json.loads(stdout)
-        except json.JSONDecodeError:
-            raise AssertionError(f"stdout is not valid JSON: {stdout[:300]}")
-
-        assert "ok" in data, f"Missing 'ok' in envelope: {data}"
-        assert "error" in data, f"Missing 'error' in envelope: {data}"
 
     def test_batch_run_provider_exception_returns_envelope(self, tmp_path):
         """batch run with provider exception returns JSON envelope, not traceback."""

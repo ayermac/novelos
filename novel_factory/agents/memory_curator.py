@@ -17,9 +17,9 @@ from ..models.state import ChapterStatus, FactoryState
 from ..llm.openai_compatible import LLMTimeoutError, OutputValidationError
 from ..llm.provider import is_configured_live_provider
 from ..skills.registry import SkillRegistry
-from .base import BaseAgent
-from .skill_hooks import run_agent_skills
-from .self_check import SelfCheckLoop, SelfCheckResult
+from ..agent_runtime.base import BaseAgent
+from ..agent_runtime.skill_hooks import run_agent_skills
+from ..agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
 
 logger = logging.getLogger(__name__)
 

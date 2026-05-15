@@ -25,8 +25,6 @@ OPENCLAW_AGENT_TARGETS = {
     "planner": "planner",
     "author": "author",
     "editor": "editor",
-    "scout": "scout",
-    "architect": "architect",
 }
 
 

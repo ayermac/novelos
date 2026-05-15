@@ -17,7 +17,8 @@ novel_factory/db/      SQLite schema, migrations, repositories
 novel_factory/workflow LangGraph chapter workflow and checkpointing
 novel_factory/llm/     Stub and OpenAI-compatible LLM providers
 novel_factory/cli_app/ CLI command implementation
-novel_factory/agents/  AI agents (planner, screenwriter, author, polisher, editor, etc.)
+novel_factory/agents/  AI agent role implementations (planner, screenwriter, author, polisher, editor, memory_curator)
+novel_factory/agent_runtime/ Shared agent runtime infrastructure (BaseAgent, role profiles, contracts, self-check, skill hooks)
 novel_factory/models/  Pydantic models and state definitions
 novel_factory/config/  Configuration loading and validation
 tests/                 Python regression and version acceptance tests
@@ -141,9 +142,10 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 - **author.py**: Transforms outlines into full text
 - **polisher.py**: Refines and polishes prose
 - **editor.py**: Five-layer review + red-line scanning
-- **scout.py**: Market analysis and topic recommendations
 - **continuity_checker.py**: Checks continuity across chapters
-- **architect.py**: System diagnostics and optimization
+ 
+Retired sidecar roles:
+- `scout`, `architect`, and `secretary` are no longer active runtime agents. Reintroduce them only through a fresh plan aligned with `novel_factory/agent_runtime/`.
 
 ### Workflow (`novel_factory/workflow/`)
 - **graph.py**: LangGraph StateGraph construction and compilation
@@ -216,4 +218,4 @@ Start with:
 - `uv` recommended for reproducible Python dependency management via `uv.lock`
 - SQLite databases, WAL files, build output, Python caches, and frontend dependencies are gitignored
 - `uv.lock` is committed for reproducibility
-- `openclaw-agents/` is treated as a local-only legacy workspace and is ignored by Git
+- `openclaw-agents/` legacy workspace has been removed from the repository; OpenClaw/Codex skill import remains optional through configured external roots

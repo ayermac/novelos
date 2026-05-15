@@ -7,8 +7,8 @@ from typing import Any
 from fastapi import APIRouter, Request
 
 from ..deps import get_repo
-from ...agents.role_profile import list_role_profiles
-from ...agents.decision_trace import DecisionTraceStore
+from ...agent_runtime.decision_trace import DecisionTraceStore
+from ...agent_runtime.role_profile import list_role_profiles
 
 router = APIRouter(prefix="/agent-ops", tags=["agent-ops"])
 

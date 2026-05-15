@@ -9,7 +9,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
-from ...agents.title_contract import build_title_contract
+from ...agent_runtime.title_contract import build_title_contract
 from ...llm.provider import is_configured_live_provider
 
 router = APIRouter()

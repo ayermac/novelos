@@ -98,7 +98,7 @@ def test_core_agents_use_v6_context_in_execute_paths():
 
 def test_handoff_contract_accepts_empty_optional_lists():
     """Planner handoff lists can be intentionally empty and should not false-fail."""
-    from novel_factory.agents.contracts import validate_handoff
+    from novel_factory.agent_runtime.contracts import validate_handoff
 
     ok, issues = validate_handoff(
         "planner",

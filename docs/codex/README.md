@@ -52,6 +52,8 @@
 2. `reports/` 和 `reviews/` 记录已经发生的事实，不再承载未来需求。
 3. `next/` 只用于方向收口和候选路线，不应被开发 Agent 当作已锁定规格。
 4. 历史规格不做大规模改写；如需改变方向，应新增下一阶段文档或新版本规格。
+5. 旧 `novel_factory/web` Jinja/静态页面路线已退役。当前 UI 只走 `frontend/` 的 React/Vite，后端只提供 FastAPI API；历史文档中出现的 `web/templates`、`web/static` 或 `web/design` 仅作为旧版本记录，不应作为新开发入口。
+6. Agent 角色实现只放在 `novel_factory/agents/`；共享运行底座放在 `novel_factory/agent_runtime/`。`scout`、`architect`、`secretary` 旧旁路 Agent 已退役，后续如确需恢复应重新按当前 Agent Runtime 规范规划。
 
 ## 关键文档
 

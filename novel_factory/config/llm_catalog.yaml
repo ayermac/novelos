@@ -26,7 +26,6 @@ catalog:
       - polisher
       - editor
       - continuity_checker
-      - architect
     notes: "Flagship model, strong across all tasks."
 
   - provider: openai
@@ -41,9 +40,7 @@ catalog:
       - speed
       - json
       - planning
-    recommended_agents:
-      - scout
-      - secretary
+    recommended_agents: []
     notes: "Fast and cheap, good for lightweight tasks."
 
   - provider: openai
@@ -62,7 +59,6 @@ catalog:
       - planner
       - screenwriter
       - editor
-      - architect
     notes: "Reasoning-optimized, good for structured planning tasks."
 
   # ── DeepSeek ────────────────────────────────────────────────
@@ -82,8 +78,6 @@ catalog:
     recommended_agents:
       - author
       - polisher
-      - scout
-      - secretary
     notes: "Cost-effective, strong Chinese prose quality."
 
   - provider: deepseek
@@ -102,7 +96,6 @@ catalog:
       - planner
       - screenwriter
       - editor
-      - architect
       - continuity_checker
     notes: "Reasoning-focused, good for planning and analysis."
 
@@ -139,9 +132,7 @@ catalog:
     strengths:
       - speed
       - json
-    recommended_agents:
-      - scout
-      - secretary
+    recommended_agents: []
     notes: "Fast and affordable, good for lightweight tasks."
 
   # ── OpenRouter ──────────────────────────────────────────────
@@ -159,8 +150,6 @@ catalog:
       - json
     recommended_agents:
       - continuity_checker
-      - scout
-      - secretary
     notes: "Very long context, fast, good for summarization."
 
   - provider: openrouter
@@ -176,8 +165,6 @@ catalog:
       - json
       - planning
     recommended_agents:
-      - scout
-      - secretary
       - planner
     notes: "Open model, good for budget-conscious setups."
 

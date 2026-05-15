@@ -12,7 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
-from ...agents.chapter_text import is_chapter_heading
+from ...agent_runtime.chapter_text import is_chapter_heading
 
 router = APIRouter()
 

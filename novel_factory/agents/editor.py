@@ -14,9 +14,9 @@ from ..validators.revision_classifier import classify_issues
 from ..skills.registry import SkillRegistry
 from ..llm.openai_compatible import LLMTimeoutError, OutputValidationError
 from ..llm.provider import is_configured_live_provider
-from .base import BaseAgent
-from .revision_context import normalize_revision_review
-from .skill_hooks import run_agent_skills
+from ..agent_runtime.base import BaseAgent
+from ..agent_runtime.revision_context import normalize_revision_review
+from ..agent_runtime.skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
 

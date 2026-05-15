@@ -457,22 +457,6 @@ class StubLLM(LLMProvider):
                 "revision_target": None,
                 "state_card": {},
             }
-        if "ScoutOutput" in schema_name:
-            return {
-                "market_report": {
-                    "genre": "玄幻",
-                    "platform": "起点",
-                    "audience": "男性读者",
-                    "trends": ["趋势1", "趋势2"],
-                    "opportunities": ["机会1", "机会2"],
-                    "reader_preferences": ["偏好1", "偏好2"],
-                    "competitor_notes": ["竞品1", "竞品2"],
-                    "summary": "市场分析摘要",
-                    "recommendations": ["建议1", "建议2"],
-                },
-                "topic": "都市异能",
-                "keywords": ["关键词1", "关键词2"],
-            }
         if "ContinuityCheckerOutput" in schema_name:
             return {
                 "report": {
@@ -493,22 +477,6 @@ class StubLLM(LLMProvider):
                     "summary": "连续性检查摘要",
                 },
                 "agent_messages": [],
-            }
-        if "ArchitectOutput" in schema_name:
-            return {
-                "proposals": [{
-                    "proposal_type": "quality_rule",
-                    "scope": "quality",
-                    "title": "改进提案",
-                    "description": "描述",
-                    "risk_level": "medium",
-                    "affected_area": ["editor"],
-                    "recommendation": "建议",
-                    "rationale": "理由",
-                    "implementation_notes": "实施说明",
-                }],
-                "summary": "架构改进提案摘要",
-                "total_proposals": 1,
             }
         if "LocalRevisionOutput" in schema_name:
             return {

@@ -14,10 +14,10 @@ from ..validators.chapter_checker import validate_chapter_output, check_word_cou
 from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_critical_violation
 from ..validators.fact_lock import check_fact_integrity, extract_fact_lock
 from ..skills.registry import SkillRegistry
-from .base import BaseAgent
-from .chapter_text import default_chapter_title, ensure_chapter_heading, strip_chapter_heading
-from .revision_context import normalize_revision_review, revision_feedback_block
-from .skill_hooks import run_agent_skills
+from ..agent_runtime.base import BaseAgent
+from ..agent_runtime.chapter_text import default_chapter_title, ensure_chapter_heading, strip_chapter_heading
+from ..agent_runtime.revision_context import normalize_revision_review, revision_feedback_block
+from ..agent_runtime.skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
 

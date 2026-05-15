@@ -56,8 +56,7 @@ a = Analysis(
         (str(pkg_root / "config" / "*.yaml"), "novel_factory/config"),
         (str(pkg_root / "config" / "genre_strategies" / "*.yaml"), "novel_factory/config/genre_strategies"),
         (str(pkg_root / "config" / "skills" / "manifest" / "*.yaml"), "novel_factory/config/skills/manifest"),
-        (str(pkg_root / "agents" / "roles" / "*.yaml"), "novel_factory/agents/roles"),
-        (str(pkg_root / "web" / "design" / "*.html"), "novel_factory/web/design"),
+        (str(pkg_root / "agent_runtime" / "roles" / "*.yaml"), "novel_factory/agent_runtime/roles"),
         # Recursive directories (skill_packages has no __init__.py but PyInstaller can copy it)
         (str(pkg_root / "skill_packages"), "novel_factory/skill_packages"),
     ],
@@ -77,7 +76,6 @@ a = Analysis(
         "langchain_openai",
         "sqlite3",
         "yaml",
-        "jinja2",
         "tenacity",
     ] + novel_factory_hiddenimports,
     hookspath=[],

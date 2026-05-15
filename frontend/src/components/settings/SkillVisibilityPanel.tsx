@@ -179,7 +179,6 @@ const CAPABILITY_FILTERS: { key: CapabilityFilter; label: string }[] = [
 const AGENT_GROUPS = [
   { key: 'creative', label: 'Creative Agents', agents: ['planner', 'screenwriter', 'author', 'polisher', 'editor'] },
   { key: 'support', label: 'Support Agents', agents: ['memory_curator', 'continuity_checker', 'publisher', 'archive'] },
-  { key: 'diagnostic', label: 'Diagnostic/Research Agents', agents: ['scout', 'architect', 'secretary'] },
 ]
 
 const CORE_AGENT_IDS = ['planner', 'screenwriter', 'author', 'polisher', 'editor', 'memory_curator']

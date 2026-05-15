@@ -195,7 +195,7 @@ class TestOpenClawReadiness:
             root = Path(tmpdir) / "openclaw-agents"
             _write_openclaw_skill(root, "planner", "worldbuilding", "Instruction-only skill.")
             _write_openclaw_skill(root, "author", "novel-writing", "Run python3 tools/db.py build_context")
-            _write_openclaw_skill(root, "secretary", "daily-report", "Daily reporting helper.")
+            _write_openclaw_skill(root, "researcher", "daily-report", "Daily reporting helper.")
 
             db_path = Path(tmpdir) / "test.db"
             init_db(str(db_path))
@@ -252,7 +252,7 @@ class TestOpenClawReadiness:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "openclaw-agents"
             _write_openclaw_skill(root, "planner", "worldbuilding", "Instruction-only skill.")
-            _write_openclaw_skill(root, "secretary", "daily-report", "Daily reporting helper.")
+            _write_openclaw_skill(root, "researcher", "daily-report", "Daily reporting helper.")
 
             db_path = Path(tmpdir) / "test.db"
             init_db(str(db_path))

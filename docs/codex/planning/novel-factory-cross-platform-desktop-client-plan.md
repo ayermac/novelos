@@ -121,9 +121,8 @@ Desktop App
    - `novel_factory/config/genre_strategies/*.yaml`
    - `novel_factory/config/skills/manifest/*.yaml`
    - `novel_factory/skill_packages/**/*`
-   - `novel_factory/agents/roles/*.yaml`
-   - `novel_factory/agents/contracts/*.yaml`
-   - `novel_factory/web/design/*.html`
+   - `novel_factory/agent_runtime/roles/*.yaml`
+   - `novel_factory/agent_runtime/contracts/*.yaml`
 
 6. 处理 LangGraph、LangChain、FastAPI、uvicorn 的 hidden imports。
 7. 生成平台侧 sidecar：
@@ -296,40 +295,71 @@ Desktop App
 - 删除密钥后 real 模式给出可解释错误。
 - `PUT /desktop/config` 拒绝写入任何含 `api_key` / `secret` / `token` 的字段。
 
-### M5：长任务、SSE 与进程恢复
+### M5：运行稳定性、健康监控与崩溃恢复
 
-目标：桌面壳不破坏当前生产工作流。
+状态：**已实现**
+
+目标：把客户端从“能打包运行”推进到“用户遇到问题时能看懂、能恢复、能验收”。
 
 实现步骤：
 
-1. 验证章节生成 SSE：
+1. **SidecarManager 状态机**：
 
-   - `/api/run/chapter/start`
-   - `/api/run/chapter/stream`
-   - workflow timeline stream
-   - production auto-run stream
+   - 状态：`starting` → `healthy` → `exited` / `failed` / `stopping`。
+   - 记录最近错误：exit code、signal、command（不含 env）、stderr log path、timestamp、reason。
+   - 异常退出时不让 Electron 主进程退出。
 
-2. Electron sleep / wake 后检测 sidecar 健康。
-3. sidecar 异常退出时：
+2. **主进程 IPC**：
 
-   - 标记 UI 为后端离线
-   - 尝试有限次数重启
-   - 保留最后错误日志入口
+   - `novelos:runtime-status` — 返回当前 sidecar 状态、pid、apiBaseUrl、最近错误、日志路径。
+   - `novelos:restart-sidecar` — 停止当前 sidecar，重新选择端口，重建 env（含 safeStorage 注入），等待 health，成功后返回新 `apiBaseUrl`。
+   - `novelos:quit-app` — 供诊断窗口调用退出应用。
 
-4. 正在运行任务时关闭应用：
+3. **前端 API base 动态更新**：
 
-   - 弹出确认
-   - 或先向后端发送 graceful shutdown 标记
+   - `preload.ts` 暴露 `getApiBaseUrl()` getter，支持 sidecar 重启后动态获取新地址。
+   - `api.ts` 优先调用 `getApiBaseUrl()`。
 
-5. 断连场景复用现有 `client_disconnected` / resume 机制。
-6. 数据库锁定时提供明确恢复建议。
+4. **客户端健康监控 UI**：
+
+   - `DesktopRuntimeBanner` — 顶部非阻塞 banner，8 秒间隔 ping `/api/health`。
+   - 连续失败 2 次后显示：“本地后端服务连接中断”。
+   - 操作：重试连接、重启本地服务（确认 dialog）、打开日志目录。
+   - 恢复后 banner 自动消失。
+   - Settings → 桌面运行时：显示 sidecar 状态、apiBaseUrl、pid、日志路径、最近错误、重启按钮。
+
+5. **启动诊断页增强**：
+
+   - sidecar 启动超时或前端资源缺失时，显示诊断窗口（不依赖 React 资源）。
+   - 内容：错误摘要、启动命令（不含 secret）、日志目录、stderr 路径。
+   - 按钮：重试启动、打开日志目录、打开配置目录、退出应用。
+   - 前端资源缺失时额外显示 expected dist path。
+
+6. **真实 LLM 配置连通性验证**：
+
+   - Settings → 桌面配置 增加“测试 LLM 连接”按钮。
+   - stub 模式提示切换 real 并重启；key missing 提示保存并重启；否则调用 `/settings/validate` 做轻量连通性验证。
+
+7. **一键客户端验收脚本**：
+
+   - `packaging/scripts/smoke-desktop-app-mac.sh`：验证 `.app` 结构、启动、health、数据目录、无残留进程。
+   - 使用 `NOVELOS_DESKTOP_USER_DATA_DIR` 避免污染真实用户数据。
+
+8. **支持独立 userData 路径**：
+
+   - 环境变量 `NOVELOS_DESKTOP_USER_DATA_DIR` 覆盖默认 userData。
+   - 用于验收脚本和便携/调试场景。
 
 验收标准：
 
-- 长章节生成时窗口不会假死。
-- sidecar crash 后 UI 有明确提示。
-- 断开 SSE 后可以重新进入项目页面恢复状态。
-- 关闭应用不会留下 running 状态与实际数据库矛盾。
+- 前端 typecheck / lint / build / vitest 通过。
+- desktop `tsc` 通过。
+- sidecar 崩溃后主进程不退出，UI 显示明确提示。
+- 用户可通过 Settings 一键重启 sidecar，renderer 自动使用新 apiBaseUrl。
+- 诊断窗口包含可操作的日志和目录入口。
+- 打包后 smoke 脚本 100% PASS。
+- 不引入新 native dependency。
+- 不泄露 API key。
 
 ### M6：跨平台 CI 与发布流水线
 

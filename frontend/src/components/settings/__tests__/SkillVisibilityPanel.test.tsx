@@ -44,7 +44,7 @@ const skills = [
 ]
 
 const skillConfig = {
-  agents: ['planner', 'screenwriter', 'author', 'polisher', 'editor', 'memory_curator', 'scout'],
+  agents: ['planner', 'screenwriter', 'author', 'polisher', 'editor', 'memory_curator'],
   stages: {
     planner: ['plan', 'after_llm'],
     screenwriter: ['after_llm'],
@@ -52,7 +52,6 @@ const skillConfig = {
     polisher: ['after_llm', 'before_save'],
     editor: ['before_review'],
     memory_curator: ['after_review', 'after_extract'],
-    scout: ['research'],
   },
   agent_skills: {
     planner: { plan: ['disabled-mounted'], after_llm: ['chapter-objective-checker'] },
@@ -61,7 +60,6 @@ const skillConfig = {
     polisher: { after_llm: ['humanizer-zh'], before_save: [] },
     editor: { before_review: ['ai-style-detector'] },
     memory_curator: { after_review: [], after_extract: ['memory-patch-validator'] },
-    scout: { research: [] },
   },
   available_skills: [
     {
@@ -83,8 +81,8 @@ const skillConfig = {
       package: null,
       legacy: true,
       class_name: null,
-      allowed_targets: [{ agent: 'scout', stage: 'research' }],
-      mountable_targets: [{ agent: 'scout', stage: 'research' }],
+      allowed_targets: [{ agent: 'memory_curator', stage: 'after_extract' }],
+      mountable_targets: [{ agent: 'memory_curator', stage: 'after_extract' }],
     },
     {
       id: 'disabled-mounted',
@@ -300,8 +298,8 @@ function mockApi() {
         manifest: true,
         findings: [{ severity: 'warn', code: 'legacy', message: 'legacy target requires review' }],
         recommended_actions: ['Review mount target'],
-        allowed_targets: [{ agent: 'scout', stage: 'research' }],
-        mountable_targets: [{ agent: 'scout', stage: 'research' }],
+        allowed_targets: [{ agent: 'memory_curator', stage: 'after_extract' }],
+        mountable_targets: [{ agent: 'memory_curator', stage: 'after_extract' }],
       },
     }
     if (path === '/skills/mount') return { ok: true, data: body }
@@ -360,7 +358,6 @@ describe('SkillVisibilityPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: /Agent 编排/ }))
     expect(screen.getByText('Creative Agents')).toBeInTheDocument()
     expect(screen.getByText('Support Agents')).toBeInTheDocument()
-    expect(screen.getByText('Diagnostic/Research Agents')).toBeInTheDocument()
     expect(screen.getAllByText('planner').length).toBeGreaterThan(0)
     expect(screen.getAllByText('draft').length).toBeGreaterThan(0)
     expect(screen.getByText('style-polisher')).toBeInTheDocument()

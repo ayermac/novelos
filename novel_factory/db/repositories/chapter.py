@@ -630,9 +630,7 @@ class ChapterRepositoryMixin:
         finally:
             conn.close()
 
-    # ── v2 Sidecar Agents ────────────────────────────────────────
-
-    # Scout Agent methods
+    # ── Chapter recovery ───────────────────────────────────────────
 
     def reset_chapter(
         self,

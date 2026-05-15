@@ -283,7 +283,7 @@ def _ensure_tool_registry() -> Any | None:
 def _ensure_trace_store(repo: Repository) -> Any | None:
     """v6.0: Create a DecisionTraceStore backed by repository."""
     try:
-        from ..agents.decision_trace import DecisionTraceStore
+        from ..agent_runtime.decision_trace import DecisionTraceStore
         return DecisionTraceStore(repo)
     except Exception as e:
         logger.warning(f"Failed to create DecisionTraceStore: {e}")
@@ -380,7 +380,7 @@ def create_node_runners(
         prev_agent = _previous_agent_in_steps(state)
         if prev_agent:
             try:
-                from ..agents.contracts import validate_handoff
+                from ..agent_runtime.contracts import validate_handoff
                 # Build a lightweight artifact from state for contract validation
                 artifact: dict[str, Any] = {"chapter_status": status_before}
                 workflow_run_id = state.get("workflow_run_id")
