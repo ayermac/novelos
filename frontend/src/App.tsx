@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Projects from './pages/Projects'
@@ -34,9 +34,11 @@ function RunRedirect() {
 }
 
 function App() {
+  const Router = window.__NOVELOS_DESKTOP__ ? HashRouter : BrowserRouter
+
   return (
     <AppDialogProvider>
-      <BrowserRouter>
+      <Router>
         <Routes>
           <Route path="/" element={<Layout />}>
             <Route index element={<Dashboard />} />
@@ -52,7 +54,7 @@ function App() {
             <Route path="agent-ops" element={<AgentOps />} />
           </Route>
         </Routes>
-      </BrowserRouter>
+      </Router>
     </AppDialogProvider>
   )
 }
