@@ -243,9 +243,28 @@ def _get_planned_chapter_with_content(repo, project_id: str) -> dict | None:
             continue
         content = (chapter.get("content") or "").strip()
         word_count = chapter.get("word_count") or 0
-        if content or word_count > 0:
+        if (content or word_count > 0) and not _has_explicit_reset_recovery(
+            repo, project_id, chapter.get("chapter_number")
+        ):
             return chapter
     return None
+
+
+def _has_explicit_reset_recovery(repo, project_id: str, chapter_number: int | None) -> bool:
+    if chapter_number is None:
+        return False
+    try:
+        runs = repo.get_workflow_runs_for_project(
+            project_id,
+            chapter_number=chapter_number,
+            limit=5,
+        )
+    except Exception:
+        return False
+    return any(
+        run.get("status") == "completed" and run.get("current_node") == "reset_recovery"
+        for run in runs
+    )
 
 
 def _detect_chapter_workflow_contradictions(repo, project_id: str) -> list[dict]:

@@ -27,7 +27,8 @@ from ..llm.openai_compatible import OutputValidationError
 from ..llm.provider import is_configured_live_provider
 from ..skills.registry import SkillRegistry
 from .base import BaseAgent
-from .chapter_text import ensure_chapter_heading, first_content_line, is_chapter_heading
+from .chapter_text import ensure_chapter_heading, first_content_line, is_chapter_heading, strip_chapter_heading
+from .revision_context import normalize_revision_review, revision_feedback_block
 from .skill_hooks import run_agent_skills
 from .self_check import SelfCheckLoop, SelfCheckResult
 
@@ -122,12 +123,10 @@ class AuthorAgent(BaseAgent):
         # If revision, include review issues
         chapter = self._get_chapter_info(state)
         if chapter and chapter.get("status") == ChapterStatus.REVISION.value:
-            review = self.repo.get_latest_review(state["project_id"], chapter["id"])
-            if review:
-                issues = json.loads(review.get("issues", "[]"))
-                suggestions = json.loads(review.get("suggestions", "[]"))
-                parts.append(f"【退回问题】\n" + "\n".join(f"- {i}" for i in issues))
-                parts.append(f"【修改建议】\n" + "\n".join(f"- {s}" for s in suggestions))
+            review = state.get("_revision_review") or self.repo.get_latest_review(state["project_id"], chapter["id"])
+            feedback = revision_feedback_block(review)
+            if feedback:
+                parts.append(feedback)
 
         return "\n\n".join(parts)
 
@@ -140,6 +139,24 @@ class AuthorAgent(BaseAgent):
 
         chapter = self._get_chapter_info(state)
         is_revision = chapter and chapter.get("status") == ChapterStatus.REVISION.value
+
+        # v6.1.1: Emit revision context loaded event
+        if is_revision:
+            revision_review = normalize_revision_review(state.get("_revision_review"))
+            if revision_review:
+                issues = revision_review.get("issues") or []
+                suggestions = revision_review.get("suggestions") or []
+                exec_events.append({
+                    "event_type": "revision_context_loaded",
+                    "message": f"返修依据：评分 {revision_review.get('score', '?')}，{len(issues)} 个问题，{len(suggestions)} 条建议",
+                    "payload": {
+                        "review_id": revision_review.get("review_id"),
+                        "score": revision_review.get("score"),
+                        "revision_target": revision_review.get("revision_target"),
+                        "issues": issues[:10],
+                        "suggestions": suggestions[:10],
+                    },
+                })
 
         task_desc = "返修" if is_revision else "创作"
         system_prompt = f"{AUTHOR_SYSTEM_PROMPT}\n\n{format_death_penalty_for_prompt()}"
@@ -198,7 +215,8 @@ class AuthorAgent(BaseAgent):
                 issues.append({"type": "death_penalty", "message": f"Violations: {dp.violations}"})
             # Word count
             wt = self._get_word_target(state)
-            wc_passed, wc_msg = check_word_count_quality_gate(out.content, wt, "author")
+            body_content = strip_chapter_heading(out.content, chapter_number, out.title)
+            wc_passed, wc_msg = check_word_count_quality_gate(body_content, wt, "author")
             if not wc_passed:
                 issues.append({"type": "word_count", "message": wc_msg})
             repairable = any(i["type"] in ("word_count", "death_penalty") for i in issues)
@@ -212,7 +230,8 @@ class AuthorAgent(BaseAgent):
         def _repair_wrap(data: dict[str, Any], check: SelfCheckResult) -> dict[str, Any] | None:
             out = data["output"]
             wt = self._get_word_target(state)
-            wc_passed, wc_msg = check_word_count_quality_gate(out.content, wt, "author")
+            body_content = strip_chapter_heading(out.content, chapter_number, out.title)
+            wc_passed, wc_msg = check_word_count_quality_gate(body_content, wt, "author")
             if not wc_passed:
                 expanded = self._try_expand_short_output(state, out, wc_msg)
                 if expanded is not None:
@@ -277,10 +296,11 @@ class AuthorAgent(BaseAgent):
         # Legacy skill hooks (still run for compatibility)
         instruction = self._get_instruction(state) or {}
         from ..validators.chapter_checker import count_words as _count_words
+        body_content = strip_chapter_heading(output.content, chapter_number, output.title)
         exec_events.append({
             "event_type": "artifact_saved",
-            "message": f"保存产物：章节初稿 ({_count_words(output.content)} 字)",
-            "payload": {"artifact_type": "draft", "word_count": _count_words(output.content)},
+            "message": f"保存产物：章节初稿 ({_count_words(body_content)} 字)",
+            "payload": {"artifact_type": "draft", "word_count": _count_words(body_content)},
         })
         run_agent_skills(
             repo=self.repo,
@@ -301,12 +321,12 @@ class AuthorAgent(BaseAgent):
         # v5.3.0: Word count quality gate (final guard after self-check loop)
         word_target = self._get_word_target(state)
         word_gate_passed, word_gate_msg = check_word_count_quality_gate(
-            output.content, word_target, "author"
+            body_content, word_target, "author"
         )
         if not word_gate_passed:
             logger.warning("Author: word count quality gate failed: %s", word_gate_msg)
             from ..validators.chapter_checker import count_words
-            actual_wc = count_words(output.content)
+            actual_wc = count_words(body_content)
             return {
                 "error": f"字数质量门未通过: {word_gate_msg}",
                 "chapter_status": state.get("chapter_status"),
@@ -323,6 +343,28 @@ class AuthorAgent(BaseAgent):
                 "_trace": trace,
                 "_autonomy": autonomy,
             }
+
+        # v6.1.1: Emit revision diff event for revision chapters
+        if is_revision and chapter:
+            from ..validators.chapter_checker import count_words as _cw
+            original_content = chapter.get("content", "") or ""
+            original_body = strip_chapter_heading(original_content, chapter_number, chapter.get("title"))
+            revised_body = strip_chapter_heading(output.content, chapter_number, output.title)
+            original_wc = _cw(original_body)
+            revised_wc = _cw(revised_body)
+            wc_delta = revised_wc - original_wc
+            low_change = abs(wc_delta) < 20 and original_body.strip() == revised_body.strip()
+            exec_events.append({
+                "event_type": "revision_diff_generated",
+                "message": f"返修改动：{original_wc} → {revised_wc} 字（{'内容几乎未变' if low_change else f'变化 {wc_delta:+d} 字'}）",
+                "status": "warning" if low_change else "info",
+                "payload": {
+                    "original_word_count": original_wc,
+                    "revised_word_count": revised_wc,
+                    "word_count_delta": wc_delta,
+                    "low_change_warning": low_change,
+                },
+            })
 
         # Advance status FIRST to lock the transition; abort if stale
         # For revision, expect status to be revision; for normal flow, expect scripted
@@ -355,9 +397,19 @@ class AuthorAgent(BaseAgent):
 
             # Save artifact (bind to workflow run for isolation)
             workflow_run_id = state.get("workflow_run_id")
+            artifact_payload = output.model_dump()
+            # v6.1.1: Embed revision metadata in artifact for auditability
+            if is_revision:
+                revision_review = normalize_revision_review(state.get("_revision_review")) or {}
+                artifact_payload["_revision_metadata"] = {
+                    "revision_source_review_id": revision_review.get("review_id"),
+                    "revision_target": revision_review.get("revision_target", "author"),
+                    "revision_issues": revision_review.get("issues", []),
+                    "revision_suggestions": revision_review.get("suggestions", []),
+                }
             self.repo.save_artifact(
                 project_id, chapter_number, "author", "draft",
-                content_json=output.model_dump(),
+                content_json=artifact_payload,
                 workflow_run_id=workflow_run_id,
             )
         except Exception as e:
@@ -747,7 +799,7 @@ class AuthorAgent(BaseAgent):
                 return output
             return AuthorOutput(**normalize_declared_word_count(data))
 
-        sanitized_content, replacements = sanitize_death_penalty_text(output.content)
+        sanitized_content, replacements = sanitize_death_penalty_text(data.get("content", ""))
         if replacements:
             logger.info(
                 "Author: sanitized death-penalty phrases before validation: %s",
@@ -804,4 +856,5 @@ class AuthorAgent(BaseAgent):
         """
         word_target = self._get_word_target(state)
 
-        return check_word_count_quality_gate(content, word_target, "author")
+        body_content = strip_chapter_heading(content, state["chapter_number"])
+        return check_word_count_quality_gate(body_content, word_target, "author")

@@ -102,7 +102,7 @@ def build_graph(
         graph.add_node("memory_curator", runners["memory_curator"])
         graph.add_node("publisher", lambda s: nodes.publisher_node(s, repo))
         graph.add_node("awaiting_publish", lambda s: nodes.awaiting_publish_node(s, repo))  # v5.3.0
-        graph.add_node("revision_router", lambda s: nodes.revision_router_node(s))
+        graph.add_node("revision_router", lambda s: nodes.revision_router_node(s, repo))
         graph.add_node("human_review", lambda s: nodes.human_review_node(s, repo))
         graph.add_node("archive", lambda s: nodes.archive_node(s, repo))
     else:
@@ -147,7 +147,7 @@ def build_graph(
             "awaiting_publish",
             lambda s: nodes.awaiting_publish_node(s, repo),
         )  # v5.3.0
-        graph.add_node("revision_router", lambda s: nodes.revision_router_node(s))
+        graph.add_node("revision_router", lambda s: nodes.revision_router_node(s, repo))
         graph.add_node(
             "human_review",
             lambda s: nodes.human_review_node(s, repo),

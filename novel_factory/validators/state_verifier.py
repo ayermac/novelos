@@ -49,8 +49,8 @@ def check_status_precondition(
         return violations  # Unknown agent, skip check
 
     # Special cases
-    if agent_id == "planner" and current_status in ("idea", "outlined"):
-        return violations  # planner can also plan from idea/outlined
+    if agent_id == "planner" and current_status in ("idea", "outlined", ChapterStatus.REVISION.value):
+        return violations  # planner can also plan from idea/outlined or planner-targeted revision
 
     if agent_id in ("author", "polisher") and current_status == ChapterStatus.REVISION.value:
         return violations  # revision can go to author or polisher

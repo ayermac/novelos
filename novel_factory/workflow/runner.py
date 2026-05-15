@@ -13,6 +13,7 @@ import time
 from typing import Any, Generator
 
 from ..config.settings import Settings
+from ..models.state import ChapterStatus
 from ..db.repository import Repository
 from ..models.state import FactoryState
 from .graph import compile_graph
@@ -242,6 +243,7 @@ def run_with_graph(
     repo: Repository,
     llm_mode: str = "stub",
     max_steps: int = 50,
+    workflow_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Run chapter production via LangGraph.
 
@@ -304,13 +306,24 @@ def run_with_graph(
             "awaiting_publish": _is_awaiting,
         }
 
-    _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
+    if workflow_run_id:
+        delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
+    else:
+        _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
 
     # v5.3.0: Context Readiness Gate
     readiness_error = _check_context_readiness_for_run(
         repo, project_id, chapter_number, current_status
     )
     if readiness_error:
+        if workflow_run_id:
+            repo.update_workflow_run(
+                workflow_run_id,
+                status="blocked",
+                current_node="context_readiness",
+                error_message=readiness_error.get("error"),
+            )
+            readiness_error["run_id"] = workflow_run_id
         return readiness_error
 
     # Build initial state
@@ -327,6 +340,26 @@ def run_with_graph(
         **_runtime_budget_state(settings, repo, project_id),
     }
 
+    # v6.1.1: Recover revision_target from latest review when chapter is in revision.
+    # This ensures routing functions can find the correct Agent even when
+    # quality_gate is not yet in state (fresh workflow start for revision chapter).
+    if current_status == ChapterStatus.REVISION.value and not state.get("quality_gate"):
+        from .conditions import resolve_revision_target, get_latest_review_data
+        resolved_target = resolve_revision_target(repo, project_id, chapter_number)
+        review = get_latest_review_data(repo, project_id, chapter_number)
+        state["quality_gate"] = {
+            "pass": False,
+            "revision_target": resolved_target,
+        }
+        if review:
+            state["_revision_review"] = {
+                "review_id": review.get("id"),
+                "score": review.get("score"),
+                "revision_target": review.get("revision_target"),
+                "issues": review.get("issues"),
+                "suggestions": review.get("suggestions"),
+            }
+
     # Build LLMRouter
     llm_router = _build_llm_router(settings, llm_mode)
 
@@ -335,7 +368,7 @@ def run_with_graph(
 
     # Build initial state with workflow_run_id placeholder
     # (will be populated by health_check_node)
-    state["workflow_run_id"] = ""
+    state["workflow_run_id"] = workflow_run_id or ""
 
     # Derive checkpoint DB path from the main repository DB so checkpoints
     # always follow the data they belong to — never in the repo root.
@@ -487,6 +520,24 @@ def run_with_graph_stream(
         "llm_mode": llm_mode,
         **_runtime_budget_state(settings, repo, project_id),
     }
+
+    # v6.1.1: Recover revision_target from latest review for revision chapters.
+    if current_status == ChapterStatus.REVISION.value and not state.get("quality_gate"):
+        from .conditions import resolve_revision_target, get_latest_review_data
+        resolved_target = resolve_revision_target(repo, project_id, chapter_number)
+        review = get_latest_review_data(repo, project_id, chapter_number)
+        state["quality_gate"] = {
+            "pass": False,
+            "revision_target": resolved_target,
+        }
+        if review:
+            state["_revision_review"] = {
+                "review_id": review.get("id"),
+                "score": review.get("score"),
+                "revision_target": review.get("revision_target"),
+                "issues": review.get("issues"),
+                "suggestions": review.get("suggestions"),
+            }
 
     # Build LLMRouter
     try:

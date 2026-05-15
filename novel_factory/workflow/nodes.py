@@ -27,6 +27,7 @@ from .execution_events import (
     build_context_loaded_message,
     verify_agent_completion_evidence,
     EVENT_CONTEXT_LOADED,
+    EVENT_LLM_STARTED,
     EVENT_LLM_COMPLETED,
     EVENT_LLM_FAILED,
     EVENT_EVIDENCE_VERIFIED,
@@ -470,6 +471,12 @@ def create_node_runners(
                 pass  # Best-effort
 
         agent_started_at = time.perf_counter()
+        log_execution_event(
+            repo, state, agent_name, EVENT_LLM_STARTED,
+            message=f"开始调用模型：{agent_name}",
+            agent_id=agent_name,
+            status="running",
+        )
         result = _handle_retryable_quality_gate(state, repo, agent.run(state))
         agent_latency_ms = int((time.perf_counter() - agent_started_at) * 1000)
 
@@ -884,9 +891,13 @@ def awaiting_publish_node(state: FactoryState, repo: Repository) -> dict[str, An
     }
 
 
-def revision_router_node(state: FactoryState) -> dict[str, Any]:
+def revision_router_node(state: FactoryState, repo: Repository | None = None) -> dict[str, Any]:
     """Determine where to route revision based on review result."""
-    # Just pass through — routing is handled by conditional edges
+    if repo is not None:
+        _update_run_node(state, repo, "revision_router")
+        _log_node_event(state, repo, "revision_router", "started", status="running")
+        _log_node_event(state, repo, "revision_router", "completed", status="completed")
+    # Pass through — routing is handled by conditional edges
     return {}
 
 

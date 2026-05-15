@@ -15,6 +15,7 @@ from ..skills.registry import SkillRegistry
 from ..llm.openai_compatible import LLMTimeoutError, OutputValidationError
 from ..llm.provider import is_configured_live_provider
 from .base import BaseAgent
+from .revision_context import normalize_revision_review
 from .skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
@@ -405,6 +406,28 @@ class EditorAgent(BaseAgent):
         # Q5: Write learned patterns when rejecting
         if not output.pass_:
             self._save_learned_patterns(project_id, chapter_number, output)
+
+        # v6.1.1: Emit revision followup verified event after review on revision chapter
+        prev_review = normalize_revision_review(state.get("_revision_review"))
+        if prev_review:
+            prev_issues = prev_review.get("issues") or []
+            prev_issue_set = set(str(i).strip() for i in (prev_issues or []) if str(i).strip())
+            current_issue_set = set(str(i).strip() for i in (output.issues or []) if str(i).strip())
+            resolved = list(prev_issue_set - current_issue_set)[:10]
+            unresolved = list(prev_issue_set & current_issue_set)[:10]
+            exec_events.append({
+                "event_type": "revision_followup_verified",
+                "message": f"返修复核：{'通过' if output.pass_ else '未通过'}，已解决 {len(resolved)} 项，未解决 {len(unresolved)} 项",
+                "status": "info" if output.pass_ else "warning",
+                "payload": {
+                    "source_review_id": prev_review.get("review_id"),
+                    "resolved": resolved,
+                    "unresolved": unresolved,
+                    "partially_resolved": [],
+                    "current_score": output.score,
+                    "previous_score": prev_review.get("score"),
+                },
+            })
 
         # Advance chapter status FIRST to lock the transition; abort if stale
         if output.pass_:

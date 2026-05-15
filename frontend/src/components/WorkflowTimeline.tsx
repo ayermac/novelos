@@ -27,6 +27,27 @@ interface Props {
   compact?: boolean
 }
 
+// v6.1.1: Event type label mapping (Chinese)
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  context_loaded: '上下文加载',
+  llm_started: 'LLM 调用开始',
+  llm_completed: 'LLM 调用完成',
+  llm_failed: 'LLM 调用失败',
+  artifact_saved: '产物保存',
+  skill_completed: 'Skill 完成',
+  self_check_completed: '自检完成',
+  fallback_used: '降级兜底',
+  diff_generated: '改动摘要',
+  evidence_verified: '证据校验',
+  revision_context_loaded: '返修依据',
+  revision_diff_generated: '返修改动',
+  revision_followup_verified: '返修复核',
+}
+
+function eventLabel(eventType: string): string {
+  return EVENT_TYPE_LABELS[eventType] || eventType
+}
+
 function stepStatusIcon(status: string): string {
   switch (status) {
     case 'completed':
@@ -178,18 +199,25 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
                           <span className="evidence-badge evidence-pass">证据校验通过</span>
                         )}
                       </div>
-                      {step.events!.map((ev, idx) => (
-                        <div key={ev.id || `ev-${idx}`} className={`exec-event exec-event-${ev.status || 'info'}`}>
-                          <span className="exec-event-dot" />
-                          <span className="exec-event-msg">{ev.message || ev.event_type}</span>
-                          {ev.latency_ms != null && ev.latency_ms > 0 && (
-                            <span className="exec-event-meta">{(ev.latency_ms / 1000).toFixed(1)}s</span>
-                          )}
-                          {ev.token_count != null && ev.token_count > 0 && (
-                            <span className="exec-event-meta">{ev.token_count} tokens</span>
-                          )}
-                        </div>
-                      ))}
+                      {step.events!.map((ev, idx) => {
+                        const isLowChange = ev.payload && (ev.payload as Record<string, unknown>).low_change_warning === true
+                        return (
+                          <div key={ev.id || `ev-${idx}`} className={`exec-event exec-event-${ev.status || 'info'}${isLowChange ? ' exec-event-low-change' : ''}`}>
+                            <span className="exec-event-dot" />
+                            <span className="exec-event-type">{eventLabel(ev.event_type)}</span>
+                            <span className="exec-event-msg">{ev.message || ''}</span>
+                            {isLowChange && (
+                              <span className="exec-event-warn-tag">内容几乎未变</span>
+                            )}
+                            {ev.latency_ms != null && ev.latency_ms > 0 && (
+                              <span className="exec-event-meta">{(ev.latency_ms / 1000).toFixed(1)}s</span>
+                            )}
+                            {ev.token_count != null && ev.token_count > 0 && (
+                              <span className="exec-event-meta">{ev.token_count} tokens</span>
+                            )}
+                          </div>
+                        )
+                      })}
                     </div>
                   )}
                   {isExpanded && hasArtifacts && (
@@ -448,6 +476,31 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
         .wf-timeline .exec-event-msg {
           min-width: 0;
           overflow-wrap: anywhere;
+        }
+        .wf-timeline .exec-event-type {
+          font-size: 11px;
+          font-weight: 500;
+          color: var(--text-muted);
+          white-space: nowrap;
+          padding: 1px 5px;
+          background: rgba(148, 163, 184, 0.1);
+          border-radius: 3px;
+          flex-shrink: 0;
+        }
+        .wf-timeline .exec-event-low-change {
+          background: rgba(251, 191, 36, 0.06);
+          border-radius: 4px;
+          padding: 3px 6px;
+          margin: 1px -6px;
+        }
+        .wf-timeline .exec-event-warn-tag {
+          font-size: 10px;
+          font-weight: 500;
+          color: #d97706;
+          padding: 1px 5px;
+          background: #fef3c7;
+          border-radius: 3px;
+          white-space: nowrap;
         }
         .wf-timeline .exec-event-meta {
           font-size: 10px;

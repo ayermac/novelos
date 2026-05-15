@@ -438,6 +438,25 @@ async def get_workflow_timeline(
             )
             chapter = repo.get_chapter(project_id, chapter_number) or chapter
 
+        if chapter.get("status") == "revision":
+            from ...workflow.reconciliation import reconcile_revision_running_workflows
+
+            reconcile_revision_running_workflows(
+                repo,
+                project_id,
+                chapter_number,
+                run_id=run_id,
+            )
+        elif chapter.get("status") in {"scripted", "drafted", "polished", "review"}:
+            from ...workflow.reconciliation import reconcile_interrupted_running_workflows
+
+            reconcile_interrupted_running_workflows(
+                repo,
+                project_id,
+                chapter_number,
+                run_id=run_id,
+            )
+
         # Find target run
         target_run: dict | None = None
         if run_id:

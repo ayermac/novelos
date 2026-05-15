@@ -15,7 +15,8 @@ from ..validators.death_penalty import check_death_penalty, check_death_penalty_
 from ..validators.fact_lock import check_fact_integrity, extract_fact_lock
 from ..skills.registry import SkillRegistry
 from .base import BaseAgent
-from .chapter_text import default_chapter_title, ensure_chapter_heading
+from .chapter_text import default_chapter_title, ensure_chapter_heading, strip_chapter_heading
+from .revision_context import normalize_revision_review, revision_feedback_block
 from .skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
@@ -66,9 +67,21 @@ class PolisherAgent(BaseAgent):
         builder = ContextBuilder(self.repo)
         title_contract = self._get_title_contract_context(state["project_id"])
         context = builder.build_for_polisher(state["project_id"], state["chapter_number"])
+        parts = []
         if title_contract:
-            return f"{title_contract}\n\n{context}"
-        return context
+            parts.append(title_contract)
+        chapter = self._get_chapter_info(state)
+        if state.get("chapter_status") == ChapterStatus.REVISION.value or (
+            chapter and chapter.get("status") == ChapterStatus.REVISION.value
+        ):
+            review = state.get("_revision_review")
+            if not review and chapter:
+                review = self.repo.get_latest_review(state["project_id"], chapter["id"])
+            feedback = revision_feedback_block(review)
+            if feedback:
+                parts.append(feedback)
+        parts.append(context)
+        return "\n\n".join(parts)
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
@@ -76,6 +89,25 @@ class PolisherAgent(BaseAgent):
         exec_events: list[dict] = []
 
         context = self._build_v6_context(state)
+
+        # v6.1.1: Emit revision context loaded event for revision chapters
+        current_status = state.get("chapter_status", "")
+        if current_status == ChapterStatus.REVISION.value:
+            revision_review = normalize_revision_review(state.get("_revision_review"))
+            if revision_review:
+                issues = revision_review.get("issues") or []
+                suggestions = revision_review.get("suggestions") or []
+                exec_events.append({
+                    "event_type": "revision_context_loaded",
+                    "message": f"返修依据：评分 {revision_review.get('score', '?')}，{len(issues)} 个问题，{len(suggestions)} 条建议",
+                    "payload": {
+                        "review_id": revision_review.get("review_id"),
+                        "score": revision_review.get("score"),
+                        "revision_target": revision_review.get("revision_target"),
+                        "issues": issues[:10],
+                        "suggestions": suggestions[:10],
+                    },
+                })
 
         messages = [
             {"role": "system", "content": POLISHER_SYSTEM_PROMPT},
@@ -103,7 +135,8 @@ class PolisherAgent(BaseAgent):
 
         # v6.1: Compute diff summary before skills may modify content
         from ..validators.chapter_checker import count_words as _count_words
-        original_wc = _count_words(original_content)
+        original_body = strip_chapter_heading(original_content, chapter_number, (chapter or {}).get("title"))
+        original_wc = _count_words(original_body)
 
         # Apply skills from config (after_llm stage)
         polished_content = output.content
@@ -228,7 +261,8 @@ class PolisherAgent(BaseAgent):
         # Normal flow polishes a drafted chapter; revision flow polishes a
         # chapter currently marked revision.
         # v6.1: Log diff summary
-        polished_wc = _count_words(polished_content)
+        polished_body = strip_chapter_heading(polished_content, chapter_number, chapter_title)
+        polished_wc = _count_words(polished_body)
         changed_scope = output.changed_scope if hasattr(output, "changed_scope") else []
         diff_msg = f"改动：{original_wc} → {polished_wc} 字"
         if changed_scope:
@@ -236,14 +270,18 @@ class PolisherAgent(BaseAgent):
             diff_msg += f"，改动范围：{scope_str}"
         if abs(polished_wc - original_wc) < 10:
             diff_msg += "（内容几乎未变）"
+        low_change = abs(polished_wc - original_wc) < 10
+        event_type = "revision_diff_generated" if current_status == ChapterStatus.REVISION.value else "diff_generated"
         exec_events.append({
-            "event_type": "diff_generated",
+            "event_type": event_type,
             "message": diff_msg,
             "payload": {
                 "original_word_count": original_wc,
                 "polished_word_count": polished_wc,
+                "revised_word_count": polished_wc,
+                "word_count_delta": polished_wc - original_wc,
                 "changed_scope": changed_scope,
-                "low_change_warning": abs(polished_wc - original_wc) < 10,
+                "low_change_warning": low_change,
             },
         })
 
@@ -291,6 +329,15 @@ class PolisherAgent(BaseAgent):
             workflow_run_id = state.get("workflow_run_id")
             artifact_payload = output.model_dump()
             artifact_payload["content"] = polished_content
+            # v6.1.1: Embed revision metadata in artifact for auditability
+            if current_status == ChapterStatus.REVISION.value:
+                revision_review = normalize_revision_review(state.get("_revision_review")) or {}
+                artifact_payload["_revision_metadata"] = {
+                    "revision_source_review_id": revision_review.get("review_id"),
+                    "revision_target": revision_review.get("revision_target", "polisher"),
+                    "revision_issues": revision_review.get("issues", []),
+                    "revision_suggestions": revision_review.get("suggestions", []),
+                }
             self.repo.save_artifact(
                 project_id, chapter_number, "polisher", "polished_draft",
                 content_json=artifact_payload,

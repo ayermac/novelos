@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
@@ -18,6 +18,105 @@ class RunChapterRequest(BaseModel):
     project_id: str
     chapter: int
     llm_mode: str | None = None
+
+
+def _run_chapter_background(
+    project_id: str,
+    chapter: int,
+    db_path: str,
+    settings,
+    llm_mode: str,
+    run_id: str,
+) -> None:
+    """Run chapter production outside the browser/SSE connection lifecycle."""
+    from ...db.repository import Repository
+    from ...workflow.runner import run_with_graph
+
+    repo = Repository(db_path)
+    try:
+        result = run_with_graph(
+            project_id=project_id,
+            chapter_number=chapter,
+            settings=settings,
+            repo=repo,
+            llm_mode=llm_mode,
+            workflow_run_id=run_id,
+        )
+        if result.get("error"):
+            # Some setup failures return before a workflow node can finalize.
+            repo.update_workflow_run(
+                run_id,
+                status="failed",
+                error_message=result.get("error"),
+            )
+    except Exception as exc:
+        repo.update_workflow_run(run_id, status="failed", error_message=str(exc))
+
+
+@router.post("/run/chapter/start")
+async def start_chapter_run(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    body: RunChapterRequest,
+) -> EnvelopeResponse:
+    """Start chapter production as a server-side background job.
+
+    The returned run_id can be observed through the workflow timeline/stream
+    endpoints. Unlike /run/chapter/stream, disconnecting the browser no longer
+    cancels the production workflow.
+    """
+    from ..deps import get_repo, get_settings, get_llm_mode
+
+    try:
+        repo = get_repo(request)
+        settings = get_settings(request)
+        llm_mode = body.llm_mode or get_llm_mode(request)
+
+        project = repo.get_project(body.project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{body.project_id}' 不存在")
+
+        chapter = repo.get_chapter(body.project_id, body.chapter)
+        if not chapter:
+            repo.add_chapter(
+                project_id=body.project_id,
+                chapter_number=body.chapter,
+                title=f"第 {body.chapter} 章",
+                status="planned",
+            )
+            chapter = repo.get_chapter(body.project_id, body.chapter)
+
+        if chapter and chapter.get("status") == "pending":
+            repo.update_chapter_status(body.project_id, body.chapter, "planned")
+
+        from ._run_guards import check_chapter_run_guard
+
+        guard_error = check_chapter_run_guard(repo, body.project_id, body.chapter)
+        if guard_error:
+            return error_response(guard_error.code, guard_error.message, details=guard_error.details)
+
+        run_id = repo.create_workflow_run(body.project_id, body.chapter)
+        background_tasks.add_task(
+            _run_chapter_background,
+            body.project_id,
+            body.chapter,
+            repo.db_path,
+            settings,
+            llm_mode,
+            run_id,
+        )
+
+        return envelope_response({
+            "run_id": run_id,
+            "project_id": body.project_id,
+            "chapter": body.chapter,
+            "workflow_status": "running",
+            "status": "running",
+            "llm_mode": llm_mode,
+            "message": "章节生成已在后台启动",
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"启动章节生成失败: {str(e)}")
 
 
 @router.post("/run/chapter")

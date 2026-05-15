@@ -11,6 +11,7 @@ from ..models.state import ChapterStatus, FactoryState
 from ..skills.registry import SkillRegistry
 from ..validators.chapter_checker import derive_word_target
 from .base import BaseAgent
+from .revision_context import revision_feedback_block
 from .skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
@@ -61,6 +62,17 @@ class PlannerAgent(BaseAgent):
         if review_notes:
             latest_note = review_notes[0]
             parts.append(f"【人工审核意见】\n{latest_note['notes']}")
+
+        chapter = self._get_chapter_info(state)
+        if state.get("chapter_status") == ChapterStatus.REVISION.value or (
+            chapter and chapter.get("status") == ChapterStatus.REVISION.value
+        ):
+            review = state.get("_revision_review")
+            if not review and chapter:
+                review = self.repo.get_latest_review(project_id, chapter["id"])
+            feedback = revision_feedback_block(review)
+            if feedback:
+                parts.append(feedback)
         
         # Previous state card
         prev_state = self._get_prev_state_card(state)
@@ -160,11 +172,19 @@ class PlannerAgent(BaseAgent):
             "payload": {"artifact_type": "chapter_brief"},
         })
 
-        # Update chapter status
-        self.repo.update_chapter_status(
-            project_id, chapter_number, ChapterStatus.PLANNED.value,
-            expected_status=ChapterStatus.PLANNED.value,
+        # Update chapter status. Planner can be entered from a normal planned
+        # chapter or from a planner-targeted revision after Editor rejects.
+        expected_status = (
+            ChapterStatus.REVISION.value
+            if state.get("chapter_status") == ChapterStatus.REVISION.value
+            else ChapterStatus.PLANNED.value
         )
+        ok = self.repo.update_chapter_status(
+            project_id, chapter_number, ChapterStatus.PLANNED.value,
+            expected_status=expected_status,
+        )
+        if not ok:
+            return {"error": "Planner: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
 
         # Save artifact (bind to workflow run for isolation)
         workflow_run_id = state.get("workflow_run_id")

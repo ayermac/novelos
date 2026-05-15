@@ -7,9 +7,8 @@ preconditions before starting a workflow.
 This module provides a single check_chapter_run_guard() function that:
 1. Rejects chapters that already have a running workflow_run
 2. Rejects chapters in a terminal status (reviewed / awaiting_publish / published)
-3. Rejects planned chapters that already contain content, which usually means a
-   recovery reset preserved author-visible content and direct generation would
-   risk overwriting it.
+3. Rejects planned chapters that already contain content unless the latest
+   recovery action explicitly reset that chapter for regeneration.
 
 Callers should use this instead of ad-hoc inline checks.
 """
@@ -46,6 +45,15 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
     # running workflow rows; reconcile first so UI/health endpoints stop
     # showing phantom work.
     chapter = repo.get_chapter(project_id, chapter_number)
+    if chapter and chapter.get("status") == "revision":
+        from ...workflow.reconciliation import reconcile_revision_running_workflows
+
+        reconcile_revision_running_workflows(repo, project_id, chapter_number)
+    elif chapter and chapter.get("status") in {"scripted", "drafted", "polished", "review"}:
+        from ...workflow.reconciliation import reconcile_interrupted_running_workflows
+
+        reconcile_interrupted_running_workflows(repo, project_id, chapter_number)
+
     if chapter and chapter.get("status") in TERMINAL_STATUSES:
         if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
             repo.reconcile_terminal_chapter_running_workflows(
@@ -68,7 +76,9 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
     if chapter and chapter.get("status") == "planned":
         content = (chapter.get("content") or "").strip()
         word_count = chapter.get("word_count") or 0
-        if content or word_count > 0:
+        if (content or word_count > 0) and not _has_explicit_reset_recovery(
+            repo, project_id, chapter_number
+        ):
             return RunGuardError(
                 "CHAPTER_HAS_EXISTING_CONTENT",
                 f"第 {chapter_number} 章已有正文内容，不能按空白 planned 章节直接生成。请先查看正文并决定编辑、回滚或显式重置。",
@@ -97,3 +107,24 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
         )
 
     return None
+
+
+def _has_explicit_reset_recovery(repo, project_id: str, chapter_number: int) -> bool:
+    """Return True when the latest recovery explicitly reset this chapter.
+
+    A reset recovery is the user's explicit confirmation that preserved chapter
+    text may be superseded by a new workflow attempt. Without this marker,
+    planned+content is treated as suspicious preserved work and stays blocked.
+    """
+    try:
+        runs = repo.get_workflow_runs_for_project(
+            project_id,
+            chapter_number=chapter_number,
+            limit=5,
+        )
+    except Exception:
+        return False
+    return any(
+        run.get("status") == "completed" and run.get("current_node") == "reset_recovery"
+        for run in runs
+    )

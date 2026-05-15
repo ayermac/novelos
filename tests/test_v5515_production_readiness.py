@@ -203,6 +203,35 @@ def test_planned_chapter_with_existing_content_cannot_be_generated():
             os.unlink(db_path)
 
 
+def test_planned_chapter_with_existing_content_can_run_after_explicit_reset():
+    """A completed reset_recovery marker is the explicit reset required before
+    regenerating a planned chapter that still has preserved text."""
+    _, repo, db_path = _client_with_repo()
+    try:
+        project_id = "v611-reset-planned-with-content"
+        repo.create_project(
+            project_id=project_id,
+            name="Reset Existing Content Test",
+            genre="fantasy",
+            description="test",
+            target_words=30000,
+            total_chapters_planned=10,
+        )
+        repo.add_chapter(project_id, 1, "第一章", status="planned")
+        repo.save_chapter(project_id, 1, "第一章", "恢复后保留的正文" * 20, 160, "planned")
+
+        run_id = repo.create_workflow_run(project_id, 1)
+        repo.update_workflow_run(run_id, status="blocked", current_node="human_review")
+        repo.mark_blocked_workflow_runs_recovered_for_chapter(project_id, 1, run_id=run_id)
+
+        from novel_factory.api.routes._run_guards import check_chapter_run_guard
+
+        assert check_chapter_run_guard(repo, project_id, 1) is None
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
 def test_pending_memory_updates_surface_in_health_summary():
     """Pending memory items must appear in the health summary with
     an action that navigates to the memory inbox."""

@@ -2,7 +2,42 @@
 
 from __future__ import annotations
 
+import logging
+from typing import Any
+
 from ..models.state import ChapterStatus, FactoryState
+
+logger = logging.getLogger(__name__)
+
+
+def resolve_revision_target(repo: Any, project_id: str, chapter_number: int) -> str:
+    """Recover revision_target from the latest review when state.quality_gate is missing.
+
+    When a workflow starts fresh for a revision chapter, quality_gate may not be
+    in state. This helper loads the latest review to determine which Agent should
+    handle the revision. Falls back to "author" if no review exists.
+    """
+    try:
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return "author"
+        review = repo.get_latest_review(project_id, chapter["id"])
+        if review and review.get("revision_target") in ("author", "polisher", "planner"):
+            return review["revision_target"]
+    except Exception:
+        logger.debug("resolve_revision_target failed for %s/%s", project_id, chapter_number)
+    return "author"
+
+
+def get_latest_review_data(repo: Any, project_id: str, chapter_number: int) -> dict | None:
+    """Load the latest review record for a chapter. Returns None on failure."""
+    try:
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return None
+        return repo.get_latest_review(project_id, chapter["id"])
+    except Exception:
+        return None
 
 
 def route_by_chapter_status(state: FactoryState) -> str:
