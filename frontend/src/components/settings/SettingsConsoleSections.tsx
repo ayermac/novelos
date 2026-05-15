@@ -3,9 +3,10 @@ import React, { useEffect, useState } from 'react'
 import EmptyState from '../EmptyState'
 import SkillVisibilityPanel from './SkillVisibilityPanel'
 import { tLlmMode } from '../../lib/i18n'
-import { DataTable, FormField, NumberInput, Select, TextInput } from '../ui'
-import { get, post, put } from '../../lib/api'
+import { DataTable, FormField, Select, TextInput } from '../ui'
+import { get } from '../../lib/api'
 import { useAppDialog } from '../AppDialogContext'
+import DesktopFirstRunSetup from '../desktop/DesktopFirstRunSetup'
 
 interface LlmProfile {
   name: string
@@ -717,17 +718,7 @@ function DesktopConfigSection() {
     }>
   } | null>(null)
   const [secretStatuses, setSecretStatuses] = useState<Record<string, { configured: boolean; storage: string }>>({})
-  const [draft, setDraft] = useState({
-    llm_mode: 'stub',
-    model: '',
-    base_url: '',
-    temperature: 0.7,
-  })
   const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
-  const [testing, setTesting] = useState(false)
-  const [testResult, setTestResult] = useState<{ valid: boolean; message: string; error_code?: string } | null>(null)
 
   const load = React.useCallback(async () => {
     if (!isDesktop) {
@@ -738,16 +729,6 @@ function DesktopConfigSection() {
     const res = await get<typeof config>('/desktop/config')
     if (res.ok && res.data) {
       setConfig(res.data)
-      const defaultProfileName = res.data.default_llm || Object.keys(res.data.profiles || {})[0] || 'default'
-      const profile = res.data.profiles?.[defaultProfileName]
-      setDraft({
-        llm_mode: res.data.llm_mode || 'stub',
-        model: profile?.model || '',
-        base_url: profile?.base_url || '',
-        temperature: profile?.temperature ?? 0.7,
-      })
-    } else {
-      setMessage(res.error?.message || '桌面配置不可用')
     }
     try {
       const statuses = await window.__NOVELOS_DESKTOP__?.secretStatus?.()
@@ -763,59 +744,6 @@ function DesktopConfigSection() {
   useEffect(() => {
     load()
   }, [load])
-
-  const handleSave = async () => {
-    if (!isDesktop) return
-    setSaving(true)
-    setMessage('')
-    const res = await put('/desktop/config', draft)
-    setSaving(false)
-    if (res.ok) {
-      setMessage('已保存')
-      await load()
-    } else {
-      setMessage(res.error?.message || '保存失败')
-    }
-  }
-
-  const handleTestConnection = async () => {
-    setTesting(true)
-    setTestResult(null)
-    try {
-      if (draft.llm_mode === 'stub') {
-        setTestResult({ valid: false, message: '当前为演示模式 (stub)。请切换为真实模式 (real) 并保存，然后重启客户端后测试。', error_code: 'STUB_MODE' })
-        setTesting(false)
-        return
-      }
-      const profileKey = config?.default_llm || Object.keys(config?.profiles || {})[0] || 'default'
-      const profile = config?.profiles?.[profileKey]
-      if (!profile) {
-        setTestResult({ valid: false, message: '未找到 LLM 配置档案。', error_code: 'NO_PROFILE' })
-        setTesting(false)
-        return
-      }
-      if (!profile.api_key_configured) {
-        setTestResult({ valid: false, message: `API Key 未配置 (${profile.api_key_env})。请先保存 API Key 并重启客户端。`, error_code: 'MISSING_API_KEY' })
-        setTesting(false)
-        return
-      }
-      const res = await post('/settings/validate', {
-        provider: profile.provider || 'openai_compatible',
-        base_url: draft.base_url || profile.base_url,
-        model: draft.model || profile.model,
-        api_key_env: profile.api_key_env,
-      })
-      if (res.ok && res.data) {
-        const data = res.data as { valid: boolean; message: string; error_code?: string }
-        setTestResult(data)
-      } else {
-        setTestResult({ valid: false, message: res.error?.message || '测试请求失败', error_code: 'REQUEST_FAILED' })
-      }
-    } catch (err) {
-      setTestResult({ valid: false, message: `测试异常: ${(err as Error).message}`, error_code: 'EXCEPTION' })
-    }
-    setTesting(false)
-  }
 
   if (loading) {
     return (
@@ -843,83 +771,10 @@ function DesktopConfigSection() {
   return (
     <SectionCard title="桌面配置" subtitle="安全字段编辑（不包含 API Key）">
       <div style={{ padding: 'var(--space-5)' }}>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '16px' }}>
-          <FormField label="LLM 模式">
-            <Select
-              value={draft.llm_mode}
-              onChange={(e) => setDraft((prev) => ({ ...prev, llm_mode: e.target.value }))}
-              disabled={saving}
-            >
-              <option value="stub">演示模式 (stub)</option>
-              <option value="real">真实模式 (real)</option>
-            </Select>
-          </FormField>
-          {profile && (
-            <>
-              <FormField label="模型">
-                <TextInput
-                  value={draft.model}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, model: e.target.value }))}
-                  disabled={saving}
-                />
-              </FormField>
-              <FormField label="Base URL">
-                <TextInput
-                  value={draft.base_url}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, base_url: e.target.value }))}
-                  disabled={saving}
-                />
-              </FormField>
-              <FormField label="Temperature">
-                <NumberInput
-                  min="0"
-                  max="2"
-                  step="0.1"
-                  value={draft.temperature}
-                  onChange={(e) => setDraft((prev) => ({ ...prev, temperature: parseFloat(e.target.value) }))}
-                  disabled={saving}
-                />
-              </FormField>
-            </>
-          )}
-        </div>
-
-        {message && (
-          <div style={{
-            marginTop: '8px',
-            padding: '10px 12px',
-            borderRadius: '6px',
-            fontSize: '13px',
-            background: message === '已保存' ? '#dcfce7' : '#fef2f2',
-            color: message === '已保存' ? '#166534' : '#991b1b',
-          }}>
-            {message}
-          </div>
-        )}
-
-        <div style={{ marginTop: '12px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
-          <button className="btn btn-primary" onClick={handleSave} disabled={saving || !profile}>
-            {saving ? '保存中...' : '保存配置'}
-          </button>
-          <button className="btn btn-secondary" onClick={handleTestConnection} disabled={testing || !profile}>
-            {testing ? '测试中...' : '测试 LLM 连接'}
-          </button>
-        </div>
-
-        {testResult && (
-          <div style={{
-            marginTop: '12px',
-            padding: '10px 12px',
-            borderRadius: '6px',
-            fontSize: '13px',
-            background: testResult.valid ? '#dcfce7' : '#fef2f2',
-            color: testResult.valid ? '#166534' : '#991b1b',
-          }}>
-            <strong>{testResult.valid ? '✓ 测试成功' : `✗ ${testResult.error_code || '测试失败'}`}</strong>
-            <div style={{ marginTop: '4px' }}>{testResult.message}</div>
-          </div>
-        )}
-
+        <DesktopFirstRunSetup
+          compact
+          onReady={load}
+        />
         {profile && (
           <DesktopApiKeyCard
             apiKeyEnv={apiKeyEnv}

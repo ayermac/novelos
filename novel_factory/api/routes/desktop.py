@@ -29,6 +29,30 @@ class DesktopConfigPayload(BaseModel):
     model: str | None = None
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     timeout: int | None = Field(default=None, ge=1, le=300)
+    api_key_env: str | None = Field(default=None, pattern="^[A-Z0-9_]+$")
+
+
+class TestLlmRequest(BaseModel):
+    """Request body for desktop LLM connection test."""
+
+    provider: str = "openai_compatible"
+    base_url: str = "https://api.openai.com/v1"
+    model: str = "gpt-4o-mini"
+    api_key_env: str = "OPENAI_API_KEY"
+
+
+class TestLlmResponse(BaseModel):
+    """Response for desktop LLM connection test."""
+
+    ok: bool
+    mode: str = "unknown"
+    provider: str = ""
+    base_url: str = ""
+    model: str = ""
+    latency_ms: int | None = None
+    message: str = ""
+    error_code: str | None = None
+    suggestion: str | None = None
 
 
 def _is_desktop_runtime() -> bool:
@@ -87,7 +111,12 @@ def _contains_sensitive_key(value: Any) -> str | None:
     if isinstance(value, dict):
         for key, nested in value.items():
             lower = str(key).lower()
-            if "api_key" in lower or "apikey" in lower or "secret" in lower or "token" in lower:
+            if (
+                ("api_key" in lower and not lower.endswith("_env"))
+                or "apikey" in lower
+                or "secret" in lower
+                or "token" in lower
+            ):
                 return str(key)
             found = _contains_sensitive_key(nested)
             if found:
@@ -232,8 +261,13 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
         if not isinstance(raw, dict):
             raw = {}
 
+        restart_required = False
+
         # Update llm_mode in app state and file
         if body.llm_mode is not None:
+            current_llm_mode = getattr(request.app.state, "llm_mode", "stub")
+            if current_llm_mode != body.llm_mode:
+                restart_required = True
             request.app.state.llm_mode = body.llm_mode
             raw["llm_mode"] = body.llm_mode
 
@@ -242,25 +276,33 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
         if default_llm and "llm_profiles" in raw and isinstance(raw["llm_profiles"], dict):
             if default_llm in raw["llm_profiles"] and isinstance(raw["llm_profiles"][default_llm], dict):
                 profile = raw["llm_profiles"][default_llm]
-                if body.base_url is not None:
+                if body.base_url is not None and profile.get("base_url") != body.base_url:
                     profile["base_url"] = body.base_url
-                if body.model is not None:
+                    restart_required = True
+                if body.model is not None and profile.get("model") != body.model:
                     profile["model"] = body.model
-                if body.temperature is not None:
+                    restart_required = True
+                if body.temperature is not None and profile.get("temperature") != body.temperature:
                     profile["temperature"] = body.temperature
-                if body.timeout is not None:
+                    restart_required = True
+                if body.timeout is not None and profile.get("timeout") != body.timeout:
                     profile["timeout"] = body.timeout
-        elif body.base_url is not None or body.model is not None:
+                    restart_required = True
+                if body.api_key_env is not None and profile.get("api_key_env") != body.api_key_env:
+                    profile["api_key_env"] = body.api_key_env
+                    restart_required = True
+        elif body.base_url is not None or body.model is not None or body.api_key_env is not None:
             # No profiles exist; create a minimal default profile
+            restart_required = True
             if "llm_profiles" not in raw:
                 raw["llm_profiles"] = {}
             if not isinstance(raw["llm_profiles"], dict):
                 raw["llm_profiles"] = {}
             raw["llm_profiles"][default_llm or "default"] = {
                 "provider": "openai_compatible",
-                "model": body.model or "gpt-4",
+                "model": body.model or "gpt-4o-mini",
                 "base_url": body.base_url or "https://api.openai.com/v1",
-                "api_key_env": "OPENAI_API_KEY",
+                "api_key_env": body.api_key_env or "OPENAI_API_KEY",
             }
             if body.temperature is not None:
                 raw["llm_profiles"][default_llm or "default"]["temperature"] = body.temperature
@@ -281,7 +323,8 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
         return envelope_response({
             "saved": True,
             "config_path": str(config_file),
-            "message": "配置已保存（未包含 API key）",
+            "restart_required": restart_required,
+            "message": "配置已保存（未包含 API key）" + ("，重启后生效" if restart_required else ""),
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"保存配置失败: {str(e)}")
@@ -314,3 +357,113 @@ def _redact_dict(d: dict[str, Any]) -> None:
             d[key] = "***REDACTED***"
         elif isinstance(val, dict):
             _redact_dict(val)
+
+
+@router.post("/desktop/test-llm")
+async def test_llm_connection(request: Request, body: TestLlmRequest) -> EnvelopeResponse:
+    """Test LLM connectivity from the desktop runtime.
+
+    Uses the currently active config and environment (including safeStorage-injected keys).
+    Only available when running inside the desktop app.
+    """
+    if not _is_desktop_runtime():
+        return error_response("DESKTOP_ONLY", "LLM 连接测试仅在 Novelos 桌面应用中可用")
+
+    # Reject if stub mode
+    llm_mode = getattr(request.app.state, "llm_mode", "stub")
+    if llm_mode == "stub":
+        return envelope_response({
+            "ok": False,
+            "mode": "stub",
+            "provider": body.provider,
+            "base_url": body.base_url,
+            "model": body.model,
+            "message": "当前为演示模式 (stub)。请先切换为真实模式并保存配置，然后重启客户端。",
+            "error_code": "STUB_MODE",
+            "suggestion": "在桌面配置中将 LLM 模式设为 real，保存后重启本地服务。",
+        })
+
+    # Check API key presence
+    api_key = os.environ.get(body.api_key_env)
+    if not api_key:
+        return envelope_response({
+            "ok": False,
+            "mode": "real",
+            "provider": body.provider,
+            "base_url": body.base_url,
+            "model": body.model,
+            "message": f"API Key 未配置 ({body.api_key_env})。请先通过桌面安全存储保存 API Key，然后重启客户端。",
+            "error_code": "API_KEY_MISSING",
+            "suggestion": "在桌面配置的「API Key 安全存储」中输入并保存密钥，然后重启本地服务使密钥注入环境变量。",
+        })
+
+    # Check for placeholder keys
+    if api_key.startswith("sk-place") or api_key == "your-api-key-here":
+        return envelope_response({
+            "ok": False,
+            "mode": "real",
+            "provider": body.provider,
+            "base_url": body.base_url,
+            "model": body.model,
+            "message": "API Key 看起来是占位符，请设置真实的 API key",
+            "error_code": "API_KEY_MISSING",
+            "suggestion": "替换为真实的服务商 API Key。",
+        })
+
+    import time
+
+    start = time.time()
+    try:
+        from langchain_openai import ChatOpenAI
+
+        llm = ChatOpenAI(
+            model=body.model,
+            api_key=api_key,
+            base_url=body.base_url,
+            timeout=15,
+            max_retries=1,
+        )
+
+        response = llm.invoke([{"role": "user", "content": "Say 'ok'"}])
+        latency_ms = int((time.time() - start) * 1000)
+
+        return envelope_response({
+            "ok": True,
+            "mode": "real",
+            "provider": body.provider,
+            "base_url": body.base_url,
+            "model": body.model,
+            "latency_ms": latency_ms,
+            "message": f"连接成功 ({latency_ms}ms)",
+        })
+
+    except Exception as e:
+        latency_ms = int((time.time() - start) * 1000)
+        error_msg = str(e)
+        error_code = "UNKNOWN"
+        suggestion = "请检查网络连接和配置参数。"
+
+        if "401" in error_msg or "authentication" in error_msg.lower() or "unauthorized" in error_msg.lower():
+            error_code = "AUTH_FAILED"
+            suggestion = "API Key 无效或无权限。请确认密钥属于当前服务商，并检查 Base URL 是否正确。"
+        elif "404" in error_msg or "not found" in error_msg.lower():
+            error_code = "MODEL_NOT_FOUND"
+            suggestion = "模型 ID 在当前服务商不存在。请检查模型名称是否与服务商文档一致。"
+        elif "timeout" in error_msg.lower():
+            error_code = "TIMEOUT"
+            suggestion = "连接超时。请检查网络状况，或尝试增加超时时间。"
+        elif "connection" in error_msg.lower() or "network" in error_msg.lower() or "resolve" in error_msg.lower():
+            error_code = "NETWORK_ERROR"
+            suggestion = "网络连接失败。请检查 Base URL 是否正确，以及本地网络是否能访问该地址。"
+
+        return envelope_response({
+            "ok": False,
+            "mode": "real",
+            "provider": body.provider,
+            "base_url": body.base_url,
+            "model": body.model,
+            "latency_ms": latency_ms,
+            "message": f"连接失败: {error_msg[:200]}",
+            "error_code": error_code,
+            "suggestion": suggestion,
+        })

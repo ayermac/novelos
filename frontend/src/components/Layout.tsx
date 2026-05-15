@@ -17,6 +17,7 @@ import {
 } from 'lucide-react'
 import { get } from '../lib/api'
 import DesktopRuntimeBanner from './DesktopRuntimeBanner'
+import DesktopFirstRunSetup from './desktop/DesktopFirstRunSetup'
 
 interface NavItem {
   to: string
@@ -78,6 +79,7 @@ export default function Layout() {
   return (
     <div className="app-layout">
       <DesktopRuntimeBanner />
+      <DesktopFirstRunSetup />
       {/* Mobile Toggle */}
       <button
         className="mobile-toggle"
