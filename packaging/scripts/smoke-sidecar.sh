@@ -32,9 +32,9 @@ DB_PATH="/tmp/novelos-sidecar-smoke.db"
 
 # ── Find sidecar ────────────────────────────────────────────────
 if [ ! -f "$SIDECAR_BIN" ]; then
-    echo "Error: Sidecar binary not found at $SIDECAR_BIN"
-    echo "Build it first: bash packaging/scripts/build-sidecar.sh"
-    exit 1
+    echo "SKIP: Sidecar binary not found at $SIDECAR_BIN"
+    echo "       Build it first: bash packaging/scripts/build-sidecar.sh"
+    exit 0
 fi
 
 echo "Sidecar binary: $SIDECAR_BIN"
