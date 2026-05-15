@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 from enum import Enum
 from urllib.parse import quote
 
@@ -14,6 +15,94 @@ from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ...agents.chapter_text import is_chapter_heading
 
 router = APIRouter()
+
+
+def _chapter_quality_score(repo, project_id: str, chapter: dict) -> int | float | None:
+    """Return the user-facing quality score for a chapter.
+
+    `chapters` does not currently persist a quality_score column. The workbench
+    read model derives it from the latest editor review first, then falls back
+    to QualityHub reports.
+    """
+    chapter_number = chapter.get("chapter_number")
+    try:
+        chapter_id = chapter.get("id")
+        if chapter_id:
+            review = repo.get_latest_review(project_id, chapter_id)
+            if review and review.get("score") is not None:
+                return review.get("score")
+    except Exception:
+        pass
+
+    try:
+        for stage in ("final", "polished", "draft"):
+            report = repo.get_latest_quality_report(project_id, chapter_number, stage)
+            if report and report.get("overall_score") is not None:
+                score = report.get("overall_score")
+                return round(score, 1) if isinstance(score, float) else score
+    except Exception:
+        pass
+
+    return None
+
+
+def _is_bare_chapter_title(title: str | None, chapter_number: int) -> bool:
+    text = re.sub(r"\s+", "", str(title or "").strip())
+    return text in {f"第{chapter_number}章", f"第{chapter_number}章节"} or bool(
+        re.fullmatch(r"第[一二三四五六七八九十百千零〇两]+章节?", text)
+    )
+
+
+def _clean_title_suffix(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"^[\"'“”‘’《》【】\s]+|[\"'“”‘’《》【】\s]+$", "", text)
+    text = re.split(r"[。！？!?；;，,\n\r]", text, maxsplit=1)[0].strip()
+    text = re.sub(r"\s+", "", text)
+    if len(text) < 2:
+        return ""
+    return text[:14]
+
+
+def _chapter_display_title(chapter: dict) -> str:
+    """Return a readable chapter title for API consumers.
+
+    Older generated chapters may have stored only "第N章". For display, derive a
+    short suffix from the first prose line while leaving the stored record intact.
+    """
+    chapter_number = int(chapter.get("chapter_number") or 0)
+    title = str(chapter.get("title") or "").strip()
+    if not chapter_number or not _is_bare_chapter_title(title, chapter_number):
+        return title
+
+    lines = [line.strip() for line in str(chapter.get("content") or "").splitlines() if line.strip()]
+    for line in lines:
+        if is_chapter_heading(line, chapter_number):
+            continue
+        suffix = _clean_title_suffix(line)
+        if suffix:
+            return f"第{chapter_number}章 {suffix}"
+
+    return title or f"第{chapter_number}章"
+
+
+def _chapter_display_content(chapter: dict, display_title: str) -> str:
+    content = str(chapter.get("content") or "")
+    chapter_number = int(chapter.get("chapter_number") or 0)
+    stored_title = str(chapter.get("title") or "").strip()
+    if not content.strip() or display_title == stored_title:
+        return content
+
+    lines = content.splitlines()
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if is_chapter_heading(line.strip(), chapter_number):
+            lines[index] = display_title
+            return "\n".join(lines)
+        return content
+    return content
 
 
 class CreateProjectRequest(BaseModel):
@@ -160,16 +249,18 @@ async def get_chapter_detail(
         if not chapter:
             return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
+        display_title = _chapter_display_title(chapter)
+
         # Return clean chapter data (no internal DB fields)
         return envelope_response({
             "project_id": project_id,
             "project_name": project.get("name", ""),
             "chapter_number": chapter.get("chapter_number", chapter_number),
-            "title": chapter.get("title", ""),
+            "title": display_title,
             "status": chapter.get("status", ""),
             "word_count": chapter.get("word_count", 0),
-            "quality_score": chapter.get("quality_score"),
-            "content": chapter.get("content", ""),
+            "quality_score": _chapter_quality_score(repo, project_id, chapter),
+            "content": _chapter_display_content(chapter, display_title),
             "created_at": chapter.get("created_at", ""),
             "updated_at": chapter.get("updated_at", ""),
         })
@@ -195,6 +286,14 @@ async def get_project_workspace(request: Request, project_id: str) -> EnvelopeRe
 
         # Get chapters
         chapters = repo.list_chapters(project_id)
+        chapters = [
+            {
+                **chapter,
+                "title": _chapter_display_title(chapter),
+                "quality_score": _chapter_quality_score(repo, project_id, chapter),
+            }
+            for chapter in chapters
+        ]
 
         # Get recent runs
         runs = repo.get_workflow_runs_for_project(project_id, limit=10)

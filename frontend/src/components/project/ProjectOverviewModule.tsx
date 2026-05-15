@@ -553,6 +553,12 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       return
     }
 
+    if (action.key === 'view_running_workflow') {
+      const ch = action.target_chapter || productionNext.health?.target_chapter || productionNext.current_chapter
+      navigate(action.action_url || `/projects/${project.project_id}?module=chapters&chapter=${ch}&view=workflow`)
+      return
+    }
+
     if (action.key === 'review_chapter') {
       navigate(`/projects/${project.project_id}?module=chapters&chapter=${productionNext.current_chapter}`)
       return
@@ -1089,6 +1095,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     || productionNext?.health?.has_running_chapter_workflow
     || productionNext?.health?.has_running_target_workflow
     || false
+  const isPrimaryNavigationAction = nextActionKey === 'view_running_workflow'
 
   /* v5.5.15: Check if health-summary reports an obsolete session */
   const obsoleteSessionItem = healthSummary?.items.find(
@@ -1225,7 +1232,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 <button
                   className="btn btn-primary"
                   onClick={handlePrimaryAction}
-                  disabled={filling || autoRunning || nextActionKey === 'none' || hasRunningWorkflow}
+                  disabled={filling || autoRunning || nextActionKey === 'none' || (hasRunningWorkflow && !isPrimaryNavigationAction)}
                   style={{ flex: '1 1 220px', minWidth: 0, minHeight: 42 }}
                 >
                   {filling ? (

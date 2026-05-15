@@ -372,9 +372,10 @@ class TestAuthorAgent:
 
         assert result["chapter_status"] == ChapterStatus.DRAFTED.value
         chapter = seeded_repo.get_chapter("test_proj", 1)
-        assert chapter["title"] == "第1章"
+        assert chapter["title"] != "第1章"
+        assert chapter["title"].startswith("第1章 ")
         assert "引入主角" not in chapter["title"]
-        assert chapter["content"].startswith("第1章\n\n")
+        assert chapter["content"].startswith(f"{chapter['title']}\n\n")
 
     def test_author_keeps_real_chapter_title_when_usable(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent

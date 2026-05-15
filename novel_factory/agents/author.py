@@ -586,6 +586,12 @@ class AuthorAgent(BaseAgent):
         derived_from_content = self._title_from_content_heading(content or "", chapter_number)
         if derived_from_content:
             return derived_from_content
+        derived_from_opening = self._title_from_content_opening(content or "", chapter_number, instruction)
+        if derived_from_opening:
+            return derived_from_opening
+        derived_from_instruction = self._title_from_instruction(instruction, chapter_number)
+        if derived_from_instruction:
+            return derived_from_instruction
         return f"第{chapter_number}章"
 
     @staticmethod
@@ -657,8 +663,56 @@ class AuthorAgent(BaseAgent):
         if len(first_line) > 32:
             return None
         if is_chapter_heading(first_line, chapter_number):
-            return first_line
+            return first_line if cls._is_usable_chapter_title(first_line, chapter_number, {}) else None
         return None
+
+    @classmethod
+    def _title_from_content_opening(
+        cls,
+        content: str,
+        chapter_number: int,
+        instruction: dict,
+    ) -> str | None:
+        """Derive a readable fallback title from the opening prose.
+
+        This is only used when the model title is unusable. It prevents the
+        published chapter from falling back to a bare "第N章" heading.
+        """
+        first_line = first_content_line(content)
+        if not first_line or is_chapter_heading(first_line, chapter_number):
+            return None
+        suffix = cls._clean_title_suffix(first_line)
+        if not suffix:
+            return None
+        title = f"第{chapter_number}章 {suffix}"
+        return title if cls._is_usable_chapter_title(title, chapter_number, instruction) else None
+
+    @classmethod
+    def _title_from_instruction(cls, instruction: dict, chapter_number: int) -> str | None:
+        for value in (
+            instruction.get("ending_hook"),
+            *cls._instruction_items(instruction.get("key_events")),
+        ):
+            suffix = cls._clean_title_suffix(str(value or ""))
+            if not suffix:
+                continue
+            title = f"第{chapter_number}章 {suffix}"
+            if cls._is_usable_chapter_title(title, chapter_number, instruction):
+                return title
+        return None
+
+    @staticmethod
+    def _clean_title_suffix(value: str) -> str:
+        text = str(value or "").strip()
+        if not text:
+            return ""
+        text = re.sub(r"^[\"'“”‘’《》【】\s]+|[\"'“”‘’《》【】\s]+$", "", text)
+        text = re.split(r"[。！？!?；;，,\n\r]", text, maxsplit=1)[0].strip()
+        text = re.sub(r"^(本章|章节|场景|目标|关键事件)\s*[:：、.-]?\s*", "", text).strip()
+        text = re.sub(r"\s+", "", text)
+        if len(text) < 2:
+            return ""
+        return text[:14]
 
     @staticmethod
     def _instruction_items(value: Any) -> list[str]:
