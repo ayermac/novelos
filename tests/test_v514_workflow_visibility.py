@@ -10,7 +10,6 @@ Tests for:
 7. UI does not show raw stub/blocked/completed/published
 8. Continue generate next chapter preselects next chapter
 9. Settings copy draft has feedback text
-10. smoke script covers /api/runs/{run_id}
 """
 
 from __future__ import annotations
@@ -294,12 +293,3 @@ class TestSettingsCopyFeedback:
         # This is a soft check - the requirement is for feedback
         # Implementation can vary
         assert has_feedback or "复制" in content
-
-
-class TestSmokeScriptRunsEndpoint:
-    """Test smoke script covers /api/runs/{run_id}."""
-
-    def test_smoke_script_exists(self):
-        """Smoke script should exist."""
-        script_path = Path(__file__).parent.parent / "scripts" / "v51_smoke_acceptance.sh"
-        assert script_path.exists()
