@@ -21,6 +21,24 @@ from ..agents.author import AuthorAgent
 from ..agents.polisher import PolisherAgent
 from ..agents.editor import EditorAgent
 from ..agents.memory_curator import MemoryCuratorAgent
+from .execution_events import (
+    log_execution_event,
+    CONTEXT_SUMMARIZERS,
+    build_context_loaded_message,
+    verify_agent_completion_evidence,
+    EVENT_CONTEXT_LOADED,
+    EVENT_LLM_COMPLETED,
+    EVENT_LLM_FAILED,
+    EVENT_EVIDENCE_VERIFIED,
+    EVENT_FALLBACK_USED,
+    EVENT_ARTIFACT_SAVED,
+    EVENT_DIFF_GENERATED,
+    EVENT_SELF_CHECK_COMPLETED,
+    EVENT_SKILL_COMPLETED,
+    EVIDENCE_STATUS_PASS,
+    EVIDENCE_STATUS_FAIL,
+    EVIDENCE_STATUS_WARN,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -437,9 +455,99 @@ def create_node_runners(
         else:
             agent = agent_cls(repo, llm)
 
+        # v6.1: Log context_loaded execution event
+        summarizer = CONTEXT_SUMMARIZERS.get(agent_name)
+        if summarizer:
+            try:
+                ctx_summary = summarizer(repo, state.get("project_id", ""), state.get("chapter_number", 0))
+                ctx_msg = build_context_loaded_message(agent_name, ctx_summary)
+                log_execution_event(
+                    repo, state, agent_name, EVENT_CONTEXT_LOADED,
+                    message=ctx_msg, agent_id=agent_name,
+                    payload=ctx_summary,
+                )
+            except Exception:
+                pass  # Best-effort
+
         agent_started_at = time.perf_counter()
         result = _handle_retryable_quality_gate(state, repo, agent.run(state))
         agent_latency_ms = int((time.perf_counter() - agent_started_at) * 1000)
+
+        # v6.1: Log agent-specific execution events from _exec_events
+        exec_events = result.pop("_exec_events", [])
+        for ev in exec_events:
+            try:
+                log_execution_event(
+                    repo, state,
+                    node_name=ev.get("node_name", agent_name),
+                    event_type=ev.get("event_type", "info"),
+                    message=ev.get("message", ""),
+                    agent_id=ev.get("agent_id", agent_name),
+                    status=ev.get("status", "info"),
+                    payload=ev.get("payload"),
+                    artifact_refs=ev.get("artifact_refs"),
+                    token_count=ev.get("token_count"),
+                    latency_ms=ev.get("latency_ms"),
+                )
+            except Exception:
+                pass  # Best-effort
+
+        # v6.1: Log LLM completion/failure
+        if "error" in result:
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_FAILED,
+                message=f"Agent 执行失败：{result['error'][:200]}",
+                agent_id=agent_name,
+                status="error",
+                payload={"error": result["error"][:500]},
+                latency_ms=agent_latency_ms,
+            )
+        else:
+            llm_usage = getattr(llm, "last_token_usage", None)
+            llm_tokens = llm_usage.total_tokens if llm_usage else 0
+            llm_duration = llm_usage.duration_ms if llm_usage else agent_latency_ms
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_COMPLETED,
+                message=f"LLM 调用完成：耗时 {llm_duration/1000:.1f}s，{llm_tokens} tokens",
+                agent_id=agent_name,
+                token_count=llm_tokens,
+                latency_ms=llm_duration,
+            )
+
+        # v6.1: Verify completion evidence on success
+        if "error" not in result and agent_name in ("planner", "screenwriter", "author", "polisher", "editor", "memory_curator"):
+            try:
+                evidence = verify_agent_completion_evidence(repo, state, agent_name)
+                severity = evidence["severity"]
+                missing_str = "、".join(evidence["missing"]) if evidence["missing"] else ""
+                warn_str = "、".join(evidence["warnings"]) if evidence["warnings"] else ""
+                if severity == EVIDENCE_STATUS_FAIL:
+                    ev_msg = f"完成证据校验失败：{missing_str}"
+                elif severity == EVIDENCE_STATUS_WARN:
+                    ev_msg = f"完成证据校验通过（有警告）：{warn_str}"
+                else:
+                    ev_msg = "完成证据校验通过"
+                log_execution_event(
+                    repo, state, agent_name, EVENT_EVIDENCE_VERIFIED,
+                    message=ev_msg,
+                    agent_id=agent_name,
+                    status=severity,
+                    payload={
+                        "ok": evidence["ok"],
+                        "severity": severity,
+                        "checks": evidence["checks"],
+                        "missing": evidence["missing"],
+                        "warnings": evidence["warnings"],
+                    },
+                )
+                # Log evidence failure as node-level warning but don't block
+                if severity == EVIDENCE_STATUS_FAIL:
+                    logger.warning(
+                        "Agent '%s' evidence verification FAILED: %s",
+                        agent_name, missing_str,
+                    )
+            except Exception:
+                pass  # Best-effort; never block workflow
 
         # v5.2: Accumulate token usage from LLM provider
         token_updates = _accumulate_tokens(state, llm)

@@ -292,6 +292,7 @@ class MemoryCuratorAgent(BaseAgent):
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+        exec_events: list[dict] = []
 
         context = self._build_v6_context(state)
 
@@ -377,6 +378,11 @@ class MemoryCuratorAgent(BaseAgent):
             if fallback_patches:
                 patches = fallback_patches
                 fallback_source = "chapter_state"
+                exec_events.append({
+                    "event_type": "fallback_used",
+                    "message": f"记忆提取为空，已使用章节状态卡兜底生成 {len(patches)} 条候选",
+                    "payload": {"fallback_type": "chapter_state", "patch_count": len(patches)},
+                })
                 logger.info(
                     "MemoryCurator: generated %d fallback patches from chapter_state for project=%s chapter=%s",
                     len(patches),
@@ -402,11 +408,18 @@ class MemoryCuratorAgent(BaseAgent):
                 project_id,
                 chapter_number,
             )
+            exec_events.append({
+                "event_type": "artifact_saved",
+                "message": "无可提取记忆，无状态卡可用",
+                "status": "info",
+                "payload": {"memory_items_count": 0},
+            })
             return {
                 "memory_curator_processed": True,
                 "memory_items_count": 0,
                 "_trace": trace,
                 "_autonomy": autonomy,
+                "_exec_events": exec_events,
             }
 
         # Create memory update batch
@@ -468,6 +481,12 @@ class MemoryCuratorAgent(BaseAgent):
             chapter_number,
         )
 
+        exec_events.append({
+            "event_type": "artifact_saved",
+            "message": f"创建记忆批次：{items_created} 条候选" + ("（状态卡兜底）" if fallback_source else ""),
+            "payload": {"batch_id": batch["id"], "items_count": items_created, "fallback_source": fallback_source},
+        })
+
         return {
             "memory_curator_processed": True,
             "memory_batch_id": batch["id"],
@@ -475,4 +494,5 @@ class MemoryCuratorAgent(BaseAgent):
             **({"memory_curator_fallback": fallback_source} if fallback_source else {}),
             "_trace": trace,
             "_autonomy": autonomy,
+            "_exec_events": exec_events,
         }

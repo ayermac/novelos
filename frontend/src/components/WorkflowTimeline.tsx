@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { formatArtifactSummary, WorkflowArtifacts } from '../lib/artifacts'
+import type { WorkflowExecutionEvent, WorkflowNodeEvidence } from '../lib/api'
 
 interface Step {
   key: string
@@ -17,6 +18,8 @@ interface Step {
     message: string
   }[]
   artifacts?: WorkflowArtifacts | null
+  events?: WorkflowExecutionEvent[]
+  evidence?: WorkflowNodeEvidence
 }
 
 interface Props {
@@ -102,6 +105,7 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
             {group.steps.map((step) => {
               const isExpanded = expandedStep === step.key
               const hasArtifacts = step.status === 'completed' && step.artifacts
+              const hasExecutionEvents = Boolean(step.events && step.events.length > 0)
               const logs = step.logs || []
 
               return (
@@ -109,7 +113,18 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
                   <div className="step-header">
                     <div className="step-icon">{stepStatusIcon(step.status)}</div>
                     <div className="step-content">
-                      <div className="step-label">{step.label}</div>
+                      <div className="step-label">
+                        {step.label}
+                        {step.evidence?.has_evidence_failure && (
+                          <span className="evidence-badge evidence-fail" style={{ marginLeft: 8 }}>证据校验失败</span>
+                        )}
+                        {step.evidence?.has_warnings && !step.evidence?.has_evidence_failure && (
+                          <span className="evidence-badge evidence-warn" style={{ marginLeft: 8 }}>有警告</span>
+                        )}
+                        {step.status === 'completed' && step.evidence?.has_evidence && !step.evidence?.has_warnings && !step.evidence?.has_evidence_failure && (
+                          <span className="evidence-badge evidence-pass" style={{ marginLeft: 8 }}>已验证</span>
+                        )}
+                      </div>
                       {!compact && (
                         <div className="step-description">{step.description}</div>
                       )}
@@ -140,16 +155,44 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
                         </div>
                       )}
                     </div>
-                    {hasArtifacts && (
+                    {(hasArtifacts || hasExecutionEvents) && (
                       <button
                         className="step-expand-btn"
                         onClick={() => toggleExpand(step.key)}
                       >
-                        {isExpanded ? '收起' : '查看过程稿'}
+                        {isExpanded ? '收起' : hasExecutionEvents ? '查看过程' : '查看过程稿'}
                       </button>
                     )}
                   </div>
-                  {hasArtifacts && isExpanded && (
+                  {isExpanded && hasExecutionEvents && (
+                    <div className="step-exec-events">
+                      <div className="exec-events-title">
+                        实时工作过程
+                        {step.evidence?.has_evidence_failure && (
+                          <span className="evidence-badge evidence-fail">证据校验失败</span>
+                        )}
+                        {step.evidence?.has_warnings && !step.evidence?.has_evidence_failure && (
+                          <span className="evidence-badge evidence-warn">有警告</span>
+                        )}
+                        {step.evidence?.has_evidence && !step.evidence?.has_warnings && !step.evidence?.has_evidence_failure && (
+                          <span className="evidence-badge evidence-pass">证据校验通过</span>
+                        )}
+                      </div>
+                      {step.events!.map((ev, idx) => (
+                        <div key={ev.id || `ev-${idx}`} className={`exec-event exec-event-${ev.status || 'info'}`}>
+                          <span className="exec-event-dot" />
+                          <span className="exec-event-msg">{ev.message || ev.event_type}</span>
+                          {ev.latency_ms != null && ev.latency_ms > 0 && (
+                            <span className="exec-event-meta">{(ev.latency_ms / 1000).toFixed(1)}s</span>
+                          )}
+                          {ev.token_count != null && ev.token_count > 0 && (
+                            <span className="exec-event-meta">{ev.token_count} tokens</span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {isExpanded && hasArtifacts && (
                     <div className="step-artifacts">
                       <div className="artifacts-summary">{formatArtifactSummary(step.artifacts)}</div>
                       {step.artifacts!.output_preview && (
@@ -340,6 +383,77 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           padding: 0 12px 12px 48px;
           border-top: 1px solid var(--border-color);
           margin-top: 0;
+        }
+        .wf-timeline .step-exec-events {
+          padding: 0 12px 10px 48px;
+          border-top: 1px solid var(--border-color);
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .wf-timeline .exec-events-title {
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--text-muted);
+          padding: 8px 0 4px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .wf-timeline .evidence-badge {
+          font-size: 10px;
+          font-weight: 500;
+          padding: 1px 6px;
+          border-radius: 3px;
+        }
+        .wf-timeline .evidence-pass {
+          background: #dcfce7;
+          color: #16a34a;
+        }
+        .wf-timeline .evidence-warn {
+          background: #fef3c7;
+          color: #d97706;
+        }
+        .wf-timeline .evidence-fail {
+          background: #fef2f2;
+          color: #dc2626;
+        }
+        .wf-timeline .exec-event {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr) auto auto;
+          align-items: center;
+          gap: 7px;
+          font-size: 12px;
+          line-height: 1.5;
+          color: var(--text-secondary);
+          padding: 2px 0;
+        }
+        .wf-timeline .exec-event-dot {
+          width: 5px;
+          height: 5px;
+          border-radius: 50%;
+          background: #94a3b8;
+          flex-shrink: 0;
+        }
+        .wf-timeline .exec-event-pass .exec-event-dot,
+        .wf-timeline .exec-event-info .exec-event-dot {
+          background: #2563eb;
+        }
+        .wf-timeline .exec-event-warning .exec-event-dot {
+          background: #d97706;
+        }
+        .wf-timeline .exec-event-error .exec-event-dot {
+          background: #dc2626;
+        }
+        .wf-timeline .exec-event-msg {
+          min-width: 0;
+          overflow-wrap: anywhere;
+        }
+        .wf-timeline .exec-event-meta {
+          font-size: 10px;
+          color: var(--text-muted);
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
         }
         .wf-timeline .artifacts-summary {
           padding: 10px 12px;

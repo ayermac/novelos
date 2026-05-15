@@ -174,6 +174,7 @@ class EditorAgent(BaseAgent):
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+        exec_events: list[dict] = []
 
         use_compact_review = state.get("llm_mode") == "real" and is_configured_live_provider(self.llm)
         context = self._build_compact_review_context(state) if use_compact_review else self._build_v6_context(state)
@@ -204,6 +205,11 @@ class EditorAgent(BaseAgent):
                 raise
             logger.warning("Editor: LLM review degraded to rule-based fallback: %s", e)
             output = self._fallback_rule_review(content, str(e))
+            exec_events.append({
+                "event_type": "fallback_used",
+                "message": f"LLM 审核降级为规则兜底：{str(e)[:100]}",
+                "payload": {"fallback_type": "rule_review", "reason": str(e)[:200]},
+            })
         
         dp_result = check_death_penalty_structured(content)
         if dp_result.has_critical:
@@ -521,6 +527,17 @@ class EditorAgent(BaseAgent):
                 new_stage = "revision"
                 retry_count = retry_count + 1
 
+        exec_events.append({
+            "event_type": "artifact_saved",
+            "message": f"保存产物：审核报告 (评分: {output.score}，{'通过' if output.pass_ else '退回'})",
+            "payload": {
+                "artifact_type": "review",
+                "score": output.score,
+                "passed": output.pass_,
+                "revision_target": output.revision_target,
+            },
+        })
+
         return {
             "chapter_status": new_status,
             "current_stage": new_stage,
@@ -532,6 +549,7 @@ class EditorAgent(BaseAgent):
                 "revision_target": output.revision_target,
                 **word_gate_details,
             },
+            "_exec_events": exec_events,
         }
 
     def validate_output(self, output: dict) -> None:

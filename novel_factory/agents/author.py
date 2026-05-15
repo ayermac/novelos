@@ -134,6 +134,7 @@ class AuthorAgent(BaseAgent):
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+        exec_events: list[dict] = []
 
         context = self._build_v6_context(state)
 
@@ -149,6 +150,11 @@ class AuthorAgent(BaseAgent):
 
         if self._should_use_plain_text_primary(state):
             output = self._try_plain_text_draft(state, task_desc, context)
+            exec_events.append({
+                "event_type": "fallback_used",
+                "message": "使用纯正文模式生成（真实 LLM 优化路径）",
+                "payload": {"fallback_type": "plain_text_primary"},
+            })
         else:
             try:
                 raw = self.llm.invoke_json(messages, schema=AuthorOutput)
@@ -160,6 +166,11 @@ class AuthorAgent(BaseAgent):
                     "Author: structured JSON output failed; retrying with plain-text drafting fallback"
                 )
                 output = self._try_plain_text_draft(state, task_desc, context)
+                exec_events.append({
+                    "event_type": "fallback_used",
+                    "message": "JSON 输出失败，降级为纯正文兜底生成",
+                    "payload": {"fallback_type": "plain_text_fallback"},
+                })
 
         output = self._sanitize_output(output, state)
 
@@ -220,6 +231,15 @@ class AuthorAgent(BaseAgent):
         output = loop_result["output"]
         trace = loop_result.get("_trace", {})
         autonomy = loop_result.get("_autonomy", {})
+        self_check_data = trace.get("self_check", {}) if isinstance(trace, dict) else {}
+        sc_passed = self_check_data.get("passed", True)
+        sc_issues = self_check_data.get("issues", [])
+        exec_events.append({
+            "event_type": "self_check_completed",
+            "message": f"自检{'通过' if sc_passed else f'未通过 ({len(sc_issues)} 个问题)'}",
+            "status": "info" if sc_passed else "warning",
+            "payload": {"passed": sc_passed, "issue_count": len(sc_issues)},
+        })
         if state.get("llm_mode") == "real" and autonomy.get("decision") in {"ask_human", "reroute", "refuse"}:
             issue_types = {
                 issue.get("type")
@@ -256,6 +276,12 @@ class AuthorAgent(BaseAgent):
 
         # Legacy skill hooks (still run for compatibility)
         instruction = self._get_instruction(state) or {}
+        from ..validators.chapter_checker import count_words as _count_words
+        exec_events.append({
+            "event_type": "artifact_saved",
+            "message": f"保存产物：章节初稿 ({_count_words(output.content)} 字)",
+            "payload": {"artifact_type": "draft", "word_count": _count_words(output.content)},
+        })
         run_agent_skills(
             repo=self.repo,
             skill_registry=self.skill_registry,
@@ -346,6 +372,7 @@ class AuthorAgent(BaseAgent):
             "current_stage": "drafted",
             "_trace": trace,
             "_autonomy": autonomy,
+            "_exec_events": exec_events,
         }
 
     def validate_output(self, output: dict) -> None:

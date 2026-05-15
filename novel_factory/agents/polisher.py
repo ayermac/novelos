@@ -73,6 +73,7 @@ class PolisherAgent(BaseAgent):
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+        exec_events: list[dict] = []
 
         context = self._build_v6_context(state)
 
@@ -99,6 +100,10 @@ class PolisherAgent(BaseAgent):
         instruction = self._get_instruction(state)
         prev_state_card = self._get_prev_state_card(state)
         fact_lock = extract_fact_lock(instruction, prev_state_card)
+
+        # v6.1: Compute diff summary before skills may modify content
+        from ..validators.chapter_checker import count_words as _count_words
+        original_wc = _count_words(original_content)
 
         # Apply skills from config (after_llm stage)
         polished_content = output.content
@@ -203,6 +208,12 @@ class PolisherAgent(BaseAgent):
             for skill_item in before_save_hook.skill_results:
                 if skill_item.get("skill_id") == "ai-style-detector" and skill_item.get("ok") and skill_item.get("data"):
                     ai_trace_score = skill_item["data"].get("ai_trace_score", 0)
+                    exec_events.append({
+                        "event_type": "skill_completed",
+                        "message": f"AI 痕迹检查{'通过' if ai_trace_score <= 70 else '未通过'}（评分: {ai_trace_score}）",
+                        "status": "info" if ai_trace_score <= 70 else "error",
+                        "payload": {"skill_id": "ai-style-detector", "ai_trace_score": ai_trace_score},
+                    })
                     if ai_trace_score > 70:  # TODO: move to config
                         logger.error(
                             "Polisher: AI trace score too high: %d > 70",
@@ -216,6 +227,26 @@ class PolisherAgent(BaseAgent):
         # Advance status FIRST to lock the transition; abort if stale.
         # Normal flow polishes a drafted chapter; revision flow polishes a
         # chapter currently marked revision.
+        # v6.1: Log diff summary
+        polished_wc = _count_words(polished_content)
+        changed_scope = output.changed_scope if hasattr(output, "changed_scope") else []
+        diff_msg = f"改动：{original_wc} → {polished_wc} 字"
+        if changed_scope:
+            scope_str = ", ".join(changed_scope) if isinstance(changed_scope, list) else str(changed_scope)
+            diff_msg += f"，改动范围：{scope_str}"
+        if abs(polished_wc - original_wc) < 10:
+            diff_msg += "（内容几乎未变）"
+        exec_events.append({
+            "event_type": "diff_generated",
+            "message": diff_msg,
+            "payload": {
+                "original_word_count": original_wc,
+                "polished_word_count": polished_wc,
+                "changed_scope": changed_scope,
+                "low_change_warning": abs(polished_wc - original_wc) < 10,
+            },
+        })
+
         current_status = state.get("chapter_status")
         expected_status = (
             ChapterStatus.REVISION.value
@@ -272,9 +303,16 @@ class PolisherAgent(BaseAgent):
             )
             return {"error": f"Polisher: write failed: {e}", "chapter_status": expected_status}
 
+        exec_events.append({
+            "event_type": "artifact_saved",
+            "message": f"保存产物：润色稿 ({polished_wc} 字)",
+            "payload": {"artifact_type": "polished_draft", "word_count": polished_wc},
+        })
+
         return {
             "chapter_status": ChapterStatus.POLISHED.value,
             "current_stage": "polished",
+            "_exec_events": exec_events,
         }
 
     def validate_output(self, output: dict) -> None:

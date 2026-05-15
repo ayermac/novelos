@@ -16,9 +16,9 @@
 - **生产稳定基线**: v5.5.15 Production Readiness Closure
 - **当前 WebUI 基线**: v5.6.1 Workbench Stabilization
 - **当前创作者闭环基线**: v5.7 Daily Writing Editing and Versioning
-- **当前稳定版本**: v6.0 Agent Role Capability System candidate after real LLM acceptance fixes
-- **状态**: v6.0 真实 LLM 新项目验收已完成；已修复真实运行中暴露的工作流状态一致性、timeline 语义、局部返修路由和质量评分问题
-- **测试基线**: pytest 1917/1917 passed；smoke passed；eval_agents 30/30 passed；vitest 148/148 passed；frontend typecheck/lint/build passed
+- **当前稳定版本**: v6.1 Agent Work Process Streaming & Auditable Execution Evidence candidate
+- **状态**: v6.1 已接入 Agent 工作过程直播、节点证据校验与历史回放；二次 Review 已修复 SSE 接入、历史 run 回放、MemoryCurator 证据误判和折叠态证据可见性问题
+- **测试基线**: v6.1 targeted pytest 24/24 passed；v5.8 + agent tests 52/52 passed；smoke passed；vitest 153/153 passed；frontend typecheck/lint/build passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
@@ -42,6 +42,9 @@
 - **v6.0 完成报告**: [reports/novel-factory-v6.0-completion-report.md](reports/novel-factory-v6.0-completion-report.md)
 - **v6.0 Review 记录**: [reviews/novel-factory-v6.0-review.md](reviews/novel-factory-v6.0-review.md)
 - **v6.0 真实 LLM 验收**: [reports/novel-factory-v6.0-real-llm-acceptance-report.md](reports/novel-factory-v6.0-real-llm-acceptance-report.md)
+- **v6.1 Agent Work Process Streaming 规格**: [planning/novel-factory-v6.1-agent-work-process-streaming-spec.md](planning/novel-factory-v6.1-agent-work-process-streaming-spec.md)
+- **v6.1 完成报告**: [reports/novel-factory-v6.1-completion-report.md](reports/novel-factory-v6.1-completion-report.md)
+- **v6.1 Review 记录**: [reviews/novel-factory-v6.1-review.md](reviews/novel-factory-v6.1-review.md)
 
 ## 当前执行规则
 

@@ -163,6 +163,31 @@ export interface WorkflowTimelineNode {
   duration_ms: number | null
   messages: string[]
   artifacts: WorkflowTimelineArtifact[]
+  events?: WorkflowExecutionEvent[]
+  evidence?: WorkflowNodeEvidence
+}
+
+// v6.1: Execution event and evidence types
+
+export interface WorkflowExecutionEvent {
+  id?: number
+  node_name?: string
+  agent_id?: string
+  event_type: string
+  status?: string
+  message?: string
+  payload?: Record<string, unknown>
+  token_count?: number | null
+  latency_ms?: number | null
+  created_at?: string
+}
+
+export interface WorkflowNodeEvidence {
+  has_evidence: boolean
+  has_warnings?: boolean
+  has_evidence_failure?: boolean
+  latest_event_summary?: string
+  event_count?: number
 }
 
 export interface WorkflowTimelineRecovery {

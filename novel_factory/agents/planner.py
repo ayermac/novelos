@@ -100,6 +100,7 @@ class PlannerAgent(BaseAgent):
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+        exec_events: list[dict] = []
 
         context = self._build_v6_context(state)
 
@@ -116,7 +117,7 @@ class PlannerAgent(BaseAgent):
         # Save instruction to DB, preserving word_target if one already exists
         brief = output.chapter_brief
         project_skill_overrides = self._get_project_skill_overrides(project_id)
-        run_agent_skills(
+        skill_result = run_agent_skills(
             repo=self.repo,
             skill_registry=self.skill_registry,
             project_id=project_id,
@@ -127,6 +128,14 @@ class PlannerAgent(BaseAgent):
             project_overrides=project_skill_overrides,
             skill_type_hint="validator",
         )
+        if skill_result.skill_results:
+            for sr in skill_result.skill_results:
+                exec_events.append({
+                    "event_type": "skill_completed",
+                    "message": f"Skill {sr.get('skill_id', '')} {'通过' if sr.get('ok') else '失败'}",
+                    "status": "info" if sr.get("ok") else "warning",
+                    "payload": {"skill_id": sr.get("skill_id"), "ok": sr.get("ok")},
+                })
 
         existing = self.repo.get_instruction(project_id, chapter_number)
         project = self.repo.get_project(project_id)
@@ -145,6 +154,12 @@ class PlannerAgent(BaseAgent):
             word_target=word_target,
         )
 
+        exec_events.append({
+            "event_type": "artifact_saved",
+            "message": "保存产物：章节指令",
+            "payload": {"artifact_type": "chapter_brief"},
+        })
+
         # Update chapter status
         self.repo.update_chapter_status(
             project_id, chapter_number, ChapterStatus.PLANNED.value,
@@ -162,6 +177,7 @@ class PlannerAgent(BaseAgent):
         return {
             "chapter_status": ChapterStatus.PLANNED.value,
             "current_stage": "planned",
+            "_exec_events": exec_events,
         }
 
     def validate_output(self, output: dict) -> None:

@@ -76,6 +76,7 @@ class ScreenwriterAgent(BaseAgent):
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+        exec_events: list[dict] = []
 
         context = self._build_v6_context(state)
 
@@ -148,7 +149,12 @@ class ScreenwriterAgent(BaseAgent):
             }
 
         beats_data = [b.model_dump() for b in output.scene_beats]
-        run_agent_skills(
+        exec_events.append({
+            "event_type": "artifact_saved",
+            "message": f"保存产物：场景规划 ({len(beats_data)} 个 beat)",
+            "payload": {"artifact_type": "scene_plan", "beat_count": len(beats_data)},
+        })
+        skill_result = run_agent_skills(
             repo=self.repo,
             skill_registry=self.skill_registry,
             project_id=project_id,
@@ -159,6 +165,14 @@ class ScreenwriterAgent(BaseAgent):
             project_overrides=self._get_project_skill_overrides(project_id),
             skill_type_hint="validator",
         )
+        if skill_result.skill_results:
+            for sr in skill_result.skill_results:
+                exec_events.append({
+                    "event_type": "skill_completed",
+                    "message": f"Skill {sr.get('skill_id', '')} {'通过' if sr.get('ok') else '失败'}",
+                    "status": "info" if sr.get("ok") else "warning",
+                    "payload": {"skill_id": sr.get("skill_id"), "ok": sr.get("ok")},
+                })
 
         # Advance status FIRST to lock the transition; abort if stale
         ok = self.repo.update_chapter_status(
@@ -192,6 +206,7 @@ class ScreenwriterAgent(BaseAgent):
             "current_stage": "scripted",
             "_trace": trace,
             "_autonomy": autonomy,
+            "_exec_events": exec_events,
         }
 
     def validate_output(self, output: dict) -> None:

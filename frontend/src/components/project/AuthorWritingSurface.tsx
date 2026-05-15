@@ -7,10 +7,11 @@ import {
   CheckCircle2,
 } from 'lucide-react'
 import { StepStatus } from '../../hooks/useSSEStream'
+import { useWorkflowStream } from '../../hooks/useWorkflowStream'
 import { tWorkflowNodeLabel } from '../../lib/state-labels'
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
 import { post } from '../../lib/api'
-import type { WorkflowTimelineData } from '../../lib/api'
+import type { WorkflowTimelineData, WorkflowExecutionEvent, WorkflowNodeEvidence } from '../../lib/api'
 import { PROCESS_DRAFT_LABEL, formatArtifactSummary, getArtifactTitle } from '../../lib/artifacts'
 import AttentionPanel, { ActionHintList } from '../AttentionPanel'
 import WorkflowTimeline from '../WorkflowTimeline'
@@ -63,6 +64,8 @@ interface Step {
     artifact_types?: unknown
     [key: string]: unknown
   } | null
+  events?: WorkflowExecutionEvent[]
+  evidence?: WorkflowNodeEvidence
 }
 
 interface RunDetailData {
@@ -89,6 +92,60 @@ function elapsedMinutesSince(value?: string | null): number | null {
   const timestamp = new Date(normalized).getTime()
   if (Number.isNaN(timestamp)) return null
   return Math.max(0, Math.floor((Date.now() - timestamp) / 60000))
+}
+
+function mergeWorkflowEvents(
+  existingEvents: WorkflowExecutionEvent[],
+  liveEvents: WorkflowExecutionEvent[],
+): WorkflowExecutionEvent[] {
+  const merged: WorkflowExecutionEvent[] = []
+  const seen = new Set<string>()
+  for (const event of [...existingEvents, ...liveEvents]) {
+    const key = event.id != null
+      ? `id:${event.id}`
+      : `${event.node_name || ''}:${event.event_type}:${event.status || ''}:${event.created_at || ''}:${event.message || ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    merged.push(event)
+  }
+  return merged
+}
+
+function buildLiveEvidence(
+  events: WorkflowExecutionEvent[],
+  fallback?: WorkflowNodeEvidence,
+): WorkflowNodeEvidence | undefined {
+  if (events.length === 0) return fallback
+
+  let hasWarnings = false
+  let hasEvidenceFailure = false
+  let latestSummary = fallback?.latest_event_summary || ''
+
+  for (const event of events) {
+    const status = event.status || 'info'
+    if (event.event_type === 'evidence_verified' && status === 'fail') {
+      hasEvidenceFailure = true
+    }
+    if (status === 'warning' || status === 'error') {
+      hasWarnings = true
+    }
+    if (
+      event.message &&
+      (event.event_type === 'evidence_verified' ||
+        event.event_type === 'node_completed' ||
+        event.event_type === 'llm_completed')
+    ) {
+      latestSummary = event.message
+    }
+  }
+
+  return {
+    has_evidence: true,
+    has_warnings: hasWarnings || fallback?.has_warnings,
+    has_evidence_failure: hasEvidenceFailure || fallback?.has_evidence_failure,
+    latest_event_summary: latestSummary,
+    event_count: events.length,
+  }
 }
 
 const CANONICAL_GENERATING_STEPS = [
@@ -535,12 +592,22 @@ function WorkflowBody({
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
 }) {
+  // v6.1: Connect to SSE stream for live execution events while running
+  const isRunActive = timeline?.run_status === 'running'
+  const { liveEvents } = useWorkflowStream(
+    isRunActive ? timeline?.project_id ?? null : null,
+    isRunActive ? timeline?.chapter_number ?? null : null,
+    isRunActive ? timeline?.run_id ?? null : null,
+    isRunActive,
+  )
+
   // v5.8.2: Timeline API is the primary workflow truth when available.
   if (timeline) {
     const nodeLabel = tWorkflowNodeLabel(timeline.current_node)
     const statusLabel = timeline.run_status ? tWorkflowStatus(timeline.run_status) : '—'
     const isStale = timeline.is_stale
     const isRunning = timeline.run_status === 'running'
+
     const statusTone = isStale || timeline.run_status === 'blocked' ? 'warning' : timeline.run_status === 'failed' ? 'error' : 'info'
     const statusHeadline = isStale
       ? '工作流疑似卡住'
@@ -565,21 +632,40 @@ function WorkflowBody({
     const checkpoint = timeline.checkpoint
 
     // Convert timeline nodes to WorkflowTimeline Step format
-    const timelineSteps: Step[] = timeline.nodes.map((n) => ({
-      key: n.node_name,
-      label: n.label,
-      description: n.messages[0] || '',
-      node_group: n.node_group,
-      node_type: n.node_type,
-      status: n.status as Step['status'],
-      logs: n.messages.map((m) => ({ level: 'info' as const, message: m })),
-      artifacts: n.artifacts.length > 0 ? {
-        summary: n.artifacts.map((a) => a.label).join('、'),
-        artifact_labels: n.artifacts.map((a) => a.label),
-        artifact_count: n.artifacts.length,
-        artifact_types: n.artifacts.map((a) => a.type),
-      } : null,
-    }))
+    // v6.1: Merge live SSE events into nodes while running
+    const liveEventsByNode: Record<string, WorkflowExecutionEvent[]> = {}
+    for (const ev of liveEvents) {
+      const nodeName = ev.node_name
+      if (nodeName) {
+        if (!liveEventsByNode[nodeName]) liveEventsByNode[nodeName] = []
+        liveEventsByNode[nodeName].push(ev)
+      }
+    }
+
+    const timelineSteps: Step[] = timeline.nodes.map((n) => {
+      const existingEvents = n.events || []
+      const live = liveEventsByNode[n.node_name] || []
+      const mergedEvents = live.length > 0
+        ? mergeWorkflowEvents(existingEvents, live)
+        : existingEvents
+      return {
+        key: n.node_name,
+        label: n.label,
+        description: n.messages[0] || '',
+        node_group: n.node_group,
+        node_type: n.node_type,
+        status: n.status as Step['status'],
+        logs: n.messages.map((m) => ({ level: 'info' as const, message: m })),
+        artifacts: n.artifacts.length > 0 ? {
+          summary: n.artifacts.map((a) => a.label).join('、'),
+          artifact_labels: n.artifacts.map((a) => a.label),
+          artifact_count: n.artifacts.length,
+          artifact_types: n.artifacts.map((a) => a.type),
+        } : null,
+        events: mergedEvents.length > 0 ? mergedEvents : undefined,
+        evidence: buildLiveEvidence(mergedEvents, n.evidence),
+      }
+    })
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

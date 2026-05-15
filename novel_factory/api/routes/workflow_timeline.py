@@ -1,13 +1,18 @@
 """Workflow timeline API for chapter-level observability (v5.8).
 
 GET /api/projects/{project_id}/chapters/{chapter_number}/workflow-timeline
+GET /api/projects/{project_id}/chapters/{chapter_number}/workflow-stream (v6.1 SSE)
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from starlette.responses import StreamingResponse
 
 from fastapi import APIRouter, Request
 
@@ -61,6 +66,30 @@ def _artifact_label(artifact_type: str | None) -> str:
     if not artifact_type:
         return "产物"
     return ARTIFACT_TYPE_LABELS.get(artifact_type, artifact_type)
+
+
+def _get_workflow_run_by_id(
+    repo: Any,
+    project_id: str,
+    chapter_number: int,
+    run_id: str,
+) -> dict | None:
+    """Fetch one workflow run by id without depending on recent-run limits."""
+    conn = repo._conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM workflow_runs WHERE id=? AND project_id=? AND chapter_number=?",
+            (run_id, project_id, chapter_number),
+        ).fetchone()
+        if not row:
+            return None
+        from ...db.connection import row_to_dict
+
+        data = row_to_dict(row)
+        data["run_id"] = data.get("id")
+        return data
+    finally:
+        conn.close()
 
 
 def _parse_db_datetime(value: str | None) -> datetime | None:
@@ -298,6 +327,85 @@ def _checkpoint_metadata(repo: Any, project_id: str, chapter_number: int) -> dic
         }
 
 
+# ── v6.1: Execution events helpers ──────────────────────────────
+
+def _group_execution_events_by_node(
+    exec_events: list[dict],
+) -> dict[str, list[dict]]:
+    """Group execution events by node_name for timeline embedding."""
+    grouped: dict[str, list[dict]] = {}
+    for ev in exec_events:
+        node = ev.get("node_name", "")
+        if node:
+            grouped.setdefault(node, []).append(ev)
+    return grouped
+
+
+def _build_node_evidence(node_exec_events: list[dict]) -> dict[str, Any]:
+    """Build evidence summary for a node from its execution events."""
+    if not node_exec_events:
+        return {"has_evidence": False}
+
+    has_warnings = False
+    has_evidence_failure = False
+    latest_summary = ""
+
+    for ev in node_exec_events:
+        etype = ev.get("event_type", "")
+        status = ev.get("status", "info")
+        if etype == "evidence_verified" and status == "fail":
+            has_evidence_failure = True
+        if status in ("warning", "error"):
+            has_warnings = True
+
+    # Latest meaningful summary
+    for ev in reversed(node_exec_events):
+        msg = ev.get("message", "")
+        if msg and ev.get("event_type") in ("evidence_verified", "node_completed", "llm_completed"):
+            latest_summary = msg
+            break
+    if not latest_summary and node_exec_events:
+        latest_summary = node_exec_events[-1].get("message", "")
+
+    return {
+        "has_evidence": True,
+        "has_warnings": has_warnings,
+        "has_evidence_failure": has_evidence_failure,
+        "latest_event_summary": latest_summary,
+        "event_count": len(node_exec_events),
+    }
+
+
+def _embed_execution_events_in_nodes(
+    nodes: list[dict],
+    exec_events: list[dict],
+) -> list[dict]:
+    """Embed execution events and evidence into timeline nodes."""
+    grouped = _group_execution_events_by_node(exec_events)
+    for node in nodes:
+        node_name = node.get("node_name", "")
+        node_exec = grouped.get(node_name, [])
+        if node_exec:
+            node["events"] = [
+                {
+                    "id": ev.get("id"),
+                    "event_type": ev.get("event_type"),
+                    "status": ev.get("status"),
+                    "message": ev.get("message"),
+                    "payload": ev.get("payload", {}),
+                    "token_count": ev.get("token_count"),
+                    "latency_ms": ev.get("latency_ms"),
+                    "created_at": ev.get("created_at"),
+                }
+                for ev in node_exec
+            ]
+            node["evidence"] = _build_node_evidence(node_exec)
+        else:
+            node["events"] = []
+            node["evidence"] = {"has_evidence": False}
+    return nodes
+
+
 @router.get("/projects/{project_id}/chapters/{chapter_number}/workflow-timeline")
 async def get_workflow_timeline(
     request: Request,
@@ -333,25 +441,7 @@ async def get_workflow_timeline(
         # Find target run
         target_run: dict | None = None
         if run_id:
-            runs = repo.get_workflow_runs_for_project(
-                project_id, chapter_number=chapter_number, limit=1
-            )
-            # Filter by run_id
-            for r in runs:
-                if r.get("id") == run_id or r.get("run_id") == run_id:
-                    target_run = r
-                    break
-            if not target_run:
-                # Direct lookup fallback
-                conn = repo._conn()
-                try:
-                    row = conn.execute(
-                        "SELECT * FROM workflow_runs WHERE id=? AND project_id=? AND chapter_number=?",
-                        (run_id, project_id, chapter_number),
-                    ).fetchone()
-                    target_run = dict(row) if row else None
-                finally:
-                    conn.close()
+            target_run = _get_workflow_run_by_id(repo, project_id, chapter_number, run_id)
         else:
             # Latest run for this chapter
             runs = repo.get_workflow_runs_for_project(
@@ -383,11 +473,11 @@ async def get_workflow_timeline(
             )
             if reconciliation.get("runs"):
                 # Refresh run data
-                runs = repo.get_workflow_runs_for_project(
-                    project_id, chapter_number=chapter_number, limit=1
-                )
-                if runs:
-                    target_run = runs[0]
+                refreshed_id = target_run.get("id") or target_run.get("run_id")
+                if refreshed_id:
+                    target_run = _get_workflow_run_by_id(
+                        repo, project_id, chapter_number, refreshed_id
+                    ) or target_run
 
         # No run -> empty timeline
         if not target_run:
@@ -439,6 +529,14 @@ async def get_workflow_timeline(
             run_status=run_status,
             current_node=current_node,
         )
+
+        # v6.1: Embed execution events into timeline nodes
+        try:
+            exec_events = repo.get_workflow_execution_events(run_id_str)
+            nodes = _embed_execution_events_in_nodes(nodes, exec_events)
+        except Exception:
+            pass  # Backward compatible — execution events are additive
+
         checkpoint = _checkpoint_metadata(repo, project_id, chapter_number)
 
         return envelope_response({
@@ -457,3 +555,130 @@ async def get_workflow_timeline(
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取工作流时间线失败: {str(e)}")
+
+
+# ── v6.1: SSE Streaming Endpoint ───────────────────────────────
+
+@router.get("/projects/{project_id}/chapters/{chapter_number}/workflow-stream")
+async def workflow_stream_sse(
+    request: Request,
+    project_id: str,
+    chapter_number: int,
+    run_id: str | None = None,
+    since_id: int | None = None,
+    replay: bool = True,
+) -> StreamingResponse:
+    """SSE endpoint for real-time workflow execution event streaming.
+
+    Streams existing events first for replay, then polls DB for new events
+    every 1-2 seconds while the target run is active.
+    """
+    from ..deps import get_repo
+
+    repo = get_repo(request)
+
+    # Find target run
+    target_run: dict | None = None
+    if run_id:
+        target_run = _get_workflow_run_by_id(repo, project_id, chapter_number, run_id)
+    else:
+        runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=1)
+        if runs:
+            target_run = runs[0]
+
+    run_id_str = target_run.get("id") or target_run.get("run_id", "") if target_run else ""
+    run_status = target_run.get("status", "") if target_run else ""
+
+    async def event_generator():
+        last_event_id = since_id or 0
+
+        # Replay existing events
+        if replay and run_id_str:
+            try:
+                existing = repo.get_workflow_execution_events(run_id_str)
+                for ev in existing:
+                    if ev.get("id", 0) <= last_event_id:
+                        continue
+                    last_event_id = ev.get("id", 0)
+                    payload = {
+                        "id": ev.get("id"),
+                        "run_id": run_id_str,
+                        "node_name": ev.get("node_name"),
+                        "agent_id": ev.get("agent_id"),
+                        "event_type": ev.get("event_type"),
+                        "status": ev.get("status"),
+                        "message": ev.get("message"),
+                        "payload": ev.get("payload", {}),
+                        "token_count": ev.get("token_count"),
+                        "latency_ms": ev.get("latency_ms"),
+                        "created_at": ev.get("created_at"),
+                    }
+                    yield f"event: workflow_event\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            except Exception:
+                pass
+
+        # If run is already terminal, emit done and close
+        if not run_id_str or run_status in ("completed", "failed", "blocked"):
+            done_payload = {"run_id": run_id_str, "status": run_status or "no_run"}
+            yield f"event: workflow_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+            return
+
+        # Poll for new events while run is active
+        max_poll_seconds = 1800  # 30 minutes max
+        poll_interval = 1.5
+        start = time.time()
+        while time.time() - start < max_poll_seconds:
+            # Check if client disconnected
+            if await request.is_disconnected():
+                break
+
+            try:
+                new_events = repo.get_workflow_execution_events_since(
+                    run_id_str, since_id=last_event_id,
+                )
+                for ev in new_events:
+                    last_event_id = ev.get("id", 0)
+                    payload = {
+                        "id": ev.get("id"),
+                        "run_id": run_id_str,
+                        "node_name": ev.get("node_name"),
+                        "agent_id": ev.get("agent_id"),
+                        "event_type": ev.get("event_type"),
+                        "status": ev.get("status"),
+                        "message": ev.get("message"),
+                        "payload": ev.get("payload", {}),
+                        "token_count": ev.get("token_count"),
+                        "latency_ms": ev.get("latency_ms"),
+                        "created_at": ev.get("created_at"),
+                    }
+                    yield f"event: workflow_event\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            except Exception:
+                pass
+
+            # Check if run has completed
+            try:
+                current_run = _get_workflow_run_by_id(
+                    repo, project_id, chapter_number, run_id_str,
+                )
+                if current_run and current_run.get("status") in ("completed", "failed", "blocked"):
+                    done_payload = {"run_id": run_id_str, "status": current_run["status"]}
+                    yield f"event: workflow_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+                    return
+            except Exception:
+                pass
+
+            await asyncio.sleep(poll_interval)
+
+        # Timeout - emit done
+        done_payload = {"run_id": run_id_str, "status": "timeout"}
+        yield f"event: workflow_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
