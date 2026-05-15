@@ -143,7 +143,38 @@ Platform keys:
 
 M2 produces a standalone macOS `.app` bundle that includes the frontend and the frozen Python sidecar.
 
-### Prerequisites
+### One-command local build
+
+For local client validation, prefer the full build script from the repo root:
+
+```bash
+bash packaging/scripts/build-desktop-mac.sh --dir
+```
+
+This builds the React frontend, freezes the Python sidecar, and packages the unsigned macOS `.app` in one pass.
+
+To also create a DMG:
+
+```bash
+bash packaging/scripts/build-desktop-mac.sh --dmg
+```
+
+From the `desktop/` directory, the same flows are available as:
+
+```bash
+npm run pack:mac:full
+npm run dist:mac:full
+```
+
+Use `--skip-sidecar` only when the frozen sidecar already exists and you are only rebuilding frontend or Electron changes:
+
+```bash
+bash packaging/scripts/build-desktop-mac.sh --dir --skip-sidecar
+```
+
+### Manual build steps
+
+The full script above runs these steps for you. Run them manually only when debugging a specific build layer.
 
 1. Frontend built:
    ```bash
@@ -163,7 +194,7 @@ M2 produces a standalone macOS `.app` bundle that includes the frontend and the 
 ```bash
 cd desktop
 npm run pack:mac     # Builds release/mac-arm64/Novelos.app (unsigned, fast)
-npm run dist:mac     # Also produces release/Novelos-6.4.0-m2-arm64.dmg
+npm run dist:mac     # Also produces release/Novelos-6.5.0-m3-arm64.dmg
 ```
 
 The packaged app will contain:
@@ -193,6 +224,8 @@ Or directly:
 3. The **frozen sidecar** starts from app resources (no local Python needed).
 4. Electron polls `/api/health` until the backend is ready.
 5. The BrowserWindow opens with the bundled frontend loaded.
+
+The desktop package does not expose a public web server. The sidecar listens only on `127.0.0.1` with a random local port, and the Electron renderer receives that port through `window.__NOVELOS_DESKTOP__`.
 
 ## Desktop Runtime Settings (M3)
 
@@ -269,6 +302,7 @@ Electron logs and sidecar stdout/stderr logs are automatically rotated when they
 - `packaging/pyinstaller/novelos-sidecar.spec` — PyInstaller spec
 - `packaging/scripts/build-sidecar.sh` — macOS sidecar build script
 - `packaging/scripts/smoke-sidecar.sh` — Sidecar standalone smoke test
+- `packaging/scripts/build-desktop-mac.sh` — One-command frontend + sidecar + Electron macOS build
 - `novel_factory/desktop_sidecar.py` — Thin Python sidecar wrapper
 - `novel_factory/api/routes/desktop.py` — Desktop runtime API (runtime-info, config read/write)
 - `novel_factory/api_app.py` — Register desktop router

@@ -173,7 +173,8 @@ Desktop App
 
 - `desktop/electron-builder.yml`
 - `desktop/build/entitlements.mac.plist`
-- `desktop/package.json`（新增 `pack:mac`、`dist:mac` 脚本）
+- `desktop/package.json`（新增 `pack:mac`、`dist:mac`、`pack:mac:full`、`dist:mac:full` 脚本）
+- `packaging/scripts/build-desktop-mac.sh` — 一键串联 frontend build、sidecar freeze、Electron packaging
 
 验收标准：
 
@@ -182,6 +183,7 @@ Desktop App
 - 应用数据写入 `~/Library/Application Support/novelos-desktop/`，不污染源码目录。
 - 关闭应用后 sidecar 进程退出。
 - Windows/Linux 打包结构已预留，待后续 CI 验证。
+- 本地客户端验收可通过一条命令完成：`bash packaging/scripts/build-desktop-mac.sh --dir`。
 
 ### M3：本地数据目录与配置治理
 
@@ -249,6 +251,7 @@ Desktop App
 - 首次启动自动生成默认配置，不覆盖已有配置。
 - 日志超过 5MB 自动轮转。
 - API key 不会通过任何 API 返回或在前端显示。
+- 默认不开放浏览器 Web 入口；sidecar 只监听 `127.0.0.1` 随机端口，并仅供 Electron 客户端使用。
 
 ### M4：API key 与安全
 
@@ -527,4 +530,3 @@ MVP 之后再规划：
 - 最近项目
 - 离线写作模式
 - 本地模型 provider
-
