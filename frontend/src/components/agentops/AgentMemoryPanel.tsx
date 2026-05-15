@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { apiUrl } from "../../lib/api";
 import { useAppDialog } from "../AppDialogContext";
 
 interface AgentMemoryPanelProps {
@@ -23,7 +24,7 @@ export const AgentMemoryPanel: React.FC<AgentMemoryPanelProps> = ({
   const dialog = useAppDialog();
 
   const load = React.useCallback(() => {
-    fetch(`/api/agent-memory/${projectId}?agent_id=${agentId}`)
+    fetch(apiUrl(`/agent-memory/${projectId}?agent_id=${agentId}`))
       .then((r) => r.json())
       .then((data) => {
         if (data.ok) {
@@ -37,7 +38,7 @@ export const AgentMemoryPanel: React.FC<AgentMemoryPanelProps> = ({
   }, [load]);
 
   const toggle = (id: number, enabled: boolean) => {
-    fetch(`/api/agent-memory/${id}/${enabled ? "disable" : "enable"}`, {
+    fetch(apiUrl(`/agent-memory/${id}/${enabled ? "disable" : "enable"}`), {
       method: "PATCH",
     }).then(() => load());
   };
@@ -51,7 +52,7 @@ export const AgentMemoryPanel: React.FC<AgentMemoryPanelProps> = ({
       tone: "danger",
     });
     if (!ok) return;
-    fetch(`/api/agent-memory/${id}`, { method: "DELETE" }).then(() => load());
+    fetch(apiUrl(`/agent-memory/${id}`), { method: "DELETE" }).then(() => load());
   };
 
   return (

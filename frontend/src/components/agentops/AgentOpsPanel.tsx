@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { apiUrl } from "../../lib/api";
 import { AgentRoleCard } from "./AgentRoleCard";
 import { AgentTraceView } from "./AgentTraceView";
 import { AgentMemoryPanel } from "./AgentMemoryPanel";
@@ -23,7 +24,7 @@ export const AgentOpsPanel: React.FC<AgentOpsPanelProps> = ({ projectId }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    fetch("/api/agent-ops/role-profiles")
+    fetch(apiUrl("/agent-ops/role-profiles"))
       .then((r) => r.json())
       .then((data) => {
         if (data.ok) {

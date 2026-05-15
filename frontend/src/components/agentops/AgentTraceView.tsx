@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { apiUrl } from "../../lib/api";
 
 interface AgentTraceViewProps {
   projectId: string;
@@ -32,7 +33,7 @@ export const AgentTraceView: React.FC<AgentTraceViewProps> = ({
 
   useEffect(() => {
     const params = new URLSearchParams({ project_id: projectId, agent_id: agentId })
-    fetch(`/api/agent-ops/agent-traces?${params.toString()}`)
+    fetch(apiUrl(`/agent-ops/agent-traces?${params.toString()}`))
       .then((r) => r.json())
       .then((data) => {
         if (data.ok) {

@@ -64,6 +64,8 @@ Desktop App
 
 ### M0：桌面化技术验证
 
+状态：**已实现**（见 `desktop/` 目录和 `desktop/README.md`）
+
 目标：证明 Electron 可以启动现有 FastAPI 后端，React 前端可以在桌面窗口里访问 `/api`。
 
 实现步骤：

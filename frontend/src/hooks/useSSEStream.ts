@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { apiUrl } from '../lib/api';
 
 export interface SSEEvent {
   type: 'step_start' | 'step_complete' | 'step_log' | 'run_complete' | 'run_error';
@@ -139,7 +140,7 @@ export function useSSEStream(
     }
 
     const launchAndObserve = async () => {
-      const response = await fetch('/api/run/chapter/start', {
+      const response = await fetch(apiUrl('/run/chapter/start'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_id: projectId, chapter }),
@@ -162,7 +163,7 @@ export function useSSEStream(
 
       const data = launch.data as LaunchResponse;
       const runId = data.run_id;
-      const url = `/api/projects/${encodeURIComponent(projectId)}/chapters/${chapter}/workflow-stream?run_id=${encodeURIComponent(runId)}`;
+      const url = apiUrl(`/projects/${encodeURIComponent(projectId)}/chapters/${chapter}/workflow-stream?run_id=${encodeURIComponent(runId)}`);
       const eventSource = new EventSource(url);
       eventSourceRef.current = eventSource;
 

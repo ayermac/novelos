@@ -1,4 +1,33 @@
-const API_BASE = '/api'
+// ── Desktop integration ───────────────────────────────────────
+declare global {
+  interface Window {
+    __NOVELOS_DESKTOP__?: {
+      apiBaseUrl: string
+      platform: string
+      userDataPath: string
+    }
+  }
+}
+
+export function getApiBase(): string {
+  if (typeof window !== 'undefined' && window.__NOVELOS_DESKTOP__?.apiBaseUrl) {
+    return window.__NOVELOS_DESKTOP__.apiBaseUrl
+  }
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL as string
+  }
+  return '/api'
+}
+
+export function apiUrl(path: string): string {
+  const base = getApiBase()
+  const normalizedPath = path.startsWith('/') ? path : `/${path}`
+  // Avoid double slash when base ends with / and path starts with /
+  if (base.endsWith('/') && normalizedPath.startsWith('/')) {
+    return base + normalizedPath.slice(1)
+  }
+  return base + normalizedPath
+}
 
 export interface EnvelopeResponse<T = unknown> {
   ok: boolean
@@ -18,7 +47,7 @@ export async function api<T = unknown>(
   path: string,
   options?: RequestInit
 ): Promise<EnvelopeResponse<T>> {
-  const url = `${API_BASE}${path}`
+  const url = apiUrl(path)
   const response = await fetch(url, {
     ...options,
     headers: {

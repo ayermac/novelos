@@ -1,0 +1,17 @@
+{
+  "name": "novelos-desktop",
+  "version": "6.2.0-m0",
+  "description": "Novelos Desktop Client — M0 Technical Proof of Concept",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "npm run build && electron .",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'No linter configured for M0'"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "electron": "^30.0.0",
+    "typescript": "^5.4.0"
+  }
+}

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { Activity, Download, FileText, BookOpen, ChevronDown } from 'lucide-react'
+import { apiUrl } from '../../lib/api'
 
 interface ProjectHeaderProps {
   projectId: string
@@ -27,7 +28,7 @@ export default function ProjectHeader({
 
   const handleExport = (format: 'txt' | 'markdown') => {
     const a = document.createElement('a')
-    a.href = `/api/projects/${projectId}/export?format=${format}`
+    a.href = apiUrl(`/projects/${projectId}/export?format=${format}`)
     a.download = ''
     document.body.appendChild(a)
     a.click()

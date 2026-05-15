@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from "react";
+import { apiUrl } from "../../lib/api";
 
 interface AgentEvalStatusProps {
   agentId: string;
@@ -15,7 +16,7 @@ export const AgentEvalStatus: React.FC<AgentEvalStatusProps> = ({ agentId }) => 
   const [status, setStatus] = useState<EvalResult | null>(null);
 
   useEffect(() => {
-    fetch(`/api/agent-ops/agent-eval/${agentId}`)
+    fetch(apiUrl(`/agent-ops/agent-eval/${agentId}`))
       .then((r) => r.json())
       .then((data) => {
         if (data.ok) {

@@ -6,6 +6,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react'
+import { apiUrl } from '../lib/api'
 import type { WorkflowExecutionEvent } from '../lib/api'
 
 export interface WorkflowStreamState {
@@ -67,7 +68,7 @@ export function useWorkflowStream(
     setError(null)
     setIsStreaming(true)
 
-    let url = `/api/projects/${encodeURIComponent(projectId)}/chapters/${chapterNumber}/workflow-stream`
+    let url = apiUrl(`/projects/${encodeURIComponent(projectId)}/chapters/${chapterNumber}/workflow-stream`)
     if (runId) {
       url += `?run_id=${encodeURIComponent(runId)}`
     }

@@ -15,7 +15,7 @@ import {
   XCircle,
   Zap,
 } from 'lucide-react'
-import { get, post } from '../../lib/api'
+import { get, post, apiUrl, getApiBase } from '../../lib/api'
 import { tSessionStopLabel, tActionKey, tStepResult } from '../../lib/state-labels'
 import { Checkbox, NumberInput } from '../ui'
 
@@ -706,7 +706,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       const { session_id, stream_url } = startRes.data
       setActiveSessionId(session_id)
 
-      const es = new EventSource(stream_url)
+      const es = new EventSource(apiUrl(stream_url.replace(/^\/api/, '')))
       eventSourceRef.current = es
 
       es.addEventListener('auto_run_started', () => {})
@@ -875,7 +875,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
   const handleDeleteSession = async (sessionId: string) => {
     try {
-      const res = await fetch(`/api/projects/${project.project_id}/production/run-auto/sessions/${sessionId}`, {
+      const res = await fetch(apiUrl(`/projects/${project.project_id}/production/run-auto/sessions/${sessionId}`), {
         method: 'DELETE',
       })
       if (res.ok) {
@@ -903,7 +903,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   }
 
   const handleHealthAction = async (item: ProductionHealthItem) => {
-    if (item.action_url.startsWith('/api/')) {
+    if (item.action_url.startsWith(getApiBase() + '/')) {
       if (item.key.startsWith('obsolete_session') && item.session_id) {
         const deleted = await handleDeleteSession(item.session_id)
         if (deleted) {
@@ -975,7 +975,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
         })
         return
       }
-      const es = new EventSource(res.data.stream_url)
+      const es = new EventSource(apiUrl(res.data.stream_url.replace(/^\/api/, '')))
       eventSourceRef.current = es
 
       es.addEventListener('auto_run_started', () => {})
