@@ -778,6 +778,9 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
+        if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
+            repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
+
         current_chapter = project.get("current_chapter", 1)
 
         health = _build_health(repo, project_id, current_chapter)

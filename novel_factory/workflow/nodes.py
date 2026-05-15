@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import json
+import time
 from typing import Any, Callable
 
 from ..db.repository import Repository
@@ -59,6 +60,8 @@ def _log_node_event(
     status: str | None = None,
     error_message: str | None = None,
     artifact_refs: list[dict] | None = None,
+    token_count: int | None = None,
+    latency_ms: int | None = None,
 ) -> None:
     """Best-effort log a workflow node event. Never raises.
 
@@ -86,6 +89,8 @@ def _log_node_event(
             message=message,
             error_message=error_message,
             artifact_refs_json=artifact_refs_json,
+            token_count=token_count,
+            latency_ms=latency_ms,
         )
     except Exception:
         logger.warning(
@@ -432,7 +437,9 @@ def create_node_runners(
         else:
             agent = agent_cls(repo, llm)
 
+        agent_started_at = time.perf_counter()
         result = _handle_retryable_quality_gate(state, repo, agent.run(state))
+        agent_latency_ms = int((time.perf_counter() - agent_started_at) * 1000)
 
         # v5.2: Accumulate token usage from LLM provider
         token_updates = _accumulate_tokens(state, llm)
@@ -444,13 +451,30 @@ def create_node_runners(
 
         # Handle error - set requires_human to stop downstream execution
         if "error" in result:
-            _log_node_event(state, repo, agent_name, "failed", status="failed", error_message=result["error"])
+            _log_node_event(
+                state,
+                repo,
+                agent_name,
+                "failed",
+                status="failed",
+                error_message=result["error"],
+                token_count=result.get("total_tokens"),
+                latency_ms=agent_latency_ms,
+            )
             _finalize_run(state, repo, "failed", result["error"])
             # P1 fix: Ensure requires_human is set so route_by_chapter_status
             # safety gate catches this and routes to human_review
             result["requires_human"] = True
         else:
-            _log_node_event(state, repo, agent_name, "completed", status="completed")
+            _log_node_event(
+                state,
+                repo,
+                agent_name,
+                "completed",
+                status="completed",
+                token_count=result.get("total_tokens"),
+                latency_ms=agent_latency_ms,
+            )
 
         # Record step after running
         step_info = {

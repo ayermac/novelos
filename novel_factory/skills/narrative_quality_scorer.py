@@ -33,7 +33,11 @@ class NarrativeQualityScorer(ValidatorSkill):
         "威胁", "危机", "危险", "挑战", "困境", "难题", "障碍",
         "争斗", "搏斗", "战斗", "打斗", "厮杀", "交锋",
         "反对", "抵抗", "反抗", "反击", "回击",
+        "追踪", "审计", "锁定", "冻结", "越权", "销毁", "警告",
+        "失踪", "怀疑", "疑虑", "屏蔽", "反向", "不可信", "躲",
     ]
+
+    DIALOGUE_PATTERN = r'["“「『]([^"”」』]+)["”」』]'
     
     # 钩子相关模式
     HOOK_PATTERNS = [
@@ -163,8 +167,7 @@ class NarrativeQualityScorer(ValidatorSkill):
         conflict_density = (conflict_count / max(char_count, 1)) * 1000
         
         # 检测冲突场景（对话中的冲突）
-        dialogue_pattern = r'["「『]([^"」』]+)["」』]'
-        dialogues = re.findall(dialogue_pattern, text)
+        dialogues = self._extract_dialogues(text)
         
         conflict_dialogues = 0
         for dialogue in dialogues:
@@ -189,16 +192,31 @@ class NarrativeQualityScorer(ValidatorSkill):
         
         检测章末是否有悬念、转折等钩子
         """
+        tail = text.strip()[-300:]
+
+        # 真实网文常用“反转事实/追问/警告”作为章末钩子，不一定以
+        # “然而/突然”这类模板收尾。先用原文尾部判断，避免切句时把
+        # 关键标点删除。
+        suspense_markers = [
+            "别相信", "不是", "而是", "确认", "警告", "查",
+            "谁", "什么", "为何", "为什么", "真相", "秘密", "钥匙",
+        ]
+        hook_score = 0.0
+        if any(marker in tail for marker in suspense_markers):
+            hook_score += 45
+        if re.search(r'[？?！!…]\s*[”"」』]?\s*$', tail):
+            hook_score += 30
+        if re.search(r'[“「『][^”」』]{1,60}[”」』]\s*[。！？!?…]?\s*$', tail):
+            hook_score += 20
+
         # 获取最后几句话
         sentences = re.split(r'[。！？\n]', text)
         last_sentences = [s.strip() for s in sentences[-5:] if s.strip()]
-        
+
         if not last_sentences:
-            return 0.0
-        
+            return round(min(hook_score, 100), 2)
+
         # 检测章末钩子模式
-        hook_score = 0.0
-        
         for sentence in last_sentences[-2:]:  # 检查最后两句话
             for pattern in self.HOOK_PATTERNS:
                 if re.search(pattern, sentence):
@@ -302,8 +320,7 @@ class NarrativeQualityScorer(ValidatorSkill):
         检测对话的比例和自然程度
         """
         # 提取对话
-        dialogue_pattern = r'["「『]([^"」』]+)["」』]'
-        dialogues = re.findall(dialogue_pattern, text)
+        dialogues = self._extract_dialogues(text)
         
         if not dialogues:
             return 30.0  # 没有对话，给低分
@@ -445,8 +462,7 @@ class NarrativeQualityScorer(ValidatorSkill):
             })
         
         # 检测对话不足
-        dialogue_pattern = r'["「『]([^"」』]+)["」』]'
-        dialogues = re.findall(dialogue_pattern, text)
+        dialogues = self._extract_dialogues(text)
         dialogue_ratio = sum(len(d) for d in dialogues) / max(len(text), 1)
         
         min_dialogue = config.get("min_dialogue_ratio", 0.1)
@@ -478,6 +494,10 @@ class NarrativeQualityScorer(ValidatorSkill):
             })
         
         return issues
+
+    def _extract_dialogues(self, text: str) -> list[str]:
+        """Extract quoted dialogue/content using common Chinese quote styles."""
+        return re.findall(self.DIALOGUE_PATTERN, text)
     
     def _generate_suggestions(
         self, 

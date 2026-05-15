@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from ..models.schemas import AuthorOutput
@@ -26,6 +27,7 @@ from ..llm.openai_compatible import OutputValidationError
 from ..llm.provider import is_configured_live_provider
 from ..skills.registry import SkillRegistry
 from .base import BaseAgent
+from .chapter_text import ensure_chapter_heading, first_content_line, is_chapter_heading
 from .skill_hooks import run_agent_skills
 from .self_check import SelfCheckLoop, SelfCheckResult
 
@@ -429,8 +431,15 @@ class AuthorAgent(BaseAgent):
         instruction = self._get_instruction(state) or {}
         word_target = self._get_word_target(state)
         minimum_required = int(word_target * 0.85)
-        prose_max_tokens = max(384, min(900, int(word_target * 1.4)))
+        prose_max_tokens = max(1024, min(4096, int(word_target * 1.5)))
         compact_context = self._build_plain_text_context(state, context)
+        if is_configured_live_provider(self.llm):
+            timeout = getattr(self.llm.config, "request_timeout_seconds", None)
+            attempts = getattr(self.llm.config, "retry_attempts", None)
+            if timeout is not None:
+                self.llm.config.request_timeout_seconds = max(timeout, 120)
+            if attempts is not None:
+                self.llm.config.retry_attempts = max(attempts, 2)
 
         messages = [
             {
@@ -458,7 +467,7 @@ class AuthorAgent(BaseAgent):
         if not content:
             raise OutputValidationError("Author 纯正文兜底生成空内容")
 
-        title = self._derive_title(state, instruction)
+        title = self._derive_title(state, instruction, content)
         return AuthorOutput(
             title=title,
             content=content,
@@ -536,15 +545,93 @@ class AuthorAgent(BaseAgent):
 
         return cleaned
 
-    def _derive_title(self, state: FactoryState, instruction: dict) -> str:
+    def _derive_title(
+        self,
+        state: FactoryState,
+        instruction: dict,
+        content: str | None = None,
+    ) -> str:
         chapter = self._get_chapter_info(state) or {}
+        chapter_number = state["chapter_number"]
         title = chapter.get("title") or ""
-        if title and not title.startswith("第 ") and title != f"第 {state['chapter_number']} 章":
+        if self._is_usable_chapter_title(title, chapter_number, instruction):
             return title
+        derived_from_content = self._title_from_content_heading(content or "", chapter_number)
+        if derived_from_content:
+            return derived_from_content
+        return f"第{chapter_number}章"
+
+    @staticmethod
+    def _strip_chapter_prefix(title: str, chapter_number: int) -> str:
+        text = str(title or "").strip()
+        patterns = [
+            rf"^第\s*{chapter_number}\s*章[\s:：、.-]*",
+            r"^第[一二三四五六七八九十百千零〇两]+\s*章[\s:：、.-]*",
+        ]
+        for pattern in patterns:
+            text = re.sub(pattern, "", text).strip()
+        return text
+
+    @classmethod
+    def _is_usable_chapter_title(
+        cls,
+        title: str,
+        chapter_number: int,
+        instruction: dict,
+    ) -> bool:
+        text = str(title or "").strip()
+        if not text:
+            return False
+        compact_placeholder = re.sub(r"\s+", "", text)
+        if compact_placeholder in {f"第{chapter_number}章", f"第{chapter_number}章节"}:
+            return False
+
+        suffix = cls._strip_chapter_prefix(text, chapter_number)
+        if not suffix:
+            return False
+
         objective = str(instruction.get("objective") or "").strip()
-        if objective:
-            return f"第{state['chapter_number']}章 {objective[:12]}"
-        return f"第{state['chapter_number']}章"
+        if len(suffix) >= 6 and objective and (
+            objective.startswith(suffix)
+            or suffix.startswith(objective[: min(len(objective), 12)])
+        ):
+            return False
+
+        planning_verbs = (
+            "引入",
+            "铺垫",
+            "描绘",
+            "建立",
+            "推进",
+            "承接",
+            "完成",
+            "解决",
+            "展示",
+            "呈现",
+            "交代",
+            "安排",
+            "触发",
+            "围绕",
+        )
+        planning_terms = ("本章", "目标", "关键事件", "写作指令", "铺垫", "建立", "描绘")
+        if suffix.startswith(planning_verbs) or any(term in suffix for term in planning_terms):
+            return False
+        if any(mark in suffix for mark in ("，", "。", "；", ";")):
+            return False
+        if len(suffix) > 16:
+            return False
+        return True
+
+    @classmethod
+    def _title_from_content_heading(cls, content: str, chapter_number: int) -> str | None:
+        first_line = first_content_line(content)
+        if not first_line:
+            return None
+        if len(first_line) > 32:
+            return None
+        if is_chapter_heading(first_line, chapter_number):
+            return first_line
+        return None
 
     @staticmethod
     def _instruction_items(value: Any) -> list[str]:
@@ -566,18 +653,29 @@ class AuthorAgent(BaseAgent):
         return [text]
 
     def _sanitize_output(self, output: AuthorOutput, state: FactoryState) -> AuthorOutput:
-        """Apply deterministic safe rewrites before hard death-penalty validation."""
-        if state.get("llm_mode") != "real":
-            return output
-        sanitized_content, replacements = sanitize_death_penalty_text(output.content)
-        if not replacements:
-            return output
-        logger.info(
-            "Author: sanitized death-penalty phrases before validation: %s",
-            replacements,
-        )
+        """Apply deterministic safe rewrites before hard validation."""
         data = output.model_dump()
-        data["content"] = sanitized_content
+        instruction = self._get_instruction(state) or {}
+        sanitized_title = self._derive_title(state, instruction, output.content)
+        if not self._is_usable_chapter_title(output.title, state["chapter_number"], instruction):
+            data["title"] = sanitized_title
+        data["content"] = ensure_chapter_heading(data.get("content", ""), data.get("title"), state["chapter_number"])
+
+        if state.get("llm_mode") != "real":
+            if data == output.model_dump():
+                return output
+            return AuthorOutput(**normalize_declared_word_count(data))
+
+        sanitized_content, replacements = sanitize_death_penalty_text(output.content)
+        if replacements:
+            logger.info(
+                "Author: sanitized death-penalty phrases before validation: %s",
+                replacements,
+            )
+            data["content"] = sanitized_content
+
+        if data == output.model_dump():
+            return output
         return AuthorOutput(**normalize_declared_word_count(data))
 
     def _build_death_penalty_repair_context(self, state: FactoryState) -> str:

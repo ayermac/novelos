@@ -176,21 +176,37 @@ def _build_node_timeline(
 
     current_node_for_timeline = "publisher" if current_node == "publish" else current_node
 
+    canonical_order = [node["node_name"] for node in canonical_nodes]
+
+    def _is_before_current(node_name: str) -> bool:
+        if not current_node_for_timeline:
+            return False
+        try:
+            return canonical_order.index(node_name) < canonical_order.index(current_node_for_timeline)
+        except ValueError:
+            return False
+
     def build_node(base: dict[str, Any]) -> dict[str, Any]:
         node_name = base["node_name"]
         evs = node_events.get(node_name, [])
         # Sort by created_at
         evs = sorted(evs, key=lambda e: e.get("created_at") or "")
-        started_ev = next((e for e in evs if e.get("event_type") == "started"), None)
-        completed_ev = next((e for e in evs if e.get("event_type") == "completed"), None)
-        failed_ev = next((e for e in evs if e.get("event_type") == "failed"), None)
+        started_events = [e for e in evs if e.get("event_type") == "started"]
+        completed_events = [e for e in evs if e.get("event_type") == "completed"]
+        failed_events = [e for e in evs if e.get("event_type") == "failed"]
+        started_ev = started_events[-1] if started_events else None
+        completed_ev = completed_events[-1] if completed_events else None
+        failed_ev = failed_events[-1] if failed_events else None
+        last_ev = evs[-1] if evs else None
 
-        if failed_ev:
+        if last_ev and last_ev.get("event_type") == "failed":
             status = "failed"
-        elif completed_ev:
+        elif last_ev and last_ev.get("event_type") == "completed":
             status = "completed"
-        elif started_ev:
+        elif last_ev and last_ev.get("event_type") == "started":
             status = "running"
+        elif _is_before_current(node_name):
+            status = "skipped"
         elif node_name == current_node_for_timeline and run_status in {"running", "blocked", "failed", "completed"}:
             status = {
                 "running": "running",
@@ -202,7 +218,11 @@ def _build_node_timeline(
             status = "pending"
 
         started_at = started_ev.get("created_at") if started_ev else None
-        completed_at = (completed_ev or failed_ev).get("created_at") if (completed_ev or failed_ev) else None
+        completed_at = None
+        if status == "completed" and completed_ev:
+            completed_at = completed_ev.get("created_at")
+        elif status == "failed" and failed_ev:
+            completed_at = failed_ev.get("created_at")
 
         duration_ms = None
         if started_at and completed_at:
@@ -216,6 +236,11 @@ def _build_node_timeline(
             msg = e.get("message")
             if msg and msg not in messages:
                 messages.append(msg)
+        if status == "skipped":
+            if node_name == "planner" and current_node_for_timeline == "screenwriter":
+                messages.append("已有人工章节指令，本轮跳过规划节点。")
+            else:
+                messages.append(f"本轮从{_node_label(current_node_for_timeline)}继续，跳过该节点。")
 
         # Build artifact refs
         arts = node_artifacts.get(node_name, [])
@@ -297,6 +322,14 @@ async def get_workflow_timeline(
         if not chapter:
             return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
+        if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
+            repo.reconcile_latest_blocked_runs_with_chapters(
+                project_id=project_id,
+                chapter_number=chapter_number,
+                run_id=run_id,
+            )
+            chapter = repo.get_chapter(project_id, chapter_number) or chapter
+
         # Find target run
         target_run: dict | None = None
         if run_id:
@@ -326,6 +359,15 @@ async def get_workflow_timeline(
             )
             if runs:
                 target_run = runs[0]
+
+        if (
+            not run_id
+            and target_run
+            and target_run.get("status") == "completed"
+            and target_run.get("current_node") == "reset_recovery"
+            and chapter.get("status") == "planned"
+        ):
+            target_run = None
 
         # Reconcile terminal chapter with running run (same logic as runs.py)
         if (
@@ -385,7 +427,7 @@ async def get_workflow_timeline(
             artifacts = repo.get_artifacts_for_chapter(
                 project_id, chapter_number, workflow_run_id=run_id_str
             )
-            if not artifacts:
+            if not artifacts and not events:
                 # Fallback: legacy artifacts without run_id
                 artifacts = repo.get_artifacts_for_chapter(project_id, chapter_number)
         except Exception:

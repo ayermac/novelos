@@ -1,0 +1,67 @@
+db_path: ./acceptance_novel_factory.db
+default_llm: default
+
+llm_profiles:
+  default:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: DeepSeek-V3.2
+    max_tokens: 4096
+    request_timeout_seconds: 90
+    retry_attempts: 2
+
+  author:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: DeepSeek-V3.2
+    max_tokens: 4096
+    request_timeout_seconds: 120
+    retry_attempts: 2
+
+  genesis:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: DeepSeek-V3.2
+    max_tokens: 8192
+    request_timeout_seconds: 180
+    retry_attempts: 2
+
+  polisher:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: DeepSeek-V3.2
+    max_tokens: 4096
+    request_timeout_seconds: 120
+    retry_attempts: 2
+
+  editor:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: Kimi-K2.6
+    max_tokens: 4096
+    request_timeout_seconds: 120
+    retry_attempts: 2
+
+  continuity_checker:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: DeepSeek-V3.2
+    request_timeout_seconds: 20
+    retry_attempts: 1
+
+agent_llm:
+  genesis: genesis
+  planner: default
+  screenwriter: default
+  author: author
+  polisher: polisher
+  editor: editor
+  scout: default
+  continuity_checker: continuity_checker
+  architect: default

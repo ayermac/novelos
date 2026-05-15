@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ...agents.chapter_text import is_chapter_heading
 
 router = APIRouter()
 
@@ -74,6 +75,9 @@ async def get_project(request: Request, project_id: str) -> EnvelopeResponse:
 
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
+            repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
 
         # Get chapters
         chapters = repo.list_chapters(project_id)
@@ -186,6 +190,9 @@ async def get_project_workspace(request: Request, project_id: str) -> EnvelopeRe
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
+        if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
+            repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
+
         # Get chapters
         chapters = repo.list_chapters(project_id)
 
@@ -275,6 +282,13 @@ async def reset_chapter(
         if not reset:
             return error_response("RESET_FAILED", "重置章节失败")
 
+        recovered_blocked_runs = 0
+        if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
+            recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+                project_id,
+                chapter_number,
+            )
+
         invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
             project_id,
             chapter_number,
@@ -294,6 +308,7 @@ async def reset_chapter(
             "retry_count_before": retry_count_before,
             "retry_count_after": retry_count_after,
             "retries_cleared": max(0, retry_count_before - retry_count_after),
+            "recovered_blocked_runs": recovered_blocked_runs,
             "invalidated_runs": invalidated_runs,
             "checkpoint_cleared": checkpoint_cleared,
         })
@@ -410,13 +425,19 @@ async def export_project(
     if format == ExportFormat.markdown:
         buf.write(f"# {project_name}\n\n")
         for ch in chapters_with_content:
-            buf.write(f"## 第{ch['chapter_number']}章 {ch.get('title', '')}\n\n")
+            content = ch["content"].strip()
+            if not is_chapter_heading(content.splitlines()[0] if content else "", ch["chapter_number"]):
+                chapter_title = ch.get("title") or f"第{ch['chapter_number']}章"
+                buf.write(f"## {chapter_title}\n\n")
             buf.write(ch["content"])
             buf.write("\n\n---\n\n")
     else:
         buf.write(f"{project_name}\n{'=' * 40}\n\n")
         for ch in chapters_with_content:
-            buf.write(f"第{ch['chapter_number']}章 {ch.get('title', '')}\n{'-' * 40}\n\n")
+            content = ch["content"].strip()
+            if not is_chapter_heading(content.splitlines()[0] if content else "", ch["chapter_number"]):
+                chapter_title = ch.get("title") or f"第{ch['chapter_number']}章"
+                buf.write(f"{chapter_title}\n{'-' * 40}\n\n")
             buf.write(ch["content"])
             buf.write("\n\n")
 

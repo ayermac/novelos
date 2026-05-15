@@ -905,6 +905,13 @@ class TestFrontendCopy:
             source = f.read()
         assert "项目初始化" in source
         assert "创世只需一次" in source or "只需一次" in source
+        assert "首批规划章数" in source
+        assert "首批规划字数" in source
+        assert "不代表整本书总章数" in source
+        assert "目标章数" not in source
+        assert "请先补齐创世设定的必要信息" in source
+        assert "required" in source
+        assert "已继承项目基础信息" in source
 
     def test_recovery_action_normalizes_api_prefix(self):
         """Recovery action strips /api prefix from action_url to avoid /api/api double prefix."""

@@ -360,8 +360,8 @@ class TestMainFlowRouting:
         # Should have workspace route for next chapter
         assert "/projects/${data.project_id}?chapter=${data.chapter_number + 1}" in content
 
-    def test_onboarding_first_chapter_to_workspace(self):
-        """Onboarding 'generate first chapter' should route to workspace."""
+    def test_onboarding_routes_to_setup_before_chapter_generation(self):
+        """Onboarding should route to setup workspace before chapter generation."""
         frontend_src = Path(__file__).parent.parent / "frontend" / "src"
         onboarding_file = frontend_src / "pages" / "Onboarding.tsx"
         content = onboarding_file.read_text()
@@ -371,8 +371,10 @@ class TestMainFlowRouting:
             "Onboarding should not route to /run?project_id for first chapter"
         )
 
-        # Should have workspace route
-        assert "/projects/${result.project.project_id}?chapter=1" in content
+        # Should have setup-first workspace routes
+        assert "/projects/${result.project.project_id}?module=overview" in content
+        assert "/projects/${result.project.project_id}?module=genesis" in content
+        assert "/projects/${result.project.project_id}?chapter=1" not in content
 
     def test_no_run_project_id_in_main_flows(self):
         """Main flow files should not have /run?project_id pattern."""

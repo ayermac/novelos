@@ -326,6 +326,97 @@ class TestAuthorAgent:
 
         chapter = seeded_repo.get_chapter("test_proj", 1)
         assert chapter["content"] is not None
+        assert chapter["content"].startswith("第一章 测试\n\n")
+
+    def test_author_does_not_use_objective_excerpt_as_chapter_title(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        base_content = "这是一段测试正文内容，用于验证 Author Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 44
+        bad_title = "第1章 引入主角平凡现状，铺垫异"
+        stub = StubLLMProvider([{
+            "title": bad_title,
+            "content": long_content,
+            "word_count": 2244,
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE chapters SET title=? WHERE project_id=? AND chapter_number=?",
+            ("第 1 章", "test_proj", 1),
+        )
+        conn.execute(
+            "UPDATE instructions SET objective=? WHERE project_id=? AND chapter_number=?",
+            ("引入主角平凡现状，铺垫异常事件开端，建立都市生活真实感", "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["title"] == "第1章"
+        assert "引入主角" not in chapter["title"]
+        assert chapter["content"].startswith("第1章\n\n")
+
+    def test_author_keeps_real_chapter_title_when_usable(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        base_content = "这是一段测试正文内容，用于验证 Author Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 44
+        stub = StubLLMProvider([{
+            "title": "第1章 雨夜玉佩",
+            "content": long_content,
+            "word_count": 2244,
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE chapters SET title=? WHERE project_id=? AND chapter_number=?",
+            ("第 1 章", "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["title"] == "第1章 雨夜玉佩"
+        assert chapter["content"].startswith("第1章 雨夜玉佩\n\n")
 
     def test_author_records_event_coverage_checker_skill_run(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
@@ -395,7 +486,8 @@ class TestAuthorAgent:
         assert result["chapter_status"] == ChapterStatus.DRAFTED.value
 
         chapter = seeded_repo.get_chapter("test_proj", 1)
-        assert chapter["word_count"] == count_words(long_content)
+        assert chapter["content"].startswith("第一章 测试\n\n")
+        assert chapter["word_count"] == count_words(chapter["content"])
 
     def test_author_real_mode_expands_short_valid_draft_once(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
@@ -442,7 +534,7 @@ class TestAuthorAgent:
         assert result["chapter_status"] == ChapterStatus.DRAFTED.value
         assert stub._call_count == 2
         chapter = seeded_repo.get_chapter("test_proj", 1)
-        assert chapter["content"] == long_content
+        assert chapter["content"] == f"第一章 测试\n\n{long_content}"
 
     def test_author_real_mode_plain_text_fallback_when_json_invalid(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
@@ -485,7 +577,7 @@ class TestAuthorAgent:
         assert llm.json_calls == 1
         assert llm.text_calls == 1
         chapter = seeded_repo.get_chapter("test_proj", 1)
-        assert chapter["content"].startswith("兜底正文内容")
+        assert chapter["content"].startswith("第一章 测试\n\n兜底正文内容")
 
     def test_author_real_openai_provider_uses_plain_text_primary(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
@@ -503,7 +595,8 @@ class TestAuthorAgent:
 
             def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
                 self.text_calls += 1
-                assert max_tokens <= 900
+                assert max_tokens >= 2500
+                assert max_tokens <= 4096
                 return "真实正文内容" * 380
 
         llm = LiveLikeTextLLM()
@@ -564,6 +657,8 @@ class TestPolisherAgent:
 
         result = agent.run(state)
         assert result["chapter_status"] == ChapterStatus.POLISHED.value
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["content"].startswith("第一章 测试\n\n")
 
     def test_polisher_rejects_fact_change(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent
@@ -833,6 +928,52 @@ class TestEditorAgent:
 
 
 class TestMemoryCuratorAgent:
+    def test_memory_curator_falls_back_to_editor_state_card_when_llm_empty(self, seeded_repo):
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        seeded_repo.save_chapter_content("test_proj", 1, "林默夺回账册，并发现账册夹层里藏着铜钥匙。", "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "reviewed")
+        seeded_repo.save_chapter_state(
+            "test_proj",
+            1,
+            {
+                "new_facts": ["林默夺回账册，并发现账册夹层里藏着铜钥匙"],
+                "character_status": {"林默": "已夺回账册，掌握铜钥匙线索"},
+                "suspense_hooks": ["铜钥匙能打开城南旧宅地下室"],
+            },
+            "第1章状态卡",
+        )
+        agent = MemoryCuratorAgent(
+            seeded_repo,
+            StubLLMProvider([{"patches": []}]),
+            skill_registry=SkillRegistry(),
+        )
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-memory-fallback",
+        })
+
+        assert result["memory_curator_processed"] is True
+        assert result["memory_curator_fallback"] == "chapter_state"
+        assert result["memory_items_count"] == 3
+
+        batches = seeded_repo.list_memory_batches("test_proj")
+        assert len(batches) == 1
+        assert batches[0]["status"] == "pending"
+        assert batches[0]["summary"] == "第1章记忆提取 (3项)"
+
+        items = seeded_repo.list_memory_items(batches[0]["id"])
+        assert len(items) == 3
+        assert {item["target_table"] for item in items} == {"story_facts"}
+        after_payloads = [json.loads(item["after_json"]) for item in items]
+        fact_types = {payload["fact_type"] for payload in after_payloads}
+        assert fact_types == {"narrative_event", "character_state", "suspense_hook"}
+        assert all(payload["source_chapter"] == 1 for payload in after_payloads)
+
     def test_memory_curator_records_memory_patch_validator_skill_run(self, seeded_repo):
         from novel_factory.agents.memory_curator import MemoryCuratorAgent
         from novel_factory.skills.registry import SkillRegistry

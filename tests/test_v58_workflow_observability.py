@@ -275,6 +275,94 @@ class TestWorkflowTimelineApi:
         assert nodes["editor"]["status"] == "pending"
         assert "已生成章节初稿" in nodes["author"]["messages"]
 
+    def test_timeline_marks_planner_skipped_when_manual_instruction_starts_downstream(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_planner_skipped", status="scripted")
+        run_id = _seed_run(repo, "obs_planner_skipped", status="running", current_node="author")
+        repo.create_workflow_node_event(
+            run_id=run_id, project_id="obs_planner_skipped", chapter_number=1,
+            node_name="screenwriter", event_type="started", status="running", message="开始编剧",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id, project_id="obs_planner_skipped", chapter_number=1,
+            node_name="screenwriter", event_type="completed", status="completed", message="已生成章节场景规划",
+        )
+
+        resp = client.get("/api/projects/obs_planner_skipped/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        nodes = {node["node_name"]: node for node in resp.json()["data"]["nodes"]}
+        assert nodes["planner"]["status"] == "skipped"
+        assert "本轮从执笔继续，跳过该节点。" in nodes["planner"]["messages"]
+        assert nodes["screenwriter"]["status"] == "completed"
+
+    def test_timeline_uses_latest_event_for_repeated_revision_nodes(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_repeated", status="revision")
+        run_id = _seed_run(repo, "obs_repeated", status="running", current_node="author")
+        repo.create_workflow_node_event(
+            run_id=run_id, project_id="obs_repeated", chapter_number=1,
+            node_name="author", event_type="started", status="running", message="开始执笔撰写",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id, project_id="obs_repeated", chapter_number=1,
+            node_name="author", event_type="completed", status="completed", message="已生成章节初稿",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id, project_id="obs_repeated", chapter_number=1,
+            node_name="editor", event_type="started", status="running", message="开始审核",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id, project_id="obs_repeated", chapter_number=1,
+            node_name="editor", event_type="completed", status="completed", message="审核完成",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id, project_id="obs_repeated", chapter_number=1,
+            node_name="author", event_type="started", status="running", message="开始执笔撰写",
+        )
+
+        resp = client.get("/api/projects/obs_repeated/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        nodes = {node["node_name"]: node for node in resp.json()["data"]["nodes"]}
+        assert nodes["author"]["status"] == "running"
+        assert nodes["author"]["completed_at"] is None
+        assert nodes["editor"]["status"] == "completed"
+        assert nodes["polisher"]["status"] == "pending"
+
+    def test_timeline_marks_upstream_nodes_skipped_when_resuming_from_later_status(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_resume_later", status="polished")
+        run_id = _seed_run(repo, "obs_resume_later", status="running", current_node="editor")
+        repo.create_workflow_node_event(
+            run_id=run_id, project_id="obs_resume_later", chapter_number=1,
+            node_name="editor", event_type="started", status="running", message="开始审核",
+        )
+
+        resp = client.get("/api/projects/obs_resume_later/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        nodes = {node["node_name"]: node for node in resp.json()["data"]["nodes"]}
+        assert nodes["screenwriter"]["status"] == "skipped"
+        assert nodes["author"]["status"] == "skipped"
+        assert nodes["polisher"]["status"] == "skipped"
+        assert "本轮从审核继续，跳过该节点。" in nodes["author"]["messages"]
+        assert nodes["editor"]["status"] == "running"
+
+    def test_timeline_does_not_attach_chapter_fallback_artifacts_to_eventful_run(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_no_artifact_leak", status="polished")
+        old_run_id = _seed_run(repo, "obs_no_artifact_leak", status="blocked", current_node="human_review")
+        repo.save_artifact("obs_no_artifact_leak", 1, "author", "draft", workflow_run_id=old_run_id)
+        new_run_id = _seed_run(repo, "obs_no_artifact_leak", status="running", current_node="editor")
+        repo.create_workflow_node_event(
+            run_id=new_run_id, project_id="obs_no_artifact_leak", chapter_number=1,
+            node_name="editor", event_type="started", status="running", message="开始审核",
+        )
+
+        resp = client.get("/api/projects/obs_no_artifact_leak/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        nodes = {node["node_name"]: node for node in resp.json()["data"]["nodes"]}
+        assert nodes["author"]["artifacts"] == []
+        assert nodes["editor"]["status"] == "running"
+
     def test_timeline_marks_current_node_when_no_events_exist(self, tmp_path):
         client, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "obs_current_fallback", status="drafted")
@@ -284,7 +372,112 @@ class TestWorkflowTimelineApi:
         assert resp.status_code == 200
         nodes = {node["node_name"]: node for node in resp.json()["data"]["nodes"]}
         assert nodes["polisher"]["status"] == "running"
-        assert nodes["author"]["status"] == "pending"
+        assert nodes["author"]["status"] == "skipped"
+
+    def test_timeline_reconciles_latest_blocked_run_to_blocking_chapter(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_blocked_truth", status="planned")
+        run_id = _seed_run(repo, "obs_blocked_truth", status="blocked", current_node="human_review")
+        repo.create_workflow_node_event(
+            run_id=run_id, project_id="obs_blocked_truth", chapter_number=1,
+            node_name="author", event_type="completed", status="completed", message="已生成章节初稿",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id, project_id="obs_blocked_truth", chapter_number=1,
+            node_name="human_review", event_type="failed", status="failed", message="需要人工干预",
+        )
+
+        resp = client.get("/api/projects/obs_blocked_truth/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["run_status"] == "blocked"
+        assert data["recovery"]["recommended_action"] == "reset_chapter"
+        assert repo.get_chapter("obs_blocked_truth", 1)["status"] == "blocking"
+
+    def test_workspace_reconciles_latest_blocked_run_but_ignores_old_blocked_run(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_workspace_blocked", status="planned")
+        old_run_id = _seed_run(repo, "obs_workspace_blocked", status="blocked", current_node="human_review")
+        _backdate_run(repo, old_run_id, 5)
+
+        resp = client.get("/api/projects/obs_workspace_blocked/workspace")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        chapter = data["chapters"][0]
+        assert chapter["status"] == "blocking"
+        assert data["stats"]["status_counts"]["blocking"] == 1
+
+        repo.reset_chapter("obs_workspace_blocked", 1)
+        _seed_run(repo, "obs_workspace_blocked", status="completed", current_node="publish")
+
+        resp = client.get("/api/projects/obs_workspace_blocked/workspace")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        chapter = data["chapters"][0]
+        assert chapter["status"] == "planned"
+        assert data["stats"]["status_counts"]["planned"] == 1
+
+    def test_chapter_reset_marks_blocked_run_recovered_so_reconcile_does_not_reblock(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_reset_recovered", status="blocking")
+        run_id = _seed_run(repo, "obs_reset_recovered", status="blocked", current_node="human_review")
+
+        reset_resp = client.post("/api/projects/obs_reset_recovered/chapters/1/reset")
+        assert reset_resp.status_code == 200
+        reset_data = reset_resp.json()["data"]
+        assert reset_data["new_status"] == "planned"
+        assert reset_data["recovered_blocked_runs"] == 1
+
+        workspace_resp = client.get("/api/projects/obs_reset_recovered/workspace")
+        assert workspace_resp.status_code == 200
+        workspace = workspace_resp.json()["data"]
+        assert workspace["chapters"][0]["status"] == "planned"
+        assert workspace["stats"]["status_counts"]["planned"] == 1
+        runs = repo.get_workflow_runs_for_project("obs_reset_recovered", chapter_number=1, limit=1)
+        assert runs[0]["id"] == run_id
+        assert runs[0]["status"] == "completed"
+        assert runs[0]["current_node"] == "reset_recovery"
+        assert runs[0]["error_message"] is None
+
+        timeline_resp = client.get("/api/projects/obs_reset_recovered/chapters/1/workflow-timeline")
+        assert timeline_resp.status_code == 200
+        timeline = timeline_resp.json()["data"]
+        assert timeline["run_id"] is None
+        assert all(node["status"] == "pending" for node in timeline["nodes"])
+
+    def test_run_recovery_reset_marks_target_blocked_run_recovered(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_run_reset_recovered", status="blocking")
+        run_id = _seed_run(repo, "obs_run_reset_recovered", status="blocked", current_node="human_review")
+
+        reset_resp = client.post(
+            f"/api/runs/{run_id}/recovery/reset",
+            json={"confirm": True},
+        )
+        assert reset_resp.status_code == 200
+        reset_data = reset_resp.json()["data"]
+        assert reset_data["new_status"] == "planned"
+        assert reset_data["recovered_blocked_runs"] == 1
+
+        workspace_resp = client.get("/api/projects/obs_run_reset_recovered/workspace")
+        assert workspace_resp.status_code == 200
+        workspace = workspace_resp.json()["data"]
+        assert workspace["chapters"][0]["status"] == "planned"
+        runs = repo.get_workflow_runs_for_project("obs_run_reset_recovered", chapter_number=1, limit=1)
+        assert runs[0]["status"] == "completed"
+        assert runs[0]["current_node"] == "reset_recovery"
+
+    def test_production_next_reconciles_blocked_run_before_recommendation(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_prod_next_blocked", status="planned")
+        _seed_run(repo, "obs_prod_next_blocked", status="blocked", current_node="human_review")
+
+        resp = client.get("/api/projects/obs_prod_next_blocked/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "recover_blocked_run"
+        assert data["next_action"]["target_chapter"] == 1
+        assert repo.get_chapter("obs_prod_next_blocked", 1)["status"] == "blocking"
 
     def test_timeline_maps_legacy_publish_current_node_to_publisher(self, tmp_path):
         client, repo = _make_client(tmp_path)

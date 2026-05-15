@@ -120,11 +120,11 @@ export default function Onboarding() {
           </div>
           <h3 style={{ marginBottom: 'var(--space-2)', fontSize: 'var(--text-xl)', fontWeight: 'var(--font-semibold)' }}>项目创建成功</h3>
           <p style={{ color: 'var(--text-charcoal)', marginBottom: 'var(--space-6)', fontSize: 'var(--text-base)' }}>
-            「{result.project.name}」已创建，共规划 {result.chapters.length} 个初始章节。
+            「{result.project.name}」已创建，共规划 {result.chapters.length} 个初始章节。建议先完成创世设定、世界观、人物、大纲和章节指令，再进入章节生成。
           </p>
           <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'center' }}>
             <Link
-              to={`/projects/${result.project.project_id}`}
+              to={`/projects/${result.project.project_id}?module=overview`}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -147,10 +147,10 @@ export default function Onboarding() {
                 e.currentTarget.style.boxShadow = ''
               }}
             >
-              进入项目工作台
+              进入准备工作台
             </Link>
             <Link
-              to={`/projects/${result.project.project_id}?chapter=1`}
+              to={`/projects/${result.project.project_id}?module=genesis`}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -174,7 +174,7 @@ export default function Onboarding() {
                 e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)'
               }}
             >
-              进入工作台生成第一章
+              配置创世设定
             </Link>
           </div>
         </div>

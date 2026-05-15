@@ -711,7 +711,7 @@ class QualityHub:
                     revision_target = "polisher"
                     break
                 elif issue["type"] == "editor_rejected":
-                    revision_target = "editor"
+                    revision_target = "author"
                     break
                 elif issue["type"] == "narrative_quality_low":
                     revision_target = "author"

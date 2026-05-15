@@ -4,6 +4,7 @@ import os
 import tempfile
 import asyncio
 import time
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -63,6 +64,56 @@ class TestGenesisCanonicalRoutes:
         genesis = body["data"]
         assert genesis["project_id"] == project_id
         assert genesis["status"] == "generated"
+
+    def test_generate_rejects_empty_creative_brief(self, client, project_id):
+        """Genesis should not generate from a blank form/default template."""
+        blank_project_id = "blank-genesis-input"
+        create_resp = client.post("/api/onboarding/projects", json={
+            "project_id": blank_project_id,
+            "name": "Blank Genesis",
+            "genre": "奇幻",
+            "description": "",
+            "total_chapters_planned": 10,
+            "target_words": 30000,
+        })
+        assert create_resp.status_code == 200
+
+        resp = client.post("/api/genesis/generate", json={
+            "project_id": blank_project_id,
+            "title": "",
+            "genre": "",
+            "premise": "",
+            "target_chapters": 10,
+            "target_words": 30000,
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["error"]["code"] == "GENESIS_INPUT_REQUIRED"
+
+        latest = client.get(f"/api/projects/{blank_project_id}/genesis/latest").json()
+        assert latest["ok"] is True
+        assert latest["data"] is None
+
+    def test_generate_inherits_project_title_genre_and_description(self, client, project_id):
+        """Genesis should reuse onboarding project fields instead of asking again."""
+        resp = client.post("/api/genesis/generate", json={
+            "project_id": project_id,
+            "title": "",
+            "genre": "",
+            "premise": "",
+            "target_chapters": 3,
+            "target_words": 9000,
+        })
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+
+        genesis = body["data"]
+        input_data = json.loads(genesis["input_json"])
+        assert input_data["title"] == "Test Genesis"
+        assert input_data["genre"] == "奇幻"
+        assert input_data["premise"] == "A test novel"
 
     def test_generate_requires_project_id_in_body(self, client):
         """POST /api/genesis/generate without project_id should fail."""
@@ -155,7 +206,7 @@ async def test_real_genesis_generation_does_not_block_event_loop(monkeypatch):
 
     class BlockingProvider:
         def invoke_json(self, messages, max_tokens=None, max_retries=1):
-            assert max_tokens == 5000
+            assert max_tokens == 7000
             time.sleep(0.2)
             return {
                 "project_updates": {"description": "ok"},
@@ -199,3 +250,105 @@ async def test_real_genesis_generation_does_not_block_event_loop(monkeypatch):
         "plot_holes": [],
         "instructions": [],
     }
+
+
+@pytest.mark.asyncio
+async def test_real_genesis_prompt_treats_chapter_count_as_initial_batch(monkeypatch):
+    """Genesis prompt should not imply target_chapters is the whole book length."""
+    from novel_factory.api.routes import genesis as genesis_routes
+
+    captured: dict[str, list[dict[str, str]]] = {}
+
+    class CapturingProvider:
+        def invoke_json(self, messages, max_tokens=None, max_retries=1):
+            captured["messages"] = messages
+            return {
+                "project_updates": {"description": "ok"},
+                "world_settings": [],
+                "characters": [],
+                "factions": [],
+                "outlines": [],
+                "plot_holes": [],
+                "instructions": [],
+            }
+
+    class Router:
+        def for_agent(self, agent_name):
+            return CapturingProvider()
+
+    monkeypatch.setattr(
+        "novel_factory.workflow.runner._build_llm_router",
+        lambda settings, llm_mode: Router(),
+    )
+
+    body = genesis_routes.GenesisGenerateRequest(
+        title="首批规划测试",
+        genre="都市幻想",
+        premise="验证创世章数不会被理解成全书长度",
+        target_chapters=10,
+        target_words=30000,
+    )
+
+    await genesis_routes._generate_real_draft(body, SimpleNamespace())
+
+    prompt = captured["messages"][1]["content"]
+    assert "首批章节规划范围: 前 10 章，首批合计约 30000 字" in prompt
+    assert "不是整本书总篇幅" in prompt
+    assert "篇幅: 10章" not in prompt
+
+
+@pytest.mark.asyncio
+async def test_real_genesis_uses_dedicated_llm_profile_and_runtime_budget(monkeypatch):
+    """Genesis should not share planner's short chapter-planning runtime budget."""
+    from novel_factory.api.routes import genesis as genesis_routes
+
+    captured: dict[str, object] = {}
+
+    class CapturingProvider:
+        def __init__(self):
+            self.config = SimpleNamespace(
+                request_timeout_seconds=45,
+                retry_attempts=1,
+            )
+
+        def invoke_json(self, messages, max_tokens=None, max_retries=1):
+            captured["timeout"] = self.config.request_timeout_seconds
+            captured["retry_attempts"] = self.config.retry_attempts
+            captured["max_tokens"] = max_tokens
+            return {
+                "project_updates": {"description": "ok"},
+                "world_settings": [],
+                "characters": [],
+                "factions": [],
+                "outlines": [],
+                "plot_holes": [],
+                "instructions": [],
+            }
+
+    class Router:
+        def __init__(self):
+            self.provider = CapturingProvider()
+
+        def for_agent(self, agent_name):
+            captured["agent_name"] = agent_name
+            return self.provider
+
+    monkeypatch.setattr(
+        "novel_factory.workflow.runner._build_llm_router",
+        lambda settings, llm_mode: Router(),
+    )
+
+    body = genesis_routes.GenesisGenerateRequest(
+        title="创世路由测试",
+        genre="都市幻想",
+        premise="验证创世使用独立 profile",
+        target_chapters=10,
+        target_words=30000,
+    )
+
+    await genesis_routes._generate_real_draft(body, SimpleNamespace())
+
+    assert captured["agent_name"] == "genesis"
+    assert captured["timeout"] == 180
+    assert captured["retry_attempts"] == 2
+    assert captured["max_tokens"] == 7000

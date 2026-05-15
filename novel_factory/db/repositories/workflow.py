@@ -168,6 +168,39 @@ class WorkflowRepositoryMixin:
         finally:
             conn.close()
 
+    def mark_blocked_workflow_runs_recovered_for_chapter(
+        self,
+        project_id: str,
+        chapter_number: int,
+        run_id: str | None = None,
+    ) -> int:
+        """Mark blocked workflow runs as recovered after a chapter reset.
+
+        Resetting a chapter moves the chapter back to ``planned``. If the latest
+        blocked run remains blocked, health reconciliation will correctly infer
+        that the chapter is still blocked and move it back to ``blocking``. Mark
+        the recovered blocked run complete so old failure bookkeeping cannot
+        re-block a freshly reset chapter.
+        """
+        conn = self._conn()
+        try:
+            query = (
+                "UPDATE workflow_runs SET status='completed', "
+                "current_node='reset_recovery', "
+                "error_message=NULL, "
+                "completed_at=datetime('now','+8 hours') "
+                "WHERE project_id=? AND chapter_number=? AND status='blocked'"
+            )
+            params: list[Any] = [project_id, chapter_number]
+            if run_id:
+                query += " AND id=?"
+                params.append(run_id)
+            cursor = conn.execute(query, params)
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()
+
     def reconcile_terminal_chapter_running_workflows(
         self,
         project_id: str | None = None,
@@ -233,6 +266,79 @@ class WorkflowRepositoryMixin:
                 "runs": len(run_ids),
                 "tasks": task_count,
                 "run_ids": run_ids,
+            }
+        finally:
+            conn.close()
+
+    def reconcile_latest_blocked_runs_with_chapters(
+        self,
+        project_id: str | None = None,
+        chapter_number: int | None = None,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Move chapters to blocking when their latest workflow run is blocked.
+
+        Older blocked runs must not poison a chapter that was already reset or
+        successfully completed later. For that reason this only considers the
+        latest run for each chapter, and never rewrites terminal/recovery
+        chapter states.
+        """
+        protected_statuses = ("blocking", "revision", "reviewed", "awaiting_publish", "published")
+        conn = self._conn()
+        try:
+            query = (
+                "SELECT wr.id, wr.project_id, wr.chapter_number, c.status AS chapter_status "
+                "FROM workflow_runs wr "
+                "JOIN chapters c ON c.project_id = wr.project_id "
+                "AND c.chapter_number = wr.chapter_number "
+                "WHERE wr.status='blocked' "
+                "AND c.status NOT IN (?, ?, ?, ?, ?) "
+                "AND wr.id = ("
+                "  SELECT wr2.id FROM workflow_runs wr2 "
+                "  WHERE wr2.project_id = wr.project_id "
+                "  AND wr2.chapter_number = wr.chapter_number "
+                "  ORDER BY datetime(wr2.started_at) DESC, wr2.id DESC "
+                "  LIMIT 1"
+                ")"
+            )
+            params: list[Any] = list(protected_statuses)
+            if project_id is not None:
+                query += " AND wr.project_id=?"
+                params.append(project_id)
+            if chapter_number is not None:
+                query += " AND wr.chapter_number=?"
+                params.append(chapter_number)
+            if run_id is not None:
+                query += " AND wr.id=?"
+                params.append(run_id)
+
+            rows = conn.execute(query, params).fetchall()
+            run_ids: list[str] = []
+            chapter_keys: list[dict[str, Any]] = []
+            for row in rows:
+                cursor = conn.execute(
+                    "UPDATE chapters SET status='blocking', updated_at=datetime('now','+8 hours') "
+                    "WHERE project_id=? AND chapter_number=? "
+                    "AND status NOT IN (?, ?, ?, ?, ?)",
+                    (
+                        row["project_id"],
+                        row["chapter_number"],
+                        *protected_statuses,
+                    ),
+                )
+                if cursor.rowcount:
+                    run_ids.append(row["id"])
+                    chapter_keys.append({
+                        "project_id": row["project_id"],
+                        "chapter_number": row["chapter_number"],
+                        "previous_status": row["chapter_status"],
+                        "new_status": "blocking",
+                    })
+            conn.commit()
+            return {
+                "chapters": len(chapter_keys),
+                "run_ids": run_ids,
+                "chapter_keys": chapter_keys,
             }
         finally:
             conn.close()

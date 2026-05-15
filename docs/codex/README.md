@@ -16,8 +16,8 @@
 - **生产稳定基线**: v5.5.15 Production Readiness Closure
 - **当前 WebUI 基线**: v5.6.1 Workbench Stabilization
 - **当前创作者闭环基线**: v5.7 Daily Writing Editing and Versioning
-- **当前稳定版本**: v6.0 Agent Role Capability System candidate after review fixes
-- **状态**: v6.0 Agent Role Capability System completed and reviewed；下一步是真实 LLM 新项目验收
+- **当前稳定版本**: v6.0 Agent Role Capability System candidate after real LLM acceptance fixes
+- **状态**: v6.0 真实 LLM 新项目验收已完成；已修复真实运行中暴露的工作流状态一致性、timeline 语义、局部返修路由和质量评分问题
 - **测试基线**: pytest 1917/1917 passed；smoke passed；eval_agents 30/30 passed；vitest 148/148 passed；frontend typecheck/lint/build passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
@@ -41,6 +41,7 @@
 - **v6.0 Agent Role Capability System 规格**: [planning/novel-factory-v6.0-agent-role-capability-system-spec.md](planning/novel-factory-v6.0-agent-role-capability-system-spec.md)
 - **v6.0 完成报告**: [reports/novel-factory-v6.0-completion-report.md](reports/novel-factory-v6.0-completion-report.md)
 - **v6.0 Review 记录**: [reviews/novel-factory-v6.0-review.md](reviews/novel-factory-v6.0-review.md)
+- **v6.0 真实 LLM 验收**: [reports/novel-factory-v6.0-real-llm-acceptance-report.md](reports/novel-factory-v6.0-real-llm-acceptance-report.md)
 
 ## 当前执行规则
 
@@ -77,7 +78,7 @@ v5.5.15 和 v5.6 Phase 1 完成后，下一阶段不优先展开多租户、企�
 
 近期优先级：
 
-1. v6.0 真实 LLM 新项目验收：验证 Agent Memory、Self-check、Trace、AgentOps 是否真的服务创作。
+1. 质量门禁产品化：把硬阻塞和建议改进拆开，避免真实创作被软指标卡死。
 2. 创作者资料库 / RAG。
 3. 导出与发布流水线。
 

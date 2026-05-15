@@ -1,6 +1,23 @@
 import type { ProjectModule } from '../components/project/ProjectModuleNav'
 
 const CHAPTER_WORKBENCH_MODULES = new Set<ProjectModule>(['chapters'])
+const PROJECT_MODULES = new Set<ProjectModule>([
+  'overview',
+  'chapters',
+  'worldview',
+  'characters',
+  'factions',
+  'outline',
+  'plots',
+  'instructions',
+  'style',
+  'review',
+  'runs',
+  'settings',
+  'genesis',
+  'memory',
+  'facts',
+])
 
 function isValidChapter(chapterNumber: number): boolean {
   return Number.isFinite(chapterNumber) && chapterNumber > 0
@@ -15,6 +32,14 @@ export function ensureChapterSearchParams(
     next.set('chapter', String(fallbackChapter))
   }
   return next
+}
+
+export function resolveProjectModule(searchParams: URLSearchParams): ProjectModule {
+  const explicitModule = searchParams.get('module') as ProjectModule | null
+  if (explicitModule && PROJECT_MODULES.has(explicitModule)) {
+    return explicitModule
+  }
+  return searchParams.get('chapter') ? 'chapters' : 'overview'
 }
 
 export function buildProjectModuleSearchParams(

@@ -8,6 +8,7 @@ memory update batches for user review.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from typing import Any
@@ -161,6 +162,133 @@ class MemoryCuratorAgent(BaseAgent):
             return None
         return None
 
+    def _patches_from_chapter_state_card(self, project_id: str, chapter_number: int) -> list[dict[str, Any]]:
+        """Build deterministic memory patches from Editor's chapter state card.
+
+        The LLM extractor can legitimately return an empty patch list, but the
+        Editor may already have persisted a useful state card. In that case the
+        workflow should still surface pending memory updates for human review.
+        """
+        try:
+            state_card = self.repo.get_chapter_state(project_id, chapter_number)
+        except Exception:
+            logger.exception(
+                "MemoryCurator: failed to load chapter state fallback for project=%s chapter=%s",
+                project_id,
+                chapter_number,
+            )
+            return []
+
+        state_data = (state_card or {}).get("state_data") or {}
+        if not isinstance(state_data, dict):
+            return []
+
+        patches: list[dict[str, Any]] = []
+
+        def _fact_key(kind: str, value: Any, index: int) -> str:
+            raw = (
+                json.dumps(value, ensure_ascii=False, sort_keys=True)
+                if isinstance(value, (dict, list))
+                else str(value)
+            )
+            digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
+            return f"chapter_{chapter_number}.{kind}.{index}.{digest}"
+
+        for index, fact in enumerate(state_data.get("new_facts") or [], start=1):
+            text = str(fact).strip()
+            if not text:
+                continue
+            fact_key = _fact_key("fact", text, index)
+            patches.append(
+                {
+                    "target_table": "story_facts",
+                    "operation": "create",
+                    "target_name": fact_key,
+                    "data": {
+                        "fact_key": fact_key,
+                        "fact_type": "narrative_event",
+                        "subject": f"第{chapter_number}章",
+                        "attribute": "新增事实",
+                        "value": {"text": text},
+                        "source_chapter": chapter_number,
+                        "source_agent": "memory_curator",
+                    },
+                    "confidence": 0.85,
+                    "evidence_text": text[:240],
+                    "rationale": "LLM 记忆提取为空，使用 Editor 章节状态卡中的 new_facts 兜底生成。",
+                }
+            )
+
+        character_status = state_data.get("character_status") or {}
+        if isinstance(character_status, dict):
+            for index, (name, status) in enumerate(character_status.items(), start=1):
+                character_name = str(name).strip()
+                status_text = str(status).strip()
+                if not character_name or not status_text:
+                    continue
+                fact_key = _fact_key(
+                    "character_status",
+                    {"name": character_name, "status": status_text},
+                    index,
+                )
+                patches.append(
+                    {
+                        "target_table": "story_facts",
+                        "operation": "create",
+                        "target_name": fact_key,
+                        "data": {
+                            "fact_key": fact_key,
+                            "fact_type": "character_state",
+                            "subject": character_name,
+                            "attribute": f"第{chapter_number}章状态",
+                            "value": {"status": status_text},
+                            "source_chapter": chapter_number,
+                            "source_agent": "memory_curator",
+                        },
+                        "confidence": 0.82,
+                        "evidence_text": status_text[:240],
+                        "rationale": "LLM 记忆提取为空，使用 Editor 章节状态卡中的 character_status 兜底生成。",
+                    }
+                )
+
+        for index, hook in enumerate(state_data.get("suspense_hooks") or [], start=1):
+            if isinstance(hook, dict):
+                title = str(
+                    hook.get("title")
+                    or hook.get("name")
+                    or f"第{chapter_number}章悬念{index}"
+                ).strip()
+                description = str(hook.get("description") or hook.get("content") or hook).strip()
+                value: Any = hook
+            else:
+                title = f"第{chapter_number}章悬念{index}"
+                description = str(hook).strip()
+                value = {"text": description}
+            if not description:
+                continue
+            fact_key = _fact_key("suspense_hook", value, index)
+            patches.append(
+                {
+                    "target_table": "story_facts",
+                    "operation": "create",
+                    "target_name": fact_key,
+                    "data": {
+                        "fact_key": fact_key,
+                        "fact_type": "suspense_hook",
+                        "subject": title,
+                        "attribute": "埋设悬念",
+                        "value": value,
+                        "source_chapter": chapter_number,
+                        "source_agent": "memory_curator",
+                    },
+                    "confidence": 0.8,
+                    "evidence_text": description[:240],
+                    "rationale": "LLM 记忆提取为空，使用 Editor 章节状态卡中的 suspense_hooks 兜底生成。",
+                }
+            )
+
+        return patches
+
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
@@ -243,6 +371,19 @@ class MemoryCuratorAgent(BaseAgent):
                 "_autonomy": autonomy,
             }
 
+        fallback_source = None
+        if not patches:
+            fallback_patches = self._patches_from_chapter_state_card(project_id, chapter_number)
+            if fallback_patches:
+                patches = fallback_patches
+                fallback_source = "chapter_state"
+                logger.info(
+                    "MemoryCurator: generated %d fallback patches from chapter_state for project=%s chapter=%s",
+                    len(patches),
+                    project_id,
+                    chapter_number,
+                )
+
         run_agent_skills(
             repo=self.repo,
             skill_registry=self.skill_registry,
@@ -261,7 +402,12 @@ class MemoryCuratorAgent(BaseAgent):
                 project_id,
                 chapter_number,
             )
-            return {"memory_curator_processed": True, "_trace": trace, "_autonomy": autonomy}
+            return {
+                "memory_curator_processed": True,
+                "memory_items_count": 0,
+                "_trace": trace,
+                "_autonomy": autonomy,
+            }
 
         # Create memory update batch
         batch = self.repo.create_memory_batch(
@@ -326,6 +472,7 @@ class MemoryCuratorAgent(BaseAgent):
             "memory_curator_processed": True,
             "memory_batch_id": batch["id"],
             "memory_items_count": items_created,
+            **({"memory_curator_fallback": fallback_source} if fallback_source else {}),
             "_trace": trace,
             "_autonomy": autonomy,
         }

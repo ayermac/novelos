@@ -43,6 +43,35 @@ class GenesisRejectRequest(BaseModel):
     genesis_id: str
 
 
+def _validate_genesis_generate_request(body: GenesisGenerateRequest) -> tuple[str, str] | None:
+    """Return a validation error for empty or nonsensical genesis input."""
+    if not body.title.strip():
+        return "GENESIS_INPUT_REQUIRED", "请填写项目标题后再生成创世设定"
+    if not body.genre.strip():
+        return "GENESIS_INPUT_REQUIRED", "请填写作品类型后再生成创世设定"
+    if not body.premise.strip():
+        return "GENESIS_INPUT_REQUIRED", "请填写故事核心创意后再生成创世设定"
+    if body.target_chapters < 1:
+        return "GENESIS_INPUT_REQUIRED", "首批规划章数必须大于 0"
+    if body.target_words < 1:
+        return "GENESIS_INPUT_REQUIRED", "首批规划字数必须大于 0"
+    return None
+
+
+def _with_project_defaults(
+    body: GenesisGenerateRequest,
+    project: dict,
+    project_id: str | None = None,
+) -> GenesisGenerateRequest:
+    """Fill genesis input from project fields already collected during onboarding."""
+    return body.model_copy(update={
+        "project_id": body.project_id or project_id or project.get("project_id", ""),
+        "title": body.title.strip() or project.get("name", ""),
+        "genre": body.genre.strip() or project.get("genre", ""),
+        "premise": body.premise.strip() or project.get("description", ""),
+    })
+
+
 def _generate_stub_draft(body: GenesisGenerateRequest) -> dict:
     """Generate a deterministic stub genesis draft."""
     title = body.title or "未命名项目"
@@ -205,7 +234,7 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
     """Generate a genesis draft using real LLM."""
     from ...workflow.runner import _build_llm_router
 
-    llm = _build_llm_router(settings, "real").for_agent("planner")
+    llm = _build_llm_router(settings, "real").for_agent("genesis")
     title_contract = build_title_contract({
         "name": body.title,
         "genre": body.genre,
@@ -218,7 +247,9 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
         f"标题: {body.title}\n"
         f"类型: {body.genre}\n"
         f"创意: {body.premise}\n"
-        f"篇幅: {body.target_chapters}章, {body.target_words}字\n"
+        "创世范围说明: 本次需要生成整本书的底盘设定，并只展开首批章节指令。\n"
+        f"首批章节规划范围: 前 {body.target_chapters} 章，首批合计约 {body.target_words} 字\n"
+        "注意: 上面的章数和字数不是整本书总篇幅，后续章节会通过章节批次规划继续延展。\n"
         f"读者: {body.target_audience}\n"
         f"风格: {body.style_preference}\n"
         f"约束: {body.constraints}\n\n"
@@ -240,8 +271,8 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
     )
 
     if is_configured_live_provider(llm):
-        llm.config.request_timeout_seconds = 45
-        llm.config.retry_attempts = 1
+        llm.config.request_timeout_seconds = max(llm.config.request_timeout_seconds, 180)
+        llm.config.retry_attempts = max(llm.config.retry_attempts, 2)
 
     return await asyncio.to_thread(
         llm.invoke_json,
@@ -252,7 +283,7 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
             },
             {"role": "user", "content": prompt},
         ],
-        max_tokens=5000,
+        max_tokens=7000,
         max_retries=2,
     )
 
@@ -424,6 +455,11 @@ async def generate_genesis(
         project = repo.get_project(project_id)
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        body = _with_project_defaults(body, project, project_id)
+        validation_error = _validate_genesis_generate_request(body)
+        if validation_error:
+            return error_response(*validation_error)
 
         # Check for running genesis
         latest = repo.get_latest_genesis_run(project_id)
@@ -599,6 +635,11 @@ async def generate_genesis_canonical(
         project = repo.get_project(project_id)
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        body = _with_project_defaults(body, project, project_id)
+        validation_error = _validate_genesis_generate_request(body)
+        if validation_error:
+            return error_response(*validation_error)
 
         latest = repo.get_latest_genesis_run(project_id)
         if latest and latest["status"] == "running":

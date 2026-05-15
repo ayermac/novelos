@@ -446,6 +446,14 @@ async def reset_run_chapter(
         if not reset:
             return error_response("RESET_FAILED", "恢复章节失败")
 
+        recovered_blocked_runs = 0
+        if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
+            recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+                project_id,
+                chapter_number,
+                run_id=run_id,
+            )
+
         invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
             project_id,
             chapter_number,
@@ -471,6 +479,7 @@ async def reset_run_chapter(
             "retry_count_before": retry_count_before,
             "retry_count_after": retry_count_after,
             "retries_cleared": max(0, retry_count_before - retry_count_after),
+            "recovered_blocked_runs": recovered_blocked_runs,
             "invalidated_runs": invalidated_runs,
             "checkpoint_before": checkpoint_before,
             "checkpoint_cleared": checkpoint_cleared,

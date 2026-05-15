@@ -4,7 +4,7 @@ import { get, post } from '../lib/api'
 import { useApiQuery } from '../hooks/useApiQuery'
 import ErrorState from '../components/ErrorState'
 import { useSSEStream, SSEEvent, StepStatus } from '../hooks/useSSEStream'
-import { buildProjectModuleSearchParams, ensureChapterSearchParams } from '../lib/project-routing'
+import { buildProjectModuleSearchParams, ensureChapterSearchParams, resolveProjectModule } from '../lib/project-routing'
 import type { ProjectModule } from '../components/project/ProjectModuleNav'
 import ProjectShell from '../components/project/ProjectShell'
 import AuthorWorkbench from '../components/project/AuthorWorkbench'
@@ -138,7 +138,7 @@ export default function ProjectDetail() {
   const streamingChapterRef = useRef<number | null>(null)
 
   const currentChapter = parseInt(searchParams.get('chapter') || '1', 10)
-  const activeModule: ProjectModule = (searchParams.get('module') as ProjectModule) || 'chapters'
+  const activeModule: ProjectModule = resolveProjectModule(searchParams)
   const requestedView = searchParams.get('view') as TabKey | null
   const requestedAutoGenerate = searchParams.get('auto_generate') === '1'
 
@@ -157,15 +157,15 @@ export default function ProjectDetail() {
     }
   }, [activeModule, requestedView])
 
-  // Set initial chapter (default to workbench / chapters module)
+  // Set initial chapter only after the user explicitly enters chapter writing.
   useEffect(() => {
-    if (workspace && !searchParams.get('chapter') && workspace.chapters.length > 0) {
+    if (activeModule === 'chapters' && workspace && !searchParams.get('chapter') && workspace.chapters.length > 0) {
       setSearchParams(
         ensureChapterSearchParams(searchParams, workspace.chapters[0].chapter_number),
         { replace: true }
       )
     }
-  }, [workspace]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeModule, workspace]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load chapter detail when chapter changes (for workbench and chapters module)
   useEffect(() => {
@@ -465,7 +465,7 @@ export default function ProjectDetail() {
       if (res.ok) {
         setGenError('')
         await refetchWorkspace()
-        loadRunDetail(runId)
+        setRunDetail(null)
       } else {
         await dialog.alert({
           title: '标记卡住运行失败',
@@ -482,7 +482,7 @@ export default function ProjectDetail() {
     } finally {
       setMarkStuckPending(false)
     }
-  }, [dialog, loadRunDetail, markStuckPending, refetchWorkspace])
+  }, [dialog, markStuckPending, refetchWorkspace])
 
   const handleResetRunRecovery = useCallback(async (runId: string) => {
     if (resetRecoveryPending) return
@@ -499,7 +499,7 @@ export default function ProjectDetail() {
       if (res.ok) {
         setGenError('')
         await refetchWorkspace()
-        loadRunDetail(runId)
+        setRunDetail(null)
       } else {
         await dialog.alert({
           title: '恢复运行失败',
@@ -516,7 +516,7 @@ export default function ProjectDetail() {
     } finally {
       setResetRecoveryPending(false)
     }
-  }, [dialog, loadRunDetail, refetchWorkspace, resetRecoveryPending])
+  }, [dialog, refetchWorkspace, resetRecoveryPending])
 
   const handleResetRunRecoveryForChapter = useCallback(async (chapterNumber: number) => {
     if (!id || resetRecoveryPending) return
@@ -667,7 +667,7 @@ function ModuleRouter({
     case 'overview':
       return <ProjectOverviewModule project={project} stats={stats} chapterNumber={currentChapter} />
     case 'genesis':
-      return <GenesisModule projectId={projectId} />
+      return <GenesisModule projectId={projectId} project={project} />
     case 'worldview':
       return <WorldSettingsModule projectId={projectId} />
     case 'characters':

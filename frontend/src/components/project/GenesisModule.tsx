@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, post } from '../../lib/api'
 import { Sparkles, CheckCircle2, XCircle, Loader2, RotateCcw } from 'lucide-react'
-import { NumberInput, TextArea, TextInput } from '../ui'
+import { FormField, NumberInput, TextArea, TextInput } from '../ui'
 
 interface GenesisRun {
   id: string
@@ -26,9 +26,16 @@ interface DraftData {
 
 interface Props {
   projectId: string
+  project?: {
+    name?: string
+    genre?: string
+    description?: string
+    target_words?: number
+    total_chapters_planned?: number
+  }
 }
 
-export default function GenesisModule({ projectId }: Props) {
+export default function GenesisModule({ projectId, project }: Props) {
   const [genesis, setGenesis] = useState<GenesisRun | null>(null)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
@@ -36,6 +43,7 @@ export default function GenesisModule({ projectId }: Props) {
   const [rejecting, setRejecting] = useState(false)
   const [showRejectConfirm, setShowRejectConfirm] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
   const [form, setForm] = useState({
     title: '',
     genre: '',
@@ -47,6 +55,8 @@ export default function GenesisModule({ projectId }: Props) {
     constraints: '',
   })
   const [showForm, setShowForm] = useState(false)
+  const projectTitle = (project?.name || form.title).trim()
+  const projectGenre = (project?.genre || form.genre).trim()
 
   const loadGenesis = useCallback(async () => {
     setLoading(true)
@@ -61,10 +71,41 @@ export default function GenesisModule({ projectId }: Props) {
 
   useEffect(() => { loadGenesis() }, [loadGenesis])
 
+  useEffect(() => {
+    if (!project) return
+    setForm((prev) => ({
+      ...prev,
+      title: project.name || prev.title,
+      genre: project.genre || prev.genre,
+      premise: prev.premise || project.description || '',
+    }))
+  }, [project?.name, project?.genre, project?.description]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const validateForm = () => {
+    const errors: Record<string, string> = {}
+    if (!projectTitle) errors.title = '项目标题缺失，请先在项目设置中补齐'
+    if (!projectGenre) errors.genre = '作品类型缺失，请先在项目设置中补齐'
+    if (!form.premise.trim()) errors.premise = '请填写故事核心创意'
+    if (!Number.isFinite(form.target_chapters) || form.target_chapters < 1) errors.target_chapters = '首批规划章数必须大于 0'
+    if (!Number.isFinite(form.target_words) || form.target_words < 1) errors.target_words = '首批规划字数必须大于 0'
+    setFormErrors(errors)
+    return Object.keys(errors).length === 0
+  }
+
   const handleGenerate = async () => {
+    if (!validateForm()) {
+      setErrorMsg('请先补齐创世设定的必要信息')
+      return
+    }
     setGenerating(true)
     setErrorMsg('')
-    const res = await post('/genesis/generate', { ...form, project_id: projectId })
+    const res = await post('/genesis/generate', {
+      ...form,
+      title: projectTitle,
+      genre: projectGenre,
+      premise: form.premise.trim(),
+      project_id: projectId,
+    })
     if (res.ok) {
       setGenesis(res.data as GenesisRun)
       setShowForm(false)
@@ -154,62 +195,93 @@ export default function GenesisModule({ projectId }: Props) {
       {/* Generate form */}
       {showForm && (
         <div className="genesis-form">
+          <div className="genesis-scope-note">
+            创世会生成整本书底盘设定；这里设置的是首批展开到章节指令的范围，不代表整本书总章数。
+          </div>
+          <div className="genesis-project-context">
+            <div className="context-intro">
+              <span className="context-label">已继承项目基础信息</span>
+              <strong>创建小说时填写的标题、类型和全书规模会直接用于创世</strong>
+            </div>
+            <div>
+              <span className="context-label">项目标题</span>
+              <strong>{projectTitle || '未填写'}</strong>
+            </div>
+            <div>
+              <span className="context-label">作品类型</span>
+              <strong>{projectGenre || '未填写'}</strong>
+            </div>
+            {project?.total_chapters_planned || project?.target_words ? (
+              <div>
+                <span className="context-label">全书规模</span>
+                <strong>
+                  {project.total_chapters_planned ? `${project.total_chapters_planned} 章` : '章数未设'}
+                  {project.target_words ? ` / 约 ${project.target_words.toLocaleString('zh-CN')} 字` : ''}
+                </strong>
+              </div>
+            ) : null}
+          </div>
+          {(formErrors.title || formErrors.genre) && (
+            <div className="genesis-error">
+              <XCircle size={16} /> {formErrors.title || formErrors.genre}
+            </div>
+          )}
           <div className="form-grid">
-            <label>
-              <span>标题</span>
-              <TextInput
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                placeholder="项目标题"
-              />
-            </label>
-            <label>
-              <span>类型</span>
-              <TextInput
-                value={form.genre}
-                onChange={(e) => setForm({ ...form, genre: e.target.value })}
-                placeholder="玄幻、都市、科幻..."
-              />
-            </label>
-            <label className="form-full">
-              <span>创意/前提</span>
+            <FormField label="创意/前提" required error={formErrors.premise} className="form-full">
               <TextArea
                 value={form.premise}
-                onChange={(e) => setForm({ ...form, premise: e.target.value })}
+                onChange={(e) => {
+                  setForm({ ...form, premise: e.target.value })
+                  if (formErrors.premise) setFormErrors({ ...formErrors, premise: '' })
+                }}
                 placeholder="描述你的故事核心创意..."
                 rows={3}
               />
-            </label>
-            <label>
-              <span>目标章数</span>
+            </FormField>
+            <FormField
+              label="首批规划章数"
+              helper="用于生成前 N 章章节指令，后续可继续通过章节批次规划扩展。"
+              required
+              error={formErrors.target_chapters}
+            >
               <NumberInput
                 value={form.target_chapters}
-                onChange={(e) => setForm({ ...form, target_chapters: Number(e.target.value) })}
+                min={1}
+                onChange={(e) => {
+                  setForm({ ...form, target_chapters: Number(e.target.value) })
+                  if (formErrors.target_chapters) setFormErrors({ ...formErrors, target_chapters: '' })
+                }}
               />
-            </label>
-            <label>
-              <span>目标字数</span>
+            </FormField>
+            <FormField
+              label="首批规划字数"
+              helper="用于估算首批章节的单章字数，不是全书总字数。"
+              required
+              error={formErrors.target_words}
+            >
               <NumberInput
                 value={form.target_words}
-                onChange={(e) => setForm({ ...form, target_words: Number(e.target.value) })}
+                min={1}
+                onChange={(e) => {
+                  setForm({ ...form, target_words: Number(e.target.value) })
+                  if (formErrors.target_words) setFormErrors({ ...formErrors, target_words: '' })
+                }}
               />
-            </label>
-            <label>
-              <span>目标读者</span>
+            </FormField>
+            <FormField label="目标读者">
               <TextInput
                 value={form.target_audience}
                 onChange={(e) => setForm({ ...form, target_audience: e.target.value })}
                 placeholder="男频、女频、全年龄..."
               />
-            </label>
-            <label>
-              <span>风格偏好</span>
+            </FormField>
+            <FormField label="风格偏好">
               <TextInput
                 value={form.style_preference}
                 onChange={(e) => setForm({ ...form, style_preference: e.target.value })}
                 placeholder="轻松、严肃、热血..."
               />
-            </label>
+            </FormField>
           </div>
           {errorMsg && (
             <div className="genesis-error" style={{ marginTop: 12 }}>
@@ -217,9 +289,9 @@ export default function GenesisModule({ projectId }: Props) {
             </div>
           )}
           <div className="form-actions">
-            <button className="btn btn-secondary" onClick={() => { setShowForm(false); setErrorMsg('') }}>取消</button>
+            <button className="btn btn-secondary" onClick={() => { setShowForm(false); setErrorMsg(''); setFormErrors({}) }}>取消</button>
             <button className="btn btn-primary" onClick={handleGenerate} disabled={generating}>
-              {generating ? <><Loader2 size={14} className="spin" /> 生成中...</> : <><Sparkles size={14} /> 开始生成</>}
+              {generating ? <><Loader2 size={14} className="spin" /> 生成中...</> : <><Sparkles size={14} /> 生成创世设定</>}
             </button>
           </div>
         </div>
@@ -230,7 +302,7 @@ export default function GenesisModule({ projectId }: Props) {
         <div className="data-empty">
           <div className="data-empty-icon"><Sparkles size={32} /></div>
           <div className="data-empty-title">项目初始化</div>
-          <div className="data-empty-desc">创世只需一次，生成整本书的底盘设定（世界观、角色、大纲等）。<br />后续章节通过「章节批次规划」延续。</div>
+          <div className="data-empty-desc">创世只需一次，生成整本书的底盘设定（世界观、角色、大纲等）。<br />表单里的章数只决定首批展开范围，后续章节通过「章节批次规划」延续。</div>
           <button className="btn btn-primary" onClick={() => setShowForm(true)} style={{ marginTop: 12 }}>
             <Sparkles size={14} /> 生成项目设定
           </button>
@@ -387,27 +459,59 @@ export default function GenesisModule({ projectId }: Props) {
           padding: 20px;
           margin-bottom: 16px;
         }
+        .genesis-scope-note {
+          margin-bottom: 14px;
+          padding: 10px 12px;
+          border: 1px solid var(--border, #e5e7eb);
+          border-radius: 6px;
+          background: var(--bg-primary, #fff);
+          color: var(--text-secondary, #4b5563);
+          font-size: 13px;
+          line-height: 1.6;
+        }
+        .genesis-project-context {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          margin-bottom: 14px;
+        }
+        .genesis-project-context > div {
+          min-width: 0;
+          padding: 10px 12px;
+          border: 1px solid var(--border, #e5e7eb);
+          border-radius: 6px;
+          background: var(--bg-primary, #fff);
+        }
+        .context-label {
+          display: block;
+          margin-bottom: 4px;
+          color: var(--text-muted, #6b7280);
+          font-size: 12px;
+        }
+        .genesis-project-context .context-intro {
+          grid-column: 1 / -1;
+        }
+        .genesis-project-context strong {
+          display: block;
+          overflow: hidden;
+          color: var(--text-primary, #111827);
+          font-size: 14px;
+          font-weight: 600;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
         .form-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 12px;
         }
-        .form-grid label {
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-          font-size: 13px;
-          color: var(--text-secondary, #6b7280);
-        }
         .form-grid .form-full {
           grid-column: 1 / -1;
         }
-        .form-grid input, .form-grid textarea {
-          padding: 8px 10px;
-          border: 1px solid var(--border, #d1d5db);
-          border-radius: 6px;
-          font-size: 14px;
-          background: var(--bg-primary, #fff);
+        @media (max-width: 900px) {
+          .genesis-project-context {
+            grid-template-columns: 1fr;
+          }
         }
         .form-actions {
           display: flex;

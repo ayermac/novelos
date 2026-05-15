@@ -7,7 +7,7 @@ interface Step {
   description: string
   node_group?: 'system' | 'creative_agent' | 'support_agent' | 'terminal' | 'router' | 'unknown'
   node_type?: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'skipped'
   error_message?: string
   error_is_legacy?: boolean
   logs?: {
@@ -34,6 +34,8 @@ function stepStatusIcon(status: string): string {
       return '✗'
     case 'blocked':
       return '!'
+    case 'skipped':
+      return '↷'
     default:
       return '○'
   }
@@ -49,6 +51,8 @@ function stepStatusClass(status: string): string {
       return 'step-failed'
     case 'blocked':
       return 'step-blocked'
+    case 'skipped':
+      return 'step-skipped'
     default:
       return 'step-pending'
   }
@@ -223,6 +227,10 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
         .wf-timeline .step-blocked .step-icon {
           background: #fef3c7;
           color: #d97706;
+        }
+        .wf-timeline .step-skipped .step-icon {
+          background: #f1f5f9;
+          color: #64748b;
         }
         .wf-timeline .step-pending .step-icon {
           background: #f3f4f6;

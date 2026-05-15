@@ -15,6 +15,7 @@ from ..validators.death_penalty import check_death_penalty, check_death_penalty_
 from ..validators.fact_lock import check_fact_integrity, extract_fact_lock
 from ..skills.registry import SkillRegistry
 from .base import BaseAgent
+from .chapter_text import default_chapter_title, ensure_chapter_heading
 from .skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
@@ -147,6 +148,9 @@ class PolisherAgent(BaseAgent):
                     "chapter_status": state.get("chapter_status"),
                 }
 
+        chapter_title = (chapter or {}).get("title") or default_chapter_title(chapter_number)
+        polished_content = ensure_chapter_heading(polished_content, chapter_title, chapter_number)
+
         # v5.3.0: Word count quality gate
         instruction = self._get_instruction(state)
         project = self.repo.get_project(project_id)
@@ -254,9 +258,11 @@ class PolisherAgent(BaseAgent):
 
             # Save artifact (bind to workflow run for isolation)
             workflow_run_id = state.get("workflow_run_id")
+            artifact_payload = output.model_dump()
+            artifact_payload["content"] = polished_content
             self.repo.save_artifact(
                 project_id, chapter_number, "polisher", "polished_draft",
-                content_json=output.model_dump(),
+                content_json=artifact_payload,
                 workflow_run_id=workflow_run_id,
             )
         except Exception as e:

@@ -24,7 +24,7 @@ SOURCE_LABELS = {
 }
 
 # Chapters that allow direct editing
-EDITABLE_STATUSES = {"drafted", "polished", "revision", "scripted"}
+EDITABLE_STATUSES = {"drafted", "polished", "revision", "scripted", "blocking"}
 # Chapters that are read-only and need revision-draft first
 PUBLISHED_STATUSES = {"published", "awaiting_publish"}
 
@@ -214,13 +214,25 @@ async def save_chapter_content(
             summary=body.summary or "人工编辑保存",
         )
 
-        # Status transition: reviewed → polished (needs re-review)
+        # Status transition: human edits after review/blocking/revision need re-review.
         new_status = status
         status_changed = False
-        if status == "reviewed":
+        if status in {"reviewed", "blocking", "revision"}:
             new_status = "polished"
             repo.update_chapter_status(project_id, chapter_number, "polished")
             status_changed = True
+            if status in {"blocking", "revision"}:
+                reset_task_id = repo.start_task(
+                    project_id,
+                    chapter_number,
+                    "reset",
+                    "human",
+                )
+                repo.complete_task(
+                    reset_task_id,
+                    success=True,
+                    error="人工编辑保存：清空本轮自动返修计数。",
+                )
 
         return envelope_response({
             "saved": True,
@@ -491,7 +503,8 @@ async def local_revision(
     body: LocalRevisionRequest,
 ) -> EnvelopeResponse:
     """AI local revision: returns candidate replacement without overwriting content."""
-    from ..deps import get_repo, get_llm_mode, get_llm_provider
+    from ..deps import get_repo, get_llm_mode, get_settings
+    from ...workflow.runner import _build_llm_router
 
     try:
         repo = get_repo(request)
@@ -554,7 +567,9 @@ async def local_revision(
             },
         ]
 
-        provider = get_llm_provider(request)
+        settings = get_settings(request)
+        llm_mode = get_llm_mode(request)
+        provider = _build_llm_router(settings, llm_mode).for_agent("author")
         result = provider.invoke_json(messages, schema=LocalRevisionOutput)
 
         if not result or not result.get("replacement_text"):

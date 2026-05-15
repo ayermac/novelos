@@ -47,7 +47,7 @@ interface Step {
   description: string
   node_group?: 'system' | 'creative_agent' | 'support_agent' | 'terminal' | 'router' | 'unknown'
   node_type?: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'skipped'
   error_message?: string
   logs?: {
     id?: string
