@@ -1,0 +1,35 @@
+cases:
+  - name: valid_beats
+    input:
+      scene_beats:
+        - sequence: 1
+          scene_goal: "主角进入拍卖场"
+          conflict: "王家子弟故意抬价"
+          turn: "主角亮出隐藏身份"
+          hook: "王家老祖暗中窥视"
+          plot_refs:
+            - "P001"
+    expect:
+      ok: true
+      check:
+        scene_count: 1
+        blocking: false
+  - name: missing_conflict
+    input:
+      scene_beats:
+        - sequence: 1
+          scene_goal: "主角进入拍卖场"
+          conflict: ""
+          turn: ""
+          hook: ""
+    expect:
+      ok: false
+      check:
+        blocking: true
+  - name: empty_beats
+    input:
+      scene_beats: []
+    expect:
+      ok: false
+      check:
+        blocking: true

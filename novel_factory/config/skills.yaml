@@ -57,6 +57,7 @@ skills:
 
   chapter-objective-checker:
     enabled: true
+    package: skill_packages/chapter_objective_checker
     manifest: config/skills/manifest/chapter-objective-checker.yaml
     type: validator
     class: ChapterObjectiveCheckerSkill
@@ -65,6 +66,7 @@ skills:
 
   scene-conflict-checker:
     enabled: true
+    package: skill_packages/scene_conflict_checker
     manifest: config/skills/manifest/scene-conflict-checker.yaml
     type: validator
     class: SceneConflictCheckerSkill
@@ -73,6 +75,7 @@ skills:
 
   event-coverage-checker:
     enabled: true
+    package: skill_packages/event_coverage_checker
     manifest: config/skills/manifest/event-coverage-checker.yaml
     type: validator
     class: EventCoverageCheckerSkill
@@ -81,6 +84,7 @@ skills:
 
   memory-patch-validator:
     enabled: true
+    package: skill_packages/memory_patch_validator
     manifest: config/skills/manifest/memory-patch-validator.yaml
     type: validator
     class: MemoryPatchValidatorSkill

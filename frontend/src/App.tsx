@@ -9,6 +9,7 @@ import RunDetail from './pages/RunDetail'
 import Review from './pages/Review'
 import Style from './pages/Style'
 import Settings from './pages/Settings'
+import AgentOps from './pages/AgentOps'
 import { AppDialogProvider } from './components/AppDialog'
 
 function ChapterRedirect() {
@@ -48,6 +49,7 @@ function App() {
             <Route path="review" element={<Review />} />
             <Route path="style" element={<Style />} />
             <Route path="settings" element={<Settings />} />
+            <Route path="agent-ops" element={<AgentOps />} />
           </Route>
         </Routes>
       </BrowserRouter>

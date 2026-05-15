@@ -1,0 +1,23 @@
+genre: mystery
+reader_promise: "逻辑严密，悬念迭起，反转不断"
+pacing_profile: slow_burn
+chapter_hook_style: revelation
+must_have_tropes:
+  - "线索埋设"
+  - "红鲱鱼"
+  - "侦探推理"
+avoid_patterns:
+  - "天降神探"
+  - "无逻辑巧合"
+editor_rubric_weights:
+  setting: 20
+  logic: 35
+  poison: 15
+  text: 15
+  pacing: 15
+planner_bias:
+  prefer_foreshadowing: true
+  min_events_per_chapter: 2
+author_style_bias:
+  detail_oriented: true
+  atmosphere_heavy: true

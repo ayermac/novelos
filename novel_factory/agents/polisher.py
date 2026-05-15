@@ -45,15 +45,15 @@ class PolisherAgent(BaseAgent):
 
     agent_id = "polisher"
 
-    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None):
+    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, **kwargs):
         """Initialize Polisher agent.
-        
+
         Args:
             repo: Repository instance.
             llm: LLM provider instance.
             skill_registry: Optional SkillRegistry for skill execution.
         """
-        super().__init__(repo, llm)
+        super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
 
     def build_context(self, state: FactoryState) -> str:
@@ -73,7 +73,7 @@ class PolisherAgent(BaseAgent):
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
 
-        context = self.build_context(state)
+        context = self._build_v6_context(state)
 
         messages = [
             {"role": "system", "content": POLISHER_SYSTEM_PROMPT},

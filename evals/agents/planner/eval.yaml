@@ -1,0 +1,74 @@
+cases:
+  - id: planner-objective-concrete
+    agent_id: planner
+    input_fixture:
+      chapter_brief:
+        objective: "主角林动在拍卖会上夺得灵药，与王家发生冲突"
+        required_events:
+          - "林动参加拍卖会"
+          - "夺得三品灵药"
+          - "王家子弟挑衅"
+        plots_to_plant: ["P002"]
+        plots_to_resolve: ["P001"]
+        ending_hook: "王家老祖暗中窥视"
+        constraints: ["保持第三人称视角"]
+    expected_behavior:
+      must_pass:
+        - type: skill_ok
+          skill_id: chapter-objective-checker
+      should_warn: []
+    rubric:
+      - 目标具体性
+      - 事件可落地
+    regression_tags: ["v6.0", "planner"]
+  - id: planner-vague-objective
+    agent_id: planner
+    input_fixture:
+      chapter_brief:
+        objective: "主角继续变强"
+        required_events: []
+    expected_behavior:
+      must_pass:
+        - type: skill_not_ok
+          skill_id: chapter-objective-checker
+    rubric:
+      - 必须检测抽象目标
+    regression_tags: ["v6.0", "planner"]
+  - id: planner-foreshadowing-debt
+    agent_id: planner
+    input_fixture:
+      pending_plots:
+        - code: "P001"
+          status: "planted"
+          planned_resolve_chapter: 5
+      current_chapter: 3
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 伏笔债务处理
+    regression_tags: ["v6.0", "planner"]
+  - id: planner-pacing-overload
+    agent_id: planner
+    input_fixture:
+      chapter_brief:
+        objective: "目标"
+        required_events: ["e1", "e2", "e3", "e4", "e5", "e6", "e7", "e8"]
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 节奏不过载
+    regression_tags: ["v6.0", "planner"]
+  - id: planner-arc-continuity
+    agent_id: planner
+    input_fixture:
+      prev_state:
+        state_data:
+          cultivation_level: "练气三层"
+      chapter_brief:
+        objective: "主角突破到筑基期"
+        required_events: ["突破"]
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 状态衔接连贯
+    regression_tags: ["v6.0", "planner"]

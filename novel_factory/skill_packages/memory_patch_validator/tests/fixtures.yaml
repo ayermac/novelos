@@ -1,0 +1,43 @@
+cases:
+  - name: valid_patch
+    input:
+      patches:
+        - target_table: "characters"
+          operation: "create"
+          target_name: "林动"
+          data:
+            name: "林动"
+            role: "主角"
+          confidence: 0.9
+          evidence_text: "林动走出家门"
+          rationale: "新角色"
+    expect:
+      ok: true
+      check:
+        patch_count: 1
+        blocking: false
+  - name: invalid_table
+    input:
+      patches:
+        - target_table: "invalid_table"
+          operation: "create"
+          data: {}
+          confidence: 0.9
+          evidence_text: "证据"
+    expect:
+      ok: false
+      check:
+        blocking: true
+  - name: low_confidence
+    input:
+      patches:
+        - target_table: "characters"
+          operation: "create"
+          data:
+            name: "林动"
+          confidence: 0.3
+          evidence_text: "证据"
+    expect:
+      ok: true
+      check:
+        patch_count: 1

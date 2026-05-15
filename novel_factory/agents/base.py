@@ -1,11 +1,14 @@
 """Base Agent class for Novel Factory.
 
 All agents inherit from BaseAgent and implement build_context, run, validate_output.
+v6.0: BaseAgent now integrates role profiles, tool registry, decision trace,
+and agent memory context in a backward-compatible way.
 """
 
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from ..db.repository import Repository
@@ -27,14 +30,79 @@ class BaseAgent:
     """
 
     agent_id: str = "base"
+    use_self_check: bool = False
 
     def __init__(
         self,
         repo: Repository,
         llm: LLMProvider,
+        skill_registry: Any | None = None,
+        tool_registry: Any | None = None,
+        trace_store: Any | None = None,
     ) -> None:
         self.repo = repo
         self.llm = llm
+        self.skill_registry = skill_registry
+        self.tool_registry = tool_registry
+        self.trace_store = trace_store
+        self._role_profile: Any | None = None
+        self._load_role_profile()
+
+    def _load_role_profile(self) -> None:
+        """v6.0: Load declarative role profile for this agent."""
+        try:
+            from .role_profile import get_role_profile
+            self._role_profile = get_role_profile(self.agent_id)
+            if self._role_profile:
+                logger.debug("Loaded role profile for %s", self.agent_id)
+        except Exception as e:
+            logger.debug("Role profile load failed for %s: %s", self.agent_id, e)
+
+    def _get_role_profile_context(self) -> str:
+        """v6.0: Return role profile mission/context for prompt injection."""
+        if not self._role_profile:
+            return ""
+        parts = [f"【角色目标】{self._role_profile.mission}"]
+        if self._role_profile.success_criteria:
+            parts.append("【成功标准】" + "; ".join(self._role_profile.success_criteria[:3]))
+        if self._role_profile.cannot_do:
+            parts.append("【禁止事项】" + "; ".join(self._role_profile.cannot_do[:3]))
+        return "\n".join(parts)
+
+    def _get_agent_memory_context(self, project_id: str) -> str:
+        """v6.0: Query enabled agent memories and inject relevant notes."""
+        try:
+            items = self.repo.list_agent_memories(
+                project_id=project_id,
+                agent_id=self.agent_id,
+                enabled_only=True,
+            )
+        except Exception as e:
+            logger.debug("Agent memory query failed: %s", e)
+            return ""
+        if not items:
+            return ""
+        lines = ["【Agent 记忆】"]
+        for item in items[:5]:
+            key = item.get("key", "")
+            value = item.get("value", {})
+            note = value.get("note") or value.get("content") or str(value)[:120]
+            lines.append(f"- {key}: {note}")
+        return "\n".join(lines)
+
+    def _build_v6_context(self, state: FactoryState) -> str:
+        """v6.0: Assemble enhanced context with role profile and memory."""
+        parts = []
+        role_ctx = self._get_role_profile_context()
+        if role_ctx:
+            parts.append(role_ctx)
+        mem_ctx = self._get_agent_memory_context(state.get("project_id", ""))
+        if mem_ctx:
+            parts.append(mem_ctx)
+        base_ctx = self.build_context(state)
+        if base_ctx:
+            parts.append(base_ctx)
+        return "\n\n".join(parts)
 
     def build_context(self, state: FactoryState) -> str:
         """Build the LLM prompt context from the current workflow state.
@@ -84,6 +152,46 @@ class BaseAgent:
                 f"Agent '{self.agent_id}' precondition failed: {'; '.join(violations)}"
             )
 
+    def _record_trace(
+        self,
+        state: FactoryState,
+        stage: str,
+        input_summary: str = "",
+        capability_packs: list[str] | None = None,
+        skill_results: list[dict[str, Any]] | None = None,
+        self_check: dict[str, Any] | None = None,
+        autonomy_decision: dict[str, Any] | None = None,
+        repair_attempts: list[dict[str, Any]] | None = None,
+        contract_validation: dict[str, Any] | None = None,
+        token_count: int = 0,
+        latency_ms: int = 0,
+    ) -> None:
+        """v6.0: Best-effort save a decision trace. Never raises."""
+        if self.trace_store is None:
+            return
+        try:
+            from .decision_trace import AgentDecisionTrace
+            trace = AgentDecisionTrace(
+                run_id=state.get("workflow_run_id", ""),
+                project_id=state.get("project_id", ""),
+                chapter_number=state.get("chapter_number", 0),
+                agent_id=self.agent_id,
+                stage=stage,
+                role_profile_id=self._role_profile.agent_id if self._role_profile else self.agent_id,
+                input_summary=input_summary,
+                capability_packs=capability_packs or [],
+                skill_results=skill_results or [],
+                self_check=self_check or {},
+                autonomy_decision=autonomy_decision or {},
+                repair_attempts=repair_attempts or [],
+                contract_validation=contract_validation or {},
+                token_count=token_count,
+                latency_ms=latency_ms,
+            )
+            self.trace_store.save(trace)
+        except Exception as e:
+            logger.debug("Trace save failed for %s: %s", self.agent_id, e)
+
     def run(self, state: FactoryState) -> dict[str, Any]:
         """Execute the agent's core logic with precondition and validation guards.
 
@@ -92,14 +200,16 @@ class BaseAgent:
 
         Subclasses should override _execute() instead of this method.
         """
+        started_at = time.perf_counter()
+        input_summary = f"project={state.get('project_id')} chapter={state.get('chapter_number')} status={state.get('chapter_status')}"
         try:
             self.check_precondition(state)
-            return self._execute(state)
+            result = self._execute(state)
         except ValueError as e:
             message = str(e)
             logger.error("Agent '%s' validation failed: %s", self.agent_id, message)
             if "死刑红线" in message:
-                return {
+                result = {
                     "error": message,
                     "chapter_status": state.get("chapter_status"),
                     "quality_gate": {
@@ -111,10 +221,29 @@ class BaseAgent:
                         "workflow_run_id": state.get("workflow_run_id"),
                     },
                 }
-            return {"error": message, "chapter_status": state.get("chapter_status")}
+            else:
+                result = {"error": message, "chapter_status": state.get("chapter_status")}
         except Exception as e:
             logger.exception("Agent '%s' execution failed", self.agent_id)
-            return {"error": str(e), "chapter_status": state.get("chapter_status")}
+            result = {"error": str(e), "chapter_status": state.get("chapter_status")}
+
+        latency_ms = int((time.perf_counter() - started_at) * 1000)
+
+        # v6.0: Attach trace and autonomy metadata (best-effort)
+        trace_payload = result.get("_trace")
+        autonomy = result.get("_autonomy")
+        self._record_trace(
+            state=state,
+            stage="execute",
+            input_summary=input_summary,
+            self_check=trace_payload.get("self_check") if isinstance(trace_payload, dict) else None,
+            autonomy_decision=autonomy,
+            repair_attempts=trace_payload.get("repair_attempts") if isinstance(trace_payload, dict) else None,
+            token_count=result.get("total_tokens", 0),
+            latency_ms=latency_ms,
+        )
+
+        return result
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         """Internal execution method. Subclasses must implement this."""
@@ -137,7 +266,7 @@ class BaseAgent:
             )
         except Exception:
             logger.warning(
-                "Failed to compensate status %s→%s for %s/%s",
+                "Failed to compensate status %s->%s for %s/%s",
                 current_status, target_status, project_id, chapter_number,
             )
 

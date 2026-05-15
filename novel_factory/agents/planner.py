@@ -43,8 +43,8 @@ class PlannerAgent(BaseAgent):
 
     agent_id = "planner"
 
-    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None):
-        super().__init__(repo, llm)
+    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, **kwargs):
+        super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
 
     def build_context(self, state: FactoryState) -> str:
@@ -101,7 +101,7 @@ class PlannerAgent(BaseAgent):
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
 
-        context = self.build_context(state)
+        context = self._build_v6_context(state)
 
         messages = [
             {"role": "system", "content": PLANNER_SYSTEM_PROMPT},

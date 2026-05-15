@@ -27,6 +27,7 @@ from ..llm.provider import is_configured_live_provider
 from ..skills.registry import SkillRegistry
 from .base import BaseAgent
 from .skill_hooks import run_agent_skills
+from .self_check import SelfCheckLoop, SelfCheckResult
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +57,8 @@ class AuthorAgent(BaseAgent):
 
     agent_id = "author"
 
-    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None):
-        super().__init__(repo, llm)
+    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, **kwargs):
+        super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
 
     def build_context(self, state: FactoryState) -> str:
@@ -132,7 +133,7 @@ class AuthorAgent(BaseAgent):
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
 
-        context = self.build_context(state)
+        context = self._build_v6_context(state)
 
         chapter = self._get_chapter_info(state)
         is_revision = chapter and chapter.get("status") == ChapterStatus.REVISION.value
@@ -160,7 +161,98 @@ class AuthorAgent(BaseAgent):
 
         output = self._sanitize_output(output, state)
 
+        # v6.0: Self-check loop (generate already done; now check + optional repair)
+        loop = SelfCheckLoop(agent_id=self.agent_id, max_repair_attempts=1)
+
+        def _generate_wrap() -> dict[str, Any]:
+            return {"output": output}
+
+        def _self_check_wrap(data: dict[str, Any]) -> SelfCheckResult:
+            out = data["output"]
+            issues: list[dict[str, Any]] = []
+            instruction = self._get_instruction(state) or {}
+            # Event coverage
+            required_events = self._instruction_items(instruction.get("key_events", ""))
+            implemented = out.implemented_events or []
+            missing = [e for e in required_events if e and e not in implemented]
+            if missing:
+                issues.append({"type": "event_coverage", "message": f"Missing events: {missing}"})
+            # Death penalty
+            dp = check_death_penalty_structured(out.content)
+            if dp.has_critical:
+                issues.append({"type": "death_penalty", "message": f"Critical: {dp.violations}"})
+            elif dp.violations:
+                issues.append({"type": "death_penalty", "message": f"Violations: {dp.violations}"})
+            # Word count
+            wt = self._get_word_target(state)
+            wc_passed, wc_msg = check_word_count_quality_gate(out.content, wt, "author")
+            if not wc_passed:
+                issues.append({"type": "word_count", "message": wc_msg})
+            repairable = any(i["type"] in ("word_count", "death_penalty") for i in issues)
+            return SelfCheckResult(
+                passed=len(issues) == 0,
+                issues=issues,
+                repair_needed=repairable,
+                repair_suggestion="扩写或清理死刑红线词汇",
+            )
+
+        def _repair_wrap(data: dict[str, Any], check: SelfCheckResult) -> dict[str, Any] | None:
+            out = data["output"]
+            wt = self._get_word_target(state)
+            wc_passed, wc_msg = check_word_count_quality_gate(out.content, wt, "author")
+            if not wc_passed:
+                expanded = self._try_expand_short_output(state, out, wc_msg)
+                if expanded is not None:
+                    return {"output": expanded}
+            # Try sanitize death penalty
+            if state.get("llm_mode") == "real":
+                sanitized, replacements = sanitize_death_penalty_text(out.content)
+                if replacements:
+                    from ..models.schemas import AuthorOutput
+                    new_data = out.model_dump()
+                    new_data["content"] = sanitized
+                    return {"output": AuthorOutput(**normalize_declared_word_count(new_data))}
+            return None
+
+        loop_result = loop.run(_generate_wrap, _self_check_wrap, _repair_wrap)
+        output = loop_result["output"]
+        trace = loop_result.get("_trace", {})
+        autonomy = loop_result.get("_autonomy", {})
+        if state.get("llm_mode") == "real" and autonomy.get("decision") in {"ask_human", "reroute", "refuse"}:
+            issue_types = {
+                issue.get("type")
+                for issue in (trace.get("self_check", {}) or {}).get("issues", [])
+                if isinstance(issue, dict)
+            }
+            # Keep legacy retryable gates working. Death-penalty and word-count
+            # failures are handled below by hard validation / quality gates so
+            # workflow routing can consume retry attempts instead of jumping
+            # straight to human blocking.
+            if issue_types and issue_types.issubset({"death_penalty", "word_count"}):
+                pass
+            else:
+                reason = autonomy.get("reason") or "Author 自检未通过"
+                target_agent = (autonomy.get("metadata") or {}).get("target_agent", "author")
+                return {
+                    "error": f"Author 自检未通过: {reason}",
+                    "chapter_status": state.get("chapter_status"),
+                    "requires_human": True,
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": target_agent,
+                        "self_check_fail": True,
+                        "message": reason,
+                        "agent": "author",
+                        "workflow_run_id": state.get("workflow_run_id"),
+                    },
+                    "_trace": trace,
+                    "_autonomy": autonomy,
+                }
+
+        # v6.0: Preserve original hard validation (schema, max words, death penalty)
         self.validate_output(output.model_dump())
+
+        # Legacy skill hooks (still run for compatibility)
         instruction = self._get_instruction(state) or {}
         run_agent_skills(
             repo=self.repo,
@@ -178,23 +270,13 @@ class AuthorAgent(BaseAgent):
             skill_type_hint="validator",
         )
 
-        # v5.3.0: Word count quality gate
+        # v5.3.0: Word count quality gate (final guard after self-check loop)
         word_target = self._get_word_target(state)
         word_gate_passed, word_gate_msg = check_word_count_quality_gate(
             output.content, word_target, "author"
         )
-        if not word_gate_passed and state.get("llm_mode") == "real":
-            expanded = self._try_expand_short_output(state, output, word_gate_msg)
-            if expanded is not None:
-                output = expanded
-                word_gate_passed, word_gate_msg = check_word_count_quality_gate(
-                    output.content, word_target, "author"
-                )
-
         if not word_gate_passed:
             logger.warning("Author: word count quality gate failed: %s", word_gate_msg)
-            # Do not advance status, return error for retry
-            # P1: Record actual word count and target for traceability
             from ..validators.chapter_checker import count_words
             actual_wc = count_words(output.content)
             return {
@@ -210,6 +292,8 @@ class AuthorAgent(BaseAgent):
                     "agent": "author",
                     "workflow_run_id": state.get("workflow_run_id"),
                 },
+                "_trace": trace,
+                "_autonomy": autonomy,
             }
 
         # Advance status FIRST to lock the transition; abort if stale
@@ -258,6 +342,8 @@ class AuthorAgent(BaseAgent):
         return {
             "chapter_status": ChapterStatus.DRAFTED.value,
             "current_stage": "drafted",
+            "_trace": trace,
+            "_autonomy": autonomy,
         }
 
     def validate_output(self, output: dict) -> None:

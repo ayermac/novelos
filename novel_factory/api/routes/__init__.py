@@ -26,6 +26,8 @@ from .project_skill_overrides import router as project_skill_overrides_router
 from .production import router as production_router
 from .versions import router as versions_router
 from .workflow_timeline import router as workflow_timeline_router
+from .agent_memory import router as agent_memory_router
+from .agent_ops import router as agent_ops_router
 
 __all__ = [
     "health_router",
@@ -54,4 +56,6 @@ __all__ = [
     "production_router",
     "versions_router",
     "workflow_timeline_router",
+    "agent_memory_router",
+    "agent_ops_router",
 ]

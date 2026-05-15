@@ -11,6 +11,7 @@ from ..models.state import ChapterStatus, FactoryState
 from ..skills.registry import SkillRegistry
 from .base import BaseAgent
 from .skill_hooks import run_agent_skills
+from .self_check import SelfCheckLoop, SelfCheckResult
 
 logger = logging.getLogger(__name__)
 
@@ -40,8 +41,8 @@ class ScreenwriterAgent(BaseAgent):
 
     agent_id = "screenwriter"
 
-    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None):
-        super().__init__(repo, llm)
+    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, **kwargs):
+        super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
 
     def build_context(self, state: FactoryState) -> str:
@@ -76,17 +77,76 @@ class ScreenwriterAgent(BaseAgent):
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
 
-        context = self.build_context(state)
+        context = self._build_v6_context(state)
 
-        messages = [
-            {"role": "system", "content": SCREENWRITER_SYSTEM_PROMPT},
-            {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请将以上指令拆解为场景 beat。"},
-        ]
+        # v6.0: Self-check loop for scene beat quality
+        loop = SelfCheckLoop(agent_id=self.agent_id, max_repair_attempts=1)
 
-        raw = self.llm.invoke_json(messages, schema=ScreenwriterOutput)
-        output = ScreenwriterOutput(**raw)
+        def _generate_wrap() -> dict[str, Any]:
+            messages = [
+                {"role": "system", "content": SCREENWRITER_SYSTEM_PROMPT},
+                {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请将以上指令拆解为场景 beat。"},
+            ]
+            raw = self.llm.invoke_json(messages, schema=ScreenwriterOutput)
+            out = ScreenwriterOutput(**raw)
+            self.validate_output(out.model_dump())
+            return {"output": out}
 
-        self.validate_output(output.model_dump())
+        def _self_check_wrap(data: dict[str, Any]) -> SelfCheckResult:
+            out = data["output"]
+            issues: list[dict[str, Any]] = []
+            for i, beat in enumerate(out.scene_beats):
+                if not beat.scene_goal:
+                    issues.append({"type": "beat_completeness", "message": f"Beat {i+1} missing scene_goal"})
+                if not beat.conflict:
+                    issues.append({"type": "beat_completeness", "message": f"Beat {i+1} missing conflict"})
+                if not beat.turn:
+                    issues.append({"type": "beat_completeness", "message": f"Beat {i+1} missing turn"})
+                if not beat.hook:
+                    issues.append({"type": "beat_completeness", "message": f"Beat {i+1} missing hook"})
+            return SelfCheckResult(
+                passed=len(issues) == 0,
+                issues=issues,
+                repair_needed=len(issues) > 0,
+                repair_suggestion="重新生成缺失字段的 beat",
+            )
+
+        def _repair_wrap(data: dict[str, Any], check: SelfCheckResult) -> dict[str, Any] | None:
+            # One retry with stronger prompt
+            messages = [
+                {"role": "system", "content": SCREENWRITER_SYSTEM_PROMPT + "\n\n注意：每个 beat 必须包含 scene_goal, conflict, turn, hook 四个字段，缺一不可。"},
+                {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请将以上指令拆解为场景 beat。确保每个 beat 都有完整的四个字段。"},
+            ]
+            try:
+                raw = self.llm.invoke_json(messages, schema=ScreenwriterOutput)
+                out = ScreenwriterOutput(**raw)
+                self.validate_output(out.model_dump())
+                return {"output": out}
+            except Exception:
+                return None
+
+        loop_result = loop.run(_generate_wrap, _self_check_wrap, _repair_wrap)
+        output = loop_result["output"]
+        trace = loop_result.get("_trace", {})
+        autonomy = loop_result.get("_autonomy", {})
+        if state.get("llm_mode") == "real" and autonomy.get("decision") in {"ask_human", "reroute", "refuse"}:
+            reason = autonomy.get("reason") or "Screenwriter 自检未通过"
+            return {
+                "error": f"Screenwriter 自检未通过: {reason}",
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": True,
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": "screenwriter",
+                    "self_check_fail": True,
+                    "message": reason,
+                    "agent": "screenwriter",
+                    "workflow_run_id": state.get("workflow_run_id"),
+                },
+                "_trace": trace,
+                "_autonomy": autonomy,
+            }
+
         beats_data = [b.model_dump() for b in output.scene_beats]
         run_agent_skills(
             repo=self.repo,
@@ -107,7 +167,7 @@ class ScreenwriterAgent(BaseAgent):
         )
         if not ok:
             logger.error("Screenwriter: status advance planned→scripted failed (stale state)")
-            return {"error": "Screenwriter: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
+            return {"error": "Screenwriter: stale state, status advance failed", "chapter_status": state.get("chapter_status"), "_trace": trace, "_autonomy": autonomy}
 
         # Save scene beats (only after status advance succeeds)
         try:
@@ -125,11 +185,13 @@ class ScreenwriterAgent(BaseAgent):
                 project_id, chapter_number,
                 ChapterStatus.SCRIPTED.value, ChapterStatus.PLANNED.value,
             )
-            return {"error": f"Screenwriter: write failed: {e}", "chapter_status": ChapterStatus.PLANNED.value}
+            return {"error": f"Screenwriter: write failed: {e}", "chapter_status": ChapterStatus.PLANNED.value, "_trace": trace, "_autonomy": autonomy}
 
         return {
             "chapter_status": ChapterStatus.SCRIPTED.value,
             "current_stage": "scripted",
+            "_trace": trace,
+            "_autonomy": autonomy,
         }
 
     def validate_output(self, output: dict) -> None:

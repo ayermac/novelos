@@ -57,15 +57,15 @@ class EditorAgent(BaseAgent):
 
     agent_id = "editor"
 
-    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None):
+    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, **kwargs):
         """Initialize Editor agent.
-        
+
         Args:
             repo: Repository instance.
             llm: LLM provider instance.
             skill_registry: Optional SkillRegistry for skill execution.
         """
-        super().__init__(repo, llm)
+        super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
 
     def build_context(self, state: FactoryState) -> str:
@@ -176,7 +176,7 @@ class EditorAgent(BaseAgent):
         chapter_number = state["chapter_number"]
 
         use_compact_review = state.get("llm_mode") == "real" and is_configured_live_provider(self.llm)
-        context = self._build_compact_review_context(state) if use_compact_review else self.build_context(state)
+        context = self._build_compact_review_context(state) if use_compact_review else self._build_v6_context(state)
 
         messages = [
             {"role": "system", "content": EDITOR_SYSTEM_PROMPT},

@@ -22,7 +22,7 @@ def test_all_pages_import_api_or_static():
     assert pages_dir.exists(), "pages directory should exist"
 
     page_files = list(pages_dir.glob("*.tsx"))
-    assert len(page_files) == 9, f"Should have 9 page files (Acceptance removed in v5.1.6), found {len(page_files)}"
+    assert len(page_files) == 10, f"Should have 10 page files (v6.0 added AgentOps), found {len(page_files)}"
 
     # Check each page
     for page_file in page_files:

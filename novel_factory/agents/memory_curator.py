@@ -18,6 +18,7 @@ from ..llm.provider import is_configured_live_provider
 from ..skills.registry import SkillRegistry
 from .base import BaseAgent
 from .skill_hooks import run_agent_skills
+from .self_check import SelfCheckLoop, SelfCheckResult
 
 logger = logging.getLogger(__name__)
 
@@ -61,8 +62,8 @@ class MemoryCuratorAgent(BaseAgent):
 
     agent_id = "memory_curator"
 
-    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None):
-        super().__init__(repo, llm)
+    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, **kwargs):
+        super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
 
     def build_context(self, state: FactoryState) -> str:
@@ -164,30 +165,84 @@ class MemoryCuratorAgent(BaseAgent):
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
 
-        context = self.build_context(state)
+        context = self._build_v6_context(state)
 
-        messages = [
-            {"role": "system", "content": MEMORY_CURATOR_SYSTEM_PROMPT},
-            {
-                "role": "user",
-                "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请提取本章的项目资料变更建议。",
-            },
-        ]
+        # v6.0: Self-check loop for patch extraction quality
+        loop = SelfCheckLoop(agent_id=self.agent_id, max_repair_attempts=1)
 
-        try:
-            invoke_kwargs = {"max_tokens": 700} if is_configured_live_provider(self.llm) else {}
-            raw = self.llm.invoke_json(messages, **invoke_kwargs)
-        except (LLMTimeoutError, OutputValidationError) as e:
-            logger.warning(
-                "MemoryCurator: degraded to no-op after LLM extraction failure: %s",
-                e,
+        def _generate_wrap() -> dict[str, Any]:
+            messages = [
+                {"role": "system", "content": MEMORY_CURATOR_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请提取本章的项目资料变更建议。",
+                },
+            ]
+            try:
+                invoke_kwargs = {"max_tokens": 700} if is_configured_live_provider(self.llm) else {}
+                raw = self.llm.invoke_json(messages, **invoke_kwargs)
+            except (LLMTimeoutError, OutputValidationError) as e:
+                logger.warning("MemoryCurator: degraded to no-op after LLM extraction failure: %s", e)
+                return {"output": [], "degraded": True, "warning": str(e)}
+            patches = raw.get("patches", raw.get("facts", []))
+            return {"output": patches}
+
+        def _self_check_wrap(data: dict[str, Any]) -> SelfCheckResult:
+            patches = data.get("output", [])
+            issues: list[dict[str, Any]] = []
+            for i, patch in enumerate(patches):
+                if not patch.get("target_table"):
+                    issues.append({"type": "patch_structure", "message": f"Patch {i+1} missing target_table"})
+                if not patch.get("operation"):
+                    issues.append({"type": "patch_structure", "message": f"Patch {i+1} missing operation"})
+                if patch.get("confidence", 0) < 0.3:
+                    issues.append({"type": "patch_confidence", "message": f"Patch {i+1} confidence too low"})
+            return SelfCheckResult(
+                passed=len(issues) == 0,
+                issues=issues,
+                repair_needed=len(issues) > 0,
+                repair_suggestion="要求 LLM 返回完整 patch 结构",
             )
+
+        def _repair_wrap(data: dict[str, Any], check: SelfCheckResult) -> dict[str, Any] | None:
+            messages = [
+                {"role": "system", "content": MEMORY_CURATOR_SYSTEM_PROMPT + "\n\n注意：每个 patch 必须包含 target_table, operation, target_name, data, confidence 字段。"},
+                {
+                    "role": "user",
+                    "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请重新提取本章的项目资料变更建议，确保字段完整。",
+                },
+            ]
+            try:
+                invoke_kwargs = {"max_tokens": 700} if is_configured_live_provider(self.llm) else {}
+                raw = self.llm.invoke_json(messages, **invoke_kwargs)
+                patches = raw.get("patches", raw.get("facts", []))
+                return {"output": patches}
+            except Exception:
+                return None
+
+        loop_result = loop.run(_generate_wrap, _self_check_wrap, _repair_wrap)
+        patches = loop_result.get("output", [])
+        trace = loop_result.get("_trace", {})
+        autonomy = loop_result.get("_autonomy", {})
+        if state.get("llm_mode") == "real" and autonomy.get("decision") in {"ask_human", "reroute", "refuse"}:
+            reason = autonomy.get("reason") or "MemoryCurator 自检未通过"
+            return {
+                "error": f"MemoryCurator 自检未通过: {reason}",
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": True,
+                "_trace": trace,
+                "_autonomy": autonomy,
+            }
+
+        if loop_result.get("degraded"):
             return {
                 "memory_curator_processed": True,
                 "memory_curator_degraded": True,
-                "memory_curator_warning": str(e),
+                "memory_curator_warning": loop_result.get("warning", ""),
+                "_trace": trace,
+                "_autonomy": autonomy,
             }
-        patches = raw.get("patches", raw.get("facts", []))
+
         run_agent_skills(
             repo=self.repo,
             skill_registry=self.skill_registry,
@@ -206,7 +261,7 @@ class MemoryCuratorAgent(BaseAgent):
                 project_id,
                 chapter_number,
             )
-            return {"memory_curator_processed": True}
+            return {"memory_curator_processed": True, "_trace": trace, "_autonomy": autonomy}
 
         # Create memory update batch
         batch = self.repo.create_memory_batch(
@@ -271,4 +326,6 @@ class MemoryCuratorAgent(BaseAgent):
             "memory_curator_processed": True,
             "memory_batch_id": batch["id"],
             "memory_items_count": items_created,
+            "_trace": trace,
+            "_autonomy": autonomy,
         }

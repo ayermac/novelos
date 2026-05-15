@@ -226,6 +226,15 @@ def _is_migration_applied_by_schema(conn: sqlite3.Connection, name: str) -> bool
         )
         return cursor.fetchone() is not None
 
+    if name == "031_v6_0_agent_memory_and_trace":
+        # 031 adds agent_memories and agent_decision_traces tables
+        cursor = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
+            "('agent_memories', 'agent_decision_traces')"
+        )
+        tables = {row[0] for row in cursor.fetchall()}
+        return {"agent_memories", "agent_decision_traces"}.issubset(tables)
+
     return False
 
 

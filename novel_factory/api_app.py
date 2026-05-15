@@ -97,6 +97,8 @@ def create_api_app(
         production_router,
         versions_router,
         workflow_timeline_router,
+        agent_memory_router,
+        agent_ops_router,
     )
 
     app.include_router(health_router, prefix="/api", tags=["health"])
@@ -125,6 +127,8 @@ def create_api_app(
     app.include_router(production_router, prefix="/api", tags=["production"])
     app.include_router(versions_router, prefix="/api", tags=["versions"])
     app.include_router(workflow_timeline_router, prefix="/api", tags=["workflow-timeline"])
+    app.include_router(agent_memory_router, prefix="/api", tags=["agent-memory"])
+    app.include_router(agent_ops_router, prefix="/api", tags=["agent-ops"])
 
     # Exception handler - never exposes traceback
     @app.exception_handler(Exception)
