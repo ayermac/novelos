@@ -1,8 +1,25 @@
 // ── Desktop integration ───────────────────────────────────────
+export interface DesktopRuntimeStatus {
+  status: string
+  pid: number | null
+  apiBaseUrl: string
+  port: number
+  startTime: string | null
+  lastError: {
+    exitCode: number | null
+    signal: string | null
+    timestamp: string
+    reason: string
+  } | null
+  stdoutLogPath?: string
+  stderrLogPath?: string
+}
+
 declare global {
   interface Window {
     __NOVELOS_DESKTOP__?: {
       apiBaseUrl: string
+      getApiBaseUrl?: () => string
       platform: string
       userDataPath: string
       openDataDir?: () => Promise<void>
@@ -11,11 +28,18 @@ declare global {
       secretStatus?: () => Promise<Record<string, { configured: boolean; storage: string }>>
       setApiKey?: (envName: string, value: string) => Promise<void>
       deleteApiKey?: (envName: string) => Promise<void>
+      runtimeStatus?: () => Promise<DesktopRuntimeStatus>
+      restartSidecar?: () => Promise<{ success: boolean; apiBaseUrl: string | null }>
+      quitApp?: () => Promise<void>
+      onRuntimeStatus?: (callback: (status: DesktopRuntimeStatus) => void) => () => void
     }
   }
 }
 
 export function getApiBase(): string {
+  if (typeof window !== 'undefined' && window.__NOVELOS_DESKTOP__?.getApiBaseUrl) {
+    return window.__NOVELOS_DESKTOP__.getApiBaseUrl()
+  }
   if (typeof window !== 'undefined' && window.__NOVELOS_DESKTOP__?.apiBaseUrl) {
     return window.__NOVELOS_DESKTOP__.apiBaseUrl
   }

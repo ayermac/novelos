@@ -4,7 +4,7 @@ import EmptyState from '../EmptyState'
 import SkillVisibilityPanel from './SkillVisibilityPanel'
 import { tLlmMode } from '../../lib/i18n'
 import { DataTable, FormField, NumberInput, Select, TextInput } from '../ui'
-import { get, put } from '../../lib/api'
+import { get, post, put } from '../../lib/api'
 import { useAppDialog } from '../AppDialogContext'
 
 interface LlmProfile {
@@ -367,6 +367,22 @@ export function DesktopRuntimeSection() {
   } | null>(null)
   const [loading, setLoading] = useState(true)
   const [healthOk, setHealthOk] = useState(false)
+  const [runtimeStatus, setRuntimeStatus] = useState<{
+    status: string
+    pid: number | null
+    apiBaseUrl: string
+    port: number
+    lastError: {
+      exitCode: number | null
+      signal: string | null
+      timestamp: string
+      reason: string
+    } | null
+    stdoutLogPath: string
+    stderrLogPath: string
+  } | null>(null)
+  const [restarting, setRestarting] = useState(false)
+  const dialog = useAppDialog()
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -378,6 +394,14 @@ export function DesktopRuntimeSection() {
       setInfo(runtimeRes.data)
     }
     setHealthOk(healthRes.ok && (healthRes.data as { status?: string } | undefined)?.status === 'ok')
+    if (window.__NOVELOS_DESKTOP__?.runtimeStatus) {
+      try {
+        const r = await window.__NOVELOS_DESKTOP__.runtimeStatus()
+        setRuntimeStatus(r as typeof runtimeStatus)
+      } catch {
+        // ignore
+      }
+    }
     setLoading(false)
   }, [])
 
@@ -385,11 +409,49 @@ export function DesktopRuntimeSection() {
     load()
   }, [load])
 
+  useEffect(() => {
+    const unsub = window.__NOVELOS_DESKTOP__?.onRuntimeStatus?.((s) => {
+      setRuntimeStatus(s as typeof runtimeStatus)
+      if (s.status === 'healthy') {
+        setHealthOk(true)
+      } else if (s.status === 'failed' || s.status === 'exited') {
+        setHealthOk(false)
+      }
+    })
+    return () => {
+      unsub?.()
+    }
+  }, [])
+
   const isDesktop = typeof window !== 'undefined' && !!window.__NOVELOS_DESKTOP__
 
   const openDataDir = () => window.__NOVELOS_DESKTOP__?.openDataDir?.()
   const openConfigDir = () => window.__NOVELOS_DESKTOP__?.openConfigDir?.()
   const openLogsDir = () => window.__NOVELOS_DESKTOP__?.openLogsDir?.()
+
+  const handleRestart = async () => {
+    const ok = await dialog.confirm({
+      title: '重启本地服务',
+      message: '确定要重启本地后端服务吗？进行中的请求可能会中断。',
+      tone: 'warning',
+      confirmLabel: '重启',
+    })
+    if (!ok) return
+    setRestarting(true)
+    try {
+      const res = await window.__NOVELOS_DESKTOP__?.restartSidecar?.()
+      if (res?.success) {
+        setHealthOk(true)
+        await dialog.alert({ title: '重启成功', message: '本地服务已重启。', tone: 'success' })
+      } else {
+        await dialog.alert({ title: '重启失败', message: '本地服务未能成功重启，请检查日志。', tone: 'danger' })
+      }
+    } catch (err) {
+      await dialog.alert({ title: '重启失败', message: `错误: ${(err as Error).message}`, tone: 'danger' })
+    }
+    setRestarting(false)
+    load()
+  }
 
   if (loading) {
     return (
@@ -454,7 +516,41 @@ export function DesktopRuntimeSection() {
               <div style={{ fontWeight: 600 }}>{info?.db_exists ? '存在' : '未创建'}</div>
               <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px', wordBreak: 'break-all' }}>{info?.db_path || '-'}</div>
             </div>
+            {isDesktop && runtimeStatus && (
+              <>
+                <div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Sidecar 状态</div>
+                  <div style={{ fontWeight: 600, color: runtimeStatus.status === 'healthy' ? 'var(--success)' : 'var(--danger)' }}>
+                    {runtimeStatus.status === 'healthy' ? '运行中' : runtimeStatus.status === 'starting' ? '启动中' : runtimeStatus.status === 'stopping' ? '停止中' : '已停止'}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>API 地址</div>
+                  <div style={{ fontWeight: 600, fontSize: '12px', wordBreak: 'break-all' }}>{runtimeStatus.apiBaseUrl || '-'}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Sidecar PID</div>
+                  <div style={{ fontWeight: 600 }}>{runtimeStatus.pid ?? '-'}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>日志路径</div>
+                  <div style={{ fontWeight: 600, fontSize: '11px', wordBreak: 'break-all' }}>{runtimeStatus.stderrLogPath || '-'}</div>
+                </div>
+              </>
+            )}
           </div>
+
+          {isDesktop && runtimeStatus?.lastError && (
+            <div style={{ marginBottom: '16px', padding: '12px', background: '#fef2f2', borderRadius: '6px', fontSize: '13px', color: '#991b1b' }}>
+              <div style={{ fontWeight: 600, marginBottom: '4px' }}>最近错误</div>
+              <div>{runtimeStatus.lastError.reason}</div>
+              <div style={{ fontSize: '11px', color: '#b91c1c', marginTop: '4px' }}>
+                时间: {new Date(runtimeStatus.lastError.timestamp).toLocaleString()}
+                {runtimeStatus.lastError.exitCode !== null && ` · 退出码: ${runtimeStatus.lastError.exitCode}`}
+                {runtimeStatus.lastError.signal && ` · 信号: ${runtimeStatus.lastError.signal}`}
+              </div>
+            </div>
+          )}
 
           {isDesktop && (
             <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
@@ -469,6 +565,9 @@ export function DesktopRuntimeSection() {
               </button>
               <button className="btn btn-secondary" onClick={load}>
                 刷新
+              </button>
+              <button className="btn btn-warning" onClick={handleRestart} disabled={restarting}>
+                {restarting ? '重启中...' : '重启本地服务'}
               </button>
             </div>
           )}
@@ -627,6 +726,8 @@ function DesktopConfigSection() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [testing, setTesting] = useState(false)
+  const [testResult, setTestResult] = useState<{ valid: boolean; message: string; error_code?: string } | null>(null)
 
   const load = React.useCallback(async () => {
     if (!isDesktop) {
@@ -675,6 +776,45 @@ function DesktopConfigSection() {
     } else {
       setMessage(res.error?.message || '保存失败')
     }
+  }
+
+  const handleTestConnection = async () => {
+    setTesting(true)
+    setTestResult(null)
+    try {
+      if (draft.llm_mode === 'stub') {
+        setTestResult({ valid: false, message: '当前为演示模式 (stub)。请切换为真实模式 (real) 并保存，然后重启客户端后测试。', error_code: 'STUB_MODE' })
+        setTesting(false)
+        return
+      }
+      const profileKey = config?.default_llm || Object.keys(config?.profiles || {})[0] || 'default'
+      const profile = config?.profiles?.[profileKey]
+      if (!profile) {
+        setTestResult({ valid: false, message: '未找到 LLM 配置档案。', error_code: 'NO_PROFILE' })
+        setTesting(false)
+        return
+      }
+      if (!profile.api_key_configured) {
+        setTestResult({ valid: false, message: `API Key 未配置 (${profile.api_key_env})。请先保存 API Key 并重启客户端。`, error_code: 'MISSING_API_KEY' })
+        setTesting(false)
+        return
+      }
+      const res = await post('/settings/validate', {
+        provider: profile.provider || 'openai_compatible',
+        base_url: draft.base_url || profile.base_url,
+        model: draft.model || profile.model,
+        api_key_env: profile.api_key_env,
+      })
+      if (res.ok && res.data) {
+        const data = res.data as { valid: boolean; message: string; error_code?: string }
+        setTestResult(data)
+      } else {
+        setTestResult({ valid: false, message: res.error?.message || '测试请求失败', error_code: 'REQUEST_FAILED' })
+      }
+    } catch (err) {
+      setTestResult({ valid: false, message: `测试异常: ${(err as Error).message}`, error_code: 'EXCEPTION' })
+    }
+    setTesting(false)
   }
 
   if (loading) {
@@ -757,11 +897,28 @@ function DesktopConfigSection() {
           </div>
         )}
 
-        <div style={{ marginTop: '12px' }}>
+        <div style={{ marginTop: '12px', display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
           <button className="btn btn-primary" onClick={handleSave} disabled={saving || !profile}>
             {saving ? '保存中...' : '保存配置'}
           </button>
+          <button className="btn btn-secondary" onClick={handleTestConnection} disabled={testing || !profile}>
+            {testing ? '测试中...' : '测试 LLM 连接'}
+          </button>
         </div>
+
+        {testResult && (
+          <div style={{
+            marginTop: '12px',
+            padding: '10px 12px',
+            borderRadius: '6px',
+            fontSize: '13px',
+            background: testResult.valid ? '#dcfce7' : '#fef2f2',
+            color: testResult.valid ? '#166534' : '#991b1b',
+          }}>
+            <strong>{testResult.valid ? '✓ 测试成功' : `✗ ${testResult.error_code || '测试失败'}`}</strong>
+            <div style={{ marginTop: '4px' }}>{testResult.message}</div>
+          </div>
+        )}
 
         {profile && (
           <DesktopApiKeyCard

@@ -314,24 +314,90 @@ Navigate to **配置中心 → 桌面运行时 → 桌面配置 → API Key 安�
 - **No menu bar customization**: Uses default Electron menus.
 - **No automatic sidecar restart after key changes**: Requires app restart.
 
+## Runtime Stability and Recovery (M5)
+
+M5 focuses on runtime reliability, health monitoring, sidecar crash recovery, and diagnostics.
+
+### Sidecar lifecycle enhancements
+
+- `SidecarManager` now tracks state: `starting`, `healthy`, `exited`, `failed`, `stopping`.
+- Records last error with exit code, signal, timestamp, and stderr log path.
+- Never logs env values or API keys.
+
+### Restart sidecar without quitting the app
+
+- **Settings → Desktop Runtime → Restart Local Service** stops and restarts the sidecar.
+- A new random port may be selected; the renderer updates `apiBaseUrl` automatically.
+- SafeStorage keys are re-injected into the new sidecar process.
+
+### Runtime health banner
+
+- A non-blocking banner appears at the top of the window when the backend becomes unreachable.
+- Actions: **Retry connection**, **Restart local service**, **Open logs directory**.
+- Banner auto-hides when health recovers.
+
+### Startup diagnostics window
+
+- If the sidecar fails to start within 60 seconds, a diagnostics window is shown instead of a native alert box.
+- Contents: error summary, start command (no env secrets), logs directory, stderr path.
+- Buttons: **Retry launch**, **Open logs directory**, **Open config directory**, **Quit app**.
+- If frontend resources are missing, shows the expected dist path.
+- Diagnostics HTML is self-contained and does not depend on React frontend assets.
+
+### LLM connectivity test
+
+- **Settings → Desktop Runtime → Desktop Config → Test LLM connection** validates real LLM connectivity.
+- In stub mode: prompts to switch to real mode and restart.
+- If API key is missing: prompts to save the key and restart.
+- Uses the existing `/settings/validate` endpoint with a minimal prompt.
+
+### Smoke test script
+
+```bash
+bash packaging/scripts/smoke-desktop-app-mac.sh
+```
+
+Verifies the packaged `.app`:
+- Bundle structure (frontend dist, frozen sidecar, executable flags)
+- App launch and port detection
+- `/api/health` response
+- User data directory creation (DB, config, logs)
+- Clean shutdown with no residual sidecar processes
+- Uses `NOVELOS_DESKTOP_USER_DATA_DIR` to avoid polluting real user data.
+
+### Environment variable for isolated user data
+
+```bash
+NOVELOS_DESKTOP_USER_DATA_DIR=/tmp/novelos-test \
+  bash packaging/scripts/smoke-desktop-app-mac.sh
+```
+
+Also supported for manual launches:
+
+```bash
+NOVELOS_DESKTOP_USER_DATA_DIR=/tmp/novelos-test \
+  ./desktop/release/mac-arm64/Novelos.app/Contents/MacOS/Novelos
+```
+
 ## Next Recommended Milestone
 
-**M5 — Long Tasks, SSE & Process Resilience**
+**M6 — Cross-Platform CI & Release Pipeline**
 
-- Verify chapter generation SSE streams in the desktop window.
-- Handle sidecar crash / sleep / wake recovery.
-- Graceful shutdown when a task is running.
+- GitHub Actions matrix for macOS, Windows, Linux.
+- Artifact naming with version, platform, architecture, and commit.
+- Code signing and notarization (future work).
 
-## Summary of Changed Files (M0 + M1 + M2 + M3 + M4)
+## Summary of Changed Files (M0 + M1 + M2 + M3 + M4 + M5)
 
 - `desktop/package.json` — Electron project manifest with `electron-builder`
 - `desktop/tsconfig.json` — TypeScript configuration
-- `desktop/src/main.ts` — Electron main process with sidecar resolution, env vars, IPC handlers, secure key injection
-- `desktop/src/preload.ts` — Preload script with safe API injection + directory open APIs + secret APIs
-- `desktop/src/sidecar.ts` — Sidecar process manager
-- `desktop/src/paths.ts` — App directory utilities + default config creation
+- `desktop/src/main.ts` — Electron main process with sidecar resolution, env vars, IPC handlers, secure key injection, diagnostics window, restart logic
+- `desktop/src/preload.ts` — Preload script with safe API injection + directory open APIs + secret APIs + runtime status subscription
+- `desktop/src/sidecar.ts` — Sidecar process manager with state machine and error recording
+- `desktop/src/runtimeStatus.ts` — **NEW** Runtime status tracker and change subscriptions
+- `desktop/src/paths.ts` — App directory utilities + default config creation + `NOVELOS_DESKTOP_USER_DATA_DIR` support
 - `desktop/src/logging.ts` — Main process logging + log rotation
-- `desktop/src/secrets.ts` — **NEW** Electron safeStorage wrapper for API keys
+- `desktop/src/secrets.ts` — Electron safeStorage wrapper for API keys
 - `desktop/electron-builder.yml` — Electron Builder configuration
 - `desktop/build/entitlements.mac.plist` — macOS entitlements for unsigned packaging
 - `desktop/README.md` — Documentation
@@ -340,9 +406,11 @@ Navigate to **配置中心 → 桌面运行时 → 桌面配置 → API Key 安�
 - `packaging/scripts/build-sidecar.sh` — macOS sidecar build script
 - `packaging/scripts/smoke-sidecar.sh` — Sidecar standalone smoke test
 - `packaging/scripts/build-desktop-mac.sh` — One-command frontend + sidecar + Electron macOS build
+- `packaging/scripts/smoke-desktop-app-mac.sh` — **NEW** Packaged app smoke test
 - `novel_factory/desktop_sidecar.py` — Thin Python sidecar wrapper
 - `novel_factory/api/routes/desktop.py` — Desktop runtime API (runtime-info, config read/write with key source detection)
 - `novel_factory/api_app.py` — Register desktop router
-- `frontend/src/lib/api.ts` — API base URL resolution + desktop window types
+- `frontend/src/lib/api.ts` — API base URL resolution + desktop window types + dynamic base URL getter
 - `frontend/src/pages/Settings.tsx` — Add desktop section to settings navigation
-- `frontend/src/components/settings/SettingsConsoleSections.tsx` — DesktopRuntimeSection + DesktopConfigSection + DesktopApiKeyCard
+- `frontend/src/components/DesktopRuntimeBanner.tsx` — **NEW** Top health banner with retry/restart/logs actions
+- `frontend/src/components/settings/SettingsConsoleSections.tsx` — DesktopRuntimeSection + DesktopConfigSection + DesktopApiKeyCard + LLM test button

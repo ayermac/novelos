@@ -3,6 +3,10 @@ import * as fs from 'fs';
 import { app } from 'electron';
 
 export function getUserDataPath(): string {
+  const override = process.env.NOVELOS_DESKTOP_USER_DATA_DIR;
+  if (override) {
+    return override;
+  }
   return app.getPath('userData');
 }
 

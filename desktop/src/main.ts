@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, shell } from 'electron';
 import * as path from 'path';
 import * as net from 'net';
 import * as fs from 'fs';
@@ -12,11 +12,23 @@ import {
   getApiKeyForSidecar,
   listSecretStatuses,
 } from './secrets';
+import { getRuntimeStatus, setRuntimeStatus, onRuntimeStatusChange } from './runtimeStatus';
+
+// ── Environment overrides ──────────────────────────────────────
+const userDataOverride = process.env.NOVELOS_DESKTOP_USER_DATA_DIR;
+if (userDataOverride) {
+  app.setPath('userData', userDataOverride);
+}
 
 let mainWindow: BrowserWindow | null = null;
 const sidecarManager = new SidecarManager();
 let apiBaseUrl = '';
 let sidecarPort = 0;
+
+// Cached for rebuild on restart
+let lastDataDir = '';
+let lastConfigDir = '';
+let lastLogsDir = '';
 
 function getIsDev(): boolean {
   return !app.isPackaged;
@@ -74,70 +86,6 @@ async function waitForHealth(port: number, timeoutMs = 60000): Promise<boolean> 
   return false;
 }
 
-function createErrorWindow(message: string): BrowserWindow {
-  const win = new BrowserWindow({
-    width: 600,
-    height: 400,
-    webPreferences: {
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-  const html = `
-    <!DOCTYPE html>
-    <html>
-      <head><meta charset="utf-8"><title>启动失败</title></head>
-      <body style="font-family:sans-serif;padding:24px;">
-        <h1 style="color:#c0392b;">Novelos 启动失败</h1>
-        <p style="white-space:pre-wrap;">${message.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</p>
-        <p style="margin-top:24px;color:#666;">请检查日志文件获取详细信息。</p>
-      </body>
-    </html>
-  `;
-  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-  return win;
-}
-
-async function createMainWindow(): Promise<BrowserWindow> {
-  const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    title: 'Novelos',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      contextIsolation: true,
-      nodeIntegration: false,
-    },
-  });
-
-  if (getIsDev()) {
-    try {
-      await win.loadURL('http://localhost:5173');
-      win.webContents.openDevTools();
-      return win;
-    } catch {
-      // Dev server unavailable, fall through to dist
-    }
-    const distPath = path.join(__dirname, '..', '..', 'frontend', 'dist', 'index.html');
-    if (fs.existsSync(distPath)) {
-      await win.loadFile(distPath);
-      return win;
-    }
-    const errorMsg = '开发模式下 Vite 服务器未启动，且未找到 frontend/dist。请先运行 npm run dev。';
-    win.close();
-    return createErrorWindow(errorMsg);
-  }
-
-  const distPath = path.join(process.resourcesPath, 'frontend', 'dist', 'index.html');
-  if (fs.existsSync(distPath)) {
-    await win.loadFile(distPath);
-    return win;
-  }
-  const errorMsg = '未找到前端资源。请重新安装应用。';
-  win.close();
-  return createErrorWindow(errorMsg);
-}
-
 function getPlatformArch(): string {
   return `${process.platform}-${process.arch}`;
 }
@@ -148,13 +96,10 @@ function getFrozenSidecarPath(): string {
 }
 
 function resolveSidecar(): { command: string; args: string[] } {
-  // 1. Env override always wins for explicit binary path
   const envCmd = process.env.NOVELOS_DESKTOP_SIDECAR_CMD;
   if (envCmd) {
     return { command: envCmd, args: [] };
   }
-
-  // 2. Packaged mode: prefer frozen binary
   if (!getIsDev()) {
     const frozenPath = getFrozenSidecarPath();
     if (fs.existsSync(frozenPath)) {
@@ -162,24 +107,7 @@ function resolveSidecar(): { command: string; args: string[] } {
     }
     log('warn', `Frozen sidecar not found at ${frozenPath}, falling back to python3`);
   }
-
-  // 3. Dev mode or fallback: python3 module
   return { command: 'python3', args: ['-m', 'novel_factory.desktop_sidecar'] };
-}
-
-function readConfigLlmMode(configDir: string): string {
-  const configPath = path.join(configDir, 'local.yaml');
-  if (!fs.existsSync(configPath)) {
-    return 'stub';
-  }
-  try {
-    // Simple YAML line scan for llm_mode to avoid adding a yaml parser dependency
-    const content = fs.readFileSync(configPath, 'utf-8');
-    const match = content.match(/^llm_mode:\s*(\S+)/m);
-    return normalizeYamlScalar(match?.[1]) || 'stub';
-  } catch {
-    return 'stub';
-  }
 }
 
 function normalizeYamlScalar(value: string | undefined): string {
@@ -194,6 +122,20 @@ function normalizeYamlScalar(value: string | undefined): string {
     return withoutComment.slice(1, -1).trim();
   }
   return withoutComment;
+}
+
+function readConfigLlmMode(configDir: string): string {
+  const configPath = path.join(configDir, 'local.yaml');
+  if (!fs.existsSync(configPath)) {
+    return 'stub';
+  }
+  try {
+    const content = fs.readFileSync(configPath, 'utf-8');
+    const match = content.match(/^llm_mode:\s*(\S+)/m);
+    return normalizeYamlScalar(match?.[1]) || 'stub';
+  } catch {
+    return 'stub';
+  }
 }
 
 function readConfigApiKeyEnvs(configDir: string): string[] {
@@ -230,6 +172,229 @@ function buildSidecarArgs(port: number, dataDir: string, configDir: string): str
   ];
 }
 
+function buildSidecarEnv(configDir: string, dataDir: string, logsDir: string): NodeJS.ProcessEnv {
+  const sidecarEnv: NodeJS.ProcessEnv = {
+    NOVELOS_DESKTOP: '1',
+    NOVELOS_APP_DATA_DIR: getUserDataPath(),
+    NOVELOS_DATA_DIR: dataDir,
+    NOVELOS_CONFIG_DIR: configDir,
+    NOVELOS_CONFIG_PATH: path.join(configDir, 'local.yaml'),
+    NOVELOS_LOGS_DIR: logsDir,
+    NOVELOS_BACKUPS_DIR: path.join(getUserDataPath(), 'backups'),
+    NOVELOS_PLATFORM: getPlatformArch(),
+  };
+  const apiKeyEnvs = readConfigApiKeyEnvs(configDir);
+  const injectedKeys: string[] = [];
+  for (const envName of apiKeyEnvs) {
+    const keyValue = getApiKeyForSidecar(configDir, envName);
+    if (keyValue) {
+      sidecarEnv[envName] = keyValue;
+      injectedKeys.push(envName);
+    }
+  }
+  if (injectedKeys.length > 0) {
+    sidecarEnv['NOVELOS_DESKTOP_SECRET_KEYS'] = injectedKeys.join(',');
+  }
+  return sidecarEnv;
+}
+
+async function launchSidecar(): Promise<boolean> {
+  const { dataDir, configDir, logsDir } = ensureAppDirectories();
+  ensureDefaultConfig(configDir);
+  lastDataDir = dataDir;
+  lastConfigDir = configDir;
+  lastLogsDir = logsDir;
+
+  sidecarPort = await findAvailablePort();
+  apiBaseUrl = `http://127.0.0.1:${sidecarPort}/api`;
+
+  const { command, args: baseArgs } = resolveSidecar();
+  const sidecarArgs = buildSidecarArgs(sidecarPort, dataDir, configDir);
+  const allArgs = [...baseArgs, ...sidecarArgs];
+  const isPython = command === 'python3';
+  const cwd = isPython ? process.cwd() : process.resourcesPath;
+  const stdoutLog = getRotatedLogPath(logsDir, 'sidecar.stdout.log');
+  const stderrLog = getRotatedLogPath(logsDir, 'sidecar.stderr.log');
+
+  const sidecarEnv = buildSidecarEnv(configDir, dataDir, logsDir);
+
+  setRuntimeStatus({
+    status: 'starting',
+    port: sidecarPort,
+    apiBaseUrl,
+    stdoutLogPath: stdoutLog,
+    stderrLogPath: stderrLog,
+    lastError: null,
+  });
+
+  // Only log command and args — never env values
+  log('info', `Sidecar command: ${command} ${allArgs.join(' ')}`);
+
+  sidecarManager.start({
+    command,
+    args: allArgs,
+    cwd,
+    env: sidecarEnv,
+    stdoutLogPath: stdoutLog,
+    stderrLogPath: stderrLog,
+  });
+
+  const healthy = await waitForHealth(sidecarPort);
+  if (!healthy) {
+    log('error', 'Sidecar failed health check');
+    setRuntimeStatus({ status: 'failed' });
+    await sidecarManager.stop();
+    return false;
+  }
+
+  setRuntimeStatus({ status: 'healthy' });
+  log('info', 'Sidecar is healthy.');
+  return true;
+}
+
+function createDiagnosticsWindow(info: {
+  title: string;
+  summary: string;
+  command: string;
+  logsDir: string;
+  stderrPath: string;
+  showRetry: boolean;
+  showFrontendMissing: boolean;
+  expectedDistPath?: string;
+}): BrowserWindow {
+  const win = new BrowserWindow({
+    width: 720,
+    height: 520,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  const retryButton = info.showRetry
+    ? `<button id="retryBtn" style="padding:10px 18px;background:#1d4ed8;color:#fff;border:none;border-radius:6px;cursor:pointer;font-size:14px;margin-right:10px;">重试启动</button>`
+    : '';
+
+  const frontendMissingBlock = info.showFrontendMissing
+    ? `<div style="margin-top:16px;padding:12px;background:#fef3c7;border-radius:6px;color:#92400e;font-size:13px;">
+         <strong>前端资源缺失</strong>
+         <div style="margin-top:4px;">请重新安装或重新打包应用。</div>
+         <div style="margin-top:4px;font-size:12px;word-break:break-all;">预期路径: ${(info.expectedDistPath || '').replace(/</g, '&lt;')}</div>
+       </div>`
+    : '';
+
+  const html = `
+    <!DOCTYPE html>
+    <html>
+      <head><meta charset="utf-8"><title>${info.title}</title></head>
+      <body style="font-family:sans-serif;padding:28px;background:#fafafa;color:#333;">
+        <h1 style="color:#c0392b;margin-top:0;">${info.title}</h1>
+        <div style="background:#fff;padding:16px;border-radius:8px;border:1px solid #e5e5e5;margin-bottom:16px;">
+          <div style="font-weight:600;margin-bottom:8px;">错误摘要</div>
+          <div style="white-space:pre-wrap;font-size:13px;color:#555;">${info.summary.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</div>
+        </div>
+        <div style="background:#fff;padding:16px;border-radius:8px;border:1px solid #e5e5e5;margin-bottom:16px;">
+          <div style="font-weight:600;margin-bottom:8px;">启动命令</div>
+          <code style="font-size:12px;background:#1f2937;color:#f9fafb;padding:8px 12px;border-radius:6px;display:block;word-break:break-all;">${info.command.replace(/</g, '&lt;').replace(/>/g, '&gt;')}</code>
+        </div>
+        <div style="background:#fff;padding:16px;border-radius:8px;border:1px solid #e5e5e5;margin-bottom:16px;">
+          <div style="font-weight:600;margin-bottom:8px;">日志</div>
+          <div style="font-size:13px;color:#555;margin-bottom:6px;">日志目录: <code>${info.logsDir}</code></div>
+          <div style="font-size:13px;color:#555;">stderr: <code>${info.stderrPath}</code></div>
+        </div>
+        ${frontendMissingBlock}
+        <div style="margin-top:20px;">
+          ${retryButton}
+          <button onclick="window.__NOVELOS_DESKTOP__?.openLogsDir?.()" style="padding:10px 18px;background:#f3f4f6;color:#374151;border:1px solid #d1d5db;border-radius:6px;cursor:pointer;font-size:14px;margin-right:10px;">打开日志目录</button>
+          <button onclick="window.__NOVELOS_DESKTOP__?.openConfigDir?.()" style="padding:10px 18px;background:#f3f4f6;color:#374151;border:1px solid #d1d5db;border-radius:6px;cursor:pointer;font-size:14px;margin-right:10px;">打开配置目录</button>
+          <button onclick="window.__NOVELOS_DESKTOP__?.quitApp?.()" style="padding:10px 18px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:6px;cursor:pointer;font-size:14px;">退出应用</button>
+        </div>
+        <script>
+          const retryBtn = document.getElementById('retryBtn');
+          if (retryBtn) {
+            retryBtn.addEventListener('click', () => {
+              retryBtn.disabled = true;
+              retryBtn.textContent = '重试中...';
+              window.__NOVELOS_DESKTOP__?.restartSidecar?.().then((res) => {
+                if (res?.success) {
+                  retryBtn.textContent = '启动成功，即将打开主窗口...';
+                } else {
+                  retryBtn.disabled = false;
+                  retryBtn.textContent = '重试启动';
+                }
+              }).catch(() => {
+                retryBtn.disabled = false;
+                retryBtn.textContent = '重试启动';
+              });
+            });
+          }
+        </script>
+      </body>
+    </html>
+  `;
+  win.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+  return win;
+}
+
+async function createMainWindow(): Promise<BrowserWindow> {
+  const win = new BrowserWindow({
+    width: 1440,
+    height: 900,
+    title: 'Novelos',
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+    },
+  });
+
+  if (getIsDev()) {
+    try {
+      await win.loadURL('http://localhost:5173');
+      win.webContents.openDevTools();
+      return win;
+    } catch {
+      // Dev server unavailable, fall through to dist
+    }
+    const distPath = path.join(__dirname, '..', '..', 'frontend', 'dist', 'index.html');
+    if (fs.existsSync(distPath)) {
+      await win.loadFile(distPath);
+      return win;
+    }
+    const errorMsg = '开发模式下 Vite 服务器未启动，且未找到 frontend/dist。请先运行 npm run dev。';
+    win.close();
+    return createDiagnosticsWindow({
+      title: '启动失败',
+      summary: errorMsg,
+      command: 'npm run dev',
+      logsDir: lastLogsDir || path.join(getUserDataPath(), 'logs'),
+      stderrPath: lastLogsDir ? path.join(lastLogsDir, 'sidecar.stderr.log') : '',
+      showRetry: false,
+      showFrontendMissing: true,
+      expectedDistPath: distPath,
+    });
+  }
+
+  const distPath = path.join(process.resourcesPath, 'frontend', 'dist', 'index.html');
+  if (fs.existsSync(distPath)) {
+    await win.loadFile(distPath);
+    return win;
+  }
+  const errorMsg = '未找到前端资源。请重新安装应用。';
+  win.close();
+  return createDiagnosticsWindow({
+    title: '启动失败',
+    summary: errorMsg,
+    command: resolveSidecar().command,
+    logsDir: lastLogsDir || path.join(getUserDataPath(), 'logs'),
+    stderrPath: lastLogsDir ? path.join(lastLogsDir, 'sidecar.stderr.log') : '',
+    showRetry: false,
+    showFrontendMissing: true,
+    expectedDistPath: distPath,
+  });
+}
+
 async function startApp(): Promise<void> {
   const gotLock = app.requestSingleInstanceLock();
   if (!gotLock) {
@@ -253,65 +418,25 @@ async function startApp(): Promise<void> {
 
   log('info', `Novelos Desktop starting. userData: ${getUserDataPath()}`);
 
-  sidecarPort = await findAvailablePort();
-  log('info', `Selected port: ${sidecarPort}`);
-  apiBaseUrl = `http://127.0.0.1:${sidecarPort}/api`;
-
-  const { command, args: baseArgs } = resolveSidecar();
-  const sidecarArgs = buildSidecarArgs(sidecarPort, dataDir, configDir);
-  const allArgs = [...baseArgs, ...sidecarArgs];
-  const isPython = command === 'python3';
-  const cwd = isPython ? process.cwd() : process.resourcesPath;
-  const stdoutLog = getRotatedLogPath(logsDir, 'sidecar.stdout.log');
-  const stderrLog = getRotatedLogPath(logsDir, 'sidecar.stderr.log');
-
-  // Collect secure API keys for sidecar env injection
-  const apiKeyEnvs = readConfigApiKeyEnvs(configDir);
-  const sidecarEnv: NodeJS.ProcessEnv = {
-    NOVELOS_DESKTOP: '1',
-    NOVELOS_APP_DATA_DIR: getUserDataPath(),
-    NOVELOS_DATA_DIR: dataDir,
-    NOVELOS_CONFIG_DIR: configDir,
-    NOVELOS_CONFIG_PATH: path.join(configDir, 'local.yaml'),
-    NOVELOS_LOGS_DIR: logsDir,
-    NOVELOS_BACKUPS_DIR: path.join(getUserDataPath(), 'backups'),
-    NOVELOS_PLATFORM: getPlatformArch(),
-  };
-  const injectedKeys: string[] = [];
-  for (const envName of apiKeyEnvs) {
-    const keyValue = getApiKeyForSidecar(configDir, envName);
-    if (keyValue) {
-      sidecarEnv[envName] = keyValue;
-      injectedKeys.push(envName);
-    }
-  }
-  if (injectedKeys.length > 0) {
-    sidecarEnv['NOVELOS_DESKTOP_SECRET_KEYS'] = injectedKeys.join(',');
-  }
-
-  log('info', `Sidecar command: ${command} ${allArgs.join(' ')}`);
-
-  sidecarManager.start({
-    command,
-    args: allArgs,
-    cwd,
-    env: sidecarEnv,
-    stdoutLogPath: stdoutLog,
-    stderrLogPath: stderrLog,
-  });
-
-  const healthy = await waitForHealth(sidecarPort);
+  const healthy = await launchSidecar();
   if (!healthy) {
-    log('error', 'Sidecar failed health check');
-    sidecarManager.stop();
+    const status = getRuntimeStatus();
+    const { command, args } = resolveSidecar();
+    const allArgs = [...args, ...buildSidecarArgs(sidecarPort || 0, dataDir, configDir)];
+    const errorMsg = '后端服务未能在 60 秒内启动。';
 
-    const errorMsg = `后端服务未能在 60 秒内启动。\n\n命令: ${command} ${allArgs.join(' ')}\n\n日志目录: ${logsDir}\n\n请检查 sidecar.stderr.log 获取详细错误信息。`;
-    dialog.showErrorBox('启动失败', errorMsg);
-    createErrorWindow(errorMsg);
+    mainWindow = createDiagnosticsWindow({
+      title: '启动诊断',
+      summary: errorMsg,
+      command: `${command} ${allArgs.join(' ')}`,
+      logsDir,
+      stderrPath: status.stderrLogPath || path.join(logsDir, 'sidecar.stderr.log'),
+      showRetry: true,
+      showFrontendMissing: false,
+    });
     return;
   }
 
-  log('info', 'Sidecar is healthy. Opening window.');
   mainWindow = await createMainWindow();
 
   app.on('window-all-closed', () => {
@@ -330,6 +455,8 @@ async function startApp(): Promise<void> {
     sidecarManager.stop();
   });
 }
+
+// ── IPC Handlers ───────────────────────────────────────────────
 
 ipcMain.on('novelos:get-api-base-url', (event) => {
   event.returnValue = apiBaseUrl;
@@ -380,6 +507,76 @@ ipcMain.handle('novelos:delete-api-key', async (_event, envName: string) => {
   }
   const { configDir } = ensureAppDirectories();
   removeApiKey(configDir, envName);
+});
+
+// M5: runtime status and sidecar restart
+ipcMain.handle('novelos:runtime-status', async () => {
+  const status = getRuntimeStatus();
+  return {
+    status: status.status,
+    pid: status.pid,
+    apiBaseUrl: status.apiBaseUrl,
+    port: status.port,
+    startTime: status.startTime,
+    lastError: status.lastError
+      ? {
+          exitCode: status.lastError.exitCode,
+          signal: status.lastError.signal,
+          command: status.lastError.command,
+          args: status.lastError.args,
+          stderrLogPath: status.lastError.stderrLogPath,
+          timestamp: status.lastError.timestamp,
+          reason: status.lastError.reason,
+        }
+      : null,
+    stdoutLogPath: status.stdoutLogPath,
+    stderrLogPath: status.stderrLogPath,
+  };
+});
+
+ipcMain.handle('novelos:restart-sidecar', async () => {
+  log('info', 'Restarting sidecar by user request');
+  await sidecarManager.stop();
+  const ok = await launchSidecar();
+  if (ok) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      const url = mainWindow.webContents.getURL();
+      if (url.startsWith('data:')) {
+        // Diagnostics window: replace with main window
+        mainWindow.close();
+        mainWindow = await createMainWindow();
+      } else {
+        mainWindow.webContents.send('novelos:api-base-url-changed', apiBaseUrl);
+      }
+    }
+  }
+  return { success: ok, apiBaseUrl: ok ? apiBaseUrl : null };
+});
+
+// Quit app helper (used by diagnostics window)
+ipcMain.handle('novelos:quit-app', async () => {
+  app.quit();
+});
+
+// Notify renderer of status changes
+onRuntimeStatusChange((status) => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('novelos:runtime-status-changed', {
+      status: status.status,
+      pid: status.pid,
+      apiBaseUrl: status.apiBaseUrl,
+      port: status.port,
+      startTime: status.startTime,
+      lastError: status.lastError
+        ? {
+            exitCode: status.lastError.exitCode,
+            signal: status.lastError.signal,
+            timestamp: status.lastError.timestamp,
+            reason: status.lastError.reason,
+          }
+        : null,
+    });
+  }
 });
 
 startApp().catch((err) => {
