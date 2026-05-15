@@ -30,6 +30,8 @@ let lastDataDir = '';
 let lastConfigDir = '';
 let lastLogsDir = '';
 
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+
 function getIsDev(): boolean {
   return !app.isPackaged;
 }
@@ -71,6 +73,49 @@ async function checkHealth(port: number): Promise<boolean> {
     req.setTimeout(3000, () => {
       req.destroy();
       resolve(false);
+    });
+  });
+}
+
+async function httpGetJson(url: string, timeoutMs = 3000): Promise<JsonValue> {
+  return new Promise((resolve) => {
+    const req = http.get(url, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      res.on('end', () => {
+        try {
+          resolve(JSON.parse(data) as JsonValue);
+        } catch {
+          resolve({
+            ok: false,
+            error: {
+              code: 'INVALID_JSON',
+              message: `Response was not valid JSON (HTTP ${res.statusCode ?? 'unknown'})`,
+            },
+          });
+        }
+      });
+    });
+    req.on('error', (err) => {
+      resolve({
+        ok: false,
+        error: {
+          code: 'REQUEST_FAILED',
+          message: err.message,
+        },
+      });
+    });
+    req.setTimeout(timeoutMs, () => {
+      req.destroy();
+      resolve({
+        ok: false,
+        error: {
+          code: 'REQUEST_TIMEOUT',
+          message: `Request timed out after ${timeoutMs}ms`,
+        },
+      });
     });
   });
 }
@@ -198,6 +243,119 @@ function buildSidecarEnv(configDir: string, dataDir: string, logsDir: string): N
   return sidecarEnv;
 }
 
+function redactSecrets(text: string): string {
+  return text
+    .replace(/(api_key\s*:\s*).+/gi, '$1***REDACTED***')
+    .replace(/(secret\s*:\s*).+/gi, '$1***REDACTED***')
+    .replace(/(token\s*:\s*).+/gi, '$1***REDACTED***')
+    .replace(/(authorization\s*:\s*).+/gi, '$1***REDACTED***')
+    .replace(/(password\s*:\s*).+/gi, '$1***REDACTED***')
+    .replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-***REDACTED***');
+}
+
+function readTextIfExists(filePath: string, maxBytes = 64 * 1024): string {
+  try {
+    if (!filePath || !fs.existsSync(filePath)) {
+      return '';
+    }
+    const stat = fs.statSync(filePath);
+    const start = Math.max(0, stat.size - maxBytes);
+    const fd = fs.openSync(filePath, 'r');
+    const buffer = Buffer.alloc(stat.size - start);
+    fs.readSync(fd, buffer, 0, buffer.length, start);
+    fs.closeSync(fd);
+    return redactSecrets(buffer.toString('utf-8'));
+  } catch (err) {
+    return `Unable to read ${filePath}: ${(err as Error).message}`;
+  }
+}
+
+function safeRuntimeStatusForDiagnostics(): JsonValue {
+  const status = getRuntimeStatus();
+  return {
+    status: status.status,
+    pid: status.pid,
+    apiBaseUrl: status.apiBaseUrl,
+    port: status.port,
+    startTime: status.startTime,
+    stdoutLogPath: status.stdoutLogPath,
+    stderrLogPath: status.stderrLogPath,
+    lastError: status.lastError
+      ? {
+          exitCode: status.lastError.exitCode,
+          signal: status.lastError.signal,
+          command: status.lastError.command,
+          args: status.lastError.args,
+          stderrLogPath: status.lastError.stderrLogPath,
+          timestamp: status.lastError.timestamp,
+          reason: status.lastError.reason,
+        }
+      : null,
+  };
+}
+
+async function exportDiagnosticsPackage(): Promise<{ success: boolean; path: string; message: string }> {
+  const dirs = ensureAppDirectories();
+  const logsDir = lastLogsDir || dirs.logsDir;
+  const dataDir = lastDataDir || dirs.dataDir;
+  const configDir = lastConfigDir || dirs.configDir;
+  const diagnosticsDir = path.join(logsDir, 'diagnostics');
+  fs.mkdirSync(diagnosticsDir, { recursive: true });
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+  const outputPath = path.join(diagnosticsDir, `novelos-diagnostics-${timestamp}.json`);
+  const runtime = getRuntimeStatus();
+  const baseUrl = runtime.apiBaseUrl || apiBaseUrl;
+  const configPath = path.join(configDir, 'local.yaml');
+  const electronLogPath = path.join(logsDir, 'electron.log');
+  const sidecarStdoutPath = runtime.stdoutLogPath || path.join(logsDir, 'sidecar.stdout.log');
+  const sidecarStderrPath = runtime.stderrLogPath || path.join(logsDir, 'sidecar.stderr.log');
+
+  const health = baseUrl ? await httpGetJson(`${baseUrl}/health`) : null;
+  const runtimeInfo = baseUrl ? await httpGetJson(`${baseUrl}/desktop/runtime-info`) : null;
+
+  const payload = {
+    schema_version: 1,
+    generated_at: new Date().toISOString(),
+    app: {
+      name: 'Novelos',
+      version: app.getVersion(),
+      is_packaged: app.isPackaged,
+      platform: getPlatformArch(),
+      user_data_path: getUserDataPath(),
+    },
+    paths: {
+      app_data_dir: getUserDataPath(),
+      data_dir: dataDir,
+      config_dir: configDir,
+      logs_dir: logsDir,
+      db_path: path.join(dataDir, 'novelos.db'),
+      config_path: configPath,
+    },
+    runtime_status: safeRuntimeStatusForDiagnostics(),
+    api: {
+      base_url: baseUrl,
+      health,
+      runtime_info: runtimeInfo,
+    },
+    config_redacted: readTextIfExists(configPath, 128 * 1024),
+    logs: {
+      electron_log_tail: readTextIfExists(electronLogPath),
+      sidecar_stdout_tail: readTextIfExists(sidecarStdoutPath),
+      sidecar_stderr_tail: readTextIfExists(sidecarStderrPath),
+    },
+  };
+
+  fs.writeFileSync(outputPath, JSON.stringify(payload, null, 2), 'utf-8');
+  log('info', `Desktop diagnostics exported: ${outputPath}`);
+  shell.showItemInFolder(outputPath);
+  return {
+    success: true,
+    path: outputPath,
+    message: '诊断包已导出',
+  };
+}
+
 async function launchSidecar(): Promise<boolean> {
   const { dataDir, configDir, logsDir } = ensureAppDirectories();
   ensureDefaultConfig(configDir);
@@ -306,6 +464,7 @@ function createDiagnosticsWindow(info: {
         ${frontendMissingBlock}
         <div style="margin-top:20px;">
           ${retryButton}
+          <button onclick="window.__NOVELOS_DESKTOP__?.exportDiagnostics?.()" style="padding:10px 18px;background:#ecfeff;color:#155e75;border:1px solid #a5f3fc;border-radius:6px;cursor:pointer;font-size:14px;margin-right:10px;">导出诊断包</button>
           <button onclick="window.__NOVELOS_DESKTOP__?.openLogsDir?.()" style="padding:10px 18px;background:#f3f4f6;color:#374151;border:1px solid #d1d5db;border-radius:6px;cursor:pointer;font-size:14px;margin-right:10px;">打开日志目录</button>
           <button onclick="window.__NOVELOS_DESKTOP__?.openConfigDir?.()" style="padding:10px 18px;background:#f3f4f6;color:#374151;border:1px solid #d1d5db;border-radius:6px;cursor:pointer;font-size:14px;margin-right:10px;">打开配置目录</button>
           <button onclick="window.__NOVELOS_DESKTOP__?.quitApp?.()" style="padding:10px 18px;background:#fee2e2;color:#991b1b;border:1px solid #fecaca;border-radius:6px;cursor:pointer;font-size:14px;">退出应用</button>
@@ -551,6 +710,10 @@ ipcMain.handle('novelos:restart-sidecar', async () => {
     }
   }
   return { success: ok, apiBaseUrl: ok ? apiBaseUrl : null };
+});
+
+ipcMain.handle('novelos:export-diagnostics', async () => {
+  return exportDiagnosticsPackage();
 });
 
 // Quit app helper (used by diagnostics window)

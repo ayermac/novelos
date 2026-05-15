@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AlertTriangle, RefreshCw, RotateCcw, FolderOpen } from 'lucide-react'
+import { AlertTriangle, RefreshCw, RotateCcw, FolderOpen, FileDown } from 'lucide-react'
 import { get, getApiBase } from '../lib/api'
 import { useAppDialog } from './AppDialogContext'
 import { Spinner } from './ui/Spinner'
@@ -23,6 +23,7 @@ export default function DesktopRuntimeBanner() {
   const [visible, setVisible] = useState(false)
   const [failCount, setFailCount] = useState(0)
   const [restarting, setRestarting] = useState(false)
+  const [exporting, setExporting] = useState(false)
   const [status, setStatus] = useState<DesktopRuntimeStatus | null>(null)
   const dialog = useAppDialog()
   const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
@@ -111,6 +112,33 @@ export default function DesktopRuntimeBanner() {
 
   const openLogsDir = () => window.__NOVELOS_DESKTOP__?.openLogsDir?.()
 
+  const handleExportDiagnostics = async () => {
+    setExporting(true)
+    try {
+      const res = await window.__NOVELOS_DESKTOP__?.exportDiagnostics?.()
+      if (res?.success) {
+        await dialog.alert({
+          title: '诊断包已导出',
+          message: `已生成脱敏诊断包：\n${res.path}`,
+          tone: 'success',
+        })
+      } else {
+        await dialog.alert({
+          title: '导出失败',
+          message: res?.message || '未能生成诊断包。',
+          tone: 'danger',
+        })
+      }
+    } catch (err) {
+      await dialog.alert({
+        title: '导出失败',
+        message: `错误: ${(err as Error).message}`,
+        tone: 'danger',
+      })
+    }
+    setExporting(false)
+  }
+
   if (!isDesktop || !visible) return null
 
   return (
@@ -159,7 +187,7 @@ export default function DesktopRuntimeBanner() {
         </button>
         <button
           onClick={handleRestart}
-          disabled={restarting}
+          disabled={restarting || exporting}
           style={{
             padding: '4px 10px',
             borderRadius: '4px',
@@ -175,6 +203,25 @@ export default function DesktopRuntimeBanner() {
         >
           {restarting ? <Spinner size="sm" label="" /> : <RotateCcw size={12} />}
           重启本地服务
+        </button>
+        <button
+          onClick={handleExportDiagnostics}
+          disabled={restarting || exporting || !window.__NOVELOS_DESKTOP__?.exportDiagnostics}
+          style={{
+            padding: '4px 10px',
+            borderRadius: '4px',
+            border: '1px solid #fca5a5',
+            background: '#fff',
+            color: '#991b1b',
+            fontSize: '12px',
+            cursor: 'pointer',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '4px',
+          }}
+        >
+          {exporting ? <Spinner size="sm" label="" /> : <FileDown size={12} />}
+          导出诊断包
         </button>
         <button
           onClick={openLogsDir}

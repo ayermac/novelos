@@ -163,7 +163,7 @@ async def get_runtime_info(request: Request) -> EnvelopeResponse:
             "db_exists": bool(db_path and Path(db_path).exists()),
             "sidecar_pid": os.getpid(),
             "platform": os.environ.get("NOVELOS_PLATFORM", ""),
-            "version": "6.7.0-m5",
+            "version": "6.8.0-m6",
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取运行时信息失败: {str(e)}")

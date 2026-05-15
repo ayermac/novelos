@@ -43,6 +43,7 @@ esac
 # Derive expected Electron Builder output path
 # electron-builder --mac --dir writes to release/mac-<arch>/Novelos.app
 APP_DIR="$REPO_ROOT/desktop/release/mac-$ARCH/Novelos.app"
+REPORT_PATH="$REPO_ROOT/desktop/release/verification-report.json"
 
 # ── Helpers ─────────────────────────────────────────────────────
 step() {
@@ -56,12 +57,39 @@ die() {
     echo ""
     echo "  FAILED: $1"
     echo "============================================================"
+    FAIL=$((FAIL + 1))
+    write_report "failed" "$1"
+    echo "  Report: $REPORT_PATH"
     exit 1
 }
 
 PASS=0
 SKIP=0
 FAIL=0
+
+write_report() {
+    local status="$1"
+    local message="${2:-}"
+    mkdir -p "$REPO_ROOT/desktop/release"
+    cat > "$REPORT_PATH" <<EOF
+{
+  "schema_version": 1,
+  "status": "$status",
+  "message": "$message",
+  "generated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "platform": "$ARCH_KEY",
+  "counts": {
+    "passed": $PASS,
+    "skipped": $SKIP,
+    "failed": $FAIL
+  },
+  "paths": {
+    "app_bundle": "$APP_DIR",
+    "sidecar_binary": "desktop/resources/sidecar/$ARCH_KEY/novelos-sidecar"
+  }
+}
+EOF
+}
 
 report() {
     if [ "$1" = "PASS" ]; then
@@ -150,9 +178,12 @@ echo "  Sidecar binary: desktop/resources/sidecar/$ARCH_KEY/novelos-sidecar"
 echo ""
 if [ "$FAIL" -eq 0 ]; then
     echo "  ALL PASSED ($PASS passed, $SKIP skipped)"
+    write_report "passed" "ALL PASSED"
 else
     echo "  FAILED ($FAIL failures, $PASS passed, $SKIP skipped)"
+    write_report "failed" "Verification failed"
 fi
+echo "  Report:         $REPORT_PATH"
 echo "============================================================"
 
 if [ "$FAIL" -ne 0 ]; then

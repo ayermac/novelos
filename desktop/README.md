@@ -428,6 +428,55 @@ bash packaging/scripts/verify-desktop-mac.sh
 - 不验证 Windows 或 Linux 构建。
 - 打包产物不会被脚本自动清理，保留在 `desktop/release/` 供手动检查。
 
+## Release Diagnostics and Recovery (v6.2.4)
+
+v6.2.4 adds a desktop diagnostics package that works even when the sidecar is unhealthy.
+
+### Export diagnostics package
+
+In desktop mode, go to **Settings → Desktop Runtime** and click **Export diagnostics package**.
+
+The generated file is written to:
+
+```text
+<userData>/logs/diagnostics/novelos-diagnostics-<timestamp>.json
+```
+
+The package includes:
+
+- App version, platform, packaged/dev mode, and userData path
+- Desktop data/config/log/db paths
+- Current sidecar runtime status, PID, port, apiBaseUrl, and last error
+- `/api/health` and `/api/desktop/runtime-info` responses when the sidecar is reachable
+- Redacted `local.yaml`
+- Tail sections of `electron.log`, `sidecar.stdout.log`, and `sidecar.stderr.log`
+
+Secrets are redacted before writing the package. Raw API keys are never intentionally included.
+
+### Startup failure diagnostics
+
+If the sidecar fails to become healthy within the startup timeout, the self-contained diagnostics window now includes:
+
+- Error summary
+- Sanitized start command
+- Log directory and stderr path
+- Retry launch
+- Export diagnostics package
+- Open logs/config directories
+- Quit app
+
+This window does not depend on the React frontend bundle, so it can still render when packaged frontend assets are missing.
+
+### Packaging verification report
+
+`verify-desktop-mac.sh` now writes a machine-readable report:
+
+```text
+desktop/release/verification-report.json
+```
+
+The report contains status, platform, pass/skip/fail counts, app bundle path, and sidecar binary path. It is useful for release checklists and future CI ingestion.
+
 ## Next Recommended Milestone
 
 **M6 — Cross-Platform CI & Release Pipeline**
@@ -440,8 +489,8 @@ bash packaging/scripts/verify-desktop-mac.sh
 
 - `desktop/package.json` — Electron project manifest with `electron-builder`
 - `desktop/tsconfig.json` — TypeScript configuration
-- `desktop/src/main.ts` — Electron main process with sidecar resolution, env vars, IPC handlers, secure key injection, diagnostics window, restart logic
-- `desktop/src/preload.ts` — Preload script with safe API injection + directory open APIs + secret APIs + runtime status subscription
+- `desktop/src/main.ts` — Electron main process with sidecar resolution, env vars, IPC handlers, secure key injection, diagnostics window, restart logic, diagnostics export
+- `desktop/src/preload.ts` — Preload script with safe API injection + directory open APIs + secret APIs + runtime status subscription + diagnostics export
 - `desktop/src/sidecar.ts` — Sidecar process manager with state machine and error recording
 - `desktop/src/runtimeStatus.ts` — **NEW** Runtime status tracker and change subscriptions
 - `desktop/src/paths.ts` — App directory utilities + default config creation + `NOVELOS_DESKTOP_USER_DATA_DIR` support

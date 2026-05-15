@@ -396,6 +396,43 @@ Desktop App
 - 未做代码签名/公证。
 - Windows/Linux 未验证。
 
+### v6.2.4：桌面发布诊断与恢复闭环
+
+状态：**已实现**
+
+目标：解决“客户端启动失败或后端不可用时，用户只能看到加载失败、不知道该看哪里”的问题。该版本不引入分发开放能力，优先补齐本地排障证据、诊断导出和发布验证报告。
+
+实现步骤：
+
+1. **Electron 主进程诊断导出**：
+   - 新增 `novelos:export-diagnostics` IPC。
+   - 诊断包输出到 `<userData>/logs/diagnostics/novelos-diagnostics-<timestamp>.json`。
+   - 内容包含 app 版本、平台、userData 路径、data/config/log/db 路径、sidecar runtime status、PID、端口、最近错误。
+   - sidecar 可达时附带 `/api/health` 和 `/api/desktop/runtime-info` 响应。
+   - 附带脱敏后的 `local.yaml` 和 electron/sidecar 日志尾部。
+   - API key、token、secret、authorization、password 等字段写入前脱敏。
+
+2. **启动失败页增强**：
+   - sidecar 启动失败的自包含诊断窗口增加“导出诊断包”按钮。
+   - 即使 React 前端资源缺失，也可以导出诊断包、打开日志/配置目录、重试启动或退出应用。
+
+3. **桌面运行时设置页入口**：
+   - Settings → 桌面运行时增加“导出诊断包”按钮。
+   - 顶部 runtime failure banner 也提供“导出诊断包”，便于后端断连时立即收集证据。
+
+4. **打包验证报告**：
+   - `packaging/scripts/verify-desktop-mac.sh` 生成 `desktop/release/verification-report.json`。
+   - 报告包含 schema version、status、message、generated_at、platform、pass/skip/fail 计数、app bundle 路径、sidecar binary 路径。
+   - 为后续 CI 和发布 checklist 提供机器可读产物。
+
+验收标准：
+
+- 诊断包可以在 sidecar healthy 和 sidecar failed 两种状态下导出。
+- 诊断包不包含明文 API key。
+- 启动失败窗口不依赖 React bundle。
+- Settings 和 runtime banner 都能触发诊断导出。
+- `verify-desktop-mac.sh` 成功或失败时都产出 `verification-report.json`。
+
 ### M6：跨平台 CI 与发布流水线
 
 目标：让 macOS、Windows、Linux 可重复构建。

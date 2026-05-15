@@ -383,6 +383,7 @@ export function DesktopRuntimeSection() {
     stderrLogPath: string
   } | null>(null)
   const [restarting, setRestarting] = useState(false)
+  const [exportingDiagnostics, setExportingDiagnostics] = useState(false)
   const dialog = useAppDialog()
 
   const load = React.useCallback(async () => {
@@ -452,6 +453,29 @@ export function DesktopRuntimeSection() {
     }
     setRestarting(false)
     load()
+  }
+
+  const handleExportDiagnostics = async () => {
+    setExportingDiagnostics(true)
+    try {
+      const res = await window.__NOVELOS_DESKTOP__?.exportDiagnostics?.()
+      if (res?.success) {
+        await dialog.alert({
+          title: '诊断包已导出',
+          message: `已生成脱敏诊断包：\n${res.path}`,
+          tone: 'success',
+        })
+      } else {
+        await dialog.alert({
+          title: '导出失败',
+          message: res?.message || '未能生成诊断包，请检查日志目录权限。',
+          tone: 'danger',
+        })
+      }
+    } catch (err) {
+      await dialog.alert({ title: '导出失败', message: `错误: ${(err as Error).message}`, tone: 'danger' })
+    }
+    setExportingDiagnostics(false)
   }
 
   if (loading) {
@@ -569,6 +593,13 @@ export function DesktopRuntimeSection() {
               </button>
               <button className="btn btn-warning" onClick={handleRestart} disabled={restarting}>
                 {restarting ? '重启中...' : '重启本地服务'}
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleExportDiagnostics}
+                disabled={exportingDiagnostics || !window.__NOVELOS_DESKTOP__?.exportDiagnostics}
+              >
+                {exportingDiagnostics ? '导出中...' : '导出诊断包'}
               </button>
             </div>
           )}

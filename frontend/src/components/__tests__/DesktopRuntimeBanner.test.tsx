@@ -6,6 +6,7 @@ import { AppDialogProvider } from '../AppDialog'
 
 const mockRestartSidecar = vi.fn()
 const mockOpenLogsDir = vi.fn()
+const mockExportDiagnostics = vi.fn()
 let runtimeStatusCallback: ((status: unknown) => void) | null = null
 
 const setupDesktop = () => {
@@ -13,6 +14,7 @@ const setupDesktop = () => {
     value: {
       restartSidecar: mockRestartSidecar,
       openLogsDir: mockOpenLogsDir,
+      exportDiagnostics: mockExportDiagnostics,
       onRuntimeStatus: (cb: (status: unknown) => void) => {
         runtimeStatusCallback = cb
         return () => { runtimeStatusCallback = null }
@@ -32,6 +34,7 @@ describe('DesktopRuntimeBanner', () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     mockRestartSidecar.mockReset()
     mockOpenLogsDir.mockReset()
+    mockExportDiagnostics.mockReset()
     runtimeStatusCallback = null
     global.fetch = vi.fn()
   })
@@ -174,6 +177,38 @@ describe('DesktopRuntimeBanner', () => {
 
     await waitFor(() => {
       expect(screen.getByText(/本地后端服务连接中断/)).toBeInTheDocument()
+    })
+  })
+
+  it('exports diagnostics from the failure banner', async () => {
+    setupDesktop()
+    mockExportDiagnostics.mockResolvedValue({
+      success: true,
+      path: '/tmp/novelos-diagnostics.json',
+      message: '诊断包已导出',
+    })
+    global.fetch = vi.fn().mockResolvedValue({ ok: false, status: 503, json: async () => ({ ok: false }) })
+
+    render(
+      <AppDialogProvider>
+        <DesktopRuntimeBanner />
+      </AppDialogProvider>,
+    )
+
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1))
+    vi.advanceTimersByTime(8000)
+    await waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(2))
+
+    await waitFor(() => {
+      expect(screen.getByText(/本地后端服务连接中断/)).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByText('导出诊断包'))
+
+    await waitFor(() => {
+      expect(mockExportDiagnostics).toHaveBeenCalledTimes(1)
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByText(/novelos-diagnostics\.json/)).toBeInTheDocument()
     })
   })
 })

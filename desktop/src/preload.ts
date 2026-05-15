@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld('__NOVELOS_DESKTOP__', {
   deleteApiKey: (envName: string) => ipcRenderer.invoke('novelos:delete-api-key', envName),
   runtimeStatus: () => ipcRenderer.invoke('novelos:runtime-status'),
   restartSidecar: () => ipcRenderer.invoke('novelos:restart-sidecar'),
+  exportDiagnostics: () => ipcRenderer.invoke('novelos:export-diagnostics'),
   quitApp: () => ipcRenderer.invoke('novelos:quit-app'),
   onRuntimeStatus: (callback: (status: unknown) => void) => {
     const handler = (_event: unknown, status: unknown) => callback(status);

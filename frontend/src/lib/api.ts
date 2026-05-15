@@ -30,6 +30,7 @@ declare global {
       deleteApiKey?: (envName: string) => Promise<void>
       runtimeStatus?: () => Promise<DesktopRuntimeStatus>
       restartSidecar?: () => Promise<{ success: boolean; apiBaseUrl: string | null }>
+      exportDiagnostics?: () => Promise<{ success: boolean; path: string; message: string }>
       quitApp?: () => Promise<void>
       onRuntimeStatus?: (callback: (status: DesktopRuntimeStatus) => void) => () => void
     }

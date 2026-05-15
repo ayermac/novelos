@@ -422,15 +422,20 @@ export default function DesktopFirstRunSetup({
   // ── Editing / saving / testing / restart / error states ─────────
   return (
     <div className="desktop-first-run-overlay">
-      <div className="desktop-first-run-modal" style={{ maxWidth: 640 }}>
-        <div className="desktop-first-run-header" style={{ textAlign: 'left', paddingBottom: 0 }}>
-          <h2>配置真实 LLM</h2>
-          <p style={{ marginTop: 4 }}>选择服务商并填写参数，配置将保存到本地安全存储。</p>
+      <div className="desktop-first-run-modal desktop-first-run-config-modal">
+        <div className="desktop-first-run-header desktop-first-run-config-header">
+          <div>
+            <h2>配置真实 LLM</h2>
+            <p>选择服务商并填写参数，配置将保存到本地安全存储。</p>
+          </div>
+          <button className="desktop-first-run-skip" type="button" onClick={handleContinueDemo}>
+            暂时跳过
+          </button>
         </div>
-        <div className="desktop-first-run-body" style={{ paddingTop: 20 }}>
+        <div className="desktop-first-run-body desktop-first-run-config-body">
           {renderFormBody()}
         </div>
-        <div className="desktop-first-run-actions" style={{ justifyContent: 'flex-end' }}>
+        <div className="desktop-first-run-actions desktop-first-run-footer">
           {step !== 'restarting' && step !== 'saving_config' && step !== 'saving_key' && (
             <>
               <button className="btn btn-secondary" onClick={handleContinueDemo}>
@@ -450,22 +455,98 @@ export default function DesktopFirstRunSetup({
         .desktop-first-run-overlay {
           position: fixed;
           inset: 0;
-          background: rgba(0,0,0,0.45);
-          backdrop-filter: blur(4px);
+          background: rgba(15, 17, 20, 0.54);
+          backdrop-filter: blur(5px);
           z-index: 400;
           display: flex;
           align-items: center;
           justify-content: center;
-          padding: 24px;
+          padding: 32px;
           overflow-y: auto;
         }
         .desktop-first-run-modal {
           background: #fff;
           border-radius: 12px;
-          max-width: 640px;
           width: 100%;
           box-shadow: 0 24px 48px rgba(0,0,0,0.18);
           overflow: hidden;
+        }
+        .desktop-first-run-config-modal {
+          display: flex;
+          max-width: min(780px, calc(100vw - 64px));
+          max-height: min(760px, calc(100vh - 64px));
+          flex-direction: column;
+        }
+        .desktop-first-run-config-header {
+          display: flex;
+          align-items: flex-start;
+          justify-content: space-between;
+          gap: 24px;
+          padding: 24px 28px 16px;
+          border-bottom: 1px solid var(--border-color);
+          text-align: left;
+        }
+        .desktop-first-run-config-header h2 {
+          margin: 0 0 6px;
+          font-size: 22px;
+          font-weight: 700;
+          line-height: 1.2;
+          color: var(--text-primary);
+          letter-spacing: 0;
+        }
+        .desktop-first-run-config-header p {
+          margin: 0;
+          color: var(--text-secondary);
+          font-size: 14px;
+          line-height: 1.45;
+        }
+        .desktop-first-run-skip {
+          flex: 0 0 auto;
+          min-height: 36px;
+          padding: 7px 12px;
+          border: 1px solid var(--border-color);
+          border-radius: 7px;
+          background: var(--bg-primary);
+          color: var(--text-secondary);
+          font: inherit;
+          font-size: 13px;
+          font-weight: 650;
+          cursor: pointer;
+        }
+        .desktop-first-run-skip:hover {
+          border-color: rgba(118, 26, 52, 0.28);
+          color: var(--text-primary);
+        }
+        .desktop-first-run-config-body {
+          min-height: 0;
+          overflow-y: auto;
+          padding: 18px 28px;
+        }
+        .desktop-first-run-footer {
+          justify-content: flex-end;
+          padding: 14px 28px 18px;
+          border-top: 1px solid var(--border-color);
+          background: rgba(250, 249, 247, 0.96);
+        }
+        @media (max-width: 720px) {
+          .desktop-first-run-overlay {
+            align-items: stretch;
+            padding: 16px;
+          }
+          .desktop-first-run-config-modal {
+            max-width: 100%;
+            max-height: calc(100vh - 32px);
+          }
+          .desktop-first-run-config-header,
+          .desktop-first-run-config-body,
+          .desktop-first-run-footer {
+            padding-left: 18px;
+            padding-right: 18px;
+          }
+          .desktop-first-run-config-header {
+            flex-direction: column;
+            gap: 12px;
+          }
         }
       `}</style>
     </div>
@@ -475,24 +556,17 @@ export default function DesktopFirstRunSetup({
     const isBusy = step === 'saving_config' || step === 'saving_key' || step === 'testing' || step === 'restarting'
 
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+      <div className="desktop-first-run-form">
         {/* Mode indicator */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: '10px',
-          padding: '10px 14px',
-          borderRadius: '8px',
-          background: form.llmMode === 'real' ? '#dcfce7' : '#fef3c7',
-          color: form.llmMode === 'real' ? '#166534' : '#92400e',
-          fontSize: '13px',
-        }}>
+        <div
+          className={`desktop-first-run-mode ${form.llmMode === 'real' ? 'is-real' : 'is-stub'}`}
+        >
           {form.llmMode === 'real' ? <Wifi size={16} /> : <WifiOff size={16} />}
           <span>当前模式: <strong>{form.llmMode === 'real' ? '真实 LLM' : '演示模式'}</strong></span>
         </div>
 
         {/* Provider preset */}
-        <FormField label="服务商">
+        <FormField label="服务商" helper={preset?.helperText}>
           <Select
             value={form.providerPreset}
             onChange={(e) => applyPreset(e.target.value)}
@@ -503,11 +577,6 @@ export default function DesktopFirstRunSetup({
             ))}
           </Select>
         </FormField>
-        {preset?.helperText && (
-          <div style={{ fontSize: '12px', color: 'var(--text-secondary)', marginTop: -10 }}>
-            {preset.helperText}
-          </div>
-        )}
 
         {/* Base URL */}
         <FormField label="Base URL">
@@ -540,7 +609,10 @@ export default function DesktopFirstRunSetup({
         </FormField>
 
         {/* API Key input */}
-        <FormField label="API Key">
+        <FormField
+          label="API Key"
+          helper={secretStatuses[form.apiKeyEnv]?.configured ? `${form.apiKeyEnv} 已保存到本机安全存储` : undefined}
+        >
           <TextInput
             type="password"
             value={form.apiKey}
@@ -549,11 +621,6 @@ export default function DesktopFirstRunSetup({
             disabled={isBusy}
           />
         </FormField>
-        {!!secretStatuses[form.apiKeyEnv]?.configured && (
-          <div style={{ fontSize: '12px', color: '#166534', marginTop: -10 }}>
-            ✓ {form.apiKeyEnv} 已保存到本机安全存储
-          </div>
-        )}
 
         {/* Advanced toggle */}
         <button
@@ -577,7 +644,7 @@ export default function DesktopFirstRunSetup({
         </button>
 
         {showAdvanced && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+          <div className="desktop-first-run-advanced">
             <FormField label="Temperature">
               <NumberInput
                 min="0"
@@ -602,7 +669,7 @@ export default function DesktopFirstRunSetup({
         )}
 
         {/* Action buttons */}
-        <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: 4 }}>
+        <div className="desktop-first-run-primary-actions">
           <button
             className="btn btn-primary"
             onClick={handleSaveConfig}
@@ -679,6 +746,64 @@ export default function DesktopFirstRunSetup({
             )}
           </div>
         )}
+        <style>{`
+          .desktop-first-run-form {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 16px 18px;
+          }
+          .desktop-first-run-mode,
+          .desktop-first-run-primary-actions,
+          .desktop-first-run-advanced,
+          .desktop-first-run-form > button,
+          .desktop-first-run-form > div[style*="fef3c7"],
+          .desktop-first-run-form > div[style*="fef2f2"],
+          .desktop-first-run-form > div[style*="dcfce7"] {
+            grid-column: 1 / -1;
+          }
+          .desktop-first-run-mode {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 600;
+          }
+          .desktop-first-run-mode.is-real {
+            background: #dcfce7;
+            color: #166534;
+          }
+          .desktop-first-run-mode.is-stub {
+            background: #fef3c7;
+            color: #92400e;
+          }
+          .desktop-first-run-advanced {
+            display: grid;
+            grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+            gap: 16px 18px;
+            padding: 14px;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            background: var(--bg-secondary);
+          }
+          .desktop-first-run-primary-actions {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            padding-top: 4px;
+          }
+          .desktop-first-run-primary-actions .btn,
+          .desktop-first-run-footer .btn {
+            white-space: nowrap;
+          }
+          @media (max-width: 720px) {
+            .desktop-first-run-form,
+            .desktop-first-run-advanced {
+              grid-template-columns: 1fr;
+            }
+          }
+        `}</style>
       </div>
     )
   }
