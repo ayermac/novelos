@@ -250,6 +250,12 @@ dist/novelos-sidecar/
 # Frozen sidecar binaries (platform-specific, built on demand)
 desktop/resources/sidecar/*/
 
+# Electron Builder output
+!desktop/build/
+!desktop/build/entitlements.mac.plist
+desktop/release/*
+!desktop/release/.gitkeep
+
 # Local config and logs
 config/acceptance.yaml
 config/local.yaml

@@ -139,36 +139,91 @@ Platform keys:
 - `linux-x64`
 - `win32-x64`
 
-## Known Limitations for M1
+## Packaging the Electron App (M2)
 
-- **No Electron app packaging**: `electron-builder` is not configured yet.
-- **No DMG/NSIS/AppImage**: Distribution packaging is M2 scope.
-- **macOS only**: Windows and Linux sidecar builds are not yet verified.
-- **No code signing**: Sidecar and Electron app are unsigned.
+M2 produces a standalone macOS `.app` bundle that includes the frontend and the frozen Python sidecar.
+
+### Prerequisites
+
+1. Frontend built:
+   ```bash
+   cd frontend && npm run build
+   ```
+2. Frozen sidecar built:
+   ```bash
+   bash packaging/scripts/build-sidecar.sh
+   ```
+3. Desktop dependencies installed:
+   ```bash
+   cd desktop && npm install
+   ```
+
+### Build the macOS app
+
+```bash
+cd desktop
+npm run pack:mac     # Builds release/mac-arm64/Novelos.app (unsigned, fast)
+npm run dist:mac     # Also produces release/Novelos-6.4.0-m2-arm64.dmg
+```
+
+The packaged app will contain:
+- `Novelos.app/Contents/Resources/app.asar` — Electron main/preload code
+- `Novelos.app/Contents/Resources/frontend/dist` — React frontend assets
+- `Novelos.app/Contents/Resources/sidecar/darwin-arm64/novelos-sidecar` — Frozen Python backend
+
+### Launch the packaged app
+
+```bash
+open release/mac-arm64/Novelos.app
+```
+
+Or directly:
+```bash
+./release/mac-arm64/Novelos.app/Contents/MacOS/Novelos
+```
+
+### What happens on first launch
+
+1. App data directories are created under `~/Library/Application Support/novelos-desktop/`:
+   - `data/` — SQLite database
+   - `config/` — user configuration files
+   - `logs/` — application and sidecar logs
+   - `backups/` — reserved for future use
+2. A random available localhost port is selected.
+3. The **frozen sidecar** starts from app resources (no local Python needed).
+4. Electron polls `/api/health` until the backend is ready.
+5. The BrowserWindow opens with the bundled frontend loaded.
+
+## Known Limitations for M2
+
+- **No code signing**: The `.app` is unsigned. macOS Gatekeeper may block it on first launch (right-click → Open to bypass).
+- **No notarization**: Required for distribution outside the Mac App Store.
+- **No auto-update**: Distribution and update mechanisms are future work.
+- **macOS only**: Windows (`nsis`) and Linux (`AppImage`) targets are configured in `electron-builder.yml` but not yet verified.
 - **No secure API key storage**: LLM API keys continue to use `.env` or environment variables.
 - **Stub mode default**: The desktop app currently defaults to `--llm-mode stub` for safety.
-- **No auto-update**: Distribution and update mechanisms are future work.
 - **No menu bar customization**: Uses default Electron menus.
 - **Config handling**: User config must be manually placed in `<userData>/config/local.yaml` if desired.
 
 ## Next Recommended Milestone
 
-**M2 — Electron App Packaging**
+**M3 — Local Data Directory & Config Governance**
 
-- Configure `electron-builder` for macOS `.app` / `.dmg`.
-- Embed `frontend/dist` as renderer resources.
-- Embed platform sidecar into app resources.
-- Code signing (optional for M2).
+- Ensure all app data stays inside `app.getPath('userData')`.
+- Add config UI for editing `local.yaml` without manual file placement.
+- Log rotation to prevent unbounded growth.
 
-## Summary of Changed Files (M0 + M1)
+## Summary of Changed Files (M0 + M1 + M2)
 
-- `desktop/package.json` — Electron project manifest
+- `desktop/package.json` — Electron project manifest with `electron-builder`
 - `desktop/tsconfig.json` — TypeScript configuration
 - `desktop/src/main.ts` — Electron main process with sidecar resolution
 - `desktop/src/preload.ts` — Preload script with safe API injection
 - `desktop/src/sidecar.ts` — Sidecar process manager
 - `desktop/src/paths.ts` — App directory utilities
 - `desktop/src/logging.ts` — Main process logging
+- `desktop/electron-builder.yml` — Electron Builder configuration
+- `desktop/build/entitlements.mac.plist` — macOS entitlements for unsigned packaging
 - `desktop/README.md` — Documentation
 - `desktop/resources/sidecar/.gitkeep` — Resource directory placeholder
 - `packaging/pyinstaller/novelos-sidecar.spec` — PyInstaller spec

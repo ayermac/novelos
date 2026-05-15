@@ -150,30 +150,38 @@ Desktop App
 
 ### M2：Electron 应用打包
 
+状态：**已实现（macOS 已验证）**
+
 目标：生成可安装或可分发的桌面应用。
 
 实现步骤：
 
-1. 引入 Electron 打包工具，建议使用 `electron-builder`。
-2. 配置 app 名称、图标、app id、版权信息。
-3. 将 `frontend/dist` 打进 renderer 资源。
-4. 将平台对应 sidecar 打进 app resources。
-5. 主进程按平台解析 sidecar 路径。
+1. 引入 `electron-builder` 作为打包工具。
+2. 配置 app 名称、app id、版权信息。
+3. 将 `frontend/dist` 作为 `extraResources` 打进 app resources。
+4. 将平台对应 sidecar 作为 `extraResources` 打进 app resources。
+5. 主进程按平台解析 sidecar 路径（`process.resourcesPath/sidecar/<platform-arch>/novelos-sidecar`）。
 6. 打包目标：
 
-   - macOS：`dmg` / `zip`
-   - Windows：`nsis` installer
-   - Linux：`AppImage`，后续可补 `deb` / `rpm`
+   - macOS：`dir`（本地验证） / `dmg`
+   - Windows：`nsis`（配置待验证）
+   - Linux：`AppImage`（配置待验证）
 
 7. 打包后启动 app，验证后端启动、窗口打开、API 可用。
+
+文件清单：
+
+- `desktop/electron-builder.yml`
+- `desktop/build/entitlements.mac.plist`
+- `desktop/package.json`（新增 `pack:mac`、`dist:mac` 脚本）
 
 验收标准：
 
 - macOS 可以打开打包后的 `.app`。
-- Windows 可以通过安装器安装并启动。
-- Linux AppImage 可以启动。
-- 三个平台均能创建本地数据库。
-- 三个平台关闭应用后 sidecar 退出。
+- 打包应用使用 frozen sidecar，不依赖本地 Python 环境。
+- 应用数据写入 `~/Library/Application Support/novelos-desktop/`，不污染源码目录。
+- 关闭应用后 sidecar 进程退出。
+- Windows/Linux 打包结构已预留，待后续 CI 验证。
 
 ### M3：本地数据目录与配置治理
 

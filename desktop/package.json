@@ -1,17 +1,20 @@
 {
   "name": "novelos-desktop",
-  "version": "6.2.0-m0",
-  "description": "Novelos Desktop Client — M0 Technical Proof of Concept",
+  "version": "6.4.0-m2",
+  "description": "Novelos Desktop Client — M2 Electron App Packaging",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",
     "dev": "npm run build && electron .",
     "typecheck": "tsc --noEmit",
-    "lint": "echo 'No linter configured for M0'"
+    "lint": "echo 'No linter configured for M0'",
+    "pack:mac": "npm run build && electron-builder --mac --dir",
+    "dist:mac": "npm run build && electron-builder --mac"
   },
   "devDependencies": {
     "@types/node": "^20.0.0",
     "electron": "^30.0.0",
+    "electron-builder": "^24.13.0",
     "typescript": "^5.4.0"
   }
 }
