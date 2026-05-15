@@ -1,11 +1,11 @@
-import { app, BrowserWindow, ipcMain, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, dialog, shell } from 'electron';
 import * as path from 'path';
 import * as net from 'net';
 import * as fs from 'fs';
 import * as http from 'http';
 import { SidecarManager } from './sidecar';
-import { ensureAppDirectories, getUserDataPath } from './paths';
-import { initLogging, log } from './logging';
+import { ensureAppDirectories, ensureDefaultConfig, getUserDataPath } from './paths';
+import { initLogging, log, getRotatedLogPath } from './logging';
 
 let mainWindow: BrowserWindow | null = null;
 const sidecarManager = new SidecarManager();
@@ -193,6 +193,7 @@ async function startApp(): Promise<void> {
   await app.whenReady();
 
   const { dataDir, configDir, logsDir } = ensureAppDirectories();
+  ensureDefaultConfig(configDir);
   initLogging(logsDir);
 
   log('info', `Novelos Desktop starting. userData: ${getUserDataPath()}`);
@@ -206,8 +207,8 @@ async function startApp(): Promise<void> {
   const allArgs = [...baseArgs, ...sidecarArgs];
   const isPython = command === 'python3';
   const cwd = isPython ? process.cwd() : process.resourcesPath;
-  const stdoutLog = path.join(logsDir, 'sidecar.stdout.log');
-  const stderrLog = path.join(logsDir, 'sidecar.stderr.log');
+  const stdoutLog = getRotatedLogPath(logsDir, 'sidecar.stdout.log');
+  const stderrLog = getRotatedLogPath(logsDir, 'sidecar.stderr.log');
 
   log('info', `Sidecar command: ${command} ${allArgs.join(' ')}`);
 
@@ -215,7 +216,16 @@ async function startApp(): Promise<void> {
     command,
     args: allArgs,
     cwd,
-    env: {},
+    env: {
+      NOVELOS_DESKTOP: '1',
+      NOVELOS_APP_DATA_DIR: getUserDataPath(),
+      NOVELOS_DATA_DIR: dataDir,
+      NOVELOS_CONFIG_DIR: configDir,
+      NOVELOS_CONFIG_PATH: path.join(configDir, 'local.yaml'),
+      NOVELOS_LOGS_DIR: logsDir,
+      NOVELOS_BACKUPS_DIR: path.join(getUserDataPath(), 'backups'),
+      NOVELOS_PLATFORM: getPlatformArch(),
+    },
     stdoutLogPath: stdoutLog,
     stderrLogPath: stderrLog,
   });
@@ -261,6 +271,24 @@ ipcMain.on('novelos:get-platform', (event) => {
 
 ipcMain.on('novelos:get-user-data-path', (event) => {
   event.returnValue = getUserDataPath();
+});
+
+ipcMain.handle('novelos:open-data-dir', async () => {
+  const userData = getUserDataPath();
+  const dir = path.join(userData, 'data');
+  await shell.openPath(dir);
+});
+
+ipcMain.handle('novelos:open-config-dir', async () => {
+  const userData = getUserDataPath();
+  const dir = path.join(userData, 'config');
+  await shell.openPath(dir);
+});
+
+ipcMain.handle('novelos:open-logs-dir', async () => {
+  const userData = getUserDataPath();
+  const dir = path.join(userData, 'logs');
+  await shell.openPath(dir);
 });
 
 startApp().catch((err) => {

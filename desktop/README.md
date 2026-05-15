@@ -194,7 +194,46 @@ Or directly:
 4. Electron polls `/api/health` until the backend is ready.
 5. The BrowserWindow opens with the bundled frontend loaded.
 
-## Known Limitations for M2
+## Desktop Runtime Settings (M3)
+
+M3 adds user-facing data directory governance and config management.
+
+### Default config auto-creation
+
+On first launch, if `<userData>/config/local.yaml` does not exist, Electron creates a safe stub-mode default config with a `default` LLM profile. No API keys are included.
+
+### Desktop Runtime settings page
+
+Navigate to **配置中心 → 桌面运行时** to view:
+- Current mode (Desktop / Browser)
+- Platform and version
+- LLM mode
+- Config and DB file existence and paths
+- Backend health status
+
+Actions available in desktop mode:
+- **打开数据目录** — opens `~/Library/Application Support/novelos-desktop/data/`
+- **打开配置目录** — opens `~/Library/Application Support/novelos-desktop/config/`
+- **打开日志目录** — opens `~/Library/Application Support/novelos-desktop/logs/`
+
+### Desktop config editing
+
+Under **桌面运行时 → 桌面配置**, you can safely edit non-secret fields:
+- LLM mode (`stub` / `real`)
+- Model name
+- Base URL
+- Temperature
+
+API keys are never displayed or written through this UI. They must be managed via environment variables or manual file editing.
+
+### Log rotation
+
+Electron logs and sidecar stdout/stderr logs are automatically rotated when they exceed 5 MB:
+- Current log → kept as-is
+- Previous log → renamed to `.1`
+- Only one backup (`.1`) is kept for M3.
+
+## Known Limitations for M3
 
 - **No code signing**: The `.app` is unsigned. macOS Gatekeeper may block it on first launch (right-click → Open to bypass).
 - **No notarization**: Required for distribution outside the Mac App Store.
@@ -203,25 +242,26 @@ Or directly:
 - **No secure API key storage**: LLM API keys continue to use `.env` or environment variables.
 - **Stub mode default**: The desktop app currently defaults to `--llm-mode stub` for safety.
 - **No menu bar customization**: Uses default Electron menus.
-- **Config handling**: User config must be manually placed in `<userData>/config/local.yaml` if desired.
+- **Config editing limited to non-secret fields**: API keys cannot be edited through the UI.
 
 ## Next Recommended Milestone
 
-**M3 — Local Data Directory & Config Governance**
+**M4 — Secure Keychain & Distribution Polish**
 
-- Ensure all app data stays inside `app.getPath('userData')`.
-- Add config UI for editing `local.yaml` without manual file placement.
-- Log rotation to prevent unbounded growth.
+- Integrate OS keychain for API key storage.
+- Add in-app API key input with secure storage.
+- Polish DMG layout and app icon.
+- Code signing (optional for M4).
 
-## Summary of Changed Files (M0 + M1 + M2)
+## Summary of Changed Files (M0 + M1 + M2 + M3)
 
 - `desktop/package.json` — Electron project manifest with `electron-builder`
 - `desktop/tsconfig.json` — TypeScript configuration
-- `desktop/src/main.ts` — Electron main process with sidecar resolution
-- `desktop/src/preload.ts` — Preload script with safe API injection
+- `desktop/src/main.ts` — Electron main process with sidecar resolution, env vars, IPC handlers
+- `desktop/src/preload.ts` — Preload script with safe API injection + directory open APIs
 - `desktop/src/sidecar.ts` — Sidecar process manager
-- `desktop/src/paths.ts` — App directory utilities
-- `desktop/src/logging.ts` — Main process logging
+- `desktop/src/paths.ts` — App directory utilities + default config creation
+- `desktop/src/logging.ts` — Main process logging + log rotation
 - `desktop/electron-builder.yml` — Electron Builder configuration
 - `desktop/build/entitlements.mac.plist` — macOS entitlements for unsigned packaging
 - `desktop/README.md` — Documentation
@@ -230,4 +270,8 @@ Or directly:
 - `packaging/scripts/build-sidecar.sh` — macOS sidecar build script
 - `packaging/scripts/smoke-sidecar.sh` — Sidecar standalone smoke test
 - `novel_factory/desktop_sidecar.py` — Thin Python sidecar wrapper
-- `frontend/src/lib/api.ts` — API base URL resolution for desktop awareness
+- `novel_factory/api/routes/desktop.py` — Desktop runtime API (runtime-info, config read/write)
+- `novel_factory/api_app.py` — Register desktop router
+- `frontend/src/lib/api.ts` — API base URL resolution + desktop window types
+- `frontend/src/pages/Settings.tsx` — Add desktop section to settings navigation
+- `frontend/src/components/settings/SettingsConsoleSections.tsx` — DesktopRuntimeSection + DesktopConfigSection

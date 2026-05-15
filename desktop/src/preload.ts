@@ -8,4 +8,7 @@ contextBridge.exposeInMainWorld('__NOVELOS_DESKTOP__', {
   apiBaseUrl,
   platform,
   userDataPath,
+  openDataDir: () => ipcRenderer.invoke('novelos:open-data-dir'),
+  openConfigDir: () => ipcRenderer.invoke('novelos:open-config-dir'),
+  openLogsDir: () => ipcRenderer.invoke('novelos:open-logs-dir'),
 });

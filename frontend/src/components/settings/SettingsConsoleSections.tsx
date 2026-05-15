@@ -1,8 +1,10 @@
 import type { Dispatch, ReactNode, SetStateAction } from 'react'
+import React, { useEffect, useState } from 'react'
 import EmptyState from '../EmptyState'
 import SkillVisibilityPanel from './SkillVisibilityPanel'
 import { tLlmMode } from '../../lib/i18n'
-import { DataTable, FormField, Select, TextInput } from '../ui'
+import { DataTable, FormField, NumberInput, Select, TextInput } from '../ui'
+import { get, put } from '../../lib/api'
 
 interface LlmProfile {
   name: string
@@ -342,6 +344,301 @@ export function SkillsSettingsSection() {
   return (
     <SectionCard title="Skill 管理">
       <SkillVisibilityPanel />
+    </SectionCard>
+  )
+}
+
+export function DesktopRuntimeSection() {
+  const [info, setInfo] = useState<{
+    is_desktop: boolean
+    app_data_dir: string
+    data_dir: string
+    db_path: string
+    config_path: string
+    config_dir: string
+    logs_dir: string
+    backups_dir: string
+    llm_mode: string
+    config_exists: boolean
+    db_exists: boolean
+    platform: string
+    version: string
+  } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [healthOk, setHealthOk] = useState(false)
+
+  const load = React.useCallback(async () => {
+    setLoading(true)
+    const [runtimeRes, healthRes] = await Promise.all([
+      get<typeof info>('/desktop/runtime-info'),
+      get('/health'),
+    ])
+    if (runtimeRes.ok && runtimeRes.data) {
+      setInfo(runtimeRes.data)
+    }
+    setHealthOk(healthRes.ok && (healthRes.data as { status?: string } | undefined)?.status === 'ok')
+    setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const isDesktop = typeof window !== 'undefined' && !!window.__NOVELOS_DESKTOP__
+
+  const openDataDir = () => window.__NOVELOS_DESKTOP__?.openDataDir?.()
+  const openConfigDir = () => window.__NOVELOS_DESKTOP__?.openConfigDir?.()
+  const openLogsDir = () => window.__NOVELOS_DESKTOP__?.openLogsDir?.()
+
+  if (loading) {
+    return (
+      <SectionCard title="桌面运行时">
+        <div style={{ padding: 'var(--space-5)', color: 'var(--text-secondary)' }}>加载中...</div>
+      </SectionCard>
+    )
+  }
+
+  return (
+    <>
+      <SectionCard
+        title="桌面运行时"
+        subtitle={isDesktop ? 'Electron 桌面模式' : '浏览器模式'}
+        action={
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 'var(--space-1)',
+            padding: 'var(--space-1) var(--space-3)',
+            fontSize: 'var(--text-xs)',
+            fontWeight: 'var(--font-medium)',
+            borderRadius: 'var(--radius-full)',
+            background: healthOk ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+            color: healthOk ? '#065f46' : '#991b1b',
+          }}>
+            <span style={{
+              width: '6px',
+              height: '6px',
+              borderRadius: '50%',
+              background: healthOk ? 'var(--status-success)' : 'var(--status-danger)',
+            }} />
+            {healthOk ? '后端正常' : '后端异常'}
+          </span>
+        }
+      >
+        <div style={{ padding: 'var(--space-5)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>运行模式</div>
+              <div style={{ fontWeight: 600 }}>{isDesktop ? '桌面应用' : '浏览器'}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>平台</div>
+              <div style={{ fontWeight: 600 }}>{info?.platform || '-'}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>LLM 模式</div>
+              <div style={{ fontWeight: 600 }}>{tLlmMode(info?.llm_mode || 'stub')}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>版本</div>
+              <div style={{ fontWeight: 600 }}>{info?.version || '-'}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>配置文件</div>
+              <div style={{ fontWeight: 600 }}>{info?.config_exists ? '存在' : '未创建'}</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px', wordBreak: 'break-all' }}>{info?.config_path || '-'}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>数据库</div>
+              <div style={{ fontWeight: 600 }}>{info?.db_exists ? '存在' : '未创建'}</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px', wordBreak: 'break-all' }}>{info?.db_path || '-'}</div>
+            </div>
+          </div>
+
+          {isDesktop && (
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button className="btn btn-secondary" onClick={openDataDir} disabled={!window.__NOVELOS_DESKTOP__?.openDataDir}>
+                打开数据目录
+              </button>
+              <button className="btn btn-secondary" onClick={openConfigDir} disabled={!window.__NOVELOS_DESKTOP__?.openConfigDir}>
+                打开配置目录
+              </button>
+              <button className="btn btn-secondary" onClick={openLogsDir} disabled={!window.__NOVELOS_DESKTOP__?.openLogsDir}>
+                打开日志目录
+              </button>
+              <button className="btn btn-secondary" onClick={load}>
+                刷新
+              </button>
+            </div>
+          )}
+
+          {!isDesktop && (
+            <div style={{ padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+              浏览器模式下无法打开本地目录。如需完整桌面功能，请使用 Novelos 桌面应用。
+            </div>
+          )}
+        </div>
+      </SectionCard>
+
+      <DesktopConfigSection />
+    </>
+  )
+}
+
+function DesktopConfigSection() {
+  const isDesktop = typeof window !== 'undefined' && !!window.__NOVELOS_DESKTOP__
+  const [config, setConfig] = useState<{
+    exists: boolean
+    llm_mode: string
+    default_llm: string | null
+    profiles: Record<string, {
+      provider: string
+      model: string
+      base_url: string
+      api_key_env: string
+      temperature: number
+      max_tokens: number
+    }>
+  } | null>(null)
+  const [draft, setDraft] = useState({
+    llm_mode: 'stub',
+    model: '',
+    base_url: '',
+    temperature: 0.7,
+  })
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+
+  const load = React.useCallback(async () => {
+    if (!isDesktop) {
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    const res = await get<typeof config>('/desktop/config')
+    if (res.ok && res.data) {
+      setConfig(res.data)
+      const defaultProfileName = res.data.default_llm || Object.keys(res.data.profiles || {})[0] || 'default'
+      const profile = res.data.profiles?.[defaultProfileName]
+      setDraft({
+        llm_mode: res.data.llm_mode || 'stub',
+        model: profile?.model || '',
+        base_url: profile?.base_url || '',
+        temperature: profile?.temperature ?? 0.7,
+      })
+    } else {
+      setMessage(res.error?.message || '桌面配置不可用')
+    }
+    setLoading(false)
+  }, [isDesktop])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  const handleSave = async () => {
+    if (!isDesktop) return
+    setSaving(true)
+    setMessage('')
+    const res = await put('/desktop/config', draft)
+    setSaving(false)
+    if (res.ok) {
+      setMessage('已保存')
+      await load()
+    } else {
+      setMessage(res.error?.message || '保存失败')
+    }
+  }
+
+  if (loading) {
+    return (
+      <SectionCard title="桌面配置">
+        <div style={{ padding: 'var(--space-5)', color: 'var(--text-secondary)' }}>加载中...</div>
+      </SectionCard>
+    )
+  }
+
+  if (!isDesktop) {
+    return (
+      <SectionCard title="桌面配置" subtitle="仅桌面应用可用">
+        <div style={{ padding: 'var(--space-5)', color: 'var(--text-secondary)' }}>
+          浏览器模式下不会读取或修改本地桌面配置。请在 Novelos 桌面应用中使用此功能。
+        </div>
+      </SectionCard>
+    )
+  }
+
+  const defaultProfileName = config?.default_llm || Object.keys(config?.profiles || {})[0] || 'default'
+  const profile = config?.profiles?.[defaultProfileName]
+
+  return (
+    <SectionCard title="桌面配置" subtitle="安全字段编辑（不包含 API Key）">
+      <div style={{ padding: 'var(--space-5)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+          <FormField label="LLM 模式">
+            <Select
+              value={draft.llm_mode}
+              onChange={(e) => setDraft((prev) => ({ ...prev, llm_mode: e.target.value }))}
+              disabled={saving}
+            >
+              <option value="stub">演示模式 (stub)</option>
+              <option value="real">真实模式 (real)</option>
+            </Select>
+          </FormField>
+          {profile && (
+            <>
+              <FormField label="模型">
+                <TextInput
+                  value={draft.model}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, model: e.target.value }))}
+                  disabled={saving}
+                />
+              </FormField>
+              <FormField label="Base URL">
+                <TextInput
+                  value={draft.base_url}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, base_url: e.target.value }))}
+                  disabled={saving}
+                />
+              </FormField>
+              <FormField label="Temperature">
+                <NumberInput
+                  min="0"
+                  max="2"
+                  step="0.1"
+                  value={draft.temperature}
+                  onChange={(e) => setDraft((prev) => ({ ...prev, temperature: parseFloat(e.target.value) }))}
+                  disabled={saving}
+                />
+              </FormField>
+            </>
+          )}
+        </div>
+
+        {message && (
+          <div style={{
+            marginTop: '8px',
+            padding: '10px 12px',
+            borderRadius: '6px',
+            fontSize: '13px',
+            background: message === '已保存' ? '#dcfce7' : '#fef2f2',
+            color: message === '已保存' ? '#166534' : '#991b1b',
+          }}>
+            {message}
+          </div>
+        )}
+
+        <div style={{ marginTop: '12px' }}>
+          <button className="btn btn-primary" onClick={handleSave} disabled={saving || !profile}>
+            {saving ? '保存中...' : '保存配置'}
+          </button>
+        </div>
+
+        <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-muted)' }}>
+          API Key 不会在此界面显示或编辑。请通过环境变量或手动编辑配置文件管理密钥。
+        </div>
+      </div>
     </SectionCard>
   )
 }

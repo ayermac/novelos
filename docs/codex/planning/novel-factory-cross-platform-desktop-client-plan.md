@@ -185,12 +185,14 @@ Desktop App
 
 ### M3：本地数据目录与配置治理
 
+状态：**已实现**
+
 目标：将开发期路径迁移为客户端安全路径。
 
 实现步骤：
 
 1. 使用 Electron `app.getPath("userData")` 作为应用数据根目录。
-2. 目录结构建议：
+2. 目录结构：
 
    ```text
    <userData>/
@@ -199,26 +201,54 @@ Desktop App
    │   ├── novelos.db-wal
    │   └── novelos.db-shm
    ├── config/
-   │   ├── local.yaml
-   │   └── skills.yaml
+   │   └── local.yaml
    ├── logs/
-   │   ├── sidecar.log
-   │   └── electron.log
+   │   ├── electron.log
+   │   ├── sidecar.stdout.log
+   │   └── sidecar.stderr.log
    └── backups/
    ```
 
-3. 首次启动时创建目录。
-4. 首次启动时初始化数据库。
-5. 如果发现旧的开发数据库，可提供导入入口，不自动搬迁。
-6. 配置中心写入 `config/local.yaml`，不要写仓库内 `config/local.yaml`。
-7. 日志限制大小，避免长期运行无限增长。
+3. 首次启动时创建目录（`ensureAppDirectories`）。
+4. 首次启动时若 `local.yaml` 缺失，自动生成 stub 模式默认配置（`ensureDefaultConfig`），不含 API key。
+5. Electron 向 sidecar 传递环境变量：
+
+   - `NOVELOS_DESKTOP=1`
+   - `NOVELOS_APP_DATA_DIR`
+   - `NOVELOS_DATA_DIR`
+   - `NOVELOS_CONFIG_DIR`
+   - `NOVELOS_CONFIG_PATH`
+   - `NOVELOS_LOGS_DIR`
+   - `NOVELOS_BACKUPS_DIR`
+   - `NOVELOS_PLATFORM`
+
+6. 后端新增 `/api/desktop/runtime-info` 返回路径、文件存在性、LLM 模式等。
+7. 后端新增 `/api/desktop/config` 支持安全字段读取和写入（不含 API key）。
+8. Electron IPC 暴露 `openDataDir` / `openConfigDir` / `openLogsDir`，主进程调用 `shell.openPath`。
+9. 前端「配置中心」新增「桌面运行时」tab，展示运行时信息并提供目录打开按钮。
+10. 前端「桌面运行时」内嵌「桌面配置」卡片，支持修改 LLM mode、model、base_url、temperature。
+11. 日志轮转：Electron 日志和 sidecar stdout/stderr 超过 5MB 时自动轮转，保留当前 + `.1` 备份。
+
+文件清单：
+
+- `desktop/src/paths.ts` — `ensureDefaultConfig`
+- `desktop/src/logging.ts` — `rotateLogIfNeeded`, `getRotatedLogPath`
+- `desktop/src/main.ts` — env vars, IPC handlers
+- `desktop/src/preload.ts` — `openDataDir` / `openConfigDir` / `openLogsDir`
+- `novel_factory/api/routes/desktop.py` — `runtime-info`, `config` GET/PUT
+- `frontend/src/pages/Settings.tsx` — 新增 desktop section
+- `frontend/src/components/settings/SettingsConsoleSections.tsx` — `DesktopRuntimeSection`, `DesktopConfigSection`
+- `frontend/src/lib/api.ts` — window type 扩展
 
 验收标准：
 
 - 应用数据不写入源码目录。
 - 卸载应用不默认删除用户小说数据。
 - 数据库路径在 API、workflow checkpoint、logs 中一致。
-- 用户可以在设置页看到当前数据目录。
+- 用户可以在设置页看到当前数据目录并一键打开。
+- 首次启动自动生成默认配置，不覆盖已有配置。
+- 日志超过 5MB 自动轮转。
+- API key 不会通过任何 API 返回或在前端显示。
 
 ### M4：API key 与安全
 

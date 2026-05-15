@@ -5,6 +5,9 @@ declare global {
       apiBaseUrl: string
       platform: string
       userDataPath: string
+      openDataDir?: () => Promise<void>
+      openConfigDir?: () => Promise<void>
+      openLogsDir?: () => Promise<void>
     }
   }
 }
