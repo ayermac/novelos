@@ -5,6 +5,7 @@ import SkillVisibilityPanel from './SkillVisibilityPanel'
 import { tLlmMode } from '../../lib/i18n'
 import { DataTable, FormField, NumberInput, Select, TextInput } from '../ui'
 import { get, put } from '../../lib/api'
+import { useAppDialog } from '../AppDialogContext'
 
 interface LlmProfile {
   name: string
@@ -485,6 +486,120 @@ export function DesktopRuntimeSection() {
   )
 }
 
+function DesktopApiKeyCard({
+  apiKeyEnv,
+  apiKeySource,
+  localSecretConfigured,
+  onRefresh,
+}: {
+  apiKeyEnv: string
+  apiKeySource: string
+  localSecretConfigured: boolean
+  onRefresh: () => void
+}) {
+  const dialog = useAppDialog()
+  const [inputValue, setInputValue] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+
+  const statusLabel = localSecretConfigured
+    ? apiKeySource === 'desktop_secure_storage'
+      ? '已安全保存'
+      : '已安全保存（重启后生效）'
+    : apiKeySource === 'desktop_secure_storage'
+      ? '当前会话已注入（本机存储已删除，重启后失效）'
+      : apiKeySource === 'environment'
+        ? '来自环境变量'
+        : '未配置'
+
+  const statusColor =
+    localSecretConfigured || apiKeySource === 'desktop_secure_storage'
+      ? 'var(--success)'
+      : apiKeySource === 'environment'
+        ? '#1d4ed8'
+        : 'var(--danger)'
+  const canDeleteLocalSecret = localSecretConfigured || apiKeySource === 'desktop_secure_storage'
+
+  const handleSave = async () => {
+    if (!inputValue.trim()) return
+    setSaving(true)
+    setMessage('')
+    try {
+      await window.__NOVELOS_DESKTOP__?.setApiKey?.(apiKeyEnv, inputValue.trim())
+      setInputValue('')
+      setMessage('已保存，重启客户端后生效')
+      onRefresh()
+    } catch (err) {
+      setMessage(`保存失败: ${(err as Error).message}`)
+    }
+    setSaving(false)
+  }
+
+  const handleDelete = async () => {
+    const ok = await dialog.confirm({
+      title: '删除本地保存的 API Key',
+      message: `确定要删除 ${apiKeyEnv} 的本地安全存储吗？此操作不可恢复。`,
+      tone: 'danger',
+      confirmLabel: '删除',
+    })
+    if (!ok) return
+    setSaving(true)
+    setMessage('')
+    try {
+      await window.__NOVELOS_DESKTOP__?.deleteApiKey?.(apiKeyEnv)
+      setMessage('已删除，重启客户端后生效')
+      onRefresh()
+    } catch (err) {
+      setMessage(`删除失败: ${(err as Error).message}`)
+    }
+    setSaving(false)
+  }
+
+  return (
+    <div style={{ marginTop: '16px', padding: '16px', background: 'var(--bg-secondary)', borderRadius: '8px' }}>
+      <div style={{ marginBottom: '12px' }}>
+        <div style={{ fontSize: '13px', fontWeight: 600, marginBottom: '4px' }}>API Key 安全存储</div>
+        <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
+          环境变量: <code>{apiKeyEnv}</code>
+        </div>
+        <div style={{ fontSize: '12px', color: statusColor, fontWeight: 600, marginTop: '4px' }}>
+          状态: {statusLabel}
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
+        <TextInput
+          type="password"
+          placeholder="输入 API Key"
+          value={inputValue}
+          onChange={(e) => setInputValue(e.target.value)}
+          disabled={saving}
+          style={{ minWidth: '240px', flex: 1 }}
+        />
+        <button className="btn btn-primary" onClick={handleSave} disabled={saving || !inputValue.trim()}>
+          保存到本机安全存储
+        </button>
+        <button className="btn btn-danger" onClick={handleDelete} disabled={saving || !canDeleteLocalSecret}>
+          删除本机保存的 Key
+        </button>
+      </div>
+
+      {message && (
+        <div style={{
+          marginTop: '10px',
+          padding: '8px 12px',
+          borderRadius: '6px',
+          fontSize: '12px',
+          background: message.includes('失败') ? '#fef2f2' : '#dcfce7',
+          color: message.includes('失败') ? '#991b1b' : '#166534',
+        }}>
+          {message}
+        </div>
+      )}
+    </div>
+  )
+}
+
 function DesktopConfigSection() {
   const isDesktop = typeof window !== 'undefined' && !!window.__NOVELOS_DESKTOP__
   const [config, setConfig] = useState<{
@@ -496,10 +611,13 @@ function DesktopConfigSection() {
       model: string
       base_url: string
       api_key_env: string
+      api_key_configured: boolean
+      api_key_source: string
       temperature: number
       max_tokens: number
     }>
   } | null>(null)
+  const [secretStatuses, setSecretStatuses] = useState<Record<string, { configured: boolean; storage: string }>>({})
   const [draft, setDraft] = useState({
     llm_mode: 'stub',
     model: '',
@@ -529,6 +647,14 @@ function DesktopConfigSection() {
       })
     } else {
       setMessage(res.error?.message || '桌面配置不可用')
+    }
+    try {
+      const statuses = await window.__NOVELOS_DESKTOP__?.secretStatus?.()
+      if (statuses) {
+        setSecretStatuses(statuses)
+      }
+    } catch {
+      setSecretStatuses({})
     }
     setLoading(false)
   }, [isDesktop])
@@ -571,6 +697,8 @@ function DesktopConfigSection() {
 
   const defaultProfileName = config?.default_llm || Object.keys(config?.profiles || {})[0] || 'default'
   const profile = config?.profiles?.[defaultProfileName]
+  const apiKeyEnv = profile?.api_key_env || 'OPENAI_API_KEY'
+  const localSecretConfigured = !!secretStatuses[apiKeyEnv]?.configured
 
   return (
     <SectionCard title="桌面配置" subtitle="安全字段编辑（不包含 API Key）">
@@ -635,9 +763,14 @@ function DesktopConfigSection() {
           </button>
         </div>
 
-        <div style={{ marginTop: '12px', fontSize: '12px', color: 'var(--text-muted)' }}>
-          API Key 不会在此界面显示或编辑。请通过环境变量或手动编辑配置文件管理密钥。
-        </div>
+        {profile && (
+          <DesktopApiKeyCard
+            apiKeyEnv={apiKeyEnv}
+            apiKeySource={profile.api_key_source}
+            localSecretConfigured={localSecretConfigured}
+            onRefresh={load}
+          />
+        )}
       </div>
     </SectionCard>
   )

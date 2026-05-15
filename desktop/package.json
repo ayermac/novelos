@@ -1,7 +1,7 @@
 {
   "name": "novelos-desktop",
-  "version": "6.5.0-m3",
-  "description": "Novelos Desktop Client — M3 Runtime Governance",
+  "version": "6.6.0-m4",
+  "description": "Novelos Desktop Client — M4 Secure API Key Storage",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",

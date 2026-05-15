@@ -266,35 +266,72 @@ Electron logs and sidecar stdout/stderr logs are automatically rotated when they
 - Previous log → renamed to `.1`
 - Only one backup (`.1`) is kept for M3.
 
-## Known Limitations for M3
+## Secure API Key Storage (M4)
+
+M4 introduces secure desktop API key storage using Electron's built-in `safeStorage`.
+
+### How it works
+
+- API keys are **never written to YAML config files**.
+- Keys are encrypted by Electron `safeStorage` and stored in `<userData>/config/secrets.json`.
+- The `secrets.json` file only contains encrypted base64 blobs — no plaintext.
+- Plaintext keys exist only **briefly in the Electron main process memory** when:
+  - The user saves a new key through the UI.
+  - The sidecar starts and keys are injected into the sidecar environment.
+- The renderer process **cannot read decrypted keys**.
+- The backend API **never returns API key values**.
+
+### Sidecar key injection
+
+On startup, Electron reads `api_key_env` values from the desktop config profile(s). For each env name that has a stored secret, it decrypts the value and injects it into the sidecar process environment. The backend receives `NOVELOS_DESKTOP_SECRET_KEYS` so it can distinguish securely stored keys from ordinary environment variables.
+
+Priority: **Electron secure storage > OS environment > `.env` file**.
+
+### UI
+
+Navigate to **配置中心 → 桌面运行时 → 桌面配置 → API Key 安全存储**:
+
+- View the current profile's `api_key_env` and status:
+  - **已安全保存** — key is in Electron safeStorage.
+  - **来自环境变量** — key is set in the OS environment.
+  - **未配置** — no key found.
+- Enter a key and click **保存到本机安全存储**.
+- Click **删除本机保存的 Key** to remove the stored key (uses a confirmation dialog).
+- After saving or deleting, a message appears: **"重启客户端后生效"**.
+
+### Limitations for M4
+
+- Keys saved while the app is running require a restart to take effect (no automatic sidecar restart yet).
+- If `safeStorage` is unavailable on the system, key storage will fail with a clear error (no silent plaintext fallback).
+
+## Known Limitations for M4
 
 - **No code signing**: The `.app` is unsigned. macOS Gatekeeper may block it on first launch (right-click → Open to bypass).
 - **No notarization**: Required for distribution outside the Mac App Store.
 - **No auto-update**: Distribution and update mechanisms are future work.
 - **macOS only**: Windows (`nsis`) and Linux (`AppImage`) targets are configured in `electron-builder.yml` but not yet verified.
-- **No secure API key storage**: LLM API keys continue to use `.env` or environment variables.
 - **Stub mode default**: The desktop app currently defaults to `--llm-mode stub` for safety.
 - **No menu bar customization**: Uses default Electron menus.
-- **Config editing limited to non-secret fields**: API keys cannot be edited through the UI.
+- **No automatic sidecar restart after key changes**: Requires app restart.
 
 ## Next Recommended Milestone
 
-**M4 — Secure Keychain & Distribution Polish**
+**M5 — Long Tasks, SSE & Process Resilience**
 
-- Integrate OS keychain for API key storage.
-- Add in-app API key input with secure storage.
-- Polish DMG layout and app icon.
-- Code signing (optional for M4).
+- Verify chapter generation SSE streams in the desktop window.
+- Handle sidecar crash / sleep / wake recovery.
+- Graceful shutdown when a task is running.
 
-## Summary of Changed Files (M0 + M1 + M2 + M3)
+## Summary of Changed Files (M0 + M1 + M2 + M3 + M4)
 
 - `desktop/package.json` — Electron project manifest with `electron-builder`
 - `desktop/tsconfig.json` — TypeScript configuration
-- `desktop/src/main.ts` — Electron main process with sidecar resolution, env vars, IPC handlers
-- `desktop/src/preload.ts` — Preload script with safe API injection + directory open APIs
+- `desktop/src/main.ts` — Electron main process with sidecar resolution, env vars, IPC handlers, secure key injection
+- `desktop/src/preload.ts` — Preload script with safe API injection + directory open APIs + secret APIs
 - `desktop/src/sidecar.ts` — Sidecar process manager
 - `desktop/src/paths.ts` — App directory utilities + default config creation
 - `desktop/src/logging.ts` — Main process logging + log rotation
+- `desktop/src/secrets.ts` — **NEW** Electron safeStorage wrapper for API keys
 - `desktop/electron-builder.yml` — Electron Builder configuration
 - `desktop/build/entitlements.mac.plist` — macOS entitlements for unsigned packaging
 - `desktop/README.md` — Documentation
@@ -304,8 +341,8 @@ Electron logs and sidecar stdout/stderr logs are automatically rotated when they
 - `packaging/scripts/smoke-sidecar.sh` — Sidecar standalone smoke test
 - `packaging/scripts/build-desktop-mac.sh` — One-command frontend + sidecar + Electron macOS build
 - `novel_factory/desktop_sidecar.py` — Thin Python sidecar wrapper
-- `novel_factory/api/routes/desktop.py` — Desktop runtime API (runtime-info, config read/write)
+- `novel_factory/api/routes/desktop.py` — Desktop runtime API (runtime-info, config read/write with key source detection)
 - `novel_factory/api_app.py` — Register desktop router
 - `frontend/src/lib/api.ts` — API base URL resolution + desktop window types
 - `frontend/src/pages/Settings.tsx` — Add desktop section to settings navigation
-- `frontend/src/components/settings/SettingsConsoleSections.tsx` — DesktopRuntimeSection + DesktopConfigSection
+- `frontend/src/components/settings/SettingsConsoleSections.tsx` — DesktopRuntimeSection + DesktopConfigSection + DesktopApiKeyCard

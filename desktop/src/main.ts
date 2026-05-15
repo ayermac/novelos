@@ -6,6 +6,12 @@ import * as http from 'http';
 import { SidecarManager } from './sidecar';
 import { ensureAppDirectories, ensureDefaultConfig, getUserDataPath } from './paths';
 import { initLogging, log, getRotatedLogPath } from './logging';
+import {
+  setApiKey as storeApiKey,
+  deleteApiKey as removeApiKey,
+  getApiKeyForSidecar,
+  listSecretStatuses,
+} from './secrets';
 
 let mainWindow: BrowserWindow | null = null;
 const sidecarManager = new SidecarManager();
@@ -161,17 +167,66 @@ function resolveSidecar(): { command: string; args: string[] } {
   return { command: 'python3', args: ['-m', 'novel_factory.desktop_sidecar'] };
 }
 
+function readConfigLlmMode(configDir: string): string {
+  const configPath = path.join(configDir, 'local.yaml');
+  if (!fs.existsSync(configPath)) {
+    return 'stub';
+  }
+  try {
+    // Simple YAML line scan for llm_mode to avoid adding a yaml parser dependency
+    const content = fs.readFileSync(configPath, 'utf-8');
+    const match = content.match(/^llm_mode:\s*(\S+)/m);
+    return normalizeYamlScalar(match?.[1]) || 'stub';
+  } catch {
+    return 'stub';
+  }
+}
+
+function normalizeYamlScalar(value: string | undefined): string {
+  if (!value) {
+    return '';
+  }
+  const withoutComment = value.split('#')[0]?.trim() || '';
+  if (
+    (withoutComment.startsWith('"') && withoutComment.endsWith('"')) ||
+    (withoutComment.startsWith("'") && withoutComment.endsWith("'"))
+  ) {
+    return withoutComment.slice(1, -1).trim();
+  }
+  return withoutComment;
+}
+
+function readConfigApiKeyEnvs(configDir: string): string[] {
+  const configPath = path.join(configDir, 'local.yaml');
+  if (!fs.existsSync(configPath)) {
+    return [];
+  }
+  try {
+    const content = fs.readFileSync(configPath, 'utf-8');
+    const envs: string[] = [];
+    const matches = content.matchAll(/api_key_env:\s*(\S+)/g);
+    for (const m of matches) {
+      const envName = normalizeYamlScalar(m[1]);
+      if (envName) envs.push(envName);
+    }
+    return [...new Set(envs)];
+  } catch {
+    return [];
+  }
+}
+
 function buildSidecarArgs(port: number, dataDir: string, configDir: string): string[] {
   const dbPath = path.join(dataDir, 'novelos.db');
   const configPath = path.join(configDir, 'local.yaml');
   const hasConfig = fs.existsSync(configPath);
+  const llmMode = readConfigLlmMode(configDir);
 
   return [
     '--host', '127.0.0.1',
     '--port', String(port),
     '--db-path', dbPath,
     ...(hasConfig ? ['--config-path', configPath] : []),
-    '--llm-mode', 'stub',
+    '--llm-mode', llmMode,
   ];
 }
 
@@ -210,22 +265,37 @@ async function startApp(): Promise<void> {
   const stdoutLog = getRotatedLogPath(logsDir, 'sidecar.stdout.log');
   const stderrLog = getRotatedLogPath(logsDir, 'sidecar.stderr.log');
 
+  // Collect secure API keys for sidecar env injection
+  const apiKeyEnvs = readConfigApiKeyEnvs(configDir);
+  const sidecarEnv: NodeJS.ProcessEnv = {
+    NOVELOS_DESKTOP: '1',
+    NOVELOS_APP_DATA_DIR: getUserDataPath(),
+    NOVELOS_DATA_DIR: dataDir,
+    NOVELOS_CONFIG_DIR: configDir,
+    NOVELOS_CONFIG_PATH: path.join(configDir, 'local.yaml'),
+    NOVELOS_LOGS_DIR: logsDir,
+    NOVELOS_BACKUPS_DIR: path.join(getUserDataPath(), 'backups'),
+    NOVELOS_PLATFORM: getPlatformArch(),
+  };
+  const injectedKeys: string[] = [];
+  for (const envName of apiKeyEnvs) {
+    const keyValue = getApiKeyForSidecar(configDir, envName);
+    if (keyValue) {
+      sidecarEnv[envName] = keyValue;
+      injectedKeys.push(envName);
+    }
+  }
+  if (injectedKeys.length > 0) {
+    sidecarEnv['NOVELOS_DESKTOP_SECRET_KEYS'] = injectedKeys.join(',');
+  }
+
   log('info', `Sidecar command: ${command} ${allArgs.join(' ')}`);
 
   sidecarManager.start({
     command,
     args: allArgs,
     cwd,
-    env: {
-      NOVELOS_DESKTOP: '1',
-      NOVELOS_APP_DATA_DIR: getUserDataPath(),
-      NOVELOS_DATA_DIR: dataDir,
-      NOVELOS_CONFIG_DIR: configDir,
-      NOVELOS_CONFIG_PATH: path.join(configDir, 'local.yaml'),
-      NOVELOS_LOGS_DIR: logsDir,
-      NOVELOS_BACKUPS_DIR: path.join(getUserDataPath(), 'backups'),
-      NOVELOS_PLATFORM: getPlatformArch(),
-    },
+    env: sidecarEnv,
     stdoutLogPath: stdoutLog,
     stderrLogPath: stderrLog,
   });
@@ -289,6 +359,27 @@ ipcMain.handle('novelos:open-logs-dir', async () => {
   const userData = getUserDataPath();
   const dir = path.join(userData, 'logs');
   await shell.openPath(dir);
+});
+
+ipcMain.handle('novelos:secret-status', async () => {
+  const { configDir } = ensureAppDirectories();
+  return listSecretStatuses(configDir);
+});
+
+ipcMain.handle('novelos:set-api-key', async (_event, envName: string, value: string) => {
+  if (typeof envName !== 'string' || typeof value !== 'string') {
+    throw new Error('Invalid arguments');
+  }
+  const { configDir } = ensureAppDirectories();
+  storeApiKey(configDir, envName, value);
+});
+
+ipcMain.handle('novelos:delete-api-key', async (_event, envName: string) => {
+  if (typeof envName !== 'string') {
+    throw new Error('Invalid arguments');
+  }
+  const { configDir } = ensureAppDirectories();
+  removeApiKey(configDir, envName);
 });
 
 startApp().catch((err) => {

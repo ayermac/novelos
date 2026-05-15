@@ -57,6 +57,49 @@ def _desktop_config_path(request: Request) -> tuple[Path | None, str | None]:
         return None, "INVALID_CONFIG_PATH"
 
 
+def _secret_key_envs() -> set[str]:
+    """Return env names declared as desktop secure storage keys."""
+    raw = os.environ.get("NOVELOS_DESKTOP_SECRET_KEYS", "")
+    return {name.strip() for name in raw.split(",") if name.strip()}
+
+
+def _api_key_source(env_name: str | None) -> str:
+    """Determine the source of an API key for a given env name."""
+    if not env_name:
+        return "missing"
+    secret_envs = _secret_key_envs()
+    if env_name in secret_envs and os.environ.get(env_name):
+        return "desktop_secure_storage"
+    if os.environ.get(env_name):
+        return "environment"
+    return "missing"
+
+
+def _api_key_configured(env_name: str | None) -> bool:
+    """Check whether an API key is configured for a given env name."""
+    if not env_name:
+        return False
+    return bool(os.environ.get(env_name))
+
+
+def _contains_sensitive_key(value: Any) -> str | None:
+    """Return the first sensitive key name found in nested JSON-like data."""
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            lower = str(key).lower()
+            if "api_key" in lower or "apikey" in lower or "secret" in lower or "token" in lower:
+                return str(key)
+            found = _contains_sensitive_key(nested)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for item in value:
+            found = _contains_sensitive_key(item)
+            if found:
+                return found
+    return None
+
+
 @router.get("/desktop/runtime-info")
 async def get_runtime_info(request: Request) -> EnvelopeResponse:
     """Return desktop runtime information.
@@ -91,7 +134,7 @@ async def get_runtime_info(request: Request) -> EnvelopeResponse:
             "db_exists": bool(db_path and Path(db_path).exists()),
             "sidecar_pid": os.getpid(),
             "platform": os.environ.get("NOVELOS_PLATFORM", ""),
-            "version": "6.5.0-m3",
+            "version": "6.6.0-m4",
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取运行时信息失败: {str(e)}")
@@ -128,11 +171,14 @@ async def get_desktop_config(request: Request) -> EnvelopeResponse:
             for name, profile in profiles.items():
                 if not isinstance(profile, dict):
                     continue
+                api_key_env = profile.get("api_key_env", "")
                 safe_profiles[name] = {
                     "provider": profile.get("provider", "unknown"),
                     "model": profile.get("model", "unknown"),
                     "base_url": profile.get("base_url", ""),
-                    "api_key_env": profile.get("api_key_env", ""),
+                    "api_key_env": api_key_env,
+                    "api_key_configured": _api_key_configured(api_key_env),
+                    "api_key_source": _api_key_source(api_key_env),
                     "temperature": profile.get("temperature", 0.7),
                     "max_tokens": profile.get("max_tokens", 4096),
                 }
@@ -149,13 +195,27 @@ async def get_desktop_config(request: Request) -> EnvelopeResponse:
 
 
 @router.put("/desktop/config")
-async def update_desktop_config(request: Request, body: DesktopConfigPayload) -> EnvelopeResponse:
+async def update_desktop_config(request: Request) -> EnvelopeResponse:
     """Update safe desktop config fields.
 
     Only updates non-secret fields. Preserves unknown keys.
     Never writes API keys.
     """
     try:
+        raw_body = await request.json()
+        if not isinstance(raw_body, dict):
+            return error_response("INVALID_BODY", "请求体必须是 JSON 对象")
+
+        sensitive_key = _contains_sensitive_key(raw_body)
+        if sensitive_key:
+            return error_response("SECURITY_REJECTED", f"配置写入拒绝包含敏感字段: {sensitive_key}")
+
+        # Validate manually to avoid silently ignoring extra fields
+        try:
+            body = DesktopConfigPayload(**raw_body)
+        except Exception as ve:
+            return error_response("VALIDATION_ERROR", f"字段校验失败: {str(ve)}")
+
         config_file, error_code = _desktop_config_path(request)
         if error_code == "DESKTOP_ONLY":
             return error_response("DESKTOP_ONLY", "桌面配置接口仅在 Novelos 桌面应用中可用")

@@ -8,6 +8,9 @@ declare global {
       openDataDir?: () => Promise<void>
       openConfigDir?: () => Promise<void>
       openLogsDir?: () => Promise<void>
+      secretStatus?: () => Promise<Record<string, { configured: boolean; storage: string }>>
+      setApiKey?: (envName: string, value: string) => Promise<void>
+      deleteApiKey?: (envName: string) => Promise<void>
     }
   }
 }

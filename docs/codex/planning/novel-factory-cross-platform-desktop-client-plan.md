@@ -255,23 +255,38 @@ Desktop App
 
 ### M4：API key 与安全
 
+状态：**已实现**
+
 目标：避免真实密钥落在普通明文配置中。
 
 实现步骤：
 
-1. 短期方案：继续支持 `.env` / 环境变量，但桌面设置页提示风险。
-2. 中期方案：引入 Electron 安全存储，例如系统 keychain 封装。
-3. 后端 LLM env_getter 增加桌面密钥读取适配。
-4. 配置文件中只保存 profile 名称、base_url、model、参数，不保存 API key 明文。
-5. 日志脱敏：
+1. **Electron `safeStorage` 加密存储**：新增 `desktop/src/secrets.ts`，提供 `setApiKey`、`deleteApiKey`、`hasApiKey`、`getApiKeyForSidecar`、`listSecretStatuses`。
+2. 密钥文件 `<userData>/config/secrets.json` 只保存加密后的 base64，不保存明文。
+3. **明文 key 只短暂存在于 Electron main process 内存中**：
+   - UI 保存时写入加密存储。
+   - Sidecar 启动时解密并注入子进程环境变量。
+4. **Renderer 可以提交 key，但不能读取明文**：通过 IPC `novelos:set-api-key` / `novelos:delete-api-key` / `novelos:secret-status` 交互。
+5. **后端 `/api/desktop/config` 增强**：
+   - 每个 profile 返回 `api_key_env`、`api_key_configured`、`api_key_source`。
+   - `api_key_source` 区分 `desktop_secure_storage` / `environment` / `missing`。
+   - 通过 `NOVELOS_DESKTOP_SECRET_KEYS` 环境变量标记哪些 key 来自安全存储。
+6. **`PUT /desktop/config` 安全约束**：如果请求体包含 `api_key`、`apiKey`、`secret`、`token`，返回 `SECURITY_REJECTED` 错误，不写入文件。
+7. **日志脱敏**：
+   - `Sidecar command:` 日志只打印命令和参数（不含 env 值）。
+   - `raw_preview` 对 `api_key`、`secret`、`token`、`authorization`、`password` 递归脱敏为 `***REDACTED***`。
+   - backend 错误消息不泄露 key 值。
+8. 配置文件中只保存 profile 名称、base_url、model、参数，不保存 API key 明文。
 
-   - API key
-   - Authorization header
-   - provider token
-   - local config secrets
+文件清单：
 
-6. 禁止 renderer 直接持有 API key。
-7. renderer 通过 IPC 请求 main process 保存或删除密钥。
+- `desktop/src/secrets.ts` — **新增** safeStorage 封装
+- `desktop/src/main.ts` — 启动 sidecar 前注入密钥，新增 IPC handlers
+- `desktop/src/preload.ts` — 暴露 secrets IPC API
+- `frontend/src/lib/api.ts` — Window 类型扩展
+- `frontend/src/components/settings/SettingsConsoleSections.tsx` — 新增 `DesktopApiKeyCard`
+- `novel_factory/api/routes/desktop.py` — 增强 config GET/PUT（key source、安全字段拒绝）
+- `tests/test_v66_desktop_secure_keys.py` — **新增** 后端安全测试
 
 验收标准：
 
@@ -279,6 +294,7 @@ Desktop App
 - sidecar 日志中看不到 API key。
 - app 重启后真实 LLM 配置仍可用。
 - 删除密钥后 real 模式给出可解释错误。
+- `PUT /desktop/config` 拒绝写入任何含 `api_key` / `secret` / `token` 的字段。
 
 ### M5：长任务、SSE 与进程恢复
 
