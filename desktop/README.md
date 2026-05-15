@@ -379,6 +379,55 @@ NOVELOS_DESKTOP_USER_DATA_DIR=/tmp/novelos-test \
   ./desktop/release/mac-arm64/Novelos.app/Contents/MacOS/Novelos
 ```
 
+## Packaging Verification Pipeline (v6.2.1)
+
+一键本地桌面打包验证：
+
+```bash
+bash packaging/scripts/verify-desktop-mac.sh
+```
+
+该脚本按顺序执行：
+
+1. **Build frontend** — `cd frontend && npm run build`
+2. **Build frozen sidecar** — `bash packaging/scripts/build-sidecar.sh`
+3. **Build desktop TypeScript** — `cd desktop && npm run build`
+4. **Package Electron app** — `cd desktop && npm run pack:mac`
+5. **Smoke-test sidecar** — `bash packaging/scripts/smoke-sidecar.sh`
+6. **Smoke-test desktop app** — `bash packaging/scripts/smoke-desktop-app-mac.sh`
+
+输出示例：
+
+```
+============================================================
+  Desktop Packaging Verification Summary
+============================================================
+  Platform:       darwin-arm64
+  App bundle:     /path/to/novelos/desktop/release/mac-arm64/Novelos.app
+  Sidecar binary: desktop/resources/sidecar/darwin-arm64/novelos-sidecar
+
+  ALL PASSED (8 passed, 0 skipped)
+============================================================
+```
+
+### Prerequisites
+
+- Node.js 18+, npm
+- Python 3.9+ with `pyinstaller` installed
+- macOS with `curl` and `lsof`
+
+### SKIP vs PASS
+
+- 如果 smoke 脚本**独立运行**且缺少 frozen sidecar，会输出 `SKIP` 并退出 0。
+- 如果 `verify-desktop-mac.sh` 已经执行了步骤 2 构建 sidecar，则后续 smoke 应全部 `PASS`。
+
+### Known limitations
+
+- 仅验证 macOS（arm64 / x64）。
+- 应用未签名/未公证。
+- 不验证 Windows 或 Linux 构建。
+- 打包产物不会被脚本自动清理，保留在 `desktop/release/` 供手动检查。
+
 ## Next Recommended Milestone
 
 **M6 — Cross-Platform CI & Release Pipeline**

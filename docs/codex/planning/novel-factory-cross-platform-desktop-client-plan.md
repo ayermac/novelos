@@ -361,6 +361,41 @@ Desktop App
 - 不引入新 native dependency。
 - 不泄露 API key。
 
+### v6.2.1：桌面打包验证流水线
+
+状态：**已实现**
+
+目标：提供一键本地桌面打包验证，确保从源码到可运行 `.app` 的完整链路在本地可重复验证。
+
+实现步骤：
+
+1. **新增编排脚本** `packaging/scripts/verify-desktop-mac.sh`：
+   - 6 步顺序执行：frontend build → sidecar freeze → desktop TS build → Electron pack → sidecar smoke → desktop app smoke。
+   - 自动检测平台/arch，推导 Electron Builder 输出路径。
+   - 任何实际构建/测试错误快速失败（`set -e`）。
+   - 最终输出 concise PASS 摘要，包含 app bundle 和 sidecar 路径。
+
+2. **改进 smoke 脚本 pipeline 友好性**：
+   - `smoke-sidecar.sh`：缺少 frozen sidecar 时输出 `SKIP` 并退出 0。
+   - `smoke-desktop-app-mac.sh`：
+     - 缺少 frozen sidecar 时输出 `SKIP` 而非 `FAIL`。
+     - 修复 port 检测逻辑，匹配 main.ts 实际日志格式 `--port [0-9]+`。
+     - 使用 `NOVELOS_DESKTOP_USER_DATA_DIR` 隔离测试数据。
+     - `cleanup` trap 确保残留 Electron 和 sidecar 进程被清理。
+
+验收标准：
+
+- `bash packaging/scripts/verify-desktop-mac.sh` 在干净 macOS 环境一次运行全部 PASS。
+- 独立运行 smoke 脚本缺少 sidecar 时输出 SKIP 不报错。
+- 不杀死用户正在运行的其他 Novelos 实例（通过 APP_PID + port 范围限制）。
+- 脚本不提交构建产物到仓库。
+
+已知限制：
+
+- 仅验证 macOS（arm64 / x64）。
+- 未做代码签名/公证。
+- Windows/Linux 未验证。
+
 ### M6：跨平台 CI 与发布流水线
 
 目标：让 macOS、Windows、Linux 可重复构建。

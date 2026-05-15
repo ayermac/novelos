@@ -121,9 +121,10 @@ echo "  PID: $APP_PID"
 echo "  Log: $LOG_FILE"
 
 # Wait for port selection in logs
+# The main process logs: [INFO] Sidecar command: ... --port 60028 ...
 DETECTED_PORT=""
 for i in $(seq 1 60); do
-  DETECTED_PORT="$(grep -oE 'Selected port: [0-9]+' "$LOG_FILE" 2>/dev/null | tail -1 | awk '{print $3}' || true)"
+  DETECTED_PORT="$(grep -oE -- '--port [0-9]+' "$LOG_FILE" 2>/dev/null | tail -1 | awk '{print $2}' || true)"
   if [ -n "$DETECTED_PORT" ]; then
     break
   fi
