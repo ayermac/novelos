@@ -123,7 +123,7 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
     if not has_approved_genesis:
         return RunGuardError(
             "CONTEXT_INCOMPLETE",
-            "项目创世设定尚未批准。请先完成创世设定审核，或补齐项目资料后再生成章节。",
+            "项目创世设定尚未批准。请先完成并批准创世设定，再补齐项目资料后生成章节。",
             details={
                 "missing": ["genesis"],
                 "hint": "generate_genesis",

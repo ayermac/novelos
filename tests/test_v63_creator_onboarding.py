@@ -198,7 +198,7 @@ class TestGenesisEmptyPremise:
             "project_id": project_id,
             "name": "Empty Premise Test",
             "genre": "fantasy",
-            "description": "A test novel without explicit premise",
+            "description": "",
             "total_chapters_planned": 10,
             "target_words": 30000,
             "initial_chapter_count": 1,

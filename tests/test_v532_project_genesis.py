@@ -68,10 +68,11 @@ class TestGenesisCanonicalRoutes:
     def test_generate_rejects_empty_creative_brief(self, client, project_id):
         """Genesis should not generate from a blank form/default template."""
         blank_project_id = "blank-genesis-input"
+        # v6.3.2: Create a project with no name/genre so inheritance cannot fill blanks.
         create_resp = client.post("/api/onboarding/projects", json={
             "project_id": blank_project_id,
-            "name": "Blank Genesis",
-            "genre": "奇幻",
+            "name": "",
+            "genre": "",
             "description": "",
             "total_chapters_planned": 10,
             "target_words": 30000,

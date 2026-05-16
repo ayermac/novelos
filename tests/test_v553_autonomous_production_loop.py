@@ -158,8 +158,8 @@ class TestProductionNextAPI:
         # With approved genesis and instructions present, next action must be generate_chapter
         assert data["next_action"]["key"] == "generate_chapter"
 
-    def test_manual_context_ready_does_not_require_genesis(self, client):
-        """Manual world/character/outline/instruction context should allow writing."""
+    def test_manual_context_ready_requires_genesis(self, client):
+        """v6.3.2: Manual context alone is not enough; approved genesis is required."""
         resp = client.post("/api/onboarding/projects", json={
             "project_id": "manual-ready-test",
             "name": "雾城回声",
@@ -186,9 +186,9 @@ class TestProductionNextAPI:
         assert body["ok"] is True
         data = body["data"]
         assert data["health"]["has_approved_genesis"] is False
-        assert data["health"]["manual_context_ready"] is True
-        assert data["next_action"]["key"] == "generate_chapter"
-        assert all(item["key"] != "genesis" for item in data["missing"])
+        assert data["health"]["manual_context_ready"] is False
+        assert data["next_action"]["key"] == "generate_genesis"
+        assert any(item["key"] == "genesis" for item in data["missing"])
 
     def test_failed_run_on_planned_chapter_does_not_block_retry(self, client):
         """A stale failed run should not block a planned chapter from retrying."""
@@ -219,6 +219,8 @@ class TestProductionNextAPI:
             "word_target": 3000,
         })
         repo = Repository(db_path)
+        # v6.3.2: approved genesis is required for generate_chapter
+        repo.create_genesis_run("planned-retry-test", input_json='{"title":"test"}', status="approved")
         run_id = repo.create_workflow_run("planned-retry-test", 1)
         repo.update_workflow_run(run_id, status="failed", current_node="screenwriter", error_message="bad json")
 
@@ -879,23 +881,24 @@ class TestFrontendCopy:
             source = f.read()
         assert "生成章节计划" in source or "generate_arc_plan" in source
 
-    def test_project_overview_generate_chapter_opens_workflow_stream(self):
-        """Generate chapter from overview should open the chapter workflow and auto-start generation."""
+    def test_project_overview_generate_chapter_opens_chapter_page(self):
+        """v6.3.2: Generate chapter from overview navigates to chapter page without auto_generate."""
         path = os.path.join(os.path.dirname(__file__), "../frontend/src/components/project/ProjectOverviewModule.tsx")
         path = os.path.abspath(path)
         with open(path, "r", encoding="utf-8") as f:
             source = f.read()
-        assert "view=workflow&auto_generate=1" in source
-        assert "generate_chapter" in source
+        assert "auto_generate=1" not in source
+        assert "module=chapters" in source
+        assert "continue_next_chapter" in source
 
-    def test_project_detail_autogenerate_query_triggers_workflow(self):
-        """ProjectDetail should auto-start chapter generation when auto_generate=1 is present."""
+    def test_project_detail_no_autogenerate_query(self):
+        """v6.3.2: ProjectDetail should not use auto_generate=1 or auto-trigger workflow."""
         path = os.path.join(os.path.dirname(__file__), "../frontend/src/pages/ProjectDetail.tsx")
         path = os.path.abspath(path)
         with open(path, "r", encoding="utf-8") as f:
             source = f.read()
-        assert "auto_generate" in source
-        assert "handleGenerate()" in source
+        assert "auto_generate=1" not in source
+        assert "setSearchParams({ chapter: String(nextCh) }" in source or 'setSearchParams({ chapter: String(nextCh) }, { replace: true })' in source
 
     def test_genesis_module_reframed_as_init(self):
         """GenesisModule reframes genesis as one-time initialization."""

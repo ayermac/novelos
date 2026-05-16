@@ -202,6 +202,25 @@ def seed_context_for_chapter(db_path_or_repo, project_id: str = "测试项目", 
             first_appearance=chapter_number,
         )
 
+    # Ensure approved genesis exists (v6.3.1+ run guard requirement)
+    latest_genesis = repo.get_latest_genesis_run(project_id)
+    if latest_genesis is None or latest_genesis.get("status") != "approved":
+        repo.create_genesis_run(
+            project_id=project_id,
+            input_json='{"title":"seed","genre":"seed"}',
+            status="approved",
+        )
+
+    # Add instruction for the target chapter if missing
+    instruction = repo.get_instruction_by_chapter(project_id, chapter_number)
+    if instruction is None or not instruction.get("objective"):
+        repo.create_instruction(
+            project_id=project_id,
+            chapter_number=chapter_number,
+            objective="本章目标是推动主线剧情发展，揭示关键线索。",
+            key_events="主角发现重要线索；与关键角色对峙；局势发生转折。",
+        )
+
     # Add chapter-level outline covering the chapter
     outlines = repo.list_outlines(project_id)
     chapter_outlines = [
