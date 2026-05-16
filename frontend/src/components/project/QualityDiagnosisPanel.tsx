@@ -50,7 +50,7 @@ function dimensionLabel(key: string): string {
     scene_immersion: '场景沉浸',
     character_motivation: '人物动机',
     show_dont_tell: "Show-Don't-Tell",
-    info_density: '信息密度(设定)',
+    info_dump: '设定灌输/信息倾倒',
   }
   return map[key] || key
 }
@@ -145,7 +145,7 @@ export default function QualityDiagnosisPanel({
             <div className="space-y-4 pt-3">
               {/* Overall score */}
               <div className="flex items-center gap-3">
-                <div className="text-2xl font-bold ${scoreColor(diagnosis.overall_score)}">
+                <div className={`text-2xl font-bold ${scoreColor(diagnosis.overall_score)}`}>
                   {diagnosis.overall_score.toFixed(1)}
                 </div>
                 <div className="text-xs text-gray-500">

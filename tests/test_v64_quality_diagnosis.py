@@ -124,7 +124,8 @@ class TestQualityHubDiagnose:
             # Dimensions should exist
             dims = result["dimensions"]
             assert "show_dont_tell" in dims
-            assert "info_density" in dims
+            assert "info_dump" in dims
+            assert "info_density" not in dims
             assert "death_penalty" in dims
             assert "ai_trace" in dims
             assert "narrative_quality" in dims

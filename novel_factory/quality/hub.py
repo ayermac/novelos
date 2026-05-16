@@ -914,7 +914,7 @@ class QualityHub:
             info_dump_count += len(re.findall(pattern, text))
 
         info_dump_score = max(0, 100 - info_dump_count * 15)
-        dimensions["info_density"] = round(info_dump_score, 1)
+        dimensions["info_dump"] = round(info_dump_score, 1)
 
         if info_dump_count > 0:
             findings.append({

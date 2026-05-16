@@ -33,7 +33,7 @@
     "scene_immersion": 45,
     "character_motivation": 55,
     "show_dont_tell": 35,
-    "info_density": 70
+    "info_dump": 70
   },
   "findings": [
     {
