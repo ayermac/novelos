@@ -11,6 +11,7 @@ import Style from './pages/Style'
 import Settings from './pages/Settings'
 import AgentOps from './pages/AgentOps'
 import { AppDialogProvider } from './components/AppDialog'
+import { ToastProvider } from './components/ui'
 
 function ChapterRedirect() {
   const path = window.location.pathname
@@ -38,23 +39,25 @@ function App() {
 
   return (
     <AppDialogProvider>
-      <Router>
-        <Routes>
-          <Route path="/" element={<Layout />}>
-            <Route index element={<Dashboard />} />
-            <Route path="projects" element={<Projects />} />
-            <Route path="projects/:id" element={<ProjectDetail />} />
-            <Route path="projects/:projectId/chapters/:chapterNumber" element={<ChapterRedirect />} />
-            <Route path="onboarding" element={<Onboarding />} />
-            <Route path="run" element={<Run />} />
-            <Route path="runs/:runId" element={<RunRedirect />} />
-            <Route path="review" element={<Review />} />
-            <Route path="style" element={<Style />} />
-            <Route path="settings" element={<Settings />} />
-            <Route path="agent-ops" element={<AgentOps />} />
-          </Route>
-        </Routes>
-      </Router>
+      <ToastProvider>
+        <Router>
+          <Routes>
+            <Route path="/" element={<Layout />}>
+              <Route index element={<Dashboard />} />
+              <Route path="projects" element={<Projects />} />
+              <Route path="projects/:id" element={<ProjectDetail />} />
+              <Route path="projects/:projectId/chapters/:chapterNumber" element={<ChapterRedirect />} />
+              <Route path="onboarding" element={<Onboarding />} />
+              <Route path="run" element={<Run />} />
+              <Route path="runs/:runId" element={<RunRedirect />} />
+              <Route path="review" element={<Review />} />
+              <Route path="style" element={<Style />} />
+              <Route path="settings" element={<Settings />} />
+              <Route path="agent-ops" element={<AgentOps />} />
+            </Route>
+          </Routes>
+        </Router>
+      </ToastProvider>
     </AppDialogProvider>
   )
 }

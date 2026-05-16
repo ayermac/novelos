@@ -20,9 +20,11 @@
 - **当前桌面客户端基线**: v6.2.5 Desktop Release Readiness Checklist
 - **当前创作者闭环基线**: v6.3.2 Creator Onboarding Closure
 - **当前章节质量基线**: v6.4.6 Chapter Generation Quality Closure
-- **当前下一步**: v6.5 Agent Evidence UX / Structured Memory Canonicalization
-- **状态**: v6.4 已封版。v6.4 核心交付：QualityHub 质量诊断基线、章节质量诊断 API 和面板、Author 起草契约、Polisher 对白/场景质感 pass、4 个 deterministic anti-AI skills、Editor advisory quality gates、可选 real LLM 验收脚本。v6.4.5 real run 在当前无 key 环境下 SKIP，stub harness 通过。
+- **当前交互体验基线**: v6.5.1 Interaction Primitives
+- **当前下一步**: v6.5.2 Project Overview Workbench Polish
+- **状态**: v6.4 已封版；v6.5.0/v6.5.1 已完成交互体验规格和基础组件。v6.5 后续页面级体验升级交给后续 Agent 继续执行。
 - **v6.4 规格**: [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md) — 解决生成章节"AI 味重"问题，聚焦 prompt 增强、deterministic validator 补充和 skill 升级。
+- **v6.5 规格**: [planning/novel-factory-v6.5-interaction-excellence-spec.md](planning/novel-factory-v6.5-interaction-excellence-spec.md) — 解决桌面客户端"后台感"问题，先建立 toast/loading/skeleton 等交互基础设施，再逐页升级工作台体验。
 - **测试基线**: backend full suite **2071 passed, 0 failed**；v6.4.5 targeted acceptance tests 2 passed；`scripts/verify.py smoke` passed；v6.4.5 real LLM acceptance skipped when no API key is configured
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
@@ -55,6 +57,8 @@
 - **v6.2 Desktop Client Review 记录**: [reviews/novel-factory-v6.2-desktop-client-review.md](reviews/novel-factory-v6.2-desktop-client-review.md)
 - **v6.4 Chapter Quality 完成报告**: [reports/novel-factory-v6.4.6-chapter-quality-closure-report.md](reports/novel-factory-v6.4.6-chapter-quality-closure-report.md)
 - **v6.4 Chapter Quality Review 记录**: [reviews/novel-factory-v6.4.6-chapter-quality-closure-review.md](reviews/novel-factory-v6.4.6-chapter-quality-closure-review.md)
+- **v6.5.1 Interaction Primitives 完成报告**: [reports/novel-factory-v6.5.1-interaction-primitives-report.md](reports/novel-factory-v6.5.1-interaction-primitives-report.md)
+- **v6.5.1 Interaction Primitives Review 记录**: [reviews/novel-factory-v6.5.1-interaction-primitives-review.md](reviews/novel-factory-v6.5.1-interaction-primitives-review.md)
 
 ## 当前执行规则
 
@@ -96,8 +100,8 @@ v5.5.15 和 v5.6 Phase 1 完成后，下一阶段不优先展开多租户、企�
 
 1. v6.2.5 桌面发布准备：release checklist、version policy、release manifest、安装/升级/卸载说明。
 2. v6.3 从 0 到 1 创作体验闭环：创建小说后进入创世设定、世界观、角色、大纲、章节规划，而不是直接跳章节。
-3. v6.5 Agent 执行证据 UX：把 Agent 输入、输出、工具调用、Skill、Memory、diff、审核依据做成用户能看懂的过程直播。
-4. v6.5 结构化记忆与事实证据链：先把角色、世界观、伏笔、时间线做准；向量/RAG 后续只用于风格和参考作品检索。
+3. v6.5 Interaction Excellence：先把客户端操作反馈、等待状态、错误恢复、页面节奏做到顺滑。
+4. v6.6+ Agent 执行证据 UX / 结构化记忆与事实证据链：把 Agent 输入、输出、工具调用、Skill、Memory、diff、审核依据做成用户能看懂的过程直播，并把角色、世界观、伏笔、时间线做准；向量/RAG 后续只用于风格和参考作品检索。
 
 详细方向见 [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)。
 

@@ -568,11 +568,37 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到"用
 - Frontend 章节详情页新增"质量诊断"折叠面板
 - 版本拆分：v6.4.0 诊断基线 → v6.4.1 Author prompt → v6.4.2 Polisher 改写 → v6.4.3 新增 skills → v6.4.4 Editor gate + 测试闭环 → v6.4.5 Real LLM 可选验收 → v6.4.6 封版
 
-### v6.5：Agent Evidence UX Closure
+### v6.5：Interaction Excellence Closure
+
+状态：**v6.5.0 + v6.5.1 已实现**（见 [planning/novel-factory-v6.5-interaction-excellence-spec.md](planning/novel-factory-v6.5-interaction-excellence-spec.md)）
+
+目标：解决桌面客户端当前"像后台系统"的问题，先把操作反馈、等待状态、错误恢复和微交互底座做稳，再交给后续 Agent 逐页升级。
+
+重点：
+
+- v6.5.0：交互审计和规格收口，明确"工作台但要有极致体验"的标准。
+- v6.5.1：新增 `ToastProvider`、`LoadingButton`、`Skeleton` / `SkeletonStack`，接入 Onboarding 和 Quality Diagnosis 两个样板场景。
+- v6.5.2：Project Overview 从信息堆叠改为下一步创作驾驶舱。
+- v6.5.3：Chapter Writing Surface 生成/发布/返修/恢复体验升级。
+- v6.5.4：Agent Process Narrative，把执行日志变成用户能理解的创作过程。
+- v6.5.5：Settings / Desktop Runtime polish，优化 LLM 配置、sidecar 状态、诊断包和连接测试。
+
+已实现文件：
+
+- `frontend/src/components/ui/Toast.tsx`
+- `frontend/src/components/ui/LoadingButton.tsx`
+- `frontend/src/components/ui/Skeleton.tsx`
+- `frontend/src/components/ui/__tests__/interaction-primitives.test.tsx`
+- `frontend/src/App.tsx`
+- `frontend/src/pages/Onboarding.tsx`
+- `frontend/src/components/project/QualityDiagnosisPanel.tsx`
+- `docs/codex/planning/novel-factory-v6.5-interaction-excellence-spec.md`
+
+### v6.6：Agent Evidence UX Closure
 
 状态：**候选规划**
 
-目标：让用户能看懂并信任每个 Agent 的工作过程。当前 v6.1 已有执行事件基础，v6.5 要把它产品化成可审计的创作证据链。
+目标：让用户能看懂并信任每个 Agent 的工作过程。当前 v6.1 已有执行事件基础，v6.6 要把它产品化成可审计的创作证据链。
 
 重点：
 
@@ -582,7 +608,7 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到"用
 - 明确标出 fallback、跳过、低变化返修、超时、无 LLM 请求等异常状态。
 - 支持长连接实时刷新，不让用户只看到"运行中/完成"。
 
-### v6.5：Structured Memory Canonicalization
+### v6.7：Structured Memory Canonicalization
 
 状态：**候选规划**
 
@@ -596,7 +622,7 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到"用
 - Agent 使用事实时必须在 trace 中显示引用来源。
 - Editor 能指出违反了哪个事实或伏笔状态。
 
-### v6.6：Author Editing & Revision Closure
+### v6.8：Author Editing & Revision Closure
 
 状态：**候选规划**
 
@@ -610,7 +636,7 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到"用
 - 返修意见能明确进入 Author/Polisher 的下一轮上下文。
 - 人工写作和 AI 协作之间切换自然。
 
-### v6.7：Desktop Distribution Closure
+### v6.9：Desktop Distribution Closure
 
 状态：**候选规划**
 
@@ -624,7 +650,7 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到"用
 - 发布产物校验和 release checklist 强制执行。
 - Windows/Linux 打包进入后续分支或并行规划。
 
-### v6.8：Reference Library + Genre/Style RAG
+### v6.10：Reference Library + Genre/Style RAG
 
 状态：**候选规划**
 

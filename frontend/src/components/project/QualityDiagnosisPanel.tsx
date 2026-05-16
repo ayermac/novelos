@@ -1,6 +1,7 @@
 import { useState, useCallback } from 'react'
 import { get } from '../../lib/api'
 import { ChevronDown, ChevronUp, AlertCircle, AlertTriangle, Info, CheckCircle2 } from 'lucide-react'
+import { InlineMessage, LoadingButton, SkeletonStack, useToast } from '../ui'
 
 interface QualityDiagnosisPanelProps {
   projectId: string
@@ -74,12 +75,13 @@ export default function QualityDiagnosisPanel({
   chapterNumber,
   chapterStatus,
 }: QualityDiagnosisPanelProps) {
+  const { showToast } = useToast()
   const [open, setOpen] = useState(false)
   const [diagnosis, setDiagnosis] = useState<QualityDiagnosis | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (showSuccess = false) => {
     if (!open) {
       setOpen(true)
       if (diagnosis) return
@@ -92,15 +94,26 @@ export default function QualityDiagnosisPanel({
       )
       if (res.ok && res.data) {
         setDiagnosis(res.data)
+        if (showSuccess) {
+          showToast({
+            tone: 'success',
+            title: '质量诊断已刷新',
+            message: `综合评分 ${res.data.overall_score.toFixed(1)} / 100`,
+          })
+        }
       } else {
-        setError(res.error?.message || '诊断失败')
+        const msg = res.error?.message || '诊断失败'
+        setError(msg)
+        showToast({ tone: 'danger', title: '诊断失败', message: msg })
       }
     } catch {
-      setError('请求失败')
+      const msg = '请求失败，请稍后重试。'
+      setError(msg)
+      showToast({ tone: 'danger', title: '诊断失败', message: msg })
     } finally {
       setLoading(false)
     }
-  }, [open, diagnosis, projectId, chapterNumber])
+  }, [open, diagnosis, projectId, chapterNumber, showToast])
 
   const toggle = () => {
     if (!open) {
@@ -139,18 +152,39 @@ export default function QualityDiagnosisPanel({
 
       {open && (
         <div className="px-4 pb-4 border-t">
-          {loading && <div className="py-4 text-sm text-gray-500">正在诊断...</div>}
-          {error && <div className="py-4 text-sm text-red-500">{error}</div>}
+          {loading && !diagnosis && (
+            <div className="py-4">
+              <SkeletonStack rows={4} />
+            </div>
+          )}
+          {error && (
+            <div className="py-4">
+              <InlineMessage variant="danger" title="质量诊断失败">
+                {error}
+              </InlineMessage>
+            </div>
+          )}
           {diagnosis && (
             <div className="space-y-4 pt-3">
               {/* Overall score */}
-              <div className="flex items-center gap-3">
-                <div className={`text-2xl font-bold ${scoreColor(diagnosis.overall_score)}`}>
-                  {diagnosis.overall_score.toFixed(1)}
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <div className={`text-2xl font-bold ${scoreColor(diagnosis.overall_score)}`}>
+                    {diagnosis.overall_score.toFixed(1)}
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    综合评分 / 100
+                  </div>
                 </div>
-                <div className="text-xs text-gray-500">
-                  综合评分 / 100
-                </div>
+                <LoadingButton
+                  variant="secondary"
+                  loading={loading}
+                  loadingText="刷新中"
+                  className="btn-sm"
+                  onClick={() => load(true)}
+                >
+                  重新诊断
+                </LoadingButton>
               </div>
 
               {/* Dimensions */}
