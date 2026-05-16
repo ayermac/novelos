@@ -10,7 +10,7 @@ import {
 } from 'lucide-react'
 import { StepStatus } from '../../hooks/useSSEStream'
 import { useWorkflowStream } from '../../hooks/useWorkflowStream'
-import { tWorkflowNodeLabel } from '../../lib/state-labels'
+import { tWorkflowNodeLabel, tWorkflowNodeNarrative } from '../../lib/state-labels'
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
 import { post } from '../../lib/api'
 import type { WorkflowTimelineData, WorkflowExecutionEvent, WorkflowNodeEvidence } from '../../lib/api'
@@ -932,7 +932,7 @@ function WorkflowBody({
       let logs: Step['logs'] = []
       if (stepStatus) {
         status = stepStatus.status as Step['status']
-        if (status === 'running') description = '处理中...'
+        if (status === 'running') description = tWorkflowNodeNarrative(s.key)
         else if (status === 'completed') description = `完成 (${stepStatus.duration_ms || 0}ms)`
         else if (status === 'failed') description = '失败'
         logs = stepStatus.logs
@@ -945,7 +945,7 @@ function WorkflowBody({
         }
       }
       if (status === 'running' && (!logs || logs.length === 0)) {
-        logs = [{ level: 'info', message: '节点运行中，正在等待模型或工具返回。' }]
+        logs = [{ level: 'info', message: tWorkflowNodeNarrative(s.key) }]
       }
       return { key: s.key, label: s.label, node_group: s.node_group, description, status, logs }
     })

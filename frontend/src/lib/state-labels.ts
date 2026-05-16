@@ -70,6 +70,60 @@ export function tWorkflowNodeLabel(node: string | null | undefined): string {
   return WORKFLOW_NODE_LABEL[node] || node
 }
 
+// ── Workflow node narrative (running-state human-readable action) ─
+
+export const WORKFLOW_NODE_NARRATIVE: Record<string, string> = {
+  health_check: '正在检查运行环境...',
+  task_discovery: '正在识别创作任务...',
+  planner: '正在规划章节结构...',
+  screenwriter: '正在编排场景与情节...',
+  author: '正在撰写章节正文...',
+  polisher: '正在润色文字表达...',
+  editor: '正在审核内容质量...',
+  memory_curator: '正在整理章节记忆...',
+  publisher: '正在发布章节...',
+  publish: '正在发布章节...',
+  awaiting_publish: '等待人工确认发布',
+  archive: '正在归档本章...',
+  revision_router: '正在分析返修方向...',
+  human_review: '等待人工审核',
+}
+
+export function tWorkflowNodeNarrative(node: string | null | undefined): string {
+  if (!node) return '正在处理...'
+  return WORKFLOW_NODE_NARRATIVE[node] || '正在处理...'
+}
+
+// ── Execution event narrative (human-readable event descriptions) ─
+
+export const EVENT_NARRATIVE: Record<string, string> = {
+  node_started: '节点开始处理',
+  context_loaded: '读取上下文完成',
+  llm_started: '开始调用 AI 模型',
+  llm_completed: 'AI 模型调用完成',
+  llm_failed: 'AI 模型调用失败',
+  artifact_saved: '产物已保存',
+  skill_started: 'Skill 开始处理',
+  skill_completed: 'Skill 处理完成',
+  tool_called: '工具调用完成',
+  self_check_completed: '自检完成',
+  fallback_used: '使用了降级方案继续创作',
+  diff_generated: '生成改动摘要',
+  evidence_verified: '质量检查',
+  node_completed: '节点处理完成',
+  node_failed: '处理失败',
+  node_skipped: '该步骤已跳过',
+  quality_diagnosed: '质量诊断完成',
+  revision_context_loaded: '读取返修依据',
+  revision_diff_generated: '生成返修改动',
+  revision_followup_verified: '返修复核',
+}
+
+export function tEventNarrative(eventType: string | undefined | null): string {
+  if (!eventType) return ''
+  return EVENT_NARRATIVE[eventType] || eventType
+}
+
 // ── Production action key labels ──────────────────────────────────
 
 export const ACTION_KEY_LABEL: Record<string, string> = {

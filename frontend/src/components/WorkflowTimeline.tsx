@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { formatArtifactSummary, WorkflowArtifacts } from '../lib/artifacts'
+import { tWorkflowNodeNarrative, tEventNarrative } from '../lib/state-labels'
 import type { WorkflowExecutionEvent, WorkflowNodeEvidence } from '../lib/api'
 
 interface Step {
@@ -45,7 +46,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
 }
 
 function eventLabel(eventType: string): string {
-  return EVENT_TYPE_LABELS[eventType] || eventType
+  return EVENT_TYPE_LABELS[eventType] || tEventNarrative(eventType) || eventType
 }
 
 function stepStatusIcon(status: string): string {
@@ -170,7 +171,7 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
                           {step.status === 'running' && logs.length === 0 && (
                             <div className="step-log step-log-info">
                               <span className="step-log-dot step-log-dot-pulse" />
-                              <span className="step-log-message">节点运行中，正在等待模型或工具返回。</span>
+                              <span className="step-log-message">{tWorkflowNodeNarrative(step.key)}</span>
                             </div>
                           )}
                         </div>

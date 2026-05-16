@@ -128,13 +128,41 @@ CSS 交互协议：
 
 ### v6.5.4：Agent Process Narrative
 
+状态：**已实现**
+
 目标：把 Agent 执行过程从日志变成用户能理解的创作过程。
 
 重点：
 
-- 节点运行时显示"正在规划/正在写作/正在润色/正在审核"。
-- fallback、跳过、guard、quality warning 显示为人类可读事件。
-- 复用 v6.1 execution events，不改后端拓扑。
+- 节点运行时显示节点专属叙事文案：
+  - planner → "正在规划章节结构..."
+  - screenwriter → "正在编排场景与情节..."
+  - author → "正在撰写章节正文..."
+  - polisher → "正在润色文字表达..."
+  - editor → "正在审核内容质量..."
+  - memory_curator → "正在整理章节记忆..."
+  - 其他节点也有对应叙事。
+- AuthorAgentPanel 右侧面板根据 currentNode 显示叙事 action-label 和详细 action-desc（如"AI 正在分析章节目标、角色关系和伏笔，规划本章结构。"）。
+- WorkflowTimeline running 状态且没有日志时，显示节点专属叙事而非通用"节点运行中..."。
+- streaming SSE 步骤在 AuthorAgentPanel 中 running 时显示叙事文案。
+- AuthorAgentPanel 按钮统一替换为 `LoadingButton`，错误显示使用 `InlineMessage`。
+- fallback、跳过、guard 等事件类型通过 `EVENT_NARRATIVE` 映射提供人类可读标签。
+
+已实现文件：
+
+- `frontend/src/lib/state-labels.ts` — 新增 `WORKFLOW_NODE_NARRATIVE`、`EVENT_NARRATIVE` 及对应翻译函数
+- `frontend/src/components/project/AuthorAgentPanel.tsx` — 叙事文案 + LoadingButton + InlineMessage
+- `frontend/src/components/project/AuthorWritingSurface.tsx` — WorkflowBody running 描述叙事化
+- `frontend/src/components/WorkflowTimeline.tsx` — running 空日志时显示节点叙事
+- `frontend/src/components/__tests__/WorkflowTimeline.test.tsx` — 新增叙事测试
+- `frontend/src/components/project/__tests__/AuthorWorkbench.test.tsx` — 新增 Agent 面板叙事测试
+
+验收标准：
+
+- 前端 typecheck / lint / build / vitest 全通过。
+- WorkflowTimeline 测试覆盖 running 节点叙事、fallback 事件标签。
+- AuthorWorkbench 测试覆盖 AuthorAgentPanel 节点叙事（author/planner/streaming）。
+- 不改后端 workflow 拓扑，不改 Agent prompt。
 
 ### v6.5.5：Settings & Desktop Runtime Polish
 

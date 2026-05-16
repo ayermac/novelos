@@ -1,5 +1,4 @@
 import {
-  Loader2,
   CheckCircle2,
   Sparkles,
   Play,
@@ -7,8 +6,9 @@ import {
   Eye,
 } from 'lucide-react'
 import { StepStatus } from '../../hooks/useSSEStream'
-import { tWorkflowNodeLabel } from '../../lib/state-labels'
+import { tWorkflowNodeLabel, tWorkflowNodeNarrative } from '../../lib/state-labels'
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
+import { LoadingButton, InlineMessage } from '../ui'
 import type { WorkflowTimelineData } from '../../lib/api'
 
 interface Run {
@@ -81,6 +81,36 @@ interface AuthorAgentPanelProps {
   onViewWorkflow: (runId: string) => void
 }
 
+function getAgentActionDesc(node: string | null | undefined): string {
+  switch (node) {
+    case 'planner':
+      return 'AI 正在分析章节目标、角色关系和伏笔，规划本章结构。'
+    case 'screenwriter':
+      return 'AI 正在将规划分解为具体场景，设计情节转折和节奏。'
+    case 'author':
+      return 'AI 正在根据场景规划撰写章节正文。'
+    case 'polisher':
+      return 'AI 正在优化文字表达，提升可读性和风格一致性。'
+    case 'editor':
+      return 'AI 正在从设定一致性、逻辑、毒点、文字质量、爽点五个维度审核。'
+    case 'memory_curator':
+      return 'AI 正在提取本章关键事实和角色状态，更新项目记忆。'
+    case 'publisher':
+    case 'publish':
+      return 'AI 正在完成最终发布步骤。'
+    case 'health_check':
+      return 'AI 正在检查上下文和运行环境是否满足创作条件。'
+    case 'task_discovery':
+      return 'AI 正在识别本章需要处理的具体创作任务。'
+    case 'revision_router':
+      return 'AI 正在分析审核结果，决定返修方向。'
+    case 'human_review':
+      return '等待人工审核和确认。'
+    default:
+      return 'AI 正在处理本章，请稍候。'
+  }
+}
+
 export default function AuthorAgentPanel({
   currentChapterRecord,
   llmMode,
@@ -127,13 +157,17 @@ export default function AuthorAgentPanel({
           <div className="author-agent-next-action">
             <div className="action-label">等待人工发布</div>
             <div className="action-desc">本章已通过 AI 审核，点击确认发布。</div>
-            <button className="btn btn-primary btn-sm" onClick={onPublish} disabled={publishPending} style={{ marginTop: 8, width: '100%' }}>
-              {publishPending ? (
-                <><Loader2 size={12} className="spin" /> 发布中...</>
-              ) : (
-                <><CheckCircle2 size={12} /> 确认发布</>
-              )}
-            </button>
+            <LoadingButton
+              className="btn btn-primary btn-sm"
+              variant="primary"
+              loading={!!publishPending}
+              loadingText="发布中..."
+              onClick={onPublish}
+              disabled={isStreaming || isWorkflowRunning}
+              style={{ marginTop: 8, width: '100%' }}
+            >
+              <CheckCircle2 size={12} /> 确认发布
+            </LoadingButton>
           </div>
         )}
 
@@ -141,65 +175,72 @@ export default function AuthorAgentPanel({
           <div className="author-agent-next-action">
             <div className="action-label">本章已发布</div>
             <div className="action-desc">可以继续生成下一章。</div>
-            <button className="btn btn-primary btn-sm" onClick={onGenerateNext} style={{ marginTop: 8, width: '100%' }}>
+            <LoadingButton
+              className="btn btn-primary btn-sm"
+              variant="primary"
+              loading={false}
+              onClick={onGenerateNext}
+              style={{ marginTop: 8, width: '100%' }}
+            >
               <Sparkles size={12} /> 生成下一章
-            </button>
+            </LoadingButton>
           </div>
         )}
 
         {!isReviewedReal && status !== 'published' && status !== 'awaiting_publish' && (
           <div className="author-agent-next-action">
             <div className="action-label">
-              {isStaleRunning ? '运行疑似卡住' : isStreaming || isWorkflowRunning ? '正在生成...' : hasContent ? '本章已有内容' : '准备生成'}
+              {isStaleRunning
+                ? '运行疑似卡住'
+                : isStreaming || isWorkflowRunning
+                  ? tWorkflowNodeNarrative(currentNode || timeline?.current_node)
+                  : hasContent
+                    ? '本章已有内容'
+                    : '准备生成'}
             </div>
             <div className="action-desc">
               {isStaleRunning
                 ? `当前运行已超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未完成，建议进入运行恢复处理。`
                 : isStreaming || isWorkflowRunning
-                ? 'AI 正在处理本章，请稍候。'
-                : hasContent
-                  ? '本章已完成生成，可以查看正文或重新生成。'
-                  : '本章尚未生成，点击下方按钮开始。'}
+                  ? getAgentActionDesc(currentNode || timeline?.current_node)
+                  : hasContent
+                    ? '本章已完成生成，可以查看正文或重新生成。'
+                    : '本章尚未生成，点击下方按钮开始。'}
             </div>
-            <button
+            <LoadingButton
               className="btn btn-primary btn-sm"
+              variant="primary"
+              loading={isStreaming || isWorkflowRunning}
+              loadingText="生成中..."
               onClick={onGenerate}
               disabled={isStreaming || isWorkflowRunning}
               style={{ marginTop: 8, width: '100%' }}
             >
-              {isStreaming || isWorkflowRunning ? (
-                <><Loader2 size={12} className="spin" /> 生成中...</>
-              ) : (
-                <><Play size={12} /> 生成本章</>
-              )}
-            </button>
+              <Play size={12} /> 生成本章
+            </LoadingButton>
             {isStaleRunning && runDetail && onMarkRunStuck && (
-              <button
+              <LoadingButton
                 className="btn btn-secondary btn-sm"
+                variant="secondary"
+                loading={!!markStuckPending}
+                loadingText="处理中..."
                 onClick={() => onMarkRunStuck(runDetail.run_id)}
-                disabled={markStuckPending}
                 style={{ marginTop: 8, width: '100%' }}
               >
-                {markStuckPending ? (
-                  <><Loader2 size={12} className="spin" /> 处理中...</>
-                ) : (
-                  <>标记为阻塞</>
-                )}
-              </button>
+                标记为阻塞
+              </LoadingButton>
             )}
             {(status === 'blocking' || status === 'revision') && runDetail && onResetRunRecovery && (
-              <button
+              <LoadingButton
                 className="btn btn-secondary btn-sm"
+                variant="secondary"
+                loading={!!resetRecoveryPending}
+                loadingText="处理中..."
                 onClick={() => onResetRunRecovery(runDetail.run_id)}
-                disabled={resetRecoveryPending}
                 style={{ marginTop: 8, width: '100%' }}
               >
-                {resetRecoveryPending ? (
-                  <><Loader2 size={12} className="spin" /> 处理中...</>
-                ) : (
-                  <>清除阻塞并重置</>
-                )}
-              </button>
+                清除阻塞并重置
+              </LoadingButton>
             )}
           </div>
         )}
@@ -258,7 +299,7 @@ export default function AuthorAgentPanel({
               {sseStepEntries.length === 0 ? (
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--wb-text-muted)' }}>
                   <span className="author-agent-status-light info pulse" />
-                  正在启动节点日志...
+                  正在启动创作流程...
                 </div>
               ) : (
                 sseStepEntries.map(([key, step]) => (
@@ -266,7 +307,9 @@ export default function AuthorAgentPanel({
                     {step.status === 'running' && <span className="author-agent-status-light info pulse" />}
                     {step.status === 'completed' && <span className="author-agent-status-light success" />}
                     {step.status === 'failed' && <span className="author-agent-status-light danger" />}
-                    <span style={{ fontSize: 11, color: 'var(--wb-text-muted)' }}>{tWorkflowNodeLabel(key)}</span>
+                    <span style={{ fontSize: 11, color: 'var(--wb-text-muted)' }}>
+                      {step.status === 'running' ? tWorkflowNodeNarrative(key) : tWorkflowNodeLabel(key)}
+                    </span>
                   </div>
                 ))
               )}
@@ -276,15 +319,17 @@ export default function AuthorAgentPanel({
 
         {/* Error */}
         {genError && (
-          <div className="author-agent-error">
-            <div style={{ fontWeight: 500, marginBottom: 2 }}>生成失败</div>
-            <div>{genError}</div>
+          <div style={{ marginTop: 8 }}>
+            <InlineMessage variant="danger">
+              <div style={{ fontWeight: 500, marginBottom: 2 }}>生成失败</div>
+              <div>{genError}</div>
+            </InlineMessage>
           </div>
         )}
 
         {runDetail?.error_message && (workflowStatus === 'failed' || workflowStatus === 'blocked') && (
-          <div className="author-agent-error">
-            {runDetail.error_message}
+          <div style={{ marginTop: 8 }}>
+            <InlineMessage variant="danger">{runDetail.error_message}</InlineMessage>
           </div>
         )}
 

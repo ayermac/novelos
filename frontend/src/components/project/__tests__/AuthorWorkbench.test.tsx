@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import AuthorWorkbench from '../AuthorWorkbench'
 
 // Mock API
@@ -1025,5 +1025,71 @@ describe('AuthorWorkbench', () => {
     )
     expect(generateBtn).toBeDefined()
     expect(generateBtn).toBeDisabled()
+  })
+
+  /* v6.5.4 Agent Process Narrative tests ----------------------------- */
+
+  it('shows node-specific narrative in agent panel when workflow is running', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        isWorkflowRunning
+        runDetail={{
+          run_id: 'run-1',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'running',
+          chapter_status: 'drafted',
+          current_node: 'author',
+          llm_mode: 'stub',
+          started_at: new Date().toISOString(),
+          steps: [],
+        }}
+      />
+    )
+    const panel = screen.getByLabelText('AI 助手面板')
+    expect(within(panel).getByText('正在撰写章节正文...')).toBeInTheDocument()
+    expect(within(panel).getByText('AI 正在根据场景规划撰写章节正文。')).toBeInTheDocument()
+  })
+
+  it('shows planner narrative when planner node is running', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        isWorkflowRunning
+        runDetail={{
+          run_id: 'run-2',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'running',
+          chapter_status: 'planned',
+          current_node: 'planner',
+          llm_mode: 'stub',
+          started_at: new Date().toISOString(),
+          steps: [],
+        }}
+      />
+    )
+    const panel = screen.getByLabelText('AI 助手面板')
+    expect(within(panel).getByText('正在规划章节结构...')).toBeInTheDocument()
+    expect(within(panel).getByText('AI 正在分析章节目标、角色关系和伏笔，规划本章结构。')).toBeInTheDocument()
+  })
+
+  it('shows streaming step narrative in agent panel', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        isStreaming
+        sseSteps={{
+          polisher: {
+            status: 'running',
+            started_at: '2026-05-13T10:00:00Z',
+            logs: [],
+          },
+        }}
+      />
+    )
+    const panel = screen.getByLabelText('AI 助手面板')
+    expect(within(panel).getByText('正在润色文字表达...')).toBeInTheDocument()
   })
 })

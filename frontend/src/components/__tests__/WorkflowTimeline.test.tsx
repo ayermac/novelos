@@ -67,4 +67,54 @@ describe('WorkflowTimeline', () => {
     expect(screen.getByText('实时工作过程')).toBeInTheDocument()
     expect(screen.getByText('生成润色差异：修改 12 处表达')).toBeInTheDocument()
   })
+
+  it('shows node-specific narrative for running steps without logs', () => {
+    render(
+      <WorkflowTimeline
+        steps={[
+          {
+            key: 'author',
+            label: '执笔',
+            description: '生成正文',
+            status: 'running',
+            logs: [],
+          },
+        ]}
+      />,
+    )
+
+    expect(screen.getByText('正在撰写章节正文...')).toBeInTheDocument()
+  })
+
+  it('shows fallback_used event with human-readable narrative label', () => {
+    render(
+      <WorkflowTimeline
+        steps={[
+          {
+            key: 'editor',
+            label: '审稿',
+            description: '审核内容',
+            status: 'completed',
+            events: [
+              {
+                id: 3,
+                node_name: 'editor',
+                event_type: 'fallback_used',
+                status: 'warning',
+                message: '审核维度不完整，使用兜底策略',
+              },
+            ],
+            evidence: {
+              has_evidence: true,
+              event_count: 1,
+            },
+          },
+        ]}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '查看过程' }))
+    expect(screen.getByText('降级兜底')).toBeInTheDocument()
+    expect(screen.getByText('审核维度不完整，使用兜底策略')).toBeInTheDocument()
+  })
 })
