@@ -49,6 +49,13 @@ function eventLabel(eventType: string): string {
   return EVENT_TYPE_LABELS[eventType] || tEventNarrative(eventType) || eventType
 }
 
+function eventMessage(ev: WorkflowExecutionEvent): string {
+  if (ev.event_type === 'llm_completed') {
+    return '模型返回完成'
+  }
+  return ev.message || ''
+}
+
 function stepStatusIcon(status: string): string {
   switch (status) {
     case 'completed':
@@ -208,7 +215,7 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
                             <span className="exec-event-dot" />
                             <span className="exec-event-main">
                               <span className="exec-event-type">{eventLabel(ev.event_type)}</span>
-                              <span className="exec-event-msg">{ev.message || ''}</span>
+                              <span className="exec-event-msg">{eventMessage(ev)}</span>
                               {isLowChange && (
                                 <span className="exec-event-warn-tag">内容几乎未变</span>
                               )}

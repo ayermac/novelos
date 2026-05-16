@@ -152,6 +152,7 @@ describe('WorkflowTimeline', () => {
     expect(eventRow).toBeTruthy()
     const metas = eventRow?.querySelector('.exec-event-metas')
     expect(metas).toBeTruthy()
+    expect(within(eventRow as HTMLElement).getByText('模型返回完成')).toBeInTheDocument()
     expect(within(metas as HTMLElement).getByText('3944 tokens')).toBeInTheDocument()
     expect(within(metas as HTMLElement).getByText('169.2s')).toBeInTheDocument()
   })
