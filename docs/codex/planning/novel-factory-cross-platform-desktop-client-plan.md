@@ -495,17 +495,55 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到“�
 
 ### v6.3：Creator Onboarding Closure
 
-状态：**候选规划**
+状态：**已实现**
 
-目标：修复从 0 到 1 创建小说的真实用户体验。创建项目后不应直接跳章节，而应进入创世设定、世界观、角色、大纲、章节规划和第一章生成的引导流程。
+目标：修复从 0 到 1 创建小说的真实用户体验。创建项目后不再直接跳章节 workflow，而是进入创作准备流程，支持一键 AI 补齐和明确的上下文就绪检查。
 
-重点：
+实现范围：
 
-- 创建小说时复用已填写的标题/类型，不重复要求用户填写。
-- 支持“全部 AI 生成”和“我自己填写一部分”两种路径。
-- 创世设定、世界观、角色、大纲、章节指令之间有清晰状态和下一步。
-- 第一章生成前必须让用户理解当前上下文是否已准备好。
-- 修正章节标题、正文标题、章节状态、质量状态的一致性。
+1. **创建后落点调整**：
+   - 项目创建成功后默认进入 `module=overview`（准备工作台），不再自动带 `chapter=1&view=workflow&auto_generate=1`。
+   - Onboarding 成功页文字已更新，明确建议先完成创世设定再生成章节。
+
+2. **章节运行 Guard 增强（后端）**：
+   - `_run_guards.py` 新增 Guard 4 `CONTEXT_INCOMPLETE`。
+   - 缺少 approved genesis / world_settings / characters / outlines / instructions 时，阻止章节 workflow 启动。
+   - 返回明确的用户可读错误，附带缺失项和修复提示。
+
+3. **production-next health 增强**：
+   - `_build_health` 新增 `ready_for_chapter_1` 布尔字段。
+   - 当且仅当 approved genesis + world + characters + outlines + instructions 全部存在时为 `true`。
+
+4. **GenesisModule 体验优化**：
+   - `premise`（创意/前提）改为可选字段，允许留空让 AI 自动推断。
+   - 标签和 helper 文案已更新，明确说明"可留空"。
+   - 已继承的项目基础信息（标题、类型、全书规模）继续显示为只读上下文。
+   - "首批规划章数" 和 "首批规划字数" 的 helper 文案已存在，保持不变。
+
+5. **ProjectOverview 主动作调整**：
+   - `generate_chapter` 的 primary action 不再导航到 `auto_generate=1`。
+   - 改为只导航到章节内容页，让用户手动点击"生成"。
+   - `auto_generate` URL 参数的自动触发 effect 已移除。
+
+6. **默认章节标题改进**：
+   - `onboarding.py` 创建章节时默认标题从 `第 N 章` 改为 `第 N 章（待命名）`。
+   - 避免用户看到无意义的默认标题。
+
+验收标准：
+
+- 新项目 production-next 返回 `generate_genesis`，不是 `generate_chapter`。
+- 缺少 context 时调用 `/run/chapter` 返回 `CONTEXT_INCOMPLETE` 错误。
+- context ready 后 production-next 返回 `generate_chapter`，且 `ready_for_chapter_1=true`。
+- 前端 `auto_generate` 不再自动触发 workflow。
+- Genesis premise 可留空生成。
+- 创建项目后默认标题包含"待命名"。
+
+非目标：
+
+- 不做营销 landing page。
+- 不做大卡片堆叠式 UI。
+- 不改动创作主流程 Agent 节点。
+- 不改后端数据库 schema。
 
 ### v6.4：Agent Evidence UX Closure
 

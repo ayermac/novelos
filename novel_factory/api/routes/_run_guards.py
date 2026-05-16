@@ -40,6 +40,8 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
 
     Guard 1: WORKFLOW_ALREADY_RUNNING — a running workflow_run already exists.
     Guard 2: CHAPTER_ALREADY_COMPLETED — the chapter is in a terminal status.
+    Guard 3: CHAPTER_HAS_EXISTING_CONTENT — planned chapter already has content.
+    Guard 4: CONTEXT_INCOMPLETE — project context missing (genesis/world/characters/outlines/instructions).
     """
     # Guard 1: Terminal status check. Terminal chapter state wins over stale
     # running workflow rows; reconcile first so UI/health endpoints stop
@@ -103,6 +105,48 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
                 "run_id": running_run.get("id"),
                 "current_node": running_run.get("current_node"),
                 "started_at": running_run.get("started_at"),
+            },
+        )
+
+    # Guard 4: Context completeness check
+    # Projects must have approved genesis + world settings + characters + outlines + instructions
+    # before any chapter workflow can start. This prevents users from accidentally generating
+    # chapters without proper creative context.
+    latest_genesis = repo.get_latest_genesis_run(project_id)
+    has_approved_genesis = latest_genesis is not None and latest_genesis.get("status") == "approved"
+    has_world = len(repo.list_world_settings(project_id)) > 0
+    has_chars = len(repo.list_characters(project_id, include_inactive=True)) > 0
+    has_outlines = len(repo.list_outlines(project_id)) > 0
+    instruction = repo.get_instruction_by_chapter(project_id, chapter_number)
+    has_instruction = instruction is not None and bool(instruction.get("objective"))
+
+    if not has_approved_genesis:
+        return RunGuardError(
+            "CONTEXT_INCOMPLETE",
+            "项目创世设定尚未批准。请先完成创世设定审核，或补齐项目资料后再生成章节。",
+            details={
+                "missing": ["genesis"],
+                "hint": "generate_genesis",
+            },
+        )
+
+    missing_context = []
+    if not has_world:
+        missing_context.append("世界观")
+    if not has_chars:
+        missing_context.append("角色")
+    if not has_outlines:
+        missing_context.append("大纲")
+    if not has_instruction:
+        missing_context.append(f"第{chapter_number}章写作指令")
+
+    if missing_context:
+        return RunGuardError(
+            "CONTEXT_INCOMPLETE",
+            f"项目资料不完整，缺少：{', '.join(missing_context)}。请先补齐资料后再生成章节。",
+            details={
+                "missing": missing_context,
+                "hint": "generate_missing_context",
             },
         )
 

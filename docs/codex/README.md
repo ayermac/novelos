@@ -18,8 +18,9 @@
 - **当前创作者闭环基线**: v5.7 Daily Writing Editing and Versioning
 - **当前 Agent 可审计基线**: v6.1 Agent Work Process Streaming & Auditable Execution Evidence
 - **当前桌面客户端基线**: v6.2.5 Desktop Release Readiness Checklist
-- **当前下一步**: v6.3 Creator Onboarding Closure
-- **状态**: 桌面客户端已完成 macOS 打包验证、首次启动真实 LLM 配置、安全 API Key 存储、sidecar 健康监控/重启、启动失败诊断页、诊断包导出、verification-report.json、release manifest、发布清单与版本规则；下一步回到创作主流程，补齐从 0 到 1 的创作者 onboarding 闭环
+- **当前创作者闭环基线**: v6.3 Creator Onboarding Closure
+- **当前下一步**: v6.4 Agent Evidence UX Closure
+- **状态**: v6.3 已完成：项目创建后不再自动跳转 chapter workflow，新增 CONTEXT_INCOMPLETE 运行 guard，production-next 返回 `ready_for_chapter_1`，Genesis premise 改为可选，默认章节标题增加"待命名"，移除 `auto_generate` 自动触发。下一步进入 Agent 执行证据 UX。
 - **测试基线**: v6.2.4 验收通过：desktop typecheck/build passed；frontend typecheck/lint/build passed；frontend vitest 169/169 passed；`scripts/verify.py smoke` passed；`test_v66_desktop_secure_keys.py` 9/9 passed；`verify-desktop-mac.sh` 7/7 passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)

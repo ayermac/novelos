@@ -140,7 +140,8 @@ export default function ProjectDetail() {
   const currentChapter = parseInt(searchParams.get('chapter') || '1', 10)
   const activeModule: ProjectModule = resolveProjectModule(searchParams)
   const requestedView = searchParams.get('view') as TabKey | null
-  const requestedAutoGenerate = searchParams.get('auto_generate') === '1'
+  // v6.3: auto_generate URL param is no longer auto-triggered.
+  // Chapter generation must be explicitly initiated by the user after reviewing context readiness.
 
   const error = wsError?.message || ''
 
@@ -400,16 +401,11 @@ export default function ProjectDetail() {
     handleOpenChapterView(currentChapter, 'content')
   }, [currentChapter, handleOpenChapterView])
 
-  useEffect(() => {
-    if (requestedView !== 'workflow' || !requestedAutoGenerate) return
-    if (!id || !workspace || generating || isStreaming) return
-    // Guard: don't auto-generate if chapter already has a running workflow
-    const hasRunningRun = workspace.recent_runs?.some(
-      (r) => r.chapter_number === currentChapter && r.status === 'running'
-    )
-    if (hasRunningRun) return
-    handleGenerate()
-  }, [requestedView, requestedAutoGenerate, id, generating, isStreaming, handleGenerate, workspace, currentChapter])
+  // v6.3: Removed auto_generate effect. Auto-triggering chapter generation on page load
+  // is dangerous because the user may not have reviewed context readiness.
+  // The primary action in ProjectOverviewModule now navigates to the chapter page
+  // without auto_generate, and the user explicitly clicks "生成" after review.
+  // Backend run guards (CONTEXT_INCOMPLETE) provide the final safety net.
 
   const handlePublishChapter = useCallback(async (chapterNumber: number) => {
     if (!id || publishPending) return

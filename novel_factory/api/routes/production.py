@@ -453,14 +453,31 @@ def _build_health(repo, project_id: str, current_chapter: int) -> dict:
         )
     title_alignment = evaluate_title_alignment(project, context_items)
 
+    has_approved_genesis = latest_genesis is not None and latest_genesis.get("status") == "approved"
+    has_world = len(world_settings) > 0
+    has_chars = len(characters) > 0
+    has_outlines_ok = len(outlines) > 0
+    has_instruction = instruction is not None and bool(instruction.get("objective"))
+
+    # v6.3: ready_for_chapter_1 is the single source of truth for whether
+    # chapter generation can proceed without hitting run guards.
+    ready_for_chapter_1 = (
+        has_approved_genesis
+        and has_world
+        and has_chars
+        and has_outlines_ok
+        and has_instruction
+    )
+
     return {
         "has_project": project is not None,
         "has_genesis": latest_genesis is not None,
-        "has_approved_genesis": latest_genesis is not None and latest_genesis.get("status") == "approved",
-        "has_world_settings": len(world_settings) > 0,
-        "has_characters": len(characters) > 0,
-        "has_outlines": len(outlines) > 0,
-        "has_instructions_for_current_chapter": instruction is not None and bool(instruction.get("objective")),
+        "has_approved_genesis": has_approved_genesis,
+        "has_world_settings": has_world,
+        "has_characters": has_chars,
+        "has_outlines": has_outlines_ok,
+        "has_instructions_for_current_chapter": has_instruction,
+        "ready_for_chapter_1": ready_for_chapter_1,
         "has_pending_memory_updates": _has_pending_memory_updates(repo, project_id),
         "has_blocking_chapter": _get_blocking_chapter(repo, project_id) is not None,
         "has_stuck_run": _get_stuck_run(repo, project_id, current_chapter) is not None,

@@ -220,6 +220,13 @@ def test_planned_chapter_with_existing_content_can_run_after_explicit_reset():
         repo.add_chapter(project_id, 1, "第一章", status="planned")
         repo.save_chapter(project_id, 1, "第一章", "恢复后保留的正文" * 20, 160, "planned")
 
+        # v6.3: context completeness guard requires approved genesis + world + characters + outlines + instructions
+        repo.create_genesis_run(project_id, input_json='{"title":"test"}', status="approved")
+        repo.create_world_setting(project_id, category="世界观", title="背景", content="test")
+        repo.create_character(project_id, name="主角", role="protagonist", description="test", traits="", first_appearance=1)
+        repo.create_outline(project_id, level="volume", sequence=1, title="第一卷", content="test", chapters_range="1-10")
+        repo.create_instruction(project_id, chapter_number=1, objective="test", key_events="test")
+
         run_id = repo.create_workflow_run(project_id, 1)
         repo.update_workflow_run(run_id, status="blocked", current_node="human_review")
         repo.mark_blocked_workflow_runs_recovered_for_chapter(project_id, 1, run_id=run_id)

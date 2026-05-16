@@ -85,7 +85,7 @@ export default function GenesisModule({ projectId, project }: Props) {
     const errors: Record<string, string> = {}
     if (!projectTitle) errors.title = '项目标题缺失，请先在项目设置中补齐'
     if (!projectGenre) errors.genre = '作品类型缺失，请先在项目设置中补齐'
-    if (!form.premise.trim()) errors.premise = '请填写故事核心创意'
+    // v6.3: premise is now optional — AI can generate it from title + genre + description
     if (!Number.isFinite(form.target_chapters) || form.target_chapters < 1) errors.target_chapters = '首批规划章数必须大于 0'
     if (!Number.isFinite(form.target_words) || form.target_words < 1) errors.target_words = '首批规划字数必须大于 0'
     setFormErrors(errors)
@@ -227,14 +227,14 @@ export default function GenesisModule({ projectId, project }: Props) {
             </div>
           )}
           <div className="form-grid">
-            <FormField label="创意/前提" required error={formErrors.premise} className="form-full">
+            <FormField label="创意/前提" helper="可留空，AI 会根据书名和类型自动推断故事前提" error={formErrors.premise} className="form-full">
               <TextArea
                 value={form.premise}
                 onChange={(e) => {
                   setForm({ ...form, premise: e.target.value })
                   if (formErrors.premise) setFormErrors({ ...formErrors, premise: '' })
                 }}
-                placeholder="描述你的故事核心创意..."
+                placeholder="描述你的故事核心创意（可选，留空让 AI 自动推断）..."
                 rows={3}
               />
             </FormField>
