@@ -433,6 +433,150 @@ Desktop App
 - Settings 和 runtime banner 都能触发诊断导出。
 - `verify-desktop-mac.sh` 成功或失败时都产出 `verification-report.json`。
 
+### v6.2.5：桌面发布准备清单
+
+状态：**已实现**
+
+目标：把当前 macOS 桌面客户端从“能打包验收”推进到“可被稳定发布和复验”。本版本不做代码签名、公证、自动更新，也不扩展 Windows/Linux；重点是发布前清单、版本规则、release manifest、安装/升级/卸载说明和机器可读验收产物。
+
+实现范围：
+
+1. **Release Checklist 文档**：
+   - 新增 `docs/codex/release/desktop-release-checklist.md`。
+   - 覆盖发布前环境要求、Git 状态检查、必跑验证命令、macOS 打包命令、首次启动验收、诊断包验收、API key 脱敏检查、真实 LLM 可选验收、残留进程检查、发布产物路径。
+   - 明确 blocker / warning 分类。
+   - 补回滚与清理说明。
+
+2. **Versioning Policy**：
+   - 新增 `docs/codex/release/desktop-versioning-policy.md`。
+   - 说明 `desktop/package.json` version、`/api/desktop/runtime-info.version`、文档版本标识的同步规则。
+   - 约定 release tag 命名建议。
+   - 约定 commit hash 必须进入 verification report / release manifest。
+   - 明确 `package-lock.json` 版本同步要求。
+
+3. **Release Manifest**：
+   - 新增 `packaging/scripts/write-desktop-release-manifest.sh`。
+   - 生成 `desktop/release/release-manifest.json`。
+   - manifest 包含 schema version、generated_at、commit、branch、desktop_version、platform、app bundle、dmg（可为空）、sidecar binary、verification report、关键存在性检查。
+   - 不提交 release 构建产物，只提交脚本和文档。
+
+4. **Verification Report 增强**：
+   - `packaging/scripts/verify-desktop-mac.sh` 的 `verification-report.json` 增加 commit、branch、desktop_version、app_bundle_exists、sidecar_binary_exists。
+   - 成功路径仍为 `status: passed`。
+   - 失败路径仍能写 report。
+   - 不破坏现有 PASS/FAIL 输出格式。
+
+5. **文档索引更新**：
+   - 更新 `desktop/README.md`，新增 Release Readiness 章节。
+   - 更新 `docs/codex/README.md`。
+   - 当前文档标记 v6.2.5 范围与非目标。
+
+验收标准：
+
+- `bash -n packaging/scripts/verify-desktop-mac.sh` 通过。
+- `bash -n packaging/scripts/write-desktop-release-manifest.sh` 通过。
+- desktop typecheck/build 通过。
+- frontend typecheck/lint 通过。
+- `python3 scripts/verify.py smoke` 通过。
+- 若本地 PyInstaller 可用，`bash packaging/scripts/verify-desktop-mac.sh` 和 release manifest 生成脚本均通过。
+- 产物 manifest 和 verification report 可被 release checklist 引用。
+
+非目标：
+
+- 不做 macOS signing/notarization。
+- 不做自动更新。
+- 不做 Windows/Linux 打包实现。
+- 不改变桌面运行时架构。
+- 不改创作主流程。
+
+## 客户端完成态后续路线
+
+v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到“用户安装后能不能真正完成一本小说”的产品闭环。建议后续版本如下：
+
+### v6.3：Creator Onboarding Closure
+
+状态：**候选规划**
+
+目标：修复从 0 到 1 创建小说的真实用户体验。创建项目后不应直接跳章节，而应进入创世设定、世界观、角色、大纲、章节规划和第一章生成的引导流程。
+
+重点：
+
+- 创建小说时复用已填写的标题/类型，不重复要求用户填写。
+- 支持“全部 AI 生成”和“我自己填写一部分”两种路径。
+- 创世设定、世界观、角色、大纲、章节指令之间有清晰状态和下一步。
+- 第一章生成前必须让用户理解当前上下文是否已准备好。
+- 修正章节标题、正文标题、章节状态、质量状态的一致性。
+
+### v6.4：Agent Evidence UX Closure
+
+状态：**候选规划**
+
+目标：让用户能看懂并信任每个 Agent 的工作过程。当前 v6.1 已有执行事件基础，v6.4 要把它产品化成可审计的创作证据链。
+
+重点：
+
+- 每个 Agent 展示输入摘要、输出摘要、工具调用、Skill 检查、memory 读写、LLM 请求状态。
+- Author/Polisher 显示生成或改写差异。
+- Editor 显示审核维度、返修依据、通过/失败证据。
+- 明确标出 fallback、跳过、低变化返修、超时、无 LLM 请求等异常状态。
+- 支持长连接实时刷新，不让用户只看到“运行中/完成”。
+
+### v6.5：Structured Memory Canonicalization
+
+状态：**候选规划**
+
+目标：先把结构化记忆、事实、伏笔、角色状态做准。角色事实、世界观设定、伏笔位置、时间线事件不依赖向量检索作为真相来源。
+
+重点：
+
+- 明确 canonical source：story facts、agent memory、memory updates、foreshadowing、characters、world settings。
+- 给事实增加 entity、source chapter/version、source span、confidence、status。
+- Memory 写入需要可确认、可编辑、可禁用、可删除。
+- Agent 使用事实时必须在 trace 中显示引用来源。
+- Editor 能指出违反了哪个事实或伏笔状态。
+
+### v6.6：Author Editing & Revision Closure
+
+状态：**候选规划**
+
+目标：把人工编辑、AI 改写、返修、版本 diff、回滚做成顺滑作者工作流。
+
+重点：
+
+- 章节正文可持续人工编辑。
+- AI 生成、润色、返修、局部改写都产生版本。
+- 支持 diff、回滚、局部替换。
+- 返修意见能明确进入 Author/Polisher 的下一轮上下文。
+- 人工写作和 AI 协作之间切换自然。
+
+### v6.7：Desktop Distribution Closure
+
+状态：**候选规划**
+
+目标：让客户端达到可对外分发的发布级状态。
+
+重点：
+
+- macOS signing / notarization。
+- DMG 发布验证。
+- 安装、升级、卸载、数据迁移路径明确。
+- 发布产物校验和 release checklist 强制执行。
+- Windows/Linux 打包进入后续分支或并行规划。
+
+### v6.8：Reference Library + Genre/Style RAG
+
+状态：**候选规划**
+
+目标：建立“参考作品研究系统”，用于题材研究、结构分析和风格样本检索。该功能不用于复制或复写他人作品。
+
+重点：
+
+- 用户导入自己有权使用的 TXT/EPUB/Markdown/样本资料。
+- 记录 source、license/right note、allowed use。
+- Reference Analyst Agent 输出抽象分析：题材套路、章节节奏、冲突模式、角色原型、章节钩子、语言风格。
+- 向量检索仅用于风格/氛围/节奏相似样本召回，不作为角色事实、伏笔、设定的真相来源。
+- 增加原创性保护：相似片段告警、n-gram 重合检测、引用来源可见。
+
 ### M6：跨平台 CI 与发布流水线
 
 目标：让 macOS、Windows、Linux 可重复构建。

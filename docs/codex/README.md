@@ -16,9 +16,11 @@
 - **生产稳定基线**: v5.5.15 Production Readiness Closure
 - **当前 WebUI 基线**: v5.6.1 Workbench Stabilization
 - **当前创作者闭环基线**: v5.7 Daily Writing Editing and Versioning
-- **当前稳定版本**: v6.1 Agent Work Process Streaming & Auditable Execution Evidence candidate
-- **状态**: v6.1 已接入 Agent 工作过程直播、节点证据校验与历史回放；二次 Review 已修复 SSE 接入、历史 run 回放、MemoryCurator 证据误判和折叠态证据可见性问题
-- **测试基线**: v6.1 targeted pytest 24/24 passed；v5.8 + agent tests 52/52 passed；smoke passed；vitest 153/153 passed；frontend typecheck/lint/build passed
+- **当前 Agent 可审计基线**: v6.1 Agent Work Process Streaming & Auditable Execution Evidence
+- **当前桌面客户端基线**: v6.2.5 Desktop Release Readiness Checklist
+- **当前下一步**: v6.3 Creator Onboarding Closure
+- **状态**: 桌面客户端已完成 macOS 打包验证、首次启动真实 LLM 配置、安全 API Key 存储、sidecar 健康监控/重启、启动失败诊断页、诊断包导出、verification-report.json、release manifest、发布清单与版本规则；下一步回到创作主流程，补齐从 0 到 1 的创作者 onboarding 闭环
+- **测试基线**: v6.2.4 验收通过：desktop typecheck/build passed；frontend typecheck/lint/build passed；frontend vitest 169/169 passed；`scripts/verify.py smoke` passed；`test_v66_desktop_secure_keys.py` 9/9 passed；`verify-desktop-mac.sh` 7/7 passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
@@ -45,6 +47,9 @@
 - **v6.1 Agent Work Process Streaming 规格**: [planning/novel-factory-v6.1-agent-work-process-streaming-spec.md](planning/novel-factory-v6.1-agent-work-process-streaming-spec.md)
 - **v6.1 完成报告**: [reports/novel-factory-v6.1-completion-report.md](reports/novel-factory-v6.1-completion-report.md)
 - **v6.1 Review 记录**: [reviews/novel-factory-v6.1-review.md](reviews/novel-factory-v6.1-review.md)
+- **桌面客户端规划**: [planning/novel-factory-cross-platform-desktop-client-plan.md](planning/novel-factory-cross-platform-desktop-client-plan.md)
+- **v6.2 Desktop Client 完成报告**: [reports/novel-factory-v6.2-desktop-client-completion-report.md](reports/novel-factory-v6.2-desktop-client-completion-report.md)
+- **v6.2 Desktop Client Review 记录**: [reviews/novel-factory-v6.2-desktop-client-review.md](reviews/novel-factory-v6.2-desktop-client-review.md)
 
 ## 当前执行规则
 
@@ -69,6 +74,7 @@
 - v5.9.2 UI 控件统一规格: [planning/novel-factory-v5.9.2-ui-controls-standardization-spec.md](planning/novel-factory-v5.9.2-ui-controls-standardization-spec.md)
 - v5.9.3 Agent Skill Expansion 规格: [planning/novel-factory-v5.9.3-agent-skill-expansion-spec.md](planning/novel-factory-v5.9.3-agent-skill-expansion-spec.md)
 - v6.0 Agent Role Capability System 规格: [planning/novel-factory-v6.0-agent-role-capability-system-spec.md](planning/novel-factory-v6.0-agent-role-capability-system-spec.md)
+- 桌面客户端规划: [planning/novel-factory-cross-platform-desktop-client-plan.md](planning/novel-factory-cross-platform-desktop-client-plan.md)
 - v5.6 完成报告: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
 - v5.6 Review: [reviews/novel-factory-v5.6-author-workbench-review.md](reviews/novel-factory-v5.6-author-workbench-review.md)
 - 下一阶段方向: [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)
@@ -83,9 +89,10 @@ v5.5.15 和 v5.6 Phase 1 完成后，下一阶段不优先展开多租户、企�
 
 近期优先级：
 
-1. 质量门禁产品化：把硬阻塞和建议改进拆开，避免真实创作被软指标卡死。
-2. 创作者资料库 / RAG。
-3. 导出与发布流水线。
+1. v6.2.5 桌面发布准备：release checklist、version policy、release manifest、安装/升级/卸载说明。
+2. v6.3 从 0 到 1 创作体验闭环：创建小说后进入创世设定、世界观、角色、大纲、章节规划，而不是直接跳章节。
+3. v6.4 Agent 执行证据 UX：把 Agent 输入、输出、工具调用、Skill、Memory、diff、审核依据做成用户能看懂的过程直播。
+4. v6.5 结构化记忆与事实证据链：先把角色、世界观、伏笔、时间线做准；向量/RAG 后续只用于风格和参考作品检索。
 
 详细方向见 [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)。
 

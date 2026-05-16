@@ -12,6 +12,9 @@
 #   5. Smoke-test frozen sidecar
 #   6. Smoke-test packaged desktop app
 #
+# Outputs:
+#   - desktop/release/verification-report.json (machine-readable)
+#
 # Prerequisites:
 #   - Node.js 18+, npm
 #   - Python 3.9+, pyinstaller
@@ -44,6 +47,15 @@ esac
 # electron-builder --mac --dir writes to release/mac-<arch>/Novelos.app
 APP_DIR="$REPO_ROOT/desktop/release/mac-$ARCH/Novelos.app"
 REPORT_PATH="$REPO_ROOT/desktop/release/verification-report.json"
+SIDECAR_PATH="$REPO_ROOT/desktop/resources/sidecar/$ARCH_KEY/novelos-sidecar"
+
+# ── Git / version info ──────────────────────────────────────────
+COMMIT="$(git rev-parse HEAD 2>/dev/null || echo "unknown")"
+BRANCH="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+if [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+    BRANCH="${BRANCH}-dirty"
+fi
+DESKTOP_VERSION="$(node -p "require('./desktop/package.json').version" 2>/dev/null || echo "unknown")"
 
 # ── Helpers ─────────────────────────────────────────────────────
 step() {
@@ -70,6 +82,10 @@ FAIL=0
 write_report() {
     local status="$1"
     local message="${2:-}"
+    local app_exists="false"
+    local sidecar_exists="false"
+    if [ -d "$APP_DIR" ]; then app_exists="true"; fi
+    if [ -f "$SIDECAR_PATH" ]; then sidecar_exists="true"; fi
     mkdir -p "$REPO_ROOT/desktop/release"
     cat > "$REPORT_PATH" <<EOF
 {
@@ -78,6 +94,9 @@ write_report() {
   "message": "$message",
   "generated_at": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
   "platform": "$ARCH_KEY",
+  "commit": "$COMMIT",
+  "branch": "$BRANCH",
+  "desktop_version": "$DESKTOP_VERSION",
   "counts": {
     "passed": $PASS,
     "skipped": $SKIP,
@@ -86,6 +105,10 @@ write_report() {
   "paths": {
     "app_bundle": "$APP_DIR",
     "sidecar_binary": "desktop/resources/sidecar/$ARCH_KEY/novelos-sidecar"
+  },
+  "checks": {
+    "app_bundle_exists": $app_exists,
+    "sidecar_binary_exists": $sidecar_exists
   }
 }
 EOF

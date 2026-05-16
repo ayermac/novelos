@@ -314,6 +314,56 @@ Navigate to **配置中心 → 桌面运行时 → 桌面配置 → API Key 安�
 - **No menu bar customization**: Uses default Electron menus.
 - **No automatic sidecar restart after key changes**: Requires app restart.
 
+## Release Readiness (v6.2.5)
+
+v6.2.5 adds release checklist, versioning policy, release manifest, and enhanced verification report. It does **not** add code signing, notarization, auto-update, or Windows/Linux packaging.
+
+### Release checklist
+
+See [`docs/codex/release/desktop-release-checklist.md`](../docs/codex/release/desktop-release-checklist.md) for the full pre-release checklist.
+
+### Versioning policy
+
+See [`docs/codex/release/desktop-versioning-policy.md`](../docs/codex/release/desktop-versioning-policy.md) for desktop version numbering rules and sync requirements.
+
+### Verification report
+
+`packaging/scripts/verify-desktop-mac.sh` generates:
+
+```text
+desktop/release/verification-report.json
+```
+
+New fields since v6.2.5:
+- `commit` — full Git SHA
+- `branch` — current branch name (appends `-dirty` if working tree is not clean)
+- `desktop_version` — from `desktop/package.json`
+- `checks.app_bundle_exists` — boolean
+- `checks.sidecar_binary_exists` — boolean
+
+### Release manifest
+
+After `verify-desktop-mac.sh` completes, generate the release manifest:
+
+```bash
+bash packaging/scripts/write-desktop-release-manifest.sh
+```
+
+This writes:
+
+```text
+desktop/release/release-manifest.json
+```
+
+The manifest contains:
+- `commit`, `branch`, `desktop_version`, `platform`
+- `artifacts.app_bundle`, `artifacts.dmg` (or `null`), `artifacts.sidecar_binary`, `artifacts.verification_report`
+- `checks` for existence of app bundle, sidecar binary, and verification report
+
+**Difference from verification report:**
+- `verification-report.json` is produced by the verification script and records the outcome of the 6-step build/test pipeline.
+- `release-manifest.json` is produced by a separate script and describes the final artifacts present in `desktop/release/`. It is intended for CI ingestion and release tagging.
+
 ## Runtime Stability and Recovery (M5)
 
 M5 focuses on runtime reliability, health monitoring, sidecar crash recovery, and diagnostics.
