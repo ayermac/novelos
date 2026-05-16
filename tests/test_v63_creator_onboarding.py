@@ -9,6 +9,7 @@ Verify that:
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 
@@ -218,3 +219,57 @@ class TestGenesisEmptyPremise:
         data = res.json()
         assert data["ok"] is True
         assert data["data"]["status"] == "generated"
+
+
+class TestGenesisApproveLooseDraft:
+    """Genesis approval tolerates loose real-LLM draft item shapes."""
+
+    def test_approve_string_items_succeeds(self, client_with_repo):
+        """String items in genesis draft arrays should be coerced, not crash."""
+        client, repo, db_path = client_with_repo
+        project_id = "v63-loose-draft"
+        res = client.post("/api/onboarding/projects", json={
+            "project_id": project_id,
+            "name": "Loose Draft Test",
+            "genre": "fantasy",
+            "description": "test",
+            "total_chapters_planned": 10,
+            "target_words": 30000,
+            "initial_chapter_count": 1,
+        })
+        assert res.status_code == 200, res.text
+
+        draft = {
+            "project_updates": "一座潮汐港口正在等待失忆守夜人。",
+            "world_settings": ["天空城漂浮在海面上"],
+            "characters": ["主角是失忆的守夜人"],
+            "factions": ["潮汐议会掌控港口"],
+            "outlines": ["第一卷讲述主角找到灯塔"],
+            "plot_holes": ["灯塔钥匙为何失踪"],
+            "instructions": ["第一章写主角抵达港口"],
+        }
+        genesis = repo.create_genesis_run(project_id, input_json="{}", status="running")
+        repo.update_genesis_run(genesis["id"], {
+            "status": "generated",
+            "draft_json": json.dumps(draft, ensure_ascii=False),
+        })
+
+        res = client.post(f"/api/projects/{project_id}/genesis/{genesis['id']}/approve")
+        assert res.status_code == 200, res.text
+        data = res.json()
+        assert data["ok"] is True, data
+        applied = data["data"]["applied"]
+        assert applied["project_updated"] is True
+        assert applied["world_settings_created"] == 1
+        assert applied["characters_created"] == 1
+        assert applied["factions_created"] == 1
+        assert applied["outlines_created"] == 1
+        assert applied["plot_holes_created"] == 1
+        assert applied["instructions_created"] == 1
+
+        assert "天空城" in repo.list_world_settings(project_id)[0]["content"]
+        assert "守夜人" in repo.list_characters(project_id)[0]["description"]
+        assert "潮汐议会" in repo.list_factions(project_id)[0]["description"]
+        assert "灯塔" in repo.list_outlines(project_id)[0]["content"]
+        assert "灯塔钥匙" in repo.list_plot_holes(project_id)[0]["description"]
+        assert "抵达港口" in repo.list_instructions(project_id)[0]["objective"]

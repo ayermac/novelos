@@ -196,6 +196,141 @@ def _as_text(value) -> str:
     return str(value)
 
 
+def _as_list(value) -> list:
+    """Normalize free-form LLM list output into a list."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    return [value]
+
+
+def _as_int(value, fallback: int) -> int:
+    """Normalize LLM numeric fields into an int."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def _short_title(text: str, fallback: str, limit: int = 24) -> str:
+    """Create a compact title from free-form text."""
+    clean = " ".join(_as_text(text).split())
+    if not clean:
+        return fallback
+    return clean[:limit]
+
+
+def _coerce_world_setting(item, index: int) -> dict | None:
+    if isinstance(item, dict):
+        title = _as_text(item.get("title", "")) or f"世界设定 {index}"
+        return {
+            "title": title,
+            "category": _as_text(item.get("category", "其他")) or "其他",
+            "content": _as_text(item.get("content", "")),
+        }
+    text = _as_text(item).strip()
+    if not text:
+        return None
+    return {"title": _short_title(text, f"世界设定 {index}"), "category": "其他", "content": text}
+
+
+def _coerce_character(item, index: int) -> dict | None:
+    if isinstance(item, dict):
+        name = _as_text(item.get("name", "")) or f"角色 {index}"
+        return {
+            **item,
+            "name": name,
+            "role": _normalize_character_role(_as_text(item.get("role", "supporting"))),
+            "description": _as_text(item.get("description", "")),
+            "traits": _as_text(item.get("traits", "")),
+        }
+    text = _as_text(item).strip()
+    if not text:
+        return None
+    return {
+        "name": _short_title(text, f"角色 {index}", limit=12),
+        "role": "supporting",
+        "description": text,
+        "traits": "",
+    }
+
+
+def _coerce_named_item(item, index: int, fallback_prefix: str) -> dict | None:
+    if isinstance(item, dict):
+        return item
+    text = _as_text(item).strip()
+    if not text:
+        return None
+    return {
+        "name": _short_title(text, f"{fallback_prefix} {index}", limit=16),
+        "type": "",
+        "description": text,
+        "relationship_with_protagonist": "",
+    }
+
+
+def _coerce_outline(item, index: int) -> dict | None:
+    if isinstance(item, dict):
+        return {
+            **item,
+            "level": _as_text(item.get("level", "arc")) or "arc",
+            "sequence": _as_int(item.get("sequence"), index),
+            "title": _as_text(item.get("title", "")) or f"大纲 {index}",
+            "content": _as_text(item.get("content", "")),
+            "chapters_range": _as_text(item.get("chapters_range", "")),
+        }
+    text = _as_text(item).strip()
+    if not text:
+        return None
+    return {
+        "level": "arc",
+        "sequence": index,
+        "title": _short_title(text, f"大纲 {index}"),
+        "content": text,
+        "chapters_range": "",
+    }
+
+
+def _coerce_plot_hole(item, index: int) -> dict | None:
+    if isinstance(item, dict):
+        code = _as_text(item.get("code", "")) or f"PH-{index:03d}"
+        return {
+            **item,
+            "code": code,
+            "type": _as_text(item.get("type", "")),
+            "title": _as_text(item.get("title", "")) or code,
+            "description": _as_text(item.get("description", "")),
+            "status": _normalize_plot_status(_as_text(item.get("status", "planted"))),
+        }
+    text = _as_text(item).strip()
+    if not text:
+        return None
+    code = f"PH-{index:03d}"
+    return {"code": code, "type": "", "title": _short_title(text, code), "description": text, "status": "planted"}
+
+
+def _coerce_instruction(item, index: int) -> dict | None:
+    if isinstance(item, dict):
+        chapter_number = _as_int(item.get("chapter_number"), index)
+        return {
+            **item,
+            "chapter_number": chapter_number,
+            "objective": _as_text(item.get("objective", "")),
+            "key_events": _as_text(item.get("key_events", "")),
+            "emotion_tone": _as_text(item.get("emotion_tone", "")),
+        }
+    text = _as_text(item).strip()
+    if not text:
+        return None
+    return {
+        "chapter_number": index,
+        "objective": text,
+        "key_events": text,
+        "emotion_tone": "",
+    }
+
+
 def _normalize_character_role(role: str | None) -> str:
     """Map real LLM Chinese role labels to canonical character roles."""
     role_text = (role or "").strip().lower()
@@ -308,6 +443,8 @@ def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
 
     # Update project description
     project_updates = draft.get("project_updates", {})
+    if not isinstance(project_updates, dict):
+        project_updates = {"description": _as_text(project_updates)}
     if project_updates.get("description"):
         repo.update_project(project_id, description=project_updates["description"])
         applied["project_updated"] = True
@@ -315,7 +452,10 @@ def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
     # World settings - upsert by title
     existing_ws = repo.list_world_settings(project_id)
     ws_by_title = {w["title"]: w for w in existing_ws}
-    for ws in draft.get("world_settings", []):
+    for idx, raw_ws in enumerate(_as_list(draft.get("world_settings", [])), start=1):
+        ws = _coerce_world_setting(raw_ws, idx)
+        if not ws:
+            continue
         title = ws.get("title", "")
         if title in ws_by_title:
             repo.update_world_setting(project_id, ws_by_title[title]["id"], ws)
@@ -331,7 +471,10 @@ def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
     # Characters - upsert by name
     existing_chars = repo.list_characters(project_id)
     char_by_name = {c["name"]: c for c in existing_chars}
-    for ch in draft.get("characters", []):
+    for idx, raw_ch in enumerate(_as_list(draft.get("characters", [])), start=1):
+        ch = _coerce_character(raw_ch, idx)
+        if not ch:
+            continue
         name = ch.get("name", "")
         char_data = {
             **ch,
@@ -354,7 +497,10 @@ def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
     # Factions - upsert by name
     existing_factions = repo.list_factions(project_id)
     fac_by_name = {f["name"]: f for f in existing_factions}
-    for f in draft.get("factions", []):
+    for idx, raw_f in enumerate(_as_list(draft.get("factions", [])), start=1):
+        f = _coerce_named_item(raw_f, idx, "势力")
+        if not f:
+            continue
         name = f.get("name", "")
         if name in fac_by_name:
             repo.update_faction(project_id, fac_by_name[name]["id"], f)
@@ -371,7 +517,10 @@ def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
     # Outlines - upsert by (level, sequence)
     existing_outlines = repo.list_outlines(project_id)
     outline_by_key = {(o.get("level", ""), o.get("sequence", 0)): o for o in existing_outlines}
-    for o in draft.get("outlines", []):
+    for idx, raw_o in enumerate(_as_list(draft.get("outlines", [])), start=1):
+        o = _coerce_outline(raw_o, idx)
+        if not o:
+            continue
         key = (o.get("level", "arc"), o.get("sequence", 0))
         if key in outline_by_key:
             repo.update_outline(project_id, outline_by_key[key]["id"], o)
@@ -389,7 +538,10 @@ def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
     # Plot holes - upsert by code
     existing_phs = repo.list_plot_holes(project_id)
     ph_by_code = {p["code"]: p for p in existing_phs if p.get("code")}
-    for ph in draft.get("plot_holes", []):
+    for idx, raw_ph in enumerate(_as_list(draft.get("plot_holes", [])), start=1):
+        ph = _coerce_plot_hole(raw_ph, idx)
+        if not ph:
+            continue
         code = ph.get("code", "")
         plot_data = {
             **ph,
@@ -414,7 +566,10 @@ def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
             applied["plot_holes_created"] += 1
 
     # Instructions - upsert by chapter_number
-    for inst in draft.get("instructions", []):
+    for idx, raw_inst in enumerate(_as_list(draft.get("instructions", [])), start=1):
+        inst = _coerce_instruction(raw_inst, idx)
+        if not inst:
+            continue
         ch_num = inst.get("chapter_number")
         if ch_num is None:
             continue
