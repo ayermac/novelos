@@ -198,6 +198,14 @@ function getModuleForMissing(item: string): string {
   return 'settings'
 }
 
+export interface GenerationErrorDetails {
+  missing?: string[]
+  actions?: string[]
+  hint?: string
+  word_count?: number
+  chapter_status?: string
+}
+
 interface AuthorWritingSurfaceProps {
   activeTab: SurfaceTabKey
   chapterDetail: ChapterDetail | null
@@ -205,7 +213,7 @@ interface AuthorWritingSurfaceProps {
   currentChapter: number
   currentChapterRecord: { status: string; word_count: number; title?: string; quality_score?: number } | null
   genError: string
-  genErrorDetails: { missing?: string[]; actions?: string[] } | null
+  genErrorDetails: GenerationErrorDetails | null
   isLaunching: boolean
   isStub: boolean
   isStreaming: boolean
@@ -218,6 +226,7 @@ interface AuthorWritingSurfaceProps {
   timeline?: WorkflowTimelineData | null
   timelineError?: string
   onGenerate: () => void
+  onConfirmRegenerate?: () => void
   onGenerateNext?: () => void
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onPublish?: () => void
@@ -226,6 +235,7 @@ interface AuthorWritingSurfaceProps {
   publishPending?: boolean
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
+  regeneratePending?: boolean
   onTabChange: (tab: SurfaceTabKey) => void
   onViewContent: () => void
   onViewWorkflow: (runId: string) => void
@@ -252,6 +262,7 @@ export default function AuthorWritingSurface({
   timeline,
   timelineError,
   onGenerate,
+  onConfirmRegenerate,
   onMarkRunStuck,
   onPublish,
   onResetRunRecovery,
@@ -259,6 +270,7 @@ export default function AuthorWritingSurface({
   publishPending,
   markStuckPending,
   resetRecoveryPending,
+  regeneratePending,
   onTabChange,
   onViewContent: _onViewContent,
   onViewWorkflow,
@@ -269,6 +281,7 @@ export default function AuthorWritingSurface({
   const status = currentChapterRecord?.status || ''
   const isTerminal = ['reviewed', 'awaiting_publish', 'published'].includes(status)
   const isReviewedReal = status === 'reviewed' && llmMode === 'real'
+  const hasPreservedPlannedContent = status === 'planned' && (currentChapterRecord?.word_count || chapterDetail?.word_count || 0) > 0
   const qualityScore = chapterDetail?.quality_score ?? currentChapterRecord?.quality_score ?? null
   const statusLabel = tChapterStatus(status)
 
@@ -317,7 +330,18 @@ export default function AuthorWritingSurface({
               <CheckCircle2 size={12} /> 确认发布
             </LoadingButton>
           )}
-          {!isTerminal && (
+          {hasPreservedPlannedContent && onConfirmRegenerate ? (
+            <LoadingButton
+              className="btn btn-primary btn-sm"
+              variant="primary"
+              loading={!!regeneratePending}
+              loadingText="确认中..."
+              onClick={onConfirmRegenerate}
+              disabled={isStreaming || isWorkflowRunning}
+            >
+              <Play size={12} /> 覆盖重生成
+            </LoadingButton>
+          ) : !isTerminal && (
             <LoadingButton
               className="btn btn-primary btn-sm"
               variant="primary"
@@ -388,7 +412,9 @@ export default function AuthorWritingSurface({
             isWorkflowRunning={isWorkflowRunning}
             projectId={projectId}
             onGenerate={onGenerate}
+            onConfirmRegenerate={onConfirmRegenerate}
             onRefreshContent={onRefreshContent}
+            regeneratePending={regeneratePending}
           />
         )}
         {activeTab === 'workflow' && (
@@ -441,21 +467,25 @@ function ContentBody({
   isWorkflowRunning,
   projectId,
   onGenerate,
+  onConfirmRegenerate,
   onRefreshContent,
+  regeneratePending,
 }: {
   chapterDetail: ChapterDetail | null
   chapterLoading: boolean
   currentChapter: number
   isTerminal: boolean
   genError: string
-  genErrorDetails: { missing?: string[]; actions?: string[] } | null
+  genErrorDetails: GenerationErrorDetails | null
   hasContent: boolean
   isStub: boolean
   isStreaming: boolean
   isWorkflowRunning?: boolean
   projectId: string
   onGenerate: () => void
+  onConfirmRegenerate?: () => void
   onRefreshContent?: () => void
+  regeneratePending?: boolean
 }) {
   const { showToast } = useToast()
   const [filling, setFilling] = useState(false)
@@ -493,6 +523,7 @@ function ContentBody({
   const handleEditorContentSaved = useCallback(() => {
     onRefreshContent?.()
   }, [onRefreshContent])
+  const hasExistingContentGuard = genErrorDetails?.hint === 'review_existing_content'
 
   return (
     <div>
@@ -509,6 +540,28 @@ function ContentBody({
       {genError && (
         <AttentionPanel title="生成失败" tone="error" style={{ marginBottom: 16 }}>
           <div>{genError}</div>
+          {hasExistingContentGuard && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+              <LoadingButton
+                className="btn btn-secondary btn-sm"
+                variant="secondary"
+                onClick={onRefreshContent}
+              >
+                <FileText size={12} /> 查看已有正文
+              </LoadingButton>
+              {onConfirmRegenerate && (
+                <LoadingButton
+                  className="btn btn-primary btn-sm"
+                  variant="primary"
+                  loading={!!regeneratePending}
+                  loadingText="确认中..."
+                  onClick={onConfirmRegenerate}
+                >
+                  <Sparkles size={12} /> 确认覆盖并重新生成
+                </LoadingButton>
+              )}
+            </div>
+          )}
           {genErrorDetails?.missing && genErrorDetails.missing.length > 0 && (
             <ActionHintList title="缺失项">
               {genErrorDetails.missing.map((item, i) => (

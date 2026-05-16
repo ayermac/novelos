@@ -70,6 +70,7 @@ interface AuthorAgentPanelProps {
   genError: string
   timeline?: WorkflowTimelineData | null
   onGenerate: () => void
+  onConfirmRegenerate?: () => void
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onPublish?: () => void
   onGenerateNext?: () => void
@@ -77,6 +78,7 @@ interface AuthorAgentPanelProps {
   publishPending?: boolean
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
+  regeneratePending?: boolean
   onViewContent: () => void
   onViewWorkflow: (runId: string) => void
 }
@@ -122,6 +124,7 @@ export default function AuthorAgentPanel({
   genError,
   timeline,
   onGenerate,
+  onConfirmRegenerate,
   onMarkRunStuck,
   onPublish,
   onGenerateNext,
@@ -129,6 +132,7 @@ export default function AuthorAgentPanel({
   publishPending,
   markStuckPending,
   resetRecoveryPending,
+  regeneratePending,
   onViewContent,
   onViewWorkflow,
 }: AuthorAgentPanelProps) {
@@ -145,6 +149,9 @@ export default function AuthorAgentPanel({
   const isReviewedReal = status === 'reviewed' && llmMode === 'real'
   const elapsedMinutes = elapsedMinutesSince(runDetail?.started_at)
   const isStaleRunning = effectiveRunStatus === 'running' && effectiveElapsed !== null && effectiveElapsed >= STUCK_RUN_THRESHOLD_MINUTES
+  const hasPreservedPlannedContent = status === 'planned' && hasContent
+  const needsRecovery = status === 'blocking' || status === 'revision'
+  const canDirectGenerate = !hasPreservedPlannedContent && !needsRecovery
 
   return (
     <aside className="author-agent" aria-label="AI 助手面板">
@@ -194,6 +201,10 @@ export default function AuthorAgentPanel({
                 ? '运行疑似卡住'
                 : isStreaming || isWorkflowRunning
                   ? tWorkflowNodeNarrative(currentNode || timeline?.current_node)
+                  : hasPreservedPlannedContent
+                    ? '已有正文待确认'
+                    : needsRecovery
+                      ? '需要先恢复运行'
                   : hasContent
                     ? '本章已有内容'
                     : '准备生成'}
@@ -203,21 +214,39 @@ export default function AuthorAgentPanel({
                 ? `当前运行已超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未完成，建议进入运行恢复处理。`
                 : isStreaming || isWorkflowRunning
                   ? getAgentActionDesc(currentNode || timeline?.current_node)
+                  : hasPreservedPlannedContent
+                    ? '本章保留了已有正文。请先查看正文，或明确确认覆盖后再重新生成。'
+                    : needsRecovery
+                      ? '本章处于阻塞或返修状态，先清除阻塞/恢复运行，再决定是否继续生成。'
                   : hasContent
                     ? '本章已完成生成，可以查看正文或重新生成。'
                     : '本章尚未生成，点击下方按钮开始。'}
             </div>
-            <LoadingButton
-              className="btn btn-primary btn-sm"
-              variant="primary"
-              loading={isStreaming || isWorkflowRunning}
-              loadingText="生成中..."
-              onClick={onGenerate}
-              disabled={isStreaming || isWorkflowRunning}
-              style={{ marginTop: 8, width: '100%' }}
-            >
-              <Play size={12} /> 生成本章
-            </LoadingButton>
+            {hasPreservedPlannedContent && onConfirmRegenerate ? (
+              <LoadingButton
+                className="btn btn-primary btn-sm"
+                variant="primary"
+                loading={!!regeneratePending}
+                loadingText="确认中..."
+                onClick={onConfirmRegenerate}
+                disabled={isStreaming || isWorkflowRunning}
+                style={{ marginTop: 8, width: '100%' }}
+              >
+                <Sparkles size={12} /> 覆盖重生成
+              </LoadingButton>
+            ) : canDirectGenerate && (
+              <LoadingButton
+                className="btn btn-primary btn-sm"
+                variant="primary"
+                loading={isStreaming || isWorkflowRunning}
+                loadingText="生成中..."
+                onClick={onGenerate}
+                disabled={isStreaming || isWorkflowRunning}
+                style={{ marginTop: 8, width: '100%' }}
+              >
+                <Play size={12} /> 生成本章
+              </LoadingButton>
+            )}
             {isStaleRunning && runDetail && onMarkRunStuck && (
               <LoadingButton
                 className="btn btn-secondary btn-sm"
@@ -230,7 +259,7 @@ export default function AuthorAgentPanel({
                 标记为阻塞
               </LoadingButton>
             )}
-            {(status === 'blocking' || status === 'revision') && runDetail && onResetRunRecovery && (
+            {needsRecovery && runDetail && onResetRunRecovery && (
               <LoadingButton
                 className="btn btn-secondary btn-sm"
                 variant="secondary"

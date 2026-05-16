@@ -17,6 +17,12 @@ from ...agent_runtime.chapter_text import is_chapter_heading
 router = APIRouter()
 
 
+class ChapterRegenerateResetRequest(BaseModel):
+    """Explicitly allow regenerating a planned chapter that already has text."""
+
+    confirm: bool = False
+
+
 def _chapter_quality_score(repo, project_id: str, chapter: dict) -> int | float | None:
     """Return the user-facing quality score for a chapter.
 
@@ -414,6 +420,101 @@ async def reset_chapter(
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"重置章节失败: {str(e)}")
+
+
+@router.post("/projects/{project_id}/chapters/{chapter_number}/regenerate-reset")
+async def confirm_chapter_regeneration(
+    request: Request,
+    project_id: str,
+    chapter_number: int,
+    body: ChapterRegenerateResetRequest,
+) -> EnvelopeResponse:
+    """Mark a planned chapter with preserved text as explicitly regenerable.
+
+    This does not delete the existing text immediately. It records the user's
+    explicit confirmation so the run guard can allow the next generation to
+    overwrite the preserved draft intentionally.
+    """
+    from ..deps import get_repo
+    from ...workflow.checkpoint import delete_checkpoint_thread
+
+    try:
+        if not body.confirm:
+            return error_response("CONFIRM_REQUIRED", "请确认覆盖已有正文并重新生成")
+
+        repo = get_repo(request)
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+
+        current_status = chapter.get("status", "")
+        content = (chapter.get("content") or "").strip()
+        word_count = chapter.get("word_count") or 0
+        if current_status != "planned" or not (content or word_count > 0):
+            return error_response(
+                "INVALID_STATUS",
+                "仅 planned 且已有正文的章节需要确认覆盖重新生成",
+                details={"current_status": current_status, "word_count": word_count},
+            )
+
+        run_id = repo.create_workflow_run(project_id, chapter_number)
+        repo.update_workflow_run(
+            run_id,
+            status="completed",
+            current_node="reset_recovery",
+            clear_error=True,
+        )
+        recovered_blocked_runs = 0
+        if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
+            recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+                project_id,
+                chapter_number,
+            )
+
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "INSERT INTO task_status "
+                "(project_id, chapter_number, task_type, agent_id, status, "
+                "started_at, completed_at, error_message, workflow_run_id) "
+                "VALUES (?, ?, 'reset', 'human', 'completed', "
+                "datetime('now','+8 hours'), datetime('now','+8 hours'), ?, ?)",
+                (
+                    project_id,
+                    chapter_number,
+                    "人工确认：已有正文可被下一次生成覆盖。",
+                    run_id,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
+            project_id,
+            chapter_number,
+            "用户已确认覆盖已有正文，旧运行已作废。",
+        )
+        checkpoint_cleared = delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
+
+        return envelope_response({
+            "reset": True,
+            "run_id": run_id,
+            "previous_status": current_status,
+            "new_status": "planned",
+            "word_count": word_count,
+            "recovered_blocked_runs": recovered_blocked_runs,
+            "invalidated_runs": invalidated_runs,
+            "checkpoint_cleared": checkpoint_cleared,
+            "message": "已确认覆盖已有正文，下一次生成将重新执行本章工作流。",
+        })
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"确认重新生成失败: {str(e)}")
 
 
 @router.delete("/projects/{project_id}/chapters/{chapter_number}")

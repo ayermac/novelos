@@ -1082,6 +1082,81 @@ describe('AuthorWorkbench', () => {
     expect(generateBtn).toBeDefined()
   })
 
+  it('planned chapter with preserved content asks for explicit overwrite instead of normal generate', () => {
+    const onConfirmRegenerate = vi.fn()
+    const preserved = { chapter_number: 4, status: 'planned', word_count: 900, title: '第四章' }
+
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        chapters={[...baseProps.chapters.slice(0, 3), preserved]}
+        currentChapter={4}
+        currentChapterRecord={preserved}
+        chapterDetail={{
+          project_id: 'test-proj',
+          project_name: '测试项目',
+          chapter_number: 4,
+          title: '第四章',
+          content: '这是一段恢复后保留的正文。',
+          word_count: 900,
+          status: 'planned',
+          quality_score: null,
+          created_at: '2026-05-16 10:00:00',
+          updated_at: '2026-05-16 10:00:00',
+        }}
+        onConfirmRegenerate={onConfirmRegenerate}
+      />
+    )
+
+    expect(screen.getAllByRole('button', { name: /覆盖重生成/ }).length).toBeGreaterThanOrEqual(2)
+    expect(screen.queryAllByRole('button', { name: /^生成本章$/ })).toHaveLength(0)
+
+    fireEvent.click(screen.getAllByRole('button', { name: /覆盖重生成/ })[0])
+    expect(onConfirmRegenerate).toHaveBeenCalled()
+  })
+
+  it('existing-content guard error shows review and confirm actions', () => {
+    const onConfirmRegenerate = vi.fn()
+    const onRefreshContent = vi.fn()
+
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        genError="第 2 章已有正文内容，不能按空白 planned 章节直接生成。"
+        genErrorDetails={{
+          hint: 'review_existing_content',
+          word_count: 1200,
+          chapter_status: 'planned',
+        }}
+        onConfirmRegenerate={onConfirmRegenerate}
+        onRefreshContent={onRefreshContent}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /查看已有正文/ }))
+    expect(onRefreshContent).toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /确认覆盖并重新生成/ }))
+    expect(onConfirmRegenerate).toHaveBeenCalled()
+  })
+
+  it('chapter menu does not offer direct generate for planned chapter with preserved content', () => {
+    const preserved = { chapter_number: 4, status: 'planned', word_count: 900, title: '第四章' }
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        chapters={[...baseProps.chapters.slice(0, 3), preserved]}
+        currentChapter={4}
+        currentChapterRecord={preserved}
+      />
+    )
+
+    fireEvent.click(screen.getByLabelText('第 4 章操作'))
+    expect(screen.getByRole('menuitem', { name: /查看正文后确认覆盖/ })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /生成本章/ })).not.toBeInTheDocument()
+  })
+
   it('generate button shows loading state via LoadingButton when workflow is running', () => {
     render(
       <AuthorWorkbench

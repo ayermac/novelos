@@ -8,7 +8,7 @@ import { buildProjectModuleSearchParams, ensureChapterSearchParams, resolveProje
 import type { ProjectModule } from '../components/project/ProjectModuleNav'
 import ProjectShell from '../components/project/ProjectShell'
 import AuthorWorkbench from '../components/project/AuthorWorkbench'
-import type { SurfaceTabKey } from '../components/project/AuthorWritingSurface'
+import type { GenerationErrorDetails, SurfaceTabKey } from '../components/project/AuthorWritingSurface'
 import WorldSettingsModule from '../components/project/WorldSettingsModule'
 import CharactersModule from '../components/project/CharactersModule'
 import FactionsModule from '../components/project/FactionsModule'
@@ -129,11 +129,12 @@ export default function ProjectDetail() {
   const [generating, setGenerating] = useState(false)
   const [generatingChapter, setGeneratingChapter] = useState<number | null>(null)
   const [genError, setGenError] = useState('')
-  const [genErrorDetails, setGenErrorDetails] = useState<{ missing?: string[]; actions?: string[] } | null>(null)
+  const [genErrorDetails, setGenErrorDetails] = useState<GenerationErrorDetails | null>(null)
   const [sseSteps, setSseSteps] = useState<Record<string, StepStatus>>({})
   const [publishPending, setPublishPending] = useState(false)
   const [markStuckPending, setMarkStuckPending] = useState(false)
   const [resetRecoveryPending, setResetRecoveryPending] = useState(false)
+  const [regeneratePending, setRegeneratePending] = useState(false)
   const currentChapterRef = useRef<number>(1)
   const streamingChapterRef = useRef<number | null>(null)
 
@@ -318,11 +319,17 @@ export default function ProjectDetail() {
           missing: event.missing || [],
           actions: event.actions || [],
         })
+      } else if (event?.details && Object.keys(event.details).length > 0) {
+        setGenErrorDetails(event.details as GenerationErrorDetails)
+        if (event.details.hint === 'review_existing_content') {
+          setActiveTab('content')
+          setSearchParams({ chapter: String(visibleChapter) }, { replace: true })
+        }
       } else {
         setGenErrorDetails(null)
       }
     }
-  }, [refetchWorkspace])
+  }, [refetchWorkspace, setSearchParams])
 
   const { isStreaming, steps: sseHookSteps, startStream } = useSSEStream(
     handleSSEComplete,
@@ -387,6 +394,41 @@ export default function ProjectDetail() {
   const handleGenerate = useCallback(() => {
     handleGenerateChapter(currentChapter)
   }, [currentChapter, handleGenerateChapter])
+
+  const handleConfirmRegenerate = useCallback(async () => {
+    if (!id || regeneratePending) return
+    const ok = await dialog.confirm({
+      title: '覆盖已有正文并重新生成',
+      message: `第 ${currentChapter} 章已经有正文。确认后会保留版本记录，但下一次生成会覆盖当前正文。`,
+      tone: 'warning',
+      confirmLabel: '确认覆盖并重新生成',
+    })
+    if (!ok) return
+    setRegeneratePending(true)
+    try {
+      const res = await post(`/projects/${id}/chapters/${currentChapter}/regenerate-reset`, { confirm: true })
+      if (res.ok) {
+        setGenError('')
+        setGenErrorDetails(null)
+        await refetchWorkspace()
+        handleGenerateChapter(currentChapter)
+      } else {
+        await dialog.alert({
+          title: '确认重新生成失败',
+          message: res.error?.message || '确认重新生成失败',
+          tone: 'danger',
+        })
+      }
+    } catch (err: unknown) {
+      await dialog.alert({
+        title: '确认重新生成失败',
+        message: err instanceof Error ? err.message : '确认重新生成失败',
+        tone: 'danger',
+      })
+    } finally {
+      setRegeneratePending(false)
+    }
+  }, [currentChapter, dialog, handleGenerateChapter, id, refetchWorkspace, regeneratePending])
 
   const handleViewWorkflow = (runId: string) => {
     loadRunDetail(runId)
@@ -636,6 +678,7 @@ export default function ProjectDetail() {
           timeline={timeline}
           timelineError={timelineError}
           onGenerate={handleGenerate}
+          onConfirmRegenerate={handleConfirmRegenerate}
           onGenerateNext={handleGenerateNext}
           onMarkRunStuck={handleMarkRunStuck}
           onPublish={handlePublish}
@@ -645,6 +688,7 @@ export default function ProjectDetail() {
           publishPending={publishPending}
           markStuckPending={markStuckPending}
           resetRecoveryPending={resetRecoveryPending}
+          regeneratePending={regeneratePending}
           onGenerateChapter={handleGenerateChapter}
           onGenerateNextFromChapter={handleGenerateNextFromChapter}
           onPublishChapter={handlePublishChapter}
