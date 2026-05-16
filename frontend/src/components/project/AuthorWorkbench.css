@@ -1776,6 +1776,114 @@ html[data-theme='dark'] .author-readiness-score {
   background: var(--wb-success-soft);
 }
 
+html[data-theme='dark'] .author-agent-card,
+html[data-theme='dark'] .author-agent-next-action,
+html[data-theme='dark'] .author-agent-run-item,
+html[data-theme='dark'] .author-workbench .artifact-card,
+html[data-theme='dark'] .author-workbench .history-item,
+html[data-theme='dark'] .author-workbench .gen-step,
+html[data-theme='dark'] .chapter-revision-panel,
+html[data-theme='dark'] .chapter-revision-result {
+  background: var(--wb-panel-soft) !important;
+  background-image: none !important;
+  border-color: var(--wb-border) !important;
+  color: var(--wb-ink) !important;
+  box-shadow: none !important;
+}
+
+html[data-theme='dark'] .author-agent-next-action {
+  background:
+    linear-gradient(180deg, rgba(240, 184, 106, 0.11), rgba(240, 184, 106, 0.04)),
+    var(--wb-panel-soft) !important;
+  border-color: rgba(240, 184, 106, 0.24) !important;
+}
+
+html[data-theme='dark'] .author-agent-run-item:hover,
+html[data-theme='dark'] .author-workbench .history-item:hover {
+  background: color-mix(in srgb, var(--wb-accent) 10%, var(--wb-panel-soft)) !important;
+  border-color: rgba(240, 184, 106, 0.22) !important;
+}
+
+html[data-theme='dark'] .content-generation-banner,
+html[data-theme='dark'] .workflow-running-banner,
+html[data-theme='dark'] .chapter-editor-readonly-note {
+  background: var(--wb-info-soft) !important;
+  border-color: rgba(120, 201, 202, 0.22) !important;
+  color: var(--wb-info) !important;
+}
+
+html[data-theme='dark'] .content-generation-title,
+html[data-theme='dark'] .workflow-running-title,
+html[data-theme='dark'] .author-agent-next-action .action-label,
+html[data-theme='dark'] .author-agent-card strong,
+html[data-theme='dark'] .chapter-revision-title,
+html[data-theme='dark'] .chapter-editor-read {
+  color: var(--wb-ink) !important;
+}
+
+html[data-theme='dark'] .content-generation-desc,
+html[data-theme='dark'] .workflow-running-desc,
+html[data-theme='dark'] .author-agent-next-action .action-desc,
+html[data-theme='dark'] .author-agent-card-title,
+html[data-theme='dark'] .chapter-revision-subtitle,
+html[data-theme='dark'] .author-workbench .data-card-content,
+html[data-theme='dark'] .author-workbench .data-card-traits {
+  color: var(--wb-ink-secondary) !important;
+}
+
+html[data-theme='dark'] .chapter-editor-surface,
+html[data-theme='dark'] .chapter-editor-surface--fullscreen,
+html[data-theme='dark'] .chapter-editor-read,
+html[data-theme='dark'] .chapter-editor-textarea,
+html[data-theme='dark'] .chapter-revision-input,
+html[data-theme='dark'] .chapter-revision-copy {
+  background: var(--wb-paper) !important;
+  color: var(--wb-ink) !important;
+  border-color: var(--wb-border) !important;
+}
+
+html[data-theme='dark'] .chapter-editor-surface--fullscreen {
+  box-shadow: 0 28px 80px rgba(0, 0, 0, 0.56) !important;
+}
+
+html[data-theme='dark'] .chapter-editor-toolbar {
+  background: var(--wb-paper) !important;
+}
+
+html[data-theme='dark'] .chapter-editor-action-secondary,
+html[data-theme='dark'] .chapter-revision-mode {
+  background: var(--wb-panel-soft) !important;
+  color: var(--wb-ink-secondary) !important;
+}
+
+html[data-theme='dark'] .chapter-editor-action-secondary:hover,
+html[data-theme='dark'] .chapter-editor-action-secondary:focus-visible,
+html[data-theme='dark'] .chapter-revision-mode.active {
+  background: var(--wb-accent-soft) !important;
+  color: var(--wb-accent) !important;
+  border-color: rgba(240, 184, 106, 0.28) !important;
+}
+
+html[data-theme='dark'] .chapter-editor-unsaved,
+html[data-theme='dark'] .chapter-revision-warning {
+  background: var(--wb-warning-soft) !important;
+  border-color: rgba(224, 170, 87, 0.24) !important;
+  color: var(--wb-warning) !important;
+}
+
+html[data-theme='dark'] .chapter-editor-error,
+html[data-theme='dark'] .author-agent-error {
+  background: var(--wb-danger-soft) !important;
+  border-color: rgba(238, 139, 145, 0.24) !important;
+  color: var(--wb-danger) !important;
+}
+
+html[data-theme='dark'] .author-agent-warning {
+  background: var(--wb-warning-soft) !important;
+  border-color: rgba(224, 170, 87, 0.24) !important;
+  color: var(--wb-warning) !important;
+}
+
 html[data-theme='dark'] .chapter-editor-read {
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02), var(--wb-shadow-paper);
 }

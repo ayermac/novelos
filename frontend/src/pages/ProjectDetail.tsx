@@ -831,10 +831,10 @@ function WorkspaceStyles() {
       .chapter-content-title { font-size: 22px; font-weight: 600; margin-bottom: 24px; text-align: center; }
       .chapter-content-body { max-width: 720px; margin: 0 auto; font-size: 16px; line-height: 1.9; color: var(--text-primary); white-space: pre-wrap; word-break: break-word; }
       .gen-step { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 6px; background: var(--bg-secondary); margin-bottom: 6px; }
-      .gen-step-icon { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; background: #e5e7eb; color: #6b7280; }
-      .gen-step-active .gen-step-icon { background: #e7f2f4; color: var(--status-info); animation: gen-pulse 1.5s infinite; }
-      .gen-step-complete .gen-step-icon { background: #dcfce7; color: var(--status-success); }
-      .gen-step-failed .gen-step-icon { background: #fee2e2; color: var(--status-danger); }
+      .gen-step-icon { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; background: var(--bg-tertiary); color: var(--text-secondary); }
+      .gen-step-active .gen-step-icon { background: var(--accent-soft); color: var(--status-info); animation: gen-pulse 1.5s infinite; }
+      .gen-step-complete .gen-step-icon { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--status-success); }
+      .gen-step-failed .gen-step-icon { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--status-danger); }
       .gen-step-label { font-size: 14px; color: var(--text-secondary); }
       .gen-step-complete .gen-step-label { color: var(--text-primary); }
       .gen-step-failed .gen-step-label { color: var(--status-danger); }
@@ -891,8 +891,8 @@ function WorkspaceStyles() {
       .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
       .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
       .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
-      .status-stub { background: #f8eee0; color: #8b4b0f; }
-      .status-real { background: #e9f4ed; color: #166e40; }
+      .status-stub { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }
+      .status-real { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
     `}</style>
   )
 }

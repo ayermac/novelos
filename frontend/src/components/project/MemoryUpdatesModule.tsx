@@ -241,48 +241,48 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
         .memory-section { margin-bottom: 24px; }
         .memory-section-title { font-size: 14px; font-weight: 600; color: var(--text-secondary, #6b7280); margin-bottom: 12px; }
         .memory-msg { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
-        .memory-msg-success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #065f46; }
-        .memory-msg-error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
-        .batch-card { border: 1px solid var(--border, #e5e7eb); border-radius: 8px; margin-bottom: 8px; overflow: hidden; }
-        .batch-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; background: var(--bg-primary, #fff); transition: background 0.15s; }
-        .batch-header:hover { background: var(--bg-hover, #f9fafb); }
+        .memory-msg-success { background: color-mix(in srgb, var(--success) 12%, var(--bg-primary)); border: 1px solid color-mix(in srgb, var(--success) 28%, transparent); color: var(--success); }
+        .memory-msg-error { background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary)); border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent); color: var(--danger); }
+        .batch-card { border: 1px solid var(--border-color, #e5e7eb); border-radius: 8px; margin-bottom: 8px; overflow: hidden; background: var(--bg-primary); }
+        .batch-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; background: var(--bg-primary); transition: background 0.15s; }
+        .batch-header:hover { background: var(--bg-tertiary); }
         .batch-toggle { color: var(--text-muted, #9ca3af); flex-shrink: 0; }
         .batch-summary { flex: 1; font-size: 14px; color: var(--text-primary, #111827); }
         .batch-meta { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
         .batch-chapter { font-size: 12px; color: var(--text-muted, #9ca3af); }
         .batch-status { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 500; }
-        .batch-status-pending { background: #fef3c7; color: #92400e; }
-        .batch-status-partial { background: #fef3c7; color: #92400e; }
-        .batch-status-applied { background: #d1fae5; color: #065f46; }
-        .batch-status-ignored { background: #f3f4f6; color: #6b7280; }
+        .batch-status-pending { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+        .batch-status-partial { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+        .batch-status-applied { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+        .batch-status-ignored { background: var(--bg-tertiary); color: var(--text-secondary); }
         .batch-actions { display: flex; gap: 6px; flex-shrink: 0; }
-        .batch-detail { padding: 14px; background: var(--bg-secondary, #f9fafb); border-top: 1px solid var(--border, #e5e7eb); }
+        .batch-detail { padding: 14px; background: var(--bg-secondary); border-top: 1px solid var(--border-color); }
         .batch-detail-loading { padding: 20px; text-align: center; color: var(--text-muted); font-size: 13px; }
-        .item-card { background: var(--bg-primary, #fff); border: 1px solid var(--border, #e5e7eb); border-radius: 6px; padding: 12px; margin-bottom: 8px; }
+        .item-card { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 6px; padding: 12px; margin-bottom: 8px; }
         .item-card:last-child { margin-bottom: 0; }
         .item-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-        .item-table { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: #dbeafe; color: #1d4ed8; font-weight: 500; }
-        .item-op { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: #f3f4f6; color: #374151; }
-        .item-op-create { background: #d1fae5; color: #065f46; }
-        .item-op-update { background: #dbeafe; color: #1d4ed8; }
-        .item-op-resolve { background: #fef3c7; color: #92400e; }
-        .item-op-deprecate { background: #fee2e2; color: #991b1b; }
+        .item-table { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: var(--accent-soft); color: var(--primary); font-weight: 500; }
+        .item-op { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-secondary); }
+        .item-op-create { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+        .item-op-update { background: var(--accent-soft); color: var(--primary); }
+        .item-op-resolve { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+        .item-op-deprecate { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
         .item-confidence { font-size: 11px; color: var(--text-muted); margin-left: auto; }
         .item-status { font-size: 11px; padding: 2px 6px; border-radius: 4px; }
-        .item-status-pending { background: #fef3c7; color: #92400e; }
-        .item-status-applied { background: #d1fae5; color: #065f46; }
-        .item-status-ignored { background: #f3f4f6; color: #6b7280; }
-        .item-status-failed { background: #fee2e2; color: #991b1b; }
+        .item-status-pending { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+        .item-status-applied { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+        .item-status-ignored { background: var(--bg-tertiary); color: var(--text-secondary); }
+        .item-status-failed { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
         .item-rationale { font-size: 13px; color: var(--text-secondary, #374151); margin-bottom: 4px; }
         .item-evidence { font-size: 12px; color: var(--text-muted, #9ca3af); line-height: 1.5; }
         .item-evidence-label { font-weight: 500; }
-        .item-error { font-size: 12px; color: #991b1b; line-height: 1.5; margin-top: 4px; background: #fef2f2; padding: 6px 8px; border-radius: 4px; }
+        .item-error { font-size: 12px; color: var(--danger); line-height: 1.5; margin-top: 4px; background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary)); padding: 6px 8px; border-radius: 4px; }
         .item-error-label { font-weight: 500; }
         .item-actions { display: flex; gap: 6px; margin-top: 8px; }
-        .btn-xs { padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border, #d1d5db); background: var(--bg-primary, #fff); color: var(--text-secondary, #374151); cursor: pointer; transition: all 0.15s; }
-        .btn-xs:hover { background: var(--bg-hover, #f9fafb); }
-        .btn-xs-danger { color: #dc2626; border-color: #fecaca; }
-        .btn-xs-danger:hover { background: #fef2f2; }
+        .btn-xs { padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; transition: all 0.15s; }
+        .btn-xs:hover { background: var(--bg-tertiary); }
+        .btn-xs-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 28%, transparent); }
+        .btn-xs-danger:hover { background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary)); }
       `}</style>
     </div>
   )

@@ -533,11 +533,11 @@ export default function GenesisModule({ projectId, project }: Props) {
           font-size: 12px;
           font-weight: 500;
         }
-        .status-running { background: #dbeafe; color: #1d4ed8; }
-        .status-pending { background: #fef3c7; color: #92400e; }
-        .status-approved { background: #d1fae5; color: #065f46; }
-        .status-rejected { background: #fee2e2; color: #991b1b; }
-        .status-failed { background: #fee2e2; color: #991b1b; }
+        .status-running { background: var(--accent-soft); color: var(--primary); }
+        .status-pending { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+        .status-approved { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+        .status-rejected { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+        .status-failed { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
         .genesis-time {
           font-size: 12px;
           color: var(--text-muted, #9ca3af);
@@ -547,10 +547,10 @@ export default function GenesisModule({ projectId, project }: Props) {
           align-items: center;
           gap: 8px;
           padding: 12px;
-          background: #fef2f2;
-          border: 1px solid #fecaca;
+          background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary));
+          border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
           border-radius: 6px;
-          color: #991b1b;
+          color: var(--danger);
           font-size: 13px;
           margin-bottom: 16px;
         }
@@ -599,7 +599,7 @@ export default function GenesisModule({ projectId, project }: Props) {
           font-size: 13px;
           line-height: 1.5;
           padding: 6px 0;
-          border-bottom: 1px solid var(--border-light, #f3f4f6);
+          border-bottom: 1px solid var(--border-color);
           color: var(--text-secondary, #374151);
         }
         .draft-section li:last-child {
@@ -618,7 +618,7 @@ export default function GenesisModule({ projectId, project }: Props) {
           gap: 6px;
           margin-right: auto;
           font-size: 13px;
-          color: #991b1b;
+          color: var(--danger);
         }
         .genesis-reject-confirm {
           display: flex;
@@ -632,10 +632,10 @@ export default function GenesisModule({ projectId, project }: Props) {
           align-items: center;
           gap: 8px;
           padding: 16px;
-          background: #f0fdf4;
-          border: 1px solid #bbf7d0;
+          background: color-mix(in srgb, var(--success) 12%, var(--bg-primary));
+          border: 1px solid color-mix(in srgb, var(--success) 28%, transparent);
           border-radius: 8px;
-          color: #065f46;
+          color: var(--success);
           font-size: 14px;
         }
         .spin {

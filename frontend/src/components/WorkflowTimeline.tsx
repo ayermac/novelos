@@ -298,29 +298,29 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           flex-shrink: 0;
         }
         .wf-timeline .step-completed .step-icon {
-          background: #dcfce7;
-          color: #16a34a;
+          background: color-mix(in srgb, var(--success) 14%, transparent);
+          color: var(--success);
         }
         .wf-timeline .step-running .step-icon {
-          background: #dbeafe;
-          color: #2563eb;
+          background: var(--accent-soft);
+          color: var(--primary);
           animation: wf-pulse 1.5s infinite;
         }
         .wf-timeline .step-failed .step-icon {
-          background: #fef2f2;
-          color: #dc2626;
+          background: color-mix(in srgb, var(--danger) 14%, transparent);
+          color: var(--danger);
         }
         .wf-timeline .step-blocked .step-icon {
-          background: #fef3c7;
-          color: #d97706;
+          background: color-mix(in srgb, var(--warning) 14%, transparent);
+          color: var(--warning);
         }
         .wf-timeline .step-skipped .step-icon {
-          background: #f1f5f9;
-          color: #64748b;
+          background: var(--bg-tertiary);
+          color: var(--text-secondary);
         }
         .wf-timeline .step-pending .step-icon {
-          background: #f3f4f6;
-          color: #9ca3af;
+          background: var(--bg-tertiary);
+          color: var(--text-muted);
         }
         .wf-timeline .step-content {
           flex: 1;
@@ -338,14 +338,14 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
         .wf-timeline .step-error {
           margin-top: 6px;
           padding: 6px 8px;
-          background: #fef2f2;
+          background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary));
           border-radius: 4px;
           font-size: 12px;
-          color: #dc2626;
+          color: var(--danger);
         }
         .wf-timeline .step-error-legacy {
-          background: #fffbeb;
-          color: #b45309;
+          background: color-mix(in srgb, var(--warning) 12%, var(--bg-primary));
+          color: var(--warning);
         }
         .wf-timeline .step-logs {
           margin-top: 8px;
@@ -354,8 +354,8 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           gap: 5px;
           padding: 8px 10px;
           border-radius: 6px;
-          background: rgba(255, 255, 255, 0.64);
-          border: 1px solid rgba(148, 163, 184, 0.2);
+          background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
+          border: 1px solid var(--border-color);
         }
         .wf-timeline .step-logs-title {
           font-size: 11px;
@@ -376,19 +376,19 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           width: 6px;
           height: 6px;
           border-radius: 50%;
-          background: #94a3b8;
+          background: var(--text-muted);
         }
         .wf-timeline .step-log-success .step-log-dot {
-          background: #16a34a;
+          background: var(--success);
         }
         .wf-timeline .step-log-warning .step-log-dot {
-          background: #d97706;
+          background: var(--warning);
         }
         .wf-timeline .step-log-error .step-log-dot {
-          background: #dc2626;
+          background: var(--danger);
         }
         .wf-timeline .step-log-info .step-log-dot {
-          background: #2563eb;
+          background: var(--primary);
         }
         .wf-timeline .step-log-dot-pulse {
           animation: wf-pulse 1.5s infinite;
@@ -450,16 +450,16 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           border-radius: 3px;
         }
         .wf-timeline .evidence-pass {
-          background: #dcfce7;
-          color: #16a34a;
+          background: color-mix(in srgb, var(--success) 14%, transparent);
+          color: var(--success);
         }
         .wf-timeline .evidence-warn {
-          background: #fef3c7;
-          color: #d97706;
+          background: color-mix(in srgb, var(--warning) 14%, transparent);
+          color: var(--warning);
         }
         .wf-timeline .evidence-fail {
-          background: #fef2f2;
-          color: #dc2626;
+          background: color-mix(in srgb, var(--danger) 14%, transparent);
+          color: var(--danger);
         }
         .wf-timeline .exec-event {
           display: grid;
@@ -475,18 +475,18 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           width: 5px;
           height: 5px;
           border-radius: 50%;
-          background: #94a3b8;
+          background: var(--text-muted);
           flex-shrink: 0;
         }
         .wf-timeline .exec-event-pass .exec-event-dot,
         .wf-timeline .exec-event-info .exec-event-dot {
-          background: #2563eb;
+          background: var(--primary);
         }
         .wf-timeline .exec-event-warning .exec-event-dot {
-          background: #d97706;
+          background: var(--warning);
         }
         .wf-timeline .exec-event-error .exec-event-dot {
-          background: #dc2626;
+          background: var(--danger);
         }
         .wf-timeline .exec-event-msg {
           min-width: 0;
@@ -510,7 +510,7 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           flex-shrink: 0;
         }
         .wf-timeline .exec-event-low-change {
-          background: rgba(251, 191, 36, 0.06);
+          background: color-mix(in srgb, var(--warning) 8%, transparent);
           border-radius: 4px;
           padding: 3px 6px;
           margin: 1px -6px;
@@ -518,9 +518,9 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
         .wf-timeline .exec-event-warn-tag {
           font-size: 10px;
           font-weight: 500;
-          color: #d97706;
+          color: var(--warning);
           padding: 1px 5px;
-          background: #fef3c7;
+          background: color-mix(in srgb, var(--warning) 14%, transparent);
           border-radius: 3px;
           white-space: nowrap;
         }
@@ -539,7 +539,7 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
         }
         .wf-timeline .artifacts-summary {
           padding: 10px 12px;
-          background: #f0fdf4;
+          background: color-mix(in srgb, var(--success) 10%, var(--bg-primary));
           border-radius: 4px;
           font-size: 13px;
           color: var(--text-primary);
