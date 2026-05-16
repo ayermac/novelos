@@ -78,6 +78,7 @@ export default function Layout() {
 
   const isStub = llmMode === 'stub'
   const isProjectWorkspace = /^\/projects\/[^/]+/.test(location.pathname)
+  const logoSrc = window.__NOVELOS_DESKTOP__ ? './logo.png' : '/logo.png'
 
   useEffect(() => {
     setSidebarOpen(false)
@@ -125,7 +126,7 @@ export default function Layout() {
       >
         <div className="sidebar-brand">
           <div className="brand-icon">
-            <img src="/logo.png" alt="" aria-hidden="true" />
+            <img src={logoSrc} alt="" aria-hidden="true" />
           </div>
           <div className="brand-text">
             <span className="brand-name">墨流工厂</span>

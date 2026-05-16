@@ -27,6 +27,7 @@ describe('Layout', () => {
     window.localStorage.clear()
     document.documentElement.removeAttribute('data-theme')
     document.documentElement.style.colorScheme = ''
+    delete window.__NOVELOS_DESKTOP__
   })
 
   it('collapses and expands the desktop sidebar', () => {
@@ -66,5 +67,16 @@ describe('Layout', () => {
 
     expect(document.documentElement.dataset.theme).toBe('light')
     expect(window.localStorage.getItem('novelos.theme')).toBe('light')
+  })
+
+  it('uses a relative logo path inside the desktop client', () => {
+    Object.defineProperty(window, '__NOVELOS_DESKTOP__', {
+      configurable: true,
+      value: { apiBaseUrl: 'http://127.0.0.1:8765' },
+    })
+
+    const { container } = renderLayout()
+
+    expect(container.querySelector('.brand-icon img')).toHaveAttribute('src', './logo.png')
   })
 })
