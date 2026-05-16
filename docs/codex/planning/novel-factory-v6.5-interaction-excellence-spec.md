@@ -2,7 +2,7 @@
 
 ## 状态
 
-**v6.5.6 已封版。**
+**v6.5.7 Visual Polish Pass 已实现。**
 
 本版本回应桌面客户端当前"像后台系统"的问题。目标不是重做视觉品牌，而是把创作者工作台的操作反馈、等待状态、错误恢复、过程感和页面节奏提升到可持续迭代的标准。
 
@@ -215,6 +215,38 @@ CSS 交互协议：
 - v6.5 的主要价值是将已有能力产品化为可理解、可恢复、可反馈的创作者工作台体验。
 - 后续 Agent Evidence UX 和 Structured Memory Canonicalization 顺延为下一阶段。
 
+### v6.5.7：Visual Polish Pass
+
+状态：**已实现**
+
+目标：回应"UI 和交互迭代后感知不明显"的问题，补一个肉眼可见的视觉层升级，并加入日间/夜间主题切换。
+
+重点：
+
+- 新增持久化主题切换：侧边栏品牌区提供日间/夜间切换按钮，写入 `html[data-theme]` 和 `localStorage`。
+- 新增日/夜两套全局主题 token：背景、表面、文本、边框、强调色、tooltip、阴影统一走变量。
+- Layout、Sidebar、Topbar、ProjectSideNav、ProjectOverview 主任务卡、Author Workbench、QualityDiagnosisPanel 适配主题变量。
+- Quality Diagnosis 从普通折叠卡改为更精致的文字体检面板，支持暗色背景、评分环和维度条。
+- 保持现有前端架构，不引入新 UI 框架，不改后端 workflow / Agent / 数据库。
+
+已实现文件：
+
+- `frontend/src/components/Layout.tsx`
+- `frontend/src/index.css`
+- `frontend/src/components/ui/ui.css`
+- `frontend/src/components/project/AuthorWorkbench.css`
+- `frontend/src/components/project/ProjectOverviewModule.tsx`
+- `frontend/src/components/project/ProjectSideNav.tsx`
+- `frontend/src/components/project/QualityDiagnosisPanel.tsx`
+- `frontend/src/components/__tests__/Layout.test.tsx`
+
+验收标准：
+
+- 主题切换按钮可访问，`aria-label` 随当前模式变化。
+- 主题选择持久化到 `localStorage`。
+- 前端 typecheck / lint / build / vitest 通过。
+- 桌面 typecheck / build 通过。
+
 ## 非目标
 
 - 不做全新设计系统重写。
@@ -230,4 +262,4 @@ CSS 交互协议：
 - 样板页面不破坏既有流程。
 - 用户执行项目创建或质量诊断时能看到明确 pending / success / error。
 - reduced-motion 下不会强制播放 skeleton/toast 动画。
-- v6.5.6 封版时 frontend、desktop、backend smoke 验证通过。
+- v6.5.7 封版时 frontend、desktop、backend smoke 验证通过。

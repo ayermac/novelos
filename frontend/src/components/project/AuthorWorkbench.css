@@ -1635,6 +1635,134 @@
   line-height: 1.85;
 }
 
+html[data-theme='dark'] .project-shell {
+  background:
+    radial-gradient(circle at 20% 0%, rgba(240, 184, 106, 0.11), transparent 26%),
+    linear-gradient(135deg, rgba(8, 11, 16, 0.98), rgba(15, 19, 25, 0.96)) !important;
+}
+
+html[data-theme='dark'] .project-shell .project-header {
+  background: rgba(14, 18, 25, 0.92) !important;
+  border-bottom-color: var(--border-color) !important;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.03) !important;
+}
+
+html[data-theme='dark'] .project-console-title,
+html[data-theme='dark'] .project-shell .project-title,
+html[data-theme='dark'] .project-shell .project-name {
+  color: var(--text-primary) !important;
+}
+
+html[data-theme='dark'] .project-console-subtitle,
+html[data-theme='dark'] .project-shell .project-header-back {
+  color: var(--text-secondary) !important;
+  background: var(--bg-primary) !important;
+  border-color: var(--border-color) !important;
+}
+
+html[data-theme='dark'] .project-side-nav {
+  background: rgba(14, 18, 25, 0.94) !important;
+  border-right-color: var(--border-color) !important;
+}
+
+html[data-theme='dark'] .project-side-nav .project-side-nav-item {
+  color: var(--text-secondary) !important;
+}
+
+html[data-theme='dark'] .project-side-nav .project-side-nav-item:hover {
+  background: var(--bg-tertiary) !important;
+  color: var(--text-primary) !important;
+}
+
+html[data-theme='dark'] .project-side-nav .project-side-nav-item.active {
+  background: var(--accent-soft) !important;
+  border-color: var(--accent-border) !important;
+  color: var(--primary) !important;
+}
+
+html[data-theme='dark'] .author-workbench {
+  --wb-app: #0f1319;
+  --wb-rail: #111720;
+  --wb-rail-active: rgba(240, 184, 106, 0.13);
+  --wb-paper: #171d26;
+  --wb-paper-soft: #202733;
+  --wb-panel: #141a22;
+  --wb-panel-soft: #1b222d;
+  --wb-border: rgba(226, 218, 205, 0.14);
+  --wb-border-soft: rgba(226, 218, 205, 0.10);
+  --wb-accent: #f0b86a;
+  --wb-accent-hover: #f7cc8a;
+  --wb-accent-soft: rgba(240, 184, 106, 0.13);
+  --wb-ink: #f4efe7;
+  --wb-ink-secondary: #c8c1b8;
+  --wb-ink-muted: #918b84;
+  --wb-ink-faint: #716b64;
+  --wb-success: #73c08b;
+  --wb-success-soft: rgba(115, 192, 139, 0.13);
+  --wb-warning: #e0aa57;
+  --wb-warning-soft: rgba(224, 170, 87, 0.14);
+  --wb-danger: #ee8b91;
+  --wb-danger-soft: rgba(238, 139, 145, 0.13);
+  --wb-info: #78c9ca;
+  --wb-info-soft: rgba(120, 201, 202, 0.12);
+  --wb-shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.34);
+  --wb-shadow-paper: 0 28px 80px rgba(0, 0, 0, 0.38);
+  background: var(--wb-app);
+  color: var(--wb-ink);
+}
+
+html[data-theme='dark'] .author-workbench .btn-primary {
+  background: linear-gradient(180deg, #f2be75 0%, #d99a4f 100%);
+  border-color: #d99a4f;
+  color: #14100b;
+}
+
+html[data-theme='dark'] .author-workbench .btn-secondary,
+html[data-theme='dark'] .chapter-revision-mode,
+html[data-theme='dark'] .chapter-revision-input,
+html[data-theme='dark'] .chapter-revision-copy {
+  background: var(--wb-panel-soft);
+  color: var(--wb-ink-secondary);
+  border-color: var(--wb-border);
+}
+
+html[data-theme='dark'] .author-rail-progress-bar,
+html[data-theme='dark'] .chapter-progress-track,
+html[data-theme='dark'] .author-workbench .ui-skeleton {
+  background: rgba(226, 218, 205, 0.12);
+}
+
+html[data-theme='dark'] .author-rail-item,
+html[data-theme='dark'] .author-surface-header,
+html[data-theme='dark'] .author-agent,
+html[data-theme='dark'] .author-readiness-strip,
+html[data-theme='dark'] .workflow-checkpoint-panel,
+html[data-theme='dark'] .chapter-editor-shell,
+html[data-theme='dark'] .chapter-editor-read,
+html[data-theme='dark'] .chapter-editor-write,
+html[data-theme='dark'] .author-surface-empty,
+html[data-theme='dark'] .author-agent-event,
+html[data-theme='dark'] .workflow-timeline {
+  background-color: var(--wb-paper) !important;
+  border-color: var(--wb-border) !important;
+  color: var(--wb-ink) !important;
+}
+
+html[data-theme='dark'] .author-rail-item:hover,
+html[data-theme='dark'] .author-rail-item.active,
+html[data-theme='dark'] .author-agent-panel,
+html[data-theme='dark'] .author-agent-log,
+html[data-theme='dark'] .workflow-node,
+html[data-theme='dark'] .chapter-editor-toolbar,
+html[data-theme='dark'] .chapter-version-panel {
+  background-color: var(--wb-panel-soft) !important;
+  border-color: var(--wb-border) !important;
+}
+
+html[data-theme='dark'] .chapter-editor-read {
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.02), var(--wb-shadow-paper);
+}
+
 @media (max-width: 1180px) {
   .author-readiness-strip {
     grid-template-columns: auto repeat(2, minmax(92px, 1fr));

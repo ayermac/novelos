@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import Layout from '../Layout'
@@ -23,6 +23,12 @@ function renderLayout() {
 }
 
 describe('Layout', () => {
+  beforeEach(() => {
+    window.localStorage.clear()
+    document.documentElement.removeAttribute('data-theme')
+    document.documentElement.style.colorScheme = ''
+  })
+
   it('collapses and expands the desktop sidebar', () => {
     const { container } = renderLayout()
     const sidebar = screen.getByLabelText('主菜单')
@@ -43,5 +49,22 @@ describe('Layout', () => {
     expect(sidebar).not.toHaveClass('collapsed')
     expect(mainArea).not.toHaveClass('sidebar-collapsed')
     expect(screen.getByRole('button', { name: '收起主菜单' })).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  it('toggles and persists the visual theme', () => {
+    renderLayout()
+
+    expect(document.documentElement.dataset.theme).toBe('light')
+
+    fireEvent.click(screen.getByRole('button', { name: '切换到夜间模式' }))
+
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    expect(window.localStorage.getItem('novelos.theme')).toBe('dark')
+    expect(screen.getByRole('button', { name: '切换到日间模式' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '切换到日间模式' }))
+
+    expect(document.documentElement.dataset.theme).toBe('light')
+    expect(window.localStorage.getItem('novelos.theme')).toBe('light')
   })
 })

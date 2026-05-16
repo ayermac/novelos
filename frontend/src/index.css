@@ -32,12 +32,71 @@
   --shadow-sm: 0 1px 2px rgba(31, 27, 25, 0.04);
   --shadow-md: 0 18px 42px rgba(31, 27, 25, 0.10);
 
+  /* v6.5.7 theme surface aliases */
+  --app-bg: radial-gradient(circle at 18% 0%, rgba(118, 26, 52, 0.06), transparent 28%),
+    linear-gradient(135deg, #f6f4ef 0%, #f1f3f4 46%, #f7f0ec 100%);
+  --sidebar-bg: rgba(251, 251, 250, 0.94);
+  --topbar-bg: rgba(252, 252, 250, 0.88);
+  --accent-soft: #f3e8eb;
+  --accent-border: rgba(118, 26, 52, 0.18);
+  --border-strong: rgba(118, 26, 52, 0.26);
+  --tooltip-bg: #191715;
+  --tooltip-text: #fffefc;
+
   /* Spacing */
   --spacing-xs: 4px;
   --spacing-sm: 8px;
   --spacing-md: 16px;
   --spacing-lg: 24px;
   --spacing-xl: 32px;
+}
+
+html {
+  color-scheme: light;
+}
+
+html[data-theme='dark'] {
+  color-scheme: dark;
+
+  --primary: #f0b86a;
+  --primary-dark: #f7cc8a;
+  --secondary: #aeb6c2;
+  --success: #73c08b;
+  --warning: #e0aa57;
+  --danger: #ee8b91;
+  --info: #78c9ca;
+
+  --bg-primary: #161b24;
+  --bg-secondary: #0f1319;
+  --bg-tertiary: #202733;
+
+  --paper-bg: #0f1319;
+  --paper-surface: #161b24;
+  --paper-elevated: #202733;
+  --paper-hover: #27303d;
+
+  --text-primary: #f4efe7;
+  --text-secondary: #c8c1b8;
+  --text-muted: #918b84;
+  --text-ink: #f4efe7;
+  --text-charcoal: #c8c1b8;
+  --text-gray: #9d978f;
+  --text-muted: #918b84;
+
+  --border-color: rgba(226, 218, 205, 0.14);
+  --border-strong: rgba(240, 184, 106, 0.34);
+  --accent-soft: rgba(240, 184, 106, 0.13);
+  --accent-border: rgba(240, 184, 106, 0.22);
+  --app-bg: radial-gradient(circle at 18% 0%, rgba(240, 184, 106, 0.13), transparent 25%),
+    radial-gradient(circle at 100% 18%, rgba(120, 201, 202, 0.10), transparent 24%),
+    linear-gradient(135deg, #080b10 0%, #10141b 48%, #171018 100%);
+  --sidebar-bg: rgba(14, 18, 25, 0.94);
+  --topbar-bg: rgba(16, 20, 27, 0.82);
+  --tooltip-bg: #f4efe7;
+  --tooltip-text: #10141b;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-md: 0 22px 60px rgba(0, 0, 0, 0.36);
 }
 
 @keyframes spin {
@@ -256,7 +315,12 @@ body {
   font-size: 14px;
   line-height: 1.6;
   color: var(--text-primary);
-  background: var(--bg-secondary);
+  background: var(--app-bg);
+  transition: background 220ms var(--ease-out, ease-out), color 220ms var(--ease-out, ease-out);
+}
+
+::selection {
+  background: color-mix(in srgb, var(--primary) 28%, transparent);
 }
 
 /* Layout */
@@ -538,6 +602,41 @@ body {
 .status-pending {
   background: #e0e7ff;
   color: #3730a3;
+}
+
+html[data-theme='dark'] .btn-secondary {
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+}
+
+html[data-theme='dark'] .btn-secondary:hover {
+  background: var(--bg-tertiary);
+  color: var(--primary);
+  border-color: var(--border-strong);
+}
+
+html[data-theme='dark'] .status-stub,
+html[data-theme='dark'] .status-pending {
+  background: rgba(120, 201, 202, 0.13);
+  color: #b8f1f1;
+}
+
+html[data-theme='dark'] .status-real,
+html[data-theme='dark'] .status-approved {
+  background: rgba(115, 192, 139, 0.13);
+  color: #b9efc7;
+}
+
+html[data-theme='dark'] .status-review {
+  background: rgba(224, 170, 87, 0.13);
+  color: #f3d59b;
+}
+
+html[data-theme='dark'] .status-rejected,
+html[data-theme='dark'] .status-blocking {
+  background: rgba(238, 139, 145, 0.14);
+  color: #ffc5c9;
 }
 
 /* Stats Grid */

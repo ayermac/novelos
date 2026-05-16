@@ -79,10 +79,10 @@ function scoreText(score: number): string {
 }
 
 function scoreColor(score: number): string {
-  if (score >= 85) return '#15803d'
-  if (score >= 70) return '#b45309'
-  if (score >= 55) return '#c2410c'
-  return '#b91c1c'
+  if (score >= 85) return 'var(--success)'
+  if (score >= 70) return 'var(--warning)'
+  if (score >= 55) return '#f97316'
+  return 'var(--danger)'
 }
 
 function severityLabel(severity: QualityFinding['severity']): string {
@@ -180,7 +180,7 @@ export default function QualityDiagnosisPanel({
             <span className="qd-title">质量诊断</span>
             <span className="qd-subtitle">
               {overall === null
-                ? '按需查看本章文本质量'
+                ? '查看 AI 痕迹、节奏、对白和场景质感'
                 : `${scoreText(overall)} · ${findings.length} 个提示`}
             </span>
           </span>
@@ -287,27 +287,29 @@ export default function QualityDiagnosisPanel({
 
       <style>{`
         .quality-diagnosis {
-          margin: 0 0 16px;
-          border: 1px solid rgba(148, 163, 184, 0.28);
-          border-radius: 8px;
-          background: #fff;
+          margin: 0 0 18px;
+          border: 1px solid var(--border-color);
+          border-radius: 10px;
+          background:
+            linear-gradient(135deg, color-mix(in srgb, var(--bg-primary) 94%, transparent), color-mix(in srgb, var(--bg-tertiary) 78%, transparent)),
+            var(--bg-primary);
           overflow: hidden;
-          box-shadow: 0 10px 24px rgba(15, 23, 42, 0.04);
+          box-shadow: var(--shadow-sm);
         }
         .qd-header {
           width: 100%;
           border: 0;
-          background: #fff;
+          background: transparent;
           display: flex;
           align-items: center;
           justify-content: space-between;
           gap: 16px;
-          padding: 14px 16px;
+          padding: 16px 18px;
           cursor: pointer;
           text-align: left;
         }
         .qd-header:hover {
-          background: rgba(248, 250, 252, 0.9);
+          background: color-mix(in srgb, var(--bg-tertiary) 58%, transparent);
         }
         .qd-header-main,
         .qd-header-side {
@@ -317,14 +319,14 @@ export default function QualityDiagnosisPanel({
           min-width: 0;
         }
         .qd-icon {
-          width: 34px;
-          height: 34px;
-          border-radius: 50%;
+          width: 38px;
+          height: 38px;
+          border-radius: 9px;
           display: inline-flex;
           align-items: center;
           justify-content: center;
-          background: rgba(148, 163, 184, 0.13);
-          color: #64748b;
+          background: var(--accent-soft);
+          color: var(--primary);
           flex-shrink: 0;
         }
         .qd-title {
@@ -346,7 +348,7 @@ export default function QualityDiagnosisPanel({
           font-size: 13px;
           font-weight: 800;
           text-align: center;
-          background: rgba(148, 163, 184, 0.12);
+          background: var(--accent-soft);
           color: var(--text-primary);
         }
         .qd-chevron {
@@ -358,26 +360,26 @@ export default function QualityDiagnosisPanel({
         }
         .qd-strong .qd-icon,
         .qd-strong .qd-score-chip {
-          background: #dcfce7;
-          color: #15803d;
+          background: color-mix(in srgb, var(--success) 18%, transparent);
+          color: var(--success);
         }
         .qd-ok .qd-icon,
         .qd-ok .qd-score-chip {
-          background: #fef3c7;
-          color: #b45309;
+          background: color-mix(in srgb, var(--warning) 20%, transparent);
+          color: var(--warning);
         }
         .qd-weak .qd-icon,
         .qd-weak .qd-score-chip {
-          background: #ffedd5;
-          color: #c2410c;
+          background: rgba(249, 115, 22, 0.16);
+          color: #f97316;
         }
         .qd-bad .qd-icon,
         .qd-bad .qd-score-chip {
-          background: #fee2e2;
-          color: #b91c1c;
+          background: color-mix(in srgb, var(--danger) 18%, transparent);
+          color: var(--danger);
         }
         .qd-body {
-          border-top: 1px solid rgba(148, 163, 184, 0.22);
+          border-top: 1px solid var(--border-color);
           padding: 16px;
           display: flex;
           flex-direction: column;
@@ -392,9 +394,11 @@ export default function QualityDiagnosisPanel({
           gap: 14px;
           align-items: center;
           padding: 14px;
-          border: 1px solid rgba(148, 163, 184, 0.18);
-          border-radius: 8px;
-          background: linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(255, 255, 255, 0.95));
+          border: 1px solid var(--border-color);
+          border-radius: 10px;
+          background:
+            radial-gradient(circle at 0% 0%, color-mix(in srgb, var(--primary) 12%, transparent), transparent 42%),
+            var(--bg-primary);
         }
         .qd-score-ring {
           width: 58px;
@@ -411,7 +415,7 @@ export default function QualityDiagnosisPanel({
           position: absolute;
           inset: 6px;
           border-radius: 50%;
-          background: #fff;
+          background: var(--bg-primary);
         }
         .qd-score-ring span {
           position: relative;
@@ -438,7 +442,7 @@ export default function QualityDiagnosisPanel({
         .qd-metrics span {
           padding: 5px 8px;
           border-radius: 999px;
-          background: rgba(148, 163, 184, 0.1);
+          background: color-mix(in srgb, var(--bg-tertiary) 70%, transparent);
           color: var(--text-secondary);
           font-size: 12px;
         }
@@ -452,9 +456,9 @@ export default function QualityDiagnosisPanel({
         }
         .qd-dimension {
           padding: 10px;
-          border: 1px solid rgba(148, 163, 184, 0.18);
-          border-radius: 8px;
-          background: #fff;
+          border: 1px solid var(--border-color);
+          border-radius: 9px;
+          background: color-mix(in srgb, var(--bg-primary) 92%, transparent);
         }
         .qd-dimension-top {
           display: flex;
@@ -474,15 +478,15 @@ export default function QualityDiagnosisPanel({
           height: 5px;
           border-radius: 999px;
           overflow: hidden;
-          background: rgba(148, 163, 184, 0.16);
+          background: color-mix(in srgb, var(--bg-tertiary) 74%, transparent);
         }
         .qd-bar span {
           display: block;
           height: 100%;
           border-radius: inherit;
-          background: #16a34a;
+          background: var(--success);
         }
-        .qd-dimension-ok .qd-bar span { background: #f59e0b; }
+        .qd-dimension-ok .qd-bar span { background: var(--warning); }
         .qd-dimension-weak .qd-bar span { background: #f97316; }
         .qd-dimension-bad .qd-bar span { background: #ef4444; }
         .qd-section-title {
@@ -502,26 +506,26 @@ export default function QualityDiagnosisPanel({
           gap: 9px;
           padding: 10px 12px;
           border-radius: 8px;
-          background: rgba(248, 250, 252, 0.92);
+          background: color-mix(in srgb, var(--bg-tertiary) 58%, transparent);
           color: var(--text-secondary);
         }
         .qd-finding svg {
           margin-top: 2px;
-          color: #64748b;
+          color: var(--text-muted);
         }
         .qd-finding-critical,
         .qd-finding-high {
-          background: #fff7ed;
+          background: color-mix(in srgb, var(--warning) 13%, var(--bg-primary));
         }
         .qd-finding-critical svg,
         .qd-finding-high svg {
-          color: #c2410c;
+          color: #f97316;
         }
         .qd-finding-medium {
-          background: #fffbeb;
+          background: color-mix(in srgb, var(--warning) 10%, var(--bg-primary));
         }
         .qd-finding-medium svg {
-          color: #d97706;
+          color: var(--warning);
         }
         .qd-finding-title {
           font-size: 13px;
@@ -532,7 +536,7 @@ export default function QualityDiagnosisPanel({
           margin-right: 7px;
           font-size: 11px;
           font-weight: 800;
-          color: #92400e;
+          color: var(--warning);
         }
         .qd-finding-suggestion {
           margin-top: 4px;
@@ -543,8 +547,8 @@ export default function QualityDiagnosisPanel({
         .qd-empty {
           padding: 12px;
           border-radius: 8px;
-          background: #f0fdf4;
-          color: #166534;
+          background: color-mix(in srgb, var(--success) 12%, var(--bg-primary));
+          color: var(--success);
           font-size: 13px;
         }
         @media (max-width: 920px) {

@@ -238,7 +238,7 @@
 }
 
 .ui-segmented-option:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.72);
+  background: color-mix(in srgb, var(--bg-primary) 72%, transparent);
 }
 
 .ui-segmented-option:active:not(:disabled) {
@@ -293,7 +293,7 @@
 }
 
 .ui-data-table tbody tr:hover {
-  background: rgba(247, 244, 239, 0.72);
+  background: color-mix(in srgb, var(--bg-tertiary) 72%, transparent);
 }
 
 .ui-data-table tbody tr:last-child td {
@@ -430,7 +430,7 @@
   min-height: 12px;
   overflow: hidden;
   border-radius: 6px;
-  background: linear-gradient(90deg, rgba(222, 219, 212, 0.56), rgba(247, 244, 239, 0.92), rgba(222, 219, 212, 0.56));
+  background: linear-gradient(90deg, color-mix(in srgb, var(--border-color) 70%, transparent), color-mix(in srgb, var(--bg-tertiary) 92%, transparent), color-mix(in srgb, var(--border-color) 70%, transparent));
   background-size: 220% 100%;
   animation: skeleton-shimmer 1.2s ease-in-out infinite;
 }
