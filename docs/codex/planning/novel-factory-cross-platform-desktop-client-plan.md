@@ -553,7 +553,7 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到"用
 
 ### v6.4：Chapter Generation Quality Closure
 
-状态：**已规划**（见 [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md)）
+状态：**已实现，v6.4.6 已封版**（见 [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md)）
 
 目标：解决生成章节"AI 味重"的核心问题，优先提升正文可读性、人物对白自然度、场景颗粒度、叙事节奏和风格一致性。
 
@@ -566,7 +566,7 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到"用
 - Editor 五维评分中"文字质量"拆分为 AI 痕迹/叙事质感/节奏控制子维度
 - QualityHub 新增统一 `diagnose` 方法和质量诊断 API
 - Frontend 章节详情页新增"质量诊断"折叠面板
-- 版本拆分：v6.4.0 诊断基线 → v6.4.1 Author prompt → v6.4.2 Polisher 改写 → v6.4.3 新增 skills → v6.4.4 Editor gate + 测试闭环 → v6.4.5 Real LLM 可选验收
+- 版本拆分：v6.4.0 诊断基线 → v6.4.1 Author prompt → v6.4.2 Polisher 改写 → v6.4.3 新增 skills → v6.4.4 Editor gate + 测试闭环 → v6.4.5 Real LLM 可选验收 → v6.4.6 封版
 
 ### v6.5：Agent Evidence UX Closure
 

@@ -19,10 +19,11 @@
 - **当前 Agent 可审计基线**: v6.1 Agent Work Process Streaming & Auditable Execution Evidence
 - **当前桌面客户端基线**: v6.2.5 Desktop Release Readiness Checklist
 - **当前创作者闭环基线**: v6.3.2 Creator Onboarding Closure
-- **当前下一步**: v6.4 Chapter Generation Quality Closure
-- **状态**: v6.3.2 已回归干净。v6.3 核心交付：项目创建后不再自动跳转 chapter workflow，新增 CONTEXT_INCOMPLETE 运行 guard，production-next 返回 `ready_for_chapter_1`，Genesis premise 改为可选，默认章节标题增加"待命名"，移除 `auto_generate` 自动触发。v6.3.1 统一 readiness 与 run guard 为 approved genesis + world + characters + outlines + instruction。v6.3.2 修复 review findings（旧测试、空 premise、stub/fixture 数据）。
-- **v6.4 规划中**: [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md) — 解决生成章节"AI 味重"问题，聚焦 prompt 增强、deterministic validator 补充和 skill 升级。
-- **测试基线**: backend full suite **1980 passed, 0 failed**；frontend typecheck/lint/build/vitest 169 passed；desktop typecheck/build passed；`scripts/verify.py smoke` passed；`test_v66_desktop_secure_keys.py` 9/9 passed；`verify-desktop-mac.sh` 7/7 passed
+- **当前章节质量基线**: v6.4.6 Chapter Generation Quality Closure
+- **当前下一步**: v6.5 Agent Evidence UX / Structured Memory Canonicalization
+- **状态**: v6.4 已封版。v6.4 核心交付：QualityHub 质量诊断基线、章节质量诊断 API 和面板、Author 起草契约、Polisher 对白/场景质感 pass、4 个 deterministic anti-AI skills、Editor advisory quality gates、可选 real LLM 验收脚本。v6.4.5 real run 在当前无 key 环境下 SKIP，stub harness 通过。
+- **v6.4 规格**: [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md) — 解决生成章节"AI 味重"问题，聚焦 prompt 增强、deterministic validator 补充和 skill 升级。
+- **测试基线**: backend full suite **2071 passed, 0 failed**；v6.4.5 targeted acceptance tests 2 passed；`scripts/verify.py smoke` passed；v6.4.5 real LLM acceptance skipped when no API key is configured
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
@@ -52,6 +53,8 @@
 - **桌面客户端规划**: [planning/novel-factory-cross-platform-desktop-client-plan.md](planning/novel-factory-cross-platform-desktop-client-plan.md)
 - **v6.2 Desktop Client 完成报告**: [reports/novel-factory-v6.2-desktop-client-completion-report.md](reports/novel-factory-v6.2-desktop-client-completion-report.md)
 - **v6.2 Desktop Client Review 记录**: [reviews/novel-factory-v6.2-desktop-client-review.md](reviews/novel-factory-v6.2-desktop-client-review.md)
+- **v6.4 Chapter Quality 完成报告**: [reports/novel-factory-v6.4.6-chapter-quality-closure-report.md](reports/novel-factory-v6.4.6-chapter-quality-closure-report.md)
+- **v6.4 Chapter Quality Review 记录**: [reviews/novel-factory-v6.4.6-chapter-quality-closure-review.md](reviews/novel-factory-v6.4.6-chapter-quality-closure-review.md)
 
 ## 当前执行规则
 
@@ -93,7 +96,7 @@ v5.5.15 和 v5.6 Phase 1 完成后，下一阶段不优先展开多租户、企�
 
 1. v6.2.5 桌面发布准备：release checklist、version policy、release manifest、安装/升级/卸载说明。
 2. v6.3 从 0 到 1 创作体验闭环：创建小说后进入创世设定、世界观、角色、大纲、章节规划，而不是直接跳章节。
-3. v6.4 Agent 执行证据 UX：把 Agent 输入、输出、工具调用、Skill、Memory、diff、审核依据做成用户能看懂的过程直播。
+3. v6.5 Agent 执行证据 UX：把 Agent 输入、输出、工具调用、Skill、Memory、diff、审核依据做成用户能看懂的过程直播。
 4. v6.5 结构化记忆与事实证据链：先把角色、世界观、伏笔、时间线做准；向量/RAG 后续只用于风格和参考作品检索。
 
 详细方向见 [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)。

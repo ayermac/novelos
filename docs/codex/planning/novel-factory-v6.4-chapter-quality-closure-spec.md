@@ -262,6 +262,26 @@
 
 ---
 
+### v6.4.6 Chapter Quality Closure
+
+**目标**：汇总 v6.4.0 ~ v6.4.5 的章节质量闭环成果，更新文档索引和下一阶段方向，标记 v6.4 封版。
+
+**状态**：已实现
+
+**封版范围**：
+1. **观测层**：`QualityHub.diagnose()`、质量诊断 API、前端诊断面板
+2. **起草层**：Author drafting contract 和 warning heuristics
+3. **润色层**：Polisher dialogue/scene texture prompt、context reminder 和 non-blocking warnings
+4. **技能层**：ShowDontTellValidator、InfoDumpDetector、SceneTextureChecker、DialogueNaturalnessChecker
+5. **评审层**：Editor advisory quality gates，不新增 hard blocker
+6. **验收层**：v6.4.5 real LLM optional acceptance harness
+
+**封版结论**：
+- v6.4 已完成"单章质量"闭环：写作约束 → 润色提醒 → deterministic 诊断 → Editor advisory review → 可选真实验收入口
+- 后续 v6.5 进入跨章可审计和结构化记忆，不继续在 v6.4 内扩大质量改写范围
+
+---
+
 ## 改动分类矩阵
 
 | 改动 | Prompt/Agent Contract | Deterministic Validator | UI/报告 | Schema | Config |
