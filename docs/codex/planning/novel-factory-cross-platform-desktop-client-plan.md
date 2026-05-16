@@ -299,7 +299,7 @@ Desktop App
 
 状态：**已实现**
 
-目标：把客户端从“能打包运行”推进到“用户遇到问题时能看懂、能恢复、能验收”。
+目标：把客户端从"能打包运行"推进到"用户遇到问题时能看懂、能恢复、能验收"。
 
 实现步骤：
 
@@ -323,7 +323,7 @@ Desktop App
 4. **客户端健康监控 UI**：
 
    - `DesktopRuntimeBanner` — 顶部非阻塞 banner，8 秒间隔 ping `/api/health`。
-   - 连续失败 2 次后显示：“本地后端服务连接中断”。
+   - 连续失败 2 次后显示："本地后端服务连接中断"。
    - 操作：重试连接、重启本地服务（确认 dialog）、打开日志目录。
    - 恢复后 banner 自动消失。
    - Settings → 桌面运行时：显示 sidecar 状态、apiBaseUrl、pid、日志路径、最近错误、重启按钮。
@@ -337,7 +337,7 @@ Desktop App
 
 6. **真实 LLM 配置连通性验证**：
 
-   - Settings → 桌面配置 增加“测试 LLM 连接”按钮。
+   - Settings → 桌面配置 增加"测试 LLM 连接"按钮。
    - stub 模式提示切换 real 并重启；key missing 提示保存并重启；否则调用 `/settings/validate` 做轻量连通性验证。
 
 7. **一键客户端验收脚本**：
@@ -400,7 +400,7 @@ Desktop App
 
 状态：**已实现**
 
-目标：解决“客户端启动失败或后端不可用时，用户只能看到加载失败、不知道该看哪里”的问题。该版本不引入分发开放能力，优先补齐本地排障证据、诊断导出和发布验证报告。
+目标：解决"客户端启动失败或后端不可用时，用户只能看到加载失败、不知道该看哪里"的问题。该版本不引入分发开放能力，优先补齐本地排障证据、诊断导出和发布验证报告。
 
 实现步骤：
 
@@ -413,12 +413,12 @@ Desktop App
    - API key、token、secret、authorization、password 等字段写入前脱敏。
 
 2. **启动失败页增强**：
-   - sidecar 启动失败的自包含诊断窗口增加“导出诊断包”按钮。
+   - sidecar 启动失败的自包含诊断窗口增加"导出诊断包"按钮。
    - 即使 React 前端资源缺失，也可以导出诊断包、打开日志/配置目录、重试启动或退出应用。
 
 3. **桌面运行时设置页入口**：
-   - Settings → 桌面运行时增加“导出诊断包”按钮。
-   - 顶部 runtime failure banner 也提供“导出诊断包”，便于后端断连时立即收集证据。
+   - Settings → 桌面运行时增加"导出诊断包"按钮。
+   - 顶部 runtime failure banner 也提供"导出诊断包"，便于后端断连时立即收集证据。
 
 4. **打包验证报告**：
    - `packaging/scripts/verify-desktop-mac.sh` 生成 `desktop/release/verification-report.json`。
@@ -437,7 +437,7 @@ Desktop App
 
 状态：**已实现**
 
-目标：把当前 macOS 桌面客户端从“能打包验收”推进到“可被稳定发布和复验”。本版本不做代码签名、公证、自动更新，也不扩展 Windows/Linux；重点是发布前清单、版本规则、release manifest、安装/升级/卸载说明和机器可读验收产物。
+目标：把当前 macOS 桌面客户端从"能打包验收"推进到"可被稳定发布和复验"。本版本不做代码签名、公证、自动更新，也不扩展 Windows/Linux；重点是发布前清单、版本规则、release manifest、安装/升级/卸载说明和机器可读验收产物。
 
 实现范围：
 
@@ -491,7 +491,7 @@ Desktop App
 
 ## 客户端完成态后续路线
 
-v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到“用户安装后能不能真正完成一本小说”的产品闭环。建议后续版本如下：
+v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到"用户安装后能不能真正完成一本小说"的产品闭环。建议后续版本如下：
 
 ### v6.3：Creator Onboarding Closure
 
@@ -551,11 +551,28 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到“�
 - 不改动创作主流程 Agent 节点。
 - 不改后端数据库 schema。
 
-### v6.4：Agent Evidence UX Closure
+### v6.4：Chapter Generation Quality Closure
+
+状态：**已规划**（见 [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md)）
+
+目标：解决生成章节"AI 味重"的核心问题，优先提升正文可读性、人物对白自然度、场景颗粒度、叙事节奏和风格一致性。
+
+重点：
+
+- Author prompt 增强：Show-Don't-Tell 铁律、感官细节要求、对白人物化、设定戏剧化、章末禁止说教
+- Polisher 专项：对白自然化、场景质感增强、节奏调整、去直白情绪
+- 新增 4 个 deterministic validator skill：`ShowDontTellValidator`、`DialogueNaturalizer`、`SceneConflictChecker`、`InfoDumpDetector`
+- 增强现有 skill：`HumanizerZh` 新增规则、`AIStyleDetector` 新增维度、`death_penalty` 新增规则
+- Editor 五维评分中"文字质量"拆分为 AI 痕迹/叙事质感/节奏控制子维度
+- QualityHub 新增统一 `diagnose` 方法和质量诊断 API
+- Frontend 章节详情页新增"质量诊断"折叠面板
+- 版本拆分：v6.4.0 诊断基线 → v6.4.1 Author prompt → v6.4.2 Polisher 改写 → v6.4.3 新增 skills → v6.4.4 Editor gate + 测试闭环
+
+### v6.5：Agent Evidence UX Closure
 
 状态：**候选规划**
 
-目标：让用户能看懂并信任每个 Agent 的工作过程。当前 v6.1 已有执行事件基础，v6.4 要把它产品化成可审计的创作证据链。
+目标：让用户能看懂并信任每个 Agent 的工作过程。当前 v6.1 已有执行事件基础，v6.5 要把它产品化成可审计的创作证据链。
 
 重点：
 
@@ -563,7 +580,7 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到“�
 - Author/Polisher 显示生成或改写差异。
 - Editor 显示审核维度、返修依据、通过/失败证据。
 - 明确标出 fallback、跳过、低变化返修、超时、无 LLM 请求等异常状态。
-- 支持长连接实时刷新，不让用户只看到“运行中/完成”。
+- 支持长连接实时刷新，不让用户只看到"运行中/完成"。
 
 ### v6.5：Structured Memory Canonicalization
 
@@ -611,7 +628,7 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到“�
 
 状态：**候选规划**
 
-目标：建立“参考作品研究系统”，用于题材研究、结构分析和风格样本检索。该功能不用于复制或复写他人作品。
+目标：建立"参考作品研究系统"，用于题材研究、结构分析和风格样本检索。该功能不用于复制或复写他人作品。
 
 重点：
 

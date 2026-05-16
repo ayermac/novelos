@@ -21,6 +21,7 @@
 - **当前创作者闭环基线**: v6.3.2 Creator Onboarding Closure
 - **当前下一步**: v6.4 Chapter Generation Quality Closure
 - **状态**: v6.3.2 已回归干净。v6.3 核心交付：项目创建后不再自动跳转 chapter workflow，新增 CONTEXT_INCOMPLETE 运行 guard，production-next 返回 `ready_for_chapter_1`，Genesis premise 改为可选，默认章节标题增加"待命名"，移除 `auto_generate` 自动触发。v6.3.1 统一 readiness 与 run guard 为 approved genesis + world + characters + outlines + instruction。v6.3.2 修复 review findings（旧测试、空 premise、stub/fixture 数据）。
+- **v6.4 规划中**: [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md) — 解决生成章节"AI 味重"问题，聚焦 prompt 增强、deterministic validator 补充和 skill 升级。
 - **测试基线**: backend full suite **1980 passed, 0 failed**；frontend typecheck/lint/build/vitest 169 passed；desktop typecheck/build passed；`scripts/verify.py smoke` passed；`test_v66_desktop_secure_keys.py` 9/9 passed；`verify-desktop-mac.sh` 7/7 passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
