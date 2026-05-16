@@ -39,7 +39,7 @@ POLISHER_SYSTEM_PROMPT = """你是网文工厂的润色编辑（Polisher），�
 2. 场景质感增强
    - 补充动作细节、环境反馈和感官线索（光影、声音、温度、气味）
    - 将抽象描述改为具体动作，避免形容词堆砌
-   - 每个场景至少保留一种视觉 + 一种其他感官细节
+   - 优先强化已有感官线索；必要时只补最小动作/环境反馈，不硬加无关描写
 3. 节奏变化
    - 打破均匀段落，长短句交替
    - 紧张场景使用短句/短段，描写场景可用长句但避免超长句（>40字）
@@ -102,7 +102,7 @@ class PolisherAgent(BaseAgent):
             "【润色写作提醒】\n"
             "1. 对白自然化：检查是否有功能性问答，尝试加入语气词、打断、省略或反问；"
             "让不同角色的句式长度和用词习惯有差异。\n"
-            "2. 场景质感：确保每个场景有视觉细节 + 至少一种听觉/触觉/嗅觉细节；"
+            "2. 场景质感：优先强化已有感官线索；必要时只补最小动作/环境反馈，不硬加无关描写；"
             "将抽象描述（\"他很紧张\"）改为具体动作（\"他攥紧拳头\"）。\n"
             "3. 节奏变化：避免连续多个段落长度相近；紧张处用短句，描写处可用长句但避免>40字。\n"
             "4. 去AI味：删除总结句（\"总之/简单来说\"）、直白心理解释和宏大空泛判断。\n"
@@ -408,12 +408,18 @@ class PolisherAgent(BaseAgent):
         if not text:
             return warnings
 
-        # Exclude dialogue from narrative-only checks
-        narrative_only = re.sub(r'[""「『].*?[""」』]', '「D」', text, flags=re.DOTALL)
+        # Exclude dialogue from narrative-only checks (covers half-width, curly, and corner quotes)
+        narrative_only = re.sub(
+            '["\u201c\u201d\u300c\u300e].*?[\u201d\u300d\u300f"]',
+            '「D」', text, flags=re.DOTALL,
+        )
         total_chars = max(len(text), 1)
 
         # 1. dialogue_naturalness_low — low dialogue ratio or overly formal dialogue
-        dialogues = re.findall(r'[""“”「『]([^""”」』]+)[""”」』]', text)
+        dialogues = re.findall(
+            '["\u201c\u201d\u300c\u300e]([^\u201d\u300d\u300f"]+)[\u201d\u300d\u300f"]',
+            text,
+        )
         dialogue_chars = sum(len(d) for d in dialogues)
         dialogue_ratio = dialogue_chars / total_chars
         if dialogue_ratio < 0.05:
@@ -445,7 +451,7 @@ class PolisherAgent(BaseAgent):
         straight_patterns = [
             r"感到[^，。！？]{1,8}", r"觉得[^，。！？]{1,8}", r"意识到[^，。！？]{1,8}",
             r"明白[^，。！？]{1,8}", r"知道[^，。！？]{1,8}", r"理解[^，。！？]{1,8}",
-            r"察觉[^，。！？]{1,8}", r"发现[^，。！？]{1,8}", r"心中暗想", r"心道", r"暗道",
+            r"察觉[^，。！？]{1,8}", r"心中暗想", r"心道",
         ]
         straight_count = sum(len(re.findall(p, narrative_only)) for p in straight_patterns)
         explain_per_1k = (straight_count / total_chars) * 1000

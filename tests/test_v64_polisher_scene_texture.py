@@ -359,6 +359,51 @@ class TestPolisherSelfCheckWarnings:
         assert result.get("chapter_status") == ChapterStatus.POLISHED.value
         assert "error" not in result or result.get("error") is None
 
+    def test_curly_quotes_dialogue_not_flagged(self, repo):
+        """Straight emotion words inside Chinese curly-quote dialogue should not trigger excessive_explanation."""
+        text = (
+            "他站在门口，深吸了一口气。\n"
+            "\u201c我感到非常愤怒，\u201d他说，\u201c你为什么要这么做？\u201d\n"
+            "\u201c我觉得你应该冷静一下。\u201d对方回答。\n"
+            "\u201c我明白你的意思，但这不公平。\u201d他攥紧拳头。\n"
+            "窗外的风声呼啸，远处的雷声隐约传来。\n"
+            "他转过身，不再说话。"
+        )
+        # Pad to pass word gate
+        long_text = text
+        while len(long_text) < 2200:
+            long_text = long_text + "\n" + long_text
+        result = self._run_polisher(repo, long_text)
+        events = result.get("_exec_events", [])
+        warn_events = [e for e in events if e.get("event_type") == "polisher_warnings"]
+        if warn_events:
+            warnings = warn_events[0].get("payload", {}).get("warnings", [])
+            assert not any("excessive_explanation" in w for w in warnings)
+
+    def test_discovery_action_not_flagged(self, repo):
+        """Objective action word '发现' used for physical discovery should not trigger excessive_explanation."""
+        text = (
+            "他沿着通道向前走去，脚步在空旷的空间里回荡。\n"
+            "突然，他发现了一条隐蔽的暗道。\n"
+            "他发现了墙上的一道裂缝，里面透出微弱的光线。\n"
+            "他发现了地上散落的纸片，捡起来仔细查看。\n"
+            "他发现了空气中弥漫的霉味，显然这里已经很久没有人来过。\n"
+            "他发现了暗道尽头的一扇铁门，门上布满了锈迹。\n"
+            "他发现了门缝里透出的冷光，背脊一紧。\n"
+            "他发现了门后传来的微弱声响，停下脚步。\n"
+            "他发现了地上的脚印，新鲜的。\n"
+            "他发现了墙角的暗器，迅速闪身避开。\n"
+        )
+        long_text = text
+        while len(long_text) < 2200:
+            long_text = long_text + "\n" + long_text
+        result = self._run_polisher(repo, long_text)
+        events = result.get("_exec_events", [])
+        warn_events = [e for e in events if e.get("event_type") == "polisher_warnings"]
+        if warn_events:
+            warnings = warn_events[0].get("payload", {}).get("warnings", [])
+            assert not any("excessive_explanation" in w for w in warnings)
+
 
 class TestStubPolisherContract:
     """Stub provider Polisher output meets v6.4.2 contract."""

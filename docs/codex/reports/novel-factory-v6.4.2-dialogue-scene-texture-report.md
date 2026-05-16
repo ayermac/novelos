@@ -63,10 +63,10 @@
 
 ## 验证结果
 
-- `pytest tests/test_v64_polisher_scene_texture.py -q`：XX passed
-- `pytest tests/test_agents.py tests/test_quality.py tests/test_v64_author_drafting_contract.py tests/test_v64_polisher_scene_texture.py -q`：XX passed
-- `python3 scripts/verify.py smoke`：XX passed
-- `pytest -q`（backend 全量）：XX passed, 0 failed
+- `pytest tests/test_v64_polisher_scene_texture.py -q`：18 passed
+- `pytest tests/test_agents.py tests/test_quality.py tests/test_v64_author_drafting_contract.py tests/test_v64_polisher_scene_texture.py -q`：114 passed
+- `python3 scripts/verify.py smoke`：通过
+- `pytest -q`（backend 全量）：2027 passed, 0 failed
 
 ## 已知限制
 
