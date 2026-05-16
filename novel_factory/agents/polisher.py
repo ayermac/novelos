@@ -400,74 +400,162 @@ class PolisherAgent(BaseAgent):
         }
 
     def _run_polisher_warnings(self, text: str) -> list[str]:
-        """v6.4.2: Deterministic warnings on polished content.
+        """v6.4.3: Deterministic warnings on polished content.
 
+        Prefer skill-based detection when skill_registry is available;
+        fall back to built-in heuristics otherwise.
         These are advisory only and do NOT affect passed/repair_needed/workflow routing.
         """
         warnings: list[str] = []
         if not text:
             return warnings
 
-        # Exclude dialogue from narrative-only checks (covers half-width, curly, and corner quotes)
+        total_chars = max(len(text), 1)
+        warned_codes: set[str] = set()
+
+        # -- Try skill-based detection first (v6.4.3) --
+        if self.skill_registry:
+            # 1. Show-Don't-Tell
+            sdt_result = self.skill_registry.run_skill(
+                "show-dont-tell", {"text": text},
+                agent="polisher", stage="before_save",
+            )
+            if sdt_result.get("ok"):
+                sdt_data = sdt_result.get("data", {})
+                per_1k = sdt_data.get("per_1000_chars", 0)
+                summary_count = sdt_data.get("summary_count", 0)
+                if isinstance(per_1k, (int, float)) and per_1k > 5:
+                    warnings.append(
+                        f"excessive_explanation: 直白情绪词密度 {per_1k:.1f}/千字，"
+                        "建议改为动作或神态展现"
+                    )
+                    warned_codes.add("excessive_explanation")
+                if isinstance(summary_count, int) and summary_count > 0:
+                    warnings.append(
+                        f"excessive_explanation: 检测到 {summary_count} 处总结句，建议删除"
+                    )
+                    warned_codes.add("excessive_explanation")
+
+            # 2. Info Dump
+            id_result = self.skill_registry.run_skill(
+                "info-dump-detector", {"text": text},
+                agent="polisher", stage="before_save",
+            )
+            if id_result.get("ok"):
+                id_data = id_result.get("data", {})
+                lore_count = id_data.get("lore_count", 0)
+                dump_paras = id_data.get("dump_paragraphs", 0)
+                if (isinstance(lore_count, int) and lore_count > 0) or \
+                        (isinstance(dump_paras, int) and dump_paras > 0):
+                    warnings.append(
+                        f"info_dump_detected: 设定旁白 {lore_count} 处，纯说明段落 {dump_paras} 处，"
+                        "建议通过动作/对话展现设定"
+                    )
+                    warned_codes.add("info_dump")
+
+            # 3. Scene Texture
+            st_result = self.skill_registry.run_skill(
+                "scene-texture", {"text": text},
+                agent="polisher", stage="before_save",
+            )
+            if st_result.get("ok"):
+                st_data = st_result.get("data", {})
+                sensory_per_1k = st_data.get("sensory_per_1000", 0)
+                if isinstance(sensory_per_1k, (int, float)) and sensory_per_1k < 3:
+                    warnings.append(
+                        f"scene_texture_low: 感官细节密度 {sensory_per_1k:.1f}/千字，"
+                        "建议补充光影、声音、温度或气味等感官线索"
+                    )
+                    warned_codes.add("scene_texture")
+
+            # 4. Dialogue Naturalness
+            dn_result = self.skill_registry.run_skill(
+                "dialogue-naturalness", {"text": text},
+                agent="polisher", stage="before_save",
+            )
+            if dn_result.get("ok"):
+                dn_data = dn_result.get("data", {})
+                dialogue_ratio = dn_data.get("dialogue_ratio", 0)
+                colloquial_ratio = dn_data.get("colloquial_ratio", 0)
+                functional_ratio = dn_data.get("functional_ratio", 0)
+                if isinstance(dialogue_ratio, (int, float)) and dialogue_ratio < 0.05:
+                    warnings.append(
+                        f"dialogue_naturalness_low: 对白占比 {dialogue_ratio*100:.1f}%，"
+                        "建议增加有冲突或潜台词的角色对话"
+                    )
+                    warned_codes.add("dialogue_naturalness")
+                elif isinstance(colloquial_ratio, (int, float)) and colloquial_ratio < 0.1:
+                    warnings.append(
+                        "dialogue_naturalness_low: 对白口语化标记不足，"
+                        "建议加入语气词、省略或打断"
+                    )
+                    warned_codes.add("dialogue_naturalness")
+                if isinstance(functional_ratio, (int, float)) and functional_ratio > 0.3:
+                    warnings.append(
+                        f"dialogue_naturalness_low: 功能性对白比例偏高（{functional_ratio*100:.0f}%），"
+                        "建议让对白承载目的、遮掩或情绪摩擦"
+                    )
+                    warned_codes.add("dialogue_naturalness")
+
+        # -- Fallback heuristics for codes not covered by skills --
+        # Exclude dialogue from narrative-only checks
         narrative_only = re.sub(
             '["\u201c\u201d\u300c\u300e].*?[\u201d\u300d\u300f"]',
             '「D」', text, flags=re.DOTALL,
         )
-        total_chars = max(len(text), 1)
 
-        # 1. dialogue_naturalness_low — low dialogue ratio or overly formal dialogue
-        dialogues = re.findall(
-            '["\u201c\u201d\u300c\u300e]([^\u201d\u300d\u300f"]+)[\u201d\u300d\u300f"]',
-            text,
-        )
-        dialogue_chars = sum(len(d) for d in dialogues)
-        dialogue_ratio = dialogue_chars / total_chars
-        if dialogue_ratio < 0.05:
-            warnings.append(
-                f"dialogue_naturalness_low: 对白占比 {dialogue_ratio*100:.1f}%，"
-                "建议增加有冲突或潜台词的角色对话"
-            )
-        else:
-            # Check for overly formal dialogue (rare colloquial marks)
-            colloquial_marks = ["啊", "呢", "吧", "嘛", "哦", "呀", "哈", "哼", "呸"]
-            colloquial_count = sum(1 for d in dialogues for m in colloquial_marks if m in d)
-            if dialogues and colloquial_count / len(dialogues) < 0.1:
+        if "excessive_explanation" not in warned_codes:
+            straight_patterns = [
+                r"感到[^，。！？]{1,8}", r"觉得[^，。！？]{1,8}", r"意识到[^，。！？]{1,8}",
+                r"明白[^，。！？]{1,8}", r"知道[^，。！？]{1,8}", r"理解[^，。！？]{1,8}",
+                r"察觉[^，。！？]{1,8}", r"心中暗想", r"心道",
+            ]
+            straight_count = sum(len(re.findall(p, narrative_only)) for p in straight_patterns)
+            explain_per_1k = (straight_count / total_chars) * 1000
+            summary_markers = ["综上所述", "总之", "简单来说", "说白了", "总而言之"]
+            summary_count = sum(1 for m in summary_markers if m in text)
+            if explain_per_1k > 5:
                 warnings.append(
-                    "dialogue_naturalness_low: 对白口语化标记不足，"
-                    "建议加入语气词、省略或打断"
+                    f"excessive_explanation: 直白情绪词密度 {explain_per_1k:.1f}/千字，"
+                    "建议改为动作或神态展现"
+                )
+            if summary_count > 0:
+                warnings.append(
+                    f"excessive_explanation: 检测到 {summary_count} 处总结句，建议删除"
                 )
 
-        # 2. scene_texture_low — low sensory detail density
-        sensory_words = ["光", "影", "声", "响", "味", "香", "臭", "冷", "热", "湿", "干燥", "干涩", "风", "雨", "雷", "温度", "颜色", "色彩"]
-        sensory_count = sum(text.count(w) for w in sensory_words)
-        sensory_per_1k = (sensory_count / total_chars) * 1000
-        if sensory_per_1k < 3:
-            warnings.append(
-                f"scene_texture_low: 感官细节密度 {sensory_per_1k:.1f}/千字，"
-                "建议补充光影、声音、温度或气味等感官线索"
-            )
+        if "scene_texture" not in warned_codes:
+            sensory_words = ["光", "影", "声", "响", "味", "香", "臭", "冷", "热", "湿", "干燥", "干涩", "风", "雨", "雷", "温度", "颜色", "色彩"]
+            sensory_count = sum(text.count(w) for w in sensory_words)
+            sensory_per_1k = (sensory_count / total_chars) * 1000
+            if sensory_per_1k < 3:
+                warnings.append(
+                    f"scene_texture_low: 感官细节密度 {sensory_per_1k:.1f}/千字，"
+                    "建议补充光影、声音、温度或气味等感官线索"
+                )
 
-        # 3. excessive_explanation — straight emotion + summary markers in narrative
-        straight_patterns = [
-            r"感到[^，。！？]{1,8}", r"觉得[^，。！？]{1,8}", r"意识到[^，。！？]{1,8}",
-            r"明白[^，。！？]{1,8}", r"知道[^，。！？]{1,8}", r"理解[^，。！？]{1,8}",
-            r"察觉[^，。！？]{1,8}", r"心中暗想", r"心道",
-        ]
-        straight_count = sum(len(re.findall(p, narrative_only)) for p in straight_patterns)
-        explain_per_1k = (straight_count / total_chars) * 1000
-        summary_markers = ["综上所述", "总之", "简单来说", "说白了", "总而言之"]
-        summary_count = sum(1 for m in summary_markers if m in text)
-        if explain_per_1k > 5:
-            warnings.append(
-                f"excessive_explanation: 直白情绪词密度 {explain_per_1k:.1f}/千字，"
-                "建议改为动作或神态展现"
+        if "dialogue_naturalness" not in warned_codes:
+            dialogues = re.findall(
+                '["\u201c\u201d\u300c\u300e]([^\u201d\u300d\u300f"]+)[\u201d\u300d\u300f"]',
+                text,
             )
-        if summary_count > 0:
-            warnings.append(
-                f"excessive_explanation: 检测到 {summary_count} 处总结句，建议删除"
-            )
+            dialogue_chars = sum(len(d) for d in dialogues)
+            dialogue_ratio = dialogue_chars / total_chars
+            if dialogue_ratio < 0.05:
+                warnings.append(
+                    f"dialogue_naturalness_low: 对白占比 {dialogue_ratio*100:.1f}%，"
+                    "建议增加有冲突或潜台词的角色对话"
+                )
+            else:
+                colloquial_marks = ["啊", "呢", "吧", "嘛", "哦", "呀", "哈", "哼", "呸"]
+                colloquial_count = sum(1 for d in dialogues for m in colloquial_marks if m in d)
+                if dialogues and colloquial_count / len(dialogues) < 0.1:
+                    warnings.append(
+                        "dialogue_naturalness_low: 对白口语化标记不足，"
+                        "建议加入语气词、省略或打断"
+                    )
 
-        # 4. pacing_too_uniform — paragraph length uniformity
+        # 5. pacing_too_uniform — always from built-in heuristic (no dedicated skill yet)
         paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
         if len(paragraphs) >= 5:
             lengths = [len(p) for p in paragraphs]

@@ -870,60 +870,101 @@ class QualityHub:
                         "suggestion": None,
                     })
 
-        # -- Show-Don't-Tell (v6.4.0 baseline: simple regex) --
-        straight_emotion_patterns = [
-            r"感到[^，。！？]{1,8}",
-            r"觉得[^，。！？]{1,8}",
-            r"意识到[^，。！？]{1,8}",
-            r"明白[^，。！？]{1,8}",
-            r"知道[^，。！？]{1,8}",
-            r"理解[^，。！？]{1,8}",
-            r"察觉[^，。！？]{1,8}",
-            r"发现[^，。！？]{1,8}",
-            r"心中暗想",
-            r"心道",
-            r"暗道",
-        ]
-        straight_emotion_count = 0
-        for pattern in straight_emotion_patterns:
-            straight_emotion_count += len(re.findall(pattern, text))
+        # -- Show-Don't-Tell (v6.4.3: use ShowDontTellValidator skill) --
+        if self.skill_registry:
+            sdt_result = self.skill_registry.run_skill(
+                "show-dont-tell",
+                {"text": text},
+                agent="qualityhub",
+                stage="diagnose",
+            )
+            if sdt_result.get("ok"):
+                sdt_data = sdt_result.get("data", {})
+                dimensions["show_dont_tell"] = sdt_data.get("score", 100)
+                for f in sdt_data.get("findings", []):
+                    findings.append({
+                        "severity": f.get("severity", "info"),
+                        "code": f"SHOW_DONT_TELL_{f.get('code', 'UNKNOWN')}",
+                        "message": f.get("message", ""),
+                        "evidence": f.get("evidence"),
+                        "suggestion": f.get("suggestion"),
+                    })
+            else:
+                dimensions["show_dont_tell"] = 100
+        else:
+            dimensions["show_dont_tell"] = 100
 
-        per_1k = (straight_emotion_count / max(word_count, 1)) * 1000
-        show_dont_tell_score = max(0, 100 - per_1k * 20)
-        dimensions["show_dont_tell"] = round(show_dont_tell_score, 1)
+        # -- Info Dump (v6.4.3: use InfoDumpDetector skill) --
+        if self.skill_registry:
+            id_result = self.skill_registry.run_skill(
+                "info-dump-detector",
+                {"text": text},
+                agent="qualityhub",
+                stage="diagnose",
+            )
+            if id_result.get("ok"):
+                id_data = id_result.get("data", {})
+                dimensions["info_dump"] = id_data.get("score", 100)
+                for f in id_data.get("findings", []):
+                    findings.append({
+                        "severity": f.get("severity", "info"),
+                        "code": f"INFO_DUMP_{f.get('code', 'UNKNOWN')}",
+                        "message": f.get("message", ""),
+                        "evidence": f.get("evidence"),
+                        "suggestion": f.get("suggestion"),
+                    })
+            else:
+                dimensions["info_dump"] = 100
+        else:
+            dimensions["info_dump"] = 100
 
-        if straight_emotion_count > 0:
-            findings.append({
-                "severity": "medium" if per_1k > 5 else "info",
-                "code": "SHOW_DONT_TELL_STRAIGHT_EMOTION",
-                "message": f"检测到 {straight_emotion_count} 处直白情绪表达（每千字约 {per_1k:.1f} 处）",
-                "evidence": {"count": straight_emotion_count, "per_1000_words": round(per_1k, 1)},
-                "suggestion": "建议将'感到/觉得/意识到'等改为动作、神态或对话展现",
-            })
+        # -- Scene Texture (v6.4.3: use SceneTextureChecker skill) --
+        if self.skill_registry:
+            st_result = self.skill_registry.run_skill(
+                "scene-texture",
+                {"text": text},
+                agent="qualityhub",
+                stage="diagnose",
+            )
+            if st_result.get("ok"):
+                st_data = st_result.get("data", {})
+                dimensions["scene_immersion"] = st_data.get("score", 100)
+                for f in st_data.get("findings", []):
+                    findings.append({
+                        "severity": f.get("severity", "info"),
+                        "code": f"SCENE_TEXTURE_{f.get('code', 'UNKNOWN')}",
+                        "message": f.get("message", ""),
+                        "evidence": f.get("evidence"),
+                        "suggestion": f.get("suggestion"),
+                    })
+            else:
+                dimensions["scene_immersion"] = 100
+        else:
+            dimensions["scene_immersion"] = 100
 
-        # -- Info Dump (v6.4.0 baseline: simple regex) --
-        info_dump_patterns = [
-            r"这个世界(是|有|存在)[^。！？]{10,80}",
-            r"在这个(世界|时代|地方)[^。！？]{10,80}",
-            r"所谓[^。！？]{10,60}(是|指)",
-            r"简单来说[^。！？]{10,60}",
-            r"说白了[^。！？]{10,60}",
-        ]
-        info_dump_count = 0
-        for pattern in info_dump_patterns:
-            info_dump_count += len(re.findall(pattern, text))
-
-        info_dump_score = max(0, 100 - info_dump_count * 15)
-        dimensions["info_dump"] = round(info_dump_score, 1)
-
-        if info_dump_count > 0:
-            findings.append({
-                "severity": "info",
-                "code": "INFO_DUMP_DETECTED",
-                "message": f"检测到 {info_dump_count} 处设定旁白式解释",
-                "evidence": {"count": info_dump_count},
-                "suggestion": "建议通过角色动作或对话展现设定，减少旁白解释",
-            })
+        # -- Dialogue Naturalness (v6.4.3: use DialogueNaturalnessChecker skill) --
+        if self.skill_registry:
+            dn_result = self.skill_registry.run_skill(
+                "dialogue-naturalness",
+                {"text": text},
+                agent="qualityhub",
+                stage="diagnose",
+            )
+            if dn_result.get("ok"):
+                dn_data = dn_result.get("data", {})
+                dimensions["dialogue_naturalness"] = dn_data.get("score", 100)
+                for f in dn_data.get("findings", []):
+                    findings.append({
+                        "severity": f.get("severity", "info"),
+                        "code": f"DIALOGUE_{f.get('code', 'UNKNOWN')}",
+                        "message": f.get("message", ""),
+                        "evidence": f.get("evidence"),
+                        "suggestion": f.get("suggestion"),
+                    })
+            else:
+                dimensions["dialogue_naturalness"] = 100
+        else:
+            dimensions["dialogue_naturalness"] = 100
 
         # -- Overall Score --
         if dimensions:

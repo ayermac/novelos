@@ -119,7 +119,7 @@ class TestQualityHubDiagnose:
             assert "SHOW_DONT_TELL_STRAIGHT_EMOTION" in finding_codes
 
             # Should detect info dump
-            assert "INFO_DUMP_DETECTED" in finding_codes
+            assert any("INFO_DUMP" in c for c in finding_codes)
 
             # Dimensions should exist
             dims = result["dimensions"]
@@ -303,7 +303,7 @@ class TestQualityDiagnosisAPI:
         # Check findings have expected codes
         codes = [f["code"] for f in diagnosis["findings"]]
         assert "SHOW_DONT_TELL_STRAIGHT_EMOTION" in codes
-        assert "INFO_DUMP_DETECTED" in codes
+        assert any("INFO_DUMP" in c for c in codes)
 
 
 class TestExecutionEventConstant:

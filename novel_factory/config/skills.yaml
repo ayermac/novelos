@@ -91,6 +91,34 @@ skills:
     description: "检查 Memory Curator 抽取的记忆 patch 是否结构完整"
     config: {}
 
+  show-dont-tell:
+    enabled: true
+    type: validator
+    class: ShowDontTellValidator
+    description: "检测叙述者直白情绪/心理解释（排除对白）"
+    config: {}
+
+  info-dump-detector:
+    enabled: true
+    type: validator
+    class: InfoDumpDetector
+    description: "检测设定灌输、连续解释、说明腔段落"
+    config: {}
+
+  scene-texture:
+    enabled: true
+    type: validator
+    class: SceneTextureChecker
+    description: "检测动作/环境/感官线索不足"
+    config: {}
+
+  dialogue-naturalness:
+    enabled: true
+    type: validator
+    class: DialogueNaturalnessChecker
+    description: "检测功能化对白、对白占比异常、缺少摩擦/潜台词"
+    config: {}
+
 # Agent挂载配置
 agent_skills:
   planner:

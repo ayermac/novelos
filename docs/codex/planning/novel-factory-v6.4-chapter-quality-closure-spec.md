@@ -133,49 +133,49 @@
 
 ### v6.4.3 Polisher Anti-AI Rewrite Pass
 
-**目标**：引入新的 deterministic skills，在 Polisher 阶段做更深层的质量检查。
+**目标**：引入新的 deterministic anti-AI quality skills，在 QualityHub 诊断和 Polisher warning 中复用。
+
+**状态**：已实现
 
 **改动**：
-1. **新增 `ShowDontTellValidator` Skill**（ValidatorSkill）：
-   - 检测"感到/觉得/意识到/明白/知道/理解/察觉/发现"等直白情绪/认知动词
-   - 检测"心中暗想/心道/暗道"等内心独白模板
-   - 返回：`straight_emotion_count`、`sensory_action_replacement_suggestions`
-   - 接入 Polisher `before_save` stage（validator 类型）
+1. **新增 4 个 ValidatorSkill**（v6.4.3，deterministic，不调用 LLM）：
+   - **`ShowDontTellValidator`**（`skill_id=show-dont-tell`）：检测直白情绪/心理表达（感到/觉得/意识到/明白/知道/理解/察觉/心中暗想/心道），排除对白内容；同时检测总结句（综上所述/总之/简单来说）；返回 `score`、`straight_emotion_count`、`summary_count`、`findings`
+   - **`InfoDumpDetector`**（`skill_id=info-dump-detector`）：检测设定旁白式解释（"这个世界是..."/"在这个时代..."/"所谓..."）、解释性短语（"也就是说"/"换句话说"）、纯说明段落（3+连续无动作/对白句）；返回 `score`、`lore_count`、`explain_count`、`dump_paragraphs`、`findings`
+   - **`SceneTextureChecker`**（`skill_id=scene-texture`）：检测感官细节密度（光/影/声/味/冷/热/风/雨等）和动作动词密度；返回 `score`、`sensory_per_1000`、`action_per_1000`、`bare_paragraphs`、`findings`
+   - **`DialogueNaturalnessChecker`**（`skill_id=dialogue-naturalness`）：检测对白占比、口语化标记（啊/呢/吧/嘛/哦/呀/哈）、功能性对白比例；返回 `score`、`dialogue_ratio`、`colloquial_ratio`、`functional_ratio`、`findings`
 
-2. **新增 `DialogueNaturalizer` Skill**（ValidatorSkill）：
-   - 检测对白是否缺少口语化标记（啊、呢、吧、嘛、哦、呀、哈）
-   - 检测对白是否过于完整/书面（所有句子都有主谓宾）
-   - 检测不同角色对白是否长度/句式过于相似
-   - 返回：`dialogue_naturalness_score`、`character_voice_diversity_score`、`issues`
-   - 接入 Polisher `before_save` stage
+2. **Skill 注册**：
+   - 注册到 `BUILTIN_SKILLS` 和 `_get_skill_class`
+   - 注册到 `skills.yaml`（enabled，但不挂载到任何 agent stage，由 QualityHub/Polisher 直接调用）
 
-3. **新增 `SceneConflictChecker` Skill**（ValidatorSkill）：
-   - 检测场景段落是否有明确的目标-冲突-转折结构
-   - 通过 scene beats 与正文对齐来检查：beat 中的 `conflict` 是否在正文中体现为实际冲突而非旁白说明
-   - 返回：`scene_structure_score`、`missing_conflict_beats`
-   - 接入 Polisher `before_save` stage
+3. **QualityHub.diagnose 接入**（v6.4.3）：
+   - `show_dont_tell` 维度改用 `ShowDontTellValidator`（如 skill_registry 可用）
+   - `info_dump` 维度改用 `InfoDumpDetector`
+   - `scene_immersion` 维度改用 `SceneTextureChecker`
+   - `dialogue_naturalness` 维度改用 `DialogueNaturalnessChecker`
+   - 保持 API 返回结构兼容：findings 包含 code/severity/message/evidence/suggestion
+   - evidence 为小结构，不包含长正文
+   - skill 不可用时优雅回退（dimension=100，无 findings）
 
-4. **新增 `InfoDumpDetector` Skill**（ValidatorSkill）：
-   - 检测设定旁白式解释："这个世界是一个..."、"在这个时代..."、"所谓 XX 是指..."
-   - 检测连续 3 句以上纯信息性描述（无角色动作/对话）
-   - 返回：`info_dump_paragraphs`、`suggestions`
-   - 接入 Polisher `before_save` stage
+4. **Polisher._run_polisher_warnings 复用 skill**（v6.4.3）：
+   - 优先通过 `skill_registry.run_skill()` 调用 4 个新 skill
+   - 将 skill 结果转换为 Polisher warning 格式
+   - 使用 `warned_codes` 集合去重，避免 fallback heuristic 重复报告
+   - skill 不可用时回退到内置 heuristic（v6.4.2 行为保留）
+   - warnings 仍不影响 passed/repair_needed/workflow 路由
 
-5. **QualityHub `check_polished` 增强**：
-   - 新增上述 4 个 skill 的调用和结果聚合
-   - `overall_score` 计算纳入新维度
-
-6. **Polisher skill hooks 配置更新**：
-   - `fail_closed_ids` 中不加入新增 skills（它们是 heuristic，不 blocker）
-   - 新增 skills 的结果通过 execution events 上报
+5. **不新增 hard gate**：
+   - 4 个 skill 均为 heuristic validator，不加入 `fail_closed_ids`
+   - 不自动改写正文，只检测和上报
 
 **验收**：
-- 各新增 skill 对已知 bad input 的单元测试通过
-- QualityHub `check_polished` 返回结果包含新维度分数
-- Polisher execution events 包含新增 skill 的 `skill_completed` 事件
+- 各 skill 对 bad input 和 good input 的单元测试通过
+- QualityHub.diagnose 返回结果包含 show_dont_tell / info_dump / scene_immersion / dialogue_naturalness 维度
+- Polisher warnings 对低质量文本触发，对正常文本低误报
+- warnings 不阻断 workflow，状态正常推进到 polished
 - backend 全量测试通过
 
-**依赖**：v6.4.2（prompt 层面的优化先做，skill 层做补充检测）
+**依赖**：v6.4.2（prompt 层优化后，skill 层做补充检测）
 
 ---
 
