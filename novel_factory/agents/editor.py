@@ -253,6 +253,12 @@ class EditorAgent(BaseAgent):
         chapter_number = state["chapter_number"]
         exec_events: list[dict] = []
 
+        # Determine actual DB status for optimistic locking. Editor may be
+        # invoked from either POLISHED or REVIEW (checkpoint recovery / retry).
+        db_status = self.repo.get_chapter_status(project_id, chapter_number) or ChapterStatus.POLISHED.value
+        expected_before = db_status if db_status in (ChapterStatus.POLISHED.value, ChapterStatus.REVIEW.value) else ChapterStatus.POLISHED.value
+        rollback_status = ChapterStatus.POLISHED.value if expected_before == ChapterStatus.POLISHED.value else ChapterStatus.REVIEW.value
+
         use_compact_review = state.get("llm_mode") == "real" and is_configured_live_provider(self.llm)
         context = self._build_compact_review_context(state) if use_compact_review else self._build_v6_context(state)
 
@@ -516,10 +522,10 @@ class EditorAgent(BaseAgent):
         if output.pass_:
             ok = self.repo.update_chapter_status(
                 project_id, chapter_number, ChapterStatus.REVIEWED.value,
-                expected_status=ChapterStatus.POLISHED.value,
+                expected_status=expected_before,
             )
             if not ok:
-                logger.error("Editor: status advance polished→reviewed failed (stale state)")
+                logger.error("Editor: status advance %s→reviewed failed (stale state)", expected_before)
                 return {"error": "Editor: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
 
             try:
@@ -532,9 +538,9 @@ class EditorAgent(BaseAgent):
                     if not state_ok:
                         self._compensate_status(
                             project_id, chapter_number,
-                            ChapterStatus.REVIEWED.value, ChapterStatus.POLISHED.value,
+                            ChapterStatus.REVIEWED.value, rollback_status,
                         )
-                        return {"error": "Editor: save_chapter_state failed", "chapter_status": ChapterStatus.POLISHED.value}
+                        return {"error": "Editor: save_chapter_state failed", "chapter_status": rollback_status}
 
                 # Save artifact (bind to workflow run for isolation)
                 workflow_run_id = state.get("workflow_run_id")
@@ -546,9 +552,9 @@ class EditorAgent(BaseAgent):
             except Exception as e:
                 self._compensate_status(
                     project_id, chapter_number,
-                    ChapterStatus.REVIEWED.value, ChapterStatus.POLISHED.value,
+                    ChapterStatus.REVIEWED.value, rollback_status,
                 )
-                return {"error": f"Editor: write failed: {e}", "chapter_status": ChapterStatus.POLISHED.value}
+                return {"error": f"Editor: write failed: {e}", "chapter_status": rollback_status}
 
             new_status = ChapterStatus.REVIEWED.value
             new_stage = "reviewed"
@@ -560,10 +566,10 @@ class EditorAgent(BaseAgent):
             if retry_count >= max_retries:
                 ok = self.repo.update_chapter_status(
                     project_id, chapter_number, ChapterStatus.BLOCKING.value,
-                    expected_status=ChapterStatus.POLISHED.value,
+                    expected_status=expected_before,
                 )
                 if not ok:
-                    logger.error("Editor: status advance polished→blocking failed (stale state)")
+                    logger.error("Editor: status advance %s→blocking failed (stale state)", expected_before)
                     return {"error": "Editor: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
 
                 try:
@@ -583,9 +589,9 @@ class EditorAgent(BaseAgent):
                 except Exception as e:
                     self._compensate_status(
                         project_id, chapter_number,
-                        ChapterStatus.BLOCKING.value, ChapterStatus.POLISHED.value,
+                        ChapterStatus.BLOCKING.value, rollback_status,
                     )
-                    return {"error": f"Editor: write failed: {e}", "chapter_status": ChapterStatus.POLISHED.value}
+                    return {"error": f"Editor: write failed: {e}", "chapter_status": rollback_status}
 
                 new_status = ChapterStatus.BLOCKING.value
                 new_stage = "blocking"
@@ -593,10 +599,10 @@ class EditorAgent(BaseAgent):
                 retry_agent = output.revision_target or "author"
                 ok = self.repo.update_chapter_status(
                     project_id, chapter_number, ChapterStatus.REVISION.value,
-                    expected_status=ChapterStatus.POLISHED.value,
+                    expected_status=expected_before,
                 )
                 if not ok:
-                    logger.error("Editor: status advance polished→revision failed (stale state)")
+                    logger.error("Editor: status advance %s→revision failed (stale state)", expected_before)
                     return {"error": "Editor: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
 
                 try:
@@ -625,9 +631,9 @@ class EditorAgent(BaseAgent):
                 except Exception as e:
                     self._compensate_status(
                         project_id, chapter_number,
-                        ChapterStatus.REVISION.value, ChapterStatus.POLISHED.value,
+                        ChapterStatus.REVISION.value, rollback_status,
                     )
-                    return {"error": f"Editor: write failed: {e}", "chapter_status": ChapterStatus.POLISHED.value}
+                    return {"error": f"Editor: write failed: {e}", "chapter_status": rollback_status}
 
                 new_status = ChapterStatus.REVISION.value
                 new_stage = "revision"
