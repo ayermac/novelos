@@ -2,7 +2,7 @@
 
 ## 状态
 
-**v6.5.0 + v6.5.1 已实现。**
+**v6.5.6 已封版。**
 
 本版本回应桌面客户端当前"像后台系统"的问题。目标不是重做视觉品牌，而是把创作者工作台的操作反馈、等待状态、错误恢复、过程感和页面节奏提升到可持续迭代的标准。
 
@@ -73,7 +73,7 @@ CSS 交互协议：
 - Skeleton 使用轻量 shimmer，reduced-motion 下关闭动画。
 - loading button 在 primary/secondary 场景中保持可读 spinner。
 
-## 后续版本交给其他 Agent
+## 页面级体验升级
 
 ### v6.5.2：Project Overview Workbench Polish
 
@@ -195,6 +195,26 @@ CSS 交互协议：
 - 浏览器模式下 DesktopRuntimeSection、DesktopConfigSection 明确提示"仅桌面应用可用"。
 - 不改动后端 desktop.py API 行为，safeStorage 安全模型保持不变。
 
+### v6.5.6：Interaction Excellence Closure
+
+状态：**已实现，v6.5 已封版**
+
+目标：对 v6.5.0～v6.5.5 的交互体验升级做最终收口，确认交互底座使用一致、文档真相源同步、回归验证通过。
+
+交付：
+
+- 补齐 v6.5.5 未提交改动并修复 review 中发现的 `.btn-warning` 样式缺失。
+- 修复 `DesktopFirstRunSetup.test.tsx` 中 v6.5.5 新增测试未初始化 desktop bridge 的问题。
+- 新增 v6.5.6 完成报告与最终 review。
+- 更新 `docs/codex/README.md` 当前基线。
+- 更新桌面客户端规划中的 v6.5 状态。
+
+最终结论：
+
+- v6.5 不改变后端 workflow、Agent prompt、数据库 schema 或 safeStorage 安全模型。
+- v6.5 的主要价值是将已有能力产品化为可理解、可恢复、可反馈的创作者工作台体验。
+- 后续 Agent Evidence UX 和 Structured Memory Canonicalization 顺延为下一阶段。
+
 ## 非目标
 
 - 不做全新设计系统重写。
@@ -210,3 +230,4 @@ CSS 交互协议：
 - 样板页面不破坏既有流程。
 - 用户执行项目创建或质量诊断时能看到明确 pending / success / error。
 - reduced-motion 下不会强制播放 skeleton/toast 动画。
+- v6.5.6 封版时 frontend、desktop、backend smoke 验证通过。

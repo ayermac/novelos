@@ -297,13 +297,15 @@ describe('DesktopFirstRunSetup', () => {
   /* v6.5.5 Settings & Desktop Runtime Polish tests ------------- */
 
   it('save config button uses LoadingButton and is disabled while saving', async () => {
+    setupDesktop({ llm_mode: 'stub' })
     let resolvePut: (v: unknown) => void
     const putPromise = new Promise((resolve) => {
       resolvePut = resolve
     })
 
-    fetchMock.mockImplementation((url: string) => {
-      if (url.includes('/desktop/config') && String(url).includes('PUT') === false) {
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const method = init?.method || 'GET'
+      if (url.includes('/desktop/config') && method !== 'PUT') {
         // GET
         return Promise.resolve({
           ok: true,

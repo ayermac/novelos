@@ -570,7 +570,7 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到"用
 
 ### v6.5：Interaction Excellence Closure
 
-状态：**v6.5.0 + v6.5.1 已实现**（见 [planning/novel-factory-v6.5-interaction-excellence-spec.md](planning/novel-factory-v6.5-interaction-excellence-spec.md)）
+状态：**已实现，v6.5.6 已封版**（见 [planning/novel-factory-v6.5-interaction-excellence-spec.md](planning/novel-factory-v6.5-interaction-excellence-spec.md)）
 
 目标：解决桌面客户端当前"像后台系统"的问题，先把操作反馈、等待状态、错误恢复和微交互底座做稳，再交给后续 Agent 逐页升级。
 
@@ -582,6 +582,7 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到"用
 - v6.5.3：Chapter Writing Surface 生成/发布/返修/恢复体验升级。
 - v6.5.4：Agent Process Narrative，把执行日志变成用户能理解的创作过程。
 - v6.5.5：Settings / Desktop Runtime polish，优化 LLM 配置、sidecar 状态、诊断包和连接测试。
+- v6.5.6：Interaction Excellence Closure，完成最终 review、文档基线和回归验证。
 
 已实现文件：
 
@@ -593,6 +594,8 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到"用
 - `frontend/src/pages/Onboarding.tsx`
 - `frontend/src/components/project/QualityDiagnosisPanel.tsx`
 - `docs/codex/planning/novel-factory-v6.5-interaction-excellence-spec.md`
+- `docs/codex/reports/novel-factory-v6.5.6-interaction-excellence-closure-report.md`
+- `docs/codex/reviews/novel-factory-v6.5.6-interaction-excellence-closure-review.md`
 
 ### v6.6：Agent Evidence UX Closure
 
