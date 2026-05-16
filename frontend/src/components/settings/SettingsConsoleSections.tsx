@@ -3,7 +3,7 @@ import React, { useEffect, useState } from 'react'
 import EmptyState from '../EmptyState'
 import SkillVisibilityPanel from './SkillVisibilityPanel'
 import { tLlmMode } from '../../lib/i18n'
-import { DataTable, FormField, Select, TextInput } from '../ui'
+import { DataTable, FormField, Select, TextInput, LoadingButton, InlineMessage, SkeletonStack, useToast } from '../ui'
 import { get } from '../../lib/api'
 import { useAppDialog } from '../AppDialogContext'
 import DesktopFirstRunSetup from '../desktop/DesktopFirstRunSetup'
@@ -385,6 +385,7 @@ export function DesktopRuntimeSection() {
   const [restarting, setRestarting] = useState(false)
   const [exportingDiagnostics, setExportingDiagnostics] = useState(false)
   const dialog = useAppDialog()
+  const { showToast } = useToast()
 
   const load = React.useCallback(async () => {
     setLoading(true)
@@ -444,12 +445,12 @@ export function DesktopRuntimeSection() {
       const res = await window.__NOVELOS_DESKTOP__?.restartSidecar?.()
       if (res?.success) {
         setHealthOk(true)
-        await dialog.alert({ title: '重启成功', message: '本地服务已重启。', tone: 'success' })
+        showToast({ tone: 'success', title: '重启成功', message: '本地服务已重启。' })
       } else {
-        await dialog.alert({ title: '重启失败', message: '本地服务未能成功重启，请检查日志。', tone: 'danger' })
+        showToast({ tone: 'danger', title: '重启失败', message: '本地服务未能成功重启，请检查日志。' })
       }
     } catch (err) {
-      await dialog.alert({ title: '重启失败', message: `错误: ${(err as Error).message}`, tone: 'danger' })
+      showToast({ tone: 'danger', title: '重启失败', message: `错误: ${(err as Error).message}` })
     }
     setRestarting(false)
     load()
@@ -460,20 +461,12 @@ export function DesktopRuntimeSection() {
     try {
       const res = await window.__NOVELOS_DESKTOP__?.exportDiagnostics?.()
       if (res?.success) {
-        await dialog.alert({
-          title: '诊断包已导出',
-          message: `已生成脱敏诊断包：\n${res.path}`,
-          tone: 'success',
-        })
+        showToast({ tone: 'success', title: '诊断包已导出', message: `脱敏诊断包已保存到 ${res.path}` })
       } else {
-        await dialog.alert({
-          title: '导出失败',
-          message: res?.message || '未能生成诊断包，请检查日志目录权限。',
-          tone: 'danger',
-        })
+        showToast({ tone: 'danger', title: '导出失败', message: res?.message || '未能生成诊断包，请检查日志目录权限。' })
       }
     } catch (err) {
-      await dialog.alert({ title: '导出失败', message: `错误: ${(err as Error).message}`, tone: 'danger' })
+      showToast({ tone: 'danger', title: '导出失败', message: `错误: ${(err as Error).message}` })
     }
     setExportingDiagnostics(false)
   }
@@ -481,7 +474,9 @@ export function DesktopRuntimeSection() {
   if (loading) {
     return (
       <SectionCard title="桌面运行时">
-        <div style={{ padding: 'var(--space-5)', color: 'var(--text-secondary)' }}>加载中...</div>
+        <div style={{ padding: 'var(--space-5)' }}>
+          <SkeletonStack rows={4} />
+        </div>
       </SectionCard>
     )
   }
@@ -591,16 +586,25 @@ export function DesktopRuntimeSection() {
               <button className="btn btn-secondary" onClick={load}>
                 刷新
               </button>
-              <button className="btn btn-warning" onClick={handleRestart} disabled={restarting}>
-                {restarting ? '重启中...' : '重启本地服务'}
-              </button>
-              <button
-                className="btn btn-primary"
-                onClick={handleExportDiagnostics}
-                disabled={exportingDiagnostics || !window.__NOVELOS_DESKTOP__?.exportDiagnostics}
+              <LoadingButton
+                className="btn btn-warning"
+                variant="warning"
+                loading={restarting}
+                loadingText="重启中..."
+                onClick={handleRestart}
               >
-                {exportingDiagnostics ? '导出中...' : '导出诊断包'}
-              </button>
+                重启本地服务
+              </LoadingButton>
+              <LoadingButton
+                className="btn btn-primary"
+                variant="primary"
+                loading={exportingDiagnostics}
+                loadingText="导出中..."
+                onClick={handleExportDiagnostics}
+                disabled={!window.__NOVELOS_DESKTOP__?.exportDiagnostics}
+              >
+                导出诊断包
+              </LoadingButton>
             </div>
           )}
 
@@ -629,9 +633,10 @@ function DesktopApiKeyCard({
   onRefresh: () => void
 }) {
   const dialog = useAppDialog()
+  const { showToast } = useToast()
   const [inputValue, setInputValue] = useState('')
   const [saving, setSaving] = useState(false)
-  const [message, setMessage] = useState('')
+  const [inlineMsg, setInlineMsg] = useState<{ variant: 'success' | 'danger'; text: string } | null>(null)
 
   const statusLabel = localSecretConfigured
     ? apiKeySource === 'desktop_secure_storage'
@@ -654,14 +659,18 @@ function DesktopApiKeyCard({
   const handleSave = async () => {
     if (!inputValue.trim()) return
     setSaving(true)
-    setMessage('')
+    setInlineMsg(null)
     try {
       await window.__NOVELOS_DESKTOP__?.setApiKey?.(apiKeyEnv, inputValue.trim())
       setInputValue('')
-      setMessage('已保存，重启客户端后生效')
+      const msg = 'API Key 已保存到本机安全存储，重启客户端后生效'
+      setInlineMsg({ variant: 'success', text: msg })
+      showToast({ tone: 'success', title: '保存成功', message: msg })
       onRefresh()
     } catch (err) {
-      setMessage(`保存失败: ${(err as Error).message}`)
+      const msg = `保存失败: ${(err as Error).message}`
+      setInlineMsg({ variant: 'danger', text: msg })
+      showToast({ tone: 'danger', title: '保存失败', message: msg })
     }
     setSaving(false)
   }
@@ -675,13 +684,17 @@ function DesktopApiKeyCard({
     })
     if (!ok) return
     setSaving(true)
-    setMessage('')
+    setInlineMsg(null)
     try {
       await window.__NOVELOS_DESKTOP__?.deleteApiKey?.(apiKeyEnv)
-      setMessage('已删除，重启客户端后生效')
+      const msg = '已删除本机保存的 API Key，重启客户端后生效'
+      setInlineMsg({ variant: 'success', text: msg })
+      showToast({ tone: 'success', title: '删除成功', message: msg })
       onRefresh()
     } catch (err) {
-      setMessage(`删除失败: ${(err as Error).message}`)
+      const msg = `删除失败: ${(err as Error).message}`
+      setInlineMsg({ variant: 'danger', text: msg })
+      showToast({ tone: 'danger', title: '删除失败', message: msg })
     }
     setSaving(false)
   }
@@ -707,24 +720,31 @@ function DesktopApiKeyCard({
           disabled={saving}
           style={{ minWidth: '240px', flex: 1 }}
         />
-        <button className="btn btn-primary" onClick={handleSave} disabled={saving || !inputValue.trim()}>
+        <LoadingButton
+          className="btn btn-primary"
+          variant="primary"
+          loading={saving}
+          loadingText="保存中..."
+          onClick={handleSave}
+          disabled={!inputValue.trim()}
+        >
           保存到本机安全存储
-        </button>
-        <button className="btn btn-danger" onClick={handleDelete} disabled={saving || !canDeleteLocalSecret}>
+        </LoadingButton>
+        <LoadingButton
+          className="btn btn-danger"
+          variant="danger"
+          loading={saving}
+          loadingText="删除中..."
+          onClick={handleDelete}
+          disabled={!canDeleteLocalSecret}
+        >
           删除本机保存的 Key
-        </button>
+        </LoadingButton>
       </div>
 
-      {message && (
-        <div style={{
-          marginTop: '10px',
-          padding: '8px 12px',
-          borderRadius: '6px',
-          fontSize: '12px',
-          background: message.includes('失败') ? '#fef2f2' : '#dcfce7',
-          color: message.includes('失败') ? '#991b1b' : '#166534',
-        }}>
-          {message}
+      {inlineMsg && (
+        <div style={{ marginTop: 10 }}>
+          <InlineMessage variant={inlineMsg.variant}>{inlineMsg.text}</InlineMessage>
         </div>
       )}
     </div>
@@ -842,6 +862,14 @@ export function ConfigDraftSection({
   onValidateConfig: () => void
   setWizardForm: Dispatch<SetStateAction<WizardForm>>
 }) {
+  const { showToast } = useToast()
+
+  const handleCopyDraft = () => {
+    if (!draft) return
+    navigator.clipboard.writeText(draft)
+    showToast({ tone: 'success', title: '已复制', message: '配置草案已复制到剪贴板' })
+  }
+
   return (
     <SectionCard title="配置草案生成器" subtitle="填写表单生成 YAML 草案（仅预览，不写入文件）">
       <div style={{ padding: 'var(--space-5)' }}>
@@ -910,30 +938,31 @@ export function ConfigDraftSection({
           </FormField>
         </div>
 
-        <button onClick={onGenerateDraft} className="btn btn-primary">
-          生成配置草案
-        </button>
-        <button
-          onClick={onValidateConfig}
-          className="btn btn-secondary"
-          style={{ marginLeft: '8px' }}
-          disabled={validating}
+        <LoadingButton
+          className="btn btn-primary"
+          variant="primary"
+          loading={false}
+          onClick={onGenerateDraft}
         >
-          {validating ? '验证中...' : '验证配置'}
-        </button>
+          生成配置草案
+        </LoadingButton>
+        <LoadingButton
+          className="btn btn-secondary"
+          variant="secondary"
+          loading={validating}
+          loadingText="验证中..."
+          onClick={onValidateConfig}
+          style={{ marginLeft: '8px' }}
+        >
+          验证配置
+        </LoadingButton>
 
         {validateResult && (
-          <div
-            style={{
-              marginTop: '16px',
-              padding: '12px',
-              borderRadius: '6px',
-              background: validateResult.valid ? '#dcfce7' : '#fef2f2',
-              color: validateResult.valid ? '#166534' : '#991b1b',
-            }}
-          >
-            <strong>{validateResult.valid ? '✓ 验证成功' : `✗ ${validateResult.error_code || '验证失败'}`}</strong>
-            <div style={{ marginTop: '4px', fontSize: '13px' }}>{validateResult.message}</div>
+          <div style={{ marginTop: 16 }}>
+            <InlineMessage variant={validateResult.valid ? 'success' : 'danger'}>
+              <strong>{validateResult.valid ? '✓ 验证成功' : `✗ ${validateResult.error_code || '验证失败'}`}</strong>
+              <div style={{ marginTop: '4px', fontSize: '13px' }}>{validateResult.message}</div>
+            </InlineMessage>
           </div>
         )}
 
@@ -983,13 +1012,14 @@ export function ConfigDraftSection({
             >
               {draft}
             </pre>
-            <button
-              onClick={() => navigator.clipboard.writeText(draft)}
+            <LoadingButton
               className="btn btn-secondary"
-              style={{ marginTop: '8px' }}
+              variant="secondary"
+              loading={false}
+              onClick={handleCopyDraft}
             >
               复制草案
-            </button>
+            </LoadingButton>
           </div>
         )}
       </div>

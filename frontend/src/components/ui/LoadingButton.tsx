@@ -4,7 +4,7 @@ import { Spinner } from './Spinner'
 export interface LoadingButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
   loading?: boolean
   loadingText?: ReactNode
-  variant?: 'primary' | 'secondary' | 'accent' | 'ghost'
+  variant?: 'primary' | 'secondary' | 'accent' | 'ghost' | 'warning' | 'danger'
 }
 
 export function LoadingButton({

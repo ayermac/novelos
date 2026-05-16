@@ -5,7 +5,7 @@ import {
 } from '../../lib/desktopProviderPresets'
 import { get, post, put } from '../../lib/api'
 import { useAppDialog } from '../AppDialogContext'
-import { FormField, Select, TextInput, NumberInput } from '../ui'
+import { FormField, Select, TextInput, NumberInput, LoadingButton, InlineMessage, useToast } from '../ui'
 import { ChevronDown, ChevronUp, Wifi, WifiOff, RefreshCw, Zap, AlertTriangle } from 'lucide-react'
 
 type SetupStep =
@@ -100,6 +100,7 @@ export default function DesktopFirstRunSetup({
 }) {
   const isDesktop = typeof window !== 'undefined' && !!window.__NOVELOS_DESKTOP__
   const dialog = useAppDialog()
+  const { showToast } = useToast()
   const [step, setStep] = useState<SetupStep>(compact ? 'editing' : 'checking')
   const [config, setConfig] = useState<DesktopConfig | null>(null)
   const [form, setForm] = useState<SetupForm>(getInitialForm(null))
@@ -186,12 +187,16 @@ export default function DesktopFirstRunSetup({
       await loadConfig()
       if (data.restart_required) {
         setStep('restart_required')
+        showToast({ tone: 'success', title: '配置已保存', message: '配置已保存，需要重启本地服务后生效。' })
       } else {
         setStep('editing')
+        showToast({ tone: 'success', title: '配置已保存', message: '配置已保存并生效。' })
       }
     } else {
-      setErrorMessage(res.error?.message || '保存配置失败')
+      const msg = res.error?.message || '保存配置失败'
+      setErrorMessage(msg)
       setStep('error')
+      showToast({ tone: 'danger', title: '保存失败', message: msg })
     }
   }
 
@@ -205,9 +210,12 @@ export default function DesktopFirstRunSetup({
       await loadSecrets()
       await loadConfig()
       setStep('editing')
+      showToast({ tone: 'success', title: '保存成功', message: 'API Key 已保存到本机安全存储，重启客户端后生效。' })
     } catch (err) {
-      setErrorMessage(`保存 API Key 失败: ${(err as Error).message}`)
+      const msg = `保存 API Key 失败: ${(err as Error).message}`
+      setErrorMessage(msg)
       setStep('error')
+      showToast({ tone: 'danger', title: '保存失败', message: msg })
     }
   }
 
@@ -225,11 +233,13 @@ export default function DesktopFirstRunSetup({
       setTestResult(res.data)
       if (res.data.ok) {
         setStep('ready')
+        showToast({ tone: 'success', title: '连接测试成功', message: `${res.data.message} (${res.data.latency_ms}ms)` })
       } else {
         setStep('editing')
+        showToast({ tone: 'warning', title: '连接测试未通过', message: res.data.message })
       }
     } else {
-      setTestResult({
+      const fallback: TestResult = {
         ok: false,
         mode: 'unknown',
         provider: '',
@@ -238,8 +248,10 @@ export default function DesktopFirstRunSetup({
         message: res.error?.message || '测试请求失败',
         error_code: 'REQUEST_FAILED',
         suggestion: '请检查网络连接和配置参数。',
-      })
+      }
+      setTestResult(fallback)
       setStep('editing')
+      showToast({ tone: 'danger', title: '测试失败', message: fallback.message })
     }
   }
 
@@ -259,14 +271,19 @@ export default function DesktopFirstRunSetup({
         await loadConfig()
         await loadSecrets()
         setStep('ready')
+        showToast({ tone: 'success', title: '重启成功', message: '本地服务已重启。' })
         onReady?.()
       } else {
-        setErrorMessage('本地服务未能成功重启，请检查日志。')
+        const msg = '本地服务未能成功重启，请检查日志。'
+        setErrorMessage(msg)
         setStep('error')
+        showToast({ tone: 'danger', title: '重启失败', message: msg })
       }
     } catch (err) {
-      setErrorMessage(`重启失败: ${(err as Error).message}`)
+      const msg = `重启失败: ${(err as Error).message}`
+      setErrorMessage(msg)
       setStep('error')
+      showToast({ tone: 'danger', title: '重启失败', message: msg })
     }
   }
 
@@ -670,32 +687,48 @@ export default function DesktopFirstRunSetup({
 
         {/* Action buttons */}
         <div className="desktop-first-run-primary-actions">
-          <button
+          <LoadingButton
             className="btn btn-primary"
+            variant="primary"
+            loading={step === 'saving_config'}
+            loadingText="保存中..."
             onClick={handleSaveConfig}
             disabled={isBusy || !form.baseUrl.trim() || !form.model.trim()}
           >
-            {step === 'saving_config' ? '保存中...' : '保存配置'}
-          </button>
-          <button
+            保存配置
+          </LoadingButton>
+          <LoadingButton
             className="btn btn-secondary"
+            variant="secondary"
+            loading={step === 'saving_key'}
+            loadingText="保存中..."
             onClick={handleSaveKey}
             disabled={isBusy || !form.apiKey.trim()}
           >
-            {step === 'saving_key' ? '保存中...' : '保存 API Key'}
-          </button>
-          <button
+            保存 API Key
+          </LoadingButton>
+          <LoadingButton
             className="btn btn-secondary"
+            variant="secondary"
+            loading={step === 'testing'}
+            loadingText="测试中..."
             onClick={handleTest}
             disabled={isBusy || !canTest}
           >
-            {step === 'testing' ? '测试中...' : '测试连接'}
-          </button>
+            测试连接
+          </LoadingButton>
           {(step === 'restart_required' || step === 'restarting') && (
-            <button className="btn btn-warning" onClick={handleRestart} disabled={isBusy}>
+            <LoadingButton
+              className="btn btn-warning"
+              variant="warning"
+              loading={step === 'restarting'}
+              loadingText="重启中..."
+              onClick={handleRestart}
+              disabled={isBusy}
+            >
               <RefreshCw size={14} style={{ marginRight: 4 }} />
-              {step === 'restarting' ? '重启中...' : '重启本地服务'}
-            </button>
+              重启本地服务
+            </LoadingButton>
           )}
         </div>
 
@@ -716,34 +749,26 @@ export default function DesktopFirstRunSetup({
 
         {/* Error / test result */}
         {errorMessage && (
-          <div style={{
-            padding: '12px',
-            borderRadius: '6px',
-            background: '#fef2f2',
-            color: '#991b1b',
-            fontSize: '13px',
-          }}>
-            <strong>错误</strong>
-            <div style={{ marginTop: 4 }}>{errorMessage}</div>
+          <div style={{ marginTop: 8 }}>
+            <InlineMessage variant="danger">
+              <strong>错误</strong>
+              <div style={{ marginTop: 4 }}>{errorMessage}</div>
+            </InlineMessage>
           </div>
         )}
 
         {testResult && (
-          <div style={{
-            padding: '12px',
-            borderRadius: '6px',
-            background: testResult.ok ? '#dcfce7' : '#fef2f2',
-            color: testResult.ok ? '#166534' : '#991b1b',
-            fontSize: '13px',
-          }}>
-            <strong>{testResult.ok ? '✓ 连接成功' : `✗ ${testResult.error_code || '连接失败'}`}</strong>
-            <div style={{ marginTop: 4 }}>{testResult.message}</div>
-            {testResult.latency_ms !== undefined && (
-              <div style={{ marginTop: 4, fontSize: '12px' }}>延迟: {testResult.latency_ms}ms</div>
-            )}
-            {testResult.suggestion && (
-              <div style={{ marginTop: 4, fontSize: '12px' }}>建议: {testResult.suggestion}</div>
-            )}
+          <div style={{ marginTop: 8 }}>
+            <InlineMessage variant={testResult.ok ? 'success' : 'danger'}>
+              <strong>{testResult.ok ? '✓ 连接成功' : `✗ ${testResult.error_code || '连接失败'}`}</strong>
+              <div style={{ marginTop: 4 }}>{testResult.message}</div>
+              {testResult.latency_ms !== undefined && (
+                <div style={{ marginTop: 4, fontSize: '12px' }}>延迟: {testResult.latency_ms}ms</div>
+              )}
+              {testResult.suggestion && (
+                <div style={{ marginTop: 4, fontSize: '12px' }}>建议: {testResult.suggestion}</div>
+              )}
+            </InlineMessage>
           </div>
         )}
         <style>{`

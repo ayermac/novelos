@@ -59,6 +59,17 @@
   border-color: #b91c1c;
 }
 
+.btn-warning {
+  background: var(--warning);
+  color: #fff;
+  border-color: var(--warning);
+}
+
+.btn-warning:hover:not(:disabled) {
+  background: #92400e;
+  border-color: #92400e;
+}
+
 .module-loading {
   display: flex;
   align-items: center;

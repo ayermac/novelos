@@ -166,13 +166,34 @@ CSS 交互协议：
 
 ### v6.5.5：Settings & Desktop Runtime Polish
 
-目标：把 LLM 配置、API key、sidecar 状态、诊断包导出做成更自然的桌面设置体验。
+状态：**已实现**
+
+目标：把 LLM 配置、API key、安全存储、sidecar 状态、诊断包导出做成更自然的桌面设置体验。
 
 重点：
 
-- 未配置 real LLM 时给出清晰引导。
-- 安全存储状态、重启 sidecar、连接测试统一反馈。
-- 桌面独占功能在 WebUI 中降级清楚。
+- 桌面模式与 WebUI 模式明确区分，浏览器模式下桌面独占功能给出清晰降级提示。
+- 未配置 real LLM 时，设置页给出清晰状态和下一步引导（演示模式 badge、配置草案提示）。
+- API Key 保存/删除/连接测试/重启 sidecar 全部接入 `LoadingButton + toast`，操作反馈即时可感知。
+- runtime info、日志路径、数据目录、诊断包导出更可读（grid 布局、状态徽章、路径断行）。
+- 不暴露明文 API Key，输入框使用 `type="password"`，状态仅显示"已配置/未配置"。
+- 不改变 `safeStorage` 安全模型，配置文件中仅保留环境变量名。
+
+已实现文件：
+
+- `frontend/src/components/settings/SettingsConsoleSections.tsx` — DesktopRuntimeSection 骨架屏 + LoadingButton + toast + InlineMessage；DesktopApiKeyCard 安全存储交互；ConfigDraftSection 复制草案 toast
+- `frontend/src/components/desktop/DesktopFirstRunSetup.tsx` — 全部 action button 替换为 LoadingButton，操作结果使用 toast，错误与测试结果使用 InlineMessage
+- `frontend/src/components/ui/LoadingButton.tsx` — 扩展 variant 类型支持 `warning` / `danger`
+- `frontend/src/components/desktop/__tests__/DesktopFirstRunSetup.test.tsx` — 新增 v6.5.5 LoadingButton loading 态、IPC 调用测试
+
+验收标准：
+
+- 前端 typecheck / lint / build / vitest 全通过。
+- SettingsConsoleSections 中桌面运行时加载态使用 SkeletonStack，重启/导出诊断使用 LoadingButton + toast。
+- DesktopApiKeyCard 保存/删除使用 LoadingButton，成功/失败使用 InlineMessage + toast 双通道反馈。
+- DesktopFirstRunSetup 所有异步操作（保存配置、保存 Key、测试连接、重启服务）均有 loading 态和 toast 反馈。
+- 浏览器模式下 DesktopRuntimeSection、DesktopConfigSection 明确提示"仅桌面应用可用"。
+- 不改动后端 desktop.py API 行为，safeStorage 安全模型保持不变。
 
 ## 非目标
 

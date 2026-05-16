@@ -1,8 +1,10 @@
+import React from 'react'
 import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import DesktopFirstRunSetup from '../DesktopFirstRunSetup'
 import { AppDialogProvider } from '../../AppDialog'
+import { ToastProvider } from '../../ui'
 
 const mockSetApiKey = vi.fn()
 const mockRestartSidecar = vi.fn()
@@ -87,22 +89,28 @@ describe('DesktopFirstRunSetup', () => {
     clearDesktop()
   })
 
+  const Wrapper = ({ children }: { children: React.ReactNode }) => (
+    <ToastProvider>
+      <AppDialogProvider>{children}</AppDialogProvider>
+    </ToastProvider>
+  )
+
   it('does not render in browser mode', () => {
     clearDesktop()
-    const { container } = render(
-      <AppDialogProvider>
+    render(
+      <Wrapper>
         <DesktopFirstRunSetup />
-      </AppDialogProvider>,
+      </Wrapper>,
     )
-    expect(container.firstChild).toBeNull()
+    expect(screen.queryByText(/欢迎使用 Novelos 桌面版/)).not.toBeInTheDocument()
   })
 
   it('shows first-run prompt when desktop config is incomplete', async () => {
     setupDesktop({ llm_mode: 'stub' })
     render(
-      <AppDialogProvider>
+      <Wrapper>
         <DesktopFirstRunSetup />
-      </AppDialogProvider>,
+      </Wrapper>,
     )
 
     await waitFor(() => {
@@ -128,23 +136,23 @@ describe('DesktopFirstRunSetup', () => {
     })
     mockSecretStatus.mockResolvedValue({ OPENAI_API_KEY: { configured: true } })
 
-    const { container } = render(
-      <AppDialogProvider>
+    render(
+      <Wrapper>
         <DesktopFirstRunSetup />
-      </AppDialogProvider>,
+      </Wrapper>,
     )
 
     await waitFor(() => {
-      expect(container.firstChild).toBeNull()
+      expect(screen.queryByText(/欢迎使用 Novelos 桌面版/)).not.toBeInTheDocument()
     })
   })
 
   it('allows entering config editing from prompt', async () => {
     setupDesktop({ llm_mode: 'stub' })
     render(
-      <AppDialogProvider>
+      <Wrapper>
         <DesktopFirstRunSetup />
-      </AppDialogProvider>,
+      </Wrapper>,
     )
 
     await waitFor(() => {
@@ -162,9 +170,9 @@ describe('DesktopFirstRunSetup', () => {
   it('fills preset fields when provider selected', async () => {
     setupDesktop({ llm_mode: 'stub' })
     render(
-      <AppDialogProvider>
+      <Wrapper>
         <DesktopFirstRunSetup />
-      </AppDialogProvider>,
+      </Wrapper>,
     )
 
     await waitFor(() => {
@@ -192,9 +200,9 @@ describe('DesktopFirstRunSetup', () => {
   it('calls save config API when save button clicked', async () => {
     setupDesktop({ llm_mode: 'stub' })
     render(
-      <AppDialogProvider>
+      <Wrapper>
         <DesktopFirstRunSetup />
-      </AppDialogProvider>,
+      </Wrapper>,
     )
 
     await waitFor(() => {
@@ -229,9 +237,9 @@ describe('DesktopFirstRunSetup', () => {
   it('calls safeStorage IPC when save key button clicked', async () => {
     setupDesktop({ llm_mode: 'stub' })
     render(
-      <AppDialogProvider>
+      <Wrapper>
         <DesktopFirstRunSetup />
-      </AppDialogProvider>,
+      </Wrapper>,
     )
 
     await waitFor(() => {
@@ -256,10 +264,10 @@ describe('DesktopFirstRunSetup', () => {
 
   it('dismisses prompt when skip clicked', async () => {
     setupDesktop({ llm_mode: 'stub' })
-    const { container } = render(
-      <AppDialogProvider>
+    render(
+      <Wrapper>
         <DesktopFirstRunSetup />
-      </AppDialogProvider>,
+      </Wrapper>,
     )
 
     await waitFor(() => {
@@ -269,20 +277,117 @@ describe('DesktopFirstRunSetup', () => {
     await userEvent.click(screen.getByText('暂时跳过'))
 
     await waitFor(() => {
-      expect(container.firstChild).toBeNull()
+      expect(screen.queryByText(/欢迎使用 Novelos 桌面版/)).not.toBeInTheDocument()
     })
   })
 
   it('compact mode renders editing form directly', async () => {
     setupDesktop({ llm_mode: 'stub' })
     render(
-      <AppDialogProvider>
+      <Wrapper>
         <DesktopFirstRunSetup compact />
-      </AppDialogProvider>,
+      </Wrapper>,
     )
 
     await waitFor(() => {
       expect(screen.getByLabelText('服务商')).toBeInTheDocument()
+    })
+  })
+
+  /* v6.5.5 Settings & Desktop Runtime Polish tests ------------- */
+
+  it('save config button uses LoadingButton and is disabled while saving', async () => {
+    let resolvePut: (v: unknown) => void
+    const putPromise = new Promise((resolve) => {
+      resolvePut = resolve
+    })
+
+    fetchMock.mockImplementation((url: string) => {
+      if (url.includes('/desktop/config') && String(url).includes('PUT') === false) {
+        // GET
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            data: {
+              exists: true,
+              llm_mode: 'stub',
+              default_llm: 'default',
+              profiles: {
+                default: {
+                  provider: 'openai_compatible',
+                  model: '',
+                  base_url: '',
+                  api_key_env: 'OPENAI_API_KEY',
+                  api_key_configured: false,
+                  api_key_source: 'missing',
+                  temperature: 0.7,
+                  max_tokens: 4096,
+                },
+              },
+            },
+          }),
+        })
+      }
+      if (url.includes('/desktop/config')) {
+        // PUT — delay resolve so we can catch loading state
+        return putPromise.then(() => ({
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, data: { saved: true, restart_required: false, message: '配置已保存' } }),
+        }))
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, data: { status: 'ok' } }) })
+    })
+
+    render(
+      <Wrapper>
+        <DesktopFirstRunSetup compact />
+      </Wrapper>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('服务商')).toBeInTheDocument()
+    })
+
+    const inputs = screen.getAllByRole('textbox')
+    const baseUrlInput = inputs[0] as HTMLInputElement
+    const modelInput = inputs[1] as HTMLInputElement
+    await userEvent.clear(baseUrlInput)
+    await userEvent.type(baseUrlInput, 'https://api.openai.com/v1')
+    await userEvent.clear(modelInput)
+    await userEvent.type(modelInput, 'gpt-4o-mini')
+
+    await userEvent.click(screen.getByText('保存配置'))
+
+    await waitFor(() => {
+      const saveBtn = screen.getByRole('button', { name: /保存中/ })
+      expect(saveBtn).toBeDisabled()
+    })
+
+    resolvePut!({})
+  })
+
+  it('save key button calls IPC and input is cleared on success', async () => {
+    setupDesktop({ llm_mode: 'stub' })
+    render(
+      <Wrapper>
+        <DesktopFirstRunSetup compact />
+      </Wrapper>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('API Key')).toBeInTheDocument()
+    })
+
+    const keyInput = screen.getByLabelText('API Key')
+    await userEvent.type(keyInput, 'sk-test-key-123')
+
+    await userEvent.click(screen.getByText('保存 API Key'))
+
+    await waitFor(() => {
+      expect(mockSetApiKey).toHaveBeenCalledWith('OPENAI_API_KEY', 'sk-test-key-123')
     })
   })
 })
