@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import { get, post, apiUrl, getApiBase } from '../../lib/api'
 import { tSessionStopLabel, tActionKey, tStepResult } from '../../lib/state-labels'
-import { Checkbox, NumberInput } from '../ui'
+import { Checkbox, InlineMessage, LoadingButton, NumberInput, SkeletonStack, useToast } from '../ui'
 
 /* ------------------------------------------------------------------ */
 /*  Types                                                              */
@@ -349,12 +349,15 @@ function ProductionPostmortemCard({
 export default function ProjectOverviewModule({ project, stats, chapterNumber }: Props) {
   const navigate = useNavigate()
 
+  const { showToast } = useToast()
+
   const [contextStatus, setContextStatus] = useState<ContextStatus | null>(null)
   const [productionNext, setProductionNext] = useState<ProductionNext | null>(null)
   const [healthSummary, setHealthSummary] = useState<ProductionHealthSummary | null>(null)
   const [loading, setLoading] = useState(true)
   const [filling, setFilling] = useState(false)
-  const [fillResult, setFillResult] = useState<string>('')
+  const [primaryActionLoading, setPrimaryActionLoading] = useState(false)
+  const [inlineMessage, setInlineMessage] = useState<{ variant: 'success' | 'danger'; children: string } | null>(null)
 
   /* Auto-run state */
   const [autoRunning, setAutoRunning] = useState(false)
@@ -401,6 +404,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setProductionNext(null)
     setHealthSummary(null)
     setShowHistory(false)
+    setInlineMessage(null)
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
       eventSourceRef.current = null
@@ -429,16 +433,33 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const load = useCallback(async () => {
     setLoading(true)
     const chapterParam = chapterNumber && chapterNumber > 1 ? `?chapter=${chapterNumber}` : ''
-    const [ctxRes, prodRes, healthRes] = await Promise.all([
-      get<ContextStatus>(`/projects/${project.project_id}/context-status${chapterParam}`),
-      get<ProductionNext>(`/projects/${project.project_id}/production-next`),
-      get<ProductionHealthSummary>(`/projects/${project.project_id}/production/health-summary`),
-    ])
-    if (ctxRes.ok && ctxRes.data) setContextStatus(ctxRes.data)
-    if (prodRes.ok && prodRes.data) setProductionNext(prodRes.data)
-    if (healthRes.ok && healthRes.data) setHealthSummary(healthRes.data)
-    setLoading(false)
-  }, [project.project_id, chapterNumber])
+    try {
+      const [ctxRes, prodRes, healthRes] = await Promise.all([
+        get<ContextStatus>(`/projects/${project.project_id}/context-status${chapterParam}`),
+        get<ProductionNext>(`/projects/${project.project_id}/production-next`),
+        get<ProductionHealthSummary>(`/projects/${project.project_id}/production/health-summary`),
+      ])
+      if (ctxRes.ok && ctxRes.data) {
+        setContextStatus(ctxRes.data)
+      } else if (!ctxRes.ok) {
+        showToast({ tone: 'danger', title: '加载失败', message: ctxRes.error?.message || '无法获取资料准备状态' })
+      }
+      if (prodRes.ok && prodRes.data) {
+        setProductionNext(prodRes.data)
+      } else if (!prodRes.ok) {
+        showToast({ tone: 'danger', title: '加载失败', message: prodRes.error?.message || '无法获取生产建议' })
+      }
+      if (healthRes.ok && healthRes.data) {
+        setHealthSummary(healthRes.data)
+      } else if (!healthRes.ok) {
+        showToast({ tone: 'warning', title: '健康检查失败', message: healthRes.error?.message || '无法获取项目健康状态' })
+      }
+    } catch (err) {
+      showToast({ tone: 'danger', title: '网络错误', message: err instanceof Error ? err.message : '无法连接到后端服务' })
+    } finally {
+      setLoading(false)
+    }
+  }, [project.project_id, chapterNumber, showToast])
 
   /* Check for active session on mount/recovery */
   const checkActiveSession = useCallback(async () => {
@@ -502,7 +523,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
   const handleAutoFill = async () => {
     setFilling(true)
-    setFillResult('')
+    setInlineMessage(null)
     try {
       const currentCh = productionNext?.current_chapter || 1
       const res = await post<{ filled: boolean; created: Record<string, number>; warnings: string[] }>(
@@ -511,13 +532,19 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       )
       if (res.ok && res.data) {
         const total = Object.values(res.data.created).reduce((a, b) => a + b, 0)
-        setFillResult(`已自动补齐 ${total} 项资料`)
-        load()
+        const msg = `已自动补齐 ${total} 项资料`
+        setInlineMessage({ variant: 'success', children: msg })
+        showToast({ tone: 'success', title: '补齐完成', message: msg })
+        await load()
       } else {
-        setFillResult(res.error?.message || '补齐失败')
+        const errMsg = res.error?.message || '补齐失败'
+        setInlineMessage({ variant: 'danger', children: errMsg })
+        showToast({ tone: 'danger', title: '补齐失败', message: errMsg })
       }
     } catch (err) {
-      setFillResult(err instanceof Error ? err.message : '网络请求失败')
+      const errMsg = err instanceof Error ? err.message : '网络请求失败'
+      setInlineMessage({ variant: 'danger', children: errMsg })
+      showToast({ tone: 'danger', title: '请求失败', message: errMsg })
     } finally {
       setFilling(false)
     }
@@ -543,16 +570,12 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
     if (action.key === 'generate_chapter') {
       const ch = productionNext.current_chapter
-      // v6.3: Do NOT auto-generate on navigation. Show the chapter page so the user
-      // can review context readiness and explicitly click "生成".
       navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
       return
     }
 
     if (action.key === 'continue_next_chapter') {
       const ch = action.target_chapter || productionNext.current_chapter + 1
-      // v6.3.1: Do NOT auto-generate on navigation. Show the chapter page so the user
-      // can review context readiness and explicitly click "生成".
       navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
       return
     }
@@ -575,29 +598,35 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
     if (action.key === 'recover_blocked_run') {
       const ch = action.target_chapter || productionNext.current_chapter
-      setFilling(true)
-      setFillResult('')
+      setPrimaryActionLoading(true)
+      setInlineMessage(null)
       try {
         const resetPath = action.action_url.replace(/^\/api/, '')
         const res = await post<{ message: string }>(resetPath, {})
         if (res.ok && res.data) {
-          setFillResult(res.data.message || `第 ${ch} 章已重置`)
-          load()
+          const msg = res.data.message || `第 ${ch} 章已重置`
+          setInlineMessage({ variant: 'success', children: msg })
+          showToast({ tone: 'success', title: '恢复成功', message: msg })
+          await load()
           navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
         } else {
-          setFillResult(res.error?.message || '重置失败')
+          const errMsg = res.error?.message || '重置失败'
+          setInlineMessage({ variant: 'danger', children: errMsg })
+          showToast({ tone: 'danger', title: '恢复失败', message: errMsg })
         }
       } catch (err) {
-        setFillResult(err instanceof Error ? err.message : '网络请求失败')
+        const errMsg = err instanceof Error ? err.message : '网络请求失败'
+        setInlineMessage({ variant: 'danger', children: errMsg })
+        showToast({ tone: 'danger', title: '请求失败', message: errMsg })
       } finally {
-        setFilling(false)
+        setPrimaryActionLoading(false)
       }
       return
     }
 
     if (action.key === 'generate_arc_plan') {
-      setFilling(true)
-      setFillResult('')
+      setPrimaryActionLoading(true)
+      setInlineMessage(null)
       try {
         const nextCh = productionNext.current_chapter + 1
         const res = await post<{ planned: boolean; created: Record<string, number> }>(
@@ -606,15 +635,21 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
         )
         if (res.ok && res.data) {
           const total = Object.values(res.data.created).reduce((a, b) => a + b, 0)
-          setFillResult(`已生成章节计划，新增 ${total} 项`)
-          load()
+          const msg = `已生成章节计划，新增 ${total} 项`
+          setInlineMessage({ variant: 'success', children: msg })
+          showToast({ tone: 'success', title: '计划生成成功', message: msg })
+          await load()
         } else {
-          setFillResult(res.error?.message || '计划生成失败')
+          const errMsg = res.error?.message || '计划生成失败'
+          setInlineMessage({ variant: 'danger', children: errMsg })
+          showToast({ tone: 'danger', title: '计划生成失败', message: errMsg })
         }
       } catch (err) {
-        setFillResult(err instanceof Error ? err.message : '网络请求失败')
+        const errMsg = err instanceof Error ? err.message : '网络请求失败'
+        setInlineMessage({ variant: 'danger', children: errMsg })
+        showToast({ tone: 'danger', title: '请求失败', message: errMsg })
       } finally {
-        setFilling(false)
+        setPrimaryActionLoading(false)
       }
       return
     }
@@ -1197,24 +1232,30 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
         {/* Body */}
         <div style={{ padding: '14px 18px' }}>
           {loading ? (
-            <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>加载生产状态中...</div>
+            <SkeletonStack rows={4} />
           ) : productionNext ? (
             <>
-              {/* Single primary recommendation */}
+              {/* Next Action Task Card */}
               <div
                 style={{
-                  padding: '12px 14px',
-                  borderRadius: 6,
+                  padding: '14px 16px',
+                  borderRadius: 8,
                   background: nextActionKey === 'none' ? '#f6faf7' : '#fbfaf7',
                   border: `1px solid ${nextActionKey === 'none' ? 'rgba(29, 123, 70, 0.18)' : '#e8e4dd'}`,
                   marginBottom: 14,
                 }}
               >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  {responsibleParty === 'ai' && <Sparkles size={14} color="#761a34" />}
-                  {responsibleParty === 'human' && <AlertCircle size={14} color="#d97706" />}
-                  {responsibleParty === 'system' && <Wrench size={14} color="#6b7280" />}
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      padding: '3px 8px',
+                      borderRadius: 4,
+                      fontWeight: 600,
+                      background: responsibleParty === 'ai' ? '#f3e8eb' : responsibleParty === 'human' ? '#fef3c7' : '#f1f0ee',
+                      color: responsibleParty === 'ai' ? '#761a34' : responsibleParty === 'human' ? '#92400e' : '#6f6862',
+                    }}
+                  >
                     {responsibleParty === 'ai' ? 'AI 可自动处理' : responsibleParty === 'human' ? '需要你确认' : '系统处理'}
                   </span>
                   {productionNext.next_action.target_chapter && (
@@ -1223,28 +1264,35 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                     </span>
                   )}
                 </div>
-                <div style={{ fontSize: 15, fontWeight: 650, color: 'var(--text-primary)', marginBottom: 4 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 6 }}>
                   {productionNext.next_action.label}
                 </div>
-                <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                <div style={{ fontSize: 13, color: 'var(--text-secondary)', lineHeight: 1.55, marginBottom: 12 }}>
                   {productionNext.next_action.description}
                 </div>
-              </div>
-
-              {/* Primary action button */}
-              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-                <button
-                  className="btn btn-primary"
+                <LoadingButton
+                  loading={primaryActionLoading || filling}
+                  loadingText="处理中..."
+                  variant="primary"
                   onClick={handlePrimaryAction}
-                  disabled={filling || autoRunning || nextActionKey === 'none' || (hasRunningWorkflow && !isPrimaryNavigationAction)}
+                  disabled={autoRunning || nextActionKey === 'none' || (hasRunningWorkflow && !isPrimaryNavigationAction)}
                   style={{ flex: '1 1 220px', minWidth: 0, minHeight: 42 }}
                 >
-                  {filling ? (
-                    <><Loader2 size={14} className="spin" /> 处理中...</>
-                  ) : (
-                    <><Zap size={14} /> {productionNext.next_action.label}</>
-                  )}
-                </button>
+                  <Zap size={14} /> {productionNext.next_action.label}
+                </LoadingButton>
+              </div>
+
+              {/* Secondary actions */}
+              <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+                {!autoRunning && disconnected && hasRunningWorkflow && (
+                  <Link
+                    to={`?module=chapters&chapter=${targetCh}&view=workflow`}
+                    className="btn btn-secondary"
+                    style={{ flex: '1 1 180px', minWidth: 0, textDecoration: 'none' }}
+                  >
+                    <Zap size={14} /> {isTargetWorkflowStale ? `处理第 ${targetCh} 章卡住的运行` : `查看第 ${targetCh} 章实时进度`}
+                  </Link>
+                )}
 
                 {!autoRunning && disconnected && hasRunningWorkflow && (
                   <Link
@@ -1317,13 +1365,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 )}
               </div>
 
-              {/* Inline fill result */}
-              {fillResult && (
-                <div
-                  className={fillResult.includes('失败') ? 'alert alert-error' : 'alert alert-success'}
-                  style={{ padding: '8px 12px', fontSize: 13, marginBottom: 12 }}
-                >
-                  {fillResult}
+              {/* Inline feedback */}
+              {inlineMessage && (
+                <div style={{ marginBottom: 12 }}>
+                  <InlineMessage variant={inlineMessage.variant}>{inlineMessage.children}</InlineMessage>
                 </div>
               )}
 
@@ -1748,13 +1793,16 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
           )}
         </div>
         {loading ? (
-          <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>检查中...</div>
+          <SkeletonStack rows={2} />
         ) : contextStatus?.ready ? (
           <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
             项目资料已满足章节生成的最低要求。
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+              资料不完整，补齐后才能开始生成章节。
+            </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
               {(contextStatus?.actions || []).map((action) => (
                 <Link key={`${action.label}-${action.path}`} className="btn btn-secondary btn-sm" to={action.path} style={{ whiteSpace: 'nowrap' }}>
@@ -1762,26 +1810,33 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 </Link>
               ))}
               {(contextStatus?.missing || []).length > 0 && nextActionKey !== 'generate_missing_context' && (
-                <button className="btn btn-secondary btn-sm" onClick={handleAutoFill} disabled={filling || autoRunning}>
+                <LoadingButton
+                  loading={filling}
+                  loadingText="补齐中..."
+                  variant="secondary"
+                  className="btn-sm"
+                  onClick={handleAutoFill}
+                  disabled={autoRunning}
+                >
                   <Sparkles size={12} /> 让 AI 补齐缺失资料
-                </button>
+                </LoadingButton>
               )}
             </div>
           </div>
         )}
       </div>
 
-      {/* Missing items */}
+      {/* Missing items checklist */}
       {productionNext && productionNext.missing.length > 0 && (
         <div className="data-card" style={{ marginTop: 12, padding: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 8 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 10 }}>
             <AlertCircle size={14} color="#ef4444" />
             <span style={{ fontSize: 13, fontWeight: 500 }}>资料缺口</span>
             <span style={{ fontSize: 11, padding: '2px 6px', borderRadius: 4, background: '#fee2e2', color: '#991b1b', marginLeft: 'auto' }}>
               {productionNext.missing.length} 项
             </span>
           </div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
             {productionNext.missing.map((item) => (
               <div
                 key={item.key}
@@ -1790,25 +1845,24 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   alignItems: 'center',
                   justifyContent: 'space-between',
                   gap: 8,
-                  padding: '6px 8px',
+                  padding: '7px 10px',
                   background: 'var(--bg-tertiary)',
                   borderRadius: 6,
                   flexWrap: 'wrap',
+                  borderLeft: `3px solid ${item.severity === 'blocking' ? '#ef4444' : '#f59e0b'}`,
                 }}
               >
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                   <span
                     style={{
-                      fontSize: 11,
-                      padding: '2px 6px',
-                      borderRadius: 4,
-                      background: item.severity === 'blocking' ? '#fee2e2' : '#fef3c7',
-                      color: item.severity === 'blocking' ? '#991b1b' : '#92400e',
+                      width: 7,
+                      height: 7,
+                      borderRadius: '50%',
+                      background: item.severity === 'blocking' ? '#ef4444' : '#f59e0b',
                       flexShrink: 0,
                     }}
-                  >
-                    {item.severity === 'blocking' ? '阻塞' : '警告'}
-                  </span>
+                    aria-hidden="true"
+                  />
                   <span style={{ fontSize: 13, overflowWrap: 'anywhere' }}>{item.label}</span>
                 </div>
                 <Link className="btn btn-secondary btn-sm" to={item.manual_url} style={{ flexShrink: 0, fontSize: 11 }}>

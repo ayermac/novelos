@@ -143,7 +143,8 @@ describe('AuthorWorkbench', () => {
         currentChapterRecord={baseProps.chapters[3]}
       />
     )
-    expect(screen.getByText('本章尚未生成')).toBeInTheDocument()
+    expect(screen.getByText('本章还没有正文内容')).toBeInTheDocument()
+    expect(screen.getByText('编剧将规划章节场景和情节')).toBeInTheDocument()
   })
 
   it('renders workflow timeline steps on workflow tab', () => {
@@ -978,5 +979,51 @@ describe('AuthorWorkbench', () => {
     )
     expect(screen.queryByRole('button', { name: /生成本章/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /继续生成/ })).not.toBeInTheDocument()
+  })
+
+  /* v6.5.3 Chapter Writing Surface Polish tests ----------------------- */
+
+  it('shows skeleton stack while chapter content is loading', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        chapterLoading
+      />
+    )
+    const skeletonStack = document.querySelector('.ui-skeleton-stack')
+    expect(skeletonStack).toBeInTheDocument()
+  })
+
+  it('empty state shows actionable next steps for ungenerated chapter', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        currentChapter={4}
+        currentChapterRecord={baseProps.chapters[3]}
+      />
+    )
+    expect(screen.getByText('本章还没有正文内容')).toBeInTheDocument()
+    expect(screen.getByText('编剧将规划章节场景和情节')).toBeInTheDocument()
+    expect(screen.getByText('执笔将撰写章节正文')).toBeInTheDocument()
+    expect(screen.getByText('润色、审核后生成最终版本')).toBeInTheDocument()
+    const surface = screen.getByLabelText('写作区')
+    const generateBtn = screen.getAllByRole('button', { name: /生成本章/ }).find((b) => surface.contains(b))
+    expect(generateBtn).toBeDefined()
+  })
+
+  it('generate button shows loading state via LoadingButton when workflow is running', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        isWorkflowRunning
+        currentChapter={4}
+        currentChapterRecord={baseProps.chapters[3]}
+      />
+    )
+    const generateBtn = screen.getAllByRole('button', { name: /生成中/ }).find((b) =>
+      b.closest('[aria-label="写作区"]')
+    )
+    expect(generateBtn).toBeDefined()
+    expect(generateBtn).toBeDisabled()
   })
 })

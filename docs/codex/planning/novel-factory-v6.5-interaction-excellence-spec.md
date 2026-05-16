@@ -77,24 +77,54 @@ CSS 交互协议：
 
 ### v6.5.2：Project Overview Workbench Polish
 
+状态：**已实现**
+
 目标：把项目 Overview 从"信息堆叠"改为"下一步创作驾驶舱"。
 
 重点：
 
-- 顶部 next action 变成明确任务卡。
-- context 缺失项展示为可完成 checklist。
-- auto-fill / genesis / chapter generation 的操作路径收敛。
-- loading、empty、error 状态全部使用 v6.5.1 primitives。
+- 顶部 next action 变成明确任务卡：责任方徽章（AI/人工/系统）+ 动作标题 + 原因描述 + LoadingButton 主操作。
+- context 缺失项展示为可扫描 checklist：左侧 severity 圆点 + label + 手动编辑按钮，侧边栏补齐按钮使用 LoadingButton。
+- auto-fill / genesis / chapter generation 的操作路径收敛，primary action 统一使用 LoadingButton 并带有 loading 状态。
+- loading、empty、error 状态全部使用 v6.5.1 primitives：SkeletonStack 替换文本 loading、InlineMessage 替换字符串结果、toast 统一异步反馈。
+
+已实现文件：
+
+- `frontend/src/components/project/ProjectOverviewModule.tsx`
+- `frontend/src/components/project/__tests__/ProjectOverviewModule.test.tsx`
+
+验收标准：
+
+- 前端 typecheck / lint / build / vitest 全通过。
+- 新 ProjectOverviewModule 测试覆盖 skeleton loading、next action card、context checklist、操作反馈。
+- load() 错误使用 toast 反馈，不再静默失败。
+- auto-fill、arc-plan、recover_blocked_run 操作使用 InlineMessage + toast 双通道反馈。
+- production-next 行为完全兼容，不改后端。
 
 ### v6.5.3：Chapter Writing Surface Polish
+
+状态：**已实现**
 
 目标：让章节正文页更像作者写作台，而不是运行详情页。
 
 重点：
 
-- 生成、发布、返修、恢复按钮统一 pending。
-- 正文、质量诊断、工作流过程稿之间的切换更顺滑。
-- 空章节状态给出明确下一步。
+- 生成、发布、返修、恢复按钮统一使用 `LoadingButton`，提供一致的 pending 体验（`aria-busy`、spinner、loading text、disabled）。
+- 章节内容 loading 使用 `SkeletonStack` 替代纯文本"加载中..."，避免布局跳动。
+- 空章节状态给出明确下一步：标题 + 图标 + 可执行步骤列表（编剧规划 → 执笔撰写 → 润色审核）+ `LoadingButton` 生成入口。
+- workflow running 状态保持现有区分（启动中 / 生成中 / 等待刷新 / 疑似卡住），恢复按钮统一使用 `LoadingButton`。
+- auto-fill 操作接入 `InlineMessage` 内联反馈 + `toast` 全局通知。
+
+已实现文件：
+
+- `frontend/src/components/project/AuthorWritingSurface.tsx`
+- `frontend/src/components/project/__tests__/AuthorWorkbench.test.tsx`
+
+验收标准：
+
+- 前端 typecheck / lint / build / vitest 全通过。
+- AuthorWorkbench 测试兼容，新增测试覆盖 skeleton loading、空状态引导、LoadingButton pending 状态。
+- 不改后端 workflow，不改章节生成逻辑。
 
 ### v6.5.4：Agent Process Narrative
 
