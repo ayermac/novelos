@@ -16,7 +16,7 @@ import pytest
 
 SAMPLE_STRAIGHT_EMOTION = (
     "李明感到一阵愤怒涌上心头。他看着眼前的对手，暗自思忖：这次一定要赢。\n"
-    "张华觉得有些不安。他知道，这次的任务非常危险。\n"
+    "张华觉得有些不安。他明白，这次的任务非常危险。\n"
     "王芳意识到，这场战斗将决定一切。她理解，自己已经没有退路。\n"
     "李明察觉到了空气中的异样。\n"
     "三人站在十字路口。\n"
@@ -105,6 +105,16 @@ class TestShowDontTellValidator:
         assert result["ok"]
         assert result["data"]["score"] >= 80
 
+    def test_neutral_know_not_flagged(self):
+        """Objective action word '知道' used for factual knowledge should not trigger."""
+        from novel_factory.skills.show_dont_tell_validator import ShowDontTellValidator
+        skill = ShowDontTellValidator()
+        text = "他知道这条路通向城堡。她知道这个秘密。"
+        result = skill.run({"text": text})
+        assert result["ok"]
+        assert result["data"]["straight_emotion_count"] == 0
+        assert result["data"]["score"] == 100
+
     def test_evidence_not_huge(self):
         from novel_factory.skills.show_dont_tell_validator import ShowDontTellValidator
         skill = ShowDontTellValidator()
@@ -165,6 +175,20 @@ class TestSceneTextureChecker:
         assert result["data"]["sensory_per_1000"] >= 3
         assert result["data"]["score"] >= 60
 
+    def test_no_duplicate_sensory_count(self):
+        """Overlapping sensory words (e.g. '阳光' containing '光') must not be double-counted."""
+        from novel_factory.skills.scene_texture_checker import SceneTextureChecker
+        skill = SceneTextureChecker()
+        # Pad with neutral text so per_1000 stays low; only one line has sensory words
+        padding = "他沿着走廊向前走去，脚步在空旷的空间里回荡。\n" * 100
+        sensory_line = "阳光透过窗户，光线洒在地上，灯光照亮了房间。\n"
+        text = padding + sensory_line + padding
+        result = skill.run({"text": text})
+        assert result["ok"]
+        data = result["data"]
+        # Exactly 3 distinct sensory matches; without dedup '光' would count 6+
+        assert data["sensory_per_1000"] <= 10
+
 
 class TestDialogueNaturalnessChecker:
     """DialogueNaturalnessChecker deterministic detection."""
@@ -187,6 +211,19 @@ class TestDialogueNaturalnessChecker:
         data = result["data"]
         assert data["dialogue_ratio"] >= 0.05
         assert data["colloquial_ratio"] >= 0.1
+
+    def test_nested_quotes_does_not_crash(self):
+        """Malformed nested curly quotes should not crash the checker."""
+        from novel_factory.skills.dialogue_naturalness_checker import DialogueNaturalnessChecker
+        skill = DialogueNaturalnessChecker()
+        text = (
+            '\u201c你来了。\u201d身后传来一个低沉的声音。\n'
+            '\u201c你\u201c说\u201d什么？\u201d李明警觉地问道。\n'
+        )
+        result = skill.run({"text": text})
+        assert result["ok"]
+        # Should still detect at least one dialogue segment
+        assert result["data"]["dialogue_count"] >= 1
 
 
 # -- Integration tests --

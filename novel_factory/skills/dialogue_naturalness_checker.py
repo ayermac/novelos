@@ -17,7 +17,7 @@ class DialogueNaturalnessChecker(ValidatorSkill):
     skill_id = "dialogue-naturalness"
     version = "1.0.0"
 
-    DIALOGUE_PATTERN = r'["\u201c\u300c\u300e]([^"\u201d\u300d\u300f]+)["\u201d\u300d\u300f]'
+    DIALOGUE_PATTERN = r'["\u201c\u300c\u300e]([^"\u201c\u201d\u300d\u300f]+)["\u201d\u300d\u300f]'
 
     # Colloquial / spoken markers
     COLLOQUIAL_MARKS: list[str] = ["啊", "呢", "吧", "嘛", "哦", "呀", "哈", "哼", "呸"]

@@ -507,7 +507,7 @@ class PolisherAgent(BaseAgent):
         if "excessive_explanation" not in warned_codes:
             straight_patterns = [
                 r"感到[^，。！？]{1,8}", r"觉得[^，。！？]{1,8}", r"意识到[^，。！？]{1,8}",
-                r"明白[^，。！？]{1,8}", r"知道[^，。！？]{1,8}", r"理解[^，。！？]{1,8}",
+                r"明白[^，。！？]{1,8}", r"理解[^，。！？]{1,8}",
                 r"察觉[^，。！？]{1,8}", r"心中暗想", r"心道",
             ]
             straight_count = sum(len(re.findall(p, narrative_only)) for p in straight_patterns)

@@ -35,6 +35,25 @@ class SceneTextureChecker(ValidatorSkill):
         "退", "进", "出", "上", "下", "抬", "低", "弯", "直", "靠",
     ]
 
+    @staticmethod
+    def _count_unique_sensory_occurrences(text: str, words: list[str]) -> int:
+        """Count sensory word occurrences without double-counting overlapping spans.
+
+        Sort words by length descending so longer words (e.g. '阳光') are matched
+        before their substrings (e.g. '光').  Each character index can only belong
+        to one match.
+        """
+        occupied = [False] * len(text)
+        count = 0
+        for w in sorted(words, key=len, reverse=True):
+            for m in re.finditer(re.escape(w), text):
+                start, end = m.start(), m.end()
+                if not any(occupied[start:end]):
+                    count += 1
+                    for i in range(start, end):
+                        occupied[i] = True
+        return count
+
     def run(self, payload: dict[str, Any]) -> dict[str, Any]:
         text = payload.get("text") or payload.get("content", "")
         if not text:
@@ -43,8 +62,8 @@ class SceneTextureChecker(ValidatorSkill):
         total_chars = max(len(text), 1)
         findings: list[dict[str, Any]] = []
 
-        # 1. Sensory density (per 1000 chars)
-        sensory_count = sum(text.count(w) for w in self.SENSORY_WORDS)
+        # 1. Sensory density (per 1000 chars) — deduplicated overlaps
+        sensory_count = self._count_unique_sensory_occurrences(text, self.SENSORY_WORDS)
         sensory_per_1k = (sensory_count / total_chars) * 1000
 
         # 2. Action verb density

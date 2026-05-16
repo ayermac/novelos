@@ -85,6 +85,13 @@
 
 1. **Deterministic heuristic**：所有 skill 基于正则和统计，可能对特定文体有误报或漏报
 2. **InfoDumpDetector 的 exposition paragraph 检测较粗**：仅检测 3+ 连续无动作句，未深入语义分析
-3. **SceneTextureChecker 的感官词列表固定**：未按 genre 定制
+3. **SceneTextureChecker 的感官词列表固定**：未按 genre 定制；v6.4.3-fix 已修复重叠子串重复计数
 4. **DialogueNaturalnessChecker 未检测角色声音区分**：仅做单章统计，不做跨章一致性
 5. **未挂载到 skill hooks**：4 个 skill 由 QualityHub/Polisher 直接调用，不通过 `run_agent_skills` 管道，因此不占用 agent stage 执行时间
+
+## v6.4.3-fix 小修
+
+- 修复 SceneTextureChecker 感官词重叠子串重复计数（"阳光"不再被"光"重复计数）
+- 移除 ShowDontTellValidator 和 Polisher fallback 中的中性词 "知道"
+- 修复 DialogueNaturalnessChecker negated class 遗漏左弯引号 \u201c
+- 新增 3 个误报/稳定性测试
