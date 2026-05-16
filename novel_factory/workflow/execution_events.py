@@ -32,6 +32,7 @@ EVENT_EVIDENCE_VERIFIED = "evidence_verified"
 EVENT_NODE_COMPLETED = "node_completed"
 EVENT_NODE_FAILED = "node_failed"
 EVENT_NODE_SKIPPED = "node_skipped"
+EVENT_QUALITY_DIAGNOSED = "quality_diagnosed"
 
 EVIDENCE_STATUS_PASS = "pass"
 EVIDENCE_STATUS_FAIL = "fail"

@@ -18,6 +18,7 @@ import WorkflowTimeline from '../WorkflowTimeline'
 import ChapterVersionPanel from './ChapterVersionPanel'
 import ChapterDiffViewer from './ChapterDiffViewer'
 import ChapterEditorSurface from './ChapterEditorSurface'
+import QualityDiagnosisPanel from './QualityDiagnosisPanel'
 
 export type SurfaceTabKey = 'content' | 'workflow' | 'artifacts' | 'history' | 'versions'
 
@@ -551,15 +552,22 @@ function ContentBody({
       )}
 
       {!chapterLoading && hasContent && !isStreaming && (
-        <ChapterEditorSurface
-          projectId={projectId}
-          chapterNumber={currentChapter}
-          onContentSaved={handleEditorContentSaved}
-          initialContent={chapterDetail?.content || ''}
-          initialWordCount={chapterDetail?.word_count || 0}
-          initialStatus={chapterDetail?.status || ''}
-          initialVersionLabel={`更新时间 ${chapterDetail?.updated_at || chapterDetail?.created_at || '-'}`}
-        />
+        <>
+          <ChapterEditorSurface
+            projectId={projectId}
+            chapterNumber={currentChapter}
+            onContentSaved={handleEditorContentSaved}
+            initialContent={chapterDetail?.content || ''}
+            initialWordCount={chapterDetail?.word_count || 0}
+            initialStatus={chapterDetail?.status || ''}
+            initialVersionLabel={`更新时间 ${chapterDetail?.updated_at || chapterDetail?.created_at || '-'}`}
+          />
+          <QualityDiagnosisPanel
+            projectId={projectId}
+            chapterNumber={currentChapter}
+            chapterStatus={chapterDetail?.status || ''}
+          />
+        </>
       )}
     </div>
   )

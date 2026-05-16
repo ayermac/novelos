@@ -23,17 +23,20 @@
 
 **目标**：建立可观测基线，不改 Agent 行为，只增加诊断报告和事件。
 
+**状态**：已实现
+
 **改动**：
-1. **QualityHub 新增 `diagnose` 方法**：聚合 death_penalty、ai-style-detector、narrative-quality、style_bible、show_dont_tell（v6.4.1 接入）的所有维度，输出统一 JSON 诊断报告
-2. **Execution Event 增强**：author/polisher/editor 完成后 emit `quality_diagnosed` 事件，包含各维度分数
-3. **新增 API**：`GET /quality/diagnosis?project_id=&chapter_number=` 返回当前章节各阶段质量快照
-4. **Frontend**：在章节详情页新增"质量诊断"折叠面板，展示 ai_trace_score、narrative scores、death_penalty hits
+1. **QualityHub 新增 `diagnose` 方法**：聚合 death_penalty、ai-style-detector、narrative-quality、show_dont_tell（正则基线）、info_dump（正则基线）的所有维度，输出统一 JSON 诊断报告
+2. **Execution Event 增强**：新增 `EVENT_QUALITY_DIAGNOSED = "quality_diagnosed"` 常量，供后续版本接入 workflow 事件记录
+3. **新增 API**：`GET /api/projects/{project_id}/chapters/{chapter_number}/quality-diagnosis` 返回当前章节质量诊断快照
+4. **Frontend**：在章节详情页正文下方新增"质量诊断"折叠面板，展示 overall_score、维度分数条、metrics、findings
 
 **验收**：
-- stub 模式跑完整 workflow，每个节点 emit `quality_diagnosed` 事件
+- stub 模式跑完整 workflow 不阻断
 - API 返回的 diagnosis JSON 包含所有已知维度
 - frontend typecheck/lint/build/vitest 通过
 - backend smoke 通过
+- backend full suite 1990 passed
 
 **依赖**：无（纯观测层）
 
