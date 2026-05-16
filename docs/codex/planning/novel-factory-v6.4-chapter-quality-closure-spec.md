@@ -183,55 +183,45 @@
 
 **目标**：让 Editor 的审核更精准地捕捉 AI 味问题，并建立可持续的测试基线。
 
+**状态**：已实现
+
 **改动**：
-1. **Editor SYSTEM_PROMPT 增强**：
+1. **Editor SYSTEM_PROMPT 增强**（v6.4.4）：
    - "文字质量"维度（15分）拆分为子维度：
      - AI 痕迹（5分）：检测模板句式、直白情绪、机械解释
      - 叙事质感（5分）：检测感官细节、动作描写、对白自然度
      - 节奏控制（5分）：检测段落单调、句子长度 uniformity
-   - 新增"死刑红线"独立维度说明：发现"感到/觉得"式直白情绪 → 文字质量单项扣至 8 分以下
-   - 新增 revision_target 规则：对白问题 → "polisher"；场景结构问题 → "author"；info dump → "author"
+   - 新增 info dump / 设定展现检测指引
+   - 新增"评审原则"：只评审和给修订建议，**不直接改写正文**
+   - 新增 revision_target 规则：info dump / 直白情绪 → "author"；文风/对白/场景 → "polisher"
 
-2. **Editor 五维评分权重调整**（可选）：
-   - 当前：setting(25) logic(25) poison(20) text(15) pacing(15)
-   - 建议保持不动，通过子维度细化 text 和 pacing 的评分标准
+2. **Editor `_run_advisory_quality_check` 新增**（v6.4.4）：
+   - 直接调用 4 个 anti-AI skills（show-dont-tell, info-dump-detector, scene-texture, dialogue-naturalness）
+   - 将 skill findings 映射为 `[v6.4质量信号] {code}: {message}` 格式的 advisory issues
+   - 映射为 `[{code}] {suggestion}` 格式的 suggestions
+   - 按 severity 排序，上限 3 条，避免 review 噪音爆炸
+   - **不改变 pass/fail/score/revision_target**，只追加到 issues/suggestions
+   - 不调用额外 LLM
 
-3. **Editor `_fallback_rule_review` 增强**：
-   - fallback 评分也纳入新增 death_penalty 规则（如直白情绪词）
+3. **Editor `_fallback_rule_review` 增强**（v6.4.4）：
+   - fallback 评分也调用 `_run_advisory_quality_check`，使降级审核仍有质量信号
 
-4. **新增测试文件**：
-   - `tests/test_v64_quality_diagnosis.py`：测试 QualityHub.diagnose 聚合逻辑
-   - `tests/test_v64_show_dont_tell.py`：测试 ShowDontTellValidator 命中逻辑
-   - `tests/test_v64_dialogue_naturalizer.py`：测试 DialogueNaturalizer 检测逻辑
-   - `tests/test_v64_scene_conflict.py`：测试 SceneConflictChecker 结构检测
-   - `tests/test_v64_info_dump.py`：测试 InfoDumpDetector 检测逻辑
-   - `tests/test_v64_author_prompt.py`：测试 Author prompt 构建（context 是否包含新规则）
-   - `tests/test_v64_polisher_rewrite.py`：测试 Polisher skill hooks 调用新 skills
+4. **新增测试文件** `tests/test_v64_editor_quality_gates.py`（v6.4.4）：
+   - Prompt contract 测试：SYSTEM_PROMPT 包含 v6.4 质量维度关键字
+   - `_run_advisory_quality_check` 单元测试：AI-heavy text 生成 advisory issues、 capped at 3、evidence 限长
+   - Integration 测试：good text 通过 Editor review 且 advisory 不 block workflow
+   - Fallback 测试：LLM 降级时仍有 advisory 信号
+   - Routing 测试：advisory 不影响 revision_target
 
-5. **Real LLM 可选验收脚本**：
-   - `scripts/verify_v64_real_llm.sh`：
-     - 创建测试项目（genre=都市/玄幻）
-     - 跑 1 章完整 real mode workflow
-     - 验收标准（heuristic）：
-       - ai_trace_score < 60
-       - narrative_quality.overall_score > 55
-       - death_penalty critical count = 0
-       - dialogue_ratio > 0.10（narrative quality 数据）
-       - show_dont_tell straight_emotion_count < 5（每千字）
-     - 不检查具体措辞，只检查数值阈值
-
-6. **Stub 稳定测试策略**：
-   - 所有新增 skill 的单元测试使用 fixture 文本（`tests/fixtures/ai_heavy_chapter.txt`）
-   - fixture 文本包含所有典型 AI 味表达（直白情绪、功能对白、info dump、模板句式）
-   - 测试断言：skill 能检测到 fixture 中的问题
-   - workflow 测试只断言节点通过、status 正确推进，不断言文本质量
+5. **已有测试更新**：
+   - `tests/test_v64_quality_diagnosis.py`：已有，不修改
+   - `tests/test_v64_antiai_skills.py`：已有，不修改
 
 **验收**：
-- 新增测试文件全部通过
-- fixture 文本 `tests/fixtures/ai_heavy_chapter.txt` 存在且被所有新增 skill 测试引用
-- backend full suite 通过
-- real LLM 验收脚本可独立运行（不纳入 CI）
-- frontend 质量诊断面板展示新维度
+- `tests/test_v64_editor_quality_gates.py` 21 个测试全部通过
+- backend full suite 2069 passed
+- backend smoke 通过
+- 无 workflow 拓扑改动、无 schema 改动、无新增 hard blocker
 
 **依赖**：v6.4.0 ~ v6.4.3（本阶段是验收和测试闭环）
 

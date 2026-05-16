@@ -29,6 +29,18 @@ EDITOR_SYSTEM_PROMPT = """你是网文工厂的质检（Editor），是读者毒
 4. 文字质量 (满分15) — 无AI烂词、无说教
 5. 爽点钩子 (满分15) — 有高潮、有悬念
 
+文字质量子维度（v6.4 质量信号，评审时重点关注）：
+- AI 痕迹：无模板句式、无直白情绪词（"感到/觉得/意识到"）、无机械解释
+- 叙事质感：感官细节充足（光影/声音/气味/温度）、动作描写具体、对白自然
+- 节奏控制：段落长短有变化、紧张场景用短句/短段、避免均匀段落
+- 设定展现：无旁白式 info dump（"这个世界是..."/"所谓..."/"简单来说"）、设定通过动作/对话展现
+- 对白人物化：对白有角色目的、潜台词或冲突、不同角色语气有差异
+
+评审原则：
+- 只评审和给修订建议，**不直接改写正文**
+- issues 和 suggestions 各最多 3 条，必须具体可执行
+- 不要泛泛评价（如"写得不错"），要给出可操作的修改方向
+
 评分规则：
 - 总分 >= 90 且无单项不及格 → 通过 (pass=true)
 - 80-89 → 退回润色或局部返修
@@ -48,7 +60,8 @@ EDITOR_SYSTEM_PROMPT = """你是网文工厂的质检（Editor），是读者毒
 
 revision_target 规则：
 - 剧情、逻辑、设定、伏笔问题 → "author"
-- 文风、句式、节奏、AI 痕迹问题 → "polisher"
+- 文风、句式、节奏、AI 痕迹、对白、场景质感问题 → "polisher"
+- info dump / 设定旁白 / 直白情绪 → "author"
 - 指令本身错误或设定冲突 → "planner"
 - 通过时 → null"""
 
@@ -140,6 +153,65 @@ class EditorAgent(BaseAgent):
         )
         return "\n\n".join(parts)
 
+    def _run_advisory_quality_check(self, content: str) -> tuple[list[str], list[str]]:
+        """Run deterministic anti-AI skills and map findings to advisory issues/suggestions.
+
+        These are advisory only — they are appended to issues/suggestions but do NOT
+        affect pass/fail/score/revision_target.  No LLM calls.
+        """
+        if not content or not self.skill_registry:
+            return [], []
+
+        skill_ids = [
+            "show-dont-tell",
+            "info-dump-detector",
+            "scene-texture",
+            "dialogue-naturalness",
+        ]
+        all_findings: list[dict[str, Any]] = []
+
+        for skill_id in skill_ids:
+            try:
+                result = self.skill_registry.run_skill(
+                    skill_id,
+                    {"text": content},
+                    agent="editor",
+                    stage="advisory",
+                )
+                if result.get("ok"):
+                    data = result.get("data") or {}
+                    for f in data.get("findings", []):
+                        if isinstance(f, dict):
+                            all_findings.append(f)
+            except Exception:
+                logger.warning("Editor: advisory skill %s failed", skill_id, exc_info=True)
+                continue
+
+        if not all_findings:
+            return [], []
+
+        # Severity ordering: critical > high > medium > warning > info
+        severity_order = {"critical": 0, "high": 1, "medium": 2, "warning": 3, "info": 4}
+        all_findings.sort(
+            key=lambda f: severity_order.get(f.get("severity", "info"), 5)
+        )
+
+        # Cap to avoid noise explosion
+        capped = all_findings[:3]
+
+        issues: list[str] = []
+        suggestions: list[str] = []
+        for finding in capped:
+            code = finding.get("code", "")
+            message = finding.get("message", "")
+            suggestion = finding.get("suggestion", "")
+            if message:
+                issues.append(f"[v6.4质量信号] {code}: {message}")
+            if suggestion:
+                suggestions.append(f"[{code}] {suggestion}")
+
+        return issues, suggestions
+
     def _fallback_rule_review(self, content: str, reason: str) -> EditorOutput:
         """Fallback review when live editor LLM cannot return a usable result."""
         dp_result = check_death_penalty_structured(content)
@@ -154,6 +226,10 @@ class EditorAgent(BaseAgent):
         if reason:
             issues.append(f"AI 审核降级为规则检查: {reason}")
 
+        # v6.4.4: Advisory quality signals even in fallback
+        advisory_issues, advisory_suggestions = self._run_advisory_quality_check(content)
+        issues = issues + advisory_issues
+
         return EditorOutput(
             pass_=passed,
             score=score,
@@ -165,7 +241,7 @@ class EditorAgent(BaseAgent):
                 "pacing": 13 if passed else 10,
             },
             issues=issues,
-            suggestions=[] if passed else ["请人工检查正文后再继续。"],
+            suggestions=advisory_suggestions if passed else (["请人工检查正文后再继续。"] + advisory_suggestions),
             revision_target=None if passed else "polisher",
             state_card={
                 "summary": "AI 审核不可用，已完成规则兜底检查；请人工发布前复核。",
@@ -212,6 +288,13 @@ class EditorAgent(BaseAgent):
                 "payload": {"fallback_type": "rule_review", "reason": str(e)[:200]},
             })
         
+        # v6.4.4: Advisory quality signals — append to review but do NOT change pass/fail/routing
+        advisory_issues, advisory_suggestions = self._run_advisory_quality_check(content)
+        if advisory_issues:
+            output.issues = output.issues + advisory_issues
+        if advisory_suggestions:
+            output.suggestions = output.suggestions + advisory_suggestions
+
         dp_result = check_death_penalty_structured(content)
         if dp_result.has_critical:
             # Force low score and fail
