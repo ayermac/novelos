@@ -132,27 +132,29 @@ export default function Layout() {
             <span className="brand-name">墨流工厂</span>
             <span className="brand-tagline">长篇小说生产系统</span>
           </div>
-          <span className="version">v5.5.9</span>
-          <div className="sidebar-brand-actions">
-            <button
-              type="button"
-              className="sidebar-icon-toggle"
-              onClick={() => setTheme(nextTheme)}
-              aria-label={themeLabel}
-              title={themeLabel}
-            >
-              {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
-            </button>
-            <button
-              type="button"
-              className="sidebar-icon-toggle"
-              onClick={() => setSidebarCollapsed((value) => !value)}
-              aria-label={sidebarCollapsed ? '展开主菜单' : '收起主菜单'}
-              aria-expanded={!sidebarCollapsed}
-              title={sidebarCollapsed ? '展开主菜单' : '收起主菜单'}
-            >
-              {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-            </button>
+          <div className="brand-meta-row">
+            <span className="version">v5.5.9</span>
+            <div className="sidebar-brand-actions">
+              <button
+                type="button"
+                className="sidebar-icon-toggle"
+                onClick={() => setTheme(nextTheme)}
+                aria-label={themeLabel}
+                title={themeLabel}
+              >
+                {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
+              <button
+                type="button"
+                className="sidebar-icon-toggle"
+                onClick={() => setSidebarCollapsed((value) => !value)}
+                aria-label={sidebarCollapsed ? '展开主菜单' : '收起主菜单'}
+                aria-expanded={!sidebarCollapsed}
+                title={sidebarCollapsed ? '展开主菜单' : '收起主菜单'}
+              >
+                {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+              </button>
+            </div>
           </div>
         </div>
 
@@ -264,13 +266,13 @@ export default function Layout() {
         .sidebar-brand {
           padding: 22px 16px 18px;
           display: grid;
-          grid-template-columns: 42px minmax(0, 1fr) auto;
+          grid-template-columns: 52px minmax(0, 1fr);
           grid-template-areas:
-            "icon text toggle"
-            "icon version toggle";
+            "icon text"
+            "meta meta";
           align-items: center;
-          column-gap: var(--space-3);
-          row-gap: var(--space-2);
+          column-gap: 14px;
+          row-gap: 12px;
           border-bottom: 1px solid var(--border-color);
         }
 
@@ -284,8 +286,8 @@ export default function Layout() {
 
         .brand-icon {
           grid-area: icon;
-          width: 42px;
-          height: 42px;
+          width: 52px;
+          height: 52px;
           display: flex;
           align-items: center;
           justify-content: center;
@@ -304,9 +306,6 @@ export default function Layout() {
         }
 
         .sidebar-brand-actions {
-          grid-area: toggle;
-          align-self: center;
-          justify-self: end;
           display: flex;
           align-items: center;
           gap: 6px;
@@ -347,6 +346,16 @@ export default function Layout() {
           flex-direction: column;
         }
 
+        .brand-meta-row {
+          grid-area: meta;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          min-width: 0;
+          padding-left: 66px;
+        }
+
         .brand-text {
           grid-area: text;
           display: flex;
@@ -377,9 +386,6 @@ export default function Layout() {
         }
 
         .version {
-          grid-area: version;
-          justify-self: start;
-          align-self: start;
           font-size: 11px;
           color: var(--primary);
           background: var(--accent-soft);
@@ -390,8 +396,19 @@ export default function Layout() {
           white-space: nowrap;
         }
 
-        .sidebar.collapsed .brand-text,
-        .sidebar.collapsed .version {
+        .sidebar.collapsed .brand-text {
+          display: none;
+        }
+
+        .sidebar.collapsed .brand-meta-row {
+          display: flex;
+          justify-content: center;
+          padding-left: 0;
+          width: 100%;
+        }
+
+        .sidebar.collapsed .version,
+        .sidebar.collapsed .sidebar-brand-actions .sidebar-icon-toggle:first-child {
           display: none;
         }
 
@@ -714,24 +731,25 @@ export default function Layout() {
 
           .sidebar.collapsed .sidebar-brand {
             display: grid;
-            grid-template-columns: 42px minmax(0, 1fr);
+            grid-template-columns: 52px minmax(0, 1fr);
             grid-template-areas:
               "icon text"
-              "icon version";
+              "meta meta";
             justify-content: flex-start;
-            column-gap: var(--space-3);
-            row-gap: var(--space-2);
+            column-gap: 14px;
+            row-gap: 12px;
             padding: var(--space-5) var(--space-5) var(--space-4);
           }
 
           .sidebar.collapsed .brand-text,
-          .sidebar.collapsed .version,
+          .sidebar.collapsed .brand-meta-row,
           .sidebar.collapsed .nav-link span,
           .sidebar.collapsed .status-indicator span {
             display: flex;
           }
 
-          .sidebar.collapsed .version {
+          .sidebar.collapsed .version,
+          .sidebar.collapsed .sidebar-brand-actions .sidebar-icon-toggle:first-child {
             display: inline-flex;
           }
 
