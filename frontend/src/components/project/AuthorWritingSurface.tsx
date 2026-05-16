@@ -222,6 +222,7 @@ interface AuthorWritingSurfaceProps {
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onPublish?: () => void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
+  onRetryRunNode?: (runId: string) => Promise<void> | void
   publishPending?: boolean
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
@@ -254,6 +255,7 @@ export default function AuthorWritingSurface({
   onMarkRunStuck,
   onPublish,
   onResetRunRecovery,
+  onRetryRunNode,
   publishPending,
   markStuckPending,
   resetRecoveryPending,
@@ -399,6 +401,7 @@ export default function AuthorWritingSurface({
             sseSteps={sseSteps}
             onMarkRunStuck={onMarkRunStuck}
             onResetRunRecovery={onResetRunRecovery}
+            onRetryRunNode={onRetryRunNode}
             markStuckPending={markStuckPending}
             resetRecoveryPending={resetRecoveryPending}
           />
@@ -625,6 +628,7 @@ function WorkflowBody({
   sseSteps,
   onMarkRunStuck,
   onResetRunRecovery,
+  onRetryRunNode,
   markStuckPending,
   resetRecoveryPending,
 }: {
@@ -636,6 +640,7 @@ function WorkflowBody({
   sseSteps: Record<string, StepStatus>
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
+  onRetryRunNode?: (runId: string) => Promise<void> | void
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
 }) {
@@ -774,6 +779,30 @@ function WorkflowBody({
               )}
             </div>
           )}
+          {recovery.recommended_action === 'retry_node' && onRetryRunNode && timeline.run_id && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+              <LoadingButton
+                className="btn btn-primary btn-sm"
+                variant="primary"
+                loading={!!resetRecoveryPending}
+                loadingText="处理中..."
+                onClick={() => onRetryRunNode(timeline.run_id!)}
+              >
+                {recovery.safe_actions.find((a) => a.key === 'retry_node')?.label || '重试当前节点'}
+              </LoadingButton>
+              {onResetRunRecovery && (
+                <LoadingButton
+                  className="btn btn-secondary btn-sm"
+                  variant="secondary"
+                  loading={!!resetRecoveryPending}
+                  loadingText="处理中..."
+                  onClick={() => onResetRunRecovery(timeline.run_id!)}
+                >
+                  完整重置
+                </LoadingButton>
+              )}
+            </div>
+          )}
         </div>
         <div className="workflow-checkpoint-panel">
           <div className="workflow-checkpoint-item">
@@ -893,6 +922,17 @@ function WorkflowBody({
                   onClick={() => onResetRunRecovery(runDetail.run_id)}
                 >
                   清除阻塞并重置
+                </LoadingButton>
+              )}
+              {(runDetail.chapter_status === 'blocking' || runDetail.chapter_status === 'revision') && onRetryRunNode && ['author', 'polisher', 'editor'].includes(runDetail.current_node || '') && (
+                <LoadingButton
+                  className="btn btn-primary btn-sm"
+                  variant="primary"
+                  loading={!!resetRecoveryPending}
+                  loadingText="处理中..."
+                  onClick={() => onRetryRunNode(runDetail.run_id)}
+                >
+                  重试当前节点
                 </LoadingButton>
               )}
               <Link to={`/runs/${runDetail.run_id}`} className="btn btn-secondary btn-sm">

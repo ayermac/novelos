@@ -516,6 +516,40 @@ export default function ProjectDetail() {
     }
   }, [dialog, refetchWorkspace, resetRecoveryPending])
 
+  const handleRetryRunNode = useCallback(async (runId: string) => {
+    if (resetRecoveryPending) return
+    const ok = await dialog.confirm({
+      title: '重试当前节点',
+      message: '确认保留已完成的上游产物，只从失败节点继续？例如执笔超时会保留编剧大纲，下一次生成直接重试执笔。',
+      tone: 'warning',
+      confirmLabel: '重试当前节点',
+    })
+    if (!ok) return
+    setResetRecoveryPending(true)
+    try {
+      const res = await post(`/runs/${runId}/recovery/retry-node`, { confirm: true })
+      if (res.ok) {
+        setGenError('')
+        await refetchWorkspace()
+        setRunDetail(null)
+      } else {
+        await dialog.alert({
+          title: '定点重试失败',
+          message: res.error?.message || '定点重试失败',
+          tone: 'danger',
+        })
+      }
+    } catch (err: unknown) {
+      await dialog.alert({
+        title: '定点重试失败',
+        message: err instanceof Error ? err.message : '定点重试失败',
+        tone: 'danger',
+      })
+    } finally {
+      setResetRecoveryPending(false)
+    }
+  }, [dialog, refetchWorkspace, resetRecoveryPending])
+
   const handleResetRunRecoveryForChapter = useCallback(async (chapterNumber: number) => {
     if (!id || resetRecoveryPending) return
     const ok = await dialog.confirm({
@@ -606,6 +640,7 @@ export default function ProjectDetail() {
           onMarkRunStuck={handleMarkRunStuck}
           onPublish={handlePublish}
           onResetRunRecovery={handleResetRunRecovery}
+          onRetryRunNode={handleRetryRunNode}
           onResetRunRecoveryForChapter={handleResetRunRecoveryForChapter}
           publishPending={publishPending}
           markStuckPending={markStuckPending}

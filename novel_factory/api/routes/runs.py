@@ -28,6 +28,12 @@ class RunRecoveryMarkStuckRequest(BaseModel):
     confirm: bool = False
 
 
+class RunRecoveryRetryNodeRequest(BaseModel):
+    """Retry the failed workflow node from its last safe chapter status."""
+
+    confirm: bool = False
+
+
 class RunHealthMarkStuckRequest(BaseModel):
     """Batch mark stuck workflow runs as blocked."""
 
@@ -518,6 +524,96 @@ async def mark_stuck_run(
         return error_response("INTERNAL_ERROR", f"标记卡住运行失败: {str(e)}")
 
 
+@router.post("/runs/{run_id}/recovery/retry-node")
+async def retry_run_node(
+    request: Request,
+    run_id: str,
+    body: RunRecoveryRetryNodeRequest,
+) -> EnvelopeResponse:
+    """Recover a blocked node to the last safe status instead of planned.
+
+    For example, an Author timeout should preserve screenwriter output and move
+    the chapter back to ``scripted`` so the next run starts at Author directly.
+    """
+    from ..deps import get_repo, get_settings
+
+    try:
+        if not body.confirm:
+            return error_response("CONFIRM_REQUIRED", "请确认节点重试操作")
+
+        repo = get_repo(request)
+        settings = get_settings(request)
+        run_data = _get_run_by_id(repo, run_id)
+        if not run_data:
+            return error_response("RUN_NOT_FOUND", f"运行记录 '{run_id}' 不存在")
+
+        target = _node_retry_target(run_data.get("current_node"))
+        if not target:
+            return error_response(
+                "NODE_RETRY_UNSUPPORTED",
+                "当前节点不支持定点重试，请使用完整恢复重置。",
+                details={"current_node": run_data.get("current_node")},
+            )
+
+        project_id = run_data["project_id"]
+        chapter_number = run_data["chapter_number"]
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+
+        current_status = chapter.get("status", "")
+        if current_status not in ("blocking", "revision"):
+            return error_response(
+                "INVALID_STATUS",
+                f"章节状态为 '{current_status}'，仅阻塞/返修状态可定点重试",
+                details={"current_status": current_status},
+            )
+
+        previous_status = current_status
+        next_status = target["status"]
+        message = (
+            f"人工恢复：保留已有产物，从{target['label']}重新继续。"
+            f" {previous_status} → {next_status}"
+        )
+        _set_chapter_status_unchecked(repo, project_id, chapter_number, next_status)
+        repo.update_workflow_run(
+            run_id,
+            status="completed",
+            current_node=f"{target['node']}_retry_recovery",
+            clear_error=True,
+        )
+        _insert_recovery_audit(
+            repo,
+            project_id,
+            chapter_number,
+            workflow_run_id=run_id,
+            message=message,
+            task_type="recover",
+            agent_id="human",
+        )
+
+        refreshed = _get_run_by_id(repo, run_id) or run_data
+        return envelope_response({
+            "recovered": True,
+            "run_id": run_id,
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "previous_status": previous_status,
+            "new_status": next_status,
+            "retry_node": target["node"],
+            "retry_label": target["label"],
+            "message": message,
+            "recovery": _build_recovery_state(
+                repo,
+                refreshed,
+                max_retries=settings.quality_gate.max_retries,
+                timeout_minutes=settings.workflow.task_timeout_minutes,
+            ),
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"定点重试恢复失败: {str(e)}")
+
+
 def _get_run_by_id(repo, run_id: str) -> dict | None:
     """Fetch workflow_run by id."""
     conn = repo._conn()
@@ -737,6 +833,8 @@ def _build_recovery_state(
         "unknown",
     )
     can_reset = chapter_status in ("blocking", "revision")
+    retry_target = _node_retry_target(run_data.get("current_node"))
+    can_retry_node = bool(retry_target and can_reset)
     reason = None
     if not chapter:
         reason = "章节不存在"
@@ -776,8 +874,31 @@ def _build_recovery_state(
                     else "运行未达到卡住阈值或章节状态不可标记。"
                 ),
             },
+            "retry_current_node": {
+                "enabled": can_retry_node,
+                "label": f"重试{retry_target['label']}" if retry_target else "定点重试",
+                "reason": (
+                    f"保留已有产物，将章节恢复到 {retry_target['status']}，"
+                    f"下次生成直接从{retry_target['label']}继续。"
+                    if retry_target
+                    else "当前节点不支持定点重试。"
+                ),
+                "target_status": retry_target["status"] if retry_target else None,
+                "target_node": retry_target["node"] if retry_target else None,
+            },
         },
     }
+
+
+def _node_retry_target(current_node: str | None) -> dict | None:
+    """Return the last safe DB status for retrying a failed node."""
+    node = (current_node or "").strip()
+    mapping = {
+        "author": {"node": "author", "label": "执笔", "status": "scripted"},
+        "polisher": {"node": "polisher", "label": "润色", "status": "drafted"},
+        "editor": {"node": "editor", "label": "审核", "status": "polished"},
+    }
+    return mapping.get(node)
 
 
 def _parse_db_datetime(value: str | None) -> datetime | None:

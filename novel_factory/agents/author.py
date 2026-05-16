@@ -34,6 +34,8 @@ from ..agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
 
 logger = logging.getLogger(__name__)
 
+AUTHOR_LONG_FORM_TIMEOUT_SECONDS = 300
+
 AUTHOR_SYSTEM_PROMPT = """你是网文工厂的执笔（Author），负责章节创作。
 
 核心职责：
@@ -629,6 +631,11 @@ class AuthorAgent(BaseAgent):
             temperature=0.7,
             max_tokens=prose_max_tokens,
             max_retries=per_call_retries,
+            request_timeout_seconds=(
+                AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                if is_configured_live_provider(self.llm)
+                else None
+            ),
         ).strip()
         content = self._coerce_plain_text_content(content)
         if not content:
@@ -658,9 +665,10 @@ class AuthorAgent(BaseAgent):
         temperature: float,
         max_tokens: int,
         max_retries: int | None,
+        request_timeout_seconds: int | None = None,
     ) -> str:
         """Invoke text generation with per-call retry control when supported."""
-        if max_retries is None:
+        if max_retries is None and request_timeout_seconds is None:
             return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
         try:
             return self.llm.invoke_text(
@@ -668,11 +676,23 @@ class AuthorAgent(BaseAgent):
                 temperature=temperature,
                 max_tokens=max_tokens,
                 max_retries=max_retries,
+                request_timeout_seconds=request_timeout_seconds,
             )
         except TypeError as exc:
-            if "max_retries" not in str(exc):
+            exc_text = str(exc)
+            if "max_retries" not in exc_text and "request_timeout_seconds" not in exc_text:
                 raise
-            return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
+            try:
+                return self.llm.invoke_text(
+                    messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    max_retries=max_retries,
+                )
+            except TypeError as retry_exc:
+                if "max_retries" not in str(retry_exc):
+                    raise
+                return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
 
     def _build_plain_text_context(self, state: FactoryState, fallback_context: str) -> str:
         """Build a compact prompt for direct prose generation."""

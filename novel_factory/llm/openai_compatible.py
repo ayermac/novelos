@@ -94,15 +94,19 @@ class OpenAICompatibleProvider(LLMProvider):
     def client(self) -> BaseChatModel:
         """Lazy-init the LangChain ChatOpenAI client."""
         if self._client is None:
-            self._client = ChatOpenAI(
-                base_url=self.config.base_url,
-                api_key=self.config.api_key or "sk-placeholder",
-                model=self.config.model,
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-                request_timeout=self.config.request_timeout_seconds,
-            )
+            self._client = self._build_client()
         return self._client
+
+    def _build_client(self, request_timeout_seconds: int | None = None) -> BaseChatModel:
+        """Build a ChatOpenAI client, optionally using a per-call timeout."""
+        return ChatOpenAI(
+            base_url=self.config.base_url,
+            api_key=self.config.api_key or "sk-placeholder",
+            model=self.config.model,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+            request_timeout=request_timeout_seconds or self.config.request_timeout_seconds,
+        )
 
     def _to_lc_messages(self, messages: list[dict[str, str]]) -> list:
         """Convert dict messages to LangChain message objects."""
@@ -116,7 +120,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 result.append(HumanMessage(content=content))
         return result
 
-    def _handle_api_error(self, error: Exception) -> None:
+    def _handle_api_error(self, error: Exception, timeout_seconds: int | None = None) -> None:
         """Convert API errors to Chinese error messages."""
         error_str = str(error).lower()
 
@@ -130,8 +134,9 @@ class OpenAICompatibleProvider(LLMProvider):
         elif "rate" in error_str or "limit" in error_str or "429" in error_str:
             raise RateLimitError("API 请求频率超限，请稍后重试") from error
         elif "timeout" in error_str or "timed out" in error_str:
+            timeout = timeout_seconds or self.config.request_timeout_seconds
             raise LLMTimeoutError(
-                f"LLM 响应超时（>{self.config.request_timeout_seconds}秒），请稍后重试"
+                f"LLM 响应超时（>{timeout}秒），请稍后重试"
             ) from error
         else:
             raise LLMError(f"LLM 调用失败: {error}") from error
@@ -140,10 +145,17 @@ class OpenAICompatibleProvider(LLMProvider):
         self,
         lc_messages: list,
         max_retries: int | None = None,
+        request_timeout_seconds: int | None = None,
         **kwargs,
     ) -> Any:
         """Invoke with exponential backoff for transient provider failures."""
         attempts = max(1, max_retries if max_retries is not None else self.config.retry_attempts)
+        client = (
+            self.client
+            if request_timeout_seconds is None
+            or request_timeout_seconds == self.config.request_timeout_seconds
+            else self._build_client(request_timeout_seconds=request_timeout_seconds)
+        )
         retryer = Retrying(
             stop=stop_after_attempt(attempts),
             wait=wait_exponential(
@@ -160,12 +172,12 @@ class OpenAICompatibleProvider(LLMProvider):
             with attempt:
                 try:
                     start_time = time.time()
-                    response = self.client.invoke(lc_messages, **kwargs)
+                    response = client.invoke(lc_messages, **kwargs)
                     duration_ms = int((time.time() - start_time) * 1000)
                 except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
                     raise
                 except Exception as e:
-                    self._handle_api_error(e)
+                    self._handle_api_error(e, timeout_seconds=request_timeout_seconds)
 
                 # Extract token usage if available
                 prompt_tokens = 0
@@ -265,6 +277,7 @@ class OpenAICompatibleProvider(LLMProvider):
         temperature: float | None = None,
         max_tokens: int | None = None,
         max_retries: int | None = None,
+        request_timeout_seconds: int | None = None,
     ) -> str:
         """Invoke LLM and return raw text."""
         lc_messages = self._to_lc_messages(messages)
@@ -276,14 +289,19 @@ class OpenAICompatibleProvider(LLMProvider):
             kwargs["max_tokens"] = max_tokens
 
         try:
-            response = self._invoke_with_retry(lc_messages, max_retries=max_retries, **kwargs)
+            response = self._invoke_with_retry(
+                lc_messages,
+                max_retries=max_retries,
+                request_timeout_seconds=request_timeout_seconds,
+                **kwargs,
+            )
             return response.content
         except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
             raise
         except LLMError:
             raise
         except Exception as e:
-            self._handle_api_error(e)
+            self._handle_api_error(e, timeout_seconds=request_timeout_seconds)
 
     @staticmethod
     def _extract_json(text: str) -> str:

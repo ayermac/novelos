@@ -486,7 +486,14 @@ class StubLLM(LLMProvider):
             }
         return {}
 
-    def invoke_text(self, messages, temperature=None, max_tokens=None, max_retries=None) -> str:
+    def invoke_text(
+        self,
+        messages,
+        temperature=None,
+        max_tokens=None,
+        max_retries=None,
+        request_timeout_seconds=None,
+    ) -> str:
         # Set mock token usage for tracking (v5.2)
         self.last_token_usage = TokenUsage(
             prompt_tokens=50,

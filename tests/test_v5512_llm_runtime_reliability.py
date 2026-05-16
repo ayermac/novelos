@@ -74,6 +74,46 @@ def test_llm_provider_retries_rate_limit_with_exponential_backoff():
     assert provider.last_token_usage.total_tokens == 15
 
 
+def test_llm_provider_text_call_can_override_timeout_without_mutating_config():
+    class _TextResponse:
+        content = "ok"
+        usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+
+    class _Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, _messages, **_kwargs):
+            self.calls += 1
+            return _TextResponse()
+
+    class _CapturingProvider(OpenAICompatibleProvider):
+        def __init__(self, config):
+            super().__init__(config)
+            self.built_timeouts = []
+            self.client_instances = []
+
+        def _build_client(self, request_timeout_seconds=None):
+            self.built_timeouts.append(request_timeout_seconds or self.config.request_timeout_seconds)
+            client = _Client()
+            self.client_instances.append(client)
+            return client
+
+    config = LLMConfig(api_key="test-key", request_timeout_seconds=60)
+    provider = _CapturingProvider(config)
+
+    text = provider.invoke_text(
+        [{"role": "user", "content": "write"}],
+        request_timeout_seconds=300,
+        max_retries=1,
+    )
+
+    assert text == "ok"
+    assert provider.built_timeouts == [300]
+    assert provider.client_instances[-1].calls == 1
+    assert provider.config.request_timeout_seconds == 60
+
+
 def test_llm_json_sanitizer_quotes_unquoted_prose_values():
     raw = '''
     {

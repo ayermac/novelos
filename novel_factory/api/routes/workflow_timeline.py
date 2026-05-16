@@ -144,6 +144,7 @@ def _build_recovery(
     recommended_action = None
     reason = None
     safe_actions: list[dict] = []
+    retry_target = _node_retry_target(run_data.get("current_node") if run_data else None)
 
     if chapter_status in terminal_statuses:
         safe_actions.append({"key": "view_artifacts", "label": "查看产物", "safe": True})
@@ -160,18 +161,43 @@ def _build_recovery(
             {"key": "reset_chapter", "label": "清除阻塞并重置", "safe": True, "note": "保留当前正文和版本"},
         ])
     elif chapter_status in ("blocking", "revision"):
-        recommended_action = "reset_chapter"
-        reason = "章节处于阻塞/返修状态，可清除阻塞并重置。"
+        recommended_action = "retry_node" if retry_target else "reset_chapter"
+        reason = (
+            f"章节处于阻塞/返修状态，可保留已有产物并重试{retry_target['label']}。"
+            if retry_target
+            else "章节处于阻塞/返修状态，可清除阻塞并重置。"
+        )
         safe_actions.extend([
             {"key": "view_artifacts", "label": "查看产物", "safe": True},
-            {"key": "reset_chapter", "label": "清除阻塞并重置", "safe": True, "note": "保留当前正文和版本"},
         ])
+        if retry_target:
+            safe_actions.append({
+                "key": "retry_node",
+                "label": f"重试{retry_target['label']}",
+                "safe": True,
+                "note": f"恢复到 {retry_target['status']}，跳过已完成上游节点",
+            })
+        safe_actions.append({
+            "key": "reset_chapter",
+            "label": "清除阻塞并重置",
+            "safe": True,
+            "note": "回到 planned，完整重跑",
+        })
 
     return {
         "recommended_action": recommended_action,
         "reason": reason,
         "safe_actions": safe_actions,
     }
+
+
+def _node_retry_target(current_node: str | None) -> dict[str, str] | None:
+    node = (current_node or "").strip()
+    return {
+        "author": {"label": "执笔", "status": "scripted"},
+        "polisher": {"label": "润色", "status": "drafted"},
+        "editor": {"label": "审核", "status": "polished"},
+    }.get(node)
 
 
 def _build_node_timeline(

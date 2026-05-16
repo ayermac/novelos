@@ -945,6 +945,51 @@ describe('AuthorWorkbench', () => {
     expect(screen.getByText(/保留当前正文和版本/)).toBeInTheDocument()
   })
 
+  it('shows targeted retry action for blocked author node', () => {
+    const onRetryRunNode = vi.fn()
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        onRetryRunNode={onRetryRunNode}
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-author-blocked',
+          run_status: 'blocked',
+          current_node: 'author',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 5,
+          is_stale: false,
+          recovery: {
+            recommended_action: 'retry_node',
+            reason: '章节处于阻塞/返修状态，可保留已有产物并重试执笔。',
+            safe_actions: [
+              { key: 'retry_node', label: '重试执笔', safe: true, note: '恢复到 scripted，跳过已完成上游节点' },
+              { key: 'reset_chapter', label: '清除阻塞并重置', safe: true, note: '回到 planned，完整重跑' },
+            ],
+          },
+          nodes: [
+            {
+              node_name: 'author',
+              label: '执笔',
+              status: 'blocked',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: null,
+              duration_ms: null,
+              messages: ['执笔撰写失败：LLM 响应超时'],
+              artifacts: [],
+            },
+          ],
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '重试执笔' }))
+    expect(onRetryRunNode).toHaveBeenCalledWith('run-author-blocked')
+    expect(screen.getByText(/跳过已完成上游节点/)).toBeInTheDocument()
+  })
+
   it('shows inline error when timeline refresh fails', () => {
     render(
       <AuthorWorkbench

@@ -724,11 +724,19 @@ class TestAuthorLiveCallBudget:
             def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None, max_retries=None):
                 return {}
 
-            def invoke_text(self, messages, temperature=None, max_tokens=None, max_retries=None):
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ):
                 self.calls.append({
                     "temperature": temperature,
                     "max_tokens": max_tokens,
                     "max_retries": max_retries,
+                    "request_timeout_seconds": request_timeout_seconds,
                 })
                 return "他推开门，潮湿的风贴着袖口钻进来。" * 120
 
@@ -751,6 +759,7 @@ class TestAuthorLiveCallBudget:
 
         assert output.content
         assert llm.calls[-1]["max_retries"] == 1
+        assert llm.calls[-1]["request_timeout_seconds"] == 300
         assert llm.calls[-1]["max_tokens"] <= 4096
         assert llm.config.request_timeout_seconds == 60
         assert llm.config.retry_attempts == 3

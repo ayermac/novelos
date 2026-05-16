@@ -263,6 +263,65 @@ def test_mark_stuck_run_converts_to_blocking_and_audits_run(tmp_path):
     assert "疑似卡住" in original_task["error_message"]
 
 
+def test_retry_author_node_recovers_to_scripted_without_full_reset(tmp_path):
+    client, repo, _ = _make_client(tmp_path)
+    run_id = _seed_running_run(repo, "recover_retry_author", minutes_old=50)
+    repo.update_workflow_run(run_id, status="blocked", current_node="author", error_message="LLM 响应超时")
+    repo.update_chapter_status("recover_retry_author", 1, "blocking")
+
+    preview = client.get(f"/api/runs/{run_id}/recovery").json()["data"]
+    assert preview["actions"]["retry_current_node"]["enabled"] is True
+    assert preview["actions"]["retry_current_node"]["target_status"] == "scripted"
+
+    resp = client.post(f"/api/runs/{run_id}/recovery/retry-node", json={"confirm": True})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    data = body["data"]
+    assert data["recovered"] is True
+    assert data["previous_status"] == "blocking"
+    assert data["new_status"] == "scripted"
+    assert data["retry_node"] == "author"
+    assert repo.get_chapter("recover_retry_author", 1)["status"] == "scripted"
+
+    conn = repo._conn()
+    try:
+        run = conn.execute(
+            "SELECT status, current_node, error_message FROM workflow_runs WHERE id=?",
+            (run_id,),
+        ).fetchone()
+        audit = conn.execute(
+            "SELECT workflow_run_id, task_type, agent_id, status, error_message FROM task_status "
+            "WHERE project_id=? AND chapter_number=? AND task_type='recover' "
+            "ORDER BY id DESC LIMIT 1",
+            ("recover_retry_author", 1),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert run["status"] == "completed"
+    assert run["current_node"] == "author_retry_recovery"
+    assert run["error_message"] is None
+    assert audit["workflow_run_id"] == run_id
+    assert audit["agent_id"] == "human"
+    assert "从执笔重新继续" in audit["error_message"]
+
+
+def test_retry_node_rejects_unsupported_node(tmp_path):
+    client, repo, _ = _make_client(tmp_path)
+    run_id = _seed_run(repo, "recover_retry_unsupported")
+    repo.update_workflow_run(run_id, current_node="planner")
+
+    resp = client.post(f"/api/runs/{run_id}/recovery/retry-node", json={"confirm": True})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "NODE_RETRY_UNSUPPORTED"
+    assert repo.get_chapter("recover_retry_unsupported", 1)["status"] == "blocking"
+
+
 def test_mark_stuck_run_rejects_recent_running_run(tmp_path):
     client, repo, _ = _make_client(tmp_path)
     run_id = _seed_running_run(repo, "recover_mark_recent", minutes_old=3)
