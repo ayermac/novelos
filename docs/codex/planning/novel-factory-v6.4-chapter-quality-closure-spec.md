@@ -227,6 +227,41 @@
 
 ---
 
+### v6.4.5 Real LLM Quality Acceptance
+
+**目标**：提供可重复的真实 LLM 单章质量验收入口，验证 v6.4 的质量诊断链路能作用于真实模型输出。本阶段不改 Author/Polisher/Editor 行为，不改 workflow 拓扑。
+
+**状态**：已实现（当前环境无真实 API key，real run 记录为 SKIP；stub harness 已验证）
+
+**改动**：
+1. **新增验收脚本**：
+   - `scripts/verify_v64_real_llm.py`：创建隔离验收项目，补齐 approved genesis/world/characters/outlines/instruction，运行 1 章 workflow，并用 `QualityHub.diagnose()` 输出质量报告
+   - `scripts/verify_v64_real_llm.sh`：shell 包装入口，支持 `MODE=real|stub`、`CONFIG_PATH`、`DB_PATH`、`OUTPUT`、`KEEP_DB`
+
+2. **Real mode 安全跳过**：
+   - 当 `OPENAI_API_KEY`、`DEEPSEEK_API_KEY`、`OPENROUTER_API_KEY` 或 profile `api_key_env` 均不可用时，输出 `status=skipped` 并 exit 0
+   - 不伪造真实验收结果，不打印任何 API key
+
+3. **Stub mode harness 验证**：
+   - `MODE=stub` 可在无网络环境下验证脚本、临时 DB、workflow、QualityHub 诊断和 JSON 输出结构
+
+4. **验收 JSON**：
+   - 输出 `run`、`chapter`、`acceptance`、`diagnosis` 四组信息
+   - `diagnosis` 包含 `overall_score`、`dimensions`、`metrics`、finding counts，不包含完整正文
+
+5. **新增测试**：
+   - `tests/test_v645_real_llm_acceptance.py` 覆盖 real mode 无 key SKIP 和 stub mode harness pass
+
+**验收**：
+- `python3 -m pytest tests/test_v645_real_llm_acceptance.py -q` 通过
+- `MODE=stub bash scripts/verify_v64_real_llm.sh` 通过
+- `MODE=real bash scripts/verify_v64_real_llm.sh` 在无 key 环境下 SKIP
+- backend smoke 通过
+
+**依赖**：v6.4.0 ~ v6.4.4（本阶段复用完整质量诊断和 Editor advisory gates）
+
+---
+
 ## 改动分类矩阵
 
 | 改动 | Prompt/Agent Contract | Deterministic Validator | UI/报告 | Schema | Config |
