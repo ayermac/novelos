@@ -28,8 +28,8 @@ ARCH="$(uname -m)"
 case "$PLATFORM" in
     darwin)
         case "$ARCH" in
-            x86_64)  ARCH_KEY="darwin-x64" ;;
-            arm64)   ARCH_KEY="darwin-arm64" ;;
+            x86_64)  ARCH_KEY="darwin-x64"; EB_ARCH="x64" ;;
+            arm64)   ARCH_KEY="darwin-arm64"; EB_ARCH="arm64" ;;
             *)       echo "Unsupported architecture: $ARCH"; exit 1 ;;
         esac
         ;;
@@ -50,7 +50,7 @@ fi
 DESKTOP_VERSION="$(node -p "require('./desktop/package.json').version" 2>/dev/null || echo "unknown")"
 
 # ── Artifact paths ──────────────────────────────────────────────
-APP_DIR="$REPO_ROOT/desktop/release/mac-$ARCH/Novelos.app"
+APP_DIR="$REPO_ROOT/desktop/release/mac-$EB_ARCH/Novelos.app"
 SIDECAR_BIN="$REPO_ROOT/desktop/resources/sidecar/$ARCH_KEY/novelos-sidecar"
 VERIFICATION_REPORT="$REPO_ROOT/desktop/release/verification-report.json"
 RELEASE_DIR="$REPO_ROOT/desktop/release"
@@ -59,13 +59,26 @@ MANIFEST_PATH="$RELEASE_DIR/release-manifest.json"
 # ── DMG discovery ───────────────────────────────────────────────
 DMG_PATH=""
 if [ -d "$RELEASE_DIR" ]; then
-    DMG_PATH="$(find "$RELEASE_DIR" -maxdepth 1 -name '*.dmg' -print -quit 2>/dev/null || true)"
+    # Match DMG by desktop version and electron-builder arch to avoid stale artifacts
+    DMG_MATCHES=()
+    while IFS= read -r -d '' f; do
+        DMG_MATCHES+=("$f")
+    done < <(find "$RELEASE_DIR" -maxdepth 1 -name "Novelos-*-${EB_ARCH}.dmg" -print0 2>/dev/null)
+    if [ ${#DMG_MATCHES[@]} -eq 1 ]; then
+        DMG_PATH="${DMG_MATCHES[0]}"
+    elif [ ${#DMG_MATCHES[@]} -gt 1 ]; then
+        echo "ERROR: Multiple DMG files matched for ${EB_ARCH}:" >&2
+        printf '  %s\n' "${DMG_MATCHES[@]}" >&2
+        echo "Please clean old release artifacts or specify one explicitly." >&2
+        exit 1
+    fi
 fi
 if [ -z "$DMG_PATH" ]; then
     DMG_JSON="null"
     DMG_RELATIVE="null"
 else
-    DMG_RELATIVE="$(realpath --relative-to="$REPO_ROOT" "$DMG_PATH" 2>/dev/null || echo "$DMG_PATH")"
+    # Use Python for portable relative path computation
+    DMG_RELATIVE="$(python3 -c "import pathlib,sys; print(pathlib.Path(sys.argv[1]).relative_to(pathlib.Path(sys.argv[2])))" "$DMG_PATH" "$REPO_ROOT")"
     DMG_JSON="\"$DMG_RELATIVE\""
 fi
 

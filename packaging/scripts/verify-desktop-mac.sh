@@ -32,8 +32,8 @@ ARCH="$(uname -m)"
 case "$PLATFORM" in
     darwin)
         case "$ARCH" in
-            x86_64)  ARCH_KEY="darwin-x64" ;;
-            arm64)   ARCH_KEY="darwin-arm64" ;;
+            x86_64)  ARCH_KEY="darwin-x64"; EB_ARCH="x64" ;;
+            arm64)   ARCH_KEY="darwin-arm64"; EB_ARCH="arm64" ;;
             *)       echo "Unsupported architecture: $ARCH"; exit 1 ;;
         esac
         ;;
@@ -44,8 +44,8 @@ case "$PLATFORM" in
 esac
 
 # Derive expected Electron Builder output path
-# electron-builder --mac --dir writes to release/mac-<arch>/Novelos.app
-APP_DIR="$REPO_ROOT/desktop/release/mac-$ARCH/Novelos.app"
+# electron-builder --mac --dir writes to release/mac-<eb-arch>/Novelos.app
+APP_DIR="$REPO_ROOT/desktop/release/mac-$EB_ARCH/Novelos.app"
 REPORT_PATH="$REPO_ROOT/desktop/release/verification-report.json"
 SIDECAR_PATH="$REPO_ROOT/desktop/resources/sidecar/$ARCH_KEY/novelos-sidecar"
 
