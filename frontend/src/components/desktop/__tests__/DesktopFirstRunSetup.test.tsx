@@ -214,6 +214,7 @@ describe('DesktopFirstRunSetup', () => {
     await waitFor(() => {
       expect(screen.getByText(/配置真实 LLM/)).toBeInTheDocument()
     })
+    expect(screen.getByText('真实 LLM')).toBeInTheDocument()
 
     // Fill required fields
     const inputs = screen.getAllByRole('textbox')
@@ -232,6 +233,78 @@ describe('DesktopFirstRunSetup', () => {
         expect.objectContaining({ method: 'PUT' }),
       )
     })
+    const putCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')
+    expect((putCall?.[1] as RequestInit).body).toEqual(expect.stringContaining('"llm_mode":"real"'))
+  })
+
+  it('shows a single restart button after saving real config from stub runtime', async () => {
+    setupDesktop({ llm_mode: 'stub' })
+    fetchMock.mockImplementation((url: string, init?: RequestInit) => {
+      const method = init?.method || 'GET'
+      if (url.includes('/desktop/config') && method !== 'PUT') {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            ok: true,
+            data: {
+              exists: true,
+              llm_mode: 'stub',
+              default_llm: 'default',
+              profiles: {
+                default: {
+                  provider: 'openai_compatible',
+                  model: '',
+                  base_url: '',
+                  api_key_env: 'OPENAI_API_KEY',
+                  api_key_configured: true,
+                  api_key_source: 'desktop_secure_storage',
+                  temperature: 0.7,
+                  max_tokens: 4096,
+                },
+              },
+            },
+          }),
+        })
+      }
+      if (url.includes('/desktop/config')) {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({ ok: true, data: { saved: true, restart_required: false, message: '配置已保存' } }),
+        })
+      }
+      return Promise.resolve({ ok: true, status: 200, json: async () => ({ ok: true, data: { status: 'ok' } }) })
+    })
+    mockSecretStatus.mockResolvedValue({ OPENAI_API_KEY: { configured: true } })
+
+    render(
+      <Wrapper>
+        <DesktopFirstRunSetup compact />
+      </Wrapper>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('真实 LLM')).toBeInTheDocument()
+    })
+
+    fireEvent.change(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://api.openai.com/v1' },
+    })
+    fireEvent.change(screen.getByLabelText('模型 ID'), {
+      target: { value: 'gpt-4o-mini' },
+    })
+
+    await userEvent.click(screen.getByText('保存配置'))
+
+    await waitFor(() => {
+      expect(screen.getAllByRole('button', { name: /重启本地服务/ })).toHaveLength(1)
+      expect(screen.getByText(/重启前暂时无法测试连接/)).toBeInTheDocument()
+    })
+
+    const putCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')
+    expect((putCall?.[1] as RequestInit).body).toEqual(expect.stringContaining('"llm_mode":"real"'))
+    expect(screen.getByRole('button', { name: /测试连接/ })).toBeDisabled()
   })
 
   it('calls safeStorage IPC when save key button clicked', async () => {

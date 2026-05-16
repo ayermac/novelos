@@ -58,6 +58,8 @@ interface TestResult {
   suggestion?: string
 }
 
+const TARGET_LLM_MODE: SetupForm['llmMode'] = 'real'
+
 function getInitialForm(config: DesktopConfig | null): SetupForm {
   const defaultProfileName = config?.default_llm || Object.keys(config?.profiles || {})[0] || 'default'
   const profile = config?.profiles?.[defaultProfileName]
@@ -70,7 +72,7 @@ function getInitialForm(config: DesktopConfig | null): SetupForm {
     model: profile?.model || '',
     apiKeyEnv: profile?.api_key_env || 'OPENAI_API_KEY',
     apiKey: '',
-    llmMode: (config?.llm_mode as 'stub' | 'real') || 'stub',
+    llmMode: TARGET_LLM_MODE,
     temperature: profile?.temperature ?? 0.7,
     timeout: 60,
   }
@@ -168,12 +170,14 @@ export default function DesktopFirstRunSetup({
       baseUrl: preset.baseUrl,
       model: preset.model,
       apiKeyEnv: preset.apiKeyEnv,
+      llmMode: TARGET_LLM_MODE,
     }))
   }
 
   const handleSaveConfig = async () => {
     setStep('saving_config')
     setErrorMessage('')
+    const previousMode = config?.llm_mode
     const res = await put('/desktop/config', {
       llm_mode: form.llmMode,
       base_url: form.baseUrl,
@@ -185,7 +189,12 @@ export default function DesktopFirstRunSetup({
     if (res.ok && res.data) {
       const data = res.data as { saved: boolean; restart_required?: boolean; message?: string }
       await loadConfig()
-      if (data.restart_required) {
+      const requiresRestart = Boolean(
+        data.restart_required ||
+        form.llmMode === TARGET_LLM_MODE ||
+        (previousMode && previousMode !== form.llmMode),
+      )
+      if (requiresRestart) {
         setRestartRequired(true)
         setStep('editing')
         showToast({ tone: 'success', title: '配置已保存', message: '配置已保存，需要重启本地服务后生效。' })
@@ -598,7 +607,7 @@ export default function DesktopFirstRunSetup({
         <FormField label="Base URL">
           <TextInput
             value={form.baseUrl}
-            onChange={(e) => setForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
+            onChange={(e) => setForm((prev) => ({ ...prev, baseUrl: e.target.value, llmMode: TARGET_LLM_MODE }))}
             placeholder="https://api.example.com/v1"
             disabled={isBusy}
           />
@@ -608,7 +617,7 @@ export default function DesktopFirstRunSetup({
         <FormField label="模型 ID">
           <TextInput
             value={form.model}
-            onChange={(e) => setForm((prev) => ({ ...prev, model: e.target.value }))}
+            onChange={(e) => setForm((prev) => ({ ...prev, model: e.target.value, llmMode: TARGET_LLM_MODE }))}
             placeholder="gpt-4o-mini"
             disabled={isBusy}
           />
@@ -618,7 +627,7 @@ export default function DesktopFirstRunSetup({
         <FormField label="API Key 环境变量名">
           <TextInput
             value={form.apiKeyEnv}
-            onChange={(e) => setForm((prev) => ({ ...prev, apiKeyEnv: e.target.value }))}
+            onChange={(e) => setForm((prev) => ({ ...prev, apiKeyEnv: e.target.value, llmMode: TARGET_LLM_MODE }))}
             placeholder="OPENAI_API_KEY"
             disabled={isBusy}
           />
@@ -632,7 +641,7 @@ export default function DesktopFirstRunSetup({
           <TextInput
             type="password"
             value={form.apiKey}
-            onChange={(e) => setForm((prev) => ({ ...prev, apiKey: e.target.value }))}
+            onChange={(e) => setForm((prev) => ({ ...prev, apiKey: e.target.value, llmMode: TARGET_LLM_MODE }))}
             placeholder="输入 API Key（仅保存到本机安全存储）"
             disabled={isBusy}
           />
