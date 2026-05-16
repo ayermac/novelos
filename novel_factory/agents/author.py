@@ -244,12 +244,19 @@ class AuthorAgent(BaseAgent):
                 issues.append({"type": "word_count", "message": wc_msg})
 
             # v6.4.1: Show-don't-tell heuristic (warning only)
+            # Scan only narrative text, excluding dialogue lines
+            def _exclude_dialogue(text: str) -> str:
+                """Replace quoted dialogue with placeholders so narration-only patterns run clean."""
+                # Chinese/English quotation marks: "" " 「」 『』
+                return re.sub(r'[""「『].*?[""」』]', '「D」', text, flags=re.DOTALL)
+
+            narrative_only = _exclude_dialogue(out.content)
             straight_patterns = [
                 r"感到[^，。！？]{1,8}", r"觉得[^，。！？]{1,8}", r"意识到[^，。！？]{1,8}",
                 r"明白[^，。！？]{1,8}", r"知道[^，。！？]{1,8}", r"理解[^，。！？]{1,8}",
                 r"察觉[^，。！？]{1,8}", r"发现[^，。！？]{1,8}", r"心中暗想", r"心道", r"暗道",
             ]
-            straight_count = sum(len(re.findall(p, out.content)) for p in straight_patterns)
+            straight_count = sum(len(re.findall(p, narrative_only)) for p in straight_patterns)
             per_1k = (straight_count / max(len(out.content), 1)) * 1000
             if per_1k > 5:
                 warnings_list.append(
@@ -258,7 +265,8 @@ class AuthorAgent(BaseAgent):
                 )
 
             # v6.4.1: Sensory detail heuristic (warning only)
-            sensory_words = ["光", "影", "声", "响", "味", "香", "臭", "冷", "热", "湿", "干", "风", "雨", "雷", "温度", "颜色", "色彩"]
+            # Use multi-character words where possible to avoid homonym pollution
+            sensory_words = ["光", "影", "声", "响", "味", "香", "臭", "冷", "热", "湿", "干燥", "干涩", "风", "雨", "雷", "温度", "颜色", "色彩"]
             sensory_count = sum(out.content.count(w) for w in sensory_words)
             sensory_per_1k = (sensory_count / max(len(out.content), 1)) * 1000
             if sensory_per_1k < 3:
@@ -268,16 +276,20 @@ class AuthorAgent(BaseAgent):
                 )
 
             # v6.4.1: Prose-like heuristic (warning only)
-            summary_markers = ["本章", "这一章", "首先", "然后", "接着", "最后", "综上所述", "总之", "简单来说", "说白了"]
-            summary_count = sum(1 for m in summary_markers if m in out.content)
-            if summary_count > 3:
+            # Strong summary markers (low threshold) vs weak transition markers (high threshold)
+            strong_markers = ["本章", "这一章", "首先", "最后", "综上所述", "总之", "简单来说", "说白了"]
+            weak_markers = ["然后", "接着"]
+            strong_count = sum(1 for m in strong_markers if m in out.content)
+            weak_count = sum(1 for m in weak_markers if m in out.content)
+            if strong_count > 3 or weak_count > 8:
                 warnings_list.append(
-                    f"prose_like: 检测到 {summary_count} 处摘要/说明式表达，"
+                    f"prose_like: 检测到 {strong_count} 处强摘要标记 + {weak_count} 处弱承接标记，"
                     "建议以场景推进代替叙述"
                 )
 
             # v6.4.1: Dialogue heuristic (warning only)
-            dialogues = re.findall(r'[""「『]([^""」』]+)[""」』]', out.content)
+            # Match Chinese curly quotes (""), straight quotes ("), and corner brackets (「」『』)
+            dialogues = re.findall(r'[""“”「『]([^""”」』]+)[""”」』]', out.content)
             dialogue_chars = sum(len(d) for d in dialogues)
             dialogue_ratio = dialogue_chars / max(len(out.content), 1)
             if dialogue_ratio < 0.05:

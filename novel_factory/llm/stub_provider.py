@@ -313,7 +313,7 @@ def _get_stub_chapter_content(messages: list | None = None) -> dict:
     MIN_STUB_LENGTH = 2800  # margin above 2700
     content = template["content"]
     if len(content) < MIN_STUB_LENGTH:
-        separator = "\n\n——时间的河流缓缓流淌，带走了尘世的喧嚣，却带不走心中那份执念。——\n\n"
+        separator = "\n\n——时间的河流缓缓流淌，带走了尘世的喧嚣，只留下满街零落的枯叶。——\n\n"
         padded = content
         while len(padded) < MIN_STUB_LENGTH:
             padded = padded + separator + content
