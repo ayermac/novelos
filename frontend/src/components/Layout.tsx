@@ -8,7 +8,6 @@ import {
   LayoutDashboard,
   FolderOpen,
   LucideIcon,
-  Feather,
   Menu,
   X,
   Activity,
@@ -97,7 +96,7 @@ export default function Layout() {
       >
         <div className="sidebar-brand">
           <div className="brand-icon">
-            <Feather size={22} />
+            <img src="/logo.png" alt="" aria-hidden="true" />
           </div>
           <div className="brand-text">
             <span className="brand-name">墨流工厂</span>
@@ -248,10 +247,18 @@ export default function Layout() {
           display: flex;
           align-items: center;
           justify-content: center;
-          background: #102338;
-          border-radius: 8px;
-          color: #fffefc;
+          background: transparent;
+          border-radius: 10px;
           flex: 0 0 auto;
+          overflow: hidden;
+          box-shadow: 0 10px 22px rgba(17, 24, 39, 0.16);
+        }
+
+        .brand-icon img {
+          width: 100%;
+          height: 100%;
+          display: block;
+          object-fit: cover;
         }
 
         .brand-text {
