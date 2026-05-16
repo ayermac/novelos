@@ -428,7 +428,7 @@ class StubLLM(LLMProvider):
                 }
             }
         if "Screenwriter" in schema_name:
-            return {"scene_beats": [{"sequence": 1, "scene_goal": "场景目标", "conflict": "冲突", "hook": "钩子"}]}
+            return {"scene_beats": [{"sequence": 1, "scene_goal": "场景目标", "conflict": "冲突", "turn": "转折", "hook": "钩子", "plot_refs": []}]}
         if "Author" in schema_name:
             chapter_data = _get_stub_chapter_content(messages)
             return {

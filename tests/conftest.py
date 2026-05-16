@@ -218,7 +218,7 @@ def seed_context_for_chapter(db_path_or_repo, project_id: str = "测试项目", 
             project_id=project_id,
             chapter_number=chapter_number,
             objective="本章目标是推动主线剧情发展，揭示关键线索。",
-            key_events="主角发现重要线索；与关键角色对峙；局势发生转折。",
+            key_events="事件1",
         )
 
     # Add chapter-level outline covering the chapter
