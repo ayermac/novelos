@@ -44,13 +44,14 @@ class GenesisRejectRequest(BaseModel):
 
 
 def _validate_genesis_generate_request(body: GenesisGenerateRequest) -> tuple[str, str] | None:
-    """Return a validation error for empty or nonsensical genesis input."""
+    """Return a validation error for empty or nonsensical genesis input.
+
+    v6.3.1: premise is optional — AI can infer it from title + genre + description.
+    """
     if not body.title.strip():
         return "GENESIS_INPUT_REQUIRED", "请填写项目标题后再生成创世设定"
     if not body.genre.strip():
         return "GENESIS_INPUT_REQUIRED", "请填写作品类型后再生成创世设定"
-    if not body.premise.strip():
-        return "GENESIS_INPUT_REQUIRED", "请填写故事核心创意后再生成创世设定"
     if body.target_chapters < 1:
         return "GENESIS_INPUT_REQUIRED", "首批规划章数必须大于 0"
     if body.target_words < 1:
@@ -242,11 +243,13 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
         "target_words": body.target_words,
         "total_chapters_planned": body.target_chapters,
     })
+    # v6.3.1: When premise is empty, ask the LLM to infer from title + genre.
+    premise_display = body.premise.strip() or f"基于标题《{body.title}》和类型「{body.genre}」自动推断故事前提"
     prompt = (
         "你是一个小说项目设定专家。根据以下创作意图，生成完整的项目圣经草案。\n"
         f"标题: {body.title}\n"
         f"类型: {body.genre}\n"
-        f"创意: {body.premise}\n"
+        f"创意: {premise_display}\n"
         "创世范围说明: 本次需要生成整本书的底盘设定，并只展开首批章节指令。\n"
         f"首批章节规划范围: 前 {body.target_chapters} 章，首批合计约 {body.target_words} 字\n"
         "注意: 上面的章数和字数不是整本书总篇幅，后续章节会通过章节批次规划继续延展。\n"

@@ -439,7 +439,9 @@ export default function ProjectDetail() {
   const handleGenerateNextFromChapter = useCallback((chapterNumber: number) => {
     if (!id) return
     const nextCh = chapterNumber + 1
-    setSearchParams({ chapter: String(nextCh), view: 'workflow', auto_generate: '1' }, { replace: true })
+    // v6.3.1: Removed auto_generate parameter. Navigation must not auto-trigger
+    // chapter generation; the user explicitly clicks "生成" after review.
+    setSearchParams({ chapter: String(nextCh) }, { replace: true })
   }, [id, setSearchParams])
 
   const handleGenerateNext = useCallback(() => {

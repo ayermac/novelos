@@ -551,7 +551,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
     if (action.key === 'continue_next_chapter') {
       const ch = action.target_chapter || productionNext.current_chapter + 1
-      navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}&view=workflow&auto_generate=1`)
+      // v6.3.1: Do NOT auto-generate on navigation. Show the chapter page so the user
+      // can review context readiness and explicitly click "生成".
+      navigate(`/projects/${project.project_id}?module=chapters&chapter=${ch}`)
       return
     }
 

@@ -61,14 +61,14 @@ def _has_running_genesis(repo, project_id: str) -> bool:
 
 
 def _has_manual_context_ready(health: dict) -> bool:
-    """Return true when manually entered project context is enough to write."""
-    return (
-        health.get("has_world_settings")
-        and health.get("has_characters")
-        and health.get("has_outlines")
-        and health.get("has_instructions_for_current_chapter")
-        and health.get("title_contract_aligned", True)
-    )
+    """Return true when project context is complete enough for chapter generation.
+
+    v6.3.1: Unified with run guard — requires approved genesis + world + characters
+    + outlines + instructions (same as ready_for_chapter_1). This prevents the
+    mismatch where production-next recommends generate_chapter but the run guard
+    blocks with CONTEXT_INCOMPLETE.
+    """
+    return health.get("ready_for_chapter_1", False)
 
 
 def _get_blocking_chapter(repo, project_id: str) -> dict | None:
@@ -484,7 +484,7 @@ def _build_health(repo, project_id: str, current_chapter: int) -> dict:
         "has_running_chapter_workflow": _has_running_chapter_workflow(repo, project_id, current_chapter),
         "title_contract": title_alignment,
         "title_contract_aligned": title_alignment["aligned"],
-        "manual_context_ready": False,
+        "manual_context_ready": ready_for_chapter_1,
     }
 
 
