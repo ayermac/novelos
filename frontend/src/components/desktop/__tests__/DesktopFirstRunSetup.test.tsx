@@ -224,6 +224,9 @@ describe('DesktopFirstRunSetup', () => {
     await userEvent.type(baseUrlInput, 'https://api.openai.com/v1')
     await userEvent.clear(modelInput)
     await userEvent.type(modelInput, 'gpt-4o-mini')
+    fireEvent.change(screen.getByLabelText('Agent 专用模型'), {
+      target: { value: 'author=MiniMax-M2.7,editor=Kimi-K2.6' },
+    })
 
     await userEvent.click(screen.getByText('保存配置'))
 
@@ -237,6 +240,9 @@ describe('DesktopFirstRunSetup', () => {
     expect((putCall?.[1] as RequestInit).body).toEqual(expect.stringContaining('"llm_mode":"real"'))
     expect((putCall?.[1] as RequestInit).body).toEqual(expect.stringContaining('"agent_llm"'))
     expect((putCall?.[1] as RequestInit).body).toEqual(expect.stringContaining('"author":"default"'))
+    expect((putCall?.[1] as RequestInit).body).toEqual(expect.stringContaining('"agent_models"'))
+    expect((putCall?.[1] as RequestInit).body).toEqual(expect.stringContaining('"author":"MiniMax-M2.7"'))
+    expect((putCall?.[1] as RequestInit).body).toEqual(expect.stringContaining('"editor":"Kimi-K2.6"'))
   })
 
   it('shows a single restart button after saving real config from stub runtime', async () => {

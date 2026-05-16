@@ -26,6 +26,7 @@ interface SetupForm {
   apiKeyEnv: string
   apiKey: string
   agentRoutes: string
+  agentModels: string
   llmMode: 'stub' | 'real'
   temperature: number
   timeout: number
@@ -72,6 +73,20 @@ function formatAgentRoutes(routes: Record<string, string> | undefined, defaultPr
   return entries.map(([agent, profile]) => `${agent}=${profile}`).join(', ')
 }
 
+function formatAgentModelOverrides(config: DesktopConfig | null, defaultProfile: string): string {
+  const routes = config?.agent_llm || {}
+  const profiles = config?.profiles || {}
+  const defaultModel = profiles[defaultProfile]?.model || ''
+  return Object.entries(routes)
+    .map(([agent, profileName]) => {
+      const model = profiles[profileName]?.model
+      if (!model || model === defaultModel) return null
+      return `${agent}=${model}`
+    })
+    .filter(Boolean)
+    .join(', ')
+}
+
 function parseAgentRoutes(value: string): Record<string, string> {
   const routes: Record<string, string> = {}
   for (const item of value.split(',')) {
@@ -87,6 +102,21 @@ function parseAgentRoutes(value: string): Record<string, string> {
   return routes
 }
 
+function parseAgentModels(value: string): Record<string, string> {
+  const models: Record<string, string> = {}
+  for (const item of value.split(',')) {
+    const pair = item.trim()
+    if (!pair || !pair.includes('=')) continue
+    const [agent, model] = pair.split('=', 2)
+    const cleanAgent = agent.trim()
+    const cleanModel = model.trim()
+    if (cleanAgent && cleanModel) {
+      models[cleanAgent] = cleanModel
+    }
+  }
+  return models
+}
+
 function getInitialForm(config: DesktopConfig | null): SetupForm {
   const defaultProfileName = config?.default_llm || Object.keys(config?.profiles || {})[0] || 'default'
   const profile = config?.profiles?.[defaultProfileName]
@@ -100,6 +130,7 @@ function getInitialForm(config: DesktopConfig | null): SetupForm {
     apiKeyEnv: profile?.api_key_env || 'OPENAI_API_KEY',
     apiKey: '',
     agentRoutes: formatAgentRoutes(config?.agent_llm, defaultProfileName),
+    agentModels: formatAgentModelOverrides(config, defaultProfileName),
     llmMode: TARGET_LLM_MODE,
     temperature: profile?.temperature ?? 0.7,
     timeout: 60,
@@ -214,6 +245,7 @@ export default function DesktopFirstRunSetup({
       timeout: form.timeout,
       api_key_env: form.apiKeyEnv,
       agent_llm: parseAgentRoutes(form.agentRoutes),
+      agent_models: parseAgentModels(form.agentModels),
     })
     if (res.ok && res.data) {
       const data = res.data as { saved: boolean; restart_required?: boolean; message?: string }
@@ -691,6 +723,19 @@ export default function DesktopFirstRunSetup({
             value={form.agentRoutes}
             onChange={(e) => setForm((prev) => ({ ...prev, agentRoutes: e.target.value, llmMode: TARGET_LLM_MODE }))}
             placeholder="planner=default,author=default,editor=default"
+            disabled={isBusy}
+          />
+        </FormField>
+
+        <FormField
+          label="Agent 专用模型"
+          helper="格式: agent=model，逗号分隔。会自动创建同名 profile，并让该 Agent 使用专用模型。"
+          className="desktop-first-run-agent-routes"
+        >
+          <TextInput
+            value={form.agentModels}
+            onChange={(e) => setForm((prev) => ({ ...prev, agentModels: e.target.value, llmMode: TARGET_LLM_MODE }))}
+            placeholder="author=MiniMax-M2.7,editor=Kimi-K2.6"
             disabled={isBusy}
           />
         </FormField>

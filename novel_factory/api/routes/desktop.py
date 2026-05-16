@@ -31,6 +31,7 @@ class DesktopConfigPayload(BaseModel):
     timeout: int | None = Field(default=None, ge=1, le=300)
     api_key_env: str | None = Field(default=None, pattern="^[A-Z0-9_]+$")
     agent_llm: dict[str, str] | None = None
+    agent_models: dict[str, str] | None = None
 
 
 class TestLlmRequest(BaseModel):
@@ -332,6 +333,47 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
                 raw["agent_llm"] = cleaned_routes
             else:
                 raw.pop("agent_llm", None)
+
+        if body.agent_models is not None:
+            cleaned_models = {
+                str(agent).strip(): str(model).strip()
+                for agent, model in body.agent_models.items()
+                if str(agent).strip() and str(model).strip()
+            }
+            if cleaned_models:
+                if "llm_profiles" not in raw or not isinstance(raw["llm_profiles"], dict):
+                    raw["llm_profiles"] = {}
+                profiles = raw["llm_profiles"]
+                default_profile_name = raw.get("default_llm", "default")
+                default_profile = profiles.get(default_profile_name, {})
+                if not isinstance(default_profile, dict):
+                    default_profile = {}
+                agent_routes = raw.get("agent_llm", {})
+                if not isinstance(agent_routes, dict):
+                    agent_routes = {}
+
+                for agent, model in cleaned_models.items():
+                    profile_name = agent
+                    next_profile = dict(default_profile)
+                    next_profile.setdefault("provider", "openai_compatible")
+                    if body.base_url is not None:
+                        next_profile["base_url"] = body.base_url
+                    next_profile.setdefault("base_url", body.base_url or "https://api.openai.com/v1")
+                    if body.api_key_env is not None:
+                        next_profile["api_key_env"] = body.api_key_env
+                    next_profile.setdefault("api_key_env", body.api_key_env or "OPENAI_API_KEY")
+                    if body.temperature is not None:
+                        next_profile["temperature"] = body.temperature
+                    if body.timeout is not None:
+                        next_profile["timeout"] = body.timeout
+                    next_profile["model"] = model
+
+                    if profiles.get(profile_name) != next_profile or agent_routes.get(agent) != profile_name:
+                        restart_required = True
+                    profiles[profile_name] = next_profile
+                    agent_routes[agent] = profile_name
+
+                raw["agent_llm"] = agent_routes
 
         # Write back
         import yaml

@@ -166,6 +166,43 @@ def test_desktop_config_accepts_agent_llm_routes(tmp_path: Path, monkeypatch):
     assert "editor: default" in content
 
 
+def test_desktop_config_creates_agent_specific_model_profiles(tmp_path: Path, monkeypatch):
+    client = _make_client(
+        tmp_path,
+        monkeypatch,
+        "llm_mode: stub\n"
+        "default_llm: default\n"
+        "llm_profiles:\n"
+        "  default:\n"
+        "    provider: openai_compatible\n"
+        "    model: gpt-4o-mini\n"
+        "    base_url: https://api.openai.com/v1\n"
+        "    api_key_env: OPENAI_API_KEY\n",
+        "stub",
+    )
+    response = client.put("/api/desktop/config", json={
+        "llm_mode": "real",
+        "base_url": "https://ark.cn-beijing.volces.com/api/coding/v3",
+        "api_key_env": "OPENAI_API_KEY",
+        "agent_models": {
+            "author": "MiniMax-M2.7",
+            "editor": "Kimi-K2.6",
+        },
+    })
+    body = response.json()
+    assert body["ok"] is True
+    assert body["data"]["restart_required"] is True
+
+    content = (tmp_path / "config" / "local.yaml").read_text(encoding="utf-8")
+    assert "author:" in content
+    assert "model: MiniMax-M2.7" in content
+    assert "editor:" in content
+    assert "model: Kimi-K2.6" in content
+    assert "agent_llm:" in content
+    assert "author: author" in content
+    assert "editor: editor" in content
+
+
 def test_desktop_test_llm_rejected_outside_desktop(tmp_path: Path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
