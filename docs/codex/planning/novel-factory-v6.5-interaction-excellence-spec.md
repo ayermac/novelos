@@ -239,11 +239,18 @@ CSS 交互协议：
 - `frontend/src/components/project/ProjectSideNav.tsx`
 - `frontend/src/components/project/QualityDiagnosisPanel.tsx`
 - `frontend/src/components/__tests__/Layout.test.tsx`
+- `frontend/src/components/settings/SkillVisibilityPanel.css` — 添加完整的 `html[data-theme='dark']` 覆盖，修复深色模式下导航、卡片、矩阵、chip、消息等硬编码浅色样式
+- `frontend/src/components/project/ChapterVersionPanel.tsx` — 将内联硬编码颜色提取为 className，由 CSS 统一管理并支持深色模式
+- `frontend/src/components/project/RunsModule.tsx` — 将 `<a href>` 改为 `<Link to>`，修复桌面端路由跳转空白问题
 
 验收标准：
 
 - 主题切换按钮可访问，`aria-label` 随当前模式变化。
 - 主题选择持久化到 `localStorage`。
+- SkillVisibilityPanel 在深色模式下所有表面（导航、卡片、矩阵、chip、消息、测试摘要）均有正确的暗色覆盖。
+- ChapterVersionPanel 在深色模式下当前版本高亮、普通版本背景、详情面板背景不再显示硬编码浅色。
+- app-dialog 各变体（danger/warning/success/info）的 icon 背景在深色模式下使用 `color-mix` 保持可读性。
+- RunsModule 运行记录详情链接在桌面端正确跳转，不再出现空白页面。
 - 前端 typecheck / lint / build / vitest 通过。
 - 桌面 typecheck / build 通过。
 

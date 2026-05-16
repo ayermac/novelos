@@ -878,3 +878,182 @@ html[data-theme='dark'] .alert-info {
 .mb-4 {
   margin-bottom: var(--spacing-lg);
 }
+
+/* Chapter Version Panel */
+.chapter-version-loading {
+  padding: 16px;
+  color: var(--text-muted);
+}
+
+.chapter-version-title {
+  margin: 0 0 12px 0;
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.chapter-version-error {
+  padding: 8px 12px;
+  background: #fdecea;
+  color: #c62828;
+  border-radius: 4px;
+  margin-bottom: 8px;
+  font-size: 14px;
+}
+
+html[data-theme='dark'] .chapter-version-error {
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary));
+  color: var(--danger);
+}
+
+.chapter-version-empty {
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.version-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.version-item {
+  padding: 8px 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--paper-surface);
+  color: var(--text-primary);
+  transition: background 150ms ease;
+}
+
+.version-item.current {
+  border-color: #1a73e8;
+  background: #e8f0fe;
+}
+
+.version-item-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.version-number {
+  font-weight: 600;
+}
+
+.version-source {
+  margin-left: 8px;
+  font-size: 13px;
+  color: #1a73e8;
+}
+
+.version-current-badge {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #1a73e8;
+}
+
+.version-word-count {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.version-summary {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+}
+
+.version-time {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+}
+
+.version-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.version-actions .btn-sm {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+
+.version-detail-panel {
+  margin-top: 16px;
+  padding: 12px;
+  background: var(--bg-secondary);
+  border-radius: 4px;
+  border: 1px solid var(--border-color);
+}
+
+.version-detail-header {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 8px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.version-detail-close {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font-size: 16px;
+  color: var(--text-muted);
+}
+
+.version-detail-close:hover {
+  color: var(--text-primary);
+}
+
+.version-detail-meta {
+  font-size: 13px;
+  color: var(--text-secondary);
+  margin-bottom: 8px;
+}
+
+.version-detail-content {
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.8;
+  max-height: 400px;
+  overflow: auto;
+  background: var(--paper-surface);
+  padding: 8px;
+  border-radius: 4px;
+  color: var(--text-primary);
+}
+
+html[data-theme='dark'] .version-item.current {
+  border-color: #4a9eff;
+  background: rgba(26, 115, 232, 0.15);
+}
+
+html[data-theme='dark'] .version-source,
+html[data-theme='dark'] .version-current-badge {
+  color: #4a9eff;
+}
+
+/* Dialog dark mode overrides */
+html[data-theme='dark'] .app-dialog-danger .app-dialog-icon {
+  background: color-mix(in srgb, var(--danger) 14%, var(--bg-primary));
+  color: var(--danger);
+}
+
+html[data-theme='dark'] .app-dialog-warning .app-dialog-icon {
+  background: color-mix(in srgb, var(--warning) 14%, var(--bg-primary));
+  color: var(--warning);
+}
+
+html[data-theme='dark'] .app-dialog-success .app-dialog-icon {
+  background: color-mix(in srgb, var(--success) 14%, var(--bg-primary));
+  color: var(--success);
+}
+
+html[data-theme='dark'] .app-dialog-info .app-dialog-icon {
+  background: color-mix(in srgb, var(--info) 14%, var(--bg-primary));
+  color: var(--info);
+}
