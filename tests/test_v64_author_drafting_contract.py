@@ -700,3 +700,57 @@ class TestWorkflowNotModified:
         assert result["chapter_status"] == ChapterStatus.DRAFTED.value
         chapter = repo.get_chapter("test_proj", 1)
         assert chapter["content"] is not None
+
+
+class TestAuthorLiveCallBudget:
+    """Live Author drafting should not turn one slow request into a long retry loop."""
+
+    def test_plain_text_draft_uses_single_attempt_without_mutating_provider_config(self, repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.config.settings import LLMConfig
+        from novel_factory.llm.provider import LLMProvider
+
+        class LiveLikeLLM(LLMProvider):
+            def __init__(self):
+                self.config = LLMConfig(
+                    base_url="https://example.test/v1",
+                    api_key="sk-test",
+                    model="slow-author-model",
+                    request_timeout_seconds=60,
+                    retry_attempts=3,
+                )
+                self.calls = []
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None, max_retries=None):
+                return {}
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None, max_retries=None):
+                self.calls.append({
+                    "temperature": temperature,
+                    "max_tokens": max_tokens,
+                    "max_retries": max_retries,
+                })
+                return "他推开门，潮湿的风贴着袖口钻进来。" * 120
+
+        llm = LiveLikeLLM()
+        agent = AuthorAgent(repo, llm)
+        output = agent._try_plain_text_draft(
+            {
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "scripted",
+                "llm_mode": "real",
+            },
+            "创作",
+            agent.build_context({
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "scripted",
+            }),
+        )
+
+        assert output.content
+        assert llm.calls[-1]["max_retries"] == 1
+        assert llm.calls[-1]["max_tokens"] <= 4096
+        assert llm.config.request_timeout_seconds == 60
+        assert llm.config.retry_attempts == 3

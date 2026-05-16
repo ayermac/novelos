@@ -598,13 +598,7 @@ class AuthorAgent(BaseAgent):
         minimum_required = int(word_target * 0.85)
         prose_max_tokens = max(1024, min(4096, int(word_target * 1.5)))
         compact_context = self._build_plain_text_context(state, context)
-        if is_configured_live_provider(self.llm):
-            timeout = getattr(self.llm.config, "request_timeout_seconds", None)
-            attempts = getattr(self.llm.config, "retry_attempts", None)
-            if timeout is not None:
-                self.llm.config.request_timeout_seconds = max(timeout, 120)
-            if attempts is not None:
-                self.llm.config.retry_attempts = max(attempts, 2)
+        per_call_retries = 1 if is_configured_live_provider(self.llm) else None
 
         messages = [
             {
@@ -630,7 +624,12 @@ class AuthorAgent(BaseAgent):
             },
         ]
 
-        content = self.llm.invoke_text(messages, temperature=0.7, max_tokens=prose_max_tokens).strip()
+        content = self._invoke_text_for_author(
+            messages,
+            temperature=0.7,
+            max_tokens=prose_max_tokens,
+            max_retries=per_call_retries,
+        ).strip()
         content = self._coerce_plain_text_content(content)
         if not content:
             raise OutputValidationError("Author 纯正文兜底生成空内容")
@@ -652,6 +651,28 @@ class AuthorAgent(BaseAgent):
         better served by plain text for long-form chapter prose.
         """
         return state.get("llm_mode") == "real" and is_configured_live_provider(self.llm)
+
+    def _invoke_text_for_author(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float,
+        max_tokens: int,
+        max_retries: int | None,
+    ) -> str:
+        """Invoke text generation with per-call retry control when supported."""
+        if max_retries is None:
+            return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
+        try:
+            return self.llm.invoke_text(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                max_retries=max_retries,
+            )
+        except TypeError as exc:
+            if "max_retries" not in str(exc):
+                raise
+            return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
 
     def _build_plain_text_context(self, state: FactoryState, fallback_context: str) -> str:
         """Build a compact prompt for direct prose generation."""

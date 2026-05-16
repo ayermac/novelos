@@ -264,6 +264,7 @@ class OpenAICompatibleProvider(LLMProvider):
         messages: list[dict[str, str]],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        max_retries: int | None = None,
     ) -> str:
         """Invoke LLM and return raw text."""
         lc_messages = self._to_lc_messages(messages)
@@ -275,7 +276,7 @@ class OpenAICompatibleProvider(LLMProvider):
             kwargs["max_tokens"] = max_tokens
 
         try:
-            response = self._invoke_with_retry(lc_messages, **kwargs)
+            response = self._invoke_with_retry(lc_messages, max_retries=max_retries, **kwargs)
             return response.content
         except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
             raise
