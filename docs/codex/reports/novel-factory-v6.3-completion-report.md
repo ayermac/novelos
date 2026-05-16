@@ -1,8 +1,10 @@
 # v6.3 Creator Onboarding Closure 完成报告
 
-## 总体 verdict：PASS
+## 总体 verdict：PASS（v6.3.2 回归干净）
 
 ## 改动文件
+
+### v6.3 主要交付
 
 | 文件 | 类型 | 说明 |
 |---|---|---|
@@ -18,6 +20,25 @@
 | `docs/codex/README.md` | 修改 | 更新当前基线和下一步 |
 | `docs/codex/planning/novel-factory-cross-platform-desktop-client-plan.md` | 修改 | v6.3 标记为已实现 |
 | `docs/codex/planning/novel-factory-v6.3-creator-onboarding-closure-spec.md` | 新增 | 规格文档 |
+
+### v6.3.1 补丁
+
+| 文件 | 类型 | 说明 |
+|---|---|---|
+| `novel_factory/api/routes/production.py` | 修改 | 统一 `ready_for_chapter_1` 与 run guard 为 approved genesis + world + characters + outlines + instruction |
+| `novel_factory/api/routes/_run_guards.py` | 修改 | CONTEXT_INCOMPLETE 文案更新，明确"请先完成并批准创世设定" |
+| `tests/test_v553_autonomous_production_loop.py` | 修改 | 适配 auto_generate 退役和 genesis requirement |
+| `tests/test_v532_project_genesis.py` | 修改 | 空 premise 测试覆盖 |
+| `tests/test_v63_creator_onboarding.py` | 修改 | 空 premise 测试真正传空字符串 |
+
+### v6.3.2 补丁
+
+| 文件 | 类型 | 说明 |
+|---|---|---|
+| `novel_factory/llm/stub_provider.py` | 修改 | Screenwriter stub 补齐 `turn` 和 `plot_refs` 字段 |
+| `tests/conftest.py` | 修改 | `seed_context_for_chapter` 创建 approved genesis run 和 instruction；instruction `key_events` 与 stub author `implemented_events` 对齐 |
+| `tests/test_v553_autonomous_production_loop.py` | 修改 | 移除旧 `auto_generate=1` 断言 |
+| `tests/test_v63_creator_onboarding.py` | 修改 | 空 premise 测试传空 `description` |
 
 ## 用户流程变化
 
@@ -38,8 +59,11 @@
 
 ## 测试结果
 
+### v6.3.2 最终基线
+
 | 命令 | 结果 |
 |---|---|
+| `python3 -m pytest -q` | **1980 passed, 0 failed** |
 | `python3 scripts/verify.py smoke` | **13 passed** |
 | `python3 -m pytest tests/test_v63_creator_onboarding.py -q` | **6 passed** |
 | `cd frontend && npm run typecheck` | **通过** |
@@ -48,6 +72,7 @@
 | `cd frontend && npm run test -- --run` | **169 passed** |
 | `cd desktop && npm run typecheck` | **通过** |
 | `cd desktop && npm run build` | **通过** |
+| `bash packaging/scripts/verify-desktop-mac.sh` | **7/7 passed** |
 
 ## 已知限制
 

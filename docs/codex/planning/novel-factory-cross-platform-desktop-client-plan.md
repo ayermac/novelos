@@ -495,7 +495,7 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到“�
 
 ### v6.3：Creator Onboarding Closure
 
-状态：**已实现**
+状态：**已实现，v6.3.2 已回归干净**
 
 目标：修复从 0 到 1 创建小说的真实用户体验。创建项目后不再直接跳章节 workflow，而是进入创作准备流程，支持一键 AI 补齐和明确的上下文就绪检查。
 
@@ -529,6 +529,11 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到“�
    - `onboarding.py` 创建章节时默认标题从 `第 N 章` 改为 `第 N 章（待命名）`。
    - 避免用户看到无意义的默认标题。
 
+小修摘要：
+
+- **v6.3.1**：统一 `ready_for_chapter_1` 与 run guard 的检查逻辑，均要求 `approved_genesis`；production-next 不再写入 `auto_generate=1`；修复空 premise 测试覆盖不完整的问题。
+- **v6.3.2**：修复 review findings——旧静态测试仍断言 `auto_generate=1`、空 premise 测试未真正传空字符串、CONTEXT_INCOMPLETE guard 文案误导；修复 Screenwriter stub 缺少 `turn`/`plot_refs` 和 instruction `key_events` 与 stub author `implemented_events` 不匹配导致的 workflow 回归失败。
+
 验收标准：
 
 - 新项目 production-next 返回 `generate_genesis`，不是 `generate_chapter`。
@@ -537,6 +542,7 @@ v6.2.5 之后，桌面客户端不应继续只补打包工程；需要回到“�
 - 前端 `auto_generate` 不再自动触发 workflow。
 - Genesis premise 可留空生成。
 - 创建项目后默认标题包含"待命名"。
+- backend full suite 1980 passed, 0 failed。
 
 非目标：
 

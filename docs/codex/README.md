@@ -18,10 +18,10 @@
 - **当前创作者闭环基线**: v5.7 Daily Writing Editing and Versioning
 - **当前 Agent 可审计基线**: v6.1 Agent Work Process Streaming & Auditable Execution Evidence
 - **当前桌面客户端基线**: v6.2.5 Desktop Release Readiness Checklist
-- **当前创作者闭环基线**: v6.3 Creator Onboarding Closure
-- **当前下一步**: v6.4 Agent Evidence UX Closure
-- **状态**: v6.3 已完成：项目创建后不再自动跳转 chapter workflow，新增 CONTEXT_INCOMPLETE 运行 guard，production-next 返回 `ready_for_chapter_1`，Genesis premise 改为可选，默认章节标题增加"待命名"，移除 `auto_generate` 自动触发。下一步进入 Agent 执行证据 UX。
-- **测试基线**: v6.2.4 验收通过：desktop typecheck/build passed；frontend typecheck/lint/build passed；frontend vitest 169/169 passed；`scripts/verify.py smoke` passed；`test_v66_desktop_secure_keys.py` 9/9 passed；`verify-desktop-mac.sh` 7/7 passed
+- **当前创作者闭环基线**: v6.3.2 Creator Onboarding Closure
+- **当前下一步**: v6.4 Chapter Generation Quality Closure
+- **状态**: v6.3.2 已回归干净。v6.3 核心交付：项目创建后不再自动跳转 chapter workflow，新增 CONTEXT_INCOMPLETE 运行 guard，production-next 返回 `ready_for_chapter_1`，Genesis premise 改为可选，默认章节标题增加"待命名"，移除 `auto_generate` 自动触发。v6.3.1 统一 readiness 与 run guard 为 approved genesis + world + characters + outlines + instruction。v6.3.2 修复 review findings（旧测试、空 premise、stub/fixture 数据）。
+- **测试基线**: backend full suite **1980 passed, 0 failed**；frontend typecheck/lint/build/vitest 169 passed；desktop typecheck/build passed；`scripts/verify.py smoke` passed；`test_v66_desktop_secure_keys.py` 9/9 passed；`verify-desktop-mac.sh` 7/7 passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)

@@ -1,6 +1,6 @@
 # v6.3 Creator Onboarding Closure Review
 
-## 总体 verdict：PASS
+## 总体 verdict：PASS（v6.3.2 回归干净）
 
 ## Review 检查项
 
@@ -40,14 +40,29 @@
 - [x] desktop typecheck/build 通过
 - [x] Python smoke 13/13 通过
 - [x] 新增测试 6/6 通过
+- [x] **backend full suite 1980 passed, 0 failed**
 
 ### 8. 文档
 - [x] `docs/codex/README.md` 已更新
 - [x] `docs/codex/planning/novel-factory-cross-platform-desktop-client-plan.md` 已更新
 - [x] 新增 spec、completion report、review
 
-## 修复记录
+## Review Findings 与修复
 
-- 无阻塞问题，无代码修复。
+### v6.3.1 修复
+
+| Finding | 根因 | 修复 |
+|---|---|---|
+| premise 前后端不一致 | 后端 validateForm 检查 premise 非空，但前端已改为可选 | 后端同步允许空 premise，更新测试覆盖 |
+| production-next / run guard readiness 不一致 | `ready_for_chapter_1` 与 `_run_guards` 的检查逻辑不统一 | v6.3.1 统一为 approved genesis + world + characters + outlines + instruction |
+
+### v6.3.2 修复
+
+| Finding | 根因 | 修复 |
+|---|---|---|
+| 旧 `auto_generate` 测试失败 | v6.3 移除 `auto_generate=1`，但静态测试仍断言包含该参数 | 更新 `test_v553_autonomous_production_loop.py` 断言为不包含 `auto_generate=1` |
+| 空 premise 测试覆盖不完整 | 空 premise 测试仍传了非空 `description` | 将 `description` 改为空字符串 `""` |
+| CONTEXT_INCOMPLETE guard 文案误导 | 旧文案"请先完成创世设定审核"暗示 genesis 存在即可，未强调"批准" | 更新为"请先完成并批准创世设定，再补齐项目资料后生成章节" |
+| workflow stub/fixture 回归失败（1 failed） | v6.0 引入的 Screenwriter stub 缺少 `turn`/`plot_refs`；`seed_context_for_chapter` 未创建 approved genesis 和 instruction | `stub_provider.py` 补齐字段；`conftest.py` 添加 approved genesis run 和 instruction 创建，并将 `key_events` 对齐 stub author 的 `implemented_events` |
 
 ## 安全继续开发：是
