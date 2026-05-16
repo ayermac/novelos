@@ -392,4 +392,44 @@ describe('DesktopFirstRunSetup', () => {
       expect(mockSetApiKey).toHaveBeenCalledWith('OPENAI_API_KEY', 'sk-test-key-123')
     })
   })
+
+  it('keeps a single restart button after saving an API key and disables test until restart', async () => {
+    setupDesktop({
+      llm_mode: 'real',
+      profiles: {
+        default: {
+          provider: 'openai_compatible',
+          model: 'gpt-4o-mini',
+          base_url: 'https://api.openai.com/v1',
+          api_key_env: 'OPENAI_API_KEY',
+          api_key_configured: false,
+          api_key_source: 'missing',
+          temperature: 0.7,
+          max_tokens: 4096,
+        },
+      },
+    })
+    mockSecretStatus.mockResolvedValue({ OPENAI_API_KEY: { configured: true } })
+
+    render(
+      <Wrapper>
+        <DesktopFirstRunSetup compact />
+      </Wrapper>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('API Key')).toBeInTheDocument()
+    })
+
+    await userEvent.type(screen.getByLabelText('API Key'), 'sk-test-key-123')
+    await userEvent.click(screen.getByText('保存 API Key'))
+
+    await waitFor(() => {
+      expect(mockSetApiKey).toHaveBeenCalledWith('OPENAI_API_KEY', 'sk-test-key-123')
+      expect(screen.getAllByRole('button', { name: /重启本地服务/ })).toHaveLength(1)
+    })
+
+    expect(screen.getByRole('button', { name: /测试连接/ })).toBeDisabled()
+    expect(screen.getByText(/重启前暂时无法测试连接/)).toBeInTheDocument()
+  })
 })

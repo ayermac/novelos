@@ -15,7 +15,6 @@ type SetupStep =
   | 'saving_config'
   | 'saving_key'
   | 'testing'
-  | 'restart_required'
   | 'restarting'
   | 'ready'
   | 'error'
@@ -108,6 +107,7 @@ export default function DesktopFirstRunSetup({
   const [testResult, setTestResult] = useState<TestResult | null>(null)
   const [errorMessage, setErrorMessage] = useState('')
   const [secretStatuses, setSecretStatuses] = useState<Record<string, { configured: boolean }>>({})
+  const [restartRequired, setRestartRequired] = useState(false)
   const dismissedRef = useRef(false)
 
   const loadConfig = useCallback(async () => {
@@ -186,7 +186,8 @@ export default function DesktopFirstRunSetup({
       const data = res.data as { saved: boolean; restart_required?: boolean; message?: string }
       await loadConfig()
       if (data.restart_required) {
-        setStep('restart_required')
+        setRestartRequired(true)
+        setStep('editing')
         showToast({ tone: 'success', title: '配置已保存', message: '配置已保存，需要重启本地服务后生效。' })
       } else {
         setStep('editing')
@@ -209,6 +210,7 @@ export default function DesktopFirstRunSetup({
       setForm((prev) => ({ ...prev, apiKey: '' }))
       await loadSecrets()
       await loadConfig()
+      setRestartRequired(true)
       setStep('editing')
       showToast({ tone: 'success', title: '保存成功', message: 'API Key 已保存到本机安全存储，重启客户端后生效。' })
     } catch (err) {
@@ -270,6 +272,7 @@ export default function DesktopFirstRunSetup({
       if (res?.success) {
         await loadConfig()
         await loadSecrets()
+        setRestartRequired(false)
         setStep('ready')
         showToast({ tone: 'success', title: '重启成功', message: '本地服务已重启。' })
         onReady?.()
@@ -301,12 +304,14 @@ export default function DesktopFirstRunSetup({
     onDismiss?.()
   }
 
-  const canTest =
+  const canTest = Boolean(
     form.llmMode === 'real' &&
     form.baseUrl.trim() &&
     form.model.trim() &&
     form.apiKeyEnv.trim() &&
-    !!secretStatuses[form.apiKeyEnv]?.configured
+    !!secretStatuses[form.apiKeyEnv]?.configured &&
+    !restartRequired
+  )
 
   const preset = getPresetById(form.providerPreset)
 
@@ -458,12 +463,6 @@ export default function DesktopFirstRunSetup({
               <button className="btn btn-secondary" onClick={handleContinueDemo}>
                 继续使用演示模式
               </button>
-              {step === 'restart_required' && (
-                <button className="btn btn-warning" onClick={handleRestart}>
-                  <RefreshCw size={14} style={{ marginRight: 4 }} />
-                  重启本地服务
-                </button>
-              )}
             </>
           )}
         </div>
@@ -717,7 +716,7 @@ export default function DesktopFirstRunSetup({
           >
             测试连接
           </LoadingButton>
-          {(step === 'restart_required' || step === 'restarting') && (
+          {(restartRequired || step === 'restarting') && (
             <LoadingButton
               className="btn btn-warning"
               variant="warning"
@@ -733,7 +732,7 @@ export default function DesktopFirstRunSetup({
         </div>
 
         {/* Restart required notice */}
-        {step === 'restart_required' && (
+        {restartRequired && (
           <div style={{
             padding: '12px',
             borderRadius: '6px',
@@ -743,7 +742,7 @@ export default function DesktopFirstRunSetup({
           }}>
             <AlertTriangle size={16} style={{ marginRight: 6, verticalAlign: 'middle' }} />
             <strong>配置已更改，需要重启本地服务才能生效。</strong>
-            <div style={{ marginTop: 4 }}>点击「重启本地服务」按钮，或稍后手动重启。</div>
+            <div style={{ marginTop: 4 }}>点击「重启本地服务」按钮。重启前暂时无法测试连接，因为当前后端进程还没有读取新的配置和 API Key。</div>
           </div>
         )}
 
