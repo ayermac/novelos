@@ -25,6 +25,7 @@ interface SetupForm {
   model: string
   apiKeyEnv: string
   apiKey: string
+  agentRoutes: string
   llmMode: 'stub' | 'real'
   temperature: number
   timeout: number
@@ -33,7 +34,10 @@ interface SetupForm {
 interface DesktopConfig {
   exists: boolean
   llm_mode: string
+  configured_llm_mode?: string
+  runtime_llm_mode?: string
   default_llm: string | null
+  agent_llm?: Record<string, string>
   profiles: Record<string, {
     provider: string
     model: string
@@ -59,6 +63,29 @@ interface TestResult {
 }
 
 const TARGET_LLM_MODE: SetupForm['llmMode'] = 'real'
+const DEFAULT_AGENT_IDS = ['genesis', 'planner', 'screenwriter', 'author', 'polisher', 'editor', 'memory_curator']
+
+function formatAgentRoutes(routes: Record<string, string> | undefined, defaultProfile: string): string {
+  const entries = routes && Object.keys(routes).length > 0
+    ? Object.entries(routes)
+    : DEFAULT_AGENT_IDS.map((agent) => [agent, defaultProfile] as const)
+  return entries.map(([agent, profile]) => `${agent}=${profile}`).join(', ')
+}
+
+function parseAgentRoutes(value: string): Record<string, string> {
+  const routes: Record<string, string> = {}
+  for (const item of value.split(',')) {
+    const pair = item.trim()
+    if (!pair || !pair.includes('=')) continue
+    const [agent, profile] = pair.split('=', 2)
+    const cleanAgent = agent.trim()
+    const cleanProfile = profile.trim()
+    if (cleanAgent && cleanProfile) {
+      routes[cleanAgent] = cleanProfile
+    }
+  }
+  return routes
+}
 
 function getInitialForm(config: DesktopConfig | null): SetupForm {
   const defaultProfileName = config?.default_llm || Object.keys(config?.profiles || {})[0] || 'default'
@@ -72,6 +99,7 @@ function getInitialForm(config: DesktopConfig | null): SetupForm {
     model: profile?.model || '',
     apiKeyEnv: profile?.api_key_env || 'OPENAI_API_KEY',
     apiKey: '',
+    agentRoutes: formatAgentRoutes(config?.agent_llm, defaultProfileName),
     llmMode: TARGET_LLM_MODE,
     temperature: profile?.temperature ?? 0.7,
     timeout: 60,
@@ -185,6 +213,7 @@ export default function DesktopFirstRunSetup({
       temperature: form.temperature,
       timeout: form.timeout,
       api_key_env: form.apiKeyEnv,
+      agent_llm: parseAgentRoutes(form.agentRoutes),
     })
     if (res.ok && res.data) {
       const data = res.data as { saved: boolean; restart_required?: boolean; message?: string }
@@ -323,6 +352,8 @@ export default function DesktopFirstRunSetup({
   )
 
   const preset = getPresetById(form.providerPreset)
+  const runtimeMode = config?.runtime_llm_mode || config?.llm_mode || 'stub'
+  const configuredMode = config?.configured_llm_mode || config?.llm_mode || runtimeMode
 
   if (!isDesktop) return null
 
@@ -587,7 +618,11 @@ export default function DesktopFirstRunSetup({
           className={`desktop-first-run-mode ${form.llmMode === 'real' ? 'is-real' : 'is-stub'}`}
         >
           {form.llmMode === 'real' ? <Wifi size={16} /> : <WifiOff size={16} />}
-          <span>当前模式: <strong>{form.llmMode === 'real' ? '真实 LLM' : '演示模式'}</strong></span>
+          <span>目标配置: <strong>{form.llmMode === 'real' ? '真实 LLM' : '演示模式'}</strong></span>
+          <span className="desktop-first-run-runtime-mode">
+            运行中: {runtimeMode === 'real' ? '真实 LLM' : '演示模式'}
+            {configuredMode !== runtimeMode ? '（待重启生效）' : ''}
+          </span>
         </div>
 
         {/* Provider preset */}
@@ -643,6 +678,19 @@ export default function DesktopFirstRunSetup({
             value={form.apiKey}
             onChange={(e) => setForm((prev) => ({ ...prev, apiKey: e.target.value, llmMode: TARGET_LLM_MODE }))}
             placeholder="输入 API Key（仅保存到本机安全存储）"
+            disabled={isBusy}
+          />
+        </FormField>
+
+        <FormField
+          label="Agent 路由"
+          helper="格式: agent=profile，逗号分隔。默认让核心 Agent 使用 default 档案。"
+          className="desktop-first-run-agent-routes"
+        >
+          <TextInput
+            value={form.agentRoutes}
+            onChange={(e) => setForm((prev) => ({ ...prev, agentRoutes: e.target.value, llmMode: TARGET_LLM_MODE }))}
+            placeholder="planner=default,author=default,editor=default"
             disabled={isBusy}
           />
         </FormField>
@@ -786,6 +834,7 @@ export default function DesktopFirstRunSetup({
             gap: 16px 18px;
           }
           .desktop-first-run-mode,
+          .desktop-first-run-agent-routes,
           .desktop-first-run-primary-actions,
           .desktop-first-run-advanced,
           .desktop-first-run-form > button,
@@ -793,6 +842,12 @@ export default function DesktopFirstRunSetup({
           .desktop-first-run-form > div[style*="fef2f2"],
           .desktop-first-run-form > div[style*="dcfce7"] {
             grid-column: 1 / -1;
+          }
+          .desktop-first-run-runtime-mode {
+            margin-left: 8px;
+            color: var(--text-secondary);
+            font-size: 12px;
+            font-weight: 500;
           }
           .desktop-first-run-mode {
             display: flex;

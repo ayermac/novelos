@@ -235,6 +235,8 @@ describe('DesktopFirstRunSetup', () => {
     })
     const putCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')
     expect((putCall?.[1] as RequestInit).body).toEqual(expect.stringContaining('"llm_mode":"real"'))
+    expect((putCall?.[1] as RequestInit).body).toEqual(expect.stringContaining('"agent_llm"'))
+    expect((putCall?.[1] as RequestInit).body).toEqual(expect.stringContaining('"author":"default"'))
   })
 
   it('shows a single restart button after saving real config from stub runtime', async () => {
@@ -287,6 +289,7 @@ describe('DesktopFirstRunSetup', () => {
     await waitFor(() => {
       expect(screen.getByText('真实 LLM')).toBeInTheDocument()
     })
+    expect(screen.getByText(/运行中: 演示模式/)).toBeInTheDocument()
 
     fireEvent.change(screen.getByLabelText('Base URL'), {
       target: { value: 'https://api.openai.com/v1' },

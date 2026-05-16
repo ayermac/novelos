@@ -30,6 +30,7 @@ class DesktopConfigPayload(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     timeout: int | None = Field(default=None, ge=1, le=300)
     api_key_env: str | None = Field(default=None, pattern="^[A-Z0-9_]+$")
+    agent_llm: dict[str, str] | None = None
 
 
 class TestLlmRequest(BaseModel):
@@ -182,10 +183,14 @@ async def get_desktop_config(request: Request) -> EnvelopeResponse:
         if error_code or not config_file:
             return error_response(error_code or "CONFIG_NOT_FOUND", "未找到桌面配置路径")
         if not config_file.exists():
+            runtime_mode = getattr(request.app.state, "llm_mode", "stub")
             return envelope_response({
                 "exists": False,
-                "llm_mode": getattr(request.app.state, "llm_mode", "stub"),
+                "llm_mode": runtime_mode,
+                "configured_llm_mode": runtime_mode,
+                "runtime_llm_mode": runtime_mode,
                 "profiles": {},
+                "agent_llm": {},
             })
 
         import yaml
@@ -214,9 +219,12 @@ async def get_desktop_config(request: Request) -> EnvelopeResponse:
 
         return envelope_response({
             "exists": True,
-            "llm_mode": getattr(request.app.state, "llm_mode", "stub"),
+            "llm_mode": raw.get("llm_mode", getattr(request.app.state, "llm_mode", "stub")),
+            "configured_llm_mode": raw.get("llm_mode", getattr(request.app.state, "llm_mode", "stub")),
+            "runtime_llm_mode": getattr(request.app.state, "llm_mode", "stub"),
             "default_llm": raw.get("default_llm"),
             "profiles": safe_profiles,
+            "agent_llm": raw.get("agent_llm", {}) if isinstance(raw.get("agent_llm", {}), dict) else {},
             "raw_preview": _redacted_yaml_preview(raw),
         })
     except Exception as e:
@@ -268,7 +276,6 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
             current_llm_mode = getattr(request.app.state, "llm_mode", "stub")
             if current_llm_mode != body.llm_mode:
                 restart_required = True
-            request.app.state.llm_mode = body.llm_mode
             raw["llm_mode"] = body.llm_mode
 
         # Update default_llm profile fields if a default_llm is set
@@ -312,6 +319,19 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
                 raw["default_llm"] = default_llm
             else:
                 raw["default_llm"] = "default"
+
+        if body.agent_llm is not None:
+            cleaned_routes = {
+                str(agent).strip(): str(profile).strip()
+                for agent, profile in body.agent_llm.items()
+                if str(agent).strip() and str(profile).strip()
+            }
+            if raw.get("agent_llm", {}) != cleaned_routes:
+                restart_required = True
+            if cleaned_routes:
+                raw["agent_llm"] = cleaned_routes
+            else:
+                raw.pop("agent_llm", None)
 
         # Write back
         import yaml

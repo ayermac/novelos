@@ -112,6 +112,60 @@ def test_desktop_config_no_restart_when_unchanged(tmp_path: Path, monkeypatch):
     assert body["data"]["restart_required"] is False
 
 
+def test_desktop_config_returns_configured_and_runtime_modes(tmp_path: Path, monkeypatch):
+    client = _make_client(
+        tmp_path,
+        monkeypatch,
+        "llm_mode: real\n"
+        "default_llm: default\n"
+        "llm_profiles:\n"
+        "  default:\n"
+        "    provider: openai_compatible\n"
+        "    model: gpt-4\n"
+        "    base_url: https://api.openai.com/v1\n"
+        "    api_key_env: OPENAI_API_KEY\n",
+        "stub",
+    )
+    response = client.get("/api/desktop/config")
+    body = response.json()
+    assert body["ok"] is True
+    assert body["data"]["llm_mode"] == "real"
+    assert body["data"]["configured_llm_mode"] == "real"
+    assert body["data"]["runtime_llm_mode"] == "stub"
+
+
+def test_desktop_config_accepts_agent_llm_routes(tmp_path: Path, monkeypatch):
+    client = _make_client(
+        tmp_path,
+        monkeypatch,
+        "llm_mode: stub\n"
+        "default_llm: default\n"
+        "llm_profiles:\n"
+        "  default:\n"
+        "    provider: openai_compatible\n"
+        "    model: gpt-4\n"
+        "    base_url: https://api.openai.com/v1\n"
+        "    api_key_env: OPENAI_API_KEY\n",
+        "stub",
+    )
+    response = client.put("/api/desktop/config", json={
+        "llm_mode": "real",
+        "agent_llm": {
+            "planner": "default",
+            "author": "default",
+            "editor": "default",
+        },
+    })
+    body = response.json()
+    assert body["ok"] is True
+    assert body["data"]["restart_required"] is True
+    content = (tmp_path / "config" / "local.yaml").read_text(encoding="utf-8")
+    assert "agent_llm:" in content
+    assert "planner: default" in content
+    assert "author: default" in content
+    assert "editor: default" in content
+
+
 def test_desktop_test_llm_rejected_outside_desktop(tmp_path: Path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()
