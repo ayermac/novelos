@@ -42,6 +42,16 @@ AUTHOR_SYSTEM_PROMPT = """你是网文工厂的执笔（Author），负责章节
 3. 精准落实指令 — 不遗漏指令中的任何要素
 4. 钩子控制 — 每章末尾必须有悬念
 
+Drafting Contract（v6.4.1）：
+- 禁止写成剧情摘要、设定说明、章节梗概。必须以场景为单位推进。
+- 每个关键事件必须通过动作、对白、环境变化或冲突体现，不得旁白解释。
+- 情绪必须通过动作、神态、对话展现；禁止"感到/觉得/意识到/明白/心中暗想"等直白情绪词。
+- 每个场景至少包含 1 种视觉 + 1 种听觉/触觉/嗅觉细节。
+- 对白必须有角色目的、潜台词或冲突；禁止所有角色使用同一套礼貌/书面语。
+- 世界观和设定必须通过角色的动作、对话或场景细节展现，禁止旁白式解释。
+- 章节结尾留悬念，禁止归纳人生道理、总结本章意义、发表作者评论。
+- 保持与 instruction objective/key_events 对齐。
+
 铁律：
 1. 禁止自己编造数值，必须从状态卡抄
 2. 禁止创建伏笔、角色或世界观规则
@@ -119,6 +129,18 @@ class AuthorAgent(BaseAgent):
         repair_context = self._build_death_penalty_repair_context(state)
         if repair_context:
             parts.append(repair_context)
+
+        # v6.4.1: Anti-AI drafting guide
+        parts.append(
+            "【去AI味写作指南】\n"
+            "1. 禁止'感到/觉得/意识到/明白/知道/理解/察觉/发现'等直白情绪动词。改为动作或神态。\n"
+            "2. 禁止'心中暗想/心道/暗道'等内心独白模板。改为动作推进或简短的心理活动。\n"
+            "3. 禁止'这个世界是一个.../在这个世界里...'等设定旁白。改为角色动作或对话展现。\n"
+            "4. 禁止'简单来说/说白了/所谓...是指'等解释句式。\n"
+            "5. 每个场景至少包含一种视觉细节 + 一种其他感官细节（听觉/触觉/嗅觉/味觉）。\n"
+            "6. 对白要有冲突或潜台词，避免功能化问答。\n"
+            "7. 章节结尾留悬念，禁止说教式总结。"
+        )
 
         # If revision, include review issues
         chapter = self._get_chapter_info(state)
@@ -200,6 +222,7 @@ class AuthorAgent(BaseAgent):
         def _self_check_wrap(data: dict[str, Any]) -> SelfCheckResult:
             out = data["output"]
             issues: list[dict[str, Any]] = []
+            warnings_list: list[str] = []
             instruction = self._get_instruction(state) or {}
             # Event coverage
             required_events = self._instruction_items(instruction.get("key_events", ""))
@@ -219,10 +242,55 @@ class AuthorAgent(BaseAgent):
             wc_passed, wc_msg = check_word_count_quality_gate(body_content, wt, "author")
             if not wc_passed:
                 issues.append({"type": "word_count", "message": wc_msg})
+
+            # v6.4.1: Show-don't-tell heuristic (warning only)
+            straight_patterns = [
+                r"感到[^，。！？]{1,8}", r"觉得[^，。！？]{1,8}", r"意识到[^，。！？]{1,8}",
+                r"明白[^，。！？]{1,8}", r"知道[^，。！？]{1,8}", r"理解[^，。！？]{1,8}",
+                r"察觉[^，。！？]{1,8}", r"发现[^，。！？]{1,8}", r"心中暗想", r"心道", r"暗道",
+            ]
+            straight_count = sum(len(re.findall(p, out.content)) for p in straight_patterns)
+            per_1k = (straight_count / max(len(out.content), 1)) * 1000
+            if per_1k > 5:
+                warnings_list.append(
+                    f"show_dont_tell: 直白情绪词密度 {per_1k:.1f}/千字，"
+                    "建议将'感到/觉得/意识到'等改为动作、神态或对话展现"
+                )
+
+            # v6.4.1: Sensory detail heuristic (warning only)
+            sensory_words = ["光", "影", "声", "响", "味", "香", "臭", "冷", "热", "湿", "干", "风", "雨", "雷", "温度", "颜色", "色彩"]
+            sensory_count = sum(out.content.count(w) for w in sensory_words)
+            sensory_per_1k = (sensory_count / max(len(out.content), 1)) * 1000
+            if sensory_per_1k < 3:
+                warnings_list.append(
+                    f"sensory_detail: 感官细节密度 {sensory_per_1k:.1f}/千字，"
+                    "建议每个场景至少增加一种视觉 + 一种听觉/触觉/嗅觉细节"
+                )
+
+            # v6.4.1: Prose-like heuristic (warning only)
+            summary_markers = ["本章", "这一章", "首先", "然后", "接着", "最后", "综上所述", "总之", "简单来说", "说白了"]
+            summary_count = sum(1 for m in summary_markers if m in out.content)
+            if summary_count > 3:
+                warnings_list.append(
+                    f"prose_like: 检测到 {summary_count} 处摘要/说明式表达，"
+                    "建议以场景推进代替叙述"
+                )
+
+            # v6.4.1: Dialogue heuristic (warning only)
+            dialogues = re.findall(r'[""「『]([^""」』]+)[""」』]', out.content)
+            dialogue_chars = sum(len(d) for d in dialogues)
+            dialogue_ratio = dialogue_chars / max(len(out.content), 1)
+            if dialogue_ratio < 0.05:
+                warnings_list.append(
+                    f"dialogue: 对白占比 {dialogue_ratio*100:.1f}%，"
+                    "建议增加有冲突或潜台词的角色对话"
+                )
+
             repairable = any(i["type"] in ("word_count", "death_penalty") for i in issues)
             return SelfCheckResult(
                 passed=len(issues) == 0,
                 issues=issues,
+                warnings=warnings_list,
                 repair_needed=repairable,
                 repair_suggestion="扩写或清理死刑红线词汇",
             )
@@ -253,11 +321,17 @@ class AuthorAgent(BaseAgent):
         self_check_data = trace.get("self_check", {}) if isinstance(trace, dict) else {}
         sc_passed = self_check_data.get("passed", True)
         sc_issues = self_check_data.get("issues", [])
+        sc_warnings = self_check_data.get("warnings", [])
         exec_events.append({
             "event_type": "self_check_completed",
-            "message": f"自检{'通过' if sc_passed else f'未通过 ({len(sc_issues)} 个问题)'}",
+            "message": f"自检{'通过' if sc_passed else f'未通过 ({len(sc_issues)} 个问题)'}"
+            f"{'，' + str(len(sc_warnings)) + ' 个警告' if sc_warnings else ''}",
             "status": "info" if sc_passed else "warning",
-            "payload": {"passed": sc_passed, "issue_count": len(sc_issues)},
+            "payload": {
+                "passed": sc_passed,
+                "issue_count": len(sc_issues),
+                "warning_count": len(sc_warnings),
+            },
         })
         if state.get("llm_mode") == "real" and autonomy.get("decision") in {"ask_human", "reroute", "refuse"}:
             issue_types = {
@@ -527,6 +601,9 @@ class AuthorAgent(BaseAgent):
                     "你是网文工厂的执笔。现在只输出章节正文纯文本。"
                     "禁止输出 JSON、Markdown 代码块、字段名、解释或清单。"
                     "直接从正文第一句开始，到正文最后一句结束。"
+                    "禁止写成剧情摘要或设定说明；以场景为单位推进。"
+                    "情绪通过动作、神态、对话展现，禁止直白情绪词。"
+                    "对白要有冲突或潜台词，避免功能化问答。"
                 ),
             },
             {
@@ -597,6 +674,13 @@ class AuthorAgent(BaseAgent):
                 for c in characters[:5]
             ]
             parts.append("【角色】\n" + "\n".join(char_lines))
+
+        parts.append(
+            "【写作约束】\n"
+            "禁止剧情摘要和设定说明；以场景推进。\n"
+            "情绪通过动作展现，禁止直白情绪词。\n"
+            "对白要有冲突或潜台词。"
+        )
 
         if parts:
             return "\n\n".join(parts)

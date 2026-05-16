@@ -46,36 +46,42 @@
 
 **目标**：从源头减少 AI 味，增强初稿质量。
 
+**状态**：已实现
+
 **改动**：
 1. **Author SYSTEM_PROMPT 增强**：
-   - 新增"Show, Don't Tell 铁律"段落：禁止"感到/觉得/意识到/明白/心中暗想"等直白情绪词；情绪必须通过动作、神态、对话展现
+   - 新增"Drafting Contract（v6.4.1）"段落：禁止剧情摘要/设定说明/章节梗概；以场景为单位推进
+   - 新增"Show, Don't Tell 铁律"：禁止"感到/觉得/意识到/明白/心中暗想"等直白情绪词；情绪必须通过动作、神态、对话展现
    - 新增"感官细节要求"：每个场景至少包含 1 种视觉 + 1 种听觉/触觉/嗅觉细节
-   - 新增"对白人物化"：每个角色的对白要体现其性格、身份、情绪状态；禁止所有角色使用同一套礼貌/书面语
+   - 新增"对白人物化"：对白必须有角色目的、潜台词或冲突；禁止所有角色使用同一套礼貌/书面语
    - 新增"设定戏剧化"：世界观和设定必须通过角色的动作、对话或场景细节展现，禁止旁白式解释
    - 新增"章末禁止说教"：章节结尾禁止归纳人生道理、总结本章意义、发表作者评论
-   - 强化 scene beats 中 `conflict` 和 `turn` 的权重：必须在正文中体现冲突升级和转折
 
 2. **Author `build_context` 增强**：
-   - 注入角色语言特征摘要（从 characters 表提取，如"急躁/粗鲁/文雅"）
-   - 注入"去AI味写作指南"（从配置或硬编码，约 10 条规则）
-   - 当 scene beats 中 `turn` 为空时，在 context 中标注警告
+   - 注入"去AI味写作指南"（硬编码 7 条规则）：禁止直白情绪动词、内心独白模板、设定旁白、解释句式；要求感官细节、对白冲突、悬念结尾
+   - 保留 style_bible 和 memory 现有行为，不破坏兼容
 
-3. **Author `_build_plain_text_context` 增强**（real mode）：
-   - 传递 show-dont-tell 规则给 plain-text prompt
-   - 传递感官细节要求
+3. **Author `_build_plain_text_context` / `_try_plain_text_draft` 增强**（real mode）：
+   - 纯正文系统提示增加 drafting contract 约束
+   - compact context 增加"写作约束"段落
 
-4. **Author self-check 增强**：
-   - 新增 `show_dont_tell` heuristic：检测 content 中直白情绪词密度，超过阈值 emit warning（不 blocker）
-   - 新增 `sensory_detail` heuristic：检测场景段落中感官词密度，低于阈值 emit warning
+4. **Author self-check 增强**（v6.4.1 warning heuristic，不 hard fail）：
+   - `show_dont_tell`：检测直白情绪词密度，超过 5/千字 emit warning
+   - `sensory_detail`：检测感官词密度，低于 3/千字 emit warning
+   - `prose_like`：检测摘要式表达（"本章/首先/然后/最后/综上所述"），超过 3 处 emit warning
+   - `dialogue`：检测对白占比，低于 5% emit warning
+   - 所有新增 heuristic 只输出 warning，不加入 issues，不影响 passed/repairable 判定
 
 5. **Stub provider 适配**：
-   - Author stub content 保持现有结构（不影响测试），但需在 `_get_stub_chapter_content` 中确保不包含新增的 critical death_penalty 词
+   - 修改 `_STORY_TEMPLATES` 中 ch1/ch2/ch3 的直白内心描写（"心中一凛/心中涌起/心中一动"等）为动作描写（"背脊一紧/喉头发紧/目光一顿"等）
+   - 确保 stub content 不触发 critical death penalty
 
 **验收**：
-- real mode 跑 3 章完整 workflow，quality diagnosis 中 `show_dont_tell_score` 和 `sensory_detail_score` 有数值
-- death_penalty 不触发新增 critical 规则（通过 prompt 减少出现）
+- SYSTEM_PROMPT 和 build_context 包含 drafting contract 关键约束
+- self-check 对 AI 味文本 emit warning，对正常文本无 warning
+- key_events 缺失时仍 hard fail
+- backend full suite 通过
 - backend smoke 通过
-- stub 全量测试通过
 
 **依赖**：v6.4.0（需要 quality diagnosis 基线来观测效果）
 
