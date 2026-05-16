@@ -595,6 +595,11 @@ function ContentBody({
 
       {!chapterLoading && hasContent && !isStreaming && (
         <>
+          <QualityDiagnosisPanel
+            projectId={projectId}
+            chapterNumber={currentChapter}
+            chapterStatus={chapterDetail?.status || ''}
+          />
           <ChapterEditorSurface
             projectId={projectId}
             chapterNumber={currentChapter}
@@ -603,11 +608,6 @@ function ContentBody({
             initialWordCount={chapterDetail?.word_count || 0}
             initialStatus={chapterDetail?.status || ''}
             initialVersionLabel={`更新时间 ${chapterDetail?.updated_at || chapterDetail?.created_at || '-'}`}
-          />
-          <QualityDiagnosisPanel
-            projectId={projectId}
-            chapterNumber={currentChapter}
-            chapterStatus={chapterDetail?.status || ''}
           />
         </>
       )}

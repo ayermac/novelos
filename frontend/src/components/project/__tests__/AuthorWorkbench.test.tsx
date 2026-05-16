@@ -1,5 +1,5 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import AuthorWorkbench from '../AuthorWorkbench'
 
 // Mock API
@@ -1037,6 +1037,32 @@ describe('AuthorWorkbench', () => {
     )
     const skeletonStack = document.querySelector('.ui-skeleton-stack')
     expect(skeletonStack).toBeInTheDocument()
+  })
+
+  it('places quality diagnosis before the chapter editor for quick access', async () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        chapterDetail={{
+          project_id: 'test-proj',
+          project_name: '测试项目',
+          chapter_number: 3,
+          title: '第三章',
+          content: '正文内容',
+          word_count: 3800,
+          status: 'drafted',
+          quality_score: null,
+          created_at: '2026-05-16 10:00:00',
+          updated_at: '2026-05-16 10:00:00',
+        }}
+      />
+    )
+
+    const diagnosis = screen.getByLabelText('质量诊断')
+    await waitFor(() => expect(document.querySelector('.chapter-editor-surface')).toBeInTheDocument())
+    const editor = document.querySelector('.chapter-editor-surface')
+    expect(editor).toBeInTheDocument()
+    expect(diagnosis.compareDocumentPosition(editor!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
   it('empty state shows actionable next steps for ungenerated chapter', () => {

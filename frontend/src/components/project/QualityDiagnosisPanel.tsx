@@ -287,7 +287,7 @@ export default function QualityDiagnosisPanel({
 
       <style>{`
         .quality-diagnosis {
-          margin: 18px 0 0;
+          margin: 0 0 16px;
           border: 1px solid rgba(148, 163, 184, 0.28);
           border-radius: 8px;
           background: #fff;
