@@ -444,8 +444,8 @@ class StubLLM(LLMProvider):
             return {
                 "content": chapter_data["content"],
                 "fact_change_risk": "none",
-                "changed_scope": ["sentence", "rhythm"],
-                "summary": "微调表达",
+                "changed_scope": ["sentence", "dialogue", "rhythm", "scene_texture"],
+                "summary": "优化句式节奏，调整对白语气，补充场景细节",
             }
         if "Editor" in schema_name:
             return {

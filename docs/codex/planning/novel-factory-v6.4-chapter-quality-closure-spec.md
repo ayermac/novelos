@@ -91,31 +91,40 @@
 
 **目标**：Polisher 专项提升对白和场景质感。
 
+**状态**：已实现
+
 **改动**：
 1. **Polisher SYSTEM_PROMPT 增强**：
+   - 新增"职责边界"段落：明确保留剧情事实、关键事件、伏笔和角色动机，不得改写剧情走向
    - 新增"对白自然化"：将功能化对白改为口语化；增加语气词、省略、打断、反问；让不同角色的对白在句式长度、用词习惯上有差异
    - 新增"场景质感增强"：在场景描写中补充感官细节（光影、声音、温度、气味）；将抽象描述改为具体动作
    - 新增"节奏调整"：打破均匀段落，在紧张场景使用短句/短段，在描写场景使用长句但避免超长句（>40字）
-   - 新增"去直白情绪"：将"他感到愤怒"改为"他攥紧拳头，指节发白"
+   - 新增"去AI味"：删减总结句（"综上所述/总之/简单来说"）、直白心理解释和宏大空泛判断
 
-2. **PolisherOutput schema 可选增强**（不破坏现有契约）：
-   - 新增可选字段：`dialogue_quality`（对白质量自评）、`scene_texture`（场景质感自评）、`rhythm_score`（节奏自评）
-   - 这些字段 Polisher LLM 可选择性填充，系统不强制要求
+2. **Polisher `build_context` 增强**（v6.4.2）：
+   - 在 ContextBuilder 输出后追加"润色写作提醒"段落
+   - 将 v6.4.0 quality diagnosis 的维度（对白自然度、场景质感、节奏变化、Show-Don't-Tell）转化为写作提醒注入 prompt
+   - 不调用 API、不触发 LLM 以外流程
 
-3. **HumanizerZhSkill 增强**：
-   - 新增替换规则："感到/觉得/意识到/明白/知道/理解" → 动作化改写（标记为 `show_dont_tell` 类型）
-   - 新增替换规则：功能化对白标记 → 口语化建议（标记为 `dialogue_functional` 类型，不自动替换，只标记）
-   - 新增替换规则：设定旁白解释模式（"这个世界是一个..." / "在这个世界里..."）→ 标记为 `info_dump`
+3. **Polisher deterministic self-check warnings**（v6.4.2，不影响路由）：
+   - `dialogue_naturalness_low`：对白占比 < 5% 或口语化标记不足时 emit warning
+   - `scene_texture_low`：感官细节密度 < 3/千字时 emit warning
+   - `excessive_explanation`：直白情绪词密度 > 5/千字或存在总结句时 emit warning
+   - `pacing_too_uniform`：段落长度变异系数 < 0.25 时 emit warning
+   - warnings 通过 execution events 上报，不影响 passed/repair_needed/workflow 路由
 
-4. **AIStyleDetector 增强**：
-   - 新增检测维度：`straight_emotion`（直白情绪词密度），权重 0.20
-   - 新增检测维度：`info_dump`（设定旁白密度），权重 0.10
-   - 调整阈值：fail_threshold 保持 70，但 `straight_emotion` 单独超过 60 时 emit warning
+4. **Stub provider 最小调整**：
+   - Polisher stub 的 `changed_scope` 增加 `dialogue` 和 `scene_texture`
+   - `summary` 从"微调表达"改为更具体的"优化句式节奏，调整对白语气，补充场景细节"
+
+5. **HumanizerZhSkill / AIStyleDetector**：
+   - v6.4.2 保持现有 skill 行为不变，不做额外增强（推迟到 v6.4.3 skill 层统一处理）
 
 **验收**：
-- HumanizerZhSkill 对包含"感到愤怒"的测试文本返回 `show_dont_tell` 类型 changes
-- AIStyleDetector 对包含直白情绪的测试文本返回 `straight_emotion_score > 50`
-- Polisher 的 `changed_scope` 中可能出现 `dialogue`、`scene_texture`、`rhythm`
+- SYSTEM_PROMPT 包含职责边界、对白自然化、场景质感、节奏变化、去AI味约束
+- build_context 包含"润色写作提醒"段落
+- self-check 对低质量文本 emit warning，对正常 stub 文本无 excessive_explanation / pacing_too_uniform warning
+- warnings 不阻断 workflow，状态正常推进到 polished
 - backend 全量测试通过
 
 **依赖**：v6.4.1（Author prompt 先减少 AI 味输入，Polisher 才有更好的基础）

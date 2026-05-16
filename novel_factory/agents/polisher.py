@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+import statistics
 import time
 from typing import Any
 
@@ -21,24 +23,36 @@ from ..agent_runtime.skill_hooks import run_agent_skills
 
 logger = logging.getLogger(__name__)
 
-POLISHER_SYSTEM_PROMPT = """你是网文工厂的润色编辑（Polisher），负责清理草稿中的问题。
+POLISHER_SYSTEM_PROMPT = """你是网文工厂的润色编辑（Polisher），负责将草稿改写成"像人写过"的小说段落。
 
-职责：
-1. 清理 AI 味表达、模板化句式和陈词滥调
-2. 优化语言质感、对话节奏、场景转换和动作描写
-3. 保持剧情事实、伏笔、角色动机和数值状态不变
-4. 输出润色报告，说明改动范围和风险
+职责边界（不可逾越）：
+1. 保留剧情事实、关键事件、伏笔和角色动机——不得改写剧情走向
+2. 不新增或删除关键事件
+3. 不改写 Planner 的伏笔计划
+4. 不替 Editor 做通过/退回判断
 
-核心约束：
-- 不改变剧情事实
-- 不新增或删除关键事件
-- 不改写 Planner 的伏笔计划
-- 不替 Editor 做通过/退回判断
+润色重点（v6.4.2）：
+1. 对白自然化
+   - 减少功能性问答式对白，让对白承载目的、遮掩、试探或情绪摩擦
+   - 加入语气词、省略、打断、反问，避免所有角色使用同一套书面语
+   - 不同角色的句式长度、用词习惯应有差异
+2. 场景质感增强
+   - 补充动作细节、环境反馈和感官线索（光影、声音、温度、气味）
+   - 将抽象描述改为具体动作，避免形容词堆砌
+   - 每个场景至少保留一种视觉 + 一种其他感官细节
+3. 节奏变化
+   - 打破均匀段落，长短句交替
+   - 紧张场景使用短句/短段，描写场景可用长句但避免超长句（>40字）
+   - 避免连续多个段落长度相近
+4. 减少 AI 味
+   - 删减总结句（"综上所述/总之/简单来说"）
+   - 将直白心理解释（"他感到愤怒"）改为动作或神态（"他攥紧拳头，指节发白"）
+   - 删除宏大空泛判断（"这一刻，他知道，一切都将改变"）
 
 输出格式：严格按 JSON 格式输出，包含：
 - content: 润色后的正文
 - fact_change_risk: 事实变更风险（none/low/high，必须为 none）
-- changed_scope: 改动范围列表（如 sentence, dialogue, rhythm）
+- changed_scope: 改动范围列表（如 sentence, dialogue, rhythm, scene_texture）
 - summary: 润色摘要"""
 
 
@@ -63,6 +77,7 @@ class PolisherAgent(BaseAgent):
 
         This ensures fact_lock, death_penalty, instruction, learned_patterns,
         and best_practices are injected into the actual LLM messages.
+        v6.4.2: Appends polishing writing reminders derived from quality diagnosis dimensions.
         """
         builder = ContextBuilder(self.repo)
         title_contract = self._get_title_contract_context(state["project_id"])
@@ -81,6 +96,18 @@ class PolisherAgent(BaseAgent):
             if feedback:
                 parts.append(feedback)
         parts.append(context)
+
+        # v6.4.2: Inject quality-diagnosis-derived writing reminders
+        parts.append(
+            "【润色写作提醒】\n"
+            "1. 对白自然化：检查是否有功能性问答，尝试加入语气词、打断、省略或反问；"
+            "让不同角色的句式长度和用词习惯有差异。\n"
+            "2. 场景质感：确保每个场景有视觉细节 + 至少一种听觉/触觉/嗅觉细节；"
+            "将抽象描述（\"他很紧张\"）改为具体动作（\"他攥紧拳头\"）。\n"
+            "3. 节奏变化：避免连续多个段落长度相近；紧张处用短句，描写处可用长句但避免>40字。\n"
+            "4. 去AI味：删除总结句（\"总之/简单来说\"）、直白心理解释和宏大空泛判断。\n"
+            "5. Show, Don't Tell：将\"感到/觉得/意识到/明白\"等直白情绪词改为动作或神态。"
+        )
         return "\n\n".join(parts)
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:
@@ -257,6 +284,16 @@ class PolisherAgent(BaseAgent):
                             "chapter_status": state.get("chapter_status"),
                         }
 
+        # v6.4.2: Deterministic self-check warnings (do NOT affect routing)
+        warnings = self._run_polisher_warnings(polished_content)
+        if warnings:
+            exec_events.append({
+                "event_type": "polisher_warnings",
+                "message": f"润色自检提醒：{len(warnings)} 项",
+                "status": "warning",
+                "payload": {"warnings": warnings},
+            })
+
         # Advance status FIRST to lock the transition; abort if stale.
         # Normal flow polishes a drafted chapter; revision flow polishes a
         # chapter currently marked revision.
@@ -361,6 +398,83 @@ class PolisherAgent(BaseAgent):
             "current_stage": "polished",
             "_exec_events": exec_events,
         }
+
+    def _run_polisher_warnings(self, text: str) -> list[str]:
+        """v6.4.2: Deterministic warnings on polished content.
+
+        These are advisory only and do NOT affect passed/repair_needed/workflow routing.
+        """
+        warnings: list[str] = []
+        if not text:
+            return warnings
+
+        # Exclude dialogue from narrative-only checks
+        narrative_only = re.sub(r'[""「『].*?[""」』]', '「D」', text, flags=re.DOTALL)
+        total_chars = max(len(text), 1)
+
+        # 1. dialogue_naturalness_low — low dialogue ratio or overly formal dialogue
+        dialogues = re.findall(r'[""“”「『]([^""”」』]+)[""”」』]', text)
+        dialogue_chars = sum(len(d) for d in dialogues)
+        dialogue_ratio = dialogue_chars / total_chars
+        if dialogue_ratio < 0.05:
+            warnings.append(
+                f"dialogue_naturalness_low: 对白占比 {dialogue_ratio*100:.1f}%，"
+                "建议增加有冲突或潜台词的角色对话"
+            )
+        else:
+            # Check for overly formal dialogue (rare colloquial marks)
+            colloquial_marks = ["啊", "呢", "吧", "嘛", "哦", "呀", "哈", "哼", "呸"]
+            colloquial_count = sum(1 for d in dialogues for m in colloquial_marks if m in d)
+            if dialogues and colloquial_count / len(dialogues) < 0.1:
+                warnings.append(
+                    "dialogue_naturalness_low: 对白口语化标记不足，"
+                    "建议加入语气词、省略或打断"
+                )
+
+        # 2. scene_texture_low — low sensory detail density
+        sensory_words = ["光", "影", "声", "响", "味", "香", "臭", "冷", "热", "湿", "干燥", "干涩", "风", "雨", "雷", "温度", "颜色", "色彩"]
+        sensory_count = sum(text.count(w) for w in sensory_words)
+        sensory_per_1k = (sensory_count / total_chars) * 1000
+        if sensory_per_1k < 3:
+            warnings.append(
+                f"scene_texture_low: 感官细节密度 {sensory_per_1k:.1f}/千字，"
+                "建议补充光影、声音、温度或气味等感官线索"
+            )
+
+        # 3. excessive_explanation — straight emotion + summary markers in narrative
+        straight_patterns = [
+            r"感到[^，。！？]{1,8}", r"觉得[^，。！？]{1,8}", r"意识到[^，。！？]{1,8}",
+            r"明白[^，。！？]{1,8}", r"知道[^，。！？]{1,8}", r"理解[^，。！？]{1,8}",
+            r"察觉[^，。！？]{1,8}", r"发现[^，。！？]{1,8}", r"心中暗想", r"心道", r"暗道",
+        ]
+        straight_count = sum(len(re.findall(p, narrative_only)) for p in straight_patterns)
+        explain_per_1k = (straight_count / total_chars) * 1000
+        summary_markers = ["综上所述", "总之", "简单来说", "说白了", "总而言之"]
+        summary_count = sum(1 for m in summary_markers if m in text)
+        if explain_per_1k > 5:
+            warnings.append(
+                f"excessive_explanation: 直白情绪词密度 {explain_per_1k:.1f}/千字，"
+                "建议改为动作或神态展现"
+            )
+        if summary_count > 0:
+            warnings.append(
+                f"excessive_explanation: 检测到 {summary_count} 处总结句，建议删除"
+            )
+
+        # 4. pacing_too_uniform — paragraph length uniformity
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        if len(paragraphs) >= 5:
+            lengths = [len(p) for p in paragraphs]
+            avg_len = statistics.mean(lengths)
+            if avg_len > 0:
+                cv = statistics.stdev(lengths) / avg_len if len(lengths) > 1 else 0
+                if cv < 0.25:
+                    warnings.append(
+                        f"pacing_too_uniform: 段落长度过于均匀（变异系数 {cv:.2f}），"
+                        "建议长短句交替，打破均匀节奏"
+                    )
+
+        return warnings
 
     def validate_output(self, output: dict) -> None:
         parsed = PolisherOutput(**output)
