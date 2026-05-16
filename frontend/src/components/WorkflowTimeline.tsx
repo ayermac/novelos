@@ -202,19 +202,26 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
                       </div>
                       {step.events!.map((ev, idx) => {
                         const isLowChange = ev.payload && (ev.payload as Record<string, unknown>).low_change_warning === true
+                        const hasMeta = (ev.latency_ms != null && ev.latency_ms > 0) || (ev.token_count != null && ev.token_count > 0)
                         return (
                           <div key={ev.id || `ev-${idx}`} className={`exec-event exec-event-${ev.status || 'info'}${isLowChange ? ' exec-event-low-change' : ''}`}>
                             <span className="exec-event-dot" />
-                            <span className="exec-event-type">{eventLabel(ev.event_type)}</span>
-                            <span className="exec-event-msg">{ev.message || ''}</span>
-                            {isLowChange && (
-                              <span className="exec-event-warn-tag">内容几乎未变</span>
-                            )}
-                            {ev.latency_ms != null && ev.latency_ms > 0 && (
-                              <span className="exec-event-meta">{(ev.latency_ms / 1000).toFixed(1)}s</span>
-                            )}
-                            {ev.token_count != null && ev.token_count > 0 && (
-                              <span className="exec-event-meta">{ev.token_count} tokens</span>
+                            <span className="exec-event-main">
+                              <span className="exec-event-type">{eventLabel(ev.event_type)}</span>
+                              <span className="exec-event-msg">{ev.message || ''}</span>
+                              {isLowChange && (
+                                <span className="exec-event-warn-tag">内容几乎未变</span>
+                              )}
+                            </span>
+                            {hasMeta && (
+                              <span className="exec-event-metas">
+                                {ev.token_count != null && ev.token_count > 0 && (
+                                  <span className="exec-event-meta">{ev.token_count} tokens</span>
+                                )}
+                                {ev.latency_ms != null && ev.latency_ms > 0 && (
+                                  <span className="exec-event-meta">{(ev.latency_ms / 1000).toFixed(1)}s</span>
+                                )}
+                              </span>
                             )}
                           </div>
                         )
@@ -449,8 +456,8 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
         }
         .wf-timeline .exec-event {
           display: grid;
-          grid-template-columns: auto minmax(0, 1fr) auto auto;
-          align-items: center;
+          grid-template-columns: auto minmax(0, 1fr) auto;
+          align-items: start;
           gap: 7px;
           font-size: 12px;
           line-height: 1.5;
@@ -478,6 +485,13 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           min-width: 0;
           overflow-wrap: anywhere;
         }
+        .wf-timeline .exec-event-main {
+          min-width: 0;
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          flex-wrap: wrap;
+        }
         .wf-timeline .exec-event-type {
           font-size: 11px;
           font-weight: 500;
@@ -501,6 +515,13 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           padding: 1px 5px;
           background: #fef3c7;
           border-radius: 3px;
+          white-space: nowrap;
+        }
+        .wf-timeline .exec-event-metas {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 7px;
           white-space: nowrap;
         }
         .wf-timeline .exec-event-meta {
