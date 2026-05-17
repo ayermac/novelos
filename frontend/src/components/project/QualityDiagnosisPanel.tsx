@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { get } from '../../lib/api'
 import { ChevronDown, AlertCircle, AlertTriangle, Info, CheckCircle2, BarChart3 } from 'lucide-react'
 import { InlineMessage, LoadingButton, SkeletonStack, useToast } from '../ui'
@@ -7,6 +7,7 @@ interface QualityDiagnosisPanelProps {
   projectId: string
   chapterNumber: number
   chapterStatus: string
+  onScoreChange?: (score: number) => void
 }
 
 interface QualityFinding {
@@ -113,6 +114,7 @@ export default function QualityDiagnosisPanel({
   projectId,
   chapterNumber,
   chapterStatus,
+  onScoreChange,
 }: QualityDiagnosisPanelProps) {
   const { showToast } = useToast()
   const [open, setOpen] = useState(false)
@@ -133,6 +135,7 @@ export default function QualityDiagnosisPanel({
       )
       if (res.ok && res.data) {
         setDiagnosis(res.data)
+        onScoreChange?.(res.data.overall_score)
         if (showSuccess) {
           showToast({
             tone: 'success',
@@ -152,7 +155,13 @@ export default function QualityDiagnosisPanel({
     } finally {
       setLoading(false)
     }
-  }, [open, diagnosis, projectId, chapterNumber, showToast])
+  }, [open, diagnosis, projectId, chapterNumber, showToast, onScoreChange])
+
+  useEffect(() => {
+    setOpen(false)
+    setDiagnosis(null)
+    setError('')
+  }, [projectId, chapterNumber, chapterStatus])
 
   const toggle = () => {
     if (!open) load()

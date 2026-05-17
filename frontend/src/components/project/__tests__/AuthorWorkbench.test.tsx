@@ -1,6 +1,7 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import AuthorWorkbench from '../AuthorWorkbench'
+import { get } from '../../../lib/api'
 
 // Mock API
 vi.mock('../../../lib/api', () => ({
@@ -59,6 +60,7 @@ const baseProps = {
 describe('AuthorWorkbench', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(get).mockResolvedValue({ ok: true, data: null })
     baseProps.isChapterWorkflowRunning.mockReturnValue(false)
   })
 
@@ -1063,6 +1065,58 @@ describe('AuthorWorkbench', () => {
     const editor = document.querySelector('.chapter-editor-surface')
     expect(editor).toBeInTheDocument()
     expect(diagnosis.compareDocumentPosition(editor!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  it('syncs the header quality score with the opened diagnosis score', async () => {
+    vi.mocked(get).mockImplementation(async (path: string) => {
+      if (path.includes('/quality-diagnosis')) {
+        return {
+          ok: true,
+          data: {
+            overall_score: 69.2,
+            dimensions: { death_penalty: 100, narrative_quality: 58 },
+            findings: [],
+            metrics: {
+              word_count: 3992,
+              paragraph_count: 129,
+              sentence_count: 187,
+              avg_sentence_length: 19.6,
+              dialogue_ratio: 0,
+              dialogue_count: 0,
+            },
+          },
+        }
+      }
+      return { ok: true, data: null }
+    })
+
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        currentChapterRecord={{ chapter_number: 3, status: 'drafted', word_count: 3800, title: '第三章', quality_score: 83 }}
+        chapterDetail={{
+          project_id: 'test-proj',
+          project_name: '测试项目',
+          chapter_number: 3,
+          title: '第三章',
+          content: '正文内容',
+          word_count: 3800,
+          status: 'drafted',
+          quality_score: 83,
+          created_at: '2026-05-16 10:00:00',
+          updated_at: '2026-05-16 10:00:00',
+        }}
+      />
+    )
+
+    const strip = document.querySelector('.author-readiness-strip')
+    expect(strip?.textContent).toContain('83')
+
+    const diagnosis = screen.getByLabelText('质量诊断')
+    fireEvent.click(within(diagnosis).getByRole('button'))
+
+    await waitFor(() => expect(strip?.textContent).toContain('诊断分'))
+    expect(strip?.textContent).toContain('69')
   })
 
   it('empty state shows actionable next steps for ungenerated chapter', () => {

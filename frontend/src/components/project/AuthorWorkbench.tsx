@@ -93,6 +93,7 @@ interface AuthorWorkbenchProps {
   onPublish?: () => void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
   onRetryRunNode?: (runId: string) => Promise<void> | void
+  onWorkflowDone?: (runId: string, status: string | null) => void
   onResetRunRecoveryForChapter?: (chapterNumber: number) => Promise<void> | void
   publishPending?: boolean
   markStuckPending?: boolean
@@ -137,6 +138,7 @@ export default function AuthorWorkbench({
   onPublish,
   onResetRunRecovery,
   onRetryRunNode,
+  onWorkflowDone,
   onResetRunRecoveryForChapter,
   publishPending,
   markStuckPending,
@@ -192,6 +194,7 @@ export default function AuthorWorkbench({
         onPublish={onPublish}
         onResetRunRecovery={onResetRunRecovery}
         onRetryRunNode={onRetryRunNode}
+        onWorkflowDone={onWorkflowDone}
         publishPending={publishPending}
         markStuckPending={markStuckPending}
         resetRecoveryPending={resetRecoveryPending}

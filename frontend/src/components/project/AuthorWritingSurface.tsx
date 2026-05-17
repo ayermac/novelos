@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Sparkles,
@@ -232,6 +232,7 @@ interface AuthorWritingSurfaceProps {
   onPublish?: () => void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
   onRetryRunNode?: (runId: string) => Promise<void> | void
+  onWorkflowDone?: (runId: string, status: string | null) => void
   publishPending?: boolean
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
@@ -267,6 +268,7 @@ export default function AuthorWritingSurface({
   onPublish,
   onResetRunRecovery,
   onRetryRunNode,
+  onWorkflowDone,
   publishPending,
   markStuckPending,
   resetRecoveryPending,
@@ -277,13 +279,20 @@ export default function AuthorWritingSurface({
   onRefreshContent,
 }: AuthorWritingSurfaceProps) {
   void _onViewContent
+  const [diagnosisQualityScore, setDiagnosisQualityScore] = useState<number | null>(null)
   const hasContent = (chapterDetail?.word_count || 0) > 0
   const status = currentChapterRecord?.status || ''
   const isTerminal = ['reviewed', 'awaiting_publish', 'published'].includes(status)
   const isReviewedReal = status === 'reviewed' && llmMode === 'real'
   const hasPreservedPlannedContent = status === 'planned' && (currentChapterRecord?.word_count || chapterDetail?.word_count || 0) > 0
-  const qualityScore = chapterDetail?.quality_score ?? currentChapterRecord?.quality_score ?? null
+  const persistedQualityScore = chapterDetail?.quality_score ?? currentChapterRecord?.quality_score ?? null
+  const qualityScore = diagnosisQualityScore !== null ? Math.round(diagnosisQualityScore) : persistedQualityScore
+  const qualitySourceLabel = diagnosisQualityScore !== null ? '诊断分' : '质量'
   const statusLabel = tChapterStatus(status)
+
+  useEffect(() => {
+    setDiagnosisQualityScore(null)
+  }, [projectId, currentChapter, chapterDetail?.updated_at, chapterDetail?.word_count])
 
   const tabs: { key: SurfaceTabKey; label: string; disabled?: boolean }[] = [
     { key: 'content', label: '正文' },
@@ -375,7 +384,7 @@ export default function AuthorWritingSurface({
           <span>{qualityScore ?? '—'}</span>
         </div>
         <div className="author-readiness-cell">
-          <strong>质量</strong>
+          <strong>{qualitySourceLabel}</strong>
           <span>{qualityScore !== null ? (qualityScore >= 85 ? '优秀' : qualityScore >= 70 ? '稳定' : '待增强') : '待评估'}</span>
         </div>
         <div className="author-readiness-cell">
@@ -414,6 +423,7 @@ export default function AuthorWritingSurface({
             onGenerate={onGenerate}
             onConfirmRegenerate={onConfirmRegenerate}
             onRefreshContent={onRefreshContent}
+            onDiagnosisScoreChange={setDiagnosisQualityScore}
             regeneratePending={regeneratePending}
           />
         )}
@@ -428,6 +438,7 @@ export default function AuthorWritingSurface({
             onMarkRunStuck={onMarkRunStuck}
             onResetRunRecovery={onResetRunRecovery}
             onRetryRunNode={onRetryRunNode}
+            onWorkflowDone={onWorkflowDone}
             markStuckPending={markStuckPending}
             resetRecoveryPending={resetRecoveryPending}
           />
@@ -469,6 +480,7 @@ function ContentBody({
   onGenerate,
   onConfirmRegenerate,
   onRefreshContent,
+  onDiagnosisScoreChange,
   regeneratePending,
 }: {
   chapterDetail: ChapterDetail | null
@@ -485,6 +497,7 @@ function ContentBody({
   onGenerate: () => void
   onConfirmRegenerate?: () => void
   onRefreshContent?: () => void
+  onDiagnosisScoreChange?: (score: number) => void
   regeneratePending?: boolean
 }) {
   const { showToast } = useToast()
@@ -652,6 +665,7 @@ function ContentBody({
             projectId={projectId}
             chapterNumber={currentChapter}
             chapterStatus={chapterDetail?.status || ''}
+            onScoreChange={onDiagnosisScoreChange}
           />
           <ChapterEditorSurface
             projectId={projectId}
@@ -682,6 +696,7 @@ function WorkflowBody({
   onMarkRunStuck,
   onResetRunRecovery,
   onRetryRunNode,
+  onWorkflowDone,
   markStuckPending,
   resetRecoveryPending,
 }: {
@@ -694,17 +709,24 @@ function WorkflowBody({
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
   onRetryRunNode?: (runId: string) => Promise<void> | void
+  onWorkflowDone?: (runId: string, status: string | null) => void
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
 }) {
   // v6.1: Connect to SSE stream for live execution events while running
   const isRunActive = timeline?.run_status === 'running'
-  const { liveEvents } = useWorkflowStream(
+  const { liveEvents, doneStatus } = useWorkflowStream(
     isRunActive ? timeline?.project_id ?? null : null,
     isRunActive ? timeline?.chapter_number ?? null : null,
     isRunActive ? timeline?.run_id ?? null : null,
     isRunActive,
   )
+
+  useEffect(() => {
+    if (doneStatus && timeline?.run_id) {
+      onWorkflowDone?.(timeline.run_id, doneStatus)
+    }
+  }, [doneStatus, onWorkflowDone, timeline?.run_id])
 
   // v5.8.2: Timeline API is the primary workflow truth when available.
   if (timeline) {

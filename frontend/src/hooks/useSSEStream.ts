@@ -108,7 +108,8 @@ function workflowEventStepStatus(event: WorkflowStreamEvent): StepStatus['status
  */
 export function useSSEStream(
   onComplete?: (event: SSEEvent) => void,
-  onError?: (error: string, event?: SSEEvent) => void
+  onError?: (error: string, event?: SSEEvent) => void,
+  onLaunch?: (event: LaunchResponse) => void
 ): UseSSEStreamResult {
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -163,6 +164,7 @@ export function useSSEStream(
 
       const data = launch.data as LaunchResponse;
       const runId = data.run_id;
+      onLaunch?.(data);
       const url = apiUrl(`/projects/${encodeURIComponent(projectId)}/chapters/${chapter}/workflow-stream?run_id=${encodeURIComponent(runId)}`);
       const eventSource = new EventSource(url);
       eventSourceRef.current = eventSource;
@@ -339,7 +341,7 @@ export function useSSEStream(
       setIsStreaming(false);
       onError?.(message);
     });
-  }, [onComplete, onError]);
+  }, [onComplete, onError, onLaunch]);
 
   useEffect(() => {
     return () => {

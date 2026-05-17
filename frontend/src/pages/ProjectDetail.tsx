@@ -243,7 +243,7 @@ export default function ProjectDetail() {
 
     const timer = window.setInterval(() => {
       loadTimeline(id, currentChapter, { silent: true })
-    }, 5000)
+    }, 2000)
 
     return () => window.clearInterval(timer)
   }, [
@@ -269,7 +269,7 @@ export default function ProjectDetail() {
     const timer = window.setInterval(() => {
       loadRunDetail(pollingRunId, { silent: true })
       refetchWorkspace()
-    }, 5000)
+    }, 2000)
 
     return () => window.clearInterval(timer)
   }, [
@@ -296,6 +296,7 @@ export default function ProjectDetail() {
     }
     refetchWorkspace()
     if (completedChapter === visibleChapter) {
+      if (id) loadTimeline(id, visibleChapter, { silent: true })
       get<ChapterDetail>(`/projects/${id}/chapters/${visibleChapter}`)
         .then((r) => {
           if (r.ok && r.data) setChapterDetail(r.data)
@@ -303,7 +304,7 @@ export default function ProjectDetail() {
         })
         .catch(() => setGenError('获取章节详情失败'))
     }
-  }, [id, loadRunDetail, refetchWorkspace])
+  }, [id, loadRunDetail, loadTimeline, refetchWorkspace])
 
   const handleSSEError = useCallback((error: string, event?: SSEEvent) => {
     const failedChapter = streamingChapterRef.current
@@ -313,6 +314,8 @@ export default function ProjectDetail() {
     streamingChapterRef.current = null
     refetchWorkspace()
     if (failedChapter === visibleChapter) {
+      if (event?.run_id) loadRunDetail(event.run_id, { silent: true })
+      if (id) loadTimeline(id, visibleChapter, { silent: true })
       setGenError(error)
       if (event?.context_incomplete) {
         setGenErrorDetails({
@@ -329,11 +332,23 @@ export default function ProjectDetail() {
         setGenErrorDetails(null)
       }
     }
-  }, [refetchWorkspace, setSearchParams])
+  }, [id, loadRunDetail, loadTimeline, refetchWorkspace, setSearchParams])
+
+  const handleSSELaunch = useCallback((event: { run_id: string; project_id: string; chapter: number }) => {
+    const visibleChapter = currentChapterRef.current
+    if (event.chapter !== visibleChapter) return
+    setRunDetail(null)
+    setTimeline(null)
+    setTimelineError('')
+    loadRunDetail(event.run_id, { silent: true })
+    loadTimeline(event.project_id, event.chapter, { silent: true })
+    refetchWorkspace()
+  }, [loadRunDetail, loadTimeline, refetchWorkspace])
 
   const { isStreaming, steps: sseHookSteps, startStream } = useSSEStream(
     handleSSEComplete,
-    handleSSEError
+    handleSSEError,
+    handleSSELaunch,
   )
 
   // Sync SSE steps to local state for rendering
@@ -383,6 +398,9 @@ export default function ProjectDetail() {
     setGenError('')
     setGenErrorDetails(null)
     setSseSteps({})
+    setRunDetail(null)
+    setTimeline(null)
+    setTimelineError('')
     setActiveTab('workflow')
     setSearchParams({
       chapter: String(chapterNumber),
@@ -438,6 +456,16 @@ export default function ProjectDetail() {
       view: 'workflow',
     }, { replace: true })
   }
+
+  const handleWorkflowDone = useCallback((runId: string) => {
+    loadRunDetail(runId, { silent: true })
+    if (!id) return
+    loadTimeline(id, currentChapterRef.current, { silent: true })
+    refetchWorkspace()
+    get<ChapterDetail>(`/projects/${id}/chapters/${currentChapterRef.current}`)
+      .then((r) => { if (r.ok && r.data) setChapterDetail(r.data) })
+      .catch(() => {})
+  }, [id, loadRunDetail, loadTimeline, refetchWorkspace])
 
   const handleViewContent = useCallback(() => {
     handleOpenChapterView(currentChapter, 'content')
@@ -684,6 +712,7 @@ export default function ProjectDetail() {
           onPublish={handlePublish}
           onResetRunRecovery={handleResetRunRecovery}
           onRetryRunNode={handleRetryRunNode}
+          onWorkflowDone={handleWorkflowDone}
           onResetRunRecoveryForChapter={handleResetRunRecoveryForChapter}
           publishPending={publishPending}
           markStuckPending={markStuckPending}
