@@ -239,12 +239,122 @@ class PublishChapterRequest(BaseModel):
     chapter: int
 
 
+def _has_memory_curator_evidence(repo, project_id: str, chapter_number: int) -> bool:
+    """Return True when memory extraction already ran for this chapter.
+
+    A reviewed chapter can legitimately produce zero memory patches, so this
+    checks both created memory batches and completed memory_curator node events.
+    """
+    try:
+        for batch in repo.list_memory_batches(project_id):
+            if int(batch.get("chapter_number") or 0) == int(chapter_number):
+                return True
+    except Exception:
+        pass
+
+    try:
+        events = repo.get_workflow_node_events_for_chapter(project_id, chapter_number)
+        return any(
+            ev.get("node_name") == "memory_curator"
+            and ev.get("event_type") == "completed"
+            and ev.get("status") == "completed"
+            for ev in events
+        )
+    except Exception:
+        return False
+
+
+def _ensure_memory_curated_before_publish(request: Request, repo, project_id: str, chapter_number: int) -> dict:
+    """Run MemoryCurator once before manual publish when evidence is missing."""
+    if _has_memory_curator_evidence(repo, project_id, chapter_number):
+        return {"memory_curator_processed": False, "memory_curator_skipped": True}
+
+    from ..deps import get_llm_provider_for_agent, LLMConfigMissingError, get_llm_mode
+    from ...agents.memory_curator import MemoryCuratorAgent
+    from ...skills.registry import SkillRegistry
+
+    run_id = repo.create_workflow_run(
+        project_id,
+        chapter_number,
+        graph_name="manual_publish_memory",
+    )
+    repo.update_workflow_run(run_id, status="running", current_node="memory_curator")
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id=project_id,
+        chapter_number=chapter_number,
+        node_name="memory_curator",
+        event_type="started",
+        status="running",
+        message="人工发布前补充记忆提取",
+    )
+
+    try:
+        llm = get_llm_provider_for_agent(request, "memory_curator")
+    except LLMConfigMissingError as exc:
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id=project_id,
+            chapter_number=chapter_number,
+            node_name="memory_curator",
+            event_type="failed",
+            status="failed",
+            error_message=str(exc),
+        )
+        repo.update_workflow_run(run_id, status="failed", current_node="memory_curator", error_message=str(exc))
+        return {"error": str(exc), "run_id": run_id}
+
+    agent = MemoryCuratorAgent(repo, llm, skill_registry=SkillRegistry())
+    result = agent.run({
+        "project_id": project_id,
+        "chapter_number": chapter_number,
+        "chapter_status": "reviewed",
+        "workflow_run_id": run_id,
+        "llm_mode": get_llm_mode(request),
+    })
+
+    if result.get("error"):
+        error = str(result.get("error"))
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id=project_id,
+            chapter_number=chapter_number,
+            node_name="memory_curator",
+            event_type="failed",
+            status="failed",
+            error_message=error,
+        )
+        repo.update_workflow_run(run_id, status="failed", current_node="memory_curator", error_message=error)
+        return {"error": error, "run_id": run_id}
+
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id=project_id,
+        chapter_number=chapter_number,
+        node_name="memory_curator",
+        event_type="completed",
+        status="completed",
+        message="人工发布前记忆提取完成",
+        output_summary=f"{result.get('memory_items_count', 0)} 条候选记忆",
+    )
+    repo.update_workflow_run(run_id, status="completed", current_node="memory_curator", clear_error=True)
+    return {
+        "memory_curator_processed": True,
+        "memory_run_id": run_id,
+        "memory_batch_id": result.get("memory_batch_id"),
+        "memory_items_count": result.get("memory_items_count", 0),
+        "memory_curator_degraded": result.get("memory_curator_degraded", False),
+        "memory_curator_fallback": result.get("memory_curator_fallback"),
+    }
+
+
 @router.post("/publish/chapter")
 async def publish_chapter(request: Request, body: PublishChapterRequest) -> EnvelopeResponse:
     """v5.3.0: Manually publish a reviewed chapter.
 
     This endpoint is for real mode where auto-publish is disabled.
-    Only chapters with status='reviewed' can be published.
+    Only chapters with status='reviewed' can be published. Before publishing,
+    it also guarantees MemoryCurator has run at least once for this chapter.
     """
     from ..deps import get_repo
 
@@ -270,6 +380,23 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 details={"current_status": current_status},
             )
 
+        memory_result = _ensure_memory_curated_before_publish(
+            request,
+            repo,
+            body.project_id,
+            body.chapter,
+        )
+        if memory_result.get("error"):
+            return error_response(
+                "MEMORY_CURATOR_FAILED",
+                f"发布前记忆提取失败: {memory_result['error']}",
+                details={
+                    "project_id": body.project_id,
+                    "chapter": body.chapter,
+                    "run_id": memory_result.get("run_id"),
+                },
+            )
+
         # Publish the chapter
         ok = repo.publish_chapter(body.project_id, body.chapter, expected_status="reviewed")
         if not ok:
@@ -279,6 +406,7 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
             "project_id": body.project_id,
             "chapter": body.chapter,
             "chapter_status": "published",
+            **memory_result,
             "message": f"第 {body.chapter} 章已发布",
         })
 

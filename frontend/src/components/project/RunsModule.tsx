@@ -94,7 +94,7 @@ export default function RunsModule({ projectId }: Props) {
               render: (run) => (
                 <Link
                   to={`/runs/${run.run_id || run.id}`}
-                  style={{ color: 'var(--primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
+                  style={{ color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                 >
                   详情 <ExternalLink size={12} />
                 </Link>

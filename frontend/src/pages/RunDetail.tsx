@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { get, post } from '../lib/api'
 import { tWorkflowStatus, tChapterStatus, tLlmMode } from '../lib/i18n'
 import WorkflowTimeline from '../components/WorkflowTimeline'
 import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
 import { useAppDialog } from '../components/AppDialogContext'
+import { ArrowLeft, DatabaseZap } from 'lucide-react'
 
 interface Step {
   key: string
@@ -99,8 +100,17 @@ interface RunRecoveryMarkStuckResult {
   recovery: RunRecovery
 }
 
+interface MemoryBackfillResult {
+  skipped: boolean
+  run_id?: string
+  memory_batch_id?: string
+  memory_items_count?: number
+  message?: string
+}
+
 export default function RunDetail() {
   const { runId } = useParams<{ runId: string }>()
+  const navigate = useNavigate()
   const dialog = useAppDialog()
   const [data, setData] = useState<RunDetail | null>(null)
   const [recovery, setRecovery] = useState<RunRecovery | null>(null)
@@ -110,6 +120,7 @@ export default function RunDetail() {
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null)
   const [recovering, setRecovering] = useState(false)
   const [markingStuck, setMarkingStuck] = useState(false)
+  const [memoryBackfilling, setMemoryBackfilling] = useState(false)
 
   const load = async () => {
     if (!runId) return
@@ -191,6 +202,30 @@ export default function RunDetail() {
     }
   }
 
+  const handleMemoryBackfill = async () => {
+    if (!runId || memoryBackfilling) return
+    const ok = await dialog.confirm({
+      title: '补跑记忆提取',
+      message: '确认为本章补跑 Memory Curator？如果已有记忆提取证据，系统会自动跳过。',
+      tone: 'warning',
+      confirmLabel: '补跑记忆',
+    })
+    if (!ok) return
+
+    setMemoryBackfilling(true)
+    setRecoveryError(null)
+    setRecoveryMessage(null)
+    const result = await post<MemoryBackfillResult>(`/runs/${runId}/memory/backfill`, { confirm: true })
+    setMemoryBackfilling(false)
+
+    if (result.ok && result.data) {
+      setRecoveryMessage(result.data.message || (result.data.skipped ? '已有记忆提取证据，未重复补跑。' : '记忆提取补跑完成。'))
+      await load()
+    } else {
+      setRecoveryError(result.error?.message || '补跑记忆提取失败')
+    }
+  }
+
   if (loading) return <div><PageHeader title="运行详情" /><div className="card"><div className="card-body module-loading">加载运行详情...</div></div></div>
   if (error && !data) return <div><PageHeader title="运行详情" /><ErrorState title="加载失败" message={error} onRetry={load} /></div>
   if (!data) return <div><PageHeader title="运行详情" /><ErrorState title="加载失败" message="无法获取运行详情" onRetry={load} /></div>
@@ -203,6 +238,12 @@ export default function RunDetail() {
   return (
     <div>
       <PageHeader title="运行详情" />
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <button className="btn btn-secondary" onClick={() => navigate(-1)}>
+          <ArrowLeft size={14} /> 返回上一级
+        </button>
+        <Link to={workflowHref} className="btn btn-secondary">返回本章工作流</Link>
+      </div>
       {isStub && (
         <div className="alert alert-warn" style={{ marginBottom: '16px' }}>
           <strong>演示模式</strong>
@@ -302,6 +343,13 @@ export default function RunDetail() {
                 </div>
               )}
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleMemoryBackfill}
+                  disabled={memoryBackfilling}
+                >
+                  <DatabaseZap size={14} /> {memoryBackfilling ? '补跑中...' : '修补记忆提取'}
+                </button>
                 <button
                   className="btn btn-secondary"
                   onClick={handleMarkStuck}

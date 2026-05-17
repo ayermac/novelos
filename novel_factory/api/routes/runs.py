@@ -34,6 +34,13 @@ class RunRecoveryRetryNodeRequest(BaseModel):
     confirm: bool = False
 
 
+class RunMemoryBackfillRequest(BaseModel):
+    """Run MemoryCurator backfill from a run detail page."""
+
+    confirm: bool = False
+    force: bool = False
+
+
 class RunHealthMarkStuckRequest(BaseModel):
     """Batch mark stuck workflow runs as blocked."""
 
@@ -616,6 +623,133 @@ async def retry_run_node(
         return error_response("INTERNAL_ERROR", f"定点重试恢复失败: {str(e)}")
 
 
+@router.post("/runs/{run_id}/memory/backfill")
+async def backfill_run_memory(
+    request: Request,
+    run_id: str,
+    body: RunMemoryBackfillRequest,
+) -> EnvelopeResponse:
+    """Backfill MemoryCurator for a reviewed/awaiting/published chapter."""
+    from ..deps import get_repo, get_llm_provider_for_agent, get_llm_mode, LLMConfigMissingError
+    from ...agents.memory_curator import MemoryCuratorAgent
+    from ...skills.registry import SkillRegistry
+
+    try:
+        if not body.confirm:
+            return error_response("CONFIRM_REQUIRED", "请确认补跑记忆提取")
+
+        repo = get_repo(request)
+        run_data = _get_run_by_id(repo, run_id)
+        if not run_data:
+            return error_response("RUN_NOT_FOUND", f"运行记录 '{run_id}' 不存在")
+
+        project_id = run_data["project_id"]
+        chapter_number = int(run_data["chapter_number"])
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+
+        current_status = chapter.get("status", "")
+        if current_status not in ("reviewed", "awaiting_publish", "published") and not body.force:
+            return error_response(
+                "INVALID_STATUS",
+                f"章节状态为 '{current_status}'，仅 reviewed / awaiting_publish / published 可补跑记忆提取",
+                details={"current_status": current_status},
+            )
+
+        if _has_memory_batch_for_chapter(repo, project_id, chapter_number) and not body.force:
+            return envelope_response({
+                "skipped": True,
+                "project_id": project_id,
+                "chapter": chapter_number,
+                "chapter_status": current_status,
+                "message": "该章节已有记忆收件箱批次，未重复补跑。",
+            })
+
+        backfill_run_id = repo.create_workflow_run(
+            project_id,
+            chapter_number,
+            graph_name="memory_backfill",
+        )
+        repo.update_workflow_run(backfill_run_id, status="running", current_node="memory_curator")
+        repo.create_workflow_node_event(
+            run_id=backfill_run_id,
+            project_id=project_id,
+            chapter_number=chapter_number,
+            node_name="memory_curator",
+            event_type="started",
+            status="running",
+            message="运行详情页手动补跑记忆提取",
+        )
+
+        try:
+            llm = get_llm_provider_for_agent(request, "memory_curator")
+        except LLMConfigMissingError as exc:
+            error = str(exc)
+            repo.create_workflow_node_event(
+                run_id=backfill_run_id,
+                project_id=project_id,
+                chapter_number=chapter_number,
+                node_name="memory_curator",
+                event_type="failed",
+                status="failed",
+                error_message=error,
+            )
+            repo.update_workflow_run(backfill_run_id, status="failed", current_node="memory_curator", error_message=error)
+            return error_response("LLM_CONFIG_MISSING", error, details={"run_id": backfill_run_id})
+
+        agent = MemoryCuratorAgent(repo, llm, skill_registry=SkillRegistry())
+        result = agent.run({
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "chapter_status": current_status,
+            "workflow_run_id": backfill_run_id,
+            "llm_mode": get_llm_mode(request),
+        })
+
+        if result.get("error"):
+            error = str(result["error"])
+            repo.create_workflow_node_event(
+                run_id=backfill_run_id,
+                project_id=project_id,
+                chapter_number=chapter_number,
+                node_name="memory_curator",
+                event_type="failed",
+                status="failed",
+                error_message=error,
+            )
+            repo.update_workflow_run(backfill_run_id, status="failed", current_node="memory_curator", error_message=error)
+            return error_response("MEMORY_CURATOR_FAILED", error, details={"run_id": backfill_run_id})
+
+        repo.create_workflow_node_event(
+            run_id=backfill_run_id,
+            project_id=project_id,
+            chapter_number=chapter_number,
+            node_name="memory_curator",
+            event_type="completed",
+            status="completed",
+            message="运行详情页手动补跑记忆提取完成",
+            output_summary=f"{result.get('memory_items_count', 0)} 条候选记忆",
+        )
+        repo.update_workflow_run(backfill_run_id, status="completed", current_node="memory_curator", clear_error=True)
+
+        return envelope_response({
+            "skipped": False,
+            "run_id": backfill_run_id,
+            "source_run_id": run_id,
+            "project_id": project_id,
+            "chapter": chapter_number,
+            "chapter_status": current_status,
+            "memory_batch_id": result.get("memory_batch_id"),
+            "memory_items_count": result.get("memory_items_count", 0),
+            "memory_curator_degraded": result.get("memory_curator_degraded", False),
+            "memory_curator_fallback": result.get("memory_curator_fallback"),
+            "message": f"记忆提取补跑完成：{result.get('memory_items_count', 0)} 条候选",
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"补跑记忆提取失败: {str(e)}")
+
+
 def _get_run_by_id(repo, run_id: str) -> dict | None:
     """Fetch workflow_run by id."""
     conn = repo._conn()
@@ -642,6 +776,34 @@ def _get_run_by_id(repo, run_id: str) -> dict | None:
         if reconciliation.get("runs"):
             return _get_run_by_id(repo, run_id)
     return run_data
+
+
+def _has_memory_curator_evidence(repo, project_id: str, chapter_number: int) -> bool:
+    """Return True when memory extraction already ran for this chapter."""
+    if _has_memory_batch_for_chapter(repo, project_id, chapter_number):
+        return True
+
+    try:
+        events = repo.get_workflow_node_events_for_chapter(project_id, chapter_number)
+        return any(
+            ev.get("node_name") == "memory_curator"
+            and ev.get("event_type") == "completed"
+            and ev.get("status") == "completed"
+            for ev in events
+        )
+    except Exception:
+        return False
+
+
+def _has_memory_batch_for_chapter(repo, project_id: str, chapter_number: int) -> bool:
+    """Return True only when the user-visible memory inbox has a batch for the chapter."""
+    try:
+        for batch in repo.list_memory_batches(project_id):
+            if int(batch.get("chapter_number") or 0) == int(chapter_number):
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def _checkpoint_exists(repo, project_id: str, chapter_number: int) -> bool:

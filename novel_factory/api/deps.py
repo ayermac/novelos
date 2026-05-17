@@ -94,3 +94,21 @@ def get_llm_provider(request: Request) -> "LLMProvider":
         )
 
     return OpenAICompatibleProvider(settings.llm)
+
+
+def get_llm_provider_for_agent(request: Request, agent_id: str) -> "LLMProvider":
+    """Create an LLM provider using the configured route for an agent.
+
+    This should be used by ad-hoc API operations that execute a single agent
+    outside the main LangGraph runner, so they honor the same ``agent_llm``
+    mapping as normal chapter production.
+    """
+    from ..workflow.runner import _build_llm_router
+
+    settings = get_settings(request)
+    llm_mode = get_llm_mode(request)
+    router = _build_llm_router(settings, llm_mode)
+    try:
+        return router.for_agent(agent_id)
+    except ValueError as exc:
+        raise LLMConfigMissingError(str(exc)) from exc

@@ -137,6 +137,174 @@ class TestReviewModule:
         chapter = repo.get_chapter(project_id, 1)
         assert chapter["status"] == "published"
 
+    def test_publish_endpoint_backfills_memory_before_publish(self, test_client):
+        """Manual publish must not skip MemoryCurator when memory evidence is missing."""
+        client, db_path = test_client
+        repo = Repository(db_path)
+
+        resp = client.post("/api/onboarding/projects", json={
+            "project_id": "test-publish-memory-project",
+            "name": "Test Memory Publish Project",
+            "genre": "fantasy",
+            "target_words": 100000,
+            "total_chapters_planned": 50,
+        })
+        assert resp.status_code == 200
+        project_id = resp.json()["data"]["project"]["project_id"]
+
+        repo.save_chapter_content(
+            project_id,
+            1,
+            "林默夺回账册，并发现账册夹层里藏着铜钥匙。",
+            "第一章",
+        )
+        repo.save_chapter_state(
+            project_id,
+            1,
+            {
+                "new_facts": ["林默夺回账册，并发现账册夹层里藏着铜钥匙"],
+                "character_status": {"林默": "掌握铜钥匙线索"},
+            },
+            "第1章状态卡",
+        )
+        repo.update_chapter_status(project_id, 1, "reviewed")
+
+        resp = client.post("/api/publish/chapter", json={
+            "project_id": project_id,
+            "chapter": 1,
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["chapter_status"] == "published"
+        assert data["data"]["memory_curator_processed"] is True
+        assert data["data"]["memory_items_count"] >= 2
+
+        batches = repo.list_memory_batches(project_id)
+        assert len(batches) == 1
+        assert batches[0]["chapter_number"] == 1
+        assert batches[0]["status"] == "pending"
+
+    def test_run_detail_memory_backfill_endpoint(self, test_client):
+        """Run detail page can backfill MemoryCurator for an already published chapter."""
+        client, db_path = test_client
+        repo = Repository(db_path)
+
+        resp = client.post("/api/onboarding/projects", json={
+            "project_id": "test-run-memory-backfill",
+            "name": "Test Run Memory Backfill",
+            "genre": "fantasy",
+            "target_words": 100000,
+            "total_chapters_planned": 50,
+        })
+        assert resp.status_code == 200
+        project_id = resp.json()["data"]["project"]["project_id"]
+
+        repo.save_chapter_content(
+            project_id,
+            1,
+            "林默夺回账册，并发现账册夹层里藏着铜钥匙。",
+            "第一章",
+        )
+        repo.save_chapter_state(
+            project_id,
+            1,
+            {"new_facts": ["林默夺回账册，并发现账册夹层里藏着铜钥匙"]},
+            "第1章状态卡",
+        )
+        repo.update_chapter_status(project_id, 1, "published")
+        run_id = repo.create_workflow_run(project_id, 1)
+        repo.update_workflow_run(run_id, status="completed", current_node="publisher")
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id=project_id,
+            chapter_number=1,
+            node_name="memory_curator",
+            event_type="completed",
+            status="completed",
+            message="历史运行显示记忆整理完成但未创建收件箱批次",
+        )
+
+        resp = client.post(f"/api/runs/{run_id}/memory/backfill", json={"confirm": True})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["skipped"] is False
+        assert data["data"]["memory_items_count"] >= 1
+
+        batches = repo.list_memory_batches(project_id)
+        assert len(batches) == 1
+        assert batches[0]["chapter_number"] == 1
+
+    def test_run_detail_memory_backfill_uses_memory_curator_llm_route(self, monkeypatch):
+        """Memory backfill should honor agent_llm.memory_curator instead of generic default."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "test.db"
+            config_path = Path(tmpdir) / "config.yaml"
+            init_db(str(db_path))
+            config_path.write_text(
+                """
+db_path: "{db_path}"
+default_llm: default
+llm_profiles:
+  default:
+    provider: openai_compatible
+    base_url: http://default.invalid/v1
+    api_key: default-key
+    model: wrong-default-model
+  memory:
+    provider: openai_compatible
+    base_url: http://memory.invalid/v1
+    api_key: memory-key
+    model: memory-route-model
+agent_llm:
+  memory_curator: memory
+""".format(db_path=str(db_path)),
+                encoding="utf-8",
+            )
+            app = create_api_app(
+                db_path=str(db_path),
+                config_path=str(config_path),
+                llm_mode="real",
+            )
+            client = TestClient(app)
+            repo = Repository(str(db_path))
+            seen: dict[str, str] = {}
+
+            def fake_run(self, state):
+                seen["model"] = getattr(getattr(self.llm, "config", None), "model", "")
+                seen["base_url"] = getattr(getattr(self.llm, "config", None), "base_url", "")
+                return {
+                    "memory_batch_id": "batch-memory-route",
+                    "memory_items_count": 1,
+                    "memory_curator_degraded": False,
+                }
+
+            monkeypatch.setattr("novel_factory.agents.memory_curator.MemoryCuratorAgent.run", fake_run)
+
+            resp = client.post("/api/onboarding/projects", json={
+                "project_id": "test-memory-route",
+                "name": "Test Memory Route",
+                "genre": "fantasy",
+                "target_words": 100000,
+                "total_chapters_planned": 50,
+            })
+            assert resp.status_code == 200
+            project_id = resp.json()["data"]["project"]["project_id"]
+            repo.save_chapter_content(project_id, 1, "林默发现铜钥匙。", "第一章")
+            repo.update_chapter_status(project_id, 1, "published")
+            run_id = repo.create_workflow_run(project_id, 1)
+            repo.update_workflow_run(run_id, status="completed", current_node="publisher")
+
+            resp = client.post(f"/api/runs/{run_id}/memory/backfill", json={"confirm": True})
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["ok"] is True
+            assert data["data"]["skipped"] is False
+            assert data["data"]["memory_batch_id"] == "batch-memory-route"
+            assert seen["model"] == "memory-route-model"
+            assert seen["base_url"] == "http://memory.invalid/v1"
+
     def test_reset_blocking_chapter(self, test_client):
         """Reset API should allow resetting blocking chapters."""
         client, db_path = test_client
