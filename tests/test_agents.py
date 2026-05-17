@@ -419,6 +419,49 @@ class TestAuthorAgent:
         assert chapter["title"] == "第1章 雨夜玉佩"
         assert chapter["content"].startswith("第1章 雨夜玉佩\n\n")
 
+    def test_author_replaces_placeholder_chapter_title_from_opening(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        body = "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 80
+        stub = StubLLMProvider([{
+            "title": "第 1 章（待命名）",
+            "content": f"第 1 章（待命名）\n\n{body}",
+            "word_count": len(body),
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE chapters SET title=? WHERE project_id=? AND chapter_number=?",
+            ("第 1 章（待命名）", "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "待命名" not in chapter["title"]
+        assert chapter["title"].startswith("第1章 ")
+        assert "待命名" not in chapter["content"].splitlines()[0]
+        assert chapter["content"].startswith(f"{chapter['title']}\n\n")
+
     def test_author_records_event_coverage_checker_skill_run(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
         from novel_factory.skills.registry import SkillRegistry
@@ -623,6 +666,52 @@ class TestAuthorAgent:
         assert result["chapter_status"] == ChapterStatus.DRAFTED.value
         assert llm.json_calls == 0
         assert llm.text_calls == 1
+
+    def test_author_plain_text_primary_retries_empty_content_once(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        class EmptyThenTextLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.text_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("real provider authoring should not use JSON primary")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                if self.text_calls == 1:
+                    return "   "
+                return "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 180
+
+        llm = EmptyThenTextLLM()
+        agent = AuthorAgent(seeded_repo, llm)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        assert llm.text_calls == 2
 
 
 class TestPolisherAgent:

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import re
 
+PLACEHOLDER_TITLE_MARKERS = ("待命名", "未命名", "占位")
+
 
 def default_chapter_title(chapter_number: int) -> str:
     """Return the fallback display title for a chapter."""
@@ -20,9 +22,10 @@ def is_chapter_heading(line: str, chapter_number: int) -> bool:
     text = str(line or "").strip()
     if not text:
         return False
+    delimiter = r"(?:\s|$|[：:、.\-—（(【《])"
     return bool(
-        re.match(rf"^第\s*{chapter_number}\s*章(?:\s|$|[：:、.-])", text)
-        or re.match(r"^第[一二三四五六七八九十百千零〇两]+\s*章(?:\s|$|[：:、.-])", text)
+        re.match(rf"^第\s*{chapter_number}\s*章{delimiter}", text)
+        or re.match(rf"^第[一二三四五六七八九十百千零〇两]+\s*章{delimiter}", text)
     )
 
 
@@ -30,14 +33,26 @@ def ensure_chapter_heading(content: str, title: str | None, chapter_number: int)
     """Ensure generated chapter content starts with a chapter title line.
 
     The title is part of the readable/exportable novel text, not just metadata.
-    If the model already wrote a heading, the content is returned unchanged.
+    If the model already wrote a real heading, the content is returned unchanged.
+    Placeholder headings like "第 2 章（待命名）" are replaced with the
+    normalized title so the manuscript does not keep stale scaffold text.
     """
     text = str(content or "").strip()
     if not text:
         return text
-    if is_chapter_heading(first_content_line(text), chapter_number):
-        return text
     heading = str(title or "").strip() or default_chapter_title(chapter_number)
+
+    lines = text.splitlines()
+    first_idx = next((idx for idx, line in enumerate(lines) if line.strip()), None)
+    if first_idx is None:
+        return ""
+    first_line = lines[first_idx].strip()
+    if is_chapter_heading(first_line, chapter_number):
+        if first_line != heading and any(marker in first_line for marker in PLACEHOLDER_TITLE_MARKERS):
+            lines[first_idx] = heading
+            return "\n".join(lines).strip()
+        return text
+
     return f"{heading}\n\n{text}"
 
 

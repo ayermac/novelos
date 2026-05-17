@@ -639,7 +639,31 @@ class AuthorAgent(BaseAgent):
         ).strip()
         content = self._coerce_plain_text_content(content)
         if not content:
-            raise OutputValidationError("Author 纯正文兜底生成空内容")
+            retry_messages = [
+                *messages,
+                {
+                    "role": "user",
+                    "content": (
+                        "上一轮返回为空。请立刻重写本章正文纯文本，"
+                        "不要输出 JSON、字段名、解释、标题占位或 Markdown。"
+                        f"正文至少 {minimum_required} 字符，从第一句正文直接开始。"
+                    ),
+                },
+            ]
+            content = self._invoke_text_for_author(
+                retry_messages,
+                temperature=0.75,
+                max_tokens=prose_max_tokens,
+                max_retries=per_call_retries,
+                request_timeout_seconds=(
+                    AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                    if is_configured_live_provider(self.llm)
+                    else None
+                ),
+            ).strip()
+            content = self._coerce_plain_text_content(content)
+        if not content:
+            raise OutputValidationError("Author 纯正文生成空内容（已重试一次）")
 
         title = self._derive_title(state, instruction, content)
         return AuthorOutput(
@@ -806,6 +830,8 @@ class AuthorAgent(BaseAgent):
             return False
         compact_placeholder = re.sub(r"\s+", "", text)
         if compact_placeholder in {f"第{chapter_number}章", f"第{chapter_number}章节"}:
+            return False
+        if any(marker in compact_placeholder for marker in ("待命名", "未命名", "占位")):
             return False
 
         suffix = cls._strip_chapter_prefix(text, chapter_number)

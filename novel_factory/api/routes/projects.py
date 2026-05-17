@@ -54,6 +54,8 @@ def _chapter_quality_score(repo, project_id: str, chapter: dict) -> int | float 
 
 def _is_bare_chapter_title(title: str | None, chapter_number: int) -> bool:
     text = re.sub(r"\s+", "", str(title or "").strip())
+    if any(marker in text for marker in ("待命名", "未命名", "占位")):
+        return True
     return text in {f"第{chapter_number}章", f"第{chapter_number}章节"} or bool(
         re.fullmatch(r"第[一二三四五六七八九十百千零〇两]+章节?", text)
     )
@@ -105,8 +107,17 @@ def _chapter_display_content(chapter: dict, display_title: str) -> str:
         if not line.strip():
             continue
         if is_chapter_heading(line.strip(), chapter_number):
-            lines[index] = display_title
-            return "\n".join(lines)
+            body = lines[index + 1 :]
+            while body and not body[0].strip():
+                body.pop(0)
+            while body and (
+                is_chapter_heading(body[0].strip(), chapter_number)
+                or body[0].strip() == stored_title
+            ):
+                body.pop(0)
+                while body and not body[0].strip():
+                    body.pop(0)
+            return "\n".join([*lines[:index], display_title, "", *body])
         return content
     return content
 
