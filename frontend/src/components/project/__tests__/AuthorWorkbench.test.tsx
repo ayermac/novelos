@@ -1060,7 +1060,7 @@ describe('AuthorWorkbench', () => {
       />
     )
 
-    const diagnosis = screen.getByLabelText('质量诊断')
+    const diagnosis = screen.getByLabelText('辅助质量诊断')
     await waitFor(() => expect(document.querySelector('.chapter-editor-surface')).toBeInTheDocument())
     const editor = document.querySelector('.chapter-editor-surface')
     expect(editor).toBeInTheDocument()
@@ -1112,11 +1112,11 @@ describe('AuthorWorkbench', () => {
     const strip = document.querySelector('.author-readiness-strip')
     expect(strip?.textContent).toContain('83')
 
-    const diagnosis = screen.getByLabelText('质量诊断')
+    const diagnosis = screen.getByLabelText('辅助质量诊断')
     fireEvent.click(within(diagnosis).getByRole('button'))
 
-    await waitFor(() => expect(within(diagnosis).getByText('69.2')).toBeInTheDocument())
-    expect(strip?.textContent).toContain('质量')
+    await waitFor(() => expect(within(diagnosis).getByText('诊断 69.2')).toBeInTheDocument())
+    expect(strip?.textContent).toContain('审核分')
     expect(strip?.textContent).toContain('83')
     expect(strip?.textContent).not.toContain('诊断分')
   })

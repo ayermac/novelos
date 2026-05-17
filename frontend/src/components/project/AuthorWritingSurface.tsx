@@ -378,7 +378,7 @@ export default function AuthorWritingSurface({
           <span>{qualityScore ?? '—'}</span>
         </div>
         <div className="author-readiness-cell">
-          <strong>质量</strong>
+          <strong>审核分</strong>
           <span>{qualityScore !== null ? (qualityScore >= 85 ? '优秀' : qualityScore >= 70 ? '稳定' : '待增强') : '待评估'}</span>
         </div>
         <div className="author-readiness-cell">

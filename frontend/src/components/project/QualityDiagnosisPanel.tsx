@@ -136,8 +136,8 @@ export default function QualityDiagnosisPanel({
         if (showSuccess) {
           showToast({
             tone: 'success',
-            title: '质量诊断已刷新',
-            message: `综合评分 ${res.data.overall_score.toFixed(1)} / 100`,
+            title: '辅助诊断已刷新',
+            message: `诊断分 ${res.data.overall_score.toFixed(1)} / 100`,
           })
         }
       } else {
@@ -176,23 +176,23 @@ export default function QualityDiagnosisPanel({
   const dimensions = diagnosis ? orderedDimensions(diagnosis.dimensions) : []
 
   return (
-    <section className={`quality-diagnosis qd-${tone}`} aria-label="质量诊断">
+    <section className={`quality-diagnosis qd-${tone}`} aria-label="辅助质量诊断">
       <button type="button" onClick={toggle} className="qd-header" aria-expanded={open}>
         <span className="qd-header-main">
           <span className="qd-icon">
             {overall === null ? <BarChart3 size={18} /> : <CheckCircle2 size={18} />}
           </span>
           <span>
-            <span className="qd-title">质量诊断</span>
+            <span className="qd-title">辅助质量诊断</span>
             <span className="qd-subtitle">
               {overall === null
-                ? '查看 AI 痕迹、节奏、对白和场景质感'
-                : `${scoreText(overall)} · ${findings.length} 个提示`}
+                ? '查看 AI 痕迹、节奏、对白和场景质感，不替代审核分'
+                : `诊断${scoreText(overall)} · ${findings.length} 个提示`}
             </span>
           </span>
         </span>
         <span className="qd-header-side">
-          {overall !== null && <span className="qd-score-chip">{overall.toFixed(1)}</span>}
+          {overall !== null && <span className="qd-score-chip">诊断 {overall.toFixed(1)}</span>}
           <ChevronDown className={`qd-chevron${open ? ' open' : ''}`} size={18} />
         </span>
       </button>
@@ -223,11 +223,11 @@ export default function QualityDiagnosisPanel({
                   <span>{diagnosis.overall_score.toFixed(0)}</span>
                 </div>
                 <div className="qd-summary-copy">
-                  <div className="qd-summary-title">{scoreText(diagnosis.overall_score)}</div>
+                  <div className="qd-summary-title">诊断分 {diagnosis.overall_score.toFixed(0)} · {scoreText(diagnosis.overall_score)}</div>
                   <div className="qd-summary-meta">
                     {blockingFindings.length > 0
                       ? `${blockingFindings.length} 个高优先级问题需要先处理`
-                      : '未发现高优先级阻断项'}
+                      : '辅助诊断未发现高优先级阻断项；发布状态仍以审核分为准'}
                   </div>
                 </div>
                 <LoadingButton
