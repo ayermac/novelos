@@ -791,6 +791,56 @@ class TestPolisherAgent:
         chapter = seeded_repo.get_chapter("test_proj", 1)
         assert chapter["content"].startswith("第一章 测试\n\n")
 
+    def test_polisher_real_mode_uses_plain_text_primary(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        class PlainTextPolisherLLM(LLMProvider):
+            config = type("Config", (), {"max_tokens": 4096})()
+
+            def __init__(self):
+                self.json_calls = 0
+                self.text_calls = 0
+                self.last_timeout = None
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                self.json_calls += 1
+                raise AssertionError("real provider polishing should not require long JSON output")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                self.last_timeout = request_timeout_seconds
+                return "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 80
+
+        base_content = "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 80
+        seeded_repo.save_chapter_content("test_proj", 1, base_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+
+        llm = PlainTextPolisherLLM()
+        agent = PolisherAgent(seeded_repo, llm)
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == ChapterStatus.POLISHED.value
+        assert llm.json_calls == 0
+        assert llm.text_calls == 1
+        assert llm.last_timeout == 300
+
     def test_polisher_rejects_fact_change(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent
 

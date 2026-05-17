@@ -20,8 +20,12 @@ from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.chapter_text import default_chapter_title, ensure_chapter_heading, strip_chapter_heading
 from ..agent_runtime.revision_context import normalize_revision_review, revision_feedback_block
 from ..agent_runtime.skill_hooks import run_agent_skills
+from ..llm.openai_compatible import OutputValidationError
+from ..llm.provider import is_configured_live_provider
 
 logger = logging.getLogger(__name__)
+
+POLISHER_LONG_FORM_TIMEOUT_SECONDS = 300
 
 POLISHER_SYSTEM_PROMPT = """你是网文工厂的润色编辑（Polisher），负责将草稿改写成"像人写过"的小说段落。
 
@@ -142,11 +146,21 @@ class PolisherAgent(BaseAgent):
         ]
 
         try:
-            raw = self.llm.invoke_json(messages, schema=PolisherOutput)
-            output = PolisherOutput(**raw)
+            if self._should_use_plain_text_primary(state):
+                output = self._try_plain_text_polish(state, context)
+            else:
+                raw = self.llm.invoke_json(messages, schema=PolisherOutput)
+                output = PolisherOutput(**raw)
         except Exception as e:
-            logger.error("Polisher LLM call failed: %s", e)
-            return {"error": f"Polisher failed: {e}", "chapter_status": state.get("chapter_status")}
+            if not self._should_use_plain_text_primary(state) and is_configured_live_provider(self.llm):
+                try:
+                    output = self._try_plain_text_polish(state, context)
+                except Exception as fallback_error:
+                    logger.error("Polisher LLM call failed: %s; plain-text fallback failed: %s", e, fallback_error)
+                    return {"error": f"Polisher failed: {fallback_error}", "chapter_status": state.get("chapter_status")}
+            else:
+                logger.error("Polisher LLM call failed: %s", e)
+                return {"error": f"Polisher failed: {e}", "chapter_status": state.get("chapter_status")}
 
         self.validate_output(output.model_dump())
 
@@ -398,6 +412,87 @@ class PolisherAgent(BaseAgent):
             "current_stage": "polished",
             "_exec_events": exec_events,
         }
+
+    def _should_use_plain_text_primary(self, state: FactoryState) -> bool:
+        """Use prose-first polishing for live providers to avoid long JSON failures."""
+        return state.get("llm_mode") == "real" and is_configured_live_provider(self.llm)
+
+    def _try_plain_text_polish(self, state: FactoryState, context: str) -> PolisherOutput:
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
+                    "不要输出 JSON、字段名、Markdown、解释或摘要。"
+                    "必须保留剧情事实、关键事件、伏笔和角色动机。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n"
+                    "请润色以上草稿。只返回润色后的完整正文纯文本。"
+                ),
+            },
+        ]
+        max_tokens = int(getattr(getattr(self.llm, "config", None), "max_tokens", 4096) or 4096)
+        content = self._invoke_text_for_polisher(
+            messages,
+            temperature=0.65,
+            max_tokens=max_tokens,
+            max_retries=1,
+            request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
+        ).strip()
+        content = self._coerce_plain_text_content(content)
+        if not content:
+            raise OutputValidationError("Polisher 纯正文润色生成空内容")
+        return PolisherOutput(
+            content=content,
+            fact_change_risk="none",
+            changed_scope=["sentence", "dialogue", "rhythm", "scene_texture"],
+            summary="纯正文润色完成",
+        )
+
+    def _invoke_text_for_polisher(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float,
+        max_tokens: int,
+        max_retries: int | None,
+        request_timeout_seconds: int | None,
+    ) -> str:
+        try:
+            return self.llm.invoke_text(
+                messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                max_retries=max_retries,
+                request_timeout_seconds=request_timeout_seconds,
+            )
+        except TypeError as exc:
+            exc_text = str(exc)
+            if "max_retries" not in exc_text and "request_timeout_seconds" not in exc_text:
+                raise
+            return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
+
+    @staticmethod
+    def _coerce_plain_text_content(text: str) -> str:
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return ""
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:text|markdown)?\s*", "", cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r"\s*```$", "", cleaned).strip()
+        if cleaned.startswith("{") and cleaned.endswith("}"):
+            try:
+                parsed = json.loads(cleaned)
+                if isinstance(parsed, dict) and parsed.get("content"):
+                    return str(parsed["content"]).strip()
+            except Exception:
+                pass
+        return cleaned
 
     def _run_polisher_warnings(self, text: str) -> list[str]:
         """v6.4.3: Deterministic warnings on polished content.
