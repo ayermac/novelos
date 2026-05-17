@@ -17,6 +17,7 @@ from ..config.settings import Settings
 from ..models.state import ChapterStatus
 from ..db.repository import Repository
 from ..models.state import FactoryState
+from ..quality.deadloop_detector import DeadloopDetector
 from .graph import compile_graph
 from .conditions import hydrate_revision_state
 from .checkpoint import (
@@ -107,6 +108,29 @@ def _clear_stale_checkpoint_for_new_run(
             chapter_number,
             exc_info=True,
         )
+
+
+def _check_deadloop_for_run(
+    repo: Repository,
+    project_id: str,
+    chapter_number: int,
+    current_status: str,
+) -> dict[str, Any] | None:
+    """Stop repeated automatic runs when a chapter is already in a dead loop."""
+    deadloop = DeadloopDetector.check_deadloop(repo, project_id, chapter_number)
+    if not deadloop.get("triggered"):
+        return None
+    reason = deadloop.get("reason") or "章节生产疑似进入返修死循环"
+    action = deadloop.get("action") or "请人工检查并考虑恢复最佳历史版本"
+    return {
+        "run_id": "",
+        "chapter_status": current_status,
+        "steps": [],
+        "error": f"章节生产熔断：{reason}。{action}",
+        "requires_human": True,
+        "deadloop_detected": True,
+        "details": deadloop,
+    }
 
 
 def _build_llm_router(settings: Settings, llm_mode: str = "stub"):
@@ -348,6 +372,18 @@ def run_with_graph(
             "awaiting_publish": _is_awaiting,
         }
 
+    deadloop_error = _check_deadloop_for_run(repo, project_id, chapter_number, current_status)
+    if deadloop_error:
+        if workflow_run_id:
+            repo.update_workflow_run(
+                workflow_run_id,
+                status="blocked",
+                current_node="deadloop_guard",
+                error_message=deadloop_error.get("error"),
+            )
+            deadloop_error["run_id"] = workflow_run_id
+        return deadloop_error
+
     if workflow_run_id:
         delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
     else:
@@ -511,6 +547,17 @@ def run_with_graph_stream(
             "run_id": "",
             "awaiting_publish": _is_awaiting,
             "requires_human": _is_awaiting,
+        }
+        return
+
+    deadloop_error = _check_deadloop_for_run(repo, project_id, chapter_number, current_status)
+    if deadloop_error:
+        yield {
+            "type": "run_error",
+            "error": deadloop_error.get("error"),
+            "chapter_status": current_status,
+            "deadloop_detected": True,
+            "details": deadloop_error.get("details", {}),
         }
         return
 

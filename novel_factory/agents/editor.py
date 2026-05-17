@@ -11,6 +11,7 @@ from ..models.state import ChapterStatus, FactoryState
 from ..validators.chapter_checker import count_words, check_word_count_quality_gate, derive_word_target
 from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured
 from ..validators.revision_classifier import classify_issues
+from ..quality.editor_strategy import post_process_llm_decision
 from ..skills.registry import SkillRegistry
 from ..llm.provider import is_configured_live_provider
 from ..agent_runtime.base import BaseAgent
@@ -439,7 +440,8 @@ class EditorAgent(BaseAgent):
                 except Exception as e:
                     logger.warning("Editor: failed to save quality report: %s", e)
 
-        # v5.3.0: Word count quality gate (Editor threshold = 0.90)
+        # v6.6.0: Word count quality gate (shared hard gate = 0.85;
+        # 0.90 is advisory and should not trigger automatic revision alone).
         # Apply BEFORE save_review so persisted review matches the gate decision
         instruction = self._get_instruction(state)
         project = self.repo.get_project(project_id)
@@ -462,6 +464,25 @@ class EditorAgent(BaseAgent):
                 "agent": "editor",
                 "workflow_run_id": state.get("workflow_run_id"),
             }
+
+        # v6.6.0: prevent high-score advisory-only reviews from entering
+        # automatic revision loops. Hard gates above remain blocking.
+        strategy_decision = post_process_llm_decision(
+            output.pass_,
+            output.score,
+            output.issues,
+            has_hard_word_fail=bool(word_gate_details),
+            has_death_penalty=dp_result.has_critical,
+        )
+        if strategy_decision.pass_ and not output.pass_:
+            logger.info("Editor strategy accepted advisory review: %s", strategy_decision.reason)
+            output.pass_ = True
+            output.revision_target = None
+            output.suggestions = output.suggestions + [
+                f"[v6.6策略] {strategy_decision.reason}；保留为发布前建议，不进入自动返修。"
+            ]
+        elif not strategy_decision.pass_ and strategy_decision.category == "blocking":
+            output.pass_ = False
 
         # Save review AFTER all gates have mutated output
         review_id = self.repo.save_review(

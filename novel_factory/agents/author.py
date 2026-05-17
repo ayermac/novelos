@@ -479,6 +479,44 @@ class AuthorAgent(BaseAgent):
                 },
             })
 
+        # v6.6.0: Do not let a revision candidate overwrite a stronger
+        # existing draft when it clearly regresses.
+        if is_revision and chapter and chapter.get("content"):
+            from ..quality.version_regression_guard import VersionRegressionGuard
+
+            revision_review = normalize_revision_review(state.get("_revision_review")) or {}
+            reject, reason = VersionRegressionGuard.should_reject_new_draft(
+                chapter.get("content", "") or "",
+                output.content,
+                self._get_word_target(state),
+                editor_suggestions=revision_review.get("suggestions", []),
+            )
+            if reject:
+                self.repo.save_artifact(
+                    project_id,
+                    chapter_number,
+                    "author",
+                    "rejected_regression",
+                    content_json={
+                        "title": output.title,
+                        "content": output.content,
+                        "rejection_reason": reason,
+                        "revision_source_review_id": revision_review.get("review_id"),
+                    },
+                    workflow_run_id=state.get("workflow_run_id"),
+                )
+                return {
+                    "error": f"返修稿退化，已保留上一版本：{reason}",
+                    "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "author",
+                        "version_regression": True,
+                        "message": reason,
+                    },
+                    "_exec_events": exec_events,
+                }
+
         # Advance status FIRST to lock the transition; abort if stale
         # For revision, expect status to be revision; for normal flow, expect scripted
         expected_status = ChapterStatus.REVISION.value if is_revision else ChapterStatus.SCRIPTED.value
@@ -744,9 +782,23 @@ class AuthorAgent(BaseAgent):
                 return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
 
     def _build_plain_text_context(self, state: FactoryState, fallback_context: str) -> str:
-        """Build a compact prompt for direct prose generation."""
+        """Build a compact prompt for direct prose generation.
+
+        v6.6.0 修复：显式注入 revision feedback，确保真实 LLM plain-text 路径
+        不会丢失 Editor 的返修意见。优先使用通用 helper。
+        """
+        from ..agent_runtime.revision_context import build_revision_feedback_context
+
         instruction = self._get_instruction(state) or {}
         parts = []
+
+        # 优先注入返修反馈（所有生成路径必须携带）
+        revision_block = build_revision_feedback_context(
+            state, self.repo, self._get_chapter_info(state)
+        )
+        if revision_block:
+            parts.append(revision_block)
+
         if instruction:
             parts.append(
                 "【写作指令】\n"

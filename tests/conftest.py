@@ -9,10 +9,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-# v5.3.0: Shared long chapter content (>= 2700 chars) for StubLLM fixtures.
-# Required because v5.3 quality gate enforces:
-# - Author/Polisher: word_target * 0.85 threshold
-# - Editor: word_target * 0.90 threshold
+# v6.6.0: Shared long chapter content for StubLLM fixtures.
+# Quality gate enforces word_target * 0.85 as the hard threshold; 0.90 is advisory.
 # Old tests with ~720-char stubs fail the gate.
 LONG_CHAPTER_CONTENT = (
     "林默推开房门，屋内弥漫着淡淡的茶香。他缓步走到窗前，凝望着外面的雨幕。\n"

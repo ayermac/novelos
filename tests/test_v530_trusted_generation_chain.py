@@ -331,16 +331,16 @@ class TestWordCountQualityGate:
         passed, message = check_word_count_quality_gate(content, word_target, "author")
         assert passed is True
 
-    def test_editor_stricter_threshold(self):
-        """Editor has stricter 90% threshold."""
+    def test_editor_warning_band_no_longer_hard_fails(self):
+        """v6.6: Editor shares the 85% hard gate; 85%-90% is advisory."""
         content = "x" * 2600  # 2600 words
         word_target = 3000
-        # 90% of 3000 = 2700, 2600 < 2700, should fail for editor
         passed, message = check_word_count_quality_gate(content, word_target, "editor")
-        assert passed is False
+        assert passed is True
+        assert "偏低" in message
 
-    def test_editor_passes_stricter_threshold(self):
-        """Editor output meeting 90% threshold should pass."""
+    def test_editor_passes_warning_threshold(self):
+        """Editor output meeting 90% threshold should pass cleanly."""
         content = "x" * 2750  # 2750 words
         word_target = 3000
         # 90% of 3000 = 2700, 2750 > 2700, should pass

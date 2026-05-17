@@ -351,6 +351,43 @@ class PolisherAgent(BaseAgent):
             },
         })
 
+        # v6.6.0: Protect the current draft from a regressing revision pass.
+        if current_status == ChapterStatus.REVISION.value and original_content:
+            from ..quality.version_regression_guard import VersionRegressionGuard
+
+            revision_review = normalize_revision_review(state.get("_revision_review")) or {}
+            reject, reason = VersionRegressionGuard.should_reject_new_draft(
+                original_content,
+                polished_content,
+                word_target,
+                editor_suggestions=revision_review.get("suggestions", []),
+            )
+            if reject:
+                self.repo.save_artifact(
+                    project_id,
+                    chapter_number,
+                    "polisher",
+                    "rejected_regression",
+                    content_json={
+                        "content": polished_content,
+                        "summary": output.summary,
+                        "rejection_reason": reason,
+                        "revision_source_review_id": revision_review.get("review_id"),
+                    },
+                    workflow_run_id=state.get("workflow_run_id"),
+                )
+                return {
+                    "error": f"返修稿退化，已保留上一版本：{reason}",
+                    "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "polisher",
+                        "version_regression": True,
+                        "message": reason,
+                    },
+                    "_exec_events": exec_events,
+                }
+
         current_status = state.get("chapter_status")
         expected_status = (
             ChapterStatus.REVISION.value
