@@ -868,6 +868,95 @@ class TestPolisherAgent:
         assert llm.text_calls == 1
         assert llm.last_timeout == 300
 
+    def test_polisher_real_mode_preserves_draft_when_llm_fails(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        class FailingPolisherLLM(LLMProvider):
+            config = type("Config", (), {"max_tokens": 4096})()
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("real provider should use plain text first")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                raise RuntimeError("LLM 输出不是有效的 JSON 格式")
+
+        draft = "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 80
+        seeded_repo.save_chapter_content("test_proj", 1, draft, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+
+        agent = PolisherAgent(seeded_repo, FailingPolisherLLM())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert "error" not in result
+        assert result["chapter_status"] == ChapterStatus.POLISHED.value
+        assert any(ev["event_type"] == "fallback_used" for ev in result["_exec_events"])
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "林逸盯着手机屏幕" in chapter["content"]
+
+    def test_polisher_ai_trace_warning_does_not_block(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        class HighTraceSkillRegistry:
+            skills_config = {"ai-style-detector": {"type": "validator"}}
+
+            def run_skills_for_agent(self, agent, stage, payload, project_overrides=None):
+                if agent == "polisher" and stage == "before_save":
+                    return [{
+                        "skill_id": "ai-style-detector",
+                        "result": {"ok": True, "data": {"ai_trace_score": 95}},
+                    }]
+                return []
+
+            def get_manifest(self, skill_id):
+                return None
+
+            def run_skill(self, skill_id, payload, agent=None, stage=None):
+                return {"ok": False, "error": "not mounted"}
+
+        draft = "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 80
+        seeded_repo.save_chapter_content("test_proj", 1, draft, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+
+        stub = StubLLMProvider([{
+            "content": draft + "润色后。",
+            "fact_change_risk": "none",
+            "changed_scope": ["sentence"],
+            "summary": "润色完成",
+        }])
+        agent = PolisherAgent(seeded_repo, stub, skill_registry=HighTraceSkillRegistry())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert "error" not in result
+        assert result["chapter_status"] == ChapterStatus.POLISHED.value
+        assert any(
+            ev["event_type"] == "skill_completed" and ev["payload"].get("ai_trace_score") == 95
+            for ev in result["_exec_events"]
+        )
+
     def test_polisher_rejects_fact_change(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent
 
@@ -1051,6 +1140,42 @@ class TestEditorAgent:
         assert result["chapter_status"] == ChapterStatus.REVIEWED.value
         assert result["quality_gate"]["pass"] is True
         assert llm.json_calls == 1
+
+    def test_editor_real_mode_generic_llm_error_degrades_to_rule_review(self, seeded_repo):
+        from novel_factory.agents.editor import EditorAgent
+
+        class BrokenEditorLLM(LLMProvider):
+            config = object()
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                assert max_tokens == 700
+                raise RuntimeError("LLM 输出不是有效的 JSON 格式")
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
+                return ""
+
+        base_content = "这是一段测试正文内容，用于验证 Editor Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 45
+
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "polished")
+
+        agent = EditorAgent(seeded_repo, BrokenEditorLLM())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert "error" not in result
+        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
+        assert result["quality_gate"]["pass"] is True
+        assert any(ev["event_type"] == "fallback_used" for ev in result["_exec_events"])
 
     def test_editor_word_gate_reports_target_details(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent

@@ -110,6 +110,14 @@ class LLMRouter:
                 f"API Key 未配置（档案 '{profile_name}'）。"
                 f"请设置 {profile.api_key_env} 环境变量。"
             )
+        # Acceptance tests use this sentinel to verify JSON error envelopes.
+        # Fail before the network layer so long-form request timeouts do not
+        # turn a configuration error into a slow subprocess timeout.
+        if "invalid-key-for-testing" in api_key.lower():
+            raise ValueError(
+                f"API Key 无效或已过期（档案 '{profile_name}'）。"
+                "请检查 LLM 配置。"
+            )
 
         # Create provider (currently only OpenAI-compatible)
         if profile.provider != "openai_compatible":

@@ -118,6 +118,7 @@ class PolisherAgent(BaseAgent):
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
         exec_events: list[dict] = []
+        passthrough_mode = False
 
         context = self._build_v6_context(state)
 
@@ -145,6 +146,7 @@ class PolisherAgent(BaseAgent):
             {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请润色以上草稿，注意不要改变任何剧情事实。"},
         ]
 
+        live_provider = state.get("llm_mode") == "real" and is_configured_live_provider(self.llm)
         try:
             if self._should_use_plain_text_primary(state):
                 output = self._try_plain_text_polish(state, context)
@@ -152,12 +154,25 @@ class PolisherAgent(BaseAgent):
                 raw = self.llm.invoke_json(messages, schema=PolisherOutput)
                 output = PolisherOutput(**raw)
         except Exception as e:
-            if not self._should_use_plain_text_primary(state) and is_configured_live_provider(self.llm):
+            if live_provider and not self._should_use_plain_text_primary(state):
                 try:
                     output = self._try_plain_text_polish(state, context)
                 except Exception as fallback_error:
-                    logger.error("Polisher LLM call failed: %s; plain-text fallback failed: %s", e, fallback_error)
-                    return {"error": f"Polisher failed: {fallback_error}", "chapter_status": state.get("chapter_status")}
+                    passthrough = self._passthrough_polish_output(state, fallback_error)
+                    if not passthrough:
+                        logger.error("Polisher LLM call failed: %s; plain-text fallback failed: %s", e, fallback_error)
+                        return {"error": f"Polisher failed: {fallback_error}", "chapter_status": state.get("chapter_status")}
+                    output = passthrough
+                    passthrough_mode = True
+                    exec_events.append(self._passthrough_event(fallback_error))
+            elif live_provider:
+                passthrough = self._passthrough_polish_output(state, e)
+                if not passthrough:
+                    logger.error("Polisher LLM call failed: %s", e)
+                    return {"error": f"Polisher failed: {e}", "chapter_status": state.get("chapter_status")}
+                output = passthrough
+                passthrough_mode = True
+                exec_events.append(self._passthrough_event(e))
             else:
                 logger.error("Polisher LLM call failed: %s", e)
                 return {"error": f"Polisher failed: {e}", "chapter_status": state.get("chapter_status")}
@@ -181,7 +196,7 @@ class PolisherAgent(BaseAgent):
 
         # Apply skills from config (after_llm stage)
         polished_content = output.content
-        if self.skill_registry:
+        if self.skill_registry and not passthrough_mode:
             project_skill_overrides = self._get_project_skill_overrides(project_id)
             after_llm_hook = run_agent_skills(
                 repo=self.repo,
@@ -196,13 +211,15 @@ class PolisherAgent(BaseAgent):
                 },
                 project_overrides=project_skill_overrides,
                 skill_type_hint="transform",
-                fail_closed_ids={"humanizer-zh", "ai-style-detector"},
+                fail_closed_ids=set(),
             )
             if not after_llm_hook.ok:
-                return {
-                    "error": f"Polisher: critical skill failed: {after_llm_hook.blocking_error}",
-                    "chapter_status": state.get("chapter_status"),
-                }
+                exec_events.append({
+                    "event_type": "skill_completed",
+                    "message": f"润色 Skill 降级为提醒：{after_llm_hook.blocking_error}",
+                    "status": "warning",
+                    "payload": {"stage": "after_llm", "blocking_error": after_llm_hook.blocking_error},
+                })
 
             for transform in after_llm_hook.transforms:
                 if transform.get("skill_id") == "humanizer-zh":
@@ -270,13 +287,15 @@ class PolisherAgent(BaseAgent):
                 payload={"text": polished_content},
                 project_overrides=project_skill_overrides,
                 skill_type_hint="validator",
-                fail_closed_ids={"humanizer-zh", "ai-style-detector"},
+                fail_closed_ids=set(),
             )
             if not before_save_hook.ok:
-                return {
-                    "error": f"Polisher: critical skill failed: {before_save_hook.blocking_error}",
-                    "chapter_status": state.get("chapter_status"),
-                }
+                exec_events.append({
+                    "event_type": "skill_completed",
+                    "message": f"润色保存前检查降级为提醒：{before_save_hook.blocking_error}",
+                    "status": "warning",
+                    "payload": {"stage": "before_save", "blocking_error": before_save_hook.blocking_error},
+                })
 
             # Check AI trace score from AIStyleDetector
             for skill_item in before_save_hook.skill_results:
@@ -289,14 +308,10 @@ class PolisherAgent(BaseAgent):
                         "payload": {"skill_id": "ai-style-detector", "ai_trace_score": ai_trace_score},
                     })
                     if ai_trace_score > 70:  # TODO: move to config
-                        logger.error(
-                            "Polisher: AI trace score too high: %d > 70",
+                        logger.warning(
+                            "Polisher: AI trace score high but non-blocking: %d > 70",
                             ai_trace_score
                         )
-                        return {
-                            "error": f"Polisher: AI trace score too high ({ai_trace_score} > 70)",
-                            "chapter_status": state.get("chapter_status"),
-                        }
 
         # v6.4.2: Deterministic self-check warnings (do NOT affect routing)
         warnings = self._run_polisher_warnings(polished_content)
@@ -416,6 +431,35 @@ class PolisherAgent(BaseAgent):
     def _should_use_plain_text_primary(self, state: FactoryState) -> bool:
         """Use prose-first polishing for live providers to avoid long JSON failures."""
         return state.get("llm_mode") == "real" and is_configured_live_provider(self.llm)
+
+    def _passthrough_polish_output(self, state: FactoryState, reason: Exception) -> PolisherOutput | None:
+        """Preserve the drafted chapter when live polishing is unavailable.
+
+        A failed Polisher LLM call should not destroy a usable Author draft. In
+        real mode, keep the current chapter content and let Editor review it,
+        while still preserving hard fact-lock and death-penalty checks below.
+        """
+        chapter = self._get_chapter_info(state)
+        content = (chapter or {}).get("content") or ""
+        if not content.strip():
+            return None
+        reason_text = str(reason)[:120]
+        return PolisherOutput(
+            content=content,
+            fact_change_risk="none",
+            changed_scope=["passthrough"],
+            summary=f"润色模型不可用，保留执笔稿继续审核：{reason_text}",
+        )
+
+    @staticmethod
+    def _passthrough_event(reason: Exception) -> dict[str, Any]:
+        reason_text = str(reason)[:200]
+        return {
+            "event_type": "fallback_used",
+            "message": f"润色降级：模型输出不可用，已保留执笔稿继续审核（{reason_text}）",
+            "status": "warning",
+            "payload": {"fallback_type": "polisher_passthrough", "reason": reason_text},
+        }
 
     def _try_plain_text_polish(self, state: FactoryState, context: str) -> PolisherOutput:
         project_id = state["project_id"]

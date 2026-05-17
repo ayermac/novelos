@@ -12,7 +12,6 @@ from ..validators.chapter_checker import count_words, check_word_count_quality_g
 from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured
 from ..validators.revision_classifier import classify_issues
 from ..skills.registry import SkillRegistry
-from ..llm.openai_compatible import LLMTimeoutError, OutputValidationError
 from ..llm.provider import is_configured_live_provider
 from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.revision_context import normalize_revision_review
@@ -283,7 +282,7 @@ class EditorAgent(BaseAgent):
             )
             output = EditorOutput(**raw)
             self.validate_output(output.model_dump())
-        except (LLMTimeoutError, OutputValidationError) as e:
+        except Exception as e:
             if not use_compact_review:
                 raise
             logger.warning("Editor: LLM review degraded to rule-based fallback: %s", e)

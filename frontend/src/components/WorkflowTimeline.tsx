@@ -51,7 +51,7 @@ function eventLabel(eventType: string): string {
 
 function eventMessage(ev: WorkflowExecutionEvent): string {
   if (ev.event_type === 'llm_completed') {
-    return '模型返回完成'
+    return ev.message || '模型返回完成'
   }
   return ev.message || ''
 }

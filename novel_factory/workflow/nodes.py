@@ -480,8 +480,41 @@ def create_node_runners(
         result = _handle_retryable_quality_gate(state, repo, agent.run(state))
         agent_latency_ms = int((time.perf_counter() - agent_started_at) * 1000)
 
-        # v6.1: Log agent-specific execution events from _exec_events
+        # v6.1: Agent-specific execution events are emitted by the agent, but
+        # keep the high-level LLM completion/failure event adjacent to
+        # llm_started so the timeline reads naturally.
         exec_events = result.pop("_exec_events", [])
+        used_fallback = any(ev.get("event_type") == EVENT_FALLBACK_USED for ev in exec_events)
+
+        # v6.1: Log LLM completion/failure
+        if "error" in result:
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_FAILED,
+                message=f"Agent 执行失败：{result['error'][:200]}",
+                agent_id=agent_name,
+                status="error",
+                payload={"error": result["error"][:500]},
+                latency_ms=agent_latency_ms,
+            )
+        else:
+            llm_usage = getattr(llm, "last_token_usage", None)
+            llm_tokens = llm_usage.total_tokens if llm_usage else 0
+            llm_duration = llm_usage.duration_ms if llm_usage else agent_latency_ms
+            completed_message = (
+                f"LLM 调用结束，已使用降级方案继续：耗时 {llm_duration/1000:.1f}s，{llm_tokens} tokens"
+                if used_fallback
+                else f"LLM 调用完成：耗时 {llm_duration/1000:.1f}s，{llm_tokens} tokens"
+            )
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_COMPLETED,
+                message=completed_message,
+                agent_id=agent_name,
+                status="warning" if used_fallback else "info",
+                token_count=llm_tokens,
+                latency_ms=llm_duration,
+            )
+
+        # v6.1: Log agent-specific execution events from _exec_events
         for ev in exec_events:
             try:
                 log_execution_event(
@@ -498,28 +531,6 @@ def create_node_runners(
                 )
             except Exception:
                 pass  # Best-effort
-
-        # v6.1: Log LLM completion/failure
-        if "error" in result:
-            log_execution_event(
-                repo, state, agent_name, EVENT_LLM_FAILED,
-                message=f"Agent 执行失败：{result['error'][:200]}",
-                agent_id=agent_name,
-                status="error",
-                payload={"error": result["error"][:500]},
-                latency_ms=agent_latency_ms,
-            )
-        else:
-            llm_usage = getattr(llm, "last_token_usage", None)
-            llm_tokens = llm_usage.total_tokens if llm_usage else 0
-            llm_duration = llm_usage.duration_ms if llm_usage else agent_latency_ms
-            log_execution_event(
-                repo, state, agent_name, EVENT_LLM_COMPLETED,
-                message=f"LLM 调用完成：耗时 {llm_duration/1000:.1f}s，{llm_tokens} tokens",
-                agent_id=agent_name,
-                token_count=llm_tokens,
-                latency_ms=llm_duration,
-            )
 
         # v6.1: Verify completion evidence on success
         if "error" not in result and agent_name in ("planner", "screenwriter", "author", "polisher", "editor", "memory_curator"):
