@@ -734,6 +734,11 @@ class TestAuthorAgent:
         assert result["chapter_status"] == ChapterStatus.DRAFTED.value
         assert llm.json_calls == 0
         assert llm.text_calls == 1
+        assert any(
+            ev["event_type"] == "long_form_generation"
+            and ev["payload"].get("mode") == "plain_text_primary"
+            for ev in result["_exec_events"]
+        )
 
     def test_author_plain_text_primary_retries_empty_content_once(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent

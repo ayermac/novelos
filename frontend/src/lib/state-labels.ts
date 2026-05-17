@@ -102,6 +102,7 @@ export const EVENT_NARRATIVE: Record<string, string> = {
   llm_started: '开始调用 AI 模型',
   llm_completed: 'AI 模型调用完成',
   llm_failed: 'AI 模型调用失败',
+  long_form_generation: '使用长文生成模式',
   artifact_saved: '产物已保存',
   skill_started: 'Skill 开始处理',
   skill_completed: 'Skill 处理完成',

@@ -34,6 +34,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   llm_started: 'LLM 调用开始',
   llm_completed: 'LLM 调用完成',
   llm_failed: 'LLM 调用失败',
+  long_form_generation: '长文生成模式',
   artifact_saved: '产物保存',
   skill_completed: 'Skill 完成',
   self_check_completed: '自检完成',

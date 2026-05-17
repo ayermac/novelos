@@ -118,6 +118,39 @@ describe('WorkflowTimeline', () => {
     expect(screen.getByText('审核维度不完整，使用兜底策略')).toBeInTheDocument()
   })
 
+  it('shows long-form generation as an optimization instead of fallback', () => {
+    render(
+      <WorkflowTimeline
+        steps={[
+          {
+            key: 'author',
+            label: '执笔',
+            description: '生成正文',
+            status: 'completed',
+            events: [
+              {
+                id: 5,
+                node_name: 'author',
+                event_type: 'long_form_generation',
+                status: 'info',
+                message: '使用长文直写模式生成，避免长章节 JSON 截断',
+              },
+            ],
+            evidence: {
+              has_evidence: true,
+              event_count: 1,
+            },
+          },
+        ]}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '查看过程' }))
+    expect(screen.getByText('长文生成模式')).toBeInTheDocument()
+    expect(screen.queryByText('降级兜底')).not.toBeInTheDocument()
+    expect(screen.getByText('使用长文直写模式生成，避免长章节 JSON 截断')).toBeInTheDocument()
+  })
+
   it('keeps LLM completion token and latency metadata in the right meta column', () => {
     render(
       <WorkflowTimeline

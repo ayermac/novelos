@@ -484,7 +484,11 @@ def create_node_runners(
         # keep the high-level LLM completion/failure event adjacent to
         # llm_started so the timeline reads naturally.
         exec_events = result.pop("_exec_events", [])
-        used_fallback = any(ev.get("event_type") == EVENT_FALLBACK_USED for ev in exec_events)
+        used_fallback = any(
+            ev.get("event_type") == EVENT_FALLBACK_USED
+            and (ev.get("payload") or {}).get("fallback_type") != "plain_text_primary"
+            for ev in exec_events
+        )
 
         # v6.1: Log LLM completion/failure
         if "error" in result:

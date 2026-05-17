@@ -216,9 +216,10 @@ class AuthorAgent(BaseAgent):
         if self._should_use_plain_text_primary(state):
             output = self._try_plain_text_draft(state, task_desc, context)
             exec_events.append({
-                "event_type": "fallback_used",
-                "message": "使用纯正文模式生成（真实 LLM 优化路径）",
-                "payload": {"fallback_type": "plain_text_primary"},
+                "event_type": "long_form_generation",
+                "message": "使用长文直写模式生成，避免长章节 JSON 截断",
+                "status": "info",
+                "payload": {"mode": "plain_text_primary"},
             })
         else:
             try:
