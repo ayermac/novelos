@@ -114,7 +114,7 @@ def test_run_recovery_reset_clears_retry_checkpoint_and_audits_run(tmp_path):
     assert data["retry_count_after"] == 0
     assert data["checkpoint_before"] is True
     assert data["checkpoint_cleared"] is True
-    assert data["recovery"]["can_reset"] is False
+    assert data["recovery"]["can_reset"] is True  # planned is now recoverable
 
     chapter = repo.get_chapter("recover_reset", 1)
     assert chapter["status"] == "planned"
@@ -150,6 +150,47 @@ def test_run_recovery_reset_rejects_non_recoverable_status(tmp_path):
     assert body["ok"] is False
     assert body["error"]["code"] == "INVALID_STATUS"
     assert repo.get_chapter("recover_invalid", 1)["status"] == "polished"
+
+
+def test_run_recovery_reset_from_planned_clears_checkpoint_and_invalidates_runs(tmp_path):
+    """Planned status should allow recovery reset (cleanup-only, no state change)."""
+    client, repo, db_path = _make_client(tmp_path)
+    run_id = _seed_run(repo, "recover_planned", status="planned")
+
+    # Seed a checkpoint and an old running run
+    from novel_factory.workflow.checkpoint import derive_checkpoint_db_path, get_checkpoint_thread_id
+    cp_path = derive_checkpoint_db_path(db_path)
+    thread_id = get_checkpoint_thread_id("recover_planned", 1)
+    from novel_factory.workflow.checkpoint import get_sqlite_checkpointer
+    with get_sqlite_checkpointer(cp_path) as cp:
+        cp.put(
+            {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}},
+            {"id": "recover-cp-planned", "chapter_status": "planned"},
+            {},
+            {},
+        )
+    from novel_factory.workflow.checkpoint import checkpoint_thread_exists
+    assert checkpoint_thread_exists(db_path, "recover_planned", 1) is True
+
+    old_run_id = repo.create_workflow_run("recover_planned", 1)
+    repo.update_workflow_run(old_run_id, status="running", current_node="screenwriter")
+
+    preview = client.get(f"/api/runs/{run_id}/recovery").json()["data"]
+    assert preview["can_reset"] is True
+    assert preview["chapter_status"] == "planned"
+
+    resp = client.post(f"/api/runs/{run_id}/recovery/reset", json={"confirm": True})
+
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["recovered"] is True
+    assert data["previous_status"] == "planned"
+    assert data["new_status"] == "planned"
+    assert data["checkpoint_cleared"] is True
+    assert data["invalidated_runs"] >= 1
+    assert checkpoint_thread_exists(db_path, "recover_planned", 1) is False
+    # Chapter status unchanged
+    assert repo.get_chapter("recover_planned", 1)["status"] == "planned"
 
 
 def test_run_recovery_reset_requires_confirmation(tmp_path):

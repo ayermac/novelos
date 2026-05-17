@@ -374,18 +374,20 @@ async def reset_chapter(
 
         # Check if reset is allowed
         current_status = chapter.get("status", "")
-        if current_status not in ("blocking", "revision"):
+        if current_status not in ("blocking", "revision", "planned"):
             return error_response(
                 "INVALID_STATUS",
-                f"章节状态为 '{current_status}'，仅 'blocking' 或 'revision' 状态可重置"
+                f"章节状态为 '{current_status}'，仅 'blocking'、'revision' 或 'planned' 状态可重置"
             )
 
         retry_count_before = repo.get_chapter_retry_count(project_id, chapter_number)
 
         # Reset the chapter and mark a new retry window.
-        reset = repo.reset_chapter(project_id, chapter_number)
-        if not reset:
-            return error_response("RESET_FAILED", "重置章节失败")
+        if current_status in ("blocking", "revision"):
+            reset = repo.reset_chapter(project_id, chapter_number)
+            if not reset:
+                return error_response("RESET_FAILED", "重置章节失败")
+        # For planned: no state reset needed, already at planned
 
         recovered_blocked_runs = 0
         if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):

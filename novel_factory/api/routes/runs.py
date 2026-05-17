@@ -435,19 +435,21 @@ async def reset_run_chapter(
             return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
         current_status = chapter.get("status", "")
-        if current_status not in ("blocking", "revision"):
+        if current_status not in ("blocking", "revision", "planned"):
             return error_response(
                 "INVALID_STATUS",
-                f"章节状态为 '{current_status}'，仅 'blocking' 或 'revision' 状态可恢复",
+                f"章节状态为 '{current_status}'，仅 'blocking'、'revision' 或 'planned' 状态可恢复",
                 details={"current_status": current_status},
             )
 
         retry_count_before = repo.get_chapter_retry_count(project_id, chapter_number)
         checkpoint_before = _checkpoint_exists(repo, project_id, chapter_number)
 
-        reset = repo.reset_chapter(project_id, chapter_number, workflow_run_id=run_id)
-        if not reset:
-            return error_response("RESET_FAILED", "恢复章节失败")
+        if current_status in ("blocking", "revision"):
+            reset = repo.reset_chapter(project_id, chapter_number, workflow_run_id=run_id)
+            if not reset:
+                return error_response("RESET_FAILED", "恢复章节失败")
+        # For planned: no state reset needed, already at planned
 
         recovered_blocked_runs = 0
         if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
@@ -832,12 +834,14 @@ def _build_recovery_state(
         "published",
         "unknown",
     )
-    can_reset = chapter_status in ("blocking", "revision")
+    can_reset = chapter_status in ("blocking", "revision", "planned")
     retry_target = _node_retry_target(run_data.get("current_node"))
-    can_retry_node = bool(retry_target and can_reset)
+    can_retry_node = bool(retry_target and chapter_status in ("blocking", "revision"))
     reason = None
     if not chapter:
         reason = "章节不存在"
+    elif chapter_status == "planned":
+        reason = "章节已为 planned，可清除旧运行和 checkpoint 后重新开始工作流。"
     elif can_reset:
         reason = "可清除阻塞/返修状态并回到 planned，重新开始工作流。"
     else:
