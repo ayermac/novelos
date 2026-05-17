@@ -130,6 +130,8 @@ class LLMRouter:
             max_tokens=profile.max_tokens,
             request_timeout_seconds=profile.request_timeout_seconds,
             retry_attempts=profile.retry_attempts,
+            retry_min_seconds=profile.retry_min_seconds,
+            retry_max_seconds=profile.retry_max_seconds,
         )
         
         logger.info(

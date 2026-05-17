@@ -8,8 +8,9 @@ llm_profiles:
     api_key_env: OPENAI_API_KEY
     model: DeepSeek-V3.2
     max_tokens: 4096
-    request_timeout_seconds: 90
-    retry_attempts: 2
+    request_timeout_seconds: 120
+    retry_attempts: 3
+    retry_max_seconds: 30
 
   author:
     provider: openai_compatible
@@ -17,8 +18,9 @@ llm_profiles:
     api_key_env: OPENAI_API_KEY
     model: DeepSeek-V3.2
     max_tokens: 4096
-    request_timeout_seconds: 120
-    retry_attempts: 2
+    request_timeout_seconds: 300
+    retry_attempts: 3
+    retry_max_seconds: 30
 
   genesis:
     provider: openai_compatible
@@ -26,8 +28,9 @@ llm_profiles:
     api_key_env: OPENAI_API_KEY
     model: DeepSeek-V3.2
     max_tokens: 8192
-    request_timeout_seconds: 180
-    retry_attempts: 2
+    request_timeout_seconds: 240
+    retry_attempts: 3
+    retry_max_seconds: 30
 
   polisher:
     provider: openai_compatible
@@ -35,8 +38,9 @@ llm_profiles:
     api_key_env: OPENAI_API_KEY
     model: DeepSeek-V3.2
     max_tokens: 4096
-    request_timeout_seconds: 120
-    retry_attempts: 2
+    request_timeout_seconds: 180
+    retry_attempts: 3
+    retry_max_seconds: 30
 
   editor:
     provider: openai_compatible
@@ -44,16 +48,18 @@ llm_profiles:
     api_key_env: OPENAI_API_KEY
     model: Kimi-K2.6
     max_tokens: 4096
-    request_timeout_seconds: 120
-    retry_attempts: 2
+    request_timeout_seconds: 180
+    retry_attempts: 3
+    retry_max_seconds: 30
 
   continuity_checker:
     provider: openai_compatible
     base_url_env: OPENAI_BASE_URL
     api_key_env: OPENAI_API_KEY
     model: DeepSeek-V3.2
-    request_timeout_seconds: 20
-    retry_attempts: 1
+    request_timeout_seconds: 60
+    retry_attempts: 2
+    retry_max_seconds: 20
 
 agent_llm:
   genesis: genesis

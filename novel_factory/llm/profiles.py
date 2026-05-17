@@ -35,6 +35,8 @@ class LLMProfile(BaseModel):
     max_tokens: int = 4096
     request_timeout_seconds: int = 60
     retry_attempts: int = 3
+    retry_min_seconds: float = 1.0
+    retry_max_seconds: float = 30.0
     
     def get_resolved_base_url(self, env_getter) -> Optional[str]:
         """Resolve base_url from direct value or environment variable.
@@ -89,6 +91,8 @@ class LLMProfile(BaseModel):
             "max_tokens": self.max_tokens,
             "request_timeout_seconds": self.request_timeout_seconds,
             "retry_attempts": self.retry_attempts,
+            "retry_min_seconds": self.retry_min_seconds,
+            "retry_max_seconds": self.retry_max_seconds,
         }
         
         # Show resolved values

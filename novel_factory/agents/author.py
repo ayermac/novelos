@@ -35,6 +35,7 @@ from ..agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
 logger = logging.getLogger(__name__)
 
 AUTHOR_LONG_FORM_TIMEOUT_SECONDS = 300
+AUTHOR_CONTEXT_CHAR_LIMIT = 12000
 
 AUTHOR_SYSTEM_PROMPT = """你是网文工厂的执笔（Author），负责章节创作。
 
@@ -152,7 +153,24 @@ class AuthorAgent(BaseAgent):
             if feedback:
                 parts.append(feedback)
 
-        return "\n\n".join(parts)
+        return self._limit_context_size("\n\n".join(parts))
+
+    @staticmethod
+    def _limit_context_size(context: str, limit: int = AUTHOR_CONTEXT_CHAR_LIMIT) -> str:
+        """Keep long-form author prompts below a conservative input budget.
+
+        The first part contains the core task contract/instructions; the tail
+        often contains repair or revision notes. Preserve both and remove the
+        middle when project context grows too large.
+        """
+        text = str(context or "")
+        if len(text) <= limit:
+            return text
+        head_len = int(limit * 0.7)
+        tail_len = limit - head_len
+        marker = "\n\n【上下文已截断】中间资料过长，已保留开头任务要求和末尾返修/约束信息。\n\n"
+        head_budget = max(0, head_len - len(marker))
+        return f"{text[:head_budget]}{marker}{text[-tail_len:]}"
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]

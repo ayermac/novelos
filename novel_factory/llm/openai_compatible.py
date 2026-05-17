@@ -53,6 +53,11 @@ class RateLimitError(LLMError):
     pass
 
 
+class LLMConnectionError(LLMError):
+    """LLM 网络连接暂时失败."""
+    pass
+
+
 class OutputValidationError(LLMError):
     """LLM 输出校验失败."""
     pass
@@ -106,6 +111,9 @@ class OpenAICompatibleProvider(LLMProvider):
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
             request_timeout=request_timeout_seconds or self.config.request_timeout_seconds,
+            # Keep retry policy centralized in _invoke_with_retry so provider
+            # behavior is predictable across OpenAI-compatible backends.
+            max_retries=0,
         )
 
     def _to_lc_messages(self, messages: list[dict[str, str]]) -> list:
@@ -138,6 +146,22 @@ class OpenAICompatibleProvider(LLMProvider):
             raise LLMTimeoutError(
                 f"LLM 响应超时（>{timeout}秒），请稍后重试"
             ) from error
+        elif any(
+            marker in error_str
+            for marker in (
+                "connection",
+                "connect",
+                "network",
+                "temporarily",
+                "reset by peer",
+                "remote protocol",
+                "ssl",
+                "tls",
+                "read error",
+                "write error",
+            )
+        ):
+            raise LLMConnectionError(f"LLM 网络连接失败，请稍后重试: {error}") from error
         else:
             raise LLMError(f"LLM 调用失败: {error}") from error
 
@@ -163,7 +187,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 min=self.config.retry_min_seconds,
                 max=self.config.retry_max_seconds,
             ),
-            retry=retry_if_exception_type((RateLimitError, LLMTimeoutError)),
+            retry=retry_if_exception_type((RateLimitError, LLMTimeoutError, LLMConnectionError)),
             before_sleep=before_sleep_log(logger, logging.WARNING),
             reraise=True,
         )
@@ -174,7 +198,7 @@ class OpenAICompatibleProvider(LLMProvider):
                     start_time = time.time()
                     response = client.invoke(lc_messages, **kwargs)
                     duration_ms = int((time.time() - start_time) * 1000)
-                except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
+                except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
                     raise
                 except Exception as e:
                     self._handle_api_error(e, timeout_seconds=request_timeout_seconds)
@@ -262,7 +286,7 @@ class OpenAICompatibleProvider(LLMProvider):
                         max_retries + 1, e, text[:800],
                     )
                     raise OutputValidationError(f"LLM 输出不是有效的 JSON 格式: {e}") from e
-            except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
+            except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
                 raise
             except LLMError:
                 raise
@@ -296,7 +320,7 @@ class OpenAICompatibleProvider(LLMProvider):
                 **kwargs,
             )
             return response.content
-        except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
+        except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
             raise
         except LLMError:
             raise

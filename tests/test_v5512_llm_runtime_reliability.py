@@ -74,6 +74,33 @@ def test_llm_provider_retries_rate_limit_with_exponential_backoff():
     assert provider.last_token_usage.total_tokens == 15
 
 
+def test_llm_provider_retries_transient_connection_errors():
+    class _ConnectionClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, _messages, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise Exception("connection reset by peer")
+            return _FakeResponse()
+
+    config = LLMConfig(
+        api_key="test-key",
+        retry_attempts=2,
+        retry_min_seconds=0,
+        retry_max_seconds=0,
+    )
+    provider = OpenAICompatibleProvider(config)
+    client = _ConnectionClient()
+    provider._client = client  # type: ignore[assignment]
+
+    result = provider.invoke_json([{"role": "user", "content": "return json"}])
+
+    assert result == {"ok": True}
+    assert client.calls == 2
+
+
 def test_llm_provider_text_call_can_override_timeout_without_mutating_config():
     class _TextResponse:
         content = "ok"

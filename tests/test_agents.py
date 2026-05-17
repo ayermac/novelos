@@ -288,6 +288,25 @@ class TestAuthorAgent:
         assert "至少 2550 字符" in context
         assert "建议写到 3050 字符左右" in context
 
+    def test_author_context_is_capped_but_preserves_head_and_tail(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent, AUTHOR_CONTEXT_CHAR_LIMIT
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
+        agent._get_title_contract_context = lambda _project_id: "HEAD_TITLE_CONTRACT"
+        agent._get_style_bible_context = lambda _project_id, _agent_id: "MIDDLE_STYLE_" + ("设定" * 8000)
+        agent._build_death_penalty_repair_context = lambda _state: "TAIL_REPAIR_CONTEXT"
+
+        context = agent.build_context({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+        })
+
+        assert len(context) <= AUTHOR_CONTEXT_CHAR_LIMIT
+        assert "HEAD_TITLE_CONTRACT" in context
+        assert "TAIL_REPAIR_CONTEXT" in context
+        assert "【上下文已截断】" in context
+
     def test_author_writes_content(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
 
