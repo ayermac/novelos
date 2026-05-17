@@ -15,6 +15,7 @@ from typing import Any, Callable
 from ..db.repository import Repository
 from ..llm.provider import LLMProvider
 from ..models.state import ChapterStatus, FactoryState
+from .conditions import revision_target_from_state
 from ..agents.planner import PlannerAgent
 from ..agents.screenwriter import ScreenwriterAgent
 from ..agents.author import AuthorAgent
@@ -226,7 +227,10 @@ def _handle_retryable_quality_gate(
         result["retry_count"] = retry_count
         return result
 
-    revision_target = gate.get("revision_target") or "author"
+    revision_target = revision_target_from_state({
+        **state,
+        "quality_gate": gate,
+    })
     current_status = repo.get_chapter_status(project_id, chapter_number)
     if current_status not in (
         ChapterStatus.BLOCKING.value,
@@ -907,11 +911,27 @@ def awaiting_publish_node(state: FactoryState, repo: Repository) -> dict[str, An
 
 
 def revision_router_node(state: FactoryState, repo: Repository | None = None) -> dict[str, Any]:
-    """Determine where to route revision based on review result."""
+    """Determine where to route revision based on review result.
+
+    v6.2: Added mid-run hydration to protect against state corruption
+    during long-running revision flows.
+    """
     if repo is not None:
         _update_run_node(state, repo, "revision_router")
         _log_node_event(state, repo, "revision_router", "started", status="running")
+
+        # Mid-run protection: re-hydrate revision state if needed. Return any
+        # recovered fields so LangGraph merges them before conditional routing.
+        from .conditions import hydrate_revision_state
+        hydrated = hydrate_revision_state(state, repo)
+        updates = {
+            key: hydrated[key]
+            for key in ("quality_gate", "_revision_review")
+            if hydrated.get(key) != state.get(key)
+        }
+
         _log_node_event(state, repo, "revision_router", "completed", status="completed")
+        return updates
     # Pass through — routing is handled by conditional edges
     return {}
 
@@ -928,7 +948,7 @@ def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
     error = state.get("error")
     if not error and gate.get("pass") is False:
         score = gate.get("score")
-        target = gate.get("revision_target") or "author"
+        target = revision_target_from_state(state)
         # P1: Include quality gate details (word count, etc.) in blocking error
         error = (
             f"章节审核未通过，已达到最大返修次数 "

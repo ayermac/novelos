@@ -197,9 +197,9 @@ def route_after_agent(state: FactoryState) -> str:
 def route_after_memory_curator(state: FactoryState) -> str:
     """Route after memory curator: publish (stub) or awaiting_publish (real).
 
-    v5.3.2 closure: In real mode, memory curator failure blocks publish.
+    v6.2: Memory curator failures still route to human_review by default
+    to maintain safety. Future versions may support configurable degradation.
     """
-    # If memory curator failed in real mode, route to human_review
     if state.get("requires_human") or state.get("error"):
         return "human_review"
 
@@ -235,3 +235,28 @@ def route_by_revision_type(state: FactoryState) -> str:
         "planner": "planner",
     }
     return routing.get(target, "author")
+
+
+def prepare_resume_after_human_review(state: FactoryState, repo: Any) -> dict:
+    """Prepare state for resuming after human review intervention.
+
+    This helper clears stale checkpoints and resets key flags so the
+    workflow can be safely re-triggered after manual fixes.
+    """
+    project_id = state.get("project_id")
+    chapter_number = state.get("chapter_number")
+
+    result = {
+        "requires_human": False,
+        "error": None,
+        "current_stage": "resumed",
+    }
+
+    if project_id and chapter_number:
+        try:
+            from .checkpoint import delete_checkpoint_thread
+            delete_checkpoint_thread(repo.db_path, project_id, int(chapter_number))
+        except Exception:
+            pass
+
+    return result
