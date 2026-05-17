@@ -38,7 +38,8 @@ class TestLangGraphCompilation:
         assert hasattr(graph, "stream")
 
     def test_compile_graph_with_checkpointer(self):
-        """compile_graph() with checkpoint=True should include checkpointer."""
+        """compile_graph() with an explicit checkpointer should compile."""
+        from langgraph.checkpoint.memory import MemorySaver
         from novel_factory.workflow.graph import compile_graph
         from novel_factory.config.settings import load_settings
         from novel_factory.db.repository import Repository
@@ -46,10 +47,22 @@ class TestLangGraphCompilation:
         settings = load_settings()
         repo = Repository(settings.db_path)
 
-        graph = compile_graph(settings=settings, repo=repo, checkpoint=True)
+        graph = compile_graph(settings=settings, repo=repo, checkpointer=MemorySaver())
 
         # Should still have invoke method
         assert hasattr(graph, "invoke")
+
+    def test_compile_graph_rejects_implicit_memory_checkpoint(self):
+        """checkpoint=True without a durable checkpointer should fail loudly."""
+        from novel_factory.workflow.graph import compile_graph
+        from novel_factory.config.settings import load_settings
+        from novel_factory.db.repository import Repository
+
+        settings = load_settings()
+        repo = Repository(settings.db_path)
+
+        with pytest.raises(ValueError, match="requires an explicit durable checkpointer"):
+            compile_graph(settings=settings, repo=repo, checkpoint=True)
 
 
 class TestNodeRunners:

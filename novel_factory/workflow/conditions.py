@@ -9,6 +9,24 @@ from ..models.state import ChapterStatus, FactoryState
 
 logger = logging.getLogger(__name__)
 
+VALID_REVISION_TARGETS = frozenset({"author", "polisher", "planner"})
+
+
+def normalize_revision_target(value: Any) -> str:
+    """Return a safe workflow revision target.
+
+    Editor outputs and historical review rows may be missing, empty, or contain
+    non-routable values. Revision is safest when it degrades to Author because
+    Author can regenerate the chapter from the existing screenplay.
+    """
+    return value if value in VALID_REVISION_TARGETS else "author"
+
+
+def revision_target_from_state(state: FactoryState) -> str:
+    """Read revision_target from workflow state with a safe default."""
+    gate = state.get("quality_gate", {}) or {}
+    return normalize_revision_target(gate.get("revision_target"))
+
 
 def resolve_revision_target(repo: Any, project_id: str, chapter_number: int) -> str:
     """Recover revision_target from the latest review when state.quality_gate is missing.
@@ -22,8 +40,8 @@ def resolve_revision_target(repo: Any, project_id: str, chapter_number: int) -> 
         if not chapter:
             return "author"
         review = repo.get_latest_review(project_id, chapter["id"])
-        if review and review.get("revision_target") in ("author", "polisher", "planner"):
-            return review["revision_target"]
+        if review:
+            return normalize_revision_target(review.get("revision_target"))
     except Exception:
         logger.debug("resolve_revision_target failed for %s/%s", project_id, chapter_number)
     return "author"
@@ -38,6 +56,44 @@ def get_latest_review_data(repo: Any, project_id: str, chapter_number: int) -> d
         return repo.get_latest_review(project_id, chapter["id"])
     except Exception:
         return None
+
+
+def hydrate_revision_state(state: FactoryState, repo: Any) -> FactoryState:
+    """Populate revision routing metadata for a fresh revision run.
+
+    Fresh graph runs are built from DB chapter status and may not have the
+    editor's quality_gate in memory. This helper restores the latest review's
+    revision_target and compact review metadata in one place so streaming and
+    non-streaming runners cannot drift.
+    """
+    if state.get("chapter_status") != ChapterStatus.REVISION.value:
+        return state
+    if state.get("quality_gate"):
+        return state
+
+    project_id = state.get("project_id")
+    chapter_number = state.get("chapter_number")
+    if not project_id or chapter_number is None:
+        return state
+
+    resolved_target = resolve_revision_target(repo, project_id, int(chapter_number))
+    hydrated: FactoryState = dict(state)
+    hydrated["quality_gate"] = {
+        "pass": False,
+        "revision_target": resolved_target,
+    }
+
+    review = get_latest_review_data(repo, project_id, int(chapter_number))
+    if review:
+        hydrated["_revision_review"] = {
+            "review_id": review.get("id"),
+            "score": review.get("score"),
+            "revision_target": normalize_revision_target(review.get("revision_target")),
+            "issues": review.get("issues"),
+            "suggestions": review.get("suggestions"),
+        }
+
+    return hydrated
 
 
 def route_by_chapter_status(state: FactoryState) -> str:
@@ -78,8 +134,7 @@ def route_by_chapter_status(state: FactoryState) -> str:
 
     # For revision, check quality_gate to determine target
     if status == ChapterStatus.REVISION.value:
-        gate = state.get("quality_gate", {})
-        target = gate.get("revision_target", "author")
+        target = revision_target_from_state(state)
         if target == "polisher":
             return "polisher"
         elif target == "planner":
@@ -172,8 +227,7 @@ def route_by_revision_type(state: FactoryState) -> str:
         }
         return routing_by_status.get(status, "human_review")
 
-    gate = state.get("quality_gate", {})
-    target = gate.get("revision_target", "author")
+    target = revision_target_from_state(state)
 
     routing = {
         "author": "author",

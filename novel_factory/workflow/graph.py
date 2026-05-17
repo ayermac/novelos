@@ -11,7 +11,6 @@ import logging
 from typing import Any
 
 from langgraph.graph import END, StateGraph
-from langgraph.checkpoint.memory import MemorySaver
 
 from ..config.settings import Settings, load_settings
 from ..db.repository import Repository
@@ -256,7 +255,7 @@ def compile_graph(
     llm_router: Any | None = None,
     skill_registry: Any | None = None,
     checkpointer: Any | None = None,
-    checkpoint: bool = True,
+    checkpoint: bool = False,
 ):
     """Build and compile the graph with optional checkpointing.
 
@@ -266,11 +265,13 @@ def compile_graph(
         llm: LLM provider. Used only if llm_router is None (legacy mode).
         llm_router: LLMRouter instance for agent-level routing (v5.1.6).
         skill_registry: Optional SkillRegistry for polisher/editor (v5.1.6).
-        checkpointer: Custom checkpointer instance (e.g. SqliteSaver).
-                       If provided, takes precedence over the checkpoint flag.
-        checkpoint: If True and no custom checkpointer is given, use MemorySaver.
-                    Note: v1.1 default MemorySaver does NOT guarantee cross-process
-                    recovery. For persistent checkpointing, pass a durable checkpointer.
+        checkpointer: Custom durable checkpointer instance (e.g. SqliteSaver).
+                       Production callers should pass one explicitly.
+        checkpoint: Deprecated compatibility flag. ``checkpoint=True`` without
+                    an explicit checkpointer is rejected because an in-memory
+                    checkpointer looks recoverable but cannot survive process
+                    restart. Use checkpoint=False for ephemeral graphs or pass
+                    a durable checkpointer.
 
     Returns:
         Compiled graph ready for .invoke() or .stream().
@@ -279,7 +280,10 @@ def compile_graph(
     if checkpointer is not None:
         cp = checkpointer
     elif checkpoint:
-        cp = MemorySaver()
+        raise ValueError(
+            "compile_graph(checkpoint=True) now requires an explicit durable "
+            "checkpointer; pass checkpoint=False for ephemeral runs."
+        )
     else:
         cp = None
     return graph.compile(checkpointer=cp)

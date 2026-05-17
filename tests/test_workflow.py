@@ -6,6 +6,8 @@ from datetime import datetime, timedelta
 
 from novel_factory.models.state import ChapterStatus
 from novel_factory.workflow.conditions import (
+    hydrate_revision_state,
+    normalize_revision_target,
     route_by_chapter_status,
     route_by_review_result,
     route_after_memory_curator,
@@ -47,6 +49,17 @@ class TestRouteByChapterStatus:
         state = {
             "chapter_status": "revision",
             "quality_gate": {"revision_target": "author"},
+        }
+        assert route_by_chapter_status(state) == "author"
+
+    def test_revision_without_quality_gate_routes_to_author(self):
+        state = {"chapter_status": "revision"}
+        assert route_by_chapter_status(state) == "author"
+
+    def test_revision_with_invalid_target_routes_to_author(self):
+        state = {
+            "chapter_status": "revision",
+            "quality_gate": {"revision_target": "editor"},
         }
         assert route_by_chapter_status(state) == "author"
 
@@ -207,6 +220,14 @@ class TestRouteByRevisionType:
         state = {"quality_gate": {}}
         assert route_by_revision_type(state) == "author"
 
+    def test_invalid_revision_target_routes_to_author(self):
+        state = {"chapter_status": ChapterStatus.REVISION.value, "quality_gate": {"revision_target": "editor"}}
+        assert route_by_revision_type(state) == "author"
+
+    def test_missing_quality_gate_routes_to_author(self):
+        state = {"chapter_status": ChapterStatus.REVISION.value}
+        assert route_by_revision_type(state) == "author"
+
     # P1: Full stale-revision-gate matrix — when DB status != REVISION, ignore gate
     @pytest.mark.parametrize(
         "db_status,expected",
@@ -244,6 +265,72 @@ class TestRouteByRevisionType:
             "quality_gate": {"revision_target": "planner"},
         }
         assert route_by_revision_type(state) == "editor"
+
+
+class TestRevisionStateHydration:
+    class FakeRepo:
+        def __init__(self, review=None):
+            self.review = review
+
+        def get_chapter(self, project_id, chapter_number):
+            return {"id": 42, "project_id": project_id, "chapter_number": chapter_number}
+
+        def get_latest_review(self, project_id, chapter_id):
+            return self.review
+
+    def test_normalize_revision_target_only_allows_routable_agents(self):
+        assert normalize_revision_target("author") == "author"
+        assert normalize_revision_target("polisher") == "polisher"
+        assert normalize_revision_target("planner") == "planner"
+        assert normalize_revision_target("editor") == "author"
+        assert normalize_revision_target(None) == "author"
+
+    def test_hydrate_revision_state_uses_latest_review_target(self):
+        repo = self.FakeRepo({
+            "id": 7,
+            "score": 69,
+            "revision_target": "polisher",
+            "issues": '["AI痕迹过重"]',
+            "suggestions": '["压缩解释性句子"]',
+        })
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "chapter_status": ChapterStatus.REVISION.value,
+        }
+
+        hydrated = hydrate_revision_state(state, repo)
+
+        assert hydrated["quality_gate"] == {"pass": False, "revision_target": "polisher"}
+        assert hydrated["_revision_review"]["review_id"] == 7
+        assert hydrated["_revision_review"]["revision_target"] == "polisher"
+
+    def test_hydrate_revision_state_invalid_review_target_defaults_to_author(self):
+        repo = self.FakeRepo({"id": 8, "score": 67, "revision_target": "editor"})
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "chapter_status": ChapterStatus.REVISION.value,
+        }
+
+        hydrated = hydrate_revision_state(state, repo)
+
+        assert hydrated["quality_gate"]["revision_target"] == "author"
+        assert hydrated["_revision_review"]["revision_target"] == "author"
+
+    def test_hydrate_revision_state_keeps_existing_quality_gate(self):
+        repo = self.FakeRepo({"id": 9, "revision_target": "planner"})
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "chapter_status": ChapterStatus.REVISION.value,
+            "quality_gate": {"pass": False, "revision_target": "polisher"},
+        }
+
+        hydrated = hydrate_revision_state(state, repo)
+
+        assert hydrated is state
+        assert hydrated["quality_gate"]["revision_target"] == "polisher"
 
 
 class TestRouteAfterMemoryCurator:

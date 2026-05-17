@@ -18,6 +18,7 @@ from ..models.state import ChapterStatus
 from ..db.repository import Repository
 from ..models.state import FactoryState
 from .graph import compile_graph
+from .conditions import hydrate_revision_state
 from .checkpoint import (
     delete_checkpoint_thread,
     derive_checkpoint_db_path,
@@ -381,25 +382,9 @@ def run_with_graph(
         **_runtime_budget_state(settings, repo, project_id),
     }
 
-    # v6.1.1: Recover revision_target from latest review when chapter is in revision.
-    # This ensures routing functions can find the correct Agent even when
-    # quality_gate is not yet in state (fresh workflow start for revision chapter).
-    if current_status == ChapterStatus.REVISION.value and not state.get("quality_gate"):
-        from .conditions import resolve_revision_target, get_latest_review_data
-        resolved_target = resolve_revision_target(repo, project_id, chapter_number)
-        review = get_latest_review_data(repo, project_id, chapter_number)
-        state["quality_gate"] = {
-            "pass": False,
-            "revision_target": resolved_target,
-        }
-        if review:
-            state["_revision_review"] = {
-                "review_id": review.get("id"),
-                "score": review.get("score"),
-                "revision_target": review.get("revision_target"),
-                "issues": review.get("issues"),
-                "suggestions": review.get("suggestions"),
-            }
+    # v6.1.1+: Recover revision_target/review metadata from the latest review
+    # for fresh revision runs. Keep this shared with streaming execution.
+    state = hydrate_revision_state(state, repo)
 
     # Build LLMRouter
     llm_router = _build_llm_router(settings, llm_mode)
@@ -562,23 +547,9 @@ def run_with_graph_stream(
         **_runtime_budget_state(settings, repo, project_id),
     }
 
-    # v6.1.1: Recover revision_target from latest review for revision chapters.
-    if current_status == ChapterStatus.REVISION.value and not state.get("quality_gate"):
-        from .conditions import resolve_revision_target, get_latest_review_data
-        resolved_target = resolve_revision_target(repo, project_id, chapter_number)
-        review = get_latest_review_data(repo, project_id, chapter_number)
-        state["quality_gate"] = {
-            "pass": False,
-            "revision_target": resolved_target,
-        }
-        if review:
-            state["_revision_review"] = {
-                "review_id": review.get("id"),
-                "score": review.get("score"),
-                "revision_target": review.get("revision_target"),
-                "issues": review.get("issues"),
-                "suggestions": review.get("suggestions"),
-            }
+    # v6.1.1+: Recover revision_target/review metadata from the latest review
+    # for fresh revision runs. Keep this shared with non-streaming execution.
+    state = hydrate_revision_state(state, repo)
 
     # Build LLMRouter
     try:

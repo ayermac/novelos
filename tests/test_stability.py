@@ -449,12 +449,12 @@ class TestS7Checkpoint:
         graph = compile_graph(checkpoint=False)
         assert graph is not None
 
-    def test_compile_default_uses_memory_saver(self):
-        """compile_graph with default args uses MemorySaver."""
+    def test_compile_rejects_implicit_memory_saver(self):
+        """compile_graph no longer creates a non-durable MemorySaver implicitly."""
         from novel_factory.workflow.graph import compile_graph
 
-        graph = compile_graph(checkpoint=True)
-        assert graph is not None
+        with pytest.raises(ValueError, match="requires an explicit durable checkpointer"):
+            compile_graph(checkpoint=True)
 
 
 # ── v1.1 Rework: Agent status-advance guard ────────────────────
