@@ -720,13 +720,27 @@ class TestReorderSkills:
         resp = test_client.post("/api/skills/reorder", json={
             "agent": "editor",
             "stage": "before_review",
-            "skill_ids": ["style-bible-checker", "narrative-quality", "ai-style-detector"],
+            "skill_ids": [
+                "style-bible-checker",
+                "narrative-quality",
+                "ai-style-detector",
+                "show-dont-tell",
+                "info-dump-detector",
+                "scene-texture",
+                "dialogue-naturalness",
+            ],
         })
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
         assert data["data"]["skill_ids"] == [
-            "style-bible-checker", "narrative-quality", "ai-style-detector"
+            "style-bible-checker",
+            "narrative-quality",
+            "ai-style-detector",
+            "show-dont-tell",
+            "info-dump-detector",
+            "scene-texture",
+            "dialogue-naturalness",
         ]
 
     def test_reorder_rejects_missing_or_extra_ids(self, test_client):
@@ -883,6 +897,29 @@ class TestGetAgentSkillMatrix:
         assert "ai-style-detector" in skill_ids
         assert "narrative-quality" in skill_ids
         assert "style-bible-checker" in skill_ids
+        assert "show-dont-tell" in skill_ids
+        assert "info-dump-detector" in skill_ids
+        assert "scene-texture" in skill_ids
+        assert "dialogue-naturalness" in skill_ids
+
+    def test_antiai_skills_are_mounted_without_unmounted_warning(self, test_client):
+        resp = test_client.get("/api/skills/agent-matrix")
+        matrix = resp.json()["data"]
+        unmounted_ids = {s["id"] for s in matrix["unmounted_enabled_skills"]}
+        warning_ids = {
+            w.get("skill_id")
+            for w in matrix["warnings"]
+            if w.get("code") == "ENABLED_UNMOUNTED_SKILL"
+        }
+
+        for skill_id in (
+            "show-dont-tell",
+            "info-dump-detector",
+            "scene-texture",
+            "dialogue-naturalness",
+        ):
+            assert skill_id not in unmounted_ids
+            assert skill_id not in warning_ids
 
     def test_style_bible_checker_manifest_skill_is_not_legacy(self, test_client):
         resp = test_client.get("/api/skills/agent-matrix")

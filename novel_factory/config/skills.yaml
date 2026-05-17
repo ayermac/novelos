@@ -144,6 +144,10 @@ agent_skills:
       - ai-style-detector
       - narrative-quality
       - style-bible-checker
+      - show-dont-tell
+      - info-dump-detector
+      - scene-texture
+      - dialogue-naturalness
 
   memory_curator:
     after_extract:

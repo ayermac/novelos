@@ -256,6 +256,10 @@ llm_profiles:
     base_url_env: DEEPSEEK_BASE_URL
     api_key_env: DEEPSEEK_API_KEY
     model: deepseek-chat
+    request_timeout_seconds: 5
+    retry_attempts: 1
+    retry_min_seconds: 0
+    retry_max_seconds: 0
 agent_llm:
   screenwriter: deepseek
   author: deepseek
