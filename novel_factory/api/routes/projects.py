@@ -23,6 +23,12 @@ class ChapterRegenerateResetRequest(BaseModel):
     confirm: bool = False
 
 
+class RestoreBestVersionRequest(BaseModel):
+    """Restore the best historical version after a workflow deadloop."""
+
+    confirm: bool = False
+
+
 def _chapter_quality_score(repo, project_id: str, chapter: dict) -> int | float | None:
     """Return the user-facing quality score for a chapter.
 
@@ -433,6 +439,114 @@ async def reset_chapter(
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"重置章节失败: {str(e)}")
+
+
+@router.post("/projects/{project_id}/chapters/{chapter_number}/restore-best-version")
+async def restore_chapter_best_version(
+    request: Request,
+    project_id: str,
+    chapter_number: int,
+    body: RestoreBestVersionRequest,
+) -> EnvelopeResponse:
+    """Restore a chapter to the best historical version after deadloop fuse."""
+    from ..deps import get_repo
+    from ...db.best_version_recovery import find_best_chapter_version, restore_best_version
+    from ...validators.chapter_checker import derive_word_target
+    from ...workflow.checkpoint import delete_checkpoint_thread
+
+    try:
+        if not body.confirm:
+            return error_response("CONFIRM_REQUIRED", "请确认恢复历史最佳版本")
+
+        repo = get_repo(request)
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+
+        current_status = chapter.get("status", "")
+        if current_status in ("published", "awaiting_publish"):
+            return error_response(
+                "PUBLISHED_PROTECTED",
+                "已发布或待发布章节不能直接恢复历史版本，请先创建修订版。",
+            )
+
+        instruction = repo.get_instruction_by_chapter(project_id, chapter_number)
+        word_target = derive_word_target(instruction, project)
+        best = find_best_chapter_version(repo, project_id, chapter_number, word_target)
+        if not best:
+            return error_response("NO_RESTORABLE_VERSION", "未找到可恢复的历史版本")
+
+        result = restore_best_version(repo, project_id, chapter_number, word_target)
+        if not result.get("success"):
+            return error_response("RESTORE_FAILED", result.get("error") or "恢复最佳版本失败")
+
+        created_by = best.get("created_by")
+        new_status = "polished" if created_by == "polisher" else "drafted"
+        repo.update_chapter_status(project_id, chapter_number, new_status)
+
+        run_id = repo.create_workflow_run(project_id, chapter_number)
+        repo.update_workflow_run(
+            run_id,
+            status="completed",
+            current_node="reset_recovery",
+            clear_error=True,
+        )
+
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "INSERT INTO task_status "
+                "(project_id, chapter_number, task_type, agent_id, status, "
+                "started_at, completed_at, error_message, workflow_run_id) "
+                "VALUES (?, ?, 'reset', 'human', 'completed', "
+                "datetime('now','+8 hours'), datetime('now','+8 hours'), ?, ?)",
+                (
+                    project_id,
+                    chapter_number,
+                    f"人工恢复历史最佳版本：{best.get('version') or best.get('id')}。",
+                    run_id,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        recovered_blocked_runs = 0
+        if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
+            recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+                project_id,
+                chapter_number,
+            )
+
+        invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
+            project_id,
+            chapter_number,
+            "章节已恢复历史最佳版本，旧运行已作废，请重新开始新的工作流。",
+        )
+        checkpoint_cleared = delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
+
+        return envelope_response({
+            "restored": True,
+            "run_id": run_id,
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "previous_status": current_status,
+            "new_status": new_status,
+            "restored_version_id": result.get("restored_version_id"),
+            "word_count": result.get("word_count"),
+            "score": result.get("score"),
+            "recovered_blocked_runs": recovered_blocked_runs,
+            "invalidated_runs": invalidated_runs,
+            "checkpoint_cleared": checkpoint_cleared,
+            "message": "已恢复历史最佳版本，下一次运行将从当前正文继续，而不是继续死循环重写。",
+        })
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"恢复历史最佳版本失败: {str(e)}")
 
 
 @router.post("/projects/{project_id}/chapters/{chapter_number}/regenerate-reset")

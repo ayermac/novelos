@@ -434,6 +434,73 @@ class WorkflowRepositoryMixin:
         finally:
             conn.close()
 
+    def get_latest_chapter_reset_marker(
+        self,
+        project_id: str,
+        chapter_number: int,
+    ) -> str | None:
+        """Return the latest explicit human recovery marker for a chapter.
+
+        Manual reset is the user's confirmation that old workflow failures
+        should no longer poison the next attempt. Both task_status reset rows
+        and reset_recovery workflow runs count as recovery markers because
+        older API paths recorded one or the other.
+        """
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT MAX(marker_at) AS marker_at FROM ("
+                "  SELECT COALESCE(completed_at, started_at, created_at) AS marker_at "
+                "  FROM task_status "
+                "  WHERE project_id=? AND chapter_number=? AND task_type='reset' "
+                "  UNION ALL "
+                "  SELECT COALESCE(completed_at, started_at) AS marker_at "
+                "  FROM workflow_runs "
+                "  WHERE project_id=? AND chapter_number=? "
+                "  AND current_node='reset_recovery' AND status='completed'"
+                ")",
+                (project_id, chapter_number, project_id, chapter_number),
+            ).fetchone()
+            return row["marker_at"] if row and row["marker_at"] else None
+        finally:
+            conn.close()
+
+    def count_recent_failed_workflow_runs(
+        self,
+        project_id: str,
+        chapter_number: int,
+        since: str | None = None,
+        limit: int = 20,
+    ) -> int:
+        """Count failed workflow runs in the current recovery window.
+
+        Without ``since`` this preserves the historical "recent 20 runs"
+        behavior. With ``since`` it counts only failures after the latest manual
+        reset/confirmation so old deadloops do not permanently block a chapter.
+        """
+        conn = self._conn()
+        try:
+            if since:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM workflow_runs "
+                    "WHERE project_id=? AND chapter_number=? "
+                    "AND status='failed' AND started_at>?",
+                    (project_id, chapter_number, since),
+                ).fetchone()
+                return int(row["cnt"] if row else 0)
+
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM ("
+                "  SELECT status FROM workflow_runs "
+                "  WHERE project_id=? AND chapter_number=? "
+                "  ORDER BY started_at DESC, rowid DESC LIMIT ?"
+                ") WHERE status='failed'",
+                (project_id, chapter_number, limit),
+            ).fetchone()
+            return int(row["cnt"] if row else 0)
+        finally:
+            conn.close()
+
     def get_chapter_total_retry_count(self, project_id: str, chapter_number: int) -> int:
         """Get all historical revision attempts for a chapter."""
         conn = self._conn()

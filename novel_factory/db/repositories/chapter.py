@@ -468,6 +468,31 @@ class ChapterRepositoryMixin:
         finally:
             conn.close()
 
+    def get_chapter_version_count(
+        self,
+        project_id: str,
+        chapter_number: int,
+        since: str | None = None,
+    ) -> int:
+        """Count chapter versions, optionally scoped after a recovery marker."""
+        conn = self._conn()
+        try:
+            if since:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM chapter_versions "
+                    "WHERE project_id=? AND chapter=? AND created_at>?",
+                    (project_id, chapter_number, since),
+                ).fetchone()
+            else:
+                row = conn.execute(
+                    "SELECT COUNT(*) AS cnt FROM chapter_versions "
+                    "WHERE project_id=? AND chapter=?",
+                    (project_id, chapter_number),
+                ).fetchone()
+            return int(row["cnt"] if row else 0)
+        finally:
+            conn.close()
+
     def get_version_by_id(
         self, project_id: str, version_id: int
     ) -> dict | None:

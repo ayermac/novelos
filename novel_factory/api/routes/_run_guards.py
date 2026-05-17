@@ -161,6 +161,12 @@ def _has_explicit_reset_recovery(repo, project_id: str, chapter_number: int) -> 
     planned+content is treated as suspicious preserved work and stays blocked.
     """
     try:
+        if hasattr(repo, "get_latest_chapter_reset_marker"):
+            return repo.get_latest_chapter_reset_marker(project_id, chapter_number) is not None
+    except Exception:
+        pass
+
+    try:
         runs = repo.get_workflow_runs_for_project(
             project_id,
             chapter_number=chapter_number,

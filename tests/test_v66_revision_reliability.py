@@ -1,6 +1,8 @@
 """v6.6.0 Revision Reliability 完整系统级测试"""
 
 import pytest
+import tempfile
+import os
 from novel_factory.quality.version_regression_guard import VersionRegressionGuard
 from novel_factory.quality.deadloop_detector import DeadloopDetector
 from novel_factory.validators.word_count_policy import WordCountPolicy, DEFAULT_POLICY
@@ -125,3 +127,127 @@ def test_best_version_recovery_uses_repository_version_api():
 
     best = find_best_chapter_version(FakeRepo(), "p", 1, 4000)
     assert best["id"] == 2
+
+
+def test_deadloop_failed_runs_are_scoped_after_manual_reset():
+    from novel_factory.db.connection import init_db
+    from novel_factory.db.repository import Repository
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        init_db(db_path)
+        repo = Repository(db_path)
+        repo.create_project(project_id="deadloop-reset", name="Deadloop Reset", genre="科幻")
+        repo.add_chapter(
+            project_id="deadloop-reset",
+            chapter_number=1,
+            title="第一章",
+            status="blocking",
+        )
+
+        run_ids = []
+        for i in range(7):
+            run_id = repo.create_workflow_run("deadloop-reset", 1)
+            repo.update_workflow_run(run_id, status="failed", error_message=f"失败 {i}")
+            run_ids.append(run_id)
+
+        conn = repo._conn()
+        try:
+            for idx, run_id in enumerate(run_ids):
+                conn.execute(
+                    "UPDATE workflow_runs SET started_at=? WHERE id=?",
+                    (f"2026-01-01 00:0{idx}:00", run_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+
+        before = DeadloopDetector.check_deadloop(repo, "deadloop-reset", 1)
+        assert before["triggered"] is True
+        assert "失败 workflow" in before["reason"]
+
+        assert repo.reset_chapter("deadloop-reset", 1) is True
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "UPDATE task_status SET completed_at='2026-01-02 00:00:00' "
+                "WHERE project_id='deadloop-reset' AND chapter_number=1 AND task_type='reset'"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        after = DeadloopDetector.check_deadloop(repo, "deadloop-reset", 1)
+        assert after["triggered"] is False
+        assert repo.count_recent_failed_workflow_runs(
+            "deadloop-reset",
+            1,
+            since=repo.get_latest_chapter_reset_marker("deadloop-reset", 1),
+        ) == 0
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
+def test_deadloop_version_count_is_scoped_after_manual_reset():
+    from novel_factory.db.connection import init_db
+    from novel_factory.db.repository import Repository
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    try:
+        init_db(db_path)
+        repo = Repository(db_path)
+        repo.create_project(project_id="version-reset", name="Version Reset", genre="科幻")
+        repo.add_chapter(
+            project_id="version-reset",
+            chapter_number=1,
+            title="第一章",
+            status="blocking",
+        )
+        for i in range(22):
+            repo.save_version(
+                "version-reset",
+                1,
+                f"第 {i} 个历史版本" + ("内容" * 120),
+                created_by="author",
+            )
+
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "UPDATE chapter_versions SET created_at='2026-01-01 00:00:00' "
+                "WHERE project_id='version-reset' AND chapter=1"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        before = DeadloopDetector.check_deadloop(repo, "version-reset", 1)
+        assert before["triggered"] is True
+        assert "版本数超过阈值" in before["reason"]
+
+        assert repo.reset_chapter("version-reset", 1) is True
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "UPDATE task_status SET completed_at='2026-01-02 00:00:00' "
+                "WHERE project_id='version-reset' AND chapter_number=1 AND task_type='reset'"
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        after = DeadloopDetector.check_deadloop(repo, "version-reset", 1)
+        assert after["triggered"] is False
+        assert repo.get_chapter_version_count(
+            "version-reset",
+            1,
+            since=repo.get_latest_chapter_reset_marker("version-reset", 1),
+        ) == 0
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)

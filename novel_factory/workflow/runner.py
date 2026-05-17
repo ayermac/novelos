@@ -130,6 +130,26 @@ def _check_deadloop_for_run(
         "requires_human": True,
         "deadloop_detected": True,
         "details": deadloop,
+        "actions": [
+            {
+                "key": "restore_best_version",
+                "label": "恢复历史最佳版本",
+                "description": "从已有版本中选择满足字数和评分较好的正文，恢复后再进入审核/润色路径。",
+                "action_url": f"/api/projects/{project_id}/chapters/{chapter_number}/restore-best-version",
+                "method": "POST",
+                "requires_confirmation": True,
+                "target_chapter": chapter_number,
+            },
+            {
+                "key": "reset_chapter",
+                "label": "人工确认重置后重跑",
+                "description": "保留现有正文和历史版本，只清理阻塞状态与本轮失败窗口。",
+                "action_url": f"/api/projects/{project_id}/chapters/{chapter_number}/reset",
+                "method": "POST",
+                "requires_confirmation": True,
+                "target_chapter": chapter_number,
+            },
+        ],
     }
 
 
@@ -558,6 +578,7 @@ def run_with_graph_stream(
             "chapter_status": current_status,
             "deadloop_detected": True,
             "details": deadloop_error.get("details", {}),
+            "actions": deadloop_error.get("actions", []),
         }
         return
 
