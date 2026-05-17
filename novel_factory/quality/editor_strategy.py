@@ -24,9 +24,14 @@ def classify_editor_result(
     has_blocking: bool = False,
     has_hard_word_fail: bool = False,
     has_death_penalty: bool = False,
+    quality_priority_count: int = 0,
+    quality_advisory_only: bool = False,
 ) -> EditorDecision:
     """
-    核心判定逻辑
+    核心判定逻辑 (v6.6.1)
+
+    quality_priority_count: 来自 deterministic quality diagnosis 的高优先级问题数量
+    quality_advisory_only: 是否所有 quality diagnosis 项都是 advisory
     """
     hard_issue_markers = (
         "CRITICAL",
@@ -56,9 +61,13 @@ def classify_editor_result(
         for issue in issues
     )
 
-    blocking = has_blocking or has_hard_word_fail or has_death_penalty or has_hard_issue_text
+    has_quality_priority = quality_priority_count > 0
 
-    if blocking:
+    effective_blocking = (
+        has_blocking or has_hard_word_fail or has_death_penalty or has_hard_issue_text
+    )
+
+    if effective_blocking:
         return EditorDecision(
             pass_=False,
             revision_needed=True,
@@ -67,7 +76,16 @@ def classify_editor_result(
             recommended_action="必须返修或人工介入",
         )
 
-    if score >= 85 or (score >= 80 and advisory_only):
+    # v6.6.1: advisory-only quality diagnosis does not override 85+ review score
+    if score >= 85:
+        if advisory_only and quality_advisory_only:
+            return EditorDecision(
+                pass_=True,
+                revision_needed=False,
+                category="advisory",
+                reason="审核分 >= 85，所有问题（含诊断）均为 advisory",
+                recommended_action="进入 awaiting_publish with warnings，不自动返修",
+            )
         return EditorDecision(
             pass_=True,
             revision_needed=False,
@@ -76,21 +94,27 @@ def classify_editor_result(
             recommended_action="进入 awaiting_publish 或 human_review（带 warning）",
         )
 
-    if 80 <= score < 85:
+    # v6.6.1: quality diagnosis priority findings prevent advisory-only auto-pass
+    # when score < 85. They do NOT override score >= 85.
+    if score >= 80 and (advisory_only or quality_advisory_only) and not has_quality_priority:
         return EditorDecision(
             pass_=True,
             revision_needed=False,
             category="advisory",
-            reason="分数 80-84，advisory issues 可接受",
+            reason="分数 80-84，advisory issues / quality diagnosis 可接受",
             recommended_action="推荐 human_review 或 awaiting_publish with warnings",
         )
 
-    # score < 80
+    # score < 80, or score 80-84 with quality priority findings
     return EditorDecision(
         pass_=False,
         revision_needed=True,
         category="revision",
-        reason="分数 < 80，需要自动返修",
+        reason=(
+            "分数 < 80，需要自动返修"
+            if score < 80
+            else "分数 80-84 但存在质量诊断高优先级问题，需要返修"
+        ),
         recommended_action="路由回对应 Agent 返修",
     )
 
@@ -103,14 +127,18 @@ def post_process_llm_decision(
     has_blocking: bool = False,
     has_hard_word_fail: bool = False,
     has_death_penalty: bool = False,
+    quality_priority_count: int = 0,
+    quality_advisory_only: bool = False,
 ) -> EditorDecision:
-    """纠正 LLM 过度苛刻的情况"""
+    """纠正 LLM 过度苛刻的情况 (v6.6.1)"""
     decision = classify_editor_result(
         score,
         issues,
         has_blocking=has_blocking,
         has_hard_word_fail=has_hard_word_fail,
         has_death_penalty=has_death_penalty,
+        quality_priority_count=quality_priority_count,
+        quality_advisory_only=quality_advisory_only,
     )
 
     # LLM 说不通过，但实际是高分 advisory

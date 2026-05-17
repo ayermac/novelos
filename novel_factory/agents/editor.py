@@ -12,6 +12,7 @@ from ..validators.chapter_checker import count_words, check_word_count_quality_g
 from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured
 from ..validators.revision_classifier import classify_issues
 from ..quality.editor_strategy import post_process_llm_decision
+from ..quality.feedback_bridge import build_compact_feedback, format_editor_context
 from ..skills.registry import SkillRegistry
 from ..llm.provider import is_configured_live_provider
 from ..agent_runtime.base import BaseAgent
@@ -117,7 +118,34 @@ class EditorAgent(BaseAgent):
         if style_ctx:
             parts.append(style_ctx)
 
+        # v6.6.1: Inject deterministic quality diagnosis feedback
+        quality_feedback = self._build_quality_feedback(state)
+        if quality_feedback:
+            parts.append(quality_feedback)
+
         return "\n\n".join(parts)
+
+    def _build_quality_feedback(self, state: FactoryState) -> str:
+        """Run deterministic quality diagnosis and return compact feedback for prompt."""
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+        chapter = self._get_chapter_info(state)
+        content = (chapter or {}).get("content", "") if chapter else ""
+        if not content or not self.skill_registry:
+            return ""
+
+        try:
+            from ..quality.hub import QualityHub
+            hub = QualityHub(self.repo, self.skill_registry)
+            diagnose_result = hub.diagnose(content, context={
+                "project_id": project_id,
+                "chapter_number": chapter_number,
+            })
+            feedback = build_compact_feedback(diagnose_result)
+            return format_editor_context(feedback)
+        except Exception:
+            logger.warning("Editor: quality diagnosis failed, skipping feedback injection", exc_info=True)
+            return ""
 
     def _build_compact_review_context(self, state: FactoryState) -> str:
         """Build a short review prompt for live LLM calls."""
@@ -465,7 +493,38 @@ class EditorAgent(BaseAgent):
                 "workflow_run_id": state.get("workflow_run_id"),
             }
 
-        # v6.6.0: prevent high-score advisory-only reviews from entering
+        # v6.6.1: Run deterministic quality diagnosis for strategy input
+        quality_priority_count = 0
+        quality_advisory_only = True
+        quality_feedback_dict: dict[str, Any] | None = None
+        if self.skill_registry:
+            try:
+                from ..quality.hub import QualityHub
+                from ..quality.feedback_bridge import build_compact_feedback
+                hub = QualityHub(self.repo, self.skill_registry)
+                diagnose_result = hub.diagnose(content, context={
+                    "project_id": project_id,
+                    "chapter_number": chapter_number,
+                })
+                qf = build_compact_feedback(diagnose_result)
+                quality_priority_count = len(qf.priority_findings)
+                quality_advisory_only = not qf.priority_findings
+                quality_feedback_dict = qf.to_dict()
+                # Inject high-priority quality findings into suggestions for audit
+                if qf.priority_findings:
+                    for f in qf.priority_findings[:3]:
+                        note = f"[诊断] [{f['code']}] {f['message']}"
+                        if note not in output.issues:
+                            output.issues.append(note)
+                if qf.advisory_findings:
+                    for f in qf.advisory_findings[:2]:
+                        note = f"[诊断建议] [{f['code']}] {f['message']}"
+                        if note not in output.suggestions:
+                            output.suggestions.append(note)
+            except Exception:
+                logger.warning("Editor: quality diagnosis for strategy failed", exc_info=True)
+
+        # v6.6.0/6.6.1: prevent high-score advisory-only reviews from entering
         # automatic revision loops. Hard gates above remain blocking.
         strategy_decision = post_process_llm_decision(
             output.pass_,
@@ -473,6 +532,8 @@ class EditorAgent(BaseAgent):
             output.issues,
             has_hard_word_fail=bool(word_gate_details),
             has_death_penalty=dp_result.has_critical,
+            quality_priority_count=quality_priority_count,
+            quality_advisory_only=quality_advisory_only,
         )
         if strategy_decision.pass_ and not output.pass_:
             logger.info("Editor strategy accepted advisory review: %s", strategy_decision.reason)
@@ -564,9 +625,12 @@ class EditorAgent(BaseAgent):
 
                 # Save artifact (bind to workflow run for isolation)
                 workflow_run_id = state.get("workflow_run_id")
+                artifact_payload = output.model_dump()
+                if quality_feedback_dict:
+                    artifact_payload["_quality_feedback"] = quality_feedback_dict
                 self.repo.save_artifact(
                     project_id, chapter_number, "editor", "review",
-                    content_json=output.model_dump(),
+                    content_json=artifact_payload,
                     workflow_run_id=workflow_run_id,
                 )
             except Exception as e:
@@ -601,9 +665,12 @@ class EditorAgent(BaseAgent):
                     )
                     # Save artifact (bind to workflow run for isolation)
                     workflow_run_id = state.get("workflow_run_id")
+                    artifact_payload = output.model_dump()
+                    if quality_feedback_dict:
+                        artifact_payload["_quality_feedback"] = quality_feedback_dict
                     self.repo.save_artifact(
                         project_id, chapter_number, "editor", "review",
-                        content_json=output.model_dump(),
+                        content_json=artifact_payload,
                         workflow_run_id=workflow_run_id,
                     )
                 except Exception as e:
@@ -643,9 +710,12 @@ class EditorAgent(BaseAgent):
                         )
                     # Save artifact (bind to workflow run for isolation)
                     workflow_run_id = state.get("workflow_run_id")
+                    artifact_payload = output.model_dump()
+                    if quality_feedback_dict:
+                        artifact_payload["_quality_feedback"] = quality_feedback_dict
                     self.repo.save_artifact(
                         project_id, chapter_number, "editor", "review",
-                        content_json=output.model_dump(),
+                        content_json=artifact_payload,
                         workflow_run_id=workflow_run_id,
                     )
                 except Exception as e:

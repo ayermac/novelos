@@ -186,8 +186,8 @@ export default function QualityDiagnosisPanel({
             <span className="qd-title">辅助质量诊断</span>
             <span className="qd-subtitle">
               {overall === null
-                ? '查看 AI 痕迹、节奏、对白和场景质感，不替代审核分'
-                : `诊断${scoreText(overall)} · ${findings.length} 个提示`}
+                ? '诊断分用于定位修订重点，不替代审核分'
+                : `诊断${scoreText(overall)} · ${findings.length} 个提示 · 不替代审核分`}
             </span>
           </span>
         </span>
@@ -267,6 +267,9 @@ export default function QualityDiagnosisPanel({
                   <div className="qd-section-title">发现的问题</div>
                   {findings.slice(0, 6).map((finding, index) => {
                     const Icon = severityIcon(finding.severity)
+                    const actionHint = finding.severity === 'critical' || finding.severity === 'high'
+                      ? '建议人工确认'
+                      : '可加入下一轮润色重点'
                     return (
                       <div key={`${finding.code}-${index}`} className={`qd-finding qd-finding-${finding.severity}`}>
                         <Icon size={16} />
@@ -278,6 +281,7 @@ export default function QualityDiagnosisPanel({
                           {finding.suggestion && (
                             <div className="qd-finding-suggestion">{finding.suggestion}</div>
                           )}
+                          <div className="qd-finding-action-hint">{actionHint}</div>
                         </div>
                       </div>
                     )
@@ -549,6 +553,13 @@ export default function QualityDiagnosisPanel({
           font-size: 12px;
           line-height: 1.45;
           color: var(--text-secondary);
+        }
+        .qd-finding-action-hint {
+          margin-top: 4px;
+          font-size: 11px;
+          line-height: 1.4;
+          color: var(--text-muted);
+          font-style: italic;
         }
         .qd-empty {
           padding: 12px;

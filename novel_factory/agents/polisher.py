@@ -22,6 +22,7 @@ from ..agent_runtime.revision_context import normalize_revision_review, revision
 from ..agent_runtime.skill_hooks import run_agent_skills
 from ..llm.openai_compatible import OutputValidationError
 from ..llm.provider import is_configured_live_provider
+from ..quality.feedback_bridge import build_compact_feedback, format_polisher_context
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,35 @@ class PolisherAgent(BaseAgent):
             "4. 去AI味：删除总结句（\"总之/简单来说\"）、直白心理解释和宏大空泛判断。\n"
             "5. Show, Don't Tell：将\"感到/觉得/意识到/明白\"等直白情绪词改为动作或神态。"
         )
+
+        # v6.6.1: Inject deterministic quality diagnosis feedback
+        quality_feedback = self._build_quality_feedback(state)
+        if quality_feedback:
+            parts.append(quality_feedback)
+
         return "\n\n".join(parts)
+
+    def _build_quality_feedback(self, state: FactoryState) -> str:
+        """Run deterministic quality diagnosis and return compact feedback for prompt."""
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+        chapter = self._get_chapter_info(state)
+        content = (chapter or {}).get("content", "") if chapter else ""
+        if not content or not self.skill_registry:
+            return ""
+
+        try:
+            from ..quality.hub import QualityHub
+            hub = QualityHub(self.repo, self.skill_registry)
+            diagnose_result = hub.diagnose(content, context={
+                "project_id": project_id,
+                "chapter_number": chapter_number,
+            })
+            feedback = build_compact_feedback(diagnose_result)
+            return format_polisher_context(feedback)
+        except Exception:
+            logger.warning("Polisher: quality diagnosis failed, skipping feedback injection", exc_info=True)
+            return ""
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
@@ -432,6 +461,31 @@ class PolisherAgent(BaseAgent):
             workflow_run_id = state.get("workflow_run_id")
             artifact_payload = output.model_dump()
             artifact_payload["content"] = polished_content
+            # v6.6.1: Embed quality diagnosis feedback for auditability
+            # LLM-reported fixes (may be empty if model does not fill them)
+            artifact_payload["_quality_feedback"] = {
+                "fixed_findings": output.fixed_quality_findings,
+                "deferred_findings": output.deferred_quality_findings,
+                "quality_risk_note": output.quality_risk_note,
+            }
+            # Also save deterministic QualityHub compact result so audit
+            # always sees the actual diagnosis regardless of LLM compliance.
+            quality_hub_compact: dict[str, Any] | None = None
+            if self.skill_registry:
+                try:
+                    from ..quality.hub import QualityHub
+                    from ..quality.feedback_bridge import build_compact_feedback
+                    hub = QualityHub(self.repo, self.skill_registry)
+                    diagnose_result = hub.diagnose(polished_content, context={
+                        "project_id": project_id,
+                        "chapter_number": chapter_number,
+                    })
+                    qf = build_compact_feedback(diagnose_result)
+                    quality_hub_compact = qf.to_dict()
+                except Exception:
+                    logger.warning("Polisher: quality diagnosis for artifact failed", exc_info=True)
+            if quality_hub_compact:
+                artifact_payload["_quality_feedback"]["quality_hub_compact"] = quality_hub_compact
             # v6.1.1: Embed revision metadata in artifact for auditability
             if current_status == ChapterStatus.REVISION.value:
                 revision_review = normalize_revision_review(state.get("_revision_review")) or {}
@@ -486,6 +540,9 @@ class PolisherAgent(BaseAgent):
             fact_change_risk="none",
             changed_scope=["passthrough"],
             summary=f"润色模型不可用，保留执笔稿继续审核：{reason_text}",
+            fixed_quality_findings=[],
+            deferred_quality_findings=[],
+            quality_risk_note=None,
         )
 
     @staticmethod
@@ -534,6 +591,9 @@ class PolisherAgent(BaseAgent):
             fact_change_risk="none",
             changed_scope=["sentence", "dialogue", "rhythm", "scene_texture"],
             summary="纯正文润色完成",
+            fixed_quality_findings=[],
+            deferred_quality_findings=[],
+            quality_risk_note=None,
         )
 
     def _invoke_text_for_polisher(
