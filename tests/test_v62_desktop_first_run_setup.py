@@ -203,6 +203,82 @@ def test_desktop_config_creates_agent_specific_model_profiles(tmp_path: Path, mo
     assert "editor: editor" in content
 
 
+def test_desktop_config_saves_template_profiles_and_agent_routes(tmp_path: Path, monkeypatch):
+    client = _make_client(
+        tmp_path,
+        monkeypatch,
+        "llm_mode: stub\n",
+        "stub",
+    )
+    response = client.put("/api/desktop/config", json={
+        "llm_mode": "real",
+        "default_llm": "default",
+        "llm_profiles": {
+            "default": {
+                "provider": "openai_compatible",
+                "model": "gpt-4o-mini",
+                "base_url": "https://api.openai.com/v1",
+                "api_key_env": "OPENAI_API_KEY",
+                "temperature": 0.7,
+                "timeout": 180,
+            },
+            "author": {
+                "provider": "openai_compatible",
+                "model": "kimi-k2",
+                "base_url": "https://api.moonshot.cn/v1",
+                "api_key_env": "MOONSHOT_API_KEY",
+                "temperature": 0.8,
+                "timeout": 300,
+            },
+        },
+        "agent_llm": {
+            "genesis": "default",
+            "planner": "default",
+            "screenwriter": "default",
+            "author": "author",
+            "polisher": "default",
+            "editor": "default",
+            "memory_curator": "default",
+        },
+    })
+    body = response.json()
+    assert body["ok"] is True
+    assert body["data"]["restart_required"] is True
+
+    content = (tmp_path / "config" / "local.yaml").read_text(encoding="utf-8")
+    assert "default_llm: default" in content
+    assert "author:" in content
+    assert "model: kimi-k2" in content
+    assert "api_key_env: MOONSHOT_API_KEY" in content
+    assert "author: author" in content
+
+
+def test_desktop_config_rejects_agent_route_to_missing_template(tmp_path: Path, monkeypatch):
+    client = _make_client(
+        tmp_path,
+        monkeypatch,
+        "llm_mode: stub\n",
+        "stub",
+    )
+    response = client.put("/api/desktop/config", json={
+        "llm_mode": "real",
+        "default_llm": "default",
+        "llm_profiles": {
+            "default": {
+                "provider": "openai_compatible",
+                "model": "gpt-4o-mini",
+                "base_url": "https://api.openai.com/v1",
+                "api_key_env": "OPENAI_API_KEY",
+            },
+        },
+        "agent_llm": {"author": "missing"},
+    })
+    body = response.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "VALIDATION_ERROR"
+    assert "不存在的模板" in body["error"]["message"]
+
+
 def test_desktop_test_llm_rejected_outside_desktop(tmp_path: Path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()

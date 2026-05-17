@@ -30,6 +30,8 @@ class DesktopConfigPayload(BaseModel):
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     timeout: int | None = Field(default=None, ge=1, le=300)
     api_key_env: str | None = Field(default=None, pattern="^[A-Z0-9_]+$")
+    default_llm: str | None = None
+    llm_profiles: dict[str, dict[str, Any]] | None = None
     agent_llm: dict[str, str] | None = None
     agent_models: dict[str, str] | None = None
 
@@ -215,6 +217,7 @@ async def get_desktop_config(request: Request) -> EnvelopeResponse:
                     "api_key_configured": _api_key_configured(api_key_env),
                     "api_key_source": _api_key_source(api_key_env),
                     "temperature": profile.get("temperature", 0.7),
+                    "timeout": profile.get("request_timeout_seconds", profile.get("timeout", 60)),
                     "max_tokens": profile.get("max_tokens", 4096),
                 }
 
@@ -279,6 +282,57 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
                 restart_required = True
             raw["llm_mode"] = body.llm_mode
 
+        if body.llm_profiles is not None:
+            cleaned_profiles: dict[str, dict[str, Any]] = {}
+            for name, profile in body.llm_profiles.items():
+                profile_name = str(name).strip()
+                if not profile_name or not isinstance(profile, dict):
+                    continue
+                provider = str(profile.get("provider") or "openai_compatible").strip()
+                model = str(profile.get("model") or "").strip()
+                base_url = str(profile.get("base_url") or "").strip()
+                api_key_env = str(profile.get("api_key_env") or "OPENAI_API_KEY").strip()
+                if not model or not base_url:
+                    return error_response(
+                        "VALIDATION_ERROR",
+                        f"LLM 模板 '{profile_name}' 缺少 Base URL 或模型 ID",
+                    )
+                if not api_key_env.replace("_", "").isalnum() or api_key_env.upper() != api_key_env:
+                    return error_response(
+                        "VALIDATION_ERROR",
+                        f"LLM 模板 '{profile_name}' 的 API Key 环境变量名无效",
+                    )
+                cleaned: dict[str, Any] = {
+                    "provider": provider,
+                    "model": model,
+                    "base_url": base_url,
+                    "api_key_env": api_key_env,
+                }
+                for numeric_key in ("temperature", "max_tokens"):
+                    if numeric_key in profile and profile[numeric_key] is not None:
+                        cleaned[numeric_key] = profile[numeric_key]
+                if profile.get("timeout") is not None:
+                    cleaned["request_timeout_seconds"] = profile["timeout"]
+                elif profile.get("request_timeout_seconds") is not None:
+                    cleaned["request_timeout_seconds"] = profile["request_timeout_seconds"]
+                cleaned_profiles[profile_name] = cleaned
+            if not cleaned_profiles:
+                return error_response("VALIDATION_ERROR", "至少需要一个 LLM 模板")
+            if raw.get("llm_profiles", {}) != cleaned_profiles:
+                restart_required = True
+            raw["llm_profiles"] = cleaned_profiles
+
+        if body.default_llm is not None:
+            default_llm = str(body.default_llm).strip()
+            if not default_llm:
+                return error_response("VALIDATION_ERROR", "默认 LLM 模板不能为空")
+            profiles = raw.get("llm_profiles", {})
+            if isinstance(profiles, dict) and profiles and default_llm not in profiles:
+                return error_response("VALIDATION_ERROR", f"默认 LLM 模板不存在: {default_llm}")
+            if raw.get("default_llm") != default_llm:
+                restart_required = True
+            raw["default_llm"] = default_llm
+
         # Update default_llm profile fields if a default_llm is set
         default_llm = raw.get("default_llm", "default")
         if default_llm and "llm_profiles" in raw and isinstance(raw["llm_profiles"], dict):
@@ -294,7 +348,8 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
                     profile["temperature"] = body.temperature
                     restart_required = True
                 if body.timeout is not None and profile.get("timeout") != body.timeout:
-                    profile["timeout"] = body.timeout
+                    profile["request_timeout_seconds"] = body.timeout
+                    profile.pop("timeout", None)
                     restart_required = True
                 if body.api_key_env is not None and profile.get("api_key_env") != body.api_key_env:
                     profile["api_key_env"] = body.api_key_env
@@ -315,7 +370,7 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
             if body.temperature is not None:
                 raw["llm_profiles"][default_llm or "default"]["temperature"] = body.temperature
             if body.timeout is not None:
-                raw["llm_profiles"][default_llm or "default"]["timeout"] = body.timeout
+                raw["llm_profiles"][default_llm or "default"]["request_timeout_seconds"] = body.timeout
             if default_llm:
                 raw["default_llm"] = default_llm
             else:
@@ -327,6 +382,14 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
                 for agent, profile in body.agent_llm.items()
                 if str(agent).strip() and str(profile).strip()
             }
+            profiles = raw.get("llm_profiles", {})
+            if isinstance(profiles, dict) and profiles:
+                missing_profiles = sorted({profile for profile in cleaned_routes.values() if profile not in profiles})
+                if missing_profiles:
+                    return error_response(
+                        "VALIDATION_ERROR",
+                        f"Agent 路由引用了不存在的模板: {', '.join(missing_profiles)}",
+                    )
             if raw.get("agent_llm", {}) != cleaned_routes:
                 restart_required = True
             if cleaned_routes:
@@ -365,7 +428,7 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
                     if body.temperature is not None:
                         next_profile["temperature"] = body.temperature
                     if body.timeout is not None:
-                        next_profile["timeout"] = body.timeout
+                        next_profile["request_timeout_seconds"] = body.timeout
                     next_profile["model"] = model
 
                     if profiles.get(profile_name) != next_profile or agent_routes.get(agent) != profile_name:
