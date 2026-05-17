@@ -1067,7 +1067,7 @@ describe('AuthorWorkbench', () => {
     expect(diagnosis.compareDocumentPosition(editor!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
   })
 
-  it('syncs the header quality score with the opened diagnosis score', async () => {
+  it('keeps the header quality score stable when diagnosis opens', async () => {
     vi.mocked(get).mockImplementation(async (path: string) => {
       if (path.includes('/quality-diagnosis')) {
         return {
@@ -1115,8 +1115,10 @@ describe('AuthorWorkbench', () => {
     const diagnosis = screen.getByLabelText('质量诊断')
     fireEvent.click(within(diagnosis).getByRole('button'))
 
-    await waitFor(() => expect(strip?.textContent).toContain('诊断分'))
-    expect(strip?.textContent).toContain('69')
+    await waitFor(() => expect(within(diagnosis).getByText('69.2')).toBeInTheDocument())
+    expect(strip?.textContent).toContain('质量')
+    expect(strip?.textContent).toContain('83')
+    expect(strip?.textContent).not.toContain('诊断分')
   })
 
   it('empty state shows actionable next steps for ungenerated chapter', () => {

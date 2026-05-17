@@ -7,7 +7,6 @@ interface QualityDiagnosisPanelProps {
   projectId: string
   chapterNumber: number
   chapterStatus: string
-  onScoreChange?: (score: number) => void
 }
 
 interface QualityFinding {
@@ -114,7 +113,6 @@ export default function QualityDiagnosisPanel({
   projectId,
   chapterNumber,
   chapterStatus,
-  onScoreChange,
 }: QualityDiagnosisPanelProps) {
   const { showToast } = useToast()
   const [open, setOpen] = useState(false)
@@ -135,7 +133,6 @@ export default function QualityDiagnosisPanel({
       )
       if (res.ok && res.data) {
         setDiagnosis(res.data)
-        onScoreChange?.(res.data.overall_score)
         if (showSuccess) {
           showToast({
             tone: 'success',
@@ -155,7 +152,7 @@ export default function QualityDiagnosisPanel({
     } finally {
       setLoading(false)
     }
-  }, [open, diagnosis, projectId, chapterNumber, showToast, onScoreChange])
+  }, [open, diagnosis, projectId, chapterNumber, showToast])
 
   useEffect(() => {
     setOpen(false)
