@@ -25,7 +25,7 @@ class TestCheckpointHelpers:
         """Test checkpoint config generation."""
         config = get_checkpoint_config("my-project", 10)
         assert config["configurable"]["thread_id"] == "my-project-chapter-10"
-        assert config["recursion_limit"] == 50
+        assert config["recursion_limit"] == 100
 
     def test_get_checkpoint_config_custom_recursion_limit(self):
         """Test that recursion_limit can be overridden."""

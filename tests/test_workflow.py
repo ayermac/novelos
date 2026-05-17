@@ -2,6 +2,7 @@
 
 import pytest
 from unittest.mock import patch
+from datetime import datetime, timedelta
 
 from novel_factory.models.state import ChapterStatus
 from novel_factory.workflow.conditions import (
@@ -98,9 +99,18 @@ class TestFreshRunCheckpointCleanup:
 
         def __init__(self, runs):
             self.runs = runs
+            self.failed_runs = []
 
         def get_workflow_runs_for_project(self, project_id, chapter_number=None, limit=20):
             return self.runs
+
+        def update_workflow_run(self, run_id, status=None, error_message=None, **_kwargs):
+            self.failed_runs.append({
+                "run_id": run_id,
+                "status": status,
+                "error_message": error_message,
+            })
+            return True
 
     def test_clears_checkpoint_when_latest_run_failed(self):
         repo = self.FakeRepo([{"status": "failed"}])
@@ -117,6 +127,17 @@ class TestFreshRunCheckpointCleanup:
             _clear_stale_checkpoint_for_new_run(repo, "demo", 1)
 
         delete.assert_not_called()
+
+    def test_clears_checkpoint_for_stale_running_run(self):
+        old_started_at = (datetime.utcnow() + timedelta(hours=8) - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+        repo = self.FakeRepo([{"id": "run-old", "status": "running", "started_at": old_started_at}])
+
+        with patch("novel_factory.workflow.runner.delete_checkpoint_thread") as delete:
+            _clear_stale_checkpoint_for_new_run(repo, "demo", 1)
+
+        delete.assert_called_once_with("test.db", "demo", 1)
+        assert repo.failed_runs[0]["run_id"] == "run-old"
+        assert repo.failed_runs[0]["status"] == "failed"
 
 
 class TestRouteByReviewResult:

@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime, timedelta
 from typing import Any, Generator
 
 from ..config.settings import Settings
@@ -26,6 +27,8 @@ from .checkpoint import (
 
 logger = logging.getLogger(__name__)
 
+STALE_RUNNING_RUN_SECONDS = 2 * 60 * 60
+
 
 def _mark_run_failed(repo: Repository, run_id: str | None, error: str) -> None:
     """Best-effort workflow run failure finalization."""
@@ -35,6 +38,37 @@ def _mark_run_failed(repo: Repository, run_id: str | None, error: str) -> None:
         repo.update_workflow_run(run_id, status="failed", error_message=error)
     except Exception:
         logger.warning("Failed to mark workflow run %s as failed", run_id, exc_info=True)
+
+
+def _parse_workflow_timestamp(value: Any) -> datetime | None:
+    """Parse repository workflow timestamps stored as SQLite datetime strings."""
+    if not value:
+        return None
+    text = str(value).strip().replace("T", " ")
+    if text.endswith("Z"):
+        text = text[:-1]
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _running_run_is_recent(run: dict[str, Any], max_age_seconds: int = STALE_RUNNING_RUN_SECONDS) -> bool:
+    """Return True when a running workflow run still looks actively resumable."""
+    started_at = _parse_workflow_timestamp(run.get("started_at"))
+    if started_at is None:
+        return True
+    # workflow_runs.started_at is stored as local China time via SQLite
+    # datetime('now','+8 hours'), so compare against the same clock.
+    now_local = datetime.utcnow() + timedelta(hours=8)
+    age = now_local - started_at
+    return age.total_seconds() <= max_age_seconds
 
 
 def _clear_stale_checkpoint_for_new_run(
@@ -55,8 +89,15 @@ def _clear_stale_checkpoint_for_new_run(
             project_id, chapter_number=chapter_number, limit=1
         )
         latest_status = latest_runs[0].get("status") if latest_runs else None
-        if latest_status == "running":
+        if latest_status == "running" and _running_run_is_recent(latest_runs[0]):
             return
+        if latest_status == "running":
+            run_id = latest_runs[0].get("id") or latest_runs[0].get("run_id")
+            _mark_run_failed(
+                repo,
+                run_id,
+                "Stale running workflow detected; clearing checkpoint before fresh run.",
+            )
         delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
     except Exception:
         logger.warning(
@@ -242,7 +283,7 @@ def run_with_graph(
     settings: Settings,
     repo: Repository,
     llm_mode: str = "stub",
-    max_steps: int = 50,
+    max_steps: int = 100,
     workflow_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Run chapter production via LangGraph.
@@ -256,7 +297,7 @@ def run_with_graph(
         settings: Application settings.
         repo: Repository instance for database access.
         llm_mode: "stub" for demo mode, "real" for actual LLM calls.
-        max_steps: Maximum graph recursion limit (steps). Defaults to 50.
+        max_steps: Maximum graph recursion limit (steps). Defaults to 100.
 
     Returns:
         Dict with the same shape as Dispatcher.run_chapter():
@@ -421,7 +462,7 @@ def run_with_graph_stream(
     settings: Settings,
     repo: Repository,
     llm_mode: str = "stub",
-    max_steps: int = 50,
+    max_steps: int = 100,
 ) -> Generator[dict[str, Any], None, None]:
     """Run chapter production with streaming events (v5.2 Phase C).
 
@@ -433,7 +474,7 @@ def run_with_graph_stream(
         settings: Application settings.
         repo: Repository instance for database access.
         llm_mode: "stub" for demo mode, "real" for actual LLM calls.
-        max_steps: Maximum graph recursion limit (steps). Defaults to 50.
+        max_steps: Maximum graph recursion limit (steps). Defaults to 100.
 
     Yields:
         Event dicts with format:
