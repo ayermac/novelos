@@ -132,6 +132,7 @@ class LLMRouter:
             retry_attempts=profile.retry_attempts,
             retry_min_seconds=profile.retry_min_seconds,
             retry_max_seconds=profile.retry_max_seconds,
+            min_interval_seconds=profile.min_interval_seconds,
         )
         
         logger.info(

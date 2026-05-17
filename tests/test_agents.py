@@ -307,6 +307,28 @@ class TestAuthorAgent:
         assert "TAIL_REPAIR_CONTEXT" in context
         assert "【上下文已截断】" in context
 
+    def test_base_v6_context_is_capped_for_non_author_agents(self, seeded_repo):
+        from novel_factory.agent_runtime.base import BaseAgent
+
+        class BigContextAgent(BaseAgent):
+            agent_id = "big_context"
+            context_char_limit = 120
+
+            def build_context(self, state):
+                return "HEAD-" + ("中间资料" * 80) + "-TAIL"
+
+        agent = BigContextAgent(seeded_repo, StubLLMProvider())
+        context = agent._build_v6_context({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+        })
+
+        assert len(context) <= 120
+        assert context.startswith("HEAD-")
+        assert context.endswith("-TAIL")
+        assert "【上下文已截断】" in context
+
     def test_author_writes_content(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
 

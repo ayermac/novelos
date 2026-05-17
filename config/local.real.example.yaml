@@ -11,6 +11,7 @@ llm_profiles:
     request_timeout_seconds: 120
     retry_attempts: 3
     retry_max_seconds: 30
+    min_interval_seconds: 0.5
 
   author:
     provider: openai_compatible
@@ -21,6 +22,7 @@ llm_profiles:
     request_timeout_seconds: 300
     retry_attempts: 3
     retry_max_seconds: 30
+    min_interval_seconds: 0.5
 
   genesis:
     provider: openai_compatible
@@ -31,6 +33,7 @@ llm_profiles:
     request_timeout_seconds: 240
     retry_attempts: 3
     retry_max_seconds: 30
+    min_interval_seconds: 0.5
 
   polisher:
     provider: openai_compatible
@@ -41,6 +44,7 @@ llm_profiles:
     request_timeout_seconds: 180
     retry_attempts: 3
     retry_max_seconds: 30
+    min_interval_seconds: 0.5
 
   editor:
     provider: openai_compatible
@@ -51,6 +55,7 @@ llm_profiles:
     request_timeout_seconds: 180
     retry_attempts: 3
     retry_max_seconds: 30
+    min_interval_seconds: 0.5
 
   continuity_checker:
     provider: openai_compatible
@@ -60,6 +65,7 @@ llm_profiles:
     request_timeout_seconds: 60
     retry_attempts: 2
     retry_max_seconds: 20
+    min_interval_seconds: 0.5
 
 agent_llm:
   genesis: genesis

@@ -31,6 +31,7 @@ class BaseAgent:
 
     agent_id: str = "base"
     use_self_check: bool = False
+    context_char_limit: int = 14000
 
     def __init__(
         self,
@@ -90,6 +91,23 @@ class BaseAgent:
             lines.append(f"- {key}: {note}")
         return "\n".join(lines)
 
+    @staticmethod
+    def _limit_context_size(context: str, limit: int, *, agent_id: str = "agent") -> str:
+        """Bound prompt context while preserving task head and late constraints."""
+        text = str(context or "")
+        if limit <= 0 or len(text) <= limit:
+            return text
+        marker = "\n\n【上下文已截断】中间资料过长，已保留开头任务要求和末尾约束信息。\n\n"
+        head_len = max(0, int(limit * 0.7) - len(marker))
+        tail_len = max(0, limit - head_len - len(marker))
+        logger.warning(
+            "%s context truncated from %d to %d chars",
+            agent_id,
+            len(text),
+            limit,
+        )
+        return f"{text[:head_len]}{marker}{text[-tail_len:]}"
+
     def _build_v6_context(self, state: FactoryState) -> str:
         """v6.0: Assemble enhanced context with role profile and memory."""
         parts = []
@@ -102,7 +120,11 @@ class BaseAgent:
         base_ctx = self.build_context(state)
         if base_ctx:
             parts.append(base_ctx)
-        return "\n\n".join(parts)
+        return self._limit_context_size(
+            "\n\n".join(parts),
+            self.context_char_limit,
+            agent_id=self.agent_id,
+        )
 
     def build_context(self, state: FactoryState) -> str:
         """Build the LLM prompt context from the current workflow state.

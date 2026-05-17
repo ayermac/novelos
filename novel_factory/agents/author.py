@@ -156,7 +156,7 @@ class AuthorAgent(BaseAgent):
         return self._limit_context_size("\n\n".join(parts))
 
     @staticmethod
-    def _limit_context_size(context: str, limit: int = AUTHOR_CONTEXT_CHAR_LIMIT) -> str:
+    def _limit_context_size(context: str, limit: int = AUTHOR_CONTEXT_CHAR_LIMIT, *, agent_id: str = "author") -> str:
         """Keep long-form author prompts below a conservative input budget.
 
         The first part contains the core task contract/instructions; the tail
@@ -169,6 +169,12 @@ class AuthorAgent(BaseAgent):
         head_len = int(limit * 0.7)
         tail_len = limit - head_len
         marker = "\n\n【上下文已截断】中间资料过长，已保留开头任务要求和末尾返修/约束信息。\n\n"
+        logger.warning(
+            "%s context truncated from %d to %d chars",
+            agent_id,
+            len(text),
+            limit,
+        )
         head_budget = max(0, head_len - len(marker))
         return f"{text[:head_budget]}{marker}{text[-tail_len:]}"
 

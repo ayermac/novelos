@@ -36,6 +36,7 @@ class LLMConfig(BaseModel):
     retry_attempts: int = 3
     retry_min_seconds: float = 1.0
     retry_max_seconds: float = 30.0
+    min_interval_seconds: float = 0.0
 
 
 class QualityGateConfig(BaseModel):

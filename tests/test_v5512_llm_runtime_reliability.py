@@ -141,6 +141,37 @@ def test_llm_provider_text_call_can_override_timeout_without_mutating_config():
     assert provider.config.request_timeout_seconds == 60
 
 
+def test_llm_provider_respects_configured_min_interval(monkeypatch):
+    class _TextResponse:
+        content = "ok"
+        usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+
+    class _Client:
+        def invoke(self, _messages, **_kwargs):
+            return _TextResponse()
+
+    clock = {"now": 100.0, "slept": []}
+
+    def fake_time():
+        return clock["now"]
+
+    def fake_sleep(seconds):
+        clock["slept"].append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr("novel_factory.llm.openai_compatible.time.time", fake_time)
+    monkeypatch.setattr("novel_factory.llm.openai_compatible.time.sleep", fake_sleep)
+
+    config = LLMConfig(api_key="test-key", min_interval_seconds=0.5)
+    provider = OpenAICompatibleProvider(config)
+    provider._client = _Client()  # type: ignore[assignment]
+
+    assert provider.invoke_text([{"role": "user", "content": "one"}]) == "ok"
+    assert provider.invoke_text([{"role": "user", "content": "two"}]) == "ok"
+
+    assert clock["slept"] == [0.5]
+
+
 def test_llm_json_sanitizer_quotes_unquoted_prose_values():
     raw = '''
     {

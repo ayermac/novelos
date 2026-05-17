@@ -94,6 +94,7 @@ class OpenAICompatibleProvider(LLMProvider):
         self.config = config or LLMConfig()
         self._client: BaseChatModel | None = None
         self.last_token_usage: TokenUsage | None = None
+        self._last_call_started_at: float | None = None
 
     @property
     def client(self) -> BaseChatModel:
@@ -195,7 +196,13 @@ class OpenAICompatibleProvider(LLMProvider):
         for attempt in retryer:
             with attempt:
                 try:
+                    interval = max(0.0, float(getattr(self.config, "min_interval_seconds", 0.0) or 0.0))
+                    if interval > 0 and self._last_call_started_at is not None:
+                        elapsed = time.time() - self._last_call_started_at
+                        if elapsed < interval:
+                            time.sleep(interval - elapsed)
                     start_time = time.time()
+                    self._last_call_started_at = start_time
                     response = client.invoke(lc_messages, **kwargs)
                     duration_ms = int((time.time() - start_time) * 1000)
                 except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
@@ -223,6 +230,15 @@ class OpenAICompatibleProvider(LLMProvider):
                     completion_tokens=completion_tokens,
                     total_tokens=total_tokens,
                     duration_ms=duration_ms,
+                )
+                logger.info(
+                    "LLM call completed model=%s attempt=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s duration_ms=%s",
+                    self.config.model,
+                    attempt.retry_state.attempt_number,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                    duration_ms,
                 )
 
                 return response
