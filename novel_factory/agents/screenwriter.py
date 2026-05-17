@@ -89,6 +89,7 @@ class ScreenwriterAgent(BaseAgent):
                 {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请将以上指令拆解为场景 beat。"},
             ]
             raw = self.llm.invoke_json(messages, schema=ScreenwriterOutput)
+            raw = self._normalize_output(raw)
             out = ScreenwriterOutput(**raw)
             self.validate_output(out.model_dump())
             return {"output": out}
@@ -115,11 +116,12 @@ class ScreenwriterAgent(BaseAgent):
         def _repair_wrap(data: dict[str, Any], check: SelfCheckResult) -> dict[str, Any] | None:
             # One retry with stronger prompt
             messages = [
-                {"role": "system", "content": SCREENWRITER_SYSTEM_PROMPT + "\n\n注意：每个 beat 必须包含 scene_goal, conflict, turn, hook 四个字段，缺一不可。"},
-                {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请将以上指令拆解为场景 beat。确保每个 beat 都有完整的四个字段。"},
+                {"role": "system", "content": SCREENWRITER_SYSTEM_PROMPT + "\n\n注意：每个 beat 必须包含 sequence, scene_goal, conflict, turn, hook 五个字段，缺一不可。"},
+                {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请将以上指令拆解为场景 beat。确保每个 beat 都有完整的五个字段，sequence 从 1 开始连续编号。"},
             ]
             try:
                 raw = self.llm.invoke_json(messages, schema=ScreenwriterOutput)
+                raw = self._normalize_output(raw)
                 out = ScreenwriterOutput(**raw)
                 self.validate_output(out.model_dump())
                 return {"output": out}
@@ -210,4 +212,40 @@ class ScreenwriterAgent(BaseAgent):
         }
 
     def validate_output(self, output: dict) -> None:
-        ScreenwriterOutput(**output)
+        ScreenwriterOutput(**self._normalize_output(output))
+
+    def _normalize_output(self, raw: dict[str, Any]) -> dict[str, Any]:
+        """Repair harmless Screenwriter JSON omissions before strict schema validation.
+
+        Real LLMs occasionally emit otherwise usable scene beats without the
+        mechanical sequence field. The database and downstream context require
+        stable ordering, so assign missing/invalid sequence values from the
+        array position instead of failing the whole workflow.
+        """
+        if not isinstance(raw, dict):
+            return raw
+
+        normalized = dict(raw)
+        beats = normalized.get("scene_beats")
+        if not isinstance(beats, list):
+            return normalized
+
+        repaired_beats: list[Any] = []
+        for index, beat in enumerate(beats, start=1):
+            if not isinstance(beat, dict):
+                repaired_beats.append(beat)
+                continue
+            next_beat = dict(beat)
+            try:
+                sequence = int(next_beat.get("sequence", index))
+            except (TypeError, ValueError):
+                sequence = index
+            if sequence <= 0:
+                sequence = index
+            next_beat["sequence"] = sequence
+            if next_beat.get("plot_refs") is None:
+                next_beat["plot_refs"] = []
+            repaired_beats.append(next_beat)
+
+        normalized["scene_beats"] = repaired_beats
+        return normalized

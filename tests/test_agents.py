@@ -239,6 +239,33 @@ class TestScreenwriterAgent:
         beats = seeded_repo.get_scene_beats("test_proj", 1)
         assert len(beats) == 1
 
+    def test_screenwriter_repairs_missing_sequence(self, seeded_repo):
+        from novel_factory.agents.screenwriter import ScreenwriterAgent
+
+        stub = StubLLMProvider([{
+            "scene_beats": [
+                {"scene_goal": "开场", "conflict": "冲突", "turn": "转折", "plot_refs": ["P001"], "hook": "钩子"},
+                {"scene_goal": "升级", "conflict": "阻碍", "turn": "反转", "plot_refs": None, "hook": "悬念"},
+            ]
+        }])
+
+        agent = ScreenwriterAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "planned")
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "planned",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.SCRIPTED.value
+        beats = seeded_repo.get_scene_beats("test_proj", 1)
+        assert [beat["sequence"] for beat in beats] == [1, 2]
+        assert beats[1]["plot_refs"] == "[]"
+
     def test_screenwriter_records_scene_conflict_checker_skill_run(self, seeded_repo):
         from novel_factory.agents.screenwriter import ScreenwriterAgent
         from novel_factory.skills.registry import SkillRegistry
