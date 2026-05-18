@@ -228,7 +228,7 @@ export default function ProjectDetail() {
     else setRunDetail(null)
 
     // v5.8: Load timeline for workflow/artifacts tabs
-    if (activeTab === 'workflow' && id) {
+    if ((activeTab === 'workflow' || activeTab === 'artifacts') && id) {
       loadTimeline(id, currentChapter)
     }
   }, [activeTab, currentChapter, workspace?.recent_runs, loadRunDetail, loadTimeline, id])
@@ -373,7 +373,7 @@ export default function ProjectDetail() {
       const latestRun = runsForChapter.length > 0 ? runsForChapter[0] : null
       if (latestRun) loadRunDetail(latestRun.run_id)
       else setRunDetail(null)
-      if (tab === 'workflow' && id) {
+      if ((tab === 'workflow' || tab === 'artifacts') && id) {
         loadTimeline(id, chapterNumber)
       }
     }

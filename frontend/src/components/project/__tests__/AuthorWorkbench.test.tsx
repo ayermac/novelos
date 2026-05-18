@@ -295,6 +295,55 @@ describe('AuthorWorkbench', () => {
     expect(screen.queryByText(/draft \(author\)/)).not.toBeInTheDocument()
   })
 
+  it('shows process drafts from workflow timeline when run detail has no artifacts', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="artifacts"
+        runDetail={{
+          run_id: 'run-empty-artifacts',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'completed',
+          chapter_status: 'polished',
+          current_node: 'editor',
+          llm_mode: 'real',
+          steps: [],
+        }}
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-empty-artifacts',
+          run_status: 'completed',
+          current_node: 'editor',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 8,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          nodes: [
+            {
+              node_name: 'author',
+              label: '执笔',
+              node_group: 'creative_agent',
+              node_type: 'creative_agent',
+              status: 'completed',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: '2026-05-13T10:05:00',
+              duration_ms: 300000,
+              messages: [],
+              artifacts: [{ type: 'draft', label: '章节初稿', artifact_id: 'art-author' }],
+            },
+          ],
+        }}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: '过程稿' })).toBeInTheDocument()
+    expect(screen.getByText('正文初稿')).toBeInTheDocument()
+    expect(screen.getByText('已生成：章节初稿')).toBeInTheDocument()
+    expect(screen.queryByText('暂无过程稿数据')).not.toBeInTheDocument()
+  })
+
   it('labels long-running workflow as possibly stuck', () => {
     render(
       <AuthorWorkbench

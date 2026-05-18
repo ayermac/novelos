@@ -14,7 +14,7 @@ import { tWorkflowNodeLabel, tWorkflowNodeNarrative } from '../../lib/state-labe
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
 import { post } from '../../lib/api'
 import type { WorkflowTimelineData, WorkflowExecutionEvent, WorkflowNodeEvidence } from '../../lib/api'
-import { PROCESS_DRAFT_LABEL, formatArtifactSummary, getArtifactTitle } from '../../lib/artifacts'
+import { PROCESS_DRAFT_LABEL, formatArtifactSummary, getArtifactTitle, type WorkflowArtifacts } from '../../lib/artifacts'
 import { LoadingButton, SkeletonStack, InlineMessage, useToast } from '../ui'
 import AttentionPanel, { ActionHintList } from '../AttentionPanel'
 import WorkflowTimeline from '../WorkflowTimeline'
@@ -437,7 +437,7 @@ export default function AuthorWritingSurface({
           />
         )}
         {activeTab === 'artifacts' && (
-          <ArtifactsBody runDetail={runDetail} />
+          <ArtifactsBody runDetail={runDetail} timeline={timeline} timelineError={timelineError} />
         )}
         {activeTab === 'history' && (
           <HistoryBody runsForChapter={runsForChapter} onViewWorkflow={onViewWorkflow} />
@@ -1085,7 +1085,21 @@ function WorkflowBody({
 /*  Artifacts Body                                                    */
 /* ------------------------------------------------------------------ */
 
-function ArtifactsBody({ runDetail }: { runDetail: RunDetailData | null }) {
+interface ProcessDraftStep {
+  key: string
+  label: string
+  artifacts: WorkflowArtifacts
+}
+
+function ArtifactsBody({
+  runDetail,
+  timeline,
+  timelineError,
+}: {
+  runDetail: RunDetailData | null
+  timeline?: WorkflowTimelineData | null
+  timelineError?: string
+}) {
   const [expandedKey, setExpandedKey] = useState<string | null>(null)
   const agentMarks: Record<string, string> = {
     planner: '规',
@@ -1096,7 +1110,30 @@ function ArtifactsBody({ runDetail }: { runDetail: RunDetailData | null }) {
     publish: '发',
   }
 
-  if (!runDetail) {
+  const runDetailSteps = runDetail?.steps || []
+  const runDetailArtifacts: ProcessDraftStep[] = runDetailSteps
+    .filter((step) => step.status === 'completed' && step.artifacts)
+    .map((step) => ({
+      key: step.key,
+      label: step.label,
+      artifacts: step.artifacts!,
+    }))
+
+  const timelineArtifacts: ProcessDraftStep[] = (timeline?.nodes || [])
+    .filter((node) => node.status === 'completed' && node.artifacts && node.artifacts.length > 0)
+    .map((node) => ({
+      key: node.node_name,
+      label: node.label,
+      artifacts: {
+        artifact_count: node.artifacts.length,
+        artifact_labels: node.artifacts.map((artifact) => artifact.label || artifact.type).filter(Boolean),
+        artifact_types: node.artifacts.map((artifact) => artifact.type).filter(Boolean),
+      },
+    }))
+
+  const stepsWithArtifacts = runDetailArtifacts.length > 0 ? runDetailArtifacts : timelineArtifacts
+
+  if (!runDetail && !timeline) {
     return (
       <div className="artifacts-empty">
         <div className="artifacts-empty-icon">{PROCESS_DRAFT_LABEL}</div>
@@ -1106,13 +1143,14 @@ function ArtifactsBody({ runDetail }: { runDetail: RunDetailData | null }) {
     )
   }
 
-  const stepsWithArtifacts = runDetail.steps.filter((step) => step.status === 'completed' && step.artifacts)
   if (stepsWithArtifacts.length === 0) {
     return (
       <div className="artifacts-empty">
         <div className="artifacts-empty-icon">{PROCESS_DRAFT_LABEL}</div>
         <div className="artifacts-empty-title">暂无过程稿数据</div>
-        <div className="artifacts-empty-desc">当前章节尚未完成生成流程，完成后可查看过程稿。</div>
+        <div className="artifacts-empty-desc">
+          {timelineError ? `刷新失败：${timelineError}` : '当前章节尚未完成生成流程，完成后可查看过程稿。'}
+        </div>
       </div>
     )
   }
