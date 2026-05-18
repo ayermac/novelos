@@ -47,7 +47,10 @@ def initialized_db():
         "target_chapters": 20, "target_words": 60000,
     })
     gid = tc.get("/api/projects/v554-test/genesis/latest").json()["data"]["id"]
-    tc.post(f"/api/projects/v554-test/genesis/{gid}/approve")
+    tc.post(f"/api/projects/v554-test/genesis/{gid}/approve", json={
+        "force_apply": True,
+        "confirm_quality_risk": True,
+    })
 
     tc.post("/api/projects/v554-test/production/auto-fill", json={
         "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,

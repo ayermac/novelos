@@ -67,7 +67,10 @@ def project_with_context(client, project_id):
     })
     assert gen_resp.status_code == 200
     genesis_id = gen_resp.json()["data"]["id"]
-    client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve")
+    client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve", json={
+        "force_apply": True,
+        "confirm_quality_risk": True,
+    })
 
     # Auto-fill context
     client.post(f"/api/projects/{project_id}/production/auto-fill", json={
@@ -229,7 +232,10 @@ class TestRunAutoAutoFill:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         genesis_id = gen_resp.json()["data"]["id"]
-        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve")
+        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
 
         # Delete all created context
         from novel_factory.db.repository import Repository

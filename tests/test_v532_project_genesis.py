@@ -140,10 +140,12 @@ class TestGenesisCanonicalRoutes:
         assert gen_resp.status_code == 200
         genesis_id = gen_resp.json()["data"]["id"]
 
-        # Then approve via canonical route
+        # Then approve via canonical route (force apply to bypass quality gate for stub draft)
         resp = client.post("/api/genesis/approve", json={
             "project_id": project_id,
             "genesis_id": genesis_id,
+            "force_apply": True,
+            "confirm_quality_risk": True,
         })
         assert resp.status_code == 200
         body = resp.json()
@@ -185,6 +187,8 @@ class TestGenesisCanonicalRoutes:
             approve_resp = test_client.post("/api/genesis/approve", json={
                 "project_id": project_id,
                 "genesis_id": genesis_id,
+                "force_apply": True,
+                "confirm_quality_risk": True,
             })
             body = approve_resp.json()
             assert body["ok"] is True

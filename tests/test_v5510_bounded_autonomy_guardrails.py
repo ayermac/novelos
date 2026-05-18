@@ -79,7 +79,10 @@ def project_with_context(client, project_id):
     })
     assert gen_resp.status_code == 200
     genesis_id = gen_resp.json()["data"]["id"]
-    client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve")
+    client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve", json={
+        "force_apply": True,
+        "confirm_quality_risk": True,
+    })
 
     client.post(f"/api/projects/{project_id}/production/auto-fill", json={
         "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,

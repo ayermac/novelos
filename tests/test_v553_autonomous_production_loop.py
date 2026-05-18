@@ -101,7 +101,10 @@ class TestProductionNextAPI:
         assert gen_resp.status_code == 200
         genesis_id = gen_resp.json()["data"]["id"]
 
-        app_resp = client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve")
+        app_resp = client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         assert app_resp.status_code == 200
         assert app_resp.json()["ok"] is True
 
@@ -140,7 +143,10 @@ class TestProductionNextAPI:
         })
         assert gen_resp.status_code == 200
         genesis_id = gen_resp.json()["data"]["id"]
-        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve")
+        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
 
         # Ensure chapter 1 exists in planned status
         from novel_factory.db.repository import Repository
@@ -250,7 +256,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/block-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/block-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/block-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/block-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -284,7 +293,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/mem-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/mem-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/mem-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/mem-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -326,7 +338,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/prio-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/prio-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/prio-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/prio-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -372,7 +387,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/stale-prio-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/stale-prio-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/stale-prio-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/stale-prio-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -429,7 +447,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/existing-content-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/existing-content-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/existing-content-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/existing-content-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -470,7 +491,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/old-fail-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/old-fail-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/old-fail-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/old-fail-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -510,7 +534,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/pub-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/pub-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/pub-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/pub-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -550,7 +577,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 20, "target_words": 60000,
         })
         gid = tc.get("/api/projects/next-inst-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/next-inst-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/next-inst-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/next-inst-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -606,7 +636,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/target-run-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/target-run-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/target-run-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/target-run-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -651,7 +684,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 20, "target_words": 60000,
         })
         gid = tc.get("/api/projects/non-curr-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/non-curr-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/non-curr-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/non-curr-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -692,7 +728,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/same-sec-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/same-sec-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/same-sec-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/same-sec-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -746,7 +785,10 @@ class TestAutoFillAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/af-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/af-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/af-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
 
         # Delete all created context to simulate gaps
         repo = Repository(db_path)
@@ -785,7 +827,10 @@ class TestAutoFillAPI:
             "target_chapters": 10, "target_words": 30000,
         })
         genesis_id = gen_resp.json()["data"]["id"]
-        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve")
+        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
 
         # Manually create a world setting before auto-fill
         client.post(f"/api/projects/{project_id}/world-settings", json={
@@ -819,7 +864,10 @@ class TestArcPlanAPI:
             "target_chapters": 20, "target_words": 60000,
         })
         genesis_id = gen_resp.json()["data"]["id"]
-        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve")
+        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         client.post(f"/api/projects/{project_id}/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })

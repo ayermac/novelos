@@ -11,6 +11,7 @@ from pydantic import BaseModel
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ...agent_runtime.title_contract import build_title_contract
 from ...llm.provider import is_configured_live_provider
+from ...quality.genesis_quality_gate import evaluate_genesis_draft
 
 router = APIRouter()
 
@@ -52,6 +53,89 @@ class GenesisRejectRequest(BaseModel):
 
     project_id: str
     genesis_id: str
+
+
+class GenesisApproveWithForceRequest(BaseModel):
+    """Canonical body for genesis approve with optional force flag."""
+
+    project_id: str
+    genesis_id: str
+    force_apply: bool = False
+    confirm_quality_risk: bool = False
+
+
+class GenesisForceApplyBody(BaseModel):
+    """Body for path-style approve route with optional force flag."""
+
+    force_apply: bool = False
+    confirm_quality_risk: bool = False
+
+
+def _quality_report_payload(quality_report) -> dict:
+    """Serialize a Genesis quality report for API responses and audit metadata."""
+    return {
+        "passed": quality_report.passed,
+        "score": quality_report.score,
+        "quality_status": quality_report.quality_status,
+        "issues": [
+            {
+                "code": issue.code,
+                "severity": issue.severity,
+                "message": issue.message,
+                "section": issue.section,
+                "item_ref": issue.item_ref,
+                "suggestion": issue.suggestion,
+            }
+            for issue in quality_report.issues
+        ],
+        "metrics": quality_report.metrics,
+    }
+
+
+def _approve_genesis_run_with_quality_audit(
+    repo,
+    genesis_id: str,
+    draft: dict,
+    quality_report,
+    *,
+    forced_apply: bool,
+) -> None:
+    """Mark a genesis run approved and persist force-apply audit in draft_json."""
+    update_data: dict = {"status": "approved"}
+    if forced_apply:
+        audited_draft = dict(draft)
+        meta = audited_draft.get("_meta")
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["forced_quality_apply"] = True
+        meta["quality_report_snapshot"] = _quality_report_payload(quality_report)
+        audited_draft["_meta"] = meta
+        update_data["draft_json"] = json.dumps(audited_draft, ensure_ascii=False)
+    repo.update_genesis_run(genesis_id, update_data)
+
+
+def _quality_report_for_genesis(genesis: dict, project: dict) -> dict | None:
+    """Evaluate and serialize quality for a persisted genesis run."""
+    draft = _parse_genesis_draft_json(genesis.get("draft_json"))
+    if draft is None:
+        return None
+
+    input_json = genesis.get("input_json", "{}")
+    try:
+        input_data = json.loads(input_json) if isinstance(input_json, str) else input_json
+    except json.JSONDecodeError:
+        input_data = {}
+    if not isinstance(input_data, dict):
+        input_data = {}
+
+    quality_report = evaluate_genesis_draft(
+        draft,
+        title=input_data.get("title", project.get("name", "")),
+        genre=input_data.get("genre", project.get("genre", "")),
+        premise=input_data.get("premise", project.get("description", "")),
+        target_chapters=input_data.get("target_chapters", project.get("total_chapters_planned", 10) or 10),
+    )
+    return _quality_report_payload(quality_report)
 
 
 def _validate_genesis_generate_request(body: GenesisGenerateRequest) -> tuple[str, str] | None:
@@ -405,6 +489,9 @@ def _generate_genesis_scaffold(body: GenesisGenerateRequest) -> dict:
     This is a last-resort safety net. It preserves the user's title/genre/brief
     and avoids letting a new project fail initialization just because a provider
     returned an empty or section-only JSON payload.
+
+    v6.6.3: Scaffold drafts are now explicitly marked with _meta.quality_status
+    to prevent silent masquerading as high-quality LLM output.
     """
     title = body.title.strip() or "未命名项目"
     genre = body.genre.strip() or "小说"
@@ -445,6 +532,11 @@ def _generate_genesis_scaffold(body: GenesisGenerateRequest) -> dict:
         })
 
     return {
+        "_meta": {
+            "source": "scaffold_fallback",
+            "quality_status": "scaffold_fallback",
+            "warnings": ["此草案由系统兜底模板生成，不建议直接批准"],
+        },
         "project_updates": {"description": _project_description_from_body(body)},
         "world_settings": [
             {
@@ -577,9 +669,15 @@ def _generate_genesis_scaffold(body: GenesisGenerateRequest) -> dict:
 
 
 def _fill_missing_genesis_sections(body: GenesisGenerateRequest, draft: dict | None) -> dict:
-    """Fill any remaining required Genesis sections from a local editable scaffold."""
+    """Fill any remaining required Genesis sections from a local editable scaffold.
+
+    v6.6.3: If any section is filled from scaffold, mark the draft with
+    _meta.scaffold_sections to track which parts are fallback.
+    """
     normalized = _normalize_genesis_draft(draft) or {}
     scaffold = _generate_genesis_scaffold(body)
+
+    scaffold_sections: list[str] = []
 
     project_updates = normalized.get("project_updates")
     description = ""
@@ -589,11 +687,24 @@ def _fill_missing_genesis_sections(body: GenesisGenerateRequest, draft: dict | N
         description = _as_text(project_updates).strip()
     if not description:
         normalized["project_updates"] = scaffold["project_updates"]
+        scaffold_sections.append("project_updates")
 
     for key in ("world_settings", "characters", "factions", "outlines", "plot_holes", "instructions"):
         value = normalized.get(key)
         if not isinstance(value, list) or not value:
             normalized[key] = scaffold[key]
+            scaffold_sections.append(key)
+
+    # v6.6.3: Mark if any scaffold sections were used
+    if scaffold_sections:
+        meta = normalized.get("_meta", {})
+        if not isinstance(meta, dict):
+            meta = {}
+        meta["scaffold_sections"] = scaffold_sections
+        meta["quality_status"] = "scaffold_fallback"
+        meta["warnings"] = [f"以下部分由系统模板补齐：{', '.join(scaffold_sections)}"]
+        normalized["_meta"] = meta
+
     return normalized
 
 
@@ -1109,11 +1220,24 @@ async def generate_genesis(
             if missing_sections:
                 raise ValueError(_incomplete_genesis_message(missing_sections))
 
+            # v6.6.3: Run quality gate
+            quality_report = evaluate_genesis_draft(
+                draft,
+                title=body.title,
+                genre=body.genre,
+                premise=body.premise,
+                target_chapters=body.target_chapters,
+            )
+
             repo.update_genesis_run(genesis_run["id"], {
                 "status": "generated",
                 "draft_json": json.dumps(draft, ensure_ascii=False),
             })
             genesis_run = repo.get_genesis_run(genesis_run["id"])
+
+            # v6.6.3: Include quality report in response
+            response_data = dict(genesis_run)
+            response_data["quality_report"] = _quality_report_payload(quality_report)
 
         except Exception as e:
             repo.update_genesis_run(genesis_run["id"], {
@@ -1122,7 +1246,7 @@ async def generate_genesis(
             })
             return error_response("GENESIS_FAILED", f"项目设定生成失败: {str(e)[:200]}")
 
-        return envelope_response(genesis_run)
+        return envelope_response(response_data)
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"生成项目设定失败: {str(e)[:200]}")
@@ -1144,7 +1268,12 @@ async def get_latest_genesis(request: Request, project_id: str) -> EnvelopeRespo
         if not genesis:
             return envelope_response(None)
 
-        return envelope_response(genesis)
+        response_data = dict(genesis)
+        quality_report = _quality_report_for_genesis(genesis, project)
+        if quality_report is not None:
+            response_data["quality_report"] = quality_report
+
+        return envelope_response(response_data)
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取创世记录失败: {str(e)[:200]}")
@@ -1155,9 +1284,18 @@ async def approve_genesis(
     request: Request,
     project_id: str,
     genesis_id: str,
+    body: GenesisForceApplyBody | None = None,
 ) -> EnvelopeResponse:
-    """Approve a genesis draft and write to formal tables."""
+    """Approve a genesis draft and write to formal tables.
+
+    v6.6.3: Runs quality gate before approval. Blocked drafts cannot be approved
+    without explicit force_apply + confirm_quality_risk flags.
+    """
     from ..deps import get_repo
+
+    # Extract force_apply flags from body if provided
+    force_apply = body.force_apply if body else False
+    confirm_quality_risk = body.confirm_quality_risk if body else False
 
     try:
         repo = get_repo(request)
@@ -1187,16 +1325,50 @@ async def approve_genesis(
         if missing_sections:
             return error_response("INCOMPLETE_DRAFT", _incomplete_genesis_message(missing_sections))
 
+        # v6.6.3: Run quality gate
+        input_json = genesis.get("input_json", "{}")
+        try:
+            input_data = json.loads(input_json) if isinstance(input_json, str) else input_json
+        except json.JSONDecodeError:
+            input_data = {}
+
+        quality_report = evaluate_genesis_draft(
+            draft,
+            title=input_data.get("title", project.get("name", "")),
+            genre=input_data.get("genre", project.get("genre", "")),
+            premise=input_data.get("premise", project.get("description", "")),
+            target_chapters=input_data.get("target_chapters", 10),
+        )
+
+        # v6.6.3: Block if quality gate failed (unless force_apply)
+        if not quality_report.passed:
+            if not (force_apply and confirm_quality_risk):
+                return error_response(
+                    "GENESIS_QUALITY_BLOCKED",
+                    "创世草案质量门未通过，请重新生成或人工补全",
+                    {
+                        "quality_report": _quality_report_payload(quality_report)
+                    },
+                )
+
         # Apply to formal tables
         applied = _apply_genesis_to_project(repo, project_id, draft)
 
-        # Mark genesis as approved
-        repo.update_genesis_run(genesis_id, {"status": "approved"})
+        forced_apply = force_apply and not quality_report.passed
+        _approve_genesis_run_with_quality_audit(
+            repo,
+            genesis_id,
+            draft,
+            quality_report,
+            forced_apply=forced_apply,
+        )
 
         return envelope_response({
             "genesis_id": genesis_id,
             "status": "approved",
             "applied": applied,
+            "quality_report": _quality_report_payload(quality_report),
+            "forced_apply": forced_apply,
         })
 
     except Exception as e:
@@ -1292,11 +1464,24 @@ async def generate_genesis_canonical(
             if missing_sections:
                 raise ValueError(_incomplete_genesis_message(missing_sections))
 
+            # v6.6.3: Run quality gate
+            quality_report = evaluate_genesis_draft(
+                draft,
+                title=body.title,
+                genre=body.genre,
+                premise=body.premise,
+                target_chapters=body.target_chapters,
+            )
+
             repo.update_genesis_run(genesis_run["id"], {
                 "status": "generated",
                 "draft_json": json.dumps(draft, ensure_ascii=False),
             })
             genesis_run = repo.get_genesis_run(genesis_run["id"])
+
+            # v6.6.3: Include quality report in response
+            response_data = dict(genesis_run)
+            response_data["quality_report"] = _quality_report_payload(quality_report)
         except Exception as e:
             repo.update_genesis_run(genesis_run["id"], {
                 "status": "failed",
@@ -1304,16 +1489,19 @@ async def generate_genesis_canonical(
             })
             return error_response("GENESIS_FAILED", f"项目设定生成失败: {str(e)[:200]}")
 
-        return envelope_response(genesis_run)
+        return envelope_response(response_data)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"生成项目设定失败: {str(e)[:200]}")
 
 
 @router.post("/genesis/approve")
 async def approve_genesis_canonical(
-    request: Request, body: GenesisApproveRequest
+    request: Request, body: GenesisApproveWithForceRequest
 ) -> EnvelopeResponse:
-    """Canonical body-style route for genesis approve."""
+    """Canonical body-style route for genesis approve.
+
+    v6.6.3: Supports force_apply + confirm_quality_risk for blocked drafts.
+    """
     from ..deps import get_repo
 
     try:
@@ -1343,13 +1531,49 @@ async def approve_genesis_canonical(
         if missing_sections:
             return error_response("INCOMPLETE_DRAFT", _incomplete_genesis_message(missing_sections))
 
+        # v6.6.3: Run quality gate
+        input_json = genesis.get("input_json", "{}")
+        try:
+            input_data = json.loads(input_json) if isinstance(input_json, str) else input_json
+        except json.JSONDecodeError:
+            input_data = {}
+
+        quality_report = evaluate_genesis_draft(
+            draft,
+            title=input_data.get("title", project.get("name", "")),
+            genre=input_data.get("genre", project.get("genre", "")),
+            premise=input_data.get("premise", project.get("description", "")),
+            target_chapters=input_data.get("target_chapters", 10),
+        )
+
+        # v6.6.3: Block if quality gate failed, unless force_apply is set
+        if not quality_report.passed:
+            if not (body.force_apply and body.confirm_quality_risk):
+                return error_response(
+                    "GENESIS_QUALITY_BLOCKED",
+                    "创世草案质量门未通过，请重新生成或人工补全。如需强制应用，请设置 force_apply=true 和 confirm_quality_risk=true",
+                    {
+                        "quality_report": _quality_report_payload(quality_report)
+                    },
+                )
+
         applied = _apply_genesis_to_project(repo, body.project_id, draft)
-        repo.update_genesis_run(body.genesis_id, {"status": "approved"})
+
+        forced_apply = not quality_report.passed and body.force_apply
+        _approve_genesis_run_with_quality_audit(
+            repo,
+            body.genesis_id,
+            draft,
+            quality_report,
+            forced_apply=forced_apply,
+        )
 
         return envelope_response({
             "genesis_id": body.genesis_id,
             "status": "approved",
             "applied": applied,
+            "quality_report": _quality_report_payload(quality_report),
+            "forced_apply": forced_apply,
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"批准创世记录失败: {str(e)[:200]}")

@@ -278,7 +278,10 @@ class TestGenesisApproveLooseDraft:
             "draft_json": json.dumps(draft, ensure_ascii=False),
         })
 
-        res = client.post(f"/api/projects/{project_id}/genesis/{genesis['id']}/approve")
+        res = client.post(f"/api/projects/{project_id}/genesis/{genesis['id']}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         assert res.status_code == 200, res.text
         data = res.json()
         assert data["ok"] is True, data

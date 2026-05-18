@@ -12,6 +12,24 @@ interface GenesisRun {
   error_message: string | null
   created_at: string
   updated_at: string
+  quality_report?: QualityReport
+}
+
+interface QualityIssue {
+  code: string
+  severity: 'blocker' | 'warning' | 'advisory'
+  message: string
+  section: string
+  item_ref?: string
+  suggestion?: string
+}
+
+interface QualityReport {
+  passed: boolean
+  score: number
+  quality_status: 'pass' | 'warning' | 'blocked' | 'scaffold_fallback'
+  issues: QualityIssue[]
+  metrics: Record<string, number>
 }
 
 interface DraftData {
@@ -283,11 +301,35 @@ export default function GenesisModule({ projectId, project }: Props) {
     }
   }
 
+  const qualityStatusLabel = (status: string) => {
+    switch (status) {
+      case 'pass': return '质量通过'
+      case 'warning': return '质量警告'
+      case 'blocked': return '质量阻塞'
+      case 'scaffold_fallback': return '兜底模板'
+      default: return status
+    }
+  }
+
+  const qualityStatusClass = (status: string) => {
+    switch (status) {
+      case 'pass': return 'quality-pass'
+      case 'warning': return 'quality-warning'
+      case 'blocked': return 'quality-blocked'
+      case 'scaffold_fallback': return 'quality-scaffold'
+      default: return ''
+    }
+  }
+
   if (loading) return <div className="module-loading">加载中...</div>
 
   const draftPreview = parseDraft()
   const draft = draftPreview.draft
   const canGenerate = !genesis || genesis.status === 'approved' || genesis.status === 'rejected' || genesis.status === 'failed'
+
+  // v6.6.3: Check quality gate
+  const qualityBlocked = genesis?.quality_report && !genesis.quality_report.passed
+  const isScaffold = genesis?.quality_report?.quality_status === 'scaffold_fallback'
 
   return (
     <div className="project-module">
@@ -447,6 +489,34 @@ export default function GenesisModule({ projectId, project }: Props) {
           {/* Draft preview */}
           {genesis.status === 'generated' && (
             <>
+              {/* v6.6.3: Quality report */}
+              {genesis.quality_report && (
+                <div className={`genesis-quality-report ${qualityStatusClass(genesis.quality_report.quality_status)}`}>
+                  <div className="quality-header">
+                    <span className="quality-status">{qualityStatusLabel(genesis.quality_report.quality_status)}</span>
+                    <span className="quality-score">评分: {genesis.quality_report.score.toFixed(0)}</span>
+                  </div>
+                  {genesis.quality_report.quality_status === 'scaffold_fallback' && (
+                    <div className="quality-scaffold-warning">
+                      当前草案包含兜底模板内容，不建议批准。请重新生成或人工补全。
+                    </div>
+                  )}
+                  {genesis.quality_report.issues.length > 0 && (
+                    <div className="quality-issues">
+                      {genesis.quality_report.issues.map((issue, i) => (
+                        <div key={i} className={`quality-issue issue-${issue.severity}`}>
+                          <span className="issue-severity">
+                            {issue.severity === 'blocker' ? '阻塞' : issue.severity === 'warning' ? '警告' : '建议'}
+                          </span>
+                          <span className="issue-message">{issue.message}</span>
+                          {issue.suggestion && <span className="issue-suggestion">{issue.suggestion}</span>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+
               <div className="genesis-draft">
                 {draftPreview.invalid && (
                   <div className="draft-empty draft-invalid">
@@ -576,9 +646,20 @@ export default function GenesisModule({ projectId, project }: Props) {
                     <button className="btn btn-danger" onClick={() => setShowRejectConfirm(true)}>
                       <XCircle size={14} /> 拒绝
                     </button>
-                    <button className="btn btn-primary" onClick={handleApprove} disabled={approving || draftPreview.invalid || draftPreview.empty || draftPreview.incomplete}>
+                    <button
+                      className="btn btn-primary"
+                      onClick={handleApprove}
+                      disabled={approving || draftPreview.invalid || draftPreview.empty || draftPreview.incomplete || qualityBlocked}
+                      title={qualityBlocked ? '质量门未通过，无法批准' : ''}
+                    >
                       {approving ? <><Loader2 size={14} className="spin" /> 应用中...</> : <><CheckCircle2 size={14} /> 批准并应用</>}
                     </button>
+                    {qualityBlocked && !isScaffold && (
+                      <span className="quality-block-hint">草案存在质量问题，请重新生成</span>
+                    )}
+                    {isScaffold && (
+                      <span className="quality-block-hint">兜底模板不建议直接批准</span>
+                    )}
                   </>
                 )}
               </div>
@@ -826,6 +907,99 @@ export default function GenesisModule({ projectId, project }: Props) {
           border-radius: 8px;
           color: var(--success);
           font-size: 14px;
+        }
+        .genesis-quality-report {
+          padding: 14px;
+          border-radius: 8px;
+          margin-bottom: 16px;
+          font-size: 13px;
+        }
+        .quality-pass {
+          background: color-mix(in srgb, var(--success) 10%, var(--bg-primary));
+          border: 1px solid color-mix(in srgb, var(--success) 24%, transparent);
+        }
+        .quality-warning {
+          background: color-mix(in srgb, var(--warning) 10%, var(--bg-primary));
+          border: 1px solid color-mix(in srgb, var(--warning) 24%, transparent);
+        }
+        .quality-blocked, .quality-scaffold {
+          background: color-mix(in srgb, var(--danger) 10%, var(--bg-primary));
+          border: 1px solid color-mix(in srgb, var(--danger) 24%, transparent);
+        }
+        .quality-header {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          margin-bottom: 10px;
+        }
+        .quality-status {
+          font-weight: 600;
+          font-size: 14px;
+        }
+        .quality-pass .quality-status { color: var(--success); }
+        .quality-warning .quality-status { color: var(--warning); }
+        .quality-blocked .quality-status, .quality-scaffold .quality-status { color: var(--danger); }
+        .quality-score {
+          color: var(--text-muted);
+          font-size: 12px;
+        }
+        .quality-scaffold-warning {
+          padding: 10px;
+          background: color-mix(in srgb, var(--danger) 8%, transparent);
+          border-radius: 4px;
+          color: var(--danger);
+          margin-bottom: 10px;
+          line-height: 1.5;
+        }
+        .quality-issues {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .quality-issue {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 6px;
+          align-items: baseline;
+          padding: 8px;
+          background: color-mix(in srgb, var(--bg-primary) 50%, transparent);
+          border-radius: 4px;
+        }
+        .issue-severity {
+          font-weight: 600;
+          font-size: 11px;
+          padding: 2px 6px;
+          border-radius: 3px;
+          text-transform: uppercase;
+        }
+        .issue-blocker .issue-severity {
+          background: color-mix(in srgb, var(--danger) 20%, transparent);
+          color: var(--danger);
+        }
+        .issue-warning .issue-severity {
+          background: color-mix(in srgb, var(--warning) 20%, transparent);
+          color: var(--warning);
+        }
+        .issue-advisory .issue-severity {
+          background: color-mix(in srgb, var(--text-muted) 20%, transparent);
+          color: var(--text-muted);
+        }
+        .issue-message {
+          flex: 1;
+          min-width: 200px;
+          color: var(--text-primary);
+        }
+        .issue-suggestion {
+          width: 100%;
+          margin-top: 4px;
+          font-size: 12px;
+          color: var(--text-muted);
+          font-style: italic;
+        }
+        .quality-block-hint {
+          font-size: 12px;
+          color: var(--danger);
+          margin-left: 8px;
         }
         .spin {
           animation: spin 1s linear infinite;

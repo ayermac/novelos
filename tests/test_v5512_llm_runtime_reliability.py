@@ -297,7 +297,10 @@ def client_with_project():
     })
     assert gen_resp.status_code == 200
     genesis_id = gen_resp.json()["data"]["id"]
-    approve_resp = client.post(f"/api/projects/budget-auto/genesis/{genesis_id}/approve")
+    approve_resp = client.post(f"/api/projects/budget-auto/genesis/{genesis_id}/approve", json={
+        "force_apply": True,
+        "confirm_quality_risk": True,
+    })
     assert approve_resp.status_code == 200
 
     fill_resp = client.post("/api/projects/budget-auto/production/auto-fill", json={
