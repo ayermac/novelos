@@ -18,6 +18,7 @@ from ..llm.provider import is_configured_live_provider
 from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.revision_context import normalize_revision_review
 from ..agent_runtime.skill_hooks import run_agent_skills
+from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
 from ..quality.chapter_seam import build_chapter_seam_context, evaluate_chapter_seam
 
 logger = logging.getLogger(__name__)
@@ -86,16 +87,26 @@ class EditorAgent(BaseAgent):
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
-        title_contract = self._get_title_contract_context(state["project_id"])
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+
+        title_contract = self._get_title_contract_context(project_id)
         if title_contract:
             parts.append(title_contract)
+
+        # v6.6.2: Unified context builder
+        builder = AgentContextBuilder(self.repo)
+        bundle = builder.build_for_editor(project_id, chapter_number, state)
+        formatted = format_context_bundle_for_prompt(bundle, agent_name="editor", max_chars=12000)
+        if formatted:
+            parts.append(formatted)
 
         # Chapter content
         chapter = self._get_chapter_info(state)
         if chapter and chapter.get("content"):
             parts.append(f"【本章正文】\n{chapter['content'][:8000]}")
 
-        # Instruction
+        # Instruction (redundant with bundle but ensures explicit visibility)
         instruction = self._get_instruction(state)
         if instruction:
             parts.append(f"【写作指令】\n目标: {instruction.get('objective', '')}\n"
@@ -103,27 +114,16 @@ class EditorAgent(BaseAgent):
                          f"埋设伏笔: {instruction.get('plots_to_plant', '[]')}\n"
                          f"兑现伏笔: {instruction.get('plots_to_resolve', '[]')}")
 
-        # Previous state card
-        prev_state = self._get_prev_state_card(state)
-        if prev_state:
-            parts.append(f"【上一章状态卡】\n{json.dumps(prev_state.get('state_data', {}), ensure_ascii=False, indent=2)}")
-
         seam_context = build_chapter_seam_context(
             self.repo,
-            state["project_id"],
-            state["chapter_number"],
+            project_id,
+            chapter_number,
         )
         if seam_context:
             parts.append(seam_context)
 
-        # Characters
-        characters = self.repo.get_characters(state["project_id"])
-        if characters:
-            char_str = "\n".join(f"- {c['name']}({c['role']}): {c.get('description', '')}" for c in characters[:10])
-            parts.append(f"【角色设定】\n{char_str}")
-
         # v4.0: Style Bible injection
-        style_ctx = self._get_style_bible_context(state["project_id"], "editor")
+        style_ctx = self._get_style_bible_context(project_id, "editor")
         if style_ctx:
             parts.append(style_ctx)
 
@@ -159,6 +159,15 @@ class EditorAgent(BaseAgent):
     def _build_compact_review_context(self, state: FactoryState) -> str:
         """Build a short review prompt for live LLM calls."""
         parts = []
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+
+        # v6.6.2: Compact unified context
+        builder = AgentContextBuilder(self.repo)
+        bundle = builder.build_for_editor(project_id, chapter_number, state)
+        formatted = format_context_bundle_for_prompt(bundle, agent_name="editor", max_chars=6000)
+        if formatted:
+            parts.append(formatted)
 
         chapter = self._get_chapter_info(state)
         if chapter and chapter.get("content"):
@@ -177,13 +186,13 @@ class EditorAgent(BaseAgent):
 
         seam_context = build_chapter_seam_context(
             self.repo,
-            state["project_id"],
-            state["chapter_number"],
+            project_id,
+            chapter_number,
         )
         if seam_context:
             parts.append(seam_context)
 
-        characters = self.repo.get_characters(state["project_id"])
+        characters = self.repo.get_characters(project_id)
         if characters:
             char_str = "\n".join(
                 f"- {c['name']}({c['role']}): {c.get('description', '')}"

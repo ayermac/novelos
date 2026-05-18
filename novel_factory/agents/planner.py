@@ -13,6 +13,8 @@ from ..validators.chapter_checker import derive_word_target
 from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.revision_context import revision_feedback_block
 from ..agent_runtime.skill_hooks import run_agent_skills
+from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
+from ..quality.chapter_inheritance import validate_chapter_inheritance
 from ..quality.chapter_seam import (
     build_chapter_seam_context,
     build_planner_inheritance_context,
@@ -57,41 +59,21 @@ class PlannerAgent(BaseAgent):
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
-        
-        # R3: Review notes from human review sessions (v3.2)
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+
         title_contract = self._get_title_contract_context(project_id)
         if title_contract:
             parts.append(title_contract)
 
-        review_notes = self.repo.get_chapter_review_notes(project_id, chapter_number)
-        if review_notes:
-            latest_note = review_notes[0]
-            parts.append(f"【人工审核意见】\n{latest_note['notes']}")
+        # v6.6.2: Unified context builder
+        builder = AgentContextBuilder(self.repo)
+        bundle = builder.build_for_planner(project_id, chapter_number, state)
+        formatted = format_context_bundle_for_prompt(bundle, agent_name="planner", max_chars=12000)
+        if formatted:
+            parts.append(formatted)
 
-        chapter = self._get_chapter_info(state)
-        if state.get("chapter_status") == ChapterStatus.REVISION.value or (
-            chapter and chapter.get("status") == ChapterStatus.REVISION.value
-        ):
-            review = state.get("_revision_review")
-            if not review and chapter:
-                review = self.repo.get_latest_review(project_id, chapter["id"])
-            feedback = revision_feedback_block(review)
-            if feedback:
-                parts.append(feedback)
-        
-        # Previous state card
-        prev_state = self._get_prev_state_card(state)
-        if prev_state:
-            parts.append(f"【上一章状态卡】\n{json.dumps(prev_state.get('state_data', {}), ensure_ascii=False, indent=2)}")
-        else:
-            parts.append("【初始状态】第一章，无上一章状态卡")
-
-        seam_context = build_chapter_seam_context(repo=self.repo, project_id=project_id, chapter_number=chapter_number)
-        if seam_context:
-            parts.append(seam_context)
-
+        # v6.6.2: Retain legacy planner inheritance context for backward compatibility
         inheritance_context = build_planner_inheritance_context(
             self.repo,
             project_id,
@@ -100,20 +82,16 @@ class PlannerAgent(BaseAgent):
         if inheritance_context:
             parts.append(inheritance_context)
 
-        # Characters
-        characters = self.repo.get_characters(state["project_id"])
-        if characters:
-            char_str = "\n".join(f"- {c['name']}({c['role']}): {c.get('description', '')}" for c in characters)
-            parts.append(f"【角色设定】\n{char_str}")
+        # R3: Review notes from human review sessions (v3.2)
+        review_notes = self.repo.get_chapter_review_notes(project_id, chapter_number)
+        if review_notes:
+            latest_note = review_notes[0]
+            parts.append(f"【人工审核意见】\n{latest_note['notes']}")
 
-        # Pending plots
-        plots = self.repo.get_pending_plots(state["project_id"])
-        if plots:
-            plot_str = "\n".join(
-                f"- [{p['code']}] {p['title']} (埋设:第{p.get('planted_chapter','?')}章, 计划兑现:第{p.get('planned_resolve_chapter','?')}章)"
-                for p in plots
-            )
-            parts.append(f"【待处理伏笔】\n{plot_str}")
+        # Seam context (retained for explicit bridge constraints)
+        seam_context = build_chapter_seam_context(repo=self.repo, project_id=project_id, chapter_number=chapter_number)
+        if seam_context:
+            parts.append(seam_context)
 
         # Pending messages
         messages = self.repo.get_pending_messages(state["project_id"], "planner")
@@ -147,6 +125,31 @@ class PlannerAgent(BaseAgent):
 
         # Save instruction to DB, preserving word_target if one already exists
         brief = output.chapter_brief
+
+        # v6.6.2: Inheritance check on generated brief
+        prev_state = self._get_prev_state_card(state)
+        builder = AgentContextBuilder(self.repo)
+        bundle = builder.build_for_planner(project_id, chapter_number, state)
+        inheritance_check = validate_chapter_inheritance(
+            prev_state,
+            bundle,
+            brief.model_dump(),
+        )
+        if inheritance_check.warnings:
+            exec_events.append({
+                "event_type": "planner_inheritance_check",
+                "message": f"Planner 继承检查提醒：{len(inheritance_check.warnings)} 项",
+                "status": "warning",
+                "payload": {"warnings": inheritance_check.warnings[:5]},
+            })
+        if inheritance_check.advisory_issues:
+            exec_events.append({
+                "event_type": "planner_inheritance_advisory",
+                "message": f"Planner 继承建议：{len(inheritance_check.advisory_issues)} 项",
+                "status": "info",
+                "payload": {"advisory": inheritance_check.advisory_issues[:5]},
+            })
+
         repaired_inheritance, inheritance_issues = enforce_planner_inheritance(
             brief,
             self.repo,

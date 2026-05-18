@@ -12,6 +12,8 @@ from ..skills.registry import SkillRegistry
 from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.skill_hooks import run_agent_skills
 from ..agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
+from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
+from ..quality.chapter_inheritance import validate_chapter_inheritance
 
 logger = logging.getLogger(__name__)
 
@@ -47,29 +49,28 @@ class ScreenwriterAgent(BaseAgent):
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
-        title_contract = self._get_title_contract_context(state["project_id"])
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+
+        title_contract = self._get_title_contract_context(project_id)
         if title_contract:
             parts.append(title_contract)
 
-        # Writing instruction
+        # v6.6.2: Unified context builder
+        builder = AgentContextBuilder(self.repo)
+        bundle = builder.build_for_screenwriter(project_id, chapter_number, state)
+        formatted = format_context_bundle_for_prompt(bundle, agent_name="screenwriter", max_chars=12000)
+        if formatted:
+            parts.append(formatted)
+
+        # Scene beats from instruction (Screenwriter needs to see them explicitly as beats)
         instruction = self._get_instruction(state)
         if instruction:
-            parts.append(f"【写作指令】\n目标: {instruction.get('objective', '')}\n"
+            parts.append(f"【Planner Brief】\n目标: {instruction.get('objective', '')}\n"
                          f"关键事件: {instruction.get('key_events', '')}\n"
                          f"章末钩子: {instruction.get('ending_hook', '')}\n"
                          f"埋设伏笔: {instruction.get('plots_to_plant', '[]')}\n"
                          f"兑现伏笔: {instruction.get('plots_to_resolve', '[]')}")
-
-        # Previous state card
-        prev_state = self._get_prev_state_card(state)
-        if prev_state:
-            parts.append(f"【上一章状态卡】\n{json.dumps(prev_state.get('state_data', {}), ensure_ascii=False, indent=2)}")
-
-        # Characters
-        characters = self.repo.get_characters(state["project_id"])
-        if characters:
-            char_str = "\n".join(f"- {c['name']}({c['role']}): {c.get('description', '')}" for c in characters)
-            parts.append(f"【角色设定】\n{char_str}")
 
         return "\n\n".join(parts)
 
@@ -151,6 +152,22 @@ class ScreenwriterAgent(BaseAgent):
             }
 
         beats_data = [b.model_dump() for b in output.scene_beats]
+
+        # v6.6.2: Light inheritance check on scene beats
+        prev_state = self._get_prev_state_card(state)
+        builder = AgentContextBuilder(self.repo)
+        bundle = builder.build_for_screenwriter(project_id, chapter_number, state)
+        inheritance_check = validate_chapter_inheritance(
+            prev_state, bundle, {"scene_beats": beats_data},
+        )
+        if inheritance_check.warnings:
+            exec_events.append({
+                "event_type": "screenwriter_inheritance_check",
+                "message": f"Screenwriter 继承检查提醒：{len(inheritance_check.warnings)} 项",
+                "status": "warning",
+                "payload": {"warnings": inheritance_check.warnings[:5]},
+            })
+
         exec_events.append({
             "event_type": "artifact_saved",
             "message": f"保存产物：场景规划 ({len(beats_data)} 个 beat)",

@@ -32,6 +32,7 @@ from ..agent_runtime.revision_context import normalize_revision_review, revision
 from ..agent_runtime.skill_hooks import run_agent_skills
 from ..agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
 from ..quality.chapter_seam import build_chapter_seam_context
+from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -80,9 +81,19 @@ class AuthorAgent(BaseAgent):
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
-        title_contract = self._get_title_contract_context(state["project_id"])
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+
+        title_contract = self._get_title_contract_context(project_id)
         if title_contract:
             parts.append(title_contract)
+
+        # v6.6.2: Unified context builder
+        builder = AgentContextBuilder(self.repo)
+        bundle = builder.build_for_author(project_id, chapter_number, state)
+        formatted = format_context_bundle_for_prompt(bundle, agent_name="author", max_chars=10000)
+        if formatted:
+            parts.append(formatted)
 
         # Writing instruction
         instruction = self._get_instruction(state)
@@ -90,24 +101,23 @@ class AuthorAgent(BaseAgent):
             word_target = self._get_word_target(state)
             minimum_required = int(word_target * 0.85)
             recommended_target = max(word_target, minimum_required + 500)
-            parts.append(f"【写作指令】\n目标: {instruction.get('objective', '')}\n"
+            parts.append(f"【写作指令】\n"
+                         f"目标: {instruction.get('objective', '')}\n"
                          f"关键事件: {instruction.get('key_events', '')}\n"
                          f"情绪基调: {instruction.get('emotion_tone', '')}\n"
                          f"章末钩子: {instruction.get('ending_hook', '')}\n"
-                         f"字数硬要求: 正文 content 至少 {minimum_required} 字符，"
+                         f"字数要求: 正文 content 至少 {minimum_required} 字符，"
                          f"建议写到 {recommended_target} 字符左右，低于硬要求会自动返修。")
 
         seam_context = build_chapter_seam_context(
             self.repo,
-            state["project_id"],
-            state["chapter_number"],
+            project_id,
+            chapter_number,
         )
         if seam_context:
             parts.append(seam_context)
 
         # R3: Review notes from human review sessions (v3.2)
-        project_id = state["project_id"]
-        chapter_number = state["chapter_number"]
         review_notes = self.repo.get_chapter_review_notes(project_id, chapter_number)
         if review_notes:
             latest_note = review_notes[0]
@@ -121,17 +131,6 @@ class AuthorAgent(BaseAgent):
                 for b in beats
             )
             parts.append(f"【场景 Beat】\n{beats_str}")
-
-        # Previous state card
-        prev_state = self._get_prev_state_card(state)
-        if prev_state:
-            parts.append(f"【上一章状态卡】\n{json.dumps(prev_state.get('state_data', {}), ensure_ascii=False, indent=2)}")
-
-        # Characters
-        characters = self.repo.get_characters(state["project_id"])
-        if characters:
-            char_str = "\n".join(f"- {c['name']}({c['role']}): {c.get('description', '')}" for c in characters[:10])
-            parts.append(f"【角色设定】\n{char_str}")
 
         # v4.0: Style Bible injection
         style_ctx = self._get_style_bible_context(project_id, "author")
@@ -157,7 +156,7 @@ class AuthorAgent(BaseAgent):
         # If revision, include review issues
         chapter = self._get_chapter_info(state)
         if chapter and chapter.get("status") == ChapterStatus.REVISION.value:
-            review = state.get("_revision_review") or self.repo.get_latest_review(state["project_id"], chapter["id"])
+            review = state.get("_revision_review") or self.repo.get_latest_review(project_id, chapter["id"])
             feedback = revision_feedback_block(review)
             if feedback:
                 parts.append(feedback)
@@ -793,15 +792,27 @@ class AuthorAgent(BaseAgent):
     def _build_plain_text_context(self, state: FactoryState, fallback_context: str) -> str:
         """Build a compact prompt for direct prose generation.
 
-        v6.6.0 修复：显式注入 revision feedback，确保真实 LLM plain-text 路径
-        不会丢失 Editor 的返修意见。优先使用通用 helper。
+        v6.6.2: 统一使用 AgentContextBuilder，确保 plain-text 路径也包含
+        revision feedback、inheritance context 和 hard constraints。
         """
         from ..agent_runtime.revision_context import build_revision_feedback_context
 
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
         instruction = self._get_instruction(state) or {}
         parts = []
 
-        # 优先注入返修反馈（所有生成路径必须携带）
+        # v6.6.2: Unified context builder for plain-text path
+        try:
+            builder = AgentContextBuilder(self.repo)
+            bundle = builder.build_for_author(project_id, chapter_number, state)
+            formatted = format_context_bundle_for_prompt(bundle, agent_name="author", max_chars=8000)
+            if formatted:
+                parts.append(formatted)
+        except Exception:
+            pass
+
+        # 保留 revision feedback 显式注入（builder 已包含，此处作为冗余保障）
         revision_block = build_revision_feedback_context(
             state, self.repo, self._get_chapter_info(state)
         )
@@ -820,8 +831,8 @@ class AuthorAgent(BaseAgent):
 
         seam_context = build_chapter_seam_context(
             self.repo,
-            state["project_id"],
-            state["chapter_number"],
+            project_id,
+            chapter_number,
         )
         if seam_context:
             parts.append(seam_context)
@@ -838,7 +849,7 @@ class AuthorAgent(BaseAgent):
                 )
             parts.append("【场景 Beat】\n" + "\n".join(beat_lines))
 
-        characters = self.repo.get_characters(state["project_id"])
+        characters = self.repo.get_characters(project_id)
         if characters:
             char_lines = [
                 f"- {c['name']}({c['role']}): {c.get('description', '')}"

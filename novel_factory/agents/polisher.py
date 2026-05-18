@@ -9,7 +9,6 @@ import statistics
 import time
 from typing import Any
 
-from ..context.builder import ContextBuilder
 from ..models.schemas import PolisherOutput
 from ..models.state import ChapterStatus, FactoryState
 from ..validators.chapter_checker import validate_chapter_output, check_word_count_quality_gate, derive_word_target
@@ -20,6 +19,7 @@ from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.chapter_text import default_chapter_title, ensure_chapter_heading, strip_chapter_heading
 from ..agent_runtime.revision_context import normalize_revision_review, revision_feedback_block
 from ..agent_runtime.skill_hooks import run_agent_skills
+from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
 from ..llm.openai_compatible import OutputValidationError
 from ..llm.provider import is_configured_live_provider
 from ..quality.feedback_bridge import build_compact_feedback, format_polisher_context
@@ -78,29 +78,40 @@ class PolisherAgent(BaseAgent):
         self.skill_registry = skill_registry
 
     def build_context(self, state: FactoryState) -> str:
-        """Build context using ContextBuilder.build_for_polisher().
+        """Build context using AgentContextBuilder.
 
-        This ensures fact_lock, death_penalty, instruction, learned_patterns,
-        and best_practices are injected into the actual LLM messages.
+        v6.6.2: Uses unified context builder for inheritance and fact consistency.
         v6.4.2: Appends polishing writing reminders derived from quality diagnosis dimensions.
         """
-        builder = ContextBuilder(self.repo)
-        title_contract = self._get_title_contract_context(state["project_id"])
-        context = builder.build_for_polisher(state["project_id"], state["chapter_number"])
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
         parts = []
+
+        title_contract = self._get_title_contract_context(project_id)
         if title_contract:
             parts.append(title_contract)
+
+        # v6.6.2: Unified context builder
+        builder = AgentContextBuilder(self.repo)
+        bundle = builder.build_for_polisher(project_id, chapter_number, state)
+        formatted = format_context_bundle_for_prompt(bundle, agent_name="polisher", max_chars=12000)
+        if formatted:
+            parts.append(formatted)
+
         chapter = self._get_chapter_info(state)
         if state.get("chapter_status") == ChapterStatus.REVISION.value or (
             chapter and chapter.get("status") == ChapterStatus.REVISION.value
         ):
             review = state.get("_revision_review")
             if not review and chapter:
-                review = self.repo.get_latest_review(state["project_id"], chapter["id"])
+                review = self.repo.get_latest_review(project_id, chapter["id"])
             feedback = revision_feedback_block(review)
             if feedback:
                 parts.append(feedback)
-        parts.append(context)
+
+        # Original draft (Polisher needs the actual text to work on)
+        if chapter and chapter.get("content"):
+            parts.append(f"【当前草稿】\n{chapter['content'][:8000]}")
 
         # v6.4.2: Inject quality-diagnosis-derived writing reminders
         parts.append(
@@ -111,8 +122,40 @@ class PolisherAgent(BaseAgent):
             "将抽象描述（\"他很紧张\"）改为具体动作（\"他攥紧拳头\"）。\n"
             "3. 节奏变化：避免连续多个段落长度相近；紧张处用短句，描写处可用长句但避免>40字。\n"
             "4. 去AI味：删除总结句（\"总之/简单来说\"）、直白心理解释和宏大空泛判断。\n"
-            "5. Show, Don't Tell：将\"感到/觉得/意识到/明白\"等直白情绪词改为动作或神态。"
+            "5. Show, Don't Tell：将\"感到/觉得/意识到/明白\"等直白情绪词改为动作或神态。\n"
+            "6. 职责边界：Polisher 只修语言、节奏、对白、说明段和质量诊断建议，"
+            "不要主动大改剧情结构。如发现剧情级风险，输出 risk note，不要硬改。"
         )
+
+        # v4.0: Style Bible injection
+        style_ctx = self._get_style_bible_context(project_id, "polisher")
+        if style_ctx:
+            parts.append(style_ctx)
+
+        # v6.6.2: Fact lock for Polisher (backward-compatible title)
+        instruction = self._get_instruction(state)
+        fact_lock_parts: list[str] = []
+        if instruction:
+            if instruction.get("key_events"):
+                fact_lock_parts.append(f"关键事件: {instruction['key_events']}")
+            if instruction.get("plots_to_plant"):
+                fact_lock_parts.append(f"伏笔埋设: {instruction['plots_to_plant']}")
+            if instruction.get("plots_to_resolve"):
+                fact_lock_parts.append(f"伏笔兑现: {instruction['plots_to_resolve']}")
+        prev_state = self._get_prev_state_card(state)
+        if prev_state:
+            state_data = prev_state.get("state_data", prev_state)
+            if isinstance(state_data, dict):
+                for key in ("level", "等级", "lv", "Lv"):
+                    if key in state_data:
+                        fact_lock_parts.append(f"等级/数值: {key}={state_data[key]}")
+                        break
+                assets = state_data.get("assets", {})
+                if isinstance(assets, dict):
+                    for k, v in list(assets.items())[:5]:
+                        fact_lock_parts.append(f"  {k}={v}")
+        if fact_lock_parts:
+            parts.append("【事实锁定清单 — 润色时不可删除/改变】\n" + "\n".join(fact_lock_parts))
 
         # v6.6.1: Inject deterministic quality diagnosis feedback
         quality_feedback = self._build_quality_feedback(state)
