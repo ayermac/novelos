@@ -128,11 +128,31 @@ def test_create_revision_draft_for_published(client: TestClient, repo: Repositor
     body = resp.json()
     assert body["ok"], body.get("error", {}).get("message", "")
     assert body["data"]["revision_draft_created"] is True
-    assert body["data"]["new_status"] == "revision"
+    assert body["data"]["new_status"] == "published"
+    assert body["data"]["status_changed"] is False
 
-    # After revision draft, chapter should be editable
+    # Creating the editable draft preserves the published state until a save occurs.
+    chapter = repo.get_chapter(pid, 1)
+    assert chapter["status"] == "published"
+
+    save = client.post(
+        f"/api/projects/{pid}/chapters/1/content",
+        json={
+            "content": content + "人工补充修订内容。",
+            "summary": "人工修订保存",
+            "confirm": True,
+        },
+    )
+    save_body = save.json()
+    assert save_body["ok"], save_body.get("error", {}).get("message", "")
+    assert save_body["data"]["status"] == "polished"
+    assert save_body["data"]["previous_status"] == "published"
+
+    # After saving a revision, chapter should be editable and ready for re-review.
     editor = client.get(f"/api/projects/{pid}/chapters/1/editor")
-    assert editor.json()["data"]["editable"] is True
+    editor_body = editor.json()
+    assert editor_body["data"]["editable"] is True
+    assert editor_body["data"]["status"] == "polished"
 
 
 # ── 4. Version list / detail ───────────────────────────────
@@ -288,6 +308,98 @@ def test_local_revision_returns_candidate(client: TestClient, seeded_project: st
     # Original content should NOT have changed
     editor2 = client.get(f"/api/projects/{pid}/chapters/1/editor")
     assert editor2.json()["data"]["content"] == content
+
+
+def test_local_revision_allows_empty_replacement_for_deletion(
+    client: TestClient,
+    seeded_project: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Deleting the selected text is a valid local revision result."""
+
+    class EmptyReplacementProvider:
+        def invoke_json(self, messages, schema=None, **kwargs):  # noqa: ANN001
+            return {
+                "replacement_text": "",
+                "change_summary": "",
+                "risk_notes": [],
+            }
+
+    class EmptyReplacementRouter:
+        def for_agent(self, agent_name: str):  # noqa: ARG002
+            return EmptyReplacementProvider()
+
+    def fake_router(settings, llm_mode):  # noqa: ANN001, ARG001
+        return EmptyReplacementRouter()
+
+    monkeypatch.setattr("novel_factory.workflow.runner._build_llm_router", fake_router)
+
+    pid = seeded_project
+    editor = client.get(f"/api/projects/{pid}/chapters/1/editor")
+    content = editor.json()["data"]["content"]
+    selected = content[:9]
+
+    resp = client.post(
+        f"/api/projects/{pid}/chapters/1/local-revision",
+        json={
+            "selected_text": selected,
+            "selection_start": 0,
+            "selection_end": len(selected),
+            "instruction": "这一段去掉",
+            "mode": "rewrite",
+        },
+    )
+    body = resp.json()
+    assert body["ok"], body.get("error", {}).get("message", "")
+    assert body["data"]["replacement_text"] == ""
+    assert body["data"]["change_summary"] == "按指令删除选中文本"
+
+    editor2 = client.get(f"/api/projects/{pid}/chapters/1/editor")
+    assert editor2.json()["data"]["content"] == content
+
+
+def test_local_revision_rejects_empty_replacement_without_deletion_intent(
+    client: TestClient,
+    seeded_project: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Empty AI output is still an error for normal polish/rewrite requests."""
+
+    class EmptyReplacementProvider:
+        def invoke_json(self, messages, schema=None, **kwargs):  # noqa: ANN001
+            return {
+                "replacement_text": "",
+                "change_summary": "",
+                "risk_notes": [],
+            }
+
+    class EmptyReplacementRouter:
+        def for_agent(self, agent_name: str):  # noqa: ARG002
+            return EmptyReplacementProvider()
+
+    def fake_router(settings, llm_mode):  # noqa: ANN001, ARG001
+        return EmptyReplacementRouter()
+
+    monkeypatch.setattr("novel_factory.workflow.runner._build_llm_router", fake_router)
+
+    pid = seeded_project
+    editor = client.get(f"/api/projects/{pid}/chapters/1/editor")
+    content = editor.json()["data"]["content"]
+    selected = content[:9]
+
+    resp = client.post(
+        f"/api/projects/{pid}/chapters/1/local-revision",
+        json={
+            "selected_text": selected,
+            "selection_start": 0,
+            "selection_end": len(selected),
+            "instruction": "润色这段文字",
+            "mode": "polish",
+        },
+    )
+    body = resp.json()
+    assert not body["ok"]
+    assert body["error"]["code"] == "REVISION_FAILED"
 
 
 # ── 9. Accept local revision creates new version ────────────

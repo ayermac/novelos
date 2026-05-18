@@ -39,6 +39,7 @@ export default function ChapterEditorSurface({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [fullscreen, setFullscreen] = useState(false)
+  const [revisionDraftReady, setRevisionDraftReady] = useState(false)
 
   // Local revision state
   const [selectedText, setSelectedText] = useState('')
@@ -96,11 +97,13 @@ export default function ChapterEditorSurface({
     try {
       const resp = await post(`/projects/${projectId}/chapters/${chapterNumber}/content`, {
         content: editContent,
-        summary: '人工编辑保存',
+        summary: revisionDraftReady ? '人工修订保存' : '人工编辑保存',
         base_version_id: editorState.current_version_id,
+        confirm: revisionDraftReady,
       })
       if (resp.ok) {
         setViewMode('read')
+        setRevisionDraftReady(false)
         await loadEditor()
         onContentSaved?.()
       } else {
@@ -111,7 +114,7 @@ export default function ChapterEditorSurface({
     } finally {
       setSaving(false)
     }
-  }, [projectId, chapterNumber, editContent, editorState, saving, loadEditor, onContentSaved])
+  }, [projectId, chapterNumber, editContent, editorState, revisionDraftReady, saving, loadEditor, onContentSaved])
 
   // Create revision draft for published chapters
   const handleCreateRevisionDraft = useCallback(async () => {
@@ -124,7 +127,8 @@ export default function ChapterEditorSurface({
       })
       if (resp.ok) {
         await loadEditor()
-        onContentSaved?.()
+        setRevisionDraftReady(true)
+        setViewMode('edit')
       } else {
         setError(resp.error?.message || '创建修订版失败')
       }
@@ -133,7 +137,7 @@ export default function ChapterEditorSurface({
     } finally {
       setSaving(false)
     }
-  }, [projectId, chapterNumber, saving, loadEditor, onContentSaved])
+  }, [projectId, chapterNumber, saving, loadEditor])
 
   // Handle text selection for local revision
   const handleTextSelect = useCallback(() => {
@@ -225,7 +229,7 @@ export default function ChapterEditorSurface({
     return <div className="chapter-editor-error">{error || '无法加载编辑器'}</div>
   }
 
-  const isPublished = editorState.status === 'published' || editorState.status === 'awaiting_publish'
+  const isPublished = (editorState.status === 'published' || editorState.status === 'awaiting_publish') && !revisionDraftReady
 
   return (
     <div className={`chapter-editor-surface${fullscreen ? ' chapter-editor-surface--fullscreen' : ''}`}>
@@ -261,7 +265,12 @@ export default function ChapterEditorSurface({
             </button>
             <button
               className="chapter-editor-action chapter-editor-action-secondary"
-              onClick={() => { setEditContent(editorState.content || ''); setViewMode('read'); setRevisionResult(null) }}
+              onClick={() => {
+                setEditContent(editorState.content || '')
+                setViewMode('read')
+                setRevisionResult(null)
+                setRevisionDraftReady(false)
+              }}
               disabled={saving}
             >
               <X size={13} />
@@ -352,8 +361,8 @@ export default function ChapterEditorSurface({
           {revisionResult && (
             <div className="chapter-revision-result">
               <div className="chapter-revision-title">AI 返修结果（{tRevisionMode(revisionResult.mode)}）</div>
-              <div className="chapter-revision-copy">
-                {revisionResult.replacement_text}
+              <div className={`chapter-revision-copy${revisionResult.replacement_text ? '' : ' is-deletion'}`}>
+                {revisionResult.replacement_text || '将删除选中文本'}
               </div>
               {revisionResult.change_summary && (
                 <div className="chapter-revision-subtitle">{revisionResult.change_summary}</div>
@@ -366,7 +375,7 @@ export default function ChapterEditorSurface({
               <div className="chapter-revision-actions">
                 <button className="chapter-editor-action chapter-editor-action-primary" onClick={handleAcceptRevision}>
                   <Check size={13} />
-                  接受替换
+                  {revisionResult.replacement_text ? '接受替换' : '接受删除'}
                 </button>
                 <button className="chapter-editor-action chapter-editor-action-secondary" onClick={handleRejectRevision}>
                   <X size={13} />

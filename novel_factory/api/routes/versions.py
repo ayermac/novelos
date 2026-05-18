@@ -76,6 +76,33 @@ class RevisionDraftRequest(BaseModel):
     confirm: bool = False
 
 
+def _is_deletion_revision_request(instruction: str | None) -> bool:
+    """Return true when an empty local-revision replacement is intentional."""
+    text = (instruction or "").strip().lower()
+    if not text:
+        return False
+    deletion_markers = (
+        "去掉",
+        "删掉",
+        "删除",
+        "删去",
+        "移除",
+        "去除",
+        "拿掉",
+        "裁掉",
+        "这一段不要",
+        "这段不要",
+        "不要这段",
+        "remove",
+        "delete",
+        "omit",
+        "drop",
+        "cut this",
+        "cut it",
+    )
+    return any(marker in text for marker in deletion_markers)
+
+
 # ── 1. Editor state ────────────────────────────────────────
 
 
@@ -176,11 +203,12 @@ async def save_chapter_content(
 
         status = chapter.get("status", "")
 
-        # Guard: published chapters must use revision-draft
-        if status in PUBLISHED_STATUSES:
+        # Guard: protected chapters require explicit confirmation before they are
+        # converted back into an editable, review-required draft.
+        if status in PUBLISHED_STATUSES and not body.confirm:
             return error_response(
                 "PUBLISHED_PROTECTED",
-                "已发布章节不能直接保存，请先创建修订版",
+                "已发布或待发布章节不能直接保存，请先创建修订版",
             )
 
         # Validate content
@@ -217,7 +245,11 @@ async def save_chapter_content(
         # Status transition: human edits after review/blocking/revision need re-review.
         new_status = status
         status_changed = False
-        if status in {"reviewed", "blocking", "revision"}:
+        if status in PUBLISHED_STATUSES:
+            new_status = "polished"
+            repo.update_chapter_status(project_id, chapter_number, "polished")
+            status_changed = True
+        elif status in {"reviewed", "blocking", "revision"}:
             new_status = "polished"
             repo.update_chapter_status(project_id, chapter_number, "polished")
             status_changed = True
@@ -480,13 +512,11 @@ async def create_revision_draft(
             summary=f"发布快照（修订前保存）",
         )
 
-        # Move chapter to revision status
-        repo.update_chapter_status(project_id, chapter_number, "revision")
-
         return envelope_response({
             "revision_draft_created": True,
             "previous_status": status,
-            "new_status": "revision",
+            "new_status": status,
+            "status_changed": False,
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"创建修订版失败: {str(e)}")
@@ -571,9 +601,15 @@ async def local_revision(
         llm_mode = get_llm_mode(request)
         provider = _build_llm_router(settings, llm_mode).for_agent("author")
         result = provider.invoke_json(messages, schema=LocalRevisionOutput)
+        deletion_requested = _is_deletion_revision_request(body.instruction)
+        replacement_text = ""
+        if result and result.get("replacement_text") is not None:
+            replacement_text = str(result.get("replacement_text", ""))
 
-        if not result or not result.get("replacement_text"):
+        if not result or (not replacement_text.strip() and not deletion_requested):
             return error_response("REVISION_FAILED", "AI 返修返回为空，请重试")
+        if deletion_requested and not replacement_text.strip():
+            replacement_text = ""
 
         # Normalize output: ensure risk_notes is always a list of strings
         raw_notes = result.get("risk_notes", [])
@@ -582,8 +618,10 @@ async def local_revision(
         normalized_notes = [str(n) for n in raw_notes]
 
         return envelope_response({
-            "replacement_text": str(result.get("replacement_text", "")),
-            "change_summary": str(result.get("change_summary", "")),
+            "replacement_text": replacement_text,
+            "change_summary": str(result.get("change_summary", "")) or (
+                "按指令删除选中文本" if deletion_requested and not replacement_text else ""
+            ),
             "risk_notes": normalized_notes,
             "selection_start": body.selection_start,
             "selection_end": body.selection_end,
