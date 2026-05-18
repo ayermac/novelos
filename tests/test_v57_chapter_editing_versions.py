@@ -356,6 +356,35 @@ def test_reviewed_save_transitions_to_polished(client: TestClient, repo: Reposit
     assert body["data"]["previous_status"] == "reviewed"
 
 
+def test_blocking_chapter_is_editable_and_save_transitions_to_polished(client: TestClient, repo: Repository):
+    pid = "test_blocking_manual_edit"
+    repo.create_project(pid, "阻塞章节编辑测试")
+    repo.add_chapter(pid, 1, "第一章")
+    content = "审核失败后保留的章节正文" * 20
+    repo.save_chapter(pid, 1, "第一章", content, len(content), "blocking")
+    repo.save_version(pid, 1, content, source="ai_generation")
+    for _ in range(3):
+        task_id = repo.start_task(pid, 1, "revise", "author")
+        repo.complete_task(task_id, success=True)
+    assert repo.get_chapter_retry_count(pid, 1) == 3
+
+    editor = client.get(f"/api/projects/{pid}/chapters/1/editor").json()
+    assert editor["ok"]
+    assert editor["data"]["editable"] is True
+
+    new_content = "人工修复设定矛盾并增强对话后的正文" * 20
+    resp = client.post(
+        f"/api/projects/{pid}/chapters/1/content",
+        json={"content": new_content, "summary": "人工修复阻塞章节"},
+    )
+    body = resp.json()
+    assert body["ok"], body.get("error", {}).get("message", "")
+    assert body["data"]["status"] == "polished"
+    assert body["data"]["status_changed"] is True
+    assert body["data"]["previous_status"] == "blocking"
+    assert repo.get_chapter_retry_count(pid, 1) == 0
+
+
 # ── 11. Cross-chapter diff is rejected ───────────────────────
 
 

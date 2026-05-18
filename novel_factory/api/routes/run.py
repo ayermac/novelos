@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import asyncio
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, BackgroundTasks, Request
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ._memory_curator_gate import (
+    has_trusted_memory_batch,
+    memory_incomplete_details,
+    memory_incomplete_message,
+    memory_result_is_incomplete,
+)
 
 router = APIRouter()
 
@@ -18,6 +24,105 @@ class RunChapterRequest(BaseModel):
     project_id: str
     chapter: int
     llm_mode: str | None = None
+
+
+def _run_chapter_background(
+    project_id: str,
+    chapter: int,
+    db_path: str,
+    settings,
+    llm_mode: str,
+    run_id: str,
+) -> None:
+    """Run chapter production outside the browser/SSE connection lifecycle."""
+    from ...db.repository import Repository
+    from ...workflow.runner import run_with_graph
+
+    repo = Repository(db_path)
+    try:
+        result = run_with_graph(
+            project_id=project_id,
+            chapter_number=chapter,
+            settings=settings,
+            repo=repo,
+            llm_mode=llm_mode,
+            workflow_run_id=run_id,
+        )
+        if result.get("error"):
+            # Some setup failures return before a workflow node can finalize.
+            repo.update_workflow_run(
+                run_id,
+                status="failed",
+                error_message=result.get("error"),
+            )
+    except Exception as exc:
+        repo.update_workflow_run(run_id, status="failed", error_message=str(exc))
+
+
+@router.post("/run/chapter/start")
+async def start_chapter_run(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    body: RunChapterRequest,
+) -> EnvelopeResponse:
+    """Start chapter production as a server-side background job.
+
+    The returned run_id can be observed through the workflow timeline/stream
+    endpoints. Unlike /run/chapter/stream, disconnecting the browser no longer
+    cancels the production workflow.
+    """
+    from ..deps import get_repo, get_settings, get_llm_mode
+
+    try:
+        repo = get_repo(request)
+        settings = get_settings(request)
+        llm_mode = body.llm_mode or get_llm_mode(request)
+
+        project = repo.get_project(body.project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{body.project_id}' 不存在")
+
+        chapter = repo.get_chapter(body.project_id, body.chapter)
+        if not chapter:
+            repo.add_chapter(
+                project_id=body.project_id,
+                chapter_number=body.chapter,
+                title=f"第 {body.chapter} 章",
+                status="planned",
+            )
+            chapter = repo.get_chapter(body.project_id, body.chapter)
+
+        if chapter and chapter.get("status") == "pending":
+            repo.update_chapter_status(body.project_id, body.chapter, "planned")
+
+        from ._run_guards import check_chapter_run_guard
+
+        guard_error = check_chapter_run_guard(repo, body.project_id, body.chapter)
+        if guard_error:
+            return error_response(guard_error.code, guard_error.message, details=guard_error.details)
+
+        run_id = repo.create_workflow_run(body.project_id, body.chapter)
+        background_tasks.add_task(
+            _run_chapter_background,
+            body.project_id,
+            body.chapter,
+            repo.db_path,
+            settings,
+            llm_mode,
+            run_id,
+        )
+
+        return envelope_response({
+            "run_id": run_id,
+            "project_id": body.project_id,
+            "chapter": body.chapter,
+            "workflow_status": "running",
+            "status": "running",
+            "llm_mode": llm_mode,
+            "message": "章节生成已在后台启动",
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"启动章节生成失败: {str(e)}")
 
 
 @router.post("/run/chapter")
@@ -140,12 +245,129 @@ class PublishChapterRequest(BaseModel):
     chapter: int
 
 
+def _has_memory_curator_evidence(repo, project_id: str, chapter_number: int) -> bool:
+    """Return True when a trusted user-visible memory batch exists.
+
+    Node events are not enough: a run can log that memory_curator executed while
+    the inbox has no batch, or only has a low-confidence state-card fallback.
+    """
+    return has_trusted_memory_batch(repo, project_id, chapter_number)
+
+
+async def _ensure_memory_curated_before_publish(request: Request, repo, project_id: str, chapter_number: int) -> dict:
+    """Run MemoryCurator once before manual publish when evidence is missing."""
+    if _has_memory_curator_evidence(repo, project_id, chapter_number):
+        return {"memory_curator_processed": False, "memory_curator_skipped": True}
+
+    from ..deps import get_llm_provider_for_agent, LLMConfigMissingError, get_llm_mode
+    from ...agents.memory_curator import MemoryCuratorAgent
+    from ...skills.registry import SkillRegistry
+
+    run_id = repo.create_workflow_run(
+        project_id,
+        chapter_number,
+        graph_name="manual_publish_memory",
+    )
+    repo.update_workflow_run(run_id, status="running", current_node="memory_curator")
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id=project_id,
+        chapter_number=chapter_number,
+        node_name="memory_curator",
+        event_type="started",
+        status="running",
+        message="人工发布前补充记忆提取",
+    )
+
+    try:
+        llm = get_llm_provider_for_agent(request, "memory_curator")
+    except LLMConfigMissingError as exc:
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id=project_id,
+            chapter_number=chapter_number,
+            node_name="memory_curator",
+            event_type="failed",
+            status="failed",
+            error_message=str(exc),
+        )
+        repo.update_workflow_run(run_id, status="failed", current_node="memory_curator", error_message=str(exc))
+        return {"error": str(exc), "run_id": run_id}
+
+    agent = MemoryCuratorAgent(repo, llm, skill_registry=SkillRegistry())
+    result = await asyncio.to_thread(
+        agent.run,
+        {
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "chapter_status": "reviewed",
+            "workflow_run_id": run_id,
+            "llm_mode": get_llm_mode(request),
+        },
+    )
+
+    if result.get("error"):
+        error = str(result.get("error"))
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id=project_id,
+            chapter_number=chapter_number,
+            node_name="memory_curator",
+            event_type="failed",
+            status="failed",
+            error_message=error,
+        )
+        repo.update_workflow_run(run_id, status="failed", current_node="memory_curator", error_message=error)
+        return {"error": error, "run_id": run_id}
+
+    extraction_success = result.get("extraction_success", True)
+    incomplete = memory_result_is_incomplete(repo, project_id, chapter_number, result)
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id=project_id,
+        chapter_number=chapter_number,
+        node_name="memory_curator",
+        event_type="completed",
+        status="warning" if incomplete else "completed",
+        message="人工发布前记忆提取完成" if not incomplete else "人工发布前记忆提取未成功，未生成可信记忆批次",
+        output_summary=f"{result.get('memory_items_count', 0)} 条候选记忆",
+    )
+    if incomplete:
+        message = memory_incomplete_message(result)
+        repo.update_workflow_run(run_id, status="failed", current_node="memory_curator", error_message=message)
+        return {
+            "error": message,
+            "memory_incomplete": True,
+            "memory_curator_processed": True,
+            "memory_run_id": run_id,
+            "memory_batch_id": result.get("memory_batch_id"),
+            "memory_items_count": result.get("memory_items_count", 0),
+            "extraction_success": extraction_success,
+            "fallback_created": result.get("fallback_created", False),
+            "memory_curator_degraded": result.get("memory_curator_degraded", False),
+            "memory_curator_fallback": result.get("memory_curator_fallback"),
+            "memory_curator_warning": result.get("memory_curator_warning"),
+        }
+    repo.update_workflow_run(run_id, status="completed", current_node="memory_curator", clear_error=True)
+    return {
+        "memory_curator_processed": True,
+        "memory_run_id": run_id,
+        "memory_batch_id": result.get("memory_batch_id"),
+        "memory_items_count": result.get("memory_items_count", 0),
+        "extraction_success": extraction_success,
+        "fallback_created": result.get("fallback_created", False),
+        "memory_curator_degraded": result.get("memory_curator_degraded", False),
+        "memory_curator_fallback": result.get("memory_curator_fallback"),
+    }
+
+
 @router.post("/publish/chapter")
 async def publish_chapter(request: Request, body: PublishChapterRequest) -> EnvelopeResponse:
     """v5.3.0: Manually publish a reviewed chapter.
 
     This endpoint is for real mode where auto-publish is disabled.
-    Only chapters with status='reviewed' can be published.
+    Only chapters with status='reviewed' can be published. Before publishing,
+    it also guarantees MemoryCurator has run at least once for this chapter.
     """
     from ..deps import get_repo
 
@@ -171,6 +393,25 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 details={"current_status": current_status},
             )
 
+        memory_result = await _ensure_memory_curated_before_publish(
+            request,
+            repo,
+            body.project_id,
+            body.chapter,
+        )
+        if memory_result.get("error"):
+            code = "MEMORY_CURATOR_INCOMPLETE" if memory_result.get("memory_incomplete") else "MEMORY_CURATOR_FAILED"
+            return error_response(
+                code,
+                f"发布前记忆提取失败: {memory_result['error']}",
+                details=memory_incomplete_details(
+                    memory_result,
+                    project_id=body.project_id,
+                    chapter_number=body.chapter,
+                    run_id=memory_result.get("memory_run_id") or memory_result.get("run_id"),
+                ),
+            )
+
         # Publish the chapter
         ok = repo.publish_chapter(body.project_id, body.chapter, expected_status="reviewed")
         if not ok:
@@ -180,6 +421,7 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
             "project_id": body.project_id,
             "chapter": body.chapter,
             "chapter_status": "published",
+            **memory_result,
             "message": f"第 {body.chapter} 章已发布",
         })
 

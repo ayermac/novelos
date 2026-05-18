@@ -11,7 +11,6 @@ import logging
 from typing import Any
 
 from langgraph.graph import END, StateGraph
-from langgraph.checkpoint.memory import MemorySaver
 
 from ..config.settings import Settings, load_settings
 from ..db.repository import Repository
@@ -102,7 +101,7 @@ def build_graph(
         graph.add_node("memory_curator", runners["memory_curator"])
         graph.add_node("publisher", lambda s: nodes.publisher_node(s, repo))
         graph.add_node("awaiting_publish", lambda s: nodes.awaiting_publish_node(s, repo))  # v5.3.0
-        graph.add_node("revision_router", lambda s: nodes.revision_router_node(s))
+        graph.add_node("revision_router", lambda s: nodes.revision_router_node(s, repo))
         graph.add_node("human_review", lambda s: nodes.human_review_node(s, repo))
         graph.add_node("archive", lambda s: nodes.archive_node(s, repo))
     else:
@@ -117,15 +116,15 @@ def build_graph(
         )
         graph.add_node(
             "planner",
-            lambda s: nodes.planner_node(s, repo, llm),
+            lambda s: nodes.planner_node(s, repo, llm, skill_registry),
         )
         graph.add_node(
             "screenwriter",
-            lambda s: nodes.screenwriter_node(s, repo, llm),
+            lambda s: nodes.screenwriter_node(s, repo, llm, skill_registry),
         )
         graph.add_node(
             "author",
-            lambda s: nodes.author_node(s, repo, llm),
+            lambda s: nodes.author_node(s, repo, llm, skill_registry),
         )
         graph.add_node(
             "polisher",
@@ -137,7 +136,7 @@ def build_graph(
         )
         graph.add_node(
             "memory_curator",
-            lambda s: nodes.memory_curator_node(s, repo, llm),
+            lambda s: nodes.memory_curator_node(s, repo, llm, skill_registry),
         )
         graph.add_node(
             "publisher",
@@ -147,7 +146,7 @@ def build_graph(
             "awaiting_publish",
             lambda s: nodes.awaiting_publish_node(s, repo),
         )  # v5.3.0
-        graph.add_node("revision_router", lambda s: nodes.revision_router_node(s))
+        graph.add_node("revision_router", lambda s: nodes.revision_router_node(s, repo))
         graph.add_node(
             "human_review",
             lambda s: nodes.human_review_node(s, repo),
@@ -256,7 +255,7 @@ def compile_graph(
     llm_router: Any | None = None,
     skill_registry: Any | None = None,
     checkpointer: Any | None = None,
-    checkpoint: bool = True,
+    checkpoint: bool = False,
 ):
     """Build and compile the graph with optional checkpointing.
 
@@ -266,11 +265,13 @@ def compile_graph(
         llm: LLM provider. Used only if llm_router is None (legacy mode).
         llm_router: LLMRouter instance for agent-level routing (v5.1.6).
         skill_registry: Optional SkillRegistry for polisher/editor (v5.1.6).
-        checkpointer: Custom checkpointer instance (e.g. SqliteSaver).
-                       If provided, takes precedence over the checkpoint flag.
-        checkpoint: If True and no custom checkpointer is given, use MemorySaver.
-                    Note: v1.1 default MemorySaver does NOT guarantee cross-process
-                    recovery. For persistent checkpointing, pass a durable checkpointer.
+        checkpointer: Custom durable checkpointer instance (e.g. SqliteSaver).
+                       Production callers should pass one explicitly.
+        checkpoint: Deprecated compatibility flag. ``checkpoint=True`` without
+                    an explicit checkpointer is rejected because an in-memory
+                    checkpointer looks recoverable but cannot survive process
+                    restart. Use checkpoint=False for ephemeral graphs or pass
+                    a durable checkpointer.
 
     Returns:
         Compiled graph ready for .invoke() or .stream().
@@ -279,7 +280,10 @@ def compile_graph(
     if checkpointer is not None:
         cp = checkpointer
     elif checkpoint:
-        cp = MemorySaver()
+        raise ValueError(
+            "compile_graph(checkpoint=True) now requires an explicit durable "
+            "checkpointer; pass checkpoint=False for ephemeral runs."
+        )
     else:
         cp = None
     return graph.compile(checkpointer=cp)

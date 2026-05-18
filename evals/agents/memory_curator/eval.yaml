@@ -1,0 +1,85 @@
+cases:
+  - id: curator-patch-valid
+    agent_id: memory_curator
+    input_fixture:
+      patches:
+        - target_table: "characters"
+          operation: "create"
+          target_name: "林动"
+          data: {name: "林动", role: "主角"}
+          confidence: 0.9
+          evidence_text: "林动走出家门"
+    expected_behavior:
+      must_pass:
+        - type: skill_ok
+          skill_id: memory-patch-validator
+    rubric:
+      - patch 合法性
+    regression_tags: ["v6.0", "memory_curator"]
+  - id: curator-patch-invalid-table
+    agent_id: memory_curator
+    input_fixture:
+      patches:
+        - target_table: "invalid_table"
+          operation: "create"
+          data: {}
+          confidence: 0.9
+          evidence_text: "证据"
+    expected_behavior:
+      must_pass:
+        - type: skill_not_ok
+          skill_id: memory-patch-validator
+    rubric:
+      - 非法 table 检测
+    regression_tags: ["v6.0", "memory_curator"]
+  - id: curator-dedup
+    agent_id: memory_curator
+    input_fixture:
+      existing_facts:
+        - fact_key: "cultivation_level"
+          value: "练气三层"
+      patches:
+        - target_table: "story_facts"
+          operation: "update"
+          target_name: "cultivation_level"
+          data: {value: "练气三层"}
+          confidence: 0.9
+          evidence_text: "证据"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 去重
+    regression_tags: ["v6.0", "memory_curator"]
+  - id: curator-conflict
+    agent_id: memory_curator
+    input_fixture:
+      existing_facts:
+        - fact_key: "faction"
+          value: "林家"
+      patches:
+        - target_table: "story_facts"
+          operation: "update"
+          target_name: "faction"
+          data: {value: "王家"}
+          confidence: 0.9
+          evidence_text: "证据"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 冲突检测
+    regression_tags: ["v6.0", "memory_curator"]
+  - id: curator-importance-rank
+    agent_id: memory_curator
+    input_fixture:
+      patches:
+        - target_table: "plot_holes"
+          operation: "create"
+          target_name: "P999"
+          data: {code: "P999", title: "重大伏笔"}
+          confidence: 0.95
+          evidence_text: "核心剧情"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 重要性排序
+    regression_tags: ["v6.0", "memory_curator"]

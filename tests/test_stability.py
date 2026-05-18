@@ -449,12 +449,12 @@ class TestS7Checkpoint:
         graph = compile_graph(checkpoint=False)
         assert graph is not None
 
-    def test_compile_default_uses_memory_saver(self):
-        """compile_graph with default args uses MemorySaver."""
+    def test_compile_rejects_implicit_memory_saver(self):
+        """compile_graph no longer creates a non-durable MemorySaver implicitly."""
         from novel_factory.workflow.graph import compile_graph
 
-        graph = compile_graph(checkpoint=True)
-        assert graph is not None
+        with pytest.raises(ValueError, match="requires an explicit durable checkpointer"):
+            compile_graph(checkpoint=True)
 
 
 # ── v1.1 Rework: Agent status-advance guard ────────────────────
@@ -607,6 +607,56 @@ class TestAgentStatusAdvanceGuard:
 
         assert "error" in result
         assert result["chapter_status"] != "revision"
+
+    def test_editor_from_review_status_advances_to_reviewed(self, repo):
+        """Editor: invoked from REVIEW status should advance to REVIEWED."""
+        from novel_factory.agents.editor import EditorAgent
+
+        _seed_project_chapter(repo, status="review")
+        repo.save_chapter_content("stab_proj", 1, LONG_CHAPTER_CONTENT, "第一章")
+        state = _make_state(chapter_status="review")
+
+        stub = StubLLMProvider([{
+            "pass": True,
+            "score": 92,
+            "scores": {"setting": 23, "logic": 20, "poison": 18, "text": 16, "pacing": 15},
+            "issues": [],
+            "suggestions": [],
+            "revision_target": None,
+            "state_card": {"assets": {"credits": 100}},
+        }])
+        agent = EditorAgent(repo, stub)
+        result = agent.run(state)
+
+        assert "error" not in result
+        assert result["chapter_status"] == "reviewed"
+        # Verify DB status was updated
+        assert repo.get_chapter_status("stab_proj", 1) == "reviewed"
+
+    def test_editor_from_review_status_revision_rolls_back_to_review(self, repo):
+        """Editor: invoked from REVIEW status should roll back to REVIEW on failure."""
+        from novel_factory.agents.editor import EditorAgent
+
+        _seed_project_chapter(repo, status="review")
+        repo.save_chapter_content("stab_proj", 1, LONG_CHAPTER_CONTENT, "第一章")
+        state = _make_state(chapter_status="review", retry_count=0, max_retries=3)
+
+        stub = StubLLMProvider([{
+            "pass": False,
+            "score": 65,
+            "scores": {"setting": 15, "logic": 12, "poison": 13, "text": 12, "pacing": 13},
+            "issues": ["逻辑漏洞"],
+            "suggestions": ["修复"],
+            "revision_target": "author",
+            "state_card": {},
+        }])
+        agent = EditorAgent(repo, stub)
+        result = agent.run(state)
+
+        assert "error" not in result
+        assert result["chapter_status"] == "revision"
+        # Verify DB status was updated
+        assert repo.get_chapter_status("stab_proj", 1) == "revision"
 
 
 # ── v1.1 Rework: Migration idempotency ────────────────────────

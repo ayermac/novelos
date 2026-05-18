@@ -71,7 +71,7 @@ def get_checkpoint_thread_id(project_id: str, chapter_number: int) -> str:
 
 
 def get_checkpoint_config(
-    project_id: str, chapter_number: int, recursion_limit: int = 50
+    project_id: str, chapter_number: int, recursion_limit: int = 100
 ) -> dict:
     """Get checkpoint config for a chapter.
 

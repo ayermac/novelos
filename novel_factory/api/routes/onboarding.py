@@ -68,7 +68,7 @@ async def create_project(request: Request, body: CreateProjectRequest) -> Envelo
             ch_id = repo.add_chapter(
                 project_id=body.project_id,
                 chapter_number=chapter_num,
-                title=f"第 {chapter_num} 章",
+                title=f"第 {chapter_num} 章（待命名）",
                 status="planned",
             )
             chapters.append({"chapter_number": chapter_num, "id": ch_id})

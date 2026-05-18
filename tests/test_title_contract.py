@@ -20,7 +20,7 @@ def _make_db():
 
 
 def test_title_contract_detects_mismatched_xian_di_context():
-    from novel_factory.agents.title_contract import evaluate_title_alignment
+    from novel_factory.agent_runtime.title_contract import evaluate_title_alignment
 
     project = {"name": "绝世仙帝在都市", "genre": "urban"}
     alignment = evaluate_title_alignment(project, [

@@ -149,6 +149,183 @@ class TestPlannerAgent:
         instr = seeded_repo.get_instruction("test_proj", 1)
         assert instr["word_target"] == 3000
 
+    def test_planner_context_includes_recent_story_facts_and_trusted_memory_batch(self, seeded_repo):
+        from novel_factory.agents.planner import PlannerAgent
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "INSERT INTO chapters (project_id, chapter_number, title, status) VALUES (?, ?, ?, ?)",
+            ("test_proj", 2, "第二章 测试", "planned"),
+        )
+        conn.commit()
+        conn.close()
+        seeded_repo.save_chapter_content("test_proj", 1, "林默收到旧工业区邀约。", "第一章 测试")
+        seeded_repo.save_chapter_state(
+            "test_proj",
+            1,
+            {"悬念": ["旧工业区邀约是谁发出的"]},
+            "第1章状态卡",
+        )
+        seeded_repo.create_story_fact(
+            "test_proj",
+            "chapter_1.appointment",
+            "time_constraint",
+            json.dumps({"time": "三天后", "location": "旧工业区"}, ensure_ascii=False),
+            subject="黑影邀约",
+            attribute="会面时间地点",
+            source_chapter=1,
+            source_agent="memory_curator",
+        )
+
+        fallback = seeded_repo.create_memory_batch("test_proj", chapter_number=1, summary="第1章记忆提取 - 状态卡兜底 (1项)")
+        seeded_repo.create_memory_item(
+            batch_id=fallback["id"],
+            project_id="test_proj",
+            target_table="story_facts",
+            operation="create",
+            after_json=json.dumps({"fact_key": "fallback"}, ensure_ascii=False),
+            confidence=0.45,
+            evidence_text="低可信",
+            rationale="状态卡兜底候选：未经过 MemoryCurator LLM 复核，请人工确认后应用。",
+        )
+        trusted = seeded_repo.create_memory_batch("test_proj", chapter_number=1, summary="第1章记忆提取 (2项)")
+        seeded_repo.create_memory_item(
+            batch_id=trusted["id"],
+            project_id="test_proj",
+            target_table="plot_holes",
+            operation="update",
+            after_json=json.dumps({"code": "PH-014", "title": "旧址会面与72小时访客"}, ensure_ascii=False),
+            confidence=0.94,
+            evidence_text="黑影再次约定三天后旧工业区",
+            rationale="正文复核提取。",
+        )
+
+        agent = PlannerAgent(seeded_repo, StubLLMProvider())
+        context = agent.build_context({
+            "project_id": "test_proj",
+            "chapter_number": 2,
+            "chapter_status": "planned",
+        })
+
+        assert "【强制继承资料】" in context
+        assert "time_constraint" in context
+        assert "三天后" in context
+        assert "PH-014" in context
+        assert "状态卡兜底候选" not in context
+
+    def test_planner_repairs_brief_that_ignores_previous_suspense(self, seeded_repo):
+        from novel_factory.agents.planner import PlannerAgent
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "INSERT INTO chapters (project_id, chapter_number, title, status) VALUES (?, ?, ?, ?)",
+            ("test_proj", 2, "第二章 测试", "planned"),
+        )
+        conn.commit()
+        conn.close()
+        seeded_repo.save_chapter_content(
+            "test_proj",
+            1,
+            "黑影抬起左手，掌心有微弱蓝光。'三天后，旧工业区。'",
+            "第一章 测试",
+        )
+        seeded_repo.save_chapter_state(
+            "test_proj",
+            1,
+            {"悬念": ["黑影身份不明", "三天后旧工业区约定"]},
+            "第1章状态卡",
+        )
+
+        stub = StubLLMProvider([{
+            "chapter_brief": {
+                "objective": "龙华集团试探林默",
+                "required_events": ["龙华集团代表接触林默"],
+                "plots_to_plant": [],
+                "plots_to_resolve": [],
+                "ending_hook": "新危机出现",
+                "constraints": [],
+            }
+        }])
+        agent = PlannerAgent(seeded_repo, stub)
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 2,
+            "chapter_status": "planned",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert "error" not in result
+        instruction = seeded_repo.get_instruction("test_proj", 2)
+        assert instruction is not None
+        assert "三天后" in instruction["objective"]
+        assert "三天后" in instruction["key_events"]
+        assert "本章必须回应或明确延期" in instruction["key_events"]
+        assert any(ev["event_type"] == "planner_inheritance_repaired" for ev in result["_exec_events"])
+
+    def test_planner_records_chapter_objective_checker_skill_run(self, seeded_repo):
+        from novel_factory.agents.planner import PlannerAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        stub = StubLLMProvider([{
+            "chapter_brief": {
+                "objective": "林默Lv1，本章要夺回账册并发现新的追兵",
+                "required_events": ["夺回账册"],
+                "plots_to_plant": [],
+                "plots_to_resolve": [],
+                "ending_hook": "追兵现身",
+                "constraints": ["不改变上一章数值"],
+            }
+        }])
+
+        agent = PlannerAgent(seeded_repo, stub, skill_registry=SkillRegistry())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "planned",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.PLANNED.value
+        runs = seeded_repo.get_skill_runs("test_proj", skill_id="chapter-objective-checker", agent_id="planner", chapter_number=1)
+        assert runs
+
+    def test_non_critical_planner_skill_failure_does_not_crash(self, seeded_repo):
+        from novel_factory.agents.planner import PlannerAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        stub = StubLLMProvider([{
+            "chapter_brief": {
+                "objective": "",
+                "required_events": [],
+                "plots_to_plant": [],
+                "plots_to_resolve": [],
+                "ending_hook": "",
+                "constraints": [],
+            }
+        }])
+
+        agent = PlannerAgent(seeded_repo, stub, skill_registry=SkillRegistry())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "planned",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert "error" not in result
+        runs = seeded_repo.get_skill_runs("test_proj", skill_id="chapter-objective-checker", agent_id="planner", chapter_number=1)
+        assert runs and runs[0]["ok"] == 0
+
 
 class TestScreenwriterAgent:
     def test_screenwriter_creates_beats(self, seeded_repo):
@@ -179,6 +356,58 @@ class TestScreenwriterAgent:
         beats = seeded_repo.get_scene_beats("test_proj", 1)
         assert len(beats) == 1
 
+    def test_screenwriter_repairs_missing_sequence(self, seeded_repo):
+        from novel_factory.agents.screenwriter import ScreenwriterAgent
+
+        stub = StubLLMProvider([{
+            "scene_beats": [
+                {"scene_goal": "开场", "conflict": "冲突", "turn": "转折", "plot_refs": ["P001"], "hook": "钩子"},
+                {"scene_goal": "升级", "conflict": "阻碍", "turn": "反转", "plot_refs": None, "hook": "悬念"},
+            ]
+        }])
+
+        agent = ScreenwriterAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "planned")
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "planned",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.SCRIPTED.value
+        beats = seeded_repo.get_scene_beats("test_proj", 1)
+        assert [beat["sequence"] for beat in beats] == [1, 2]
+        assert beats[1]["plot_refs"] == "[]"
+
+    def test_screenwriter_records_scene_conflict_checker_skill_run(self, seeded_repo):
+        from novel_factory.agents.screenwriter import ScreenwriterAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        stub = StubLLMProvider([{
+            "scene_beats": [
+                {"sequence": 1, "scene_goal": "开场", "conflict": "冲突", "turn": "转折", "plot_refs": ["P001"], "hook": "钩子"},
+            ]
+        }])
+
+        seeded_repo.update_chapter_status("test_proj", 1, "planned")
+        agent = ScreenwriterAgent(seeded_repo, stub, skill_registry=SkillRegistry())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "planned",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+        assert result["chapter_status"] == ChapterStatus.SCRIPTED.value
+        runs = seeded_repo.get_skill_runs("test_proj", skill_id="scene-conflict-checker", agent_id="screenwriter", chapter_number=1)
+        assert runs
+
 
 class TestAuthorAgent:
     def test_author_context_derives_missing_word_target(self, seeded_repo):
@@ -202,6 +431,92 @@ class TestAuthorAgent:
         assert "字数目标: None" not in context
         assert "至少 2550 字符" in context
         assert "建议写到 3050 字符左右" in context
+
+    def test_author_context_is_capped_but_preserves_head_and_tail(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent, AUTHOR_CONTEXT_CHAR_LIMIT
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
+        agent._get_title_contract_context = lambda _project_id: "HEAD_TITLE_CONTRACT"
+        agent._get_style_bible_context = lambda _project_id, _agent_id: "MIDDLE_STYLE_" + ("设定" * 8000)
+        agent._build_death_penalty_repair_context = lambda _state: "TAIL_REPAIR_CONTEXT"
+
+        context = agent.build_context({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+        })
+
+        assert len(context) <= AUTHOR_CONTEXT_CHAR_LIMIT
+        assert "HEAD_TITLE_CONTRACT" in context
+        assert "TAIL_REPAIR_CONTEXT" in context
+        assert "【上下文已截断】" in context
+
+    def test_author_plain_text_context_includes_chapter_seam(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        seeded_repo.save_chapter_content(
+            "test_proj",
+            1,
+            "林默站在图书馆外，黑影低声说：'三天后，旧工业区，我很期待。'",
+            "第一章 测试",
+        )
+        seeded_repo.save_chapter_state(
+            "test_proj",
+            1,
+            {
+                "新增事实": ["黑影约林默三天后去旧工业区"],
+                "悬念": ["黑影身份与旧工业区约定"],
+            },
+            "第1章状态卡",
+        )
+        conn = seeded_repo._conn()
+        conn.execute(
+            "INSERT INTO chapters (project_id, chapter_number, title, status) VALUES (?, ?, ?, ?)",
+            ("test_proj", 2, "第二章 测试", "scripted"),
+        )
+        conn.execute(
+            "INSERT INTO instructions (project_id, chapter_number, objective, key_events, ending_hook, word_target, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'active')",
+            ("test_proj", 2, "承接旧工业区约定", '["赴约"]', "黑影露面", 2500),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
+        context = agent._build_plain_text_context(
+            {
+                "project_id": "test_proj",
+                "chapter_number": 2,
+                "chapter_status": "scripted",
+            },
+            "",
+        )
+
+        assert "【章间衔接硬约束】" in context
+        assert "三天后，旧工业区" in context
+        assert "黑影身份与旧工业区约定" in context
+
+    def test_base_v6_context_is_capped_for_non_author_agents(self, seeded_repo):
+        from novel_factory.agent_runtime.base import BaseAgent
+
+        class BigContextAgent(BaseAgent):
+            agent_id = "big_context"
+            context_char_limit = 120
+
+            def build_context(self, state):
+                return "HEAD-" + ("中间资料" * 80) + "-TAIL"
+
+        agent = BigContextAgent(seeded_repo, StubLLMProvider())
+        context = agent._build_v6_context({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+        })
+
+        assert len(context) <= 120
+        assert context.startswith("HEAD-")
+        assert context.endswith("-TAIL")
+        assert "【上下文已截断】" in context
 
     def test_author_writes_content(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
@@ -241,6 +556,171 @@ class TestAuthorAgent:
 
         chapter = seeded_repo.get_chapter("test_proj", 1)
         assert chapter["content"] is not None
+        assert chapter["content"].startswith("第一章 测试\n\n")
+
+    def test_author_does_not_use_objective_excerpt_as_chapter_title(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        base_content = "这是一段测试正文内容，用于验证 Author Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 44
+        bad_title = "第1章 引入主角平凡现状，铺垫异"
+        stub = StubLLMProvider([{
+            "title": bad_title,
+            "content": long_content,
+            "word_count": 2244,
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE chapters SET title=? WHERE project_id=? AND chapter_number=?",
+            ("第 1 章", "test_proj", 1),
+        )
+        conn.execute(
+            "UPDATE instructions SET objective=? WHERE project_id=? AND chapter_number=?",
+            ("引入主角平凡现状，铺垫异常事件开端，建立都市生活真实感", "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["title"] != "第1章"
+        assert chapter["title"].startswith("第1章 ")
+        assert "引入主角" not in chapter["title"]
+        assert chapter["content"].startswith(f"{chapter['title']}\n\n")
+
+    def test_author_keeps_real_chapter_title_when_usable(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        base_content = "这是一段测试正文内容，用于验证 Author Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 44
+        stub = StubLLMProvider([{
+            "title": "第1章 雨夜玉佩",
+            "content": long_content,
+            "word_count": 2244,
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE chapters SET title=? WHERE project_id=? AND chapter_number=?",
+            ("第 1 章", "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["title"] == "第1章 雨夜玉佩"
+        assert chapter["content"].startswith("第1章 雨夜玉佩\n\n")
+
+    def test_author_replaces_placeholder_chapter_title_from_opening(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        body = "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 80
+        stub = StubLLMProvider([{
+            "title": "第 1 章（待命名）",
+            "content": f"第 1 章（待命名）\n\n{body}",
+            "word_count": len(body),
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE chapters SET title=? WHERE project_id=? AND chapter_number=?",
+            ("第 1 章（待命名）", "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "待命名" not in chapter["title"]
+        assert chapter["title"].startswith("第1章 ")
+        assert "待命名" not in chapter["content"].splitlines()[0]
+        assert chapter["content"].startswith(f"{chapter['title']}\n\n")
+
+    def test_author_records_event_coverage_checker_skill_run(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        base_content = "这是一段测试正文内容，用于验证 Author Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 44
+        stub = StubLLMProvider([{
+            "title": "第一章 测试",
+            "content": long_content,
+            "word_count": 2244,
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [{"sequence": 1, "scene_goal": "开场", "conflict": "冲突"}])
+        agent = AuthorAgent(seeded_repo, stub, skill_registry=SkillRegistry())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        runs = seeded_repo.get_skill_runs("test_proj", skill_id="event-coverage-checker", agent_id="author", chapter_number=1)
+        assert runs
 
     def test_author_recomputes_llm_declared_word_count(self, seeded_repo):
         """LLM word_count guesses should not block otherwise valid content."""
@@ -280,7 +760,8 @@ class TestAuthorAgent:
         assert result["chapter_status"] == ChapterStatus.DRAFTED.value
 
         chapter = seeded_repo.get_chapter("test_proj", 1)
-        assert chapter["word_count"] == count_words(long_content)
+        assert chapter["content"].startswith("第一章 测试\n\n")
+        assert chapter["word_count"] == count_words(chapter["content"])
 
     def test_author_real_mode_expands_short_valid_draft_once(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
@@ -327,7 +808,7 @@ class TestAuthorAgent:
         assert result["chapter_status"] == ChapterStatus.DRAFTED.value
         assert stub._call_count == 2
         chapter = seeded_repo.get_chapter("test_proj", 1)
-        assert chapter["content"] == long_content
+        assert chapter["content"] == f"第一章 测试\n\n{long_content}"
 
     def test_author_real_mode_plain_text_fallback_when_json_invalid(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
@@ -370,7 +851,7 @@ class TestAuthorAgent:
         assert llm.json_calls == 1
         assert llm.text_calls == 1
         chapter = seeded_repo.get_chapter("test_proj", 1)
-        assert chapter["content"].startswith("兜底正文内容")
+        assert chapter["content"].startswith("第一章 测试\n\n兜底正文内容")
 
     def test_author_real_openai_provider_uses_plain_text_primary(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
@@ -388,7 +869,8 @@ class TestAuthorAgent:
 
             def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
                 self.text_calls += 1
-                assert max_tokens <= 900
+                assert max_tokens >= 2500
+                assert max_tokens <= 4096
                 return "真实正文内容" * 380
 
         llm = LiveLikeTextLLM()
@@ -414,6 +896,57 @@ class TestAuthorAgent:
         assert result["chapter_status"] == ChapterStatus.DRAFTED.value
         assert llm.json_calls == 0
         assert llm.text_calls == 1
+        assert any(
+            ev["event_type"] == "long_form_generation"
+            and ev["payload"].get("mode") == "plain_text_primary"
+            for ev in result["_exec_events"]
+        )
+
+    def test_author_plain_text_primary_retries_empty_content_once(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        class EmptyThenTextLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.text_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("real provider authoring should not use JSON primary")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                if self.text_calls == 1:
+                    return "   "
+                return "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 180
+
+        llm = EmptyThenTextLLM()
+        agent = AuthorAgent(seeded_repo, llm)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        assert llm.text_calls == 2
 
 
 class TestPolisherAgent:
@@ -449,6 +982,147 @@ class TestPolisherAgent:
 
         result = agent.run(state)
         assert result["chapter_status"] == ChapterStatus.POLISHED.value
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["content"].startswith("第一章 测试\n\n")
+
+    def test_polisher_real_mode_uses_plain_text_primary(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        class PlainTextPolisherLLM(LLMProvider):
+            config = type("Config", (), {"max_tokens": 4096})()
+
+            def __init__(self):
+                self.json_calls = 0
+                self.text_calls = 0
+                self.last_timeout = None
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                self.json_calls += 1
+                raise AssertionError("real provider polishing should not require long JSON output")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                self.last_timeout = request_timeout_seconds
+                return "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 80
+
+        base_content = "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 80
+        seeded_repo.save_chapter_content("test_proj", 1, base_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+
+        llm = PlainTextPolisherLLM()
+        agent = PolisherAgent(seeded_repo, llm)
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == ChapterStatus.POLISHED.value
+        assert llm.json_calls == 0
+        assert llm.text_calls == 1
+        assert llm.last_timeout == 300
+
+    def test_polisher_real_mode_preserves_draft_when_llm_fails(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        class FailingPolisherLLM(LLMProvider):
+            config = type("Config", (), {"max_tokens": 4096})()
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("real provider should use plain text first")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                raise RuntimeError("LLM 输出不是有效的 JSON 格式")
+
+        draft = "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 80
+        seeded_repo.save_chapter_content("test_proj", 1, draft, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+
+        agent = PolisherAgent(seeded_repo, FailingPolisherLLM())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert "error" not in result
+        assert result["chapter_status"] == ChapterStatus.POLISHED.value
+        assert any(ev["event_type"] == "fallback_used" for ev in result["_exec_events"])
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "林逸盯着手机屏幕" in chapter["content"]
+
+    def test_polisher_ai_trace_warning_does_not_block(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        class HighTraceSkillRegistry:
+            skills_config = {"ai-style-detector": {"type": "validator"}}
+
+            def run_skills_for_agent(self, agent, stage, payload, project_overrides=None):
+                if agent == "polisher" and stage == "before_save":
+                    return [{
+                        "skill_id": "ai-style-detector",
+                        "result": {"ok": True, "data": {"ai_trace_score": 95}},
+                    }]
+                return []
+
+            def get_manifest(self, skill_id):
+                return None
+
+            def run_skill(self, skill_id, payload, agent=None, stage=None):
+                return {"ok": False, "error": "not mounted"}
+
+        draft = "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 80
+        seeded_repo.save_chapter_content("test_proj", 1, draft, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+
+        stub = StubLLMProvider([{
+            "content": draft + "润色后。",
+            "fact_change_risk": "none",
+            "changed_scope": ["sentence"],
+            "summary": "润色完成",
+        }])
+        agent = PolisherAgent(seeded_repo, stub, skill_registry=HighTraceSkillRegistry())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert "error" not in result
+        assert result["chapter_status"] == ChapterStatus.POLISHED.value
+        assert any(
+            ev["event_type"] == "skill_completed" and ev["payload"].get("ai_trace_score") == 95
+            for ev in result["_exec_events"]
+        )
 
     def test_polisher_rejects_fact_change(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent
@@ -521,6 +1195,70 @@ class TestEditorAgent:
         assert result["chapter_status"] == ChapterStatus.REVIEWED.value
         assert result["quality_gate"]["pass"] is True
 
+    def test_editor_blocks_explicit_previous_chapter_seam_break(self, seeded_repo):
+        from novel_factory.agents.editor import EditorAgent
+
+        previous = "林默合上电脑，窗外的黑影低声说：'三天后，旧工业区，我很期待。'"
+        seeded_repo.save_chapter_content("test_proj", 1, previous, "第一章 测试")
+        seeded_repo.save_chapter_state(
+            "test_proj",
+            1,
+            {
+                "新增事实": ["黑影约林默三天后去旧工业区"],
+                "悬念": ["黑影身份与旧工业区约定"],
+            },
+            "第1章状态卡",
+        )
+
+        current = "第二章 测试\n" + (
+            "林默走出图书馆的时候，手机忽然震动。龙华集团的人拦住了他，新的危机扑面而来。"
+            "他低头看着屏幕，完全没有想起旧约。"
+        ) * 40
+        conn = seeded_repo._conn()
+        conn.execute(
+            "INSERT INTO chapters (project_id, chapter_number, title, status, content, word_count) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("test_proj", 2, "第二章 测试", "polished", current, len(current)),
+        )
+        conn.execute(
+            "INSERT INTO instructions (project_id, chapter_number, objective, key_events, ending_hook, word_target, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'active')",
+            ("test_proj", 2, "承接上一章", '["处理黑影约定"]', "新危机", 2500),
+        )
+        conn.commit()
+        conn.close()
+
+        stub = StubLLMProvider([{
+            "pass": True,
+            "score": 92,
+            "scores": {"setting": 23, "logic": 23, "poison": 18, "text": 14, "pacing": 14},
+            "issues": [],
+            "suggestions": [],
+            "revision_target": None,
+            "state_card": {"新增事实": ["龙华集团接触林默"]},
+        }])
+        agent = EditorAgent(seeded_repo, stub)
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 2,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"]["pass"] is False
+        assert result["quality_gate"]["revision_target"] == "author"
+        assert result["quality_gate"]["chapter_seam_fail"] is True
+        review = seeded_repo.get_latest_review("test_proj", 2)
+        assert review is not None
+        assert review["pass"] == 0
+        assert review["revision_target"] == "author"
+        assert "章间衔接" in review["issues"]
+
     def test_editor_fail_routes_to_revision(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent
 
@@ -555,6 +1293,46 @@ class TestEditorAgent:
         result = agent.run(state)
         assert result["chapter_status"] == ChapterStatus.REVISION.value
         assert result["quality_gate"]["pass"] is False
+
+    def test_editor_low_score_llm_pass_is_forced_to_revision(self, seeded_repo):
+        from novel_factory.agents.editor import EditorAgent
+
+        base_content = "这是一段测试正文内容，用于验证 Editor Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 45
+
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "polished")
+
+        stub = StubLLMProvider([{
+            "pass": True,
+            "score": 70,
+            "scores": {"setting": 16, "logic": 14, "poison": 14, "text": 13, "pacing": 13},
+            "issues": [],
+            "suggestions": [],
+            "revision_target": None,
+            "state_card": {},
+        }])
+
+        agent = EditorAgent(seeded_repo, stub)
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"]["pass"] is False
+        assert result["quality_gate"]["score"] == 70
+        assert result["quality_gate"]["revision_target"] == "polisher"
+
+        review = seeded_repo.get_latest_review("test_proj", 1)
+        assert review is not None
+        assert review["pass"] == 0
+        assert review["revision_target"] == "polisher"
 
     def test_editor_accepts_null_state_card(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent
@@ -633,6 +1411,42 @@ class TestEditorAgent:
         assert result["chapter_status"] == ChapterStatus.REVIEWED.value
         assert result["quality_gate"]["pass"] is True
         assert llm.json_calls == 1
+
+    def test_editor_real_mode_generic_llm_error_degrades_to_rule_review(self, seeded_repo):
+        from novel_factory.agents.editor import EditorAgent
+
+        class BrokenEditorLLM(LLMProvider):
+            config = object()
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                assert max_tokens == 700
+                raise RuntimeError("LLM 输出不是有效的 JSON 格式")
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
+                return ""
+
+        base_content = "这是一段测试正文内容，用于验证 Editor Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 45
+
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "polished")
+
+        agent = EditorAgent(seeded_repo, BrokenEditorLLM())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert "error" not in result
+        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
+        assert result["quality_gate"]["pass"] is True
+        assert any(ev["event_type"] == "fallback_used" for ev in result["_exec_events"])
 
     def test_editor_word_gate_reports_target_details(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent
@@ -718,6 +1532,300 @@ class TestEditorAgent:
 
 
 class TestMemoryCuratorAgent:
+    def test_memory_curator_falls_back_to_editor_state_card_when_llm_empty(self, seeded_repo):
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        seeded_repo.save_chapter_content("test_proj", 1, "林默夺回账册，并发现账册夹层里藏着铜钥匙。", "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "reviewed")
+        seeded_repo.save_chapter_state(
+            "test_proj",
+            1,
+            {
+                "new_facts": ["林默夺回账册，并发现账册夹层里藏着铜钥匙"],
+                "character_status": {"林默": "已夺回账册，掌握铜钥匙线索"},
+                "suspense_hooks": ["铜钥匙能打开城南旧宅地下室"],
+            },
+            "第1章状态卡",
+        )
+        agent = MemoryCuratorAgent(
+            seeded_repo,
+            StubLLMProvider([{"patches": []}]),
+            skill_registry=SkillRegistry(),
+        )
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-memory-fallback",
+        })
+
+        assert result["memory_curator_processed"] is True
+        assert result["memory_curator_fallback"] == "chapter_state"
+        assert result["memory_items_count"] == 3
+
+        batches = seeded_repo.list_memory_batches("test_proj")
+        assert len(batches) == 1
+        assert batches[0]["status"] == "pending"
+        assert batches[0]["summary"] == "第1章记忆提取 - 状态卡兜底 (3项)"
+
+        items = seeded_repo.list_memory_items(batches[0]["id"])
+        assert len(items) == 3
+        assert {item["target_table"] for item in items} == {"story_facts"}
+        assert {item["confidence"] for item in items} == {0.45}
+        assert all("请人工确认后应用" in item["rationale"] for item in items)
+        after_payloads = [json.loads(item["after_json"]) for item in items]
+        fact_types = {payload["fact_type"] for payload in after_payloads}
+        assert fact_types == {"narrative_event", "character_state", "suspense_hook"}
+        assert all(payload["source_chapter"] == 1 for payload in after_payloads)
+
+    def test_memory_curator_real_empty_extraction_repairs_before_fallback(self, seeded_repo):
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        class EmptyThenPatchLLM(StubLLMProvider):
+            def __init__(self):
+                super().__init__([
+                    {"patches": []},
+                    {
+                        "patches": [{
+                            "target_table": "story_facts",
+                            "operation": "create",
+                            "target_name": "chapter_1.key",
+                            "data": {
+                                "fact_key": "chapter_1.key",
+                                "fact_type": "narrative_event",
+                                "subject": "第1章",
+                                "attribute": "关键物",
+                                "value": {"text": "铜钥匙出现"},
+                            },
+                            "confidence": 0.9,
+                            "evidence_text": "账册夹层里藏着铜钥匙",
+                            "rationale": "本章新增关键物。",
+                        }]
+                    },
+                ])
+
+        seeded_repo.save_chapter_content(
+            "test_proj",
+            1,
+            "林默夺回账册，并发现账册夹层里藏着铜钥匙。" * 80,
+            "第一章 测试",
+        )
+        seeded_repo.update_chapter_status("test_proj", 1, "reviewed")
+        seeded_repo.save_chapter_state(
+            "test_proj",
+            1,
+            {"new_facts": ["林默发现铜钥匙"]},
+            "第1章状态卡",
+        )
+        llm = EmptyThenPatchLLM()
+        agent = MemoryCuratorAgent(
+            seeded_repo,
+            llm,
+            skill_registry=SkillRegistry(),
+        )
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-memory-empty-repair",
+            "llm_mode": "real",
+        })
+
+        assert llm._call_count == 2
+        assert result["extraction_success"] is True
+        assert result["fallback_created"] is False
+        assert result["memory_items_count"] == 1
+        assert "memory_curator_fallback" not in result
+
+        batches = seeded_repo.list_memory_batches("test_proj")
+        assert len(batches) == 1
+        assert "状态卡兜底" not in batches[0]["summary"]
+
+    def test_memory_curator_fallback_accepts_chinese_state_card_keys(self, seeded_repo):
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        seeded_repo.save_chapter_content("test_proj", 1, "林默发现铜钥匙。", "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "reviewed")
+        seeded_repo.save_chapter_state(
+            "test_proj",
+            1,
+            {
+                "新增事实": ["林默发现铜钥匙"],
+                "角色状态": {"林默": "掌握铜钥匙线索"},
+                "悬念": ["铜钥匙能打开什么"],
+            },
+            "第1章状态卡",
+        )
+        agent = MemoryCuratorAgent(
+            seeded_repo,
+            StubLLMProvider([{"patches": []}]),
+            skill_registry=SkillRegistry(),
+        )
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-memory-cn-state",
+        })
+
+        assert result["memory_curator_fallback"] == "chapter_state"
+        assert result["memory_items_count"] == 3
+        batches = seeded_repo.list_memory_batches("test_proj")
+        assert len(batches) == 1
+        items = seeded_repo.list_memory_items(batches[0]["id"])
+        fact_types = {json.loads(item["after_json"])["fact_type"] for item in items}
+        assert fact_types == {"narrative_event", "character_state", "suspense_hook"}
+
+    def test_memory_curator_json_parse_error_repairs_before_fallback(self, seeded_repo):
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.llm.openai_compatible import OutputValidationError
+        from novel_factory.skills.registry import SkillRegistry
+
+        class BrokenThenPatchLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                self.calls += 1
+                if self.calls == 1:
+                    raise OutputValidationError("bad memory json")
+                return {
+                    "patches": [{
+                        "target_table": "story_facts",
+                        "operation": "create",
+                        "target_name": "chapter_1.fixed",
+                        "data": {"fact_key": "chapter_1.fixed", "fact_type": "narrative_event"},
+                        "confidence": 0.9,
+                        "evidence_text": "铜钥匙出现",
+                        "rationale": "修复后提取成功。",
+                    }]
+                }
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
+                return ""
+
+        seeded_repo.save_chapter_content("test_proj", 1, "林默发现铜钥匙。" * 80, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "reviewed")
+        seeded_repo.save_chapter_state(
+            "test_proj",
+            1,
+            {"新增事实": ["林默发现铜钥匙"]},
+            "第1章状态卡",
+        )
+        llm = BrokenThenPatchLLM()
+        agent = MemoryCuratorAgent(
+            seeded_repo,
+            llm,
+            skill_registry=SkillRegistry(),
+        )
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-memory-json-repair",
+            "llm_mode": "real",
+        })
+
+        assert llm.calls == 2
+        assert result["extraction_success"] is True
+        assert result["fallback_created"] is False
+        assert result["memory_items_count"] == 1
+        assert "memory_curator_fallback" not in result
+
+    def test_memory_curator_json_failure_falls_back_to_editor_state_card(self, seeded_repo):
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.llm.openai_compatible import OutputValidationError
+        from novel_factory.skills.registry import SkillRegistry
+
+        class BrokenJsonMemoryLLM(LLMProvider):
+            config = object()
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                assert max_tokens is None
+                raise OutputValidationError("bad memory json")
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
+                return ""
+
+        seeded_repo.save_chapter_content("test_proj", 1, "林默夺回账册，并发现账册夹层里藏着铜钥匙。", "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "reviewed")
+        seeded_repo.save_chapter_state(
+            "test_proj",
+            1,
+            {
+                "new_facts": ["林默夺回账册，并发现账册夹层里藏着铜钥匙"],
+                "character_status": {"林默": "已夺回账册，掌握铜钥匙线索"},
+                "suspense_hooks": ["铜钥匙能打开城南旧宅地下室"],
+            },
+            "第1章状态卡",
+        )
+        agent = MemoryCuratorAgent(
+            seeded_repo,
+            BrokenJsonMemoryLLM(),
+            skill_registry=SkillRegistry(),
+        )
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-memory-json-fallback",
+            "llm_mode": "real",
+        })
+
+        assert result["memory_curator_processed"] is True
+        assert result["memory_curator_fallback"] == "chapter_state_after_llm_extraction_failure"
+        assert result["memory_items_count"] == 3
+        assert result["memory_curator_warning"] == "bad memory json"
+        assert result.get("memory_curator_degraded") is None
+
+        batches = seeded_repo.list_memory_batches("test_proj")
+        assert len(batches) == 1
+        assert batches[0]["status"] == "pending"
+
+        items = seeded_repo.list_memory_items(batches[0]["id"])
+        assert len(items) == 3
+        assert {json.loads(item["after_json"])["source_agent"] for item in items} == {"memory_curator"}
+
+    def test_memory_curator_records_memory_patch_validator_skill_run(self, seeded_repo):
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.skills.registry import SkillRegistry
+
+        seeded_repo.save_chapter_content("test_proj", 1, "林默夺回账册。", "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "reviewed")
+        stub = StubLLMProvider([{
+            "patches": [{
+                "target_table": "story_facts",
+                "operation": "create",
+                "target_name": "linmo.asset.ledger",
+                "data": {"fact_key": "linmo.asset.ledger", "fact_type": "asset", "subject": "林默", "attribute": "账册", "value": {"state": "recovered"}},
+                "confidence": 0.9,
+                "evidence_text": "林默夺回账册",
+                "rationale": "本章明确夺回账册",
+            }]
+        }])
+        agent = MemoryCuratorAgent(seeded_repo, stub, skill_registry=SkillRegistry())
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-memory-skill",
+        })
+
+        assert result["memory_curator_processed"] is True
+        runs = seeded_repo.get_skill_runs("test_proj", skill_id="memory-patch-validator", agent_id="memory_curator", chapter_number=1)
+        assert runs
+
     def test_memory_curator_timeout_degrades_to_noop(self, seeded_repo):
         from novel_factory.agents.memory_curator import MemoryCuratorAgent
         from novel_factory.llm.openai_compatible import LLMTimeoutError
@@ -726,7 +1834,7 @@ class TestMemoryCuratorAgent:
             config = object()
 
             def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
-                assert max_tokens == 700
+                assert max_tokens is None
                 raise LLMTimeoutError("timeout")
 
             def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
@@ -747,3 +1855,85 @@ class TestMemoryCuratorAgent:
         assert result["memory_curator_processed"] is True
         assert result["memory_curator_degraded"] is True
         assert "error" not in result
+
+    def test_memory_curator_timeout_with_chapter_state_creates_fallback(self, seeded_repo):
+        """When LLM times out but chapter_state exists, create fallback batch with low confidence."""
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.llm.openai_compatible import LLMTimeoutError
+
+        class TimeoutMemoryLLM(LLMProvider):
+            config = object()
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise LLMTimeoutError("timeout")
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
+                return ""
+
+        seeded_repo.save_chapter_content("test_proj", 1, "林默夺回账册，并发现账册夹层里藏着铜钥匙。", "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "reviewed")
+        seeded_repo.save_chapter_state(
+            "test_proj",
+            1,
+            {
+                "new_facts": ["林默夺回账册，并发现账册夹层里藏着铜钥匙"],
+                "character_status": {"林默": "已夺回账册"},
+            },
+            "第1章状态卡",
+        )
+
+        agent = MemoryCuratorAgent(seeded_repo, TimeoutMemoryLLM())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-timeout-fallback",
+            "llm_mode": "real",
+        })
+
+        # Should create fallback batch, not degraded no-op
+        assert result["memory_curator_processed"] is True
+        assert result.get("memory_curator_degraded") is None
+        assert result["memory_curator_fallback"] == "chapter_state_after_llm_extraction_failure"
+        assert result["extraction_success"] is False
+        assert result["fallback_created"] is True
+        assert result["memory_items_count"] == 2  # new_facts + character_status
+
+        batches = seeded_repo.list_memory_batches("test_proj")
+        assert len(batches) == 1
+        items = seeded_repo.list_memory_items(batches[0]["id"])
+        assert all(item["confidence"] <= 0.45 for item in items)
+        assert all("状态卡兜底" in item["rationale"] for item in items)
+
+    def test_memory_curator_returns_extraction_success_flag(self, seeded_repo):
+        """Verify extraction_success is True for successful LLM extraction."""
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.llm.stub_provider import StubLLM
+
+        class SuccessLLM(StubLLM):
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                return {"patches": [{
+                    "target_table": "story_facts",
+                    "operation": "create",
+                    "target_name": "test.fact",
+                    "data": {"fact_key": "test.fact", "fact_type": "narrative_event"},
+                    "confidence": 0.9,
+                    "evidence_text": "test",
+                    "rationale": "test",
+                }]}
+
+        seeded_repo.save_chapter_content("test_proj", 1, "测试正文", "第一章")
+        seeded_repo.update_chapter_status("test_proj", 1, "reviewed")
+
+        agent = MemoryCuratorAgent(seeded_repo, SuccessLLM())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-success",
+            "llm_mode": "real",
+        })
+
+        assert result["extraction_success"] is True
+        assert result["fallback_created"] is False
+        assert "memory_curator_fallback" not in result

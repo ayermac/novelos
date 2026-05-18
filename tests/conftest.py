@@ -9,10 +9,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
-# v5.3.0: Shared long chapter content (>= 2700 chars) for StubLLM fixtures.
-# Required because v5.3 quality gate enforces:
-# - Author/Polisher: word_target * 0.85 threshold
-# - Editor: word_target * 0.90 threshold
+# v6.6.0: Shared long chapter content for StubLLM fixtures.
+# Quality gate enforces word_target * 0.85 as the hard threshold; 0.90 is advisory.
 # Old tests with ~720-char stubs fail the gate.
 LONG_CHAPTER_CONTENT = (
     "林默推开房门，屋内弥漫着淡淡的茶香。他缓步走到窗前，凝望着外面的雨幕。\n"
@@ -200,6 +198,25 @@ def seed_context_for_chapter(db_path_or_repo, project_id: str = "测试项目", 
             alias="默",
             traits="沉稳,冷静,果断",
             first_appearance=chapter_number,
+        )
+
+    # Ensure approved genesis exists (v6.3.1+ run guard requirement)
+    latest_genesis = repo.get_latest_genesis_run(project_id)
+    if latest_genesis is None or latest_genesis.get("status") != "approved":
+        repo.create_genesis_run(
+            project_id=project_id,
+            input_json='{"title":"seed","genre":"seed"}',
+            status="approved",
+        )
+
+    # Add instruction for the target chapter if missing
+    instruction = repo.get_instruction_by_chapter(project_id, chapter_number)
+    if instruction is None or not instruction.get("objective"):
+        repo.create_instruction(
+            project_id=project_id,
+            chapter_number=chapter_number,
+            objective="本章目标是推动主线剧情发展，揭示关键线索。",
+            key_events="事件1",
         )
 
     # Add chapter-level outline covering the chapter

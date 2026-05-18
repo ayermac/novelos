@@ -1,6 +1,6 @@
 import './AuthorWorkbench.css'
 import AuthorChapterRail from './AuthorChapterRail'
-import AuthorWritingSurface, { SurfaceTabKey } from './AuthorWritingSurface'
+import AuthorWritingSurface, { SurfaceTabKey, GenerationErrorDetails } from './AuthorWritingSurface'
 import AuthorAgentPanel from './AuthorAgentPanel'
 import { StepStatus } from '../../hooks/useSSEStream'
 import type { WorkflowTimelineData } from '../../lib/api'
@@ -73,7 +73,7 @@ interface AuthorWorkbenchProps {
   currentChapter: number
   currentChapterRecord: Chapter | null
   genError: string
-  genErrorDetails: { missing?: string[]; actions?: string[] } | null
+  genErrorDetails: GenerationErrorDetails | null
   isLaunching: boolean
   isStub: boolean
   isStreaming: boolean
@@ -87,14 +87,18 @@ interface AuthorWorkbenchProps {
   timeline?: WorkflowTimelineData | null
   timelineError?: string
   onGenerate: () => void
+  onConfirmRegenerate?: () => void
   onGenerateNext?: () => void
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onPublish?: () => void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
+  onRetryRunNode?: (runId: string) => Promise<void> | void
+  onWorkflowDone?: (runId: string, status: string | null) => void
   onResetRunRecoveryForChapter?: (chapterNumber: number) => Promise<void> | void
   publishPending?: boolean
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
+  regeneratePending?: boolean
   onGenerateChapter?: (chapterNumber: number) => void
   onGenerateNextFromChapter?: (chapterNumber: number) => void
   onPublishChapter?: (chapterNumber: number) => void
@@ -128,14 +132,18 @@ export default function AuthorWorkbench({
   timeline,
   timelineError,
   onGenerate,
+  onConfirmRegenerate,
   onGenerateNext,
   onMarkRunStuck,
   onPublish,
   onResetRunRecovery,
+  onRetryRunNode,
+  onWorkflowDone,
   onResetRunRecoveryForChapter,
   publishPending,
   markStuckPending,
   resetRecoveryPending,
+  regeneratePending,
   onGenerateChapter,
   onGenerateNextFromChapter,
   onPublishChapter,
@@ -180,13 +188,17 @@ export default function AuthorWorkbench({
         timeline={timeline}
         timelineError={timelineError}
         onGenerate={onGenerate}
+        onConfirmRegenerate={onConfirmRegenerate}
         onGenerateNext={onGenerateNext}
         onMarkRunStuck={onMarkRunStuck}
         onPublish={onPublish}
         onResetRunRecovery={onResetRunRecovery}
+        onRetryRunNode={onRetryRunNode}
+        onWorkflowDone={onWorkflowDone}
         publishPending={publishPending}
         markStuckPending={markStuckPending}
         resetRecoveryPending={resetRecoveryPending}
+        regeneratePending={regeneratePending}
         onTabChange={onTabChange}
         onViewContent={onViewContent}
         onViewWorkflow={onViewWorkflow}
@@ -204,6 +216,7 @@ export default function AuthorWorkbench({
         genError={genError}
         timeline={timeline}
         onGenerate={onGenerate}
+        onConfirmRegenerate={onConfirmRegenerate}
         onMarkRunStuck={onMarkRunStuck}
         onPublish={onPublish}
         onGenerateNext={onGenerateNext}
@@ -211,6 +224,7 @@ export default function AuthorWorkbench({
         publishPending={publishPending}
         markStuckPending={markStuckPending}
         resetRecoveryPending={resetRecoveryPending}
+        regeneratePending={regeneratePending}
         onViewContent={onViewContent}
         onViewWorkflow={onViewWorkflow}
       />

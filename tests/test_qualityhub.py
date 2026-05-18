@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from novel_factory.quality.hub import QualityHub
+from novel_factory.skills.narrative_quality_scorer import NarrativeQualityScorer
 from novel_factory.skills.registry import SkillRegistry
 from novel_factory.db.repository import Repository
 from novel_factory.db.connection import init_db
@@ -105,6 +106,7 @@ class TestQualityHubFinalGate:
         assert len(data["blocking_issues"]) > 0
         # Should not pass
         assert data["pass"] is False
+        assert data["revision_target"] == "author"
     
     def test_final_gate_narrative_low_blocks(self, tmp_db):
         """Test final_gate blocks on low narrative quality."""
@@ -126,6 +128,38 @@ class TestQualityHubFinalGate:
         for issue in data["blocking_issues"]:
             if issue.get("type") == "narrative_quality_low":
                 assert issue.get("revision_target") == "author"
+
+
+class TestNarrativeQualityScorerRealChineseProse:
+    """Regression coverage from real LLM acceptance."""
+
+    def test_scores_chinese_curly_quotes_as_dialogue(self):
+        scorer = NarrativeQualityScorer()
+        text = (
+            "林澈盯着便签，雨噪像细针一样扎进耳膜。"
+            "“你是在把我往里推，还是在把我往外赶，许今白？”他低声问。"
+            "空荡的数据站没有回答。"
+            "“哥，别相信我的记忆。”投影熄灭。"
+        )
+
+        result = scorer.run({"text": text})
+
+        assert result["ok"] is True
+        scores = result["data"]["scores"]
+        assert scores["dialogue_naturalness"] > 30
+
+    def test_scores_reversal_ending_as_hook(self):
+        scorer = NarrativeQualityScorer()
+        text = (
+            "林澈反复播放那段破碎投影，确认妹妹最后留下的不是逃跑指令。"
+            "投影熄灭前，又吐出半个被雨噪咬碎的音节。"
+            "他听了三遍，终于确认那不是“逃”，而是“查”。"
+        )
+
+        result = scorer.run({"text": text})
+
+        assert result["ok"] is True
+        assert result["data"]["scores"]["hook_strength"] >= 45
 
 
 class TestQualityReports:

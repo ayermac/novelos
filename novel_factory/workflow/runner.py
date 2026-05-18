@@ -10,12 +10,16 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime, timedelta
 from typing import Any, Generator
 
 from ..config.settings import Settings
+from ..models.state import ChapterStatus
 from ..db.repository import Repository
 from ..models.state import FactoryState
+from ..quality.deadloop_detector import DeadloopDetector
 from .graph import compile_graph
+from .conditions import hydrate_revision_state
 from .checkpoint import (
     delete_checkpoint_thread,
     derive_checkpoint_db_path,
@@ -24,6 +28,21 @@ from .checkpoint import (
 )
 
 logger = logging.getLogger(__name__)
+
+STALE_RUNNING_RUN_SECONDS = 2 * 60 * 60
+STREAM_VISIBLE_NODES = frozenset(
+    {
+        "planner",
+        "screenwriter",
+        "author",
+        "polisher",
+        "editor",
+        "memory_curator",
+        "publisher",
+        "awaiting_publish",
+        "human_review",
+    }
+)
 
 
 def _mark_run_failed(repo: Repository, run_id: str | None, error: str) -> None:
@@ -34,6 +53,37 @@ def _mark_run_failed(repo: Repository, run_id: str | None, error: str) -> None:
         repo.update_workflow_run(run_id, status="failed", error_message=error)
     except Exception:
         logger.warning("Failed to mark workflow run %s as failed", run_id, exc_info=True)
+
+
+def _parse_workflow_timestamp(value: Any) -> datetime | None:
+    """Parse repository workflow timestamps stored as SQLite datetime strings."""
+    if not value:
+        return None
+    text = str(value).strip().replace("T", " ")
+    if text.endswith("Z"):
+        text = text[:-1]
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _running_run_is_recent(run: dict[str, Any], max_age_seconds: int = STALE_RUNNING_RUN_SECONDS) -> bool:
+    """Return True when a running workflow run still looks actively resumable."""
+    started_at = _parse_workflow_timestamp(run.get("started_at"))
+    if started_at is None:
+        return True
+    # workflow_runs.started_at is stored as local China time via SQLite
+    # datetime('now','+8 hours'), so compare against the same clock.
+    now_local = datetime.utcnow() + timedelta(hours=8)
+    age = now_local - started_at
+    return age.total_seconds() <= max_age_seconds
 
 
 def _clear_stale_checkpoint_for_new_run(
@@ -54,8 +104,15 @@ def _clear_stale_checkpoint_for_new_run(
             project_id, chapter_number=chapter_number, limit=1
         )
         latest_status = latest_runs[0].get("status") if latest_runs else None
-        if latest_status == "running":
+        if latest_status == "running" and _running_run_is_recent(latest_runs[0]):
             return
+        if latest_status == "running":
+            run_id = latest_runs[0].get("id") or latest_runs[0].get("run_id")
+            _mark_run_failed(
+                repo,
+                run_id,
+                "Stale running workflow detected; clearing checkpoint before fresh run.",
+            )
         delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
     except Exception:
         logger.warning(
@@ -64,6 +121,49 @@ def _clear_stale_checkpoint_for_new_run(
             chapter_number,
             exc_info=True,
         )
+
+
+def _check_deadloop_for_run(
+    repo: Repository,
+    project_id: str,
+    chapter_number: int,
+    current_status: str,
+) -> dict[str, Any] | None:
+    """Stop repeated automatic runs when a chapter is already in a dead loop."""
+    deadloop = DeadloopDetector.check_deadloop(repo, project_id, chapter_number)
+    if not deadloop.get("triggered"):
+        return None
+    reason = deadloop.get("reason") or "章节生产疑似进入返修死循环"
+    action = deadloop.get("action") or "请人工检查并考虑恢复最佳历史版本"
+    return {
+        "run_id": "",
+        "chapter_status": current_status,
+        "steps": [],
+        "error": f"章节生产熔断：{reason}。{action}",
+        "requires_human": True,
+        "deadloop_detected": True,
+        "details": deadloop,
+        "actions": [
+            {
+                "key": "restore_best_version",
+                "label": "恢复历史最佳版本",
+                "description": "从已有版本中选择满足字数和评分较好的正文，恢复后再进入审核/润色路径。",
+                "action_url": f"/api/projects/{project_id}/chapters/{chapter_number}/restore-best-version",
+                "method": "POST",
+                "requires_confirmation": True,
+                "target_chapter": chapter_number,
+            },
+            {
+                "key": "reset_chapter",
+                "label": "人工确认重置后重跑",
+                "description": "保留现有正文和历史版本，只清理阻塞状态与本轮失败窗口。",
+                "action_url": f"/api/projects/{project_id}/chapters/{chapter_number}/reset",
+                "method": "POST",
+                "requires_confirmation": True,
+                "target_chapter": chapter_number,
+            },
+        ],
+    }
 
 
 def _build_llm_router(settings: Settings, llm_mode: str = "stub"):
@@ -241,7 +341,8 @@ def run_with_graph(
     settings: Settings,
     repo: Repository,
     llm_mode: str = "stub",
-    max_steps: int = 50,
+    max_steps: int = 100,
+    workflow_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Run chapter production via LangGraph.
 
@@ -254,7 +355,7 @@ def run_with_graph(
         settings: Application settings.
         repo: Repository instance for database access.
         llm_mode: "stub" for demo mode, "real" for actual LLM calls.
-        max_steps: Maximum graph recursion limit (steps). Defaults to 50.
+        max_steps: Maximum graph recursion limit (steps). Defaults to 100.
 
     Returns:
         Dict with the same shape as Dispatcher.run_chapter():
@@ -304,13 +405,36 @@ def run_with_graph(
             "awaiting_publish": _is_awaiting,
         }
 
-    _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
+    deadloop_error = _check_deadloop_for_run(repo, project_id, chapter_number, current_status)
+    if deadloop_error:
+        if workflow_run_id:
+            repo.update_workflow_run(
+                workflow_run_id,
+                status="blocked",
+                current_node="deadloop_guard",
+                error_message=deadloop_error.get("error"),
+            )
+            deadloop_error["run_id"] = workflow_run_id
+        return deadloop_error
+
+    if workflow_run_id:
+        delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
+    else:
+        _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
 
     # v5.3.0: Context Readiness Gate
     readiness_error = _check_context_readiness_for_run(
         repo, project_id, chapter_number, current_status
     )
     if readiness_error:
+        if workflow_run_id:
+            repo.update_workflow_run(
+                workflow_run_id,
+                status="blocked",
+                current_node="context_readiness",
+                error_message=readiness_error.get("error"),
+            )
+            readiness_error["run_id"] = workflow_run_id
         return readiness_error
 
     # Build initial state
@@ -327,6 +451,10 @@ def run_with_graph(
         **_runtime_budget_state(settings, repo, project_id),
     }
 
+    # v6.1.1+: Recover revision_target/review metadata from the latest review
+    # for fresh revision runs. Keep this shared with streaming execution.
+    state = hydrate_revision_state(state, repo)
+
     # Build LLMRouter
     llm_router = _build_llm_router(settings, llm_mode)
 
@@ -335,7 +463,7 @@ def run_with_graph(
 
     # Build initial state with workflow_run_id placeholder
     # (will be populated by health_check_node)
-    state["workflow_run_id"] = ""
+    state["workflow_run_id"] = workflow_run_id or ""
 
     # Derive checkpoint DB path from the main repository DB so checkpoints
     # always follow the data they belong to — never in the repo root.
@@ -388,7 +516,7 @@ def run_with_graph_stream(
     settings: Settings,
     repo: Repository,
     llm_mode: str = "stub",
-    max_steps: int = 50,
+    max_steps: int = 100,
 ) -> Generator[dict[str, Any], None, None]:
     """Run chapter production with streaming events (v5.2 Phase C).
 
@@ -400,7 +528,7 @@ def run_with_graph_stream(
         settings: Application settings.
         repo: Repository instance for database access.
         llm_mode: "stub" for demo mode, "real" for actual LLM calls.
-        max_steps: Maximum graph recursion limit (steps). Defaults to 50.
+        max_steps: Maximum graph recursion limit (steps). Defaults to 100.
 
     Yields:
         Event dicts with format:
@@ -455,6 +583,18 @@ def run_with_graph_stream(
         }
         return
 
+    deadloop_error = _check_deadloop_for_run(repo, project_id, chapter_number, current_status)
+    if deadloop_error:
+        yield {
+            "type": "run_error",
+            "error": deadloop_error.get("error"),
+            "chapter_status": current_status,
+            "deadloop_detected": True,
+            "details": deadloop_error.get("details", {}),
+            "actions": deadloop_error.get("actions", []),
+        }
+        return
+
     _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
 
     # v5.3.0: Context Readiness Gate must match non-streaming execution.
@@ -487,6 +627,10 @@ def run_with_graph_stream(
         "llm_mode": llm_mode,
         **_runtime_budget_state(settings, repo, project_id),
     }
+
+    # v6.1.1+: Recover revision_target/review metadata from the latest review
+    # for fresh revision runs. Keep this shared with non-streaming execution.
+    state = hydrate_revision_state(state, repo)
 
     # Build LLMRouter
     try:
@@ -547,7 +691,7 @@ def run_with_graph_stream(
                             }
 
                         # Emit step_start for new agent
-                        if node_name in ("planner", "screenwriter", "author", "polisher", "editor", "publisher", "human_review"):
+                        if node_name in STREAM_VISIBLE_NODES:
                             current_agent = node_name
                             agent_start_times[node_name] = time.time()
                             yield {

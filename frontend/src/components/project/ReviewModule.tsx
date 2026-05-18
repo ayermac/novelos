@@ -108,18 +108,18 @@ export default function ReviewModule({ projectId }: Props) {
       {/* Blocking chapters */}
       {blockingChapters.length > 0 && (
         <div style={{ marginBottom: 20 }}>
-          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 6 }}>
             <AlertTriangle size={16} /> 已阻塞章节
           </h4>
           {blockingChapters.map((ch) => (
-            <div key={ch.chapter_number} className="data-card" style={{ marginBottom: 8, borderLeft: '3px solid #dc2626' }}>
+            <div key={ch.chapter_number} className="data-card" style={{ marginBottom: 8, borderLeft: '3px solid var(--danger)' }}>
               <div className="data-card-header">
-                <span className="data-card-category" style={{ background: '#fee2e2', color: '#dc2626' }}>阻塞</span>
+                <span className="data-card-category" style={{ background: 'color-mix(in srgb, var(--danger) 14%, transparent)', color: 'var(--danger)' }}>阻塞</span>
                 <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>第 {ch.chapter_number} 章</span>
               </div>
               <div className="data-card-title">{ch.title || `第 ${ch.chapter_number} 章`}</div>
               {blockingErrors[ch.chapter_number] && (
-                <div style={{ marginTop: 6, padding: '6px 8px', background: '#fef2f2', borderRadius: '4px', fontSize: 12, color: '#dc2626' }}>
+                <div style={{ marginTop: 6, padding: '6px 8px', background: 'color-mix(in srgb, var(--danger) 12%, var(--bg-primary))', borderRadius: '4px', fontSize: 12, color: 'var(--danger)' }}>
                   {blockingErrors[ch.chapter_number]}
                 </div>
               )}
@@ -182,13 +182,13 @@ export default function ReviewModule({ projectId }: Props) {
       {/* Revision chapters */}
       {revisionChapters.length > 0 && (
         <div style={{ marginBottom: 20 }}>
-          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#d97706' }}>
+          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: 'var(--warning)' }}>
             返修中章节
           </h4>
           {revisionChapters.map((ch) => (
-            <div key={ch.chapter_number} className="data-card" style={{ marginBottom: 8, borderLeft: '3px solid #d97706' }}>
+            <div key={ch.chapter_number} className="data-card" style={{ marginBottom: 8, borderLeft: '3px solid var(--warning)' }}>
               <div className="data-card-header">
-                <span className="data-card-category" style={{ background: '#fef3c7', color: '#92400e' }}>返修</span>
+                <span className="data-card-category" style={{ background: 'color-mix(in srgb, var(--warning) 14%, transparent)', color: 'var(--warning)' }}>返修</span>
                 <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>第 {ch.chapter_number} 章</span>
               </div>
               <div className="data-card-title">{ch.title || `第 ${ch.chapter_number} 章`}</div>

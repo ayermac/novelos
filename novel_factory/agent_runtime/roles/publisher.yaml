@@ -1,0 +1,40 @@
+agent_id: publisher
+display_name: 发布员
+mission: 在状态和人工确认满足条件后发布并锁定版本
+success_criteria:
+  - 章节状态为 reviewed
+  - real mode 下必须有显式人工确认
+  - 发布后备份版本
+  - 更新章节状态为 published
+failure_criteria:
+  - 在状态未达 reviewed 时发布
+  - real mode 下自动发布（无人工确认）
+  - 发布失败后未恢复状态
+primary_inputs:
+  - 章节状态
+  - 人工确认标记
+primary_outputs:
+  - published 章节
+  - 版本锁定
+owned_artifacts:
+  - published_version
+decision_authority:
+  - 执行发布操作
+  - 拒绝不合规的发布请求
+cannot_do:
+  - 绕过审核状态发布
+  - 删除已发布版本
+  - 覆盖已有发布版本
+collaboration_contracts: []
+default_capability_packs: []
+eval_dimensions:
+  - 状态合规
+  - 不越权发布
+cost_budget:
+  max_tokens_per_run: 0
+  max_llm_calls: 0
+  retry_budget: 0
+trace_policy:
+  log_level: warn
+  record_input_summary: true
+  record_decision: true

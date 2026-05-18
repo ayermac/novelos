@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { Activity, Download, FileText, BookOpen, ChevronDown } from 'lucide-react'
+import { Activity, Download, FileText, BookOpen, ChevronDown, Copy, Check } from 'lucide-react'
+import { apiUrl } from '../../lib/api'
 
 interface ProjectHeaderProps {
   projectId: string
@@ -14,6 +15,7 @@ export default function ProjectHeader({
   isStub,
 }: ProjectHeaderProps) {
   const [showExport, setShowExport] = useState(false)
+  const [copiedProjectId, setCopiedProjectId] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -27,12 +29,22 @@ export default function ProjectHeader({
 
   const handleExport = (format: 'txt' | 'markdown') => {
     const a = document.createElement('a')
-    a.href = `/api/projects/${projectId}/export?format=${format}`
+    a.href = apiUrl(`/projects/${projectId}/export?format=${format}`)
     a.download = ''
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
     setShowExport(false)
+  }
+
+  const handleCopyProjectId = async () => {
+    try {
+      await navigator.clipboard?.writeText(projectId)
+      setCopiedProjectId(true)
+      window.setTimeout(() => setCopiedProjectId(false), 1600)
+    } catch {
+      setCopiedProjectId(false)
+    }
   }
 
   return (
@@ -44,6 +56,21 @@ export default function ProjectHeader({
         </div>
         <div className="project-header-title">
           <h1>{projectName}</h1>
+          <div className="project-header-meta">
+            <span className="project-id-chip" title={`project_id: ${projectId}`}>
+              <span className="project-id-chip-label">ID</span>
+              <code>{projectId}</code>
+              <button
+                type="button"
+                className="project-id-copy"
+                onClick={handleCopyProjectId}
+                aria-label="复制项目 ID"
+                title={copiedProjectId ? '已复制' : '复制项目 ID'}
+              >
+                {copiedProjectId ? <Check size={12} /> : <Copy size={12} />}
+              </button>
+            </span>
+          </div>
         </div>
       </div>
       <div className="project-header-actions">

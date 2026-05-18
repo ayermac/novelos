@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="墨流工厂">
+  <defs>
+    <linearGradient id="bg" x1="86" y1="46" x2="430" y2="468" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="0.55" stop-color="#172033"/>
+      <stop offset="1" stop-color="#761a34"/>
+    </linearGradient>
+    <linearGradient id="paper" x1="120" y1="130" x2="387" y2="370" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#fff7df"/>
+      <stop offset="1" stop-color="#e9d7aa"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="154" y1="132" x2="366" y2="386" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffcf70"/>
+      <stop offset="0.46" stop-color="#bd3157"/>
+      <stop offset="1" stop-color="#6028d9"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <path d="M106 125c58-31 112-30 150 2v267c-46-30-94-36-150-13V125z" fill="url(#paper)"/>
+  <path d="M256 127c40-32 93-33 150-2v256c-56-23-104-17-150 13V127z" fill="url(#paper)"/>
+  <path d="M256 128v263" stroke="#6f5f43" stroke-opacity="0.28" stroke-width="9" stroke-linecap="round"/>
+  <path d="M144 352c58-101 93-172 141-204 37-25 75-18 91 5 20 29-6 68-45 63-21-2-37-17-50-34-28 35-48 94-78 171l-59-1z" fill="url(#ink)"/>
+  <path d="M167 351c35-22 78-29 120-8 34 17 61 18 88 3" fill="none" stroke="#ffcf70" stroke-width="15" stroke-linecap="round"/>
+  <circle cx="342" cy="153" r="13" fill="#ffcf70"/>
+  <path d="M365 92l9 20 21 9-21 9-9 21-9-21-21-9 21-9 9-20z" fill="#ffcf70"/>
+</svg>

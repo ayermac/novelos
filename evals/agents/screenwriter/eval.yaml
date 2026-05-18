@@ -1,0 +1,75 @@
+cases:
+  - id: screenwriter-beat-complete
+    agent_id: screenwriter
+    input_fixture:
+      scene_beats:
+        - sequence: 1
+          scene_goal: "主角进入拍卖场"
+          conflict: "王家子弟故意抬价"
+          turn: "主角亮出隐藏身份"
+          hook: "王家老祖暗中窥视"
+          plot_refs: ["P001"]
+    expected_behavior:
+      must_pass:
+        - type: skill_ok
+          skill_id: scene-conflict-checker
+    rubric:
+      - scene beat 完整性
+    regression_tags: ["v6.0", "screenwriter"]
+  - id: screenwriter-missing-hook
+    agent_id: screenwriter
+    input_fixture:
+      scene_beats:
+        - sequence: 1
+          scene_goal: "主角进入拍卖场"
+          conflict: "王家子弟故意抬价"
+          turn: ""
+          hook: ""
+    expected_behavior:
+      must_pass:
+        - type: skill_not_ok
+          skill_id: scene-conflict-checker
+    rubric:
+      - 必须检测缺失字段
+    regression_tags: ["v6.0", "screenwriter"]
+  - id: screenwriter-empty-beats
+    agent_id: screenwriter
+    input_fixture:
+      scene_beats: []
+    expected_behavior:
+      must_pass:
+        - type: skill_not_ok
+          skill_id: scene-conflict-checker
+    rubric:
+      - 必须检测空 beats
+    regression_tags: ["v6.0", "screenwriter"]
+  - id: screenwriter-emotion-curve
+    agent_id: screenwriter
+    input_fixture:
+      scene_beats:
+        - sequence: 1
+          scene_goal: "开场"
+          emotion: "平静"
+        - sequence: 2
+          scene_goal: "冲突"
+          emotion: "紧张"
+        - sequence: 3
+          scene_goal: "高潮"
+          emotion: "激烈"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 情绪曲线变化
+    regression_tags: ["v6.0", "screenwriter"]
+  - id: screenwriter-hook-strength
+    agent_id: screenwriter
+    input_fixture:
+      scene_beats:
+        - sequence: 1
+          scene_goal: "结尾"
+          hook: "悬念足够强"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 钩子强度
+    regression_tags: ["v6.0", "screenwriter"]

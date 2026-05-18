@@ -2,9 +2,13 @@
 
 import pytest
 from unittest.mock import patch
+from datetime import datetime, timedelta
 
 from novel_factory.models.state import ChapterStatus
 from novel_factory.workflow.conditions import (
+    hydrate_revision_state,
+    normalize_revision_target,
+    prepare_resume_after_human_review,
     route_by_chapter_status,
     route_by_review_result,
     route_after_memory_curator,
@@ -46,6 +50,17 @@ class TestRouteByChapterStatus:
         state = {
             "chapter_status": "revision",
             "quality_gate": {"revision_target": "author"},
+        }
+        assert route_by_chapter_status(state) == "author"
+
+    def test_revision_without_quality_gate_routes_to_author(self):
+        state = {"chapter_status": "revision"}
+        assert route_by_chapter_status(state) == "author"
+
+    def test_revision_with_invalid_target_routes_to_author(self):
+        state = {
+            "chapter_status": "revision",
+            "quality_gate": {"revision_target": "editor"},
         }
         assert route_by_chapter_status(state) == "author"
 
@@ -98,9 +113,18 @@ class TestFreshRunCheckpointCleanup:
 
         def __init__(self, runs):
             self.runs = runs
+            self.failed_runs = []
 
         def get_workflow_runs_for_project(self, project_id, chapter_number=None, limit=20):
             return self.runs
+
+        def update_workflow_run(self, run_id, status=None, error_message=None, **_kwargs):
+            self.failed_runs.append({
+                "run_id": run_id,
+                "status": status,
+                "error_message": error_message,
+            })
+            return True
 
     def test_clears_checkpoint_when_latest_run_failed(self):
         repo = self.FakeRepo([{"status": "failed"}])
@@ -117,6 +141,17 @@ class TestFreshRunCheckpointCleanup:
             _clear_stale_checkpoint_for_new_run(repo, "demo", 1)
 
         delete.assert_not_called()
+
+    def test_clears_checkpoint_for_stale_running_run(self):
+        old_started_at = (datetime.utcnow() + timedelta(hours=8) - timedelta(hours=3)).strftime("%Y-%m-%d %H:%M:%S")
+        repo = self.FakeRepo([{"id": "run-old", "status": "running", "started_at": old_started_at}])
+
+        with patch("novel_factory.workflow.runner.delete_checkpoint_thread") as delete:
+            _clear_stale_checkpoint_for_new_run(repo, "demo", 1)
+
+        delete.assert_called_once_with("test.db", "demo", 1)
+        assert repo.failed_runs[0]["run_id"] == "run-old"
+        assert repo.failed_runs[0]["status"] == "failed"
 
 
 class TestRouteByReviewResult:
@@ -186,6 +221,14 @@ class TestRouteByRevisionType:
         state = {"quality_gate": {}}
         assert route_by_revision_type(state) == "author"
 
+    def test_invalid_revision_target_routes_to_author(self):
+        state = {"chapter_status": ChapterStatus.REVISION.value, "quality_gate": {"revision_target": "editor"}}
+        assert route_by_revision_type(state) == "author"
+
+    def test_missing_quality_gate_routes_to_author(self):
+        state = {"chapter_status": ChapterStatus.REVISION.value}
+        assert route_by_revision_type(state) == "author"
+
     # P1: Full stale-revision-gate matrix — when DB status != REVISION, ignore gate
     @pytest.mark.parametrize(
         "db_status,expected",
@@ -225,6 +268,92 @@ class TestRouteByRevisionType:
         assert route_by_revision_type(state) == "editor"
 
 
+class TestRevisionStateHydration:
+    class FakeRepo:
+        def __init__(self, review=None):
+            self.review = review
+
+        def get_chapter(self, project_id, chapter_number):
+            return {"id": 42, "project_id": project_id, "chapter_number": chapter_number}
+
+        def get_latest_review(self, project_id, chapter_id):
+            return self.review
+
+    def test_normalize_revision_target_only_allows_routable_agents(self):
+        assert normalize_revision_target("author") == "author"
+        assert normalize_revision_target("polisher") == "polisher"
+        assert normalize_revision_target("planner") == "planner"
+        assert normalize_revision_target("editor") == "author"
+        assert normalize_revision_target(None) == "author"
+
+    def test_hydrate_revision_state_uses_latest_review_target(self):
+        repo = self.FakeRepo({
+            "id": 7,
+            "score": 69,
+            "revision_target": "polisher",
+            "issues": '["AI痕迹过重"]',
+            "suggestions": '["压缩解释性句子"]',
+        })
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "chapter_status": ChapterStatus.REVISION.value,
+        }
+
+        hydrated = hydrate_revision_state(state, repo)
+
+        assert hydrated["quality_gate"] == {"pass": False, "revision_target": "polisher"}
+        assert hydrated["_revision_review"]["review_id"] == 7
+        assert hydrated["_revision_review"]["revision_target"] == "polisher"
+
+    def test_hydrate_revision_state_invalid_review_target_defaults_to_author(self):
+        repo = self.FakeRepo({"id": 8, "score": 67, "revision_target": "editor"})
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "chapter_status": ChapterStatus.REVISION.value,
+        }
+
+        hydrated = hydrate_revision_state(state, repo)
+
+        assert hydrated["quality_gate"]["revision_target"] == "author"
+        assert hydrated["_revision_review"]["revision_target"] == "author"
+
+    def test_hydrate_revision_state_keeps_existing_quality_gate(self):
+        repo = self.FakeRepo({"id": 9, "revision_target": "planner"})
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "chapter_status": ChapterStatus.REVISION.value,
+            "quality_gate": {"pass": False, "revision_target": "polisher"},
+        }
+
+        hydrated = hydrate_revision_state(state, repo)
+
+        assert hydrated is state
+        assert hydrated["quality_gate"]["revision_target"] == "polisher"
+
+    def test_prepare_resume_after_human_review_clears_checkpoint_and_flags(self):
+        repo = self.FakeRepo()
+        repo.db_path = "resume.db"
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "requires_human": True,
+            "error": "blocked",
+        }
+
+        with patch("novel_factory.workflow.checkpoint.delete_checkpoint_thread") as delete:
+            result = prepare_resume_after_human_review(state, repo)
+
+        delete.assert_called_once_with("resume.db", "demo", 2)
+        assert result == {
+            "requires_human": False,
+            "error": None,
+            "current_stage": "resumed",
+        }
+
+
 class TestRouteAfterMemoryCurator:
     """v5.3.2 closure: memory_curator failure routing."""
 
@@ -235,6 +364,22 @@ class TestRouteAfterMemoryCurator:
     def test_real_mode_no_error_goes_to_awaiting_publish(self):
         state = {"llm_mode": "real"}
         assert route_after_memory_curator(state) == "awaiting_publish"
+
+    def test_real_mode_degraded_memory_routes_to_human_review(self):
+        state = {
+            "llm_mode": "real",
+            "memory_curator_degraded": True,
+            "memory_curator_warning": "LLM 未提取出记忆候选",
+        }
+        assert route_after_memory_curator(state) == "human_review"
+
+    def test_real_mode_fallback_memory_routes_to_human_review(self):
+        state = {
+            "llm_mode": "real",
+            "extraction_success": False,
+            "fallback_created": True,
+        }
+        assert route_after_memory_curator(state) == "human_review"
 
     def test_no_llm_mode_defaults_to_publish(self):
         state = {}
@@ -254,3 +399,102 @@ class TestRouteAfterMemoryCurator:
         """Even in stub mode, requires_human=True routes to human_review."""
         state = {"llm_mode": "stub", "requires_human": True}
         assert route_after_memory_curator(state) == "human_review"
+
+
+class TestWorkflowNodeRevisionHardening:
+    class FakeGateRepo:
+        db_path = "gate.db"
+
+        def __init__(self):
+            self.updated_status = None
+            self.started_tasks = []
+            self.completed_tasks = []
+
+        def get_chapter_retry_count(self, project_id, chapter_number):
+            return 0
+
+        def get_chapter_status(self, project_id, chapter_number):
+            return ChapterStatus.DRAFTED.value
+
+        def update_chapter_status(self, project_id, chapter_number, status):
+            self.updated_status = (project_id, chapter_number, status)
+            return True
+
+        def start_task(self, project_id, chapter_number, task_type, agent_id, workflow_run_id=None):
+            self.started_tasks.append({
+                "project_id": project_id,
+                "chapter_number": chapter_number,
+                "task_type": task_type,
+                "agent_id": agent_id,
+                "workflow_run_id": workflow_run_id,
+            })
+            return 101
+
+        def complete_task(self, task_id, success=True):
+            self.completed_tasks.append((task_id, success))
+            return True
+
+    def test_retryable_quality_gate_uses_current_result_revision_target(self):
+        from novel_factory.workflow.nodes import _handle_retryable_quality_gate
+
+        repo = self.FakeGateRepo()
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "workflow_run_id": "run-1",
+            "max_retries": 3,
+            "quality_gate": {"revision_target": "author"},
+        }
+        result = {
+            "error": "word count failed",
+            "quality_gate": {
+                "pass": False,
+                "word_count_fail": True,
+                "revision_target": "polisher",
+            },
+        }
+
+        updated = _handle_retryable_quality_gate(state, repo, result)
+
+        assert updated["chapter_status"] == ChapterStatus.REVISION.value
+        assert updated["retry_count"] == 1
+        assert updated["requires_human"] is False
+        assert "error" not in updated
+        assert repo.started_tasks[0]["agent_id"] == "polisher"
+
+    def test_revision_router_node_returns_hydrated_updates_for_langgraph_merge(self):
+        from novel_factory.workflow.nodes import revision_router_node
+
+        class Repo:
+            db_path = "revision.db"
+
+            def update_workflow_run(self, *args, **kwargs):
+                return True
+
+            def log_workflow_node_event(self, *args, **kwargs):
+                return 1
+
+            def get_chapter(self, project_id, chapter_number):
+                return {"id": 42}
+
+            def get_latest_review(self, project_id, chapter_id):
+                return {
+                    "id": 7,
+                    "score": 72,
+                    "revision_target": "planner",
+                    "issues": '["规划冲突"]',
+                    "suggestions": '["重做章节目标"]',
+                }
+
+        state = {
+            "workflow_run_id": "run-2",
+            "project_id": "demo",
+            "chapter_number": 2,
+            "chapter_status": ChapterStatus.REVISION.value,
+        }
+
+        updates = revision_router_node(state, Repo())
+
+        assert updates["quality_gate"] == {"pass": False, "revision_target": "planner"}
+        assert updates["_revision_review"]["review_id"] == 7
+        assert updates["_revision_review"]["revision_target"] == "planner"

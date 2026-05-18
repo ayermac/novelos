@@ -51,7 +51,7 @@ def minimal_catalog():
             latency_tier="low",
             quality_tier="draft",
             strengths=[Strength.SPEED, Strength.JSON],
-            recommended_agents=["scout", "secretary"],
+            recommended_agents=[],
         ),
         LLMModelSpec(
             provider="test",
@@ -71,7 +71,7 @@ def minimal_catalog():
             latency_tier="medium",
             quality_tier="standard",
             strengths=[Strength.REASONING, Strength.EDITING, Strength.JSON],
-            recommended_agents=["editor", "architect"],
+            recommended_agents=["editor"],
         ),
     ]
     return LLMCatalog(models=models)
@@ -84,7 +84,7 @@ class TestRecommendForAgent:
 
     @pytest.mark.parametrize("agent_id", [
         "planner", "screenwriter", "author", "polisher",
-        "editor", "scout", "continuity_checker", "architect", "secretary",
+        "editor", "continuity_checker",
     ])
     def test_each_agent_gets_recommendation(self, catalog, agent_id):
         """Each core agent gets a valid recommendation from the default catalog."""
@@ -183,7 +183,7 @@ class TestRecommendationConstraints:
     def test_prefer_low_latency(self, catalog):
         """prefer_low_latency flag boosts fast models."""
         constraints = RecommendationConstraints(prefer_low_latency=True)
-        result = recommend_for_agent("secretary", catalog=catalog, constraints=constraints)
+        result = recommend_for_agent("continuity_checker", catalog=catalog, constraints=constraints)
         assert result["ok"] is True
 
     def test_combined_constraints(self, minimal_catalog):

@@ -98,7 +98,7 @@ def _make_state(**overrides) -> FactoryState:
 class TestR1SingleRunMethod:
     def test_base_agent_has_single_run_method(self):
         """BaseAgent must have exactly one 'run' method definition."""
-        from novel_factory.agents.base import BaseAgent
+        from novel_factory.agent_runtime.base import BaseAgent
         run_methods = [
             name for name, _ in inspect.getmembers(BaseAgent, predicate=inspect.isfunction)
             if name == "run"

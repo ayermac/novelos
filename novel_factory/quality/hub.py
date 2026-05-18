@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from ..db.repository import Repository
@@ -711,7 +712,7 @@ class QualityHub:
                     revision_target = "polisher"
                     break
                 elif issue["type"] == "editor_rejected":
-                    revision_target = "editor"
+                    revision_target = "author"
                     break
                 elif issue["type"] == "narrative_quality_low":
                     revision_target = "author"
@@ -732,4 +733,248 @@ class QualityHub:
                 "skill_results": skill_results,
                 "quality_dimensions": quality_dimensions,
             }
+        }
+
+    def diagnose(
+        self,
+        chapter_text: str,
+        context: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """对章节正文进行结构化质量诊断（v6.4.0 观测层，不改写文本）。
+
+        聚合现有 deterministic 诊断能力：death_penalty、ai_style_detector、
+        narrative_quality_scorer，并补充基础 show-dont-tell 检测。
+
+        Args:
+            chapter_text: 章节正文
+            context: 可选上下文（project_id、chapter_number 等）
+
+        Returns:
+            {
+                "overall_score": float,
+                "dimensions": dict[str, float],
+                "findings": list[dict],
+                "metrics": dict[str, Any],
+            }
+        """
+        if chapter_text is None:
+            chapter_text = ""
+
+        text = chapter_text
+        findings: list[dict[str, Any]] = []
+        dimensions: dict[str, float] = {}
+        metrics: dict[str, Any] = {}
+
+        # -- Metrics: 基础统计 --
+        from ..validators.chapter_checker import count_words
+
+        word_count = count_words(text)
+        paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+        sentences = [s.strip() for s in re.split(r"[。！？]", text) if s.strip()]
+        avg_sent_len = sum(len(s) for s in sentences) / max(len(sentences), 1)
+
+        # 对话比例
+        dialogue_pattern = r'[""「『]([^""」』]+)[""」』]'
+        dialogues = re.findall(dialogue_pattern, text)
+        dialogue_chars = sum(len(d) for d in dialogues)
+        dialogue_ratio = dialogue_chars / max(len(text), 1)
+
+        metrics = {
+            "word_count": word_count,
+            "paragraph_count": len(paragraphs),
+            "sentence_count": len(sentences),
+            "avg_sentence_length": round(avg_sent_len, 1),
+            "dialogue_ratio": round(dialogue_ratio, 3),
+            "dialogue_count": len(dialogues),
+        }
+
+        # -- Death Penalty --
+        dp_result = check_death_penalty_structured(text)
+        dp_score = 0 if dp_result.has_critical else (50 if dp_result.violations else 100)
+        dimensions["death_penalty"] = dp_score
+
+        if dp_result.has_critical:
+            for v in dp_result.violations:
+                findings.append({
+                    "severity": "critical",
+                    "code": "DEATH_PENALTY_CRITICAL",
+                    "message": f"检测到死刑红线: {v}",
+                    "evidence": None,
+                    "suggestion": "请移除或替换 AI 烂词、典型表情描写等",
+                })
+        elif dp_result.violations:
+            for v in dp_result.violations:
+                findings.append({
+                    "severity": "high",
+                    "code": "DEATH_PENALTY_VIOLATION",
+                    "message": f"检测到死刑违规: {v}",
+                    "evidence": None,
+                    "suggestion": "建议替换为更自然的表达",
+                })
+
+        # -- AI Style Detector --
+        ai_trace_score = 0.0
+        if self.skill_registry:
+            ai_result = self.skill_registry.run_skill(
+                "ai-style-detector",
+                {"text": text},
+                agent="manual",
+                stage="manual",
+            )
+            if ai_result.get("ok"):
+                ai_data = ai_result.get("data", {})
+                ai_trace_score = ai_data.get("ai_trace_score", 0)
+                dimensions["ai_trace"] = max(0, 100 - ai_trace_score)
+
+                for issue in ai_data.get("issues", []):
+                    issue_type = issue.get("type", "")
+                    issue_score = issue.get("score", 0)
+                    if issue_score > 50:
+                        findings.append({
+                            "severity": "medium" if issue_score < 70 else "high",
+                            "code": f"AI_TRACE_{issue_type.upper()}",
+                            "message": issue.get("description", f"AI 痕迹: {issue_type}"),
+                            "evidence": None,
+                            "suggestion": None,
+                        })
+
+        # -- Narrative Quality --
+        narrative_overall = 0.0
+        if self.skill_registry:
+            nq_result = self.skill_registry.run_skill(
+                "narrative-quality",
+                {"text": text},
+                agent="manual",
+                stage="manual",
+            )
+            if nq_result.get("ok"):
+                nq_data = nq_result.get("data", {})
+                scores = nq_data.get("scores", {})
+                narrative_overall = scores.get("overall_score", 0)
+                dimensions["narrative_quality"] = narrative_overall
+                dimensions["conflict_intensity"] = scores.get("conflict_intensity", 0)
+                dimensions["hook_strength"] = scores.get("hook_strength", 0)
+                dimensions["information_density"] = scores.get("information_density", 0)
+                dimensions["pacing_control"] = scores.get("pacing_control", 0)
+                dimensions["dialogue_naturalness"] = scores.get("dialogue_naturalness", 0)
+                dimensions["scene_immersion"] = scores.get("scene_immersion", 0)
+                dimensions["character_motivation"] = scores.get("character_motivation", 0)
+
+                for issue in nq_data.get("issues", []):
+                    severity = issue.get("severity", "info")
+                    findings.append({
+                        "severity": severity,
+                        "code": f"NARRATIVE_{issue.get('type', 'UNKNOWN').upper()}",
+                        "message": issue.get("message", ""),
+                        "evidence": issue.get("ratio") or issue.get("score") or None,
+                        "suggestion": None,
+                    })
+
+        # -- Show-Don't-Tell (v6.4.3: use ShowDontTellValidator skill) --
+        if self.skill_registry:
+            sdt_result = self.skill_registry.run_skill(
+                "show-dont-tell",
+                {"text": text},
+                agent="qualityhub",
+                stage="diagnose",
+            )
+            if sdt_result.get("ok"):
+                sdt_data = sdt_result.get("data", {})
+                dimensions["show_dont_tell"] = sdt_data.get("score", 100)
+                for f in sdt_data.get("findings", []):
+                    findings.append({
+                        "severity": f.get("severity", "info"),
+                        "code": f"SHOW_DONT_TELL_{f.get('code', 'UNKNOWN')}",
+                        "message": f.get("message", ""),
+                        "evidence": f.get("evidence"),
+                        "suggestion": f.get("suggestion"),
+                    })
+            else:
+                dimensions["show_dont_tell"] = 100
+        else:
+            dimensions["show_dont_tell"] = 100
+
+        # -- Info Dump (v6.4.3: use InfoDumpDetector skill) --
+        if self.skill_registry:
+            id_result = self.skill_registry.run_skill(
+                "info-dump-detector",
+                {"text": text},
+                agent="qualityhub",
+                stage="diagnose",
+            )
+            if id_result.get("ok"):
+                id_data = id_result.get("data", {})
+                dimensions["info_dump"] = id_data.get("score", 100)
+                for f in id_data.get("findings", []):
+                    findings.append({
+                        "severity": f.get("severity", "info"),
+                        "code": f"INFO_DUMP_{f.get('code', 'UNKNOWN')}",
+                        "message": f.get("message", ""),
+                        "evidence": f.get("evidence"),
+                        "suggestion": f.get("suggestion"),
+                    })
+            else:
+                dimensions["info_dump"] = 100
+        else:
+            dimensions["info_dump"] = 100
+
+        # -- Scene Texture (v6.4.3: use SceneTextureChecker skill) --
+        if self.skill_registry:
+            st_result = self.skill_registry.run_skill(
+                "scene-texture",
+                {"text": text},
+                agent="qualityhub",
+                stage="diagnose",
+            )
+            if st_result.get("ok"):
+                st_data = st_result.get("data", {})
+                dimensions["scene_immersion"] = st_data.get("score", 100)
+                for f in st_data.get("findings", []):
+                    findings.append({
+                        "severity": f.get("severity", "info"),
+                        "code": f"SCENE_TEXTURE_{f.get('code', 'UNKNOWN')}",
+                        "message": f.get("message", ""),
+                        "evidence": f.get("evidence"),
+                        "suggestion": f.get("suggestion"),
+                    })
+            else:
+                dimensions["scene_immersion"] = 100
+        else:
+            dimensions["scene_immersion"] = 100
+
+        # -- Dialogue Naturalness (v6.4.3: use DialogueNaturalnessChecker skill) --
+        if self.skill_registry:
+            dn_result = self.skill_registry.run_skill(
+                "dialogue-naturalness",
+                {"text": text},
+                agent="qualityhub",
+                stage="diagnose",
+            )
+            if dn_result.get("ok"):
+                dn_data = dn_result.get("data", {})
+                dimensions["dialogue_naturalness"] = dn_data.get("score", 100)
+                for f in dn_data.get("findings", []):
+                    findings.append({
+                        "severity": f.get("severity", "info"),
+                        "code": f"DIALOGUE_{f.get('code', 'UNKNOWN')}",
+                        "message": f.get("message", ""),
+                        "evidence": f.get("evidence"),
+                        "suggestion": f.get("suggestion"),
+                    })
+            else:
+                dimensions["dialogue_naturalness"] = 100
+        else:
+            dimensions["dialogue_naturalness"] = 100
+
+        # -- Overall Score --
+        if dimensions:
+            overall_score = sum(dimensions.values()) / len(dimensions)
+        else:
+            overall_score = 0.0
+
+        return {
+            "overall_score": round(overall_score, 1),
+            "dimensions": dimensions,
+            "findings": findings,
+            "metrics": metrics,
         }

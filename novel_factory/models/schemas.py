@@ -95,6 +95,10 @@ class PolisherOutput(BaseModel):
     fact_change_risk: str = "none"
     changed_scope: list[str] = Field(default_factory=list)
     summary: str = ""
+    # v6.6.1: Quality diagnosis feedback tracking
+    fixed_quality_findings: list[str] = Field(default_factory=list)
+    deferred_quality_findings: list[str] = Field(default_factory=list)
+    quality_risk_note: str | None = None
 
 
 # ── Editor output ──────────────────────────────────────────────

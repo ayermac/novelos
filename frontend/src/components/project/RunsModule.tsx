@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { get } from '../../lib/api'
 import { History, ExternalLink } from 'lucide-react'
 import { tWorkflowStatus } from '../../lib/i18n'
@@ -91,12 +92,12 @@ export default function RunsModule({ projectId }: Props) {
               key: 'detail',
               header: '详情',
               render: (run) => (
-                <a
-                  href={`/runs/${run.run_id || run.id}`}
-                  style={{ color: 'var(--primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
+                <Link
+                  to={`/runs/${run.run_id || run.id}`}
+                  style={{ color: 'var(--primary)', display: 'inline-flex', alignItems: 'center', gap: 4 }}
                 >
                   详情 <ExternalLink size={12} />
-                </a>
+                </Link>
               ),
             },
           ]}

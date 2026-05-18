@@ -1,8 +1,12 @@
 import type { Dispatch, ReactNode, SetStateAction } from 'react'
+import React, { useEffect, useState } from 'react'
 import EmptyState from '../EmptyState'
 import SkillVisibilityPanel from './SkillVisibilityPanel'
 import { tLlmMode } from '../../lib/i18n'
-import { DataTable, FormField, Select, TextInput } from '../ui'
+import { FormField, Select, TextInput, LoadingButton, InlineMessage, SkeletonStack, useToast } from '../ui'
+import { get, post, put } from '../../lib/api'
+import { useAppDialog } from '../AppDialogContext'
+import { CheckCircle2, KeyRound, Plus, RefreshCw, Router, Server, Trash2, Wifi } from 'lucide-react'
 
 interface LlmProfile {
   name: string
@@ -49,6 +53,38 @@ interface SettingsData {
   generation_stats: GenerationStats
 }
 
+interface DesktopProfile {
+  provider: string
+  model: string
+  base_url: string
+  api_key_env: string
+  api_key_configured: boolean
+  api_key_source: string
+  temperature?: number
+  timeout?: number
+  max_tokens?: number
+}
+
+interface DesktopConfig {
+  exists: boolean
+  llm_mode: string
+  configured_llm_mode?: string
+  runtime_llm_mode?: string
+  default_llm: string | null
+  profiles: Record<string, DesktopProfile>
+  agent_llm?: Record<string, string>
+}
+
+interface LlmTemplateForm {
+  name: string
+  provider: string
+  base_url: string
+  model: string
+  api_key_env: string
+  temperature: number
+  timeout: number
+}
+
 interface WizardForm {
   provider: string
   base_url: string
@@ -68,6 +104,38 @@ interface ValidateResult {
 interface Option {
   value: string
   label: string
+}
+
+const AGENT_OPTIONS = [
+  { id: 'genesis', label: '创世设定', hint: '项目底盘、世界观、角色原型' },
+  { id: 'planner', label: '章节规划', hint: '章节目标、关键事件、铺垫' },
+  { id: 'screenwriter', label: '分场编剧', hint: '场景节拍和行动结构' },
+  { id: 'author', label: '执笔撰写', hint: '长文本正文生成，建议使用最强写作模型' },
+  { id: 'polisher', label: '润色修订', hint: '对白、节奏、去 AI 味' },
+  { id: 'editor', label: '质量审核', hint: '评分、问题定位、发布建议' },
+  { id: 'memory_curator', label: '记忆整理', hint: '事实、伏笔、连续性沉淀' },
+] as const
+
+const TEMPLATE_PROVIDER_OPTIONS = [
+  { value: 'openai_compatible', label: 'OpenAI 兼容接口' },
+  { value: 'openai', label: 'OpenAI' },
+  { value: 'deepseek', label: 'DeepSeek' },
+  { value: 'anthropic', label: 'Anthropic' },
+]
+
+const PROVIDER_PRESETS: Record<string, Pick<LlmTemplateForm, 'provider' | 'base_url' | 'model' | 'api_key_env'>> = {
+  default: {
+    provider: 'openai_compatible',
+    base_url: 'https://api.openai.com/v1',
+    model: 'gpt-4o-mini',
+    api_key_env: 'OPENAI_API_KEY',
+  },
+  author: {
+    provider: 'openai_compatible',
+    base_url: 'https://api.openai.com/v1',
+    model: 'gpt-4o',
+    api_key_env: 'OPENAI_API_KEY',
+  },
 }
 
 function SectionCard({ title, subtitle, action, children }: {
@@ -256,85 +324,616 @@ export function SettingsOverviewSection({ data }: { data: SettingsData }) {
 }
 
 export function LlmSettingsSection({ data }: { data: SettingsData }) {
+  const isDesktop = typeof window !== 'undefined' && !!window.__NOVELOS_DESKTOP__
+  const dialog = useAppDialog()
+  const { showToast } = useToast()
+  const [desktopConfig, setDesktopConfig] = useState<DesktopConfig | null>(null)
+  const [secretStatuses, setSecretStatuses] = useState<Record<string, { configured: boolean; storage?: string }>>({})
+  const [loading, setLoading] = useState(isDesktop)
+  const [saving, setSaving] = useState(false)
+  const [savingKeyFor, setSavingKeyFor] = useState<string | null>(null)
+  const [testingProfile, setTestingProfile] = useState<string | null>(null)
+  const [restarting, setRestarting] = useState(false)
+  const [restartRequired, setRestartRequired] = useState(false)
+  const [inlineMsg, setInlineMsg] = useState<{ variant: 'success' | 'warning' | 'danger'; text: string } | null>(null)
+  const [templates, setTemplates] = useState<LlmTemplateForm[]>([])
+  const [defaultTemplate, setDefaultTemplate] = useState(data.default_llm || 'default')
+  const [agentRoutes, setAgentRoutes] = useState<Record<string, string>>({})
+  const [apiKeyDrafts, setApiKeyDrafts] = useState<Record<string, string>>({})
+
+  const loadDesktopConfig = React.useCallback(async () => {
+    if (!isDesktop) {
+      setLoading(false)
+      return
+    }
+    setLoading(true)
+    const res = await get<DesktopConfig>('/desktop/config')
+    if (res.ok && res.data) {
+      const cfg = res.data
+      setDesktopConfig(cfg)
+      const profiles = Object.entries(cfg.profiles || {})
+      const nextTemplates = profiles.length > 0
+        ? profiles.map(([name, profile]) => ({
+            name,
+            provider: profile.provider || 'openai_compatible',
+            base_url: profile.base_url || '',
+            model: profile.model || '',
+            api_key_env: profile.api_key_env || 'OPENAI_API_KEY',
+            temperature: profile.temperature ?? 0.7,
+            timeout: profile.timeout ?? 60,
+          }))
+        : [{
+            name: 'default',
+            ...PROVIDER_PRESETS.default,
+            temperature: 0.7,
+            timeout: 300,
+          }]
+      const defaultName = cfg.default_llm || nextTemplates[0]?.name || 'default'
+      setTemplates(nextTemplates)
+      setDefaultTemplate(defaultName)
+      setAgentRoutes(Object.fromEntries(AGENT_OPTIONS.map((agent) => [
+        agent.id,
+        cfg.agent_llm?.[agent.id] || defaultName,
+      ])))
+    } else {
+      setInlineMsg({ variant: 'danger', text: res.error?.message || '读取桌面 LLM 配置失败' })
+    }
+    try {
+      const statuses = await window.__NOVELOS_DESKTOP__?.secretStatus?.()
+      setSecretStatuses(statuses || {})
+    } catch {
+      setSecretStatuses({})
+    }
+    setLoading(false)
+  }, [isDesktop])
+
+  useEffect(() => {
+    loadDesktopConfig()
+  }, [loadDesktopConfig])
+
+  const updateTemplate = (name: string, patch: Partial<LlmTemplateForm>) => {
+    setTemplates((prev) => prev.map((template) => (
+      template.name === name ? { ...template, ...patch } : template
+    )))
+  }
+
+  const renameTemplate = (oldName: string, nextName: string) => {
+    const cleanName = nextName.trim()
+    updateTemplate(oldName, { name: cleanName })
+    if (defaultTemplate === oldName) {
+      setDefaultTemplate(cleanName)
+    }
+    setAgentRoutes((prev) => Object.fromEntries(
+      Object.entries(prev).map(([agent, route]) => [agent, route === oldName ? cleanName : route]),
+    ))
+  }
+
+  const addTemplate = () => {
+    const baseName = templates.some((template) => template.name === 'author') ? 'profile' : 'author'
+    let name = baseName
+    let suffix = 2
+    while (templates.some((template) => template.name === name)) {
+      name = `${baseName}${suffix}`
+      suffix += 1
+    }
+    setTemplates((prev) => [
+      ...prev,
+      {
+        name,
+        ...(PROVIDER_PRESETS[name] || PROVIDER_PRESETS.default),
+        temperature: 0.7,
+        timeout: name === 'author' ? 300 : 180,
+      },
+    ])
+  }
+
+  const removeTemplate = async (name: string) => {
+    if (templates.length <= 1) return
+    const ok = await dialog.confirm({
+      title: '删除 LLM 模板',
+      message: `确定删除模板 ${name}？使用它的 Agent 会切回 ${defaultTemplate}。`,
+      tone: 'danger',
+      confirmLabel: '删除',
+    })
+    if (!ok) return
+    const fallback = name === defaultTemplate
+      ? templates.find((template) => template.name !== name)?.name || 'default'
+      : defaultTemplate
+    setTemplates((prev) => prev.filter((template) => template.name !== name))
+    setDefaultTemplate(fallback)
+    setAgentRoutes((prev) => Object.fromEntries(
+      Object.entries(prev).map(([agent, route]) => [agent, route === name ? fallback : route]),
+    ))
+  }
+
+  const handleSaveConfig = async () => {
+    const normalizedNames = templates.map((template) => template.name.trim()).filter(Boolean)
+    if (new Set(normalizedNames).size !== normalizedNames.length) {
+      setInlineMsg({ variant: 'danger', text: '模板名称不能重复或为空' })
+      return
+    }
+    const profiles = Object.fromEntries(templates.map((template) => [
+      template.name.trim(),
+      {
+        provider: template.provider,
+        model: template.model.trim(),
+        base_url: template.base_url.trim(),
+        api_key_env: template.api_key_env.trim(),
+        temperature: template.temperature,
+        timeout: template.timeout,
+      },
+    ]))
+    setSaving(true)
+    setInlineMsg(null)
+    const res = await put('/desktop/config', {
+      llm_mode: 'real',
+      default_llm: defaultTemplate,
+      llm_profiles: profiles,
+      agent_llm: agentRoutes,
+    })
+    setSaving(false)
+    if (res.ok && res.data) {
+      const payload = res.data as { restart_required?: boolean; message?: string }
+      await loadDesktopConfig()
+      setRestartRequired(Boolean(payload.restart_required) || desktopConfig?.runtime_llm_mode !== 'real')
+      setInlineMsg({ variant: 'success', text: 'LLM 模板和 Agent 路由已保存，重启本地服务后生效。' })
+      showToast({ tone: 'success', title: 'LLM 配置已保存', message: '模板和 Agent 路由已写入本地配置。' })
+    } else {
+      const msg = res.error?.message || '保存 LLM 配置失败'
+      setInlineMsg({ variant: 'danger', text: msg })
+      showToast({ tone: 'danger', title: '保存失败', message: msg })
+    }
+  }
+
+  const handleSaveKey = async (template: LlmTemplateForm) => {
+    const value = apiKeyDrafts[template.name]?.trim()
+    if (!value) return
+    setSavingKeyFor(template.name)
+    setInlineMsg(null)
+    try {
+      await window.__NOVELOS_DESKTOP__?.setApiKey?.(template.api_key_env, value)
+      setApiKeyDrafts((prev) => ({ ...prev, [template.name]: '' }))
+      const statuses = await window.__NOVELOS_DESKTOP__?.secretStatus?.()
+      setSecretStatuses(statuses || {})
+      setRestartRequired(true)
+      const msg = `${template.name} 的 API Key 已保存到本机安全存储，重启本地服务后可测试连接。`
+      setInlineMsg({ variant: 'success', text: msg })
+      showToast({ tone: 'success', title: 'API Key 已保存', message: msg })
+    } catch (err) {
+      const msg = `保存 API Key 失败: ${(err as Error).message}`
+      setInlineMsg({ variant: 'danger', text: msg })
+      showToast({ tone: 'danger', title: '保存失败', message: msg })
+    }
+    setSavingKeyFor(null)
+  }
+
+  const handleDeleteKey = async (template: LlmTemplateForm) => {
+    const ok = await dialog.confirm({
+      title: '删除本机 API Key',
+      message: `确定删除 ${template.api_key_env} 的本机安全存储？配置文件会保留模板，但重启后该模板将无法调用真实 LLM。`,
+      tone: 'danger',
+      confirmLabel: '删除',
+    })
+    if (!ok) return
+    setSavingKeyFor(template.name)
+    setInlineMsg(null)
+    try {
+      await window.__NOVELOS_DESKTOP__?.deleteApiKey?.(template.api_key_env)
+      const statuses = await window.__NOVELOS_DESKTOP__?.secretStatus?.()
+      setSecretStatuses(statuses || {})
+      setRestartRequired(true)
+      const msg = `${template.name} 的 API Key 已删除，重启本地服务后生效。`
+      setInlineMsg({ variant: 'success', text: msg })
+      showToast({ tone: 'success', title: 'API Key 已删除', message: msg })
+    } catch (err) {
+      const msg = `删除 API Key 失败: ${(err as Error).message}`
+      setInlineMsg({ variant: 'danger', text: msg })
+      showToast({ tone: 'danger', title: '删除失败', message: msg })
+    }
+    setSavingKeyFor(null)
+  }
+
+  const handleTest = async (template: LlmTemplateForm) => {
+    setTestingProfile(template.name)
+    setInlineMsg(null)
+    const res = await post<{
+      ok: boolean
+      message: string
+      error_code?: string
+      latency_ms?: number
+      suggestion?: string
+    }>('/desktop/test-llm', {
+      provider: template.provider,
+      base_url: template.base_url,
+      model: template.model,
+      api_key_env: template.api_key_env,
+    })
+    setTestingProfile(null)
+    if (res.ok && res.data) {
+      if (res.data.ok) {
+        const msg = `${template.name} 连接成功${res.data.latency_ms ? `，延迟 ${res.data.latency_ms}ms` : ''}`
+        setInlineMsg({ variant: 'success', text: msg })
+        showToast({ tone: 'success', title: '连接成功', message: msg })
+      } else {
+        const msg = `${res.data.error_code || '连接失败'}：${res.data.message}${res.data.suggestion ? `。${res.data.suggestion}` : ''}`
+        setInlineMsg({ variant: 'danger', text: msg })
+        showToast({ tone: 'danger', title: '连接未通过', message: res.data.message })
+      }
+    } else {
+      const msg = res.error?.message || '测试连接失败'
+      setInlineMsg({ variant: 'danger', text: msg })
+      showToast({ tone: 'danger', title: '测试失败', message: msg })
+    }
+  }
+
+  const handleRestart = async () => {
+    const ok = await dialog.confirm({
+      title: '重启本地服务',
+      message: '重启后会加载最新 LLM 模板、Agent 路由和安全存储中的 API Key。进行中的请求会中断。',
+      tone: 'warning',
+      confirmLabel: '重启',
+    })
+    if (!ok) return
+    setRestarting(true)
+    try {
+      const res = await window.__NOVELOS_DESKTOP__?.restartSidecar?.()
+      if (res?.success) {
+        setRestartRequired(false)
+        await loadDesktopConfig()
+        setInlineMsg({ variant: 'success', text: '本地服务已重启，真实 LLM 配置已加载。' })
+        showToast({ tone: 'success', title: '重启成功', message: '可以开始测试连接或生成章节。' })
+      } else {
+        const msg = '本地服务未能成功重启，请检查日志。'
+        setInlineMsg({ variant: 'danger', text: msg })
+        showToast({ tone: 'danger', title: '重启失败', message: msg })
+      }
+    } catch (err) {
+      const msg = `重启失败: ${(err as Error).message}`
+      setInlineMsg({ variant: 'danger', text: msg })
+      showToast({ tone: 'danger', title: '重启失败', message: msg })
+    }
+    setRestarting(false)
+  }
+
+  if (!isDesktop) {
+    return (
+      <>
+        <SectionCard title="模型配置" subtitle="当前为浏览器模式">
+          <div style={{ padding: 'var(--space-5)' }}>
+            <InlineMessage variant="warning">
+              浏览器模式只能查看当前 API 进程配置；模板、API Key 安全存储和重启服务需要在桌面客户端中使用。
+            </InlineMessage>
+          </div>
+        </SectionCard>
+        <ReadonlyLlmSnapshot data={data} />
+      </>
+    )
+  }
+
+  if (loading) {
+    return (
+      <SectionCard title="模型配置">
+        <div style={{ padding: 'var(--space-5)' }}>
+          <SkeletonStack rows={5} />
+        </div>
+      </SectionCard>
+    )
+  }
+
+  const runtimeMode = desktopConfig?.runtime_llm_mode || desktopConfig?.llm_mode || data.llm_mode
+  const configuredMode = desktopConfig?.configured_llm_mode || desktopConfig?.llm_mode || runtimeMode
+  const profileNames = templates.map((template) => template.name)
+
   return (
     <>
-      <SectionCard title="LLM 档案" subtitle={`默认: ${data.default_llm || '未设置'}`}>
+      <SectionCard
+        title="模型配置"
+        subtitle="用模板管理 API、API Key 和模型；每个 Agent 选择一个模板，不选则使用 default"
+        action={
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 8,
+            padding: '6px 10px',
+            borderRadius: 'var(--radius-full)',
+            background: runtimeMode === 'real' ? 'rgba(16, 185, 129, 0.12)' : 'rgba(245, 158, 11, 0.13)',
+            color: runtimeMode === 'real' ? 'var(--success)' : 'var(--warning)',
+            fontSize: '12px',
+            fontWeight: 700,
+          }}>
+            <Wifi size={14} />
+            运行中：{runtimeMode === 'real' ? '真实 LLM' : '演示模式'}
+            {configuredMode !== runtimeMode ? '（待重启）' : ''}
+          </span>
+        }
+      >
         <div style={{ padding: 'var(--space-5)' }}>
-          {data.llm_profiles.length > 0 ? (
-            <DataTable
-              compact
-              data={data.llm_profiles}
-              getRowKey={(profile) => profile.name}
-              columns={[
-                { key: 'name', header: '名称', render: (profile) => profile.name },
-                { key: 'provider', header: '提供商', render: (profile) => profile.provider },
-                { key: 'model', header: '模型', render: (profile) => profile.model },
-                {
-                  key: 'apiKey',
-                  header: 'API Key',
-                  render: (profile) => (
-                    <>
-                      {profile.has_key ? <span className="text-success">已配置</span> : <span className="text-danger">未配置</span>}
-                      {profile.api_key_env && <div style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>变量: {profile.api_key_env}</div>}
-                      {profile.api_key_source && <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>来源: {profile.api_key_source}</div>}
-                    </>
-                  ),
-                },
-                {
-                  key: 'baseUrl',
-                  header: 'Base URL',
-                  render: (profile) => (
-                    <>
-                      {profile.has_base_url ? <span className="text-success">已配置</span> : <span className="text-danger">未配置</span>}
-                      {profile.resolved_base_url && (
-                        <div style={{ fontSize: '11px', color: 'var(--text-secondary)', maxWidth: 260, wordBreak: 'break-all' }}>
-                          {profile.resolved_base_url}
+          {inlineMsg && (
+            <div style={{ marginBottom: 16 }}>
+              <InlineMessage variant={inlineMsg.variant}>{inlineMsg.text}</InlineMessage>
+            </div>
+          )}
+
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: 'minmax(0, 1.2fr) minmax(280px, 0.8fr)',
+            gap: 18,
+            alignItems: 'start',
+          }}>
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+                <div>
+                  <h4 style={{ margin: 0, fontSize: 16 }}>LLM 模板</h4>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 3 }}>
+                    每个模板包含一套 Base URL、API Key 环境变量和模型 ID。
+                  </div>
+                </div>
+                <LoadingButton className="btn btn-secondary" variant="secondary" loading={false} onClick={addTemplate}>
+                  <Plus size={14} style={{ marginRight: 4 }} />
+                  新建模板
+                </LoadingButton>
+              </div>
+
+              <div style={{ display: 'grid', gap: 14 }}>
+                {templates.map((template) => {
+                  const isDefault = template.name === defaultTemplate
+                  const secretConfigured = Boolean(secretStatuses[template.api_key_env]?.configured)
+                  const persistedProfile = desktopConfig?.profiles?.[template.name]
+                  const activeKey = secretConfigured || persistedProfile?.api_key_configured
+                  const canTest = runtimeMode === 'real' && !restartRequired && activeKey
+                  return (
+                    <div
+                      key={template.name}
+                      style={{
+                        border: isDefault ? '1px solid rgba(118, 26, 52, 0.36)' : '1px solid var(--border-color)',
+                        borderRadius: 'var(--radius-md)',
+                        padding: 16,
+                        background: isDefault ? 'rgba(118, 26, 52, 0.035)' : 'var(--bg-primary)',
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 14 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                          <Server size={18} style={{ color: 'var(--ink-accent)' }} />
+                          <TextInput
+                            aria-label={`${template.name} 模板名称`}
+                            value={template.name}
+                            onChange={(e) => renameTemplate(template.name, e.target.value)}
+                            style={{ width: 150, fontWeight: 700 }}
+                          />
+                          {isDefault && (
+                            <span style={{
+                              borderRadius: 'var(--radius-full)',
+                              padding: '3px 8px',
+                              background: 'rgba(118, 26, 52, 0.11)',
+                              color: 'var(--ink-accent)',
+                              fontSize: 12,
+                              fontWeight: 700,
+                            }}>
+                              default
+                            </span>
+                          )}
+                          {activeKey && (
+                            <span style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: 4,
+                              color: 'var(--success)',
+                              fontSize: 12,
+                              fontWeight: 700,
+                            }}>
+                              <CheckCircle2 size={13} />
+                              Key 已保存
+                            </span>
+                          )}
                         </div>
-                      )}
-                      {profile.base_url_source && <div style={{ fontSize: '11px', color: 'var(--text-muted)' }}>来源: {profile.base_url_source}</div>}
-                    </>
-                  ),
-                },
-                {
-                  key: 'params',
-                  header: '参数',
-                  render: (profile) => (
-                    <>
-                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>temperature: {profile.temperature ?? '-'}</div>
-                      <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>max_tokens: {profile.max_tokens ?? '-'}</div>
-                    </>
-                  ),
-                },
-              ]}
-            />
-          ) : (
-            <EmptyState
-              title="暂无 LLM 档案"
-              hint="使用配置草案生成器创建档案，或手动编辑配置文件。"
-            />
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          {!isDefault && (
+                            <LoadingButton className="btn btn-secondary" variant="secondary" loading={false} onClick={() => setDefaultTemplate(template.name)}>
+                              设为默认
+                            </LoadingButton>
+                          )}
+                          <button
+                            className="btn btn-secondary"
+                            type="button"
+                            onClick={() => removeTemplate(template.name)}
+                            disabled={templates.length <= 1}
+                            aria-label={`删除 ${template.name} 模板`}
+                          >
+                            <Trash2 size={14} />
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
+                        <FormField label="服务商">
+                          <Select value={template.provider} onChange={(e) => updateTemplate(template.name, { provider: e.target.value })}>
+                            {TEMPLATE_PROVIDER_OPTIONS.map((option) => (
+                              <option key={option.value} value={option.value}>{option.label}</option>
+                            ))}
+                          </Select>
+                        </FormField>
+                        <FormField label="模型 ID">
+                          <TextInput
+                            value={template.model}
+                            onChange={(e) => updateTemplate(template.name, { model: e.target.value })}
+                            placeholder="gpt-4o-mini / kimi-k2 / deepseek-chat"
+                          />
+                        </FormField>
+                        <FormField label="Base URL">
+                          <TextInput
+                            value={template.base_url}
+                            onChange={(e) => updateTemplate(template.name, { base_url: e.target.value })}
+                            placeholder="https://api.example.com/v1"
+                          />
+                        </FormField>
+                        <FormField label="API Key 环境变量名">
+                          <TextInput
+                            value={template.api_key_env}
+                            onChange={(e) => updateTemplate(template.name, { api_key_env: e.target.value.toUpperCase() })}
+                            placeholder="OPENAI_API_KEY"
+                          />
+                        </FormField>
+                      </div>
+
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(0, 1fr) auto auto auto',
+                        gap: 10,
+                        alignItems: 'end',
+                        marginTop: 12,
+                      }}>
+                        <FormField label="API Key" helper="只保存到本机安全存储，不写入配置文件。">
+                          <TextInput
+                            type="password"
+                            value={apiKeyDrafts[template.name] || ''}
+                            onChange={(e) => setApiKeyDrafts((prev) => ({ ...prev, [template.name]: e.target.value }))}
+                            placeholder={`输入 ${template.api_key_env} 的 Key`}
+                          />
+                        </FormField>
+                        <LoadingButton
+                          className="btn btn-secondary"
+                          variant="secondary"
+                          loading={savingKeyFor === template.name}
+                          loadingText="保存中..."
+                          onClick={() => handleSaveKey(template)}
+                          disabled={!apiKeyDrafts[template.name]?.trim()}
+                        >
+                          <KeyRound size={14} style={{ marginRight: 4 }} />
+                          保存 Key
+                        </LoadingButton>
+                        <LoadingButton
+                          className="btn btn-secondary"
+                          variant="secondary"
+                          loading={testingProfile === template.name}
+                          loadingText="测试中..."
+                          onClick={() => handleTest(template)}
+                          disabled={!canTest}
+                        >
+                          测试连接
+                        </LoadingButton>
+                        <LoadingButton
+                          className="btn btn-secondary"
+                          variant="secondary"
+                          loading={savingKeyFor === template.name}
+                          loadingText="删除中..."
+                          onClick={() => handleDeleteKey(template)}
+                          disabled={!activeKey}
+                        >
+                          删除 Key
+                        </LoadingButton>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+
+            <div style={{
+              border: '1px solid var(--border-color)',
+              borderRadius: 'var(--radius-md)',
+              background: 'var(--bg-primary)',
+              padding: 16,
+              position: 'sticky',
+              top: 12,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
+                <Router size={18} style={{ color: 'var(--ink-accent)' }} />
+                <div>
+                  <h4 style={{ margin: 0, fontSize: 16 }}>Agent 使用哪个模板</h4>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 2 }}>
+                    默认都走 default，需要时给 author/editor 单独分配。
+                  </div>
+                </div>
+              </div>
+              <div style={{ display: 'grid', gap: 10 }}>
+                {AGENT_OPTIONS.map((agent) => (
+                  <div
+                    key={agent.id}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'minmax(0, 1fr) 150px',
+                      gap: 10,
+                      alignItems: 'center',
+                      padding: '10px 0',
+                      borderBottom: '1px solid rgba(30, 58, 95, 0.06)',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 700 }}>{agent.label}</div>
+                      <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 2 }}>{agent.hint}</div>
+                    </div>
+                    <Select
+                      aria-label={`${agent.id} LLM 模板`}
+                      value={agentRoutes[agent.id] || defaultTemplate}
+                      onChange={(e) => setAgentRoutes((prev) => ({ ...prev, [agent.id]: e.target.value }))}
+                    >
+                      {profileNames.map((name) => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </Select>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginTop: 18 }}>
+            <LoadingButton className="btn btn-primary" variant="primary" loading={saving} loadingText="保存中..." onClick={handleSaveConfig}>
+              保存模型配置
+            </LoadingButton>
+            {(restartRequired || runtimeMode !== 'real' || configuredMode !== runtimeMode) && (
+              <LoadingButton className="btn btn-warning" variant="warning" loading={restarting} loadingText="重启中..." onClick={handleRestart}>
+                <RefreshCw size={14} style={{ marginRight: 4 }} />
+                重启本地服务
+              </LoadingButton>
+            )}
+            <button className="btn btn-secondary" type="button" onClick={loadDesktopConfig}>
+              刷新状态
+            </button>
+          </div>
+
+          {(restartRequired || runtimeMode !== 'real' || configuredMode !== runtimeMode) && (
+            <div style={{ marginTop: 14 }}>
+              <InlineMessage variant="warning">
+                配置或 API Key 已更新，但当前后端仍未加载最新环境。请重启本地服务后再测试连接或生成章节。
+              </InlineMessage>
+            </div>
           )}
         </div>
       </SectionCard>
-
-      {data.agent_routes.length > 0 && (
-        <div className="card" style={{ marginBottom: 'var(--spacing-lg)' }}>
-          <div className="card-header">
-            <h3>Agent 路由</h3>
-          </div>
-          <div className="card-body">
-            <DataTable
-              compact
-              data={data.agent_routes}
-              getRowKey={(route) => route.agent}
-              columns={[
-                { key: 'agent', header: 'Agent', render: (route) => route.agent },
-                { key: 'route', header: 'LLM Profile', render: (route) => route.route },
-              ]}
-            />
-          </div>
-        </div>
-      )}
     </>
+  )
+}
+
+function ReadonlyLlmSnapshot({ data }: { data: SettingsData }) {
+  return (
+    <SectionCard title="当前 API 进程配置" subtitle={`默认: ${data.default_llm || '未设置'}`}>
+      <div style={{ padding: 'var(--space-5)' }}>
+        {data.llm_profiles.length > 0 ? (
+          <div style={{ display: 'grid', gap: 10 }}>
+            {data.llm_profiles.map((profile) => (
+              <div
+                key={profile.name}
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: '160px minmax(0, 1fr) 120px',
+                  gap: 12,
+                  padding: 12,
+                  borderRadius: 'var(--radius-md)',
+                  border: '1px solid var(--border-color)',
+                }}
+              >
+                <strong>{profile.name}</strong>
+                <span style={{ color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{profile.resolved_base_url || '-'}</span>
+                <span>{profile.model}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <EmptyState title="暂无 LLM 档案" hint="请在桌面客户端中创建 LLM 模板。" />
+        )}
+      </div>
+    </SectionCard>
   )
 }
 
@@ -343,6 +942,276 @@ export function SkillsSettingsSection() {
     <SectionCard title="Skill 管理">
       <SkillVisibilityPanel />
     </SectionCard>
+  )
+}
+
+export function DesktopRuntimeSection() {
+  const [info, setInfo] = useState<{
+    is_desktop: boolean
+    app_data_dir: string
+    data_dir: string
+    db_path: string
+    config_path: string
+    config_dir: string
+    logs_dir: string
+    backups_dir: string
+    llm_mode: string
+    config_exists: boolean
+    db_exists: boolean
+    platform: string
+    version: string
+  } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [healthOk, setHealthOk] = useState(false)
+  const [runtimeStatus, setRuntimeStatus] = useState<{
+    status: string
+    pid: number | null
+    apiBaseUrl: string
+    port: number
+    lastError: {
+      exitCode: number | null
+      signal: string | null
+      timestamp: string
+      reason: string
+    } | null
+    stdoutLogPath: string
+    stderrLogPath: string
+  } | null>(null)
+  const [restarting, setRestarting] = useState(false)
+  const [exportingDiagnostics, setExportingDiagnostics] = useState(false)
+  const dialog = useAppDialog()
+  const { showToast } = useToast()
+
+  const load = React.useCallback(async () => {
+    setLoading(true)
+    const [runtimeRes, healthRes] = await Promise.all([
+      get<typeof info>('/desktop/runtime-info'),
+      get('/health'),
+    ])
+    if (runtimeRes.ok && runtimeRes.data) {
+      setInfo(runtimeRes.data)
+    }
+    setHealthOk(healthRes.ok && (healthRes.data as { status?: string } | undefined)?.status === 'ok')
+    if (window.__NOVELOS_DESKTOP__?.runtimeStatus) {
+      try {
+        const r = await window.__NOVELOS_DESKTOP__.runtimeStatus()
+        setRuntimeStatus(r as typeof runtimeStatus)
+      } catch {
+        // ignore
+      }
+    }
+    setLoading(false)
+  }, [])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  useEffect(() => {
+    const unsub = window.__NOVELOS_DESKTOP__?.onRuntimeStatus?.((s) => {
+      setRuntimeStatus(s as typeof runtimeStatus)
+      if (s.status === 'healthy') {
+        setHealthOk(true)
+      } else if (s.status === 'failed' || s.status === 'exited') {
+        setHealthOk(false)
+      }
+    })
+    return () => {
+      unsub?.()
+    }
+  }, [])
+
+  const isDesktop = typeof window !== 'undefined' && !!window.__NOVELOS_DESKTOP__
+
+  const openDataDir = () => window.__NOVELOS_DESKTOP__?.openDataDir?.()
+  const openConfigDir = () => window.__NOVELOS_DESKTOP__?.openConfigDir?.()
+  const openLogsDir = () => window.__NOVELOS_DESKTOP__?.openLogsDir?.()
+
+  const handleRestart = async () => {
+    const ok = await dialog.confirm({
+      title: '重启本地服务',
+      message: '确定要重启本地后端服务吗？进行中的请求可能会中断。',
+      tone: 'warning',
+      confirmLabel: '重启',
+    })
+    if (!ok) return
+    setRestarting(true)
+    try {
+      const res = await window.__NOVELOS_DESKTOP__?.restartSidecar?.()
+      if (res?.success) {
+        setHealthOk(true)
+        showToast({ tone: 'success', title: '重启成功', message: '本地服务已重启。' })
+      } else {
+        showToast({ tone: 'danger', title: '重启失败', message: '本地服务未能成功重启，请检查日志。' })
+      }
+    } catch (err) {
+      showToast({ tone: 'danger', title: '重启失败', message: `错误: ${(err as Error).message}` })
+    }
+    setRestarting(false)
+    load()
+  }
+
+  const handleExportDiagnostics = async () => {
+    setExportingDiagnostics(true)
+    try {
+      const res = await window.__NOVELOS_DESKTOP__?.exportDiagnostics?.()
+      if (res?.success) {
+        showToast({ tone: 'success', title: '诊断包已导出', message: `脱敏诊断包已保存到 ${res.path}` })
+      } else {
+        showToast({ tone: 'danger', title: '导出失败', message: res?.message || '未能生成诊断包，请检查日志目录权限。' })
+      }
+    } catch (err) {
+      showToast({ tone: 'danger', title: '导出失败', message: `错误: ${(err as Error).message}` })
+    }
+    setExportingDiagnostics(false)
+  }
+
+  if (loading) {
+    return (
+      <SectionCard title="本地服务">
+        <div style={{ padding: 'var(--space-5)' }}>
+          <SkeletonStack rows={4} />
+        </div>
+      </SectionCard>
+    )
+  }
+
+  return (
+    <>
+      <SectionCard
+        title="本地服务"
+        subtitle={isDesktop ? '桌面端 sidecar、数据目录与日志' : '浏览器模式'}
+        action={
+          <span style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 'var(--space-1)',
+            padding: 'var(--space-1) var(--space-3)',
+            fontSize: 'var(--text-xs)',
+            fontWeight: 'var(--font-medium)',
+            borderRadius: 'var(--radius-full)',
+            background: healthOk ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+            color: healthOk ? '#065f46' : '#991b1b',
+          }}>
+            <span style={{
+              width: '6px',
+              height: '6px',
+              borderRadius: '50%',
+              background: healthOk ? 'var(--status-success)' : 'var(--status-danger)',
+            }} />
+            {healthOk ? '后端正常' : '后端异常'}
+          </span>
+        }
+      >
+        <div style={{ padding: 'var(--space-5)' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px', marginBottom: '16px' }}>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>运行模式</div>
+              <div style={{ fontWeight: 600 }}>{isDesktop ? '桌面应用' : '浏览器'}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>平台</div>
+              <div style={{ fontWeight: 600 }}>{info?.platform || '-'}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>LLM 模式</div>
+              <div style={{ fontWeight: 600 }}>{tLlmMode(info?.llm_mode || 'stub')}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>版本</div>
+              <div style={{ fontWeight: 600 }}>{info?.version || '-'}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>配置文件</div>
+              <div style={{ fontWeight: 600 }}>{info?.config_exists ? '存在' : '未创建'}</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px', wordBreak: 'break-all' }}>{info?.config_path || '-'}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>数据库</div>
+              <div style={{ fontWeight: 600 }}>{info?.db_exists ? '存在' : '未创建'}</div>
+              <div style={{ fontSize: '11px', color: 'var(--text-muted)', marginTop: '2px', wordBreak: 'break-all' }}>{info?.db_path || '-'}</div>
+            </div>
+            {isDesktop && runtimeStatus && (
+              <>
+                <div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Sidecar 状态</div>
+                  <div style={{ fontWeight: 600, color: runtimeStatus.status === 'healthy' ? 'var(--success)' : 'var(--danger)' }}>
+                    {runtimeStatus.status === 'healthy' ? '运行中' : runtimeStatus.status === 'starting' ? '启动中' : runtimeStatus.status === 'stopping' ? '停止中' : '已停止'}
+                  </div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>API 地址</div>
+                  <div style={{ fontWeight: 600, fontSize: '12px', wordBreak: 'break-all' }}>{runtimeStatus.apiBaseUrl || '-'}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>Sidecar PID</div>
+                  <div style={{ fontWeight: 600 }}>{runtimeStatus.pid ?? '-'}</div>
+                </div>
+                <div>
+                  <div style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>日志路径</div>
+                  <div style={{ fontWeight: 600, fontSize: '11px', wordBreak: 'break-all' }}>{runtimeStatus.stderrLogPath || '-'}</div>
+                </div>
+              </>
+            )}
+          </div>
+
+          {isDesktop && runtimeStatus?.lastError && (
+            <div style={{ marginBottom: '16px', padding: '12px', background: '#fef2f2', borderRadius: '6px', fontSize: '13px', color: '#991b1b' }}>
+              <div style={{ fontWeight: 600, marginBottom: '4px' }}>最近错误</div>
+              <div>{runtimeStatus.lastError.reason}</div>
+              <div style={{ fontSize: '11px', color: '#b91c1c', marginTop: '4px' }}>
+                时间: {new Date(runtimeStatus.lastError.timestamp).toLocaleString()}
+                {runtimeStatus.lastError.exitCode !== null && ` · 退出码: ${runtimeStatus.lastError.exitCode}`}
+                {runtimeStatus.lastError.signal && ` · 信号: ${runtimeStatus.lastError.signal}`}
+              </div>
+            </div>
+          )}
+
+          {isDesktop && (
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button className="btn btn-secondary" onClick={openDataDir} disabled={!window.__NOVELOS_DESKTOP__?.openDataDir}>
+                打开数据目录
+              </button>
+              <button className="btn btn-secondary" onClick={openConfigDir} disabled={!window.__NOVELOS_DESKTOP__?.openConfigDir}>
+                打开配置目录
+              </button>
+              <button className="btn btn-secondary" onClick={openLogsDir} disabled={!window.__NOVELOS_DESKTOP__?.openLogsDir}>
+                打开日志目录
+              </button>
+              <button className="btn btn-secondary" onClick={load}>
+                刷新
+              </button>
+              <LoadingButton
+                className="btn btn-warning"
+                variant="warning"
+                loading={restarting}
+                loadingText="重启中..."
+                onClick={handleRestart}
+              >
+                重启本地服务
+              </LoadingButton>
+              <LoadingButton
+                className="btn btn-primary"
+                variant="primary"
+                loading={exportingDiagnostics}
+                loadingText="导出中..."
+                onClick={handleExportDiagnostics}
+                disabled={!window.__NOVELOS_DESKTOP__?.exportDiagnostics}
+              >
+                导出诊断包
+              </LoadingButton>
+            </div>
+          )}
+
+          {!isDesktop && (
+            <div style={{ padding: '12px', background: 'var(--bg-secondary)', borderRadius: '6px', fontSize: '13px', color: 'var(--text-secondary)' }}>
+              浏览器模式下无法打开本地目录。如需完整桌面功能，请使用 Novelos 桌面应用。
+            </div>
+          )}
+        </div>
+      </SectionCard>
+
+    </>
   )
 }
 
@@ -369,6 +1238,14 @@ export function ConfigDraftSection({
   onValidateConfig: () => void
   setWizardForm: Dispatch<SetStateAction<WizardForm>>
 }) {
+  const { showToast } = useToast()
+
+  const handleCopyDraft = () => {
+    if (!draft) return
+    navigator.clipboard.writeText(draft)
+    showToast({ tone: 'success', title: '已复制', message: '配置草案已复制到剪贴板' })
+  }
+
   return (
     <SectionCard title="配置草案生成器" subtitle="填写表单生成 YAML 草案（仅预览，不写入文件）">
       <div style={{ padding: 'var(--space-5)' }}>
@@ -437,30 +1314,31 @@ export function ConfigDraftSection({
           </FormField>
         </div>
 
-        <button onClick={onGenerateDraft} className="btn btn-primary">
-          生成配置草案
-        </button>
-        <button
-          onClick={onValidateConfig}
-          className="btn btn-secondary"
-          style={{ marginLeft: '8px' }}
-          disabled={validating}
+        <LoadingButton
+          className="btn btn-primary"
+          variant="primary"
+          loading={false}
+          onClick={onGenerateDraft}
         >
-          {validating ? '验证中...' : '验证配置'}
-        </button>
+          生成配置草案
+        </LoadingButton>
+        <LoadingButton
+          className="btn btn-secondary"
+          variant="secondary"
+          loading={validating}
+          loadingText="验证中..."
+          onClick={onValidateConfig}
+          style={{ marginLeft: '8px' }}
+        >
+          验证配置
+        </LoadingButton>
 
         {validateResult && (
-          <div
-            style={{
-              marginTop: '16px',
-              padding: '12px',
-              borderRadius: '6px',
-              background: validateResult.valid ? '#dcfce7' : '#fef2f2',
-              color: validateResult.valid ? '#166534' : '#991b1b',
-            }}
-          >
-            <strong>{validateResult.valid ? '✓ 验证成功' : `✗ ${validateResult.error_code || '验证失败'}`}</strong>
-            <div style={{ marginTop: '4px', fontSize: '13px' }}>{validateResult.message}</div>
+          <div style={{ marginTop: 16 }}>
+            <InlineMessage variant={validateResult.valid ? 'success' : 'danger'}>
+              <strong>{validateResult.valid ? '✓ 验证成功' : `✗ ${validateResult.error_code || '验证失败'}`}</strong>
+              <div style={{ marginTop: '4px', fontSize: '13px' }}>{validateResult.message}</div>
+            </InlineMessage>
           </div>
         )}
 
@@ -510,13 +1388,14 @@ export function ConfigDraftSection({
             >
               {draft}
             </pre>
-            <button
-              onClick={() => navigator.clipboard.writeText(draft)}
+            <LoadingButton
               className="btn btn-secondary"
-              style={{ marginTop: '8px' }}
+              variant="secondary"
+              loading={false}
+              onClick={handleCopyDraft}
             >
               复制草案
-            </button>
+            </LoadingButton>
           </div>
         )}
       </div>

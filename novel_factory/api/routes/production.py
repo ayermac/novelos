@@ -44,8 +44,7 @@ class ArcPlanRequest(BaseModel):
 
 def _has_approved_genesis(repo, project_id: str) -> bool:
     """Check if project has an approved genesis run."""
-    latest = repo.get_latest_genesis_run(project_id)
-    return latest is not None and latest.get("status") == "approved"
+    return any(run.get("status") == "approved" for run in repo.list_genesis_runs(project_id))
 
 
 def _has_pending_genesis(repo, project_id: str) -> bool:
@@ -61,14 +60,14 @@ def _has_running_genesis(repo, project_id: str) -> bool:
 
 
 def _has_manual_context_ready(health: dict) -> bool:
-    """Return true when manually entered project context is enough to write."""
-    return (
-        health.get("has_world_settings")
-        and health.get("has_characters")
-        and health.get("has_outlines")
-        and health.get("has_instructions_for_current_chapter")
-        and health.get("title_contract_aligned", True)
-    )
+    """Return true when project context is complete enough for chapter generation.
+
+    v6.3.1: Unified with run guard — requires approved genesis + world + characters
+    + outlines + instructions (same as ready_for_chapter_1). This prevents the
+    mismatch where production-next recommends generate_chapter but the run guard
+    blocks with CONTEXT_INCOMPLETE.
+    """
+    return health.get("ready_for_chapter_1", False)
 
 
 def _get_blocking_chapter(repo, project_id: str) -> dict | None:
@@ -110,6 +109,10 @@ def _has_pending_memory_updates(repo, project_id: str) -> bool:
     return len(items) > 0
 
 
+def _is_chapter_production_run(run: dict) -> bool:
+    return (run.get("graph_name") or "chapter_production") == "chapter_production"
+
+
 def _has_running_chapter_workflow(repo, project_id: str, chapter_number: int) -> bool:
     """Check if a chapter has a currently running workflow run."""
     if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
@@ -118,7 +121,7 @@ def _has_running_chapter_workflow(repo, project_id: str, chapter_number: int) ->
             chapter_number=chapter_number,
         )
     runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=5)
-    return any(r.get("status") == "running" for r in runs)
+    return any(r.get("status") == "running" and _is_chapter_production_run(r) for r in runs)
 
 
 def _get_running_chapter_workflow(repo, project_id: str, chapter_number: int) -> dict | None:
@@ -130,7 +133,7 @@ def _get_running_chapter_workflow(repo, project_id: str, chapter_number: int) ->
         )
     runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=5)
     for run in runs:
-        if run.get("status") == "running":
+        if run.get("status") == "running" and _is_chapter_production_run(run):
             return run
     return None
 
@@ -243,9 +246,28 @@ def _get_planned_chapter_with_content(repo, project_id: str) -> dict | None:
             continue
         content = (chapter.get("content") or "").strip()
         word_count = chapter.get("word_count") or 0
-        if content or word_count > 0:
+        if (content or word_count > 0) and not _has_explicit_reset_recovery(
+            repo, project_id, chapter.get("chapter_number")
+        ):
             return chapter
     return None
+
+
+def _has_explicit_reset_recovery(repo, project_id: str, chapter_number: int | None) -> bool:
+    if chapter_number is None:
+        return False
+    try:
+        runs = repo.get_workflow_runs_for_project(
+            project_id,
+            chapter_number=chapter_number,
+            limit=5,
+        )
+    except Exception:
+        return False
+    return any(
+        run.get("status") == "completed" and run.get("current_node") == "reset_recovery"
+        for run in runs
+    )
 
 
 def _detect_chapter_workflow_contradictions(repo, project_id: str) -> list[dict]:
@@ -274,7 +296,10 @@ def _detect_chapter_workflow_contradictions(repo, project_id: str) -> list[dict]
         if not runs:
             continue
 
-        running_runs = [r for r in runs if r.get("status") == "running"]
+        running_runs = [
+            r for r in runs
+            if r.get("status") == "running" and _is_chapter_production_run(r)
+        ]
         latest_run = runs[0]  # Most recent first
 
         # Contradiction 1: Chapter in terminal state but workflow is still "running"
@@ -415,7 +440,7 @@ def _build_project_health_summary(repo, project_id: str, timeout_minutes: int) -
 
 def _build_health(repo, project_id: str, current_chapter: int) -> dict:
     """Build health snapshot for a project."""
-    from ...agents.title_contract import evaluate_title_alignment
+    from ...agent_runtime.title_contract import evaluate_title_alignment
 
     project = repo.get_project(project_id)
     world_settings = repo.list_world_settings(project_id)
@@ -434,21 +459,38 @@ def _build_health(repo, project_id: str, current_chapter: int) -> dict:
         )
     title_alignment = evaluate_title_alignment(project, context_items)
 
+    has_approved_genesis = _has_approved_genesis(repo, project_id)
+    has_world = len(world_settings) > 0
+    has_chars = len(characters) > 0
+    has_outlines_ok = len(outlines) > 0
+    has_instruction = instruction is not None and bool(instruction.get("objective"))
+
+    # v6.3: ready_for_chapter_1 is the single source of truth for whether
+    # chapter generation can proceed without hitting run guards.
+    ready_for_chapter_1 = (
+        has_approved_genesis
+        and has_world
+        and has_chars
+        and has_outlines_ok
+        and has_instruction
+    )
+
     return {
         "has_project": project is not None,
         "has_genesis": latest_genesis is not None,
-        "has_approved_genesis": latest_genesis is not None and latest_genesis.get("status") == "approved",
-        "has_world_settings": len(world_settings) > 0,
-        "has_characters": len(characters) > 0,
-        "has_outlines": len(outlines) > 0,
-        "has_instructions_for_current_chapter": instruction is not None and bool(instruction.get("objective")),
+        "has_approved_genesis": has_approved_genesis,
+        "has_world_settings": has_world,
+        "has_characters": has_chars,
+        "has_outlines": has_outlines_ok,
+        "has_instructions_for_current_chapter": has_instruction,
+        "ready_for_chapter_1": ready_for_chapter_1,
         "has_pending_memory_updates": _has_pending_memory_updates(repo, project_id),
         "has_blocking_chapter": _get_blocking_chapter(repo, project_id) is not None,
         "has_stuck_run": _get_stuck_run(repo, project_id, current_chapter) is not None,
         "has_running_chapter_workflow": _has_running_chapter_workflow(repo, project_id, current_chapter),
         "title_contract": title_alignment,
         "title_contract_aligned": title_alignment["aligned"],
-        "manual_context_ready": False,
+        "manual_context_ready": ready_for_chapter_1,
     }
 
 
@@ -777,6 +819,9 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
         project = repo.get_project(project_id)
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
+            repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
 
         current_chapter = project.get("current_chapter", 1)
 

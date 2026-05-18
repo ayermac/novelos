@@ -311,8 +311,16 @@ function RunDetailSidebar({
                     fontSize: 10,
                     padding: '2px 6px',
                     borderRadius: 4,
-                    background: run.status === 'completed' ? '#d1fae5' : run.status === 'failed' ? '#fee2e2' : '#dbeafe',
-                    color: run.status === 'completed' ? '#065f46' : run.status === 'failed' ? '#991b1b' : '#1e40af',
+                    background: run.status === 'completed'
+                      ? 'color-mix(in srgb, var(--success) 16%, transparent)'
+                      : run.status === 'failed'
+                        ? 'color-mix(in srgb, var(--danger) 16%, transparent)'
+                        : 'var(--accent-soft)',
+                    color: run.status === 'completed'
+                      ? 'var(--success)'
+                      : run.status === 'failed'
+                        ? 'var(--danger)'
+                        : 'var(--primary)',
                     flexShrink: 0,
                   }}
                 >

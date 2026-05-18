@@ -1,6 +1,7 @@
 import { beforeEach, describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within, waitFor } from '@testing-library/react'
 import AuthorWorkbench from '../AuthorWorkbench'
+import { get } from '../../../lib/api'
 
 // Mock API
 vi.mock('../../../lib/api', () => ({
@@ -59,6 +60,7 @@ const baseProps = {
 describe('AuthorWorkbench', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(get).mockResolvedValue({ ok: true, data: null })
     baseProps.isChapterWorkflowRunning.mockReturnValue(false)
   })
 
@@ -143,7 +145,8 @@ describe('AuthorWorkbench', () => {
         currentChapterRecord={baseProps.chapters[3]}
       />
     )
-    expect(screen.getByText('本章尚未生成')).toBeInTheDocument()
+    expect(screen.getByText('本章还没有正文内容')).toBeInTheDocument()
+    expect(screen.getByText('编剧将规划章节场景和情节')).toBeInTheDocument()
   })
 
   it('renders workflow timeline steps on workflow tab', () => {
@@ -944,6 +947,51 @@ describe('AuthorWorkbench', () => {
     expect(screen.getByText(/保留当前正文和版本/)).toBeInTheDocument()
   })
 
+  it('shows targeted retry action for blocked author node', () => {
+    const onRetryRunNode = vi.fn()
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        onRetryRunNode={onRetryRunNode}
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-author-blocked',
+          run_status: 'blocked',
+          current_node: 'author',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 5,
+          is_stale: false,
+          recovery: {
+            recommended_action: 'retry_node',
+            reason: '章节处于阻塞/返修状态，可保留已有产物并重试执笔。',
+            safe_actions: [
+              { key: 'retry_node', label: '重试执笔', safe: true, note: '恢复到 scripted，跳过已完成上游节点' },
+              { key: 'reset_chapter', label: '清除阻塞并重置', safe: true, note: '回到 planned，完整重跑' },
+            ],
+          },
+          nodes: [
+            {
+              node_name: 'author',
+              label: '执笔',
+              status: 'blocked',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: null,
+              duration_ms: null,
+              messages: ['执笔撰写失败：LLM 响应超时'],
+              artifacts: [],
+            },
+          ],
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '重试执笔' }))
+    expect(onRetryRunNode).toHaveBeenCalledWith('run-author-blocked')
+    expect(screen.getByText(/跳过已完成上游节点/)).toBeInTheDocument()
+  })
+
   it('shows inline error when timeline refresh fails', () => {
     render(
       <AuthorWorkbench
@@ -978,5 +1026,272 @@ describe('AuthorWorkbench', () => {
     )
     expect(screen.queryByRole('button', { name: /生成本章/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /继续生成/ })).not.toBeInTheDocument()
+  })
+
+  /* v6.5.3 Chapter Writing Surface Polish tests ----------------------- */
+
+  it('shows skeleton stack while chapter content is loading', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        chapterLoading
+      />
+    )
+    const skeletonStack = document.querySelector('.ui-skeleton-stack')
+    expect(skeletonStack).toBeInTheDocument()
+  })
+
+  it('places quality diagnosis before the chapter editor for quick access', async () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        chapterDetail={{
+          project_id: 'test-proj',
+          project_name: '测试项目',
+          chapter_number: 3,
+          title: '第三章',
+          content: '正文内容',
+          word_count: 3800,
+          status: 'drafted',
+          quality_score: null,
+          created_at: '2026-05-16 10:00:00',
+          updated_at: '2026-05-16 10:00:00',
+        }}
+      />
+    )
+
+    const diagnosis = screen.getByLabelText('辅助质量诊断')
+    await waitFor(() => expect(document.querySelector('.chapter-editor-surface')).toBeInTheDocument())
+    const editor = document.querySelector('.chapter-editor-surface')
+    expect(editor).toBeInTheDocument()
+    expect(diagnosis.compareDocumentPosition(editor!)).toBe(Node.DOCUMENT_POSITION_FOLLOWING)
+  })
+
+  it('keeps the header quality score stable when diagnosis opens', async () => {
+    vi.mocked(get).mockImplementation(async (path: string) => {
+      if (path.includes('/quality-diagnosis')) {
+        return {
+          ok: true,
+          data: {
+            overall_score: 69.2,
+            dimensions: { death_penalty: 100, narrative_quality: 58 },
+            findings: [],
+            metrics: {
+              word_count: 3992,
+              paragraph_count: 129,
+              sentence_count: 187,
+              avg_sentence_length: 19.6,
+              dialogue_ratio: 0,
+              dialogue_count: 0,
+            },
+          },
+        }
+      }
+      return { ok: true, data: null }
+    })
+
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        currentChapterRecord={{ chapter_number: 3, status: 'drafted', word_count: 3800, title: '第三章', quality_score: 83 }}
+        chapterDetail={{
+          project_id: 'test-proj',
+          project_name: '测试项目',
+          chapter_number: 3,
+          title: '第三章',
+          content: '正文内容',
+          word_count: 3800,
+          status: 'drafted',
+          quality_score: 83,
+          created_at: '2026-05-16 10:00:00',
+          updated_at: '2026-05-16 10:00:00',
+        }}
+      />
+    )
+
+    const strip = document.querySelector('.author-readiness-strip')
+    expect(strip?.textContent).toContain('83')
+
+    const diagnosis = screen.getByLabelText('辅助质量诊断')
+    fireEvent.click(within(diagnosis).getByRole('button'))
+
+    await waitFor(() => expect(within(diagnosis).getByText('诊断 69.2')).toBeInTheDocument())
+    expect(strip?.textContent).toContain('审核分')
+    expect(strip?.textContent).toContain('83')
+    expect(strip?.textContent).not.toContain('诊断分')
+  })
+
+  it('empty state shows actionable next steps for ungenerated chapter', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        currentChapter={4}
+        currentChapterRecord={baseProps.chapters[3]}
+      />
+    )
+    expect(screen.getByText('本章还没有正文内容')).toBeInTheDocument()
+    expect(screen.getByText('编剧将规划章节场景和情节')).toBeInTheDocument()
+    expect(screen.getByText('执笔将撰写章节正文')).toBeInTheDocument()
+    expect(screen.getByText('润色、审核后生成最终版本')).toBeInTheDocument()
+    const surface = screen.getByLabelText('写作区')
+    const generateBtn = screen.getAllByRole('button', { name: /生成本章/ }).find((b) => surface.contains(b))
+    expect(generateBtn).toBeDefined()
+  })
+
+  it('planned chapter with preserved content asks for explicit overwrite instead of normal generate', () => {
+    const onConfirmRegenerate = vi.fn()
+    const preserved = { chapter_number: 4, status: 'planned', word_count: 900, title: '第四章' }
+
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        chapters={[...baseProps.chapters.slice(0, 3), preserved]}
+        currentChapter={4}
+        currentChapterRecord={preserved}
+        chapterDetail={{
+          project_id: 'test-proj',
+          project_name: '测试项目',
+          chapter_number: 4,
+          title: '第四章',
+          content: '这是一段恢复后保留的正文。',
+          word_count: 900,
+          status: 'planned',
+          quality_score: null,
+          created_at: '2026-05-16 10:00:00',
+          updated_at: '2026-05-16 10:00:00',
+        }}
+        onConfirmRegenerate={onConfirmRegenerate}
+      />
+    )
+
+    expect(screen.getAllByRole('button', { name: /覆盖重生成/ }).length).toBeGreaterThanOrEqual(2)
+    expect(screen.queryAllByRole('button', { name: /^生成本章$/ })).toHaveLength(0)
+
+    fireEvent.click(screen.getAllByRole('button', { name: /覆盖重生成/ })[0])
+    expect(onConfirmRegenerate).toHaveBeenCalled()
+  })
+
+  it('existing-content guard error shows review and confirm actions', () => {
+    const onConfirmRegenerate = vi.fn()
+    const onRefreshContent = vi.fn()
+
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        genError="第 2 章已有正文内容，不能按空白 planned 章节直接生成。"
+        genErrorDetails={{
+          hint: 'review_existing_content',
+          word_count: 1200,
+          chapter_status: 'planned',
+        }}
+        onConfirmRegenerate={onConfirmRegenerate}
+        onRefreshContent={onRefreshContent}
+      />
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: /查看已有正文/ }))
+    expect(onRefreshContent).toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /确认覆盖并重新生成/ }))
+    expect(onConfirmRegenerate).toHaveBeenCalled()
+  })
+
+  it('chapter menu does not offer direct generate for planned chapter with preserved content', () => {
+    const preserved = { chapter_number: 4, status: 'planned', word_count: 900, title: '第四章' }
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        chapters={[...baseProps.chapters.slice(0, 3), preserved]}
+        currentChapter={4}
+        currentChapterRecord={preserved}
+      />
+    )
+
+    fireEvent.click(screen.getByLabelText('第 4 章操作'))
+    expect(screen.getByRole('menuitem', { name: /查看正文后确认覆盖/ })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /生成本章/ })).not.toBeInTheDocument()
+  })
+
+  it('generate button shows loading state via LoadingButton when workflow is running', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        isWorkflowRunning
+        currentChapter={4}
+        currentChapterRecord={baseProps.chapters[3]}
+      />
+    )
+    const generateBtn = screen.getAllByRole('button', { name: /生成中/ }).find((b) =>
+      b.closest('[aria-label="写作区"]')
+    )
+    expect(generateBtn).toBeDefined()
+    expect(generateBtn).toBeDisabled()
+  })
+
+  /* v6.5.4 Agent Process Narrative tests ----------------------------- */
+
+  it('shows node-specific narrative in agent panel when workflow is running', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        isWorkflowRunning
+        runDetail={{
+          run_id: 'run-1',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'running',
+          chapter_status: 'drafted',
+          current_node: 'author',
+          llm_mode: 'stub',
+          started_at: new Date().toISOString(),
+          steps: [],
+        }}
+      />
+    )
+    const panel = screen.getByLabelText('AI 助手面板')
+    expect(within(panel).getByText('正在撰写章节正文...')).toBeInTheDocument()
+    expect(within(panel).getByText('AI 正在根据场景规划撰写章节正文。')).toBeInTheDocument()
+  })
+
+  it('shows planner narrative when planner node is running', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        isWorkflowRunning
+        runDetail={{
+          run_id: 'run-2',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'running',
+          chapter_status: 'planned',
+          current_node: 'planner',
+          llm_mode: 'stub',
+          started_at: new Date().toISOString(),
+          steps: [],
+        }}
+      />
+    )
+    const panel = screen.getByLabelText('AI 助手面板')
+    expect(within(panel).getByText('正在规划章节结构...')).toBeInTheDocument()
+    expect(within(panel).getByText('AI 正在分析章节目标、角色关系和伏笔，规划本章结构。')).toBeInTheDocument()
+  })
+
+  it('shows streaming step narrative in agent panel', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        isStreaming
+        sseSteps={{
+          polisher: {
+            status: 'running',
+            started_at: '2026-05-13T10:00:00Z',
+            logs: [],
+          },
+        }}
+      />
+    )
+    const panel = screen.getByLabelText('AI 助手面板')
+    expect(within(panel).getByText('正在润色文字表达...')).toBeInTheDocument()
   })
 })

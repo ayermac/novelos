@@ -27,6 +27,7 @@ class MemoryApplyRequest(BaseModel):
 
     project_id: str
     batch_id: str
+    allow_fallback: bool = False
 
 
 class MemoryIgnoreRequest(BaseModel):
@@ -388,6 +389,33 @@ def _compute_batch_status(batch_id: str, repo) -> str:
     return "mixed"
 
 
+def _is_state_card_fallback_batch(batch: dict, items: list[dict]) -> bool:
+    """Return True when a batch is a low-confidence state-card fallback.
+
+    These batches are created only after MemoryCurator's real extraction fails.
+    They are useful as hints, but applying them directly pollutes project memory
+    because they have not been classified or verified by the memory extractor.
+    """
+    summary = str(batch.get("summary") or "")
+    if "状态卡兜底" in summary:
+        return True
+    for item in items:
+        rationale = str(item.get("rationale") or "")
+        confidence = float(item.get("confidence") or 0)
+        if "状态卡兜底候选" in rationale or (
+            confidence <= 0.45 and "MemoryCurator LLM 复核" in rationale
+        ):
+            return True
+    return False
+
+
+def _fallback_apply_error() -> EnvelopeResponse:
+    return error_response(
+        "FALLBACK_MEMORY_REQUIRES_REEXTRACTION",
+        "该批次是状态卡兜底候选，不是 MemoryCurator 真实提取结果。请重新补跑记忆提取，或逐条人工复核后再应用。",
+    )
+
+
 @router.get("/projects/{project_id}/memory-batches")
 async def list_memory_batches(
     request: Request, project_id: str, status: str | None = None
@@ -401,6 +429,27 @@ async def list_memory_batches(
         project = repo.get_project(project_id)
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        try:
+            from ._memory_curator_gate import (
+                has_trusted_memory_batch,
+                ignore_duplicate_state_card_fallback_batches,
+                ignore_state_card_fallback_batches_for_chapter,
+            )
+
+            ignore_duplicate_state_card_fallback_batches(repo, project_id)
+            for batch in repo.list_memory_batches(project_id):
+                chapter_number = batch.get("chapter_number")
+                if chapter_number is None:
+                    continue
+                if has_trusted_memory_batch(repo, project_id, int(chapter_number)):
+                    ignore_state_card_fallback_batches_for_chapter(
+                        repo,
+                        project_id,
+                        int(chapter_number),
+                    )
+        except Exception:
+            pass
 
         batches = repo.list_memory_batches(project_id, status=status)
         return envelope_response(batches)
@@ -467,6 +516,8 @@ async def apply_memory_batch(
                 "NO_PENDING_MEMORY_ITEMS",
                 "该批次没有待应用的记忆项，请刷新后查看最新状态",
             )
+        if _is_state_card_fallback_batch(batch, items):
+            return _fallback_apply_error()
         results = []
 
         for item in items:
@@ -601,6 +652,8 @@ async def apply_memory_batch_canonical(
                 "NO_PENDING_MEMORY_ITEMS",
                 "该批次没有待应用的记忆项，请刷新后查看最新状态",
             )
+        if _is_state_card_fallback_batch(batch, items) and not body.allow_fallback:
+            return _fallback_apply_error()
         results = []
 
         for item in items:

@@ -74,6 +74,104 @@ def test_llm_provider_retries_rate_limit_with_exponential_backoff():
     assert provider.last_token_usage.total_tokens == 15
 
 
+def test_llm_provider_retries_transient_connection_errors():
+    class _ConnectionClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, _messages, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise Exception("connection reset by peer")
+            return _FakeResponse()
+
+    config = LLMConfig(
+        api_key="test-key",
+        retry_attempts=2,
+        retry_min_seconds=0,
+        retry_max_seconds=0,
+    )
+    provider = OpenAICompatibleProvider(config)
+    client = _ConnectionClient()
+    provider._client = client  # type: ignore[assignment]
+
+    result = provider.invoke_json([{"role": "user", "content": "return json"}])
+
+    assert result == {"ok": True}
+    assert client.calls == 2
+
+
+def test_llm_provider_text_call_can_override_timeout_without_mutating_config():
+    class _TextResponse:
+        content = "ok"
+        usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+
+    class _Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, _messages, **_kwargs):
+            self.calls += 1
+            return _TextResponse()
+
+    class _CapturingProvider(OpenAICompatibleProvider):
+        def __init__(self, config):
+            super().__init__(config)
+            self.built_timeouts = []
+            self.client_instances = []
+
+        def _build_client(self, request_timeout_seconds=None):
+            self.built_timeouts.append(request_timeout_seconds or self.config.request_timeout_seconds)
+            client = _Client()
+            self.client_instances.append(client)
+            return client
+
+    config = LLMConfig(api_key="test-key", request_timeout_seconds=60)
+    provider = _CapturingProvider(config)
+
+    text = provider.invoke_text(
+        [{"role": "user", "content": "write"}],
+        request_timeout_seconds=300,
+        max_retries=1,
+    )
+
+    assert text == "ok"
+    assert provider.built_timeouts == [300]
+    assert provider.client_instances[-1].calls == 1
+    assert provider.config.request_timeout_seconds == 60
+
+
+def test_llm_provider_respects_configured_min_interval(monkeypatch):
+    class _TextResponse:
+        content = "ok"
+        usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+
+    class _Client:
+        def invoke(self, _messages, **_kwargs):
+            return _TextResponse()
+
+    clock = {"now": 100.0, "slept": []}
+
+    def fake_time():
+        return clock["now"]
+
+    def fake_sleep(seconds):
+        clock["slept"].append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr("novel_factory.llm.openai_compatible.time.time", fake_time)
+    monkeypatch.setattr("novel_factory.llm.openai_compatible.time.sleep", fake_sleep)
+
+    config = LLMConfig(api_key="test-key", min_interval_seconds=0.5)
+    provider = OpenAICompatibleProvider(config)
+    provider._client = _Client()  # type: ignore[assignment]
+
+    assert provider.invoke_text([{"role": "user", "content": "one"}]) == "ok"
+    assert provider.invoke_text([{"role": "user", "content": "two"}]) == "ok"
+
+    assert clock["slept"] == [0.5]
+
+
 def test_llm_json_sanitizer_quotes_unquoted_prose_values():
     raw = '''
     {
@@ -91,6 +189,28 @@ def test_llm_json_sanitizer_quotes_unquoted_prose_values():
 
     assert '"turn": "林澈在广播中听见失踪者声音"' in sanitized
     assert json.loads(sanitized)["scene_beats"][0]["turn"] == "林澈在广播中听见失踪者声音"
+
+
+def test_llm_json_extractor_accepts_markdown_fenced_json_variants():
+    fenced = '''``` json
+    {
+      "patches": [
+        {"target_table": "characters", "operation": "create"}
+      ]
+    }
+    ```'''
+    unclosed = '''```JSON
+    {
+      "patches": [
+        {"target_table": "story_facts", "operation": "create"}
+      ]
+    }'''
+
+    fenced_data = json.loads(OpenAICompatibleProvider._extract_json(fenced))
+    unclosed_data = json.loads(OpenAICompatibleProvider._extract_json(unclosed))
+
+    assert fenced_data["patches"][0]["target_table"] == "characters"
+    assert unclosed_data["patches"][0]["target_table"] == "story_facts"
 
 
 def test_chapter_token_budget_failure_finalizes_workflow_run(tmp_path):

@@ -1,13 +1,18 @@
 """Workflow timeline API for chapter-level observability (v5.8).
 
 GET /api/projects/{project_id}/chapters/{chapter_number}/workflow-timeline
+GET /api/projects/{project_id}/chapters/{chapter_number}/workflow-stream (v6.1 SSE)
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
+
+from starlette.responses import StreamingResponse
 
 from fastapi import APIRouter, Request
 
@@ -63,6 +68,30 @@ def _artifact_label(artifact_type: str | None) -> str:
     return ARTIFACT_TYPE_LABELS.get(artifact_type, artifact_type)
 
 
+def _get_workflow_run_by_id(
+    repo: Any,
+    project_id: str,
+    chapter_number: int,
+    run_id: str,
+) -> dict | None:
+    """Fetch one workflow run by id without depending on recent-run limits."""
+    conn = repo._conn()
+    try:
+        row = conn.execute(
+            "SELECT * FROM workflow_runs WHERE id=? AND project_id=? AND chapter_number=?",
+            (run_id, project_id, chapter_number),
+        ).fetchone()
+        if not row:
+            return None
+        from ...db.connection import row_to_dict
+
+        data = row_to_dict(row)
+        data["run_id"] = data.get("id")
+        return data
+    finally:
+        conn.close()
+
+
 def _parse_db_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -115,6 +144,7 @@ def _build_recovery(
     recommended_action = None
     reason = None
     safe_actions: list[dict] = []
+    retry_target = _node_retry_target(run_data.get("current_node") if run_data else None)
 
     if chapter_status in terminal_statuses:
         safe_actions.append({"key": "view_artifacts", "label": "查看产物", "safe": True})
@@ -131,18 +161,43 @@ def _build_recovery(
             {"key": "reset_chapter", "label": "清除阻塞并重置", "safe": True, "note": "保留当前正文和版本"},
         ])
     elif chapter_status in ("blocking", "revision"):
-        recommended_action = "reset_chapter"
-        reason = "章节处于阻塞/返修状态，可清除阻塞并重置。"
+        recommended_action = "retry_node" if retry_target else "reset_chapter"
+        reason = (
+            f"章节处于阻塞/返修状态，可保留已有产物并重试{retry_target['label']}。"
+            if retry_target
+            else "章节处于阻塞/返修状态，可清除阻塞并重置。"
+        )
         safe_actions.extend([
             {"key": "view_artifacts", "label": "查看产物", "safe": True},
-            {"key": "reset_chapter", "label": "清除阻塞并重置", "safe": True, "note": "保留当前正文和版本"},
         ])
+        if retry_target:
+            safe_actions.append({
+                "key": "retry_node",
+                "label": f"重试{retry_target['label']}",
+                "safe": True,
+                "note": f"恢复到 {retry_target['status']}，跳过已完成上游节点",
+            })
+        safe_actions.append({
+            "key": "reset_chapter",
+            "label": "清除阻塞并重置",
+            "safe": True,
+            "note": "回到 planned，完整重跑",
+        })
 
     return {
         "recommended_action": recommended_action,
         "reason": reason,
         "safe_actions": safe_actions,
     }
+
+
+def _node_retry_target(current_node: str | None) -> dict[str, str] | None:
+    node = (current_node or "").strip()
+    return {
+        "author": {"label": "执笔", "status": "scripted"},
+        "polisher": {"label": "润色", "status": "drafted"},
+        "editor": {"label": "审核", "status": "polished"},
+    }.get(node)
 
 
 def _build_node_timeline(
@@ -176,21 +231,37 @@ def _build_node_timeline(
 
     current_node_for_timeline = "publisher" if current_node == "publish" else current_node
 
+    canonical_order = [node["node_name"] for node in canonical_nodes]
+
+    def _is_before_current(node_name: str) -> bool:
+        if not current_node_for_timeline:
+            return False
+        try:
+            return canonical_order.index(node_name) < canonical_order.index(current_node_for_timeline)
+        except ValueError:
+            return False
+
     def build_node(base: dict[str, Any]) -> dict[str, Any]:
         node_name = base["node_name"]
         evs = node_events.get(node_name, [])
         # Sort by created_at
         evs = sorted(evs, key=lambda e: e.get("created_at") or "")
-        started_ev = next((e for e in evs if e.get("event_type") == "started"), None)
-        completed_ev = next((e for e in evs if e.get("event_type") == "completed"), None)
-        failed_ev = next((e for e in evs if e.get("event_type") == "failed"), None)
+        started_events = [e for e in evs if e.get("event_type") == "started"]
+        completed_events = [e for e in evs if e.get("event_type") == "completed"]
+        failed_events = [e for e in evs if e.get("event_type") == "failed"]
+        started_ev = started_events[-1] if started_events else None
+        completed_ev = completed_events[-1] if completed_events else None
+        failed_ev = failed_events[-1] if failed_events else None
+        last_ev = evs[-1] if evs else None
 
-        if failed_ev:
+        if last_ev and last_ev.get("event_type") == "failed":
             status = "failed"
-        elif completed_ev:
+        elif last_ev and last_ev.get("event_type") == "completed":
             status = "completed"
-        elif started_ev:
+        elif last_ev and last_ev.get("event_type") == "started":
             status = "running"
+        elif _is_before_current(node_name):
+            status = "skipped"
         elif node_name == current_node_for_timeline and run_status in {"running", "blocked", "failed", "completed"}:
             status = {
                 "running": "running",
@@ -202,7 +273,11 @@ def _build_node_timeline(
             status = "pending"
 
         started_at = started_ev.get("created_at") if started_ev else None
-        completed_at = (completed_ev or failed_ev).get("created_at") if (completed_ev or failed_ev) else None
+        completed_at = None
+        if status == "completed" and completed_ev:
+            completed_at = completed_ev.get("created_at")
+        elif status == "failed" and failed_ev:
+            completed_at = failed_ev.get("created_at")
 
         duration_ms = None
         if started_at and completed_at:
@@ -216,6 +291,11 @@ def _build_node_timeline(
             msg = e.get("message")
             if msg and msg not in messages:
                 messages.append(msg)
+        if status == "skipped":
+            if node_name == "planner" and current_node_for_timeline == "screenwriter":
+                messages.append("已有人工章节指令，本轮跳过规划节点。")
+            else:
+                messages.append(f"本轮从{_node_label(current_node_for_timeline)}继续，跳过该节点。")
 
         # Build artifact refs
         arts = node_artifacts.get(node_name, [])
@@ -273,6 +353,85 @@ def _checkpoint_metadata(repo: Any, project_id: str, chapter_number: int) -> dic
         }
 
 
+# ── v6.1: Execution events helpers ──────────────────────────────
+
+def _group_execution_events_by_node(
+    exec_events: list[dict],
+) -> dict[str, list[dict]]:
+    """Group execution events by node_name for timeline embedding."""
+    grouped: dict[str, list[dict]] = {}
+    for ev in exec_events:
+        node = ev.get("node_name", "")
+        if node:
+            grouped.setdefault(node, []).append(ev)
+    return grouped
+
+
+def _build_node_evidence(node_exec_events: list[dict]) -> dict[str, Any]:
+    """Build evidence summary for a node from its execution events."""
+    if not node_exec_events:
+        return {"has_evidence": False}
+
+    has_warnings = False
+    has_evidence_failure = False
+    latest_summary = ""
+
+    for ev in node_exec_events:
+        etype = ev.get("event_type", "")
+        status = ev.get("status", "info")
+        if etype == "evidence_verified" and status == "fail":
+            has_evidence_failure = True
+        if status in ("warning", "error"):
+            has_warnings = True
+
+    # Latest meaningful summary
+    for ev in reversed(node_exec_events):
+        msg = ev.get("message", "")
+        if msg and ev.get("event_type") in ("evidence_verified", "node_completed", "llm_completed"):
+            latest_summary = msg
+            break
+    if not latest_summary and node_exec_events:
+        latest_summary = node_exec_events[-1].get("message", "")
+
+    return {
+        "has_evidence": True,
+        "has_warnings": has_warnings,
+        "has_evidence_failure": has_evidence_failure,
+        "latest_event_summary": latest_summary,
+        "event_count": len(node_exec_events),
+    }
+
+
+def _embed_execution_events_in_nodes(
+    nodes: list[dict],
+    exec_events: list[dict],
+) -> list[dict]:
+    """Embed execution events and evidence into timeline nodes."""
+    grouped = _group_execution_events_by_node(exec_events)
+    for node in nodes:
+        node_name = node.get("node_name", "")
+        node_exec = grouped.get(node_name, [])
+        if node_exec:
+            node["events"] = [
+                {
+                    "id": ev.get("id"),
+                    "event_type": ev.get("event_type"),
+                    "status": ev.get("status"),
+                    "message": ev.get("message"),
+                    "payload": ev.get("payload", {}),
+                    "token_count": ev.get("token_count"),
+                    "latency_ms": ev.get("latency_ms"),
+                    "created_at": ev.get("created_at"),
+                }
+                for ev in node_exec
+            ]
+            node["evidence"] = _build_node_evidence(node_exec)
+        else:
+            node["events"] = []
+            node["evidence"] = {"has_evidence": False}
+    return nodes
+
+
 @router.get("/projects/{project_id}/chapters/{chapter_number}/workflow-timeline")
 async def get_workflow_timeline(
     request: Request,
@@ -289,36 +448,48 @@ async def get_workflow_timeline(
 
     try:
         repo = get_repo(request)
-        settings = get_settings(request)
-        timeout_minutes = settings.workflow.task_timeout_minutes
+        try:
+            settings = get_settings(request)
+            timeout_minutes = settings.workflow.task_timeout_minutes
+        except Exception:
+            timeout_minutes = STUCK_THRESHOLD_MINUTES
 
         # Verify chapter exists
         chapter = repo.get_chapter(project_id, chapter_number)
         if not chapter:
             return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
+        if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
+            repo.reconcile_latest_blocked_runs_with_chapters(
+                project_id=project_id,
+                chapter_number=chapter_number,
+                run_id=run_id,
+            )
+            chapter = repo.get_chapter(project_id, chapter_number) or chapter
+
+        if chapter.get("status") == "revision":
+            from ...workflow.reconciliation import reconcile_revision_running_workflows
+
+            reconcile_revision_running_workflows(
+                repo,
+                project_id,
+                chapter_number,
+                run_id=run_id,
+            )
+        elif chapter.get("status") in {"scripted", "drafted", "polished", "review"}:
+            from ...workflow.reconciliation import reconcile_interrupted_running_workflows
+
+            reconcile_interrupted_running_workflows(
+                repo,
+                project_id,
+                chapter_number,
+                run_id=run_id,
+            )
+
         # Find target run
         target_run: dict | None = None
         if run_id:
-            runs = repo.get_workflow_runs_for_project(
-                project_id, chapter_number=chapter_number, limit=1
-            )
-            # Filter by run_id
-            for r in runs:
-                if r.get("id") == run_id or r.get("run_id") == run_id:
-                    target_run = r
-                    break
-            if not target_run:
-                # Direct lookup fallback
-                conn = repo._conn()
-                try:
-                    row = conn.execute(
-                        "SELECT * FROM workflow_runs WHERE id=? AND project_id=? AND chapter_number=?",
-                        (run_id, project_id, chapter_number),
-                    ).fetchone()
-                    target_run = dict(row) if row else None
-                finally:
-                    conn.close()
+            target_run = _get_workflow_run_by_id(repo, project_id, chapter_number, run_id)
         else:
             # Latest run for this chapter
             runs = repo.get_workflow_runs_for_project(
@@ -326,6 +497,15 @@ async def get_workflow_timeline(
             )
             if runs:
                 target_run = runs[0]
+
+        if (
+            not run_id
+            and target_run
+            and target_run.get("status") == "completed"
+            and target_run.get("current_node") == "reset_recovery"
+            and chapter.get("status") == "planned"
+        ):
+            target_run = None
 
         # Reconcile terminal chapter with running run (same logic as runs.py)
         if (
@@ -341,11 +521,11 @@ async def get_workflow_timeline(
             )
             if reconciliation.get("runs"):
                 # Refresh run data
-                runs = repo.get_workflow_runs_for_project(
-                    project_id, chapter_number=chapter_number, limit=1
-                )
-                if runs:
-                    target_run = runs[0]
+                refreshed_id = target_run.get("id") or target_run.get("run_id")
+                if refreshed_id:
+                    target_run = _get_workflow_run_by_id(
+                        repo, project_id, chapter_number, refreshed_id
+                    ) or target_run
 
         # No run -> empty timeline
         if not target_run:
@@ -385,7 +565,7 @@ async def get_workflow_timeline(
             artifacts = repo.get_artifacts_for_chapter(
                 project_id, chapter_number, workflow_run_id=run_id_str
             )
-            if not artifacts:
+            if not artifacts and not events:
                 # Fallback: legacy artifacts without run_id
                 artifacts = repo.get_artifacts_for_chapter(project_id, chapter_number)
         except Exception:
@@ -397,6 +577,14 @@ async def get_workflow_timeline(
             run_status=run_status,
             current_node=current_node,
         )
+
+        # v6.1: Embed execution events into timeline nodes
+        try:
+            exec_events = repo.get_workflow_execution_events(run_id_str)
+            nodes = _embed_execution_events_in_nodes(nodes, exec_events)
+        except Exception:
+            pass  # Backward compatible — execution events are additive
+
         checkpoint = _checkpoint_metadata(repo, project_id, chapter_number)
 
         return envelope_response({
@@ -415,3 +603,130 @@ async def get_workflow_timeline(
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取工作流时间线失败: {str(e)}")
+
+
+# ── v6.1: SSE Streaming Endpoint ───────────────────────────────
+
+@router.get("/projects/{project_id}/chapters/{chapter_number}/workflow-stream")
+async def workflow_stream_sse(
+    request: Request,
+    project_id: str,
+    chapter_number: int,
+    run_id: str | None = None,
+    since_id: int | None = None,
+    replay: bool = True,
+) -> StreamingResponse:
+    """SSE endpoint for real-time workflow execution event streaming.
+
+    Streams existing events first for replay, then polls DB for new events
+    every 1-2 seconds while the target run is active.
+    """
+    from ..deps import get_repo
+
+    repo = get_repo(request)
+
+    # Find target run
+    target_run: dict | None = None
+    if run_id:
+        target_run = _get_workflow_run_by_id(repo, project_id, chapter_number, run_id)
+    else:
+        runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=1)
+        if runs:
+            target_run = runs[0]
+
+    run_id_str = target_run.get("id") or target_run.get("run_id", "") if target_run else ""
+    run_status = target_run.get("status", "") if target_run else ""
+
+    async def event_generator():
+        last_event_id = since_id or 0
+
+        # Replay existing events
+        if replay and run_id_str:
+            try:
+                existing = repo.get_workflow_execution_events(run_id_str)
+                for ev in existing:
+                    if ev.get("id", 0) <= last_event_id:
+                        continue
+                    last_event_id = ev.get("id", 0)
+                    payload = {
+                        "id": ev.get("id"),
+                        "run_id": run_id_str,
+                        "node_name": ev.get("node_name"),
+                        "agent_id": ev.get("agent_id"),
+                        "event_type": ev.get("event_type"),
+                        "status": ev.get("status"),
+                        "message": ev.get("message"),
+                        "payload": ev.get("payload", {}),
+                        "token_count": ev.get("token_count"),
+                        "latency_ms": ev.get("latency_ms"),
+                        "created_at": ev.get("created_at"),
+                    }
+                    yield f"event: workflow_event\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            except Exception:
+                pass
+
+        # If run is already terminal, emit done and close
+        if not run_id_str or run_status in ("completed", "failed", "blocked"):
+            done_payload = {"run_id": run_id_str, "status": run_status or "no_run"}
+            yield f"event: workflow_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+            return
+
+        # Poll for new events while run is active
+        max_poll_seconds = 1800  # 30 minutes max
+        poll_interval = 1.5
+        start = time.time()
+        while time.time() - start < max_poll_seconds:
+            # Check if client disconnected
+            if await request.is_disconnected():
+                break
+
+            try:
+                new_events = repo.get_workflow_execution_events_since(
+                    run_id_str, since_id=last_event_id,
+                )
+                for ev in new_events:
+                    last_event_id = ev.get("id", 0)
+                    payload = {
+                        "id": ev.get("id"),
+                        "run_id": run_id_str,
+                        "node_name": ev.get("node_name"),
+                        "agent_id": ev.get("agent_id"),
+                        "event_type": ev.get("event_type"),
+                        "status": ev.get("status"),
+                        "message": ev.get("message"),
+                        "payload": ev.get("payload", {}),
+                        "token_count": ev.get("token_count"),
+                        "latency_ms": ev.get("latency_ms"),
+                        "created_at": ev.get("created_at"),
+                    }
+                    yield f"event: workflow_event\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+            except Exception:
+                pass
+
+            # Check if run has completed
+            try:
+                current_run = _get_workflow_run_by_id(
+                    repo, project_id, chapter_number, run_id_str,
+                )
+                if current_run and current_run.get("status") in ("completed", "failed", "blocked"):
+                    done_payload = {"run_id": run_id_str, "status": current_run["status"]}
+                    yield f"event: workflow_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+                    return
+            except Exception:
+                pass
+
+            await asyncio.sleep(poll_interval)
+
+        # Timeout - emit done
+        done_payload = {"run_id": run_id_str, "status": "timeout"}
+        yield f"event: workflow_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

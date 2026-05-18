@@ -8,17 +8,39 @@ v5.1.6: Added create_node_runners for LLMRouter-based dependency injection.
 from __future__ import annotations
 
 import logging
+import json
+import time
 from typing import Any, Callable
 
 from ..db.repository import Repository
 from ..llm.provider import LLMProvider
 from ..models.state import ChapterStatus, FactoryState
+from .conditions import revision_target_from_state
 from ..agents.planner import PlannerAgent
 from ..agents.screenwriter import ScreenwriterAgent
 from ..agents.author import AuthorAgent
 from ..agents.polisher import PolisherAgent
 from ..agents.editor import EditorAgent
 from ..agents.memory_curator import MemoryCuratorAgent
+from .execution_events import (
+    log_execution_event,
+    CONTEXT_SUMMARIZERS,
+    build_context_loaded_message,
+    verify_agent_completion_evidence,
+    EVENT_CONTEXT_LOADED,
+    EVENT_LLM_STARTED,
+    EVENT_LLM_COMPLETED,
+    EVENT_LLM_FAILED,
+    EVENT_EVIDENCE_VERIFIED,
+    EVENT_FALLBACK_USED,
+    EVENT_ARTIFACT_SAVED,
+    EVENT_DIFF_GENERATED,
+    EVENT_SELF_CHECK_COMPLETED,
+    EVENT_SKILL_COMPLETED,
+    EVIDENCE_STATUS_PASS,
+    EVIDENCE_STATUS_FAIL,
+    EVIDENCE_STATUS_WARN,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +80,8 @@ def _log_node_event(
     status: str | None = None,
     error_message: str | None = None,
     artifact_refs: list[dict] | None = None,
+    token_count: int | None = None,
+    latency_ms: int | None = None,
 ) -> None:
     """Best-effort log a workflow node event. Never raises.
 
@@ -85,6 +109,8 @@ def _log_node_event(
             message=message,
             error_message=error_message,
             artifact_refs_json=artifact_refs_json,
+            token_count=token_count,
+            latency_ms=latency_ms,
         )
     except Exception:
         logger.warning(
@@ -201,7 +227,10 @@ def _handle_retryable_quality_gate(
         result["retry_count"] = retry_count
         return result
 
-    revision_target = gate.get("revision_target") or "author"
+    revision_target = revision_target_from_state({
+        **state,
+        "quality_gate": gate,
+    })
     current_status = repo.get_chapter_status(project_id, chapter_number)
     if current_status not in (
         ChapterStatus.BLOCKING.value,
@@ -225,7 +254,105 @@ def _handle_retryable_quality_gate(
     return updated
 
 
+def _memory_curator_real_mode_error(state: FactoryState, result: dict[str, Any]) -> str | None:
+    """Return a blocking error when real-mode memory extraction did not truly succeed."""
+    if state.get("llm_mode", "stub") != "real":
+        return None
+    if result.get("memory_curator_degraded"):
+        return (
+            result.get("memory_curator_warning")
+            or "记忆提取未成功：MemoryCurator 已降级且未创建可信记忆批次。"
+        )
+    if result.get("fallback_created") or result.get("extraction_success") is False:
+        return (
+            result.get("memory_curator_warning")
+            or "记忆提取未成功：仅生成状态卡兜底候选，请补跑或人工确认记忆后再发布。"
+        )
+    return None
+
+
 # ── v5.1.6: Node factory for LLMRouter-based injection ────────────────
+
+
+def _ensure_skill_registry(skill_registry: Any | None) -> Any | None:
+    """Create a default SkillRegistry when runtime hooks need one.
+
+    The API/CLI graph path often does not pass a registry explicitly. Without
+    this fallback, Agent-level Skill mounts appear in configuration but never
+    execute in the real LangGraph runner.
+    """
+    if skill_registry is not None:
+        return skill_registry
+    try:
+        from ..skills.registry import SkillRegistry
+        return SkillRegistry()
+    except Exception as e:
+        logger.warning(f"Failed to create SkillRegistry: {e}")
+        return None
+
+
+def _ensure_tool_registry() -> Any | None:
+    """v6.0: Create a default ToolRegistry for agent tool runtime."""
+    try:
+        from ..tools.registry import ToolRegistry
+        return ToolRegistry()
+    except Exception as e:
+        logger.warning(f"Failed to create ToolRegistry: {e}")
+        return None
+
+
+def _ensure_trace_store(repo: Repository) -> Any | None:
+    """v6.0: Create a DecisionTraceStore backed by repository."""
+    try:
+        from ..agent_runtime.decision_trace import DecisionTraceStore
+        return DecisionTraceStore(repo)
+    except Exception as e:
+        logger.warning(f"Failed to create DecisionTraceStore: {e}")
+        return None
+
+
+def _previous_agent_in_steps(state: FactoryState) -> str | None:
+    """v6.0: Find the last successful agent from state.steps."""
+    steps = state.get("steps", []) or []
+    for step in reversed(steps):
+        if step.get("agent") and not step.get("error"):
+            return step.get("agent")
+    return None
+
+
+def _latest_artifact_content(
+    repo: Repository,
+    project_id: str,
+    chapter_number: int,
+    agent_id: str,
+    artifact_type: str,
+    workflow_run_id: str | None = None,
+) -> dict[str, Any]:
+    """Read the latest artifact content for handoff validation.
+
+    Artifact repository metadata intentionally omits content, while v6.0
+    contracts need the actual previous handoff payload. This helper keeps the
+    read scoped and best-effort for workflow validation only.
+    """
+    conn = repo._conn()
+    try:
+        params: list[Any] = [project_id, chapter_number, agent_id, artifact_type]
+        sql = (
+            "SELECT content_json FROM agent_artifacts "
+            "WHERE project_id=? AND chapter_number=? AND agent_id=? AND artifact_type=?"
+        )
+        if workflow_run_id:
+            sql += " AND workflow_run_id=?"
+            params.append(workflow_run_id)
+        sql += " ORDER BY created_at DESC LIMIT 1"
+        row = conn.execute(sql, params).fetchone()
+        if not row or not row["content_json"]:
+            return {}
+        return json.loads(row["content_json"])
+    except Exception:
+        return {}
+    finally:
+        conn.close()
 
 
 def create_node_runners(
@@ -248,6 +375,9 @@ def create_node_runners(
     Returns:
         Dictionary mapping agent names to node functions.
     """
+    effective_skill_registry = _ensure_skill_registry(skill_registry)
+    effective_tool_registry = _ensure_tool_registry()
+    effective_trace_store = _ensure_trace_store(repo)
 
     def _run_agent_node(
         agent_name: str,
@@ -257,12 +387,71 @@ def create_node_runners(
         """Generic agent runner with LLMRouter + error handling.
 
         Equivalent to dispatch/chapter.py ChapterDispatchMixin._run_agent().
+        v6.0: Injects tool_registry and trace_store; validates handoff contracts.
         """
         _update_run_node(state, repo, agent_name)
         _log_node_event(state, repo, agent_name, "started", status="running")
 
         # Record step before running (for run_with_graph return value)
         status_before = state.get("chapter_status", "")
+
+        # v6.0: Best-effort handoff contract validation from previous agent
+        contract_ok = True
+        contract_issues: list[str] = []
+        prev_agent = _previous_agent_in_steps(state)
+        if prev_agent:
+            try:
+                from ..agent_runtime.contracts import validate_handoff
+                # Build a lightweight artifact from state for contract validation
+                artifact: dict[str, Any] = {"chapter_status": status_before}
+                workflow_run_id = state.get("workflow_run_id")
+                if status_before == ChapterStatus.PLANNED.value:
+                    inst = repo.get_instruction(state.get("project_id", ""), state.get("chapter_number", 0))
+                    if inst:
+                        artifact.update({k: inst.get(k) for k in ("objective", "key_events", "ending_hook", "plots_to_plant", "plots_to_resolve")})
+                elif status_before == ChapterStatus.SCRIPTED.value:
+                    beats = repo.get_scene_beats(state.get("project_id", ""), state.get("chapter_number", 0))
+                    if beats:
+                        artifact["sequence"] = beats[0].get("sequence")
+                        artifact["scene_goal"] = beats[0].get("scene_goal")
+                        artifact["conflict"] = beats[0].get("conflict")
+                        artifact["turn"] = beats[0].get("turn")
+                        artifact["hook"] = beats[0].get("hook")
+                        artifact["plot_refs"] = beats[0].get("plot_refs")
+                elif status_before == ChapterStatus.DRAFTED.value:
+                    artifact.update(_latest_artifact_content(
+                        repo,
+                        state.get("project_id", ""),
+                        state.get("chapter_number", 0),
+                        "author",
+                        "draft",
+                        workflow_run_id,
+                    ))
+                    ch = repo.get_chapter(state.get("project_id", ""), state.get("chapter_number", 0))
+                    if ch:
+                        artifact.setdefault("content", ch.get("content", ""))
+                        artifact.setdefault("title", ch.get("title", ""))
+                        artifact.setdefault("word_count", len(ch.get("content", "")))
+                elif status_before == ChapterStatus.POLISHED.value:
+                    artifact.update(_latest_artifact_content(
+                        repo,
+                        state.get("project_id", ""),
+                        state.get("chapter_number", 0),
+                        "polisher",
+                        "polished_draft",
+                        workflow_run_id,
+                    ))
+                    ch = repo.get_chapter(state.get("project_id", ""), state.get("chapter_number", 0))
+                    if ch:
+                        artifact.setdefault("content", ch.get("content", ""))
+                contract_ok, contract_issues = validate_handoff(prev_agent, agent_name, artifact)
+                if not contract_ok:
+                    logger.warning(
+                        "Handoff contract %s -> %s failed: %s",
+                        prev_agent, agent_name, contract_issues,
+                    )
+            except Exception:
+                pass  # Best-effort; never block workflow
 
         # Get LLM for this agent
         try:
@@ -277,13 +466,139 @@ def create_node_runners(
                 "requires_human": True,
             }
 
-        # Inject skill_registry for Polisher and Editor
-        if agent_name in ("polisher", "editor") and skill_registry is not None:
-            agent = agent_cls(repo, llm, skill_registry=skill_registry)
+        # v6.0: Inject skill_registry, tool_registry, and trace_store for all core agents.
+        if agent_name in ("planner", "screenwriter", "author", "polisher", "editor", "memory_curator"):
+            agent = agent_cls(
+                repo, llm,
+                skill_registry=effective_skill_registry,
+                tool_registry=effective_tool_registry,
+                trace_store=effective_trace_store,
+            )
         else:
             agent = agent_cls(repo, llm)
 
+        # v6.1: Log context_loaded execution event
+        summarizer = CONTEXT_SUMMARIZERS.get(agent_name)
+        if summarizer:
+            try:
+                ctx_summary = summarizer(repo, state.get("project_id", ""), state.get("chapter_number", 0))
+                ctx_msg = build_context_loaded_message(agent_name, ctx_summary)
+                log_execution_event(
+                    repo, state, agent_name, EVENT_CONTEXT_LOADED,
+                    message=ctx_msg, agent_id=agent_name,
+                    payload=ctx_summary,
+                )
+            except Exception:
+                pass  # Best-effort
+
+        agent_started_at = time.perf_counter()
+        log_execution_event(
+            repo, state, agent_name, EVENT_LLM_STARTED,
+            message=f"开始调用模型：{agent_name}",
+            agent_id=agent_name,
+            status="running",
+        )
         result = _handle_retryable_quality_gate(state, repo, agent.run(state))
+        agent_latency_ms = int((time.perf_counter() - agent_started_at) * 1000)
+        memory_error = (
+            _memory_curator_real_mode_error(state, result)
+            if agent_name == "memory_curator" and "error" not in result
+            else None
+        )
+        if memory_error:
+            result["error"] = memory_error
+            result["requires_human"] = True
+
+        # v6.1: Agent-specific execution events are emitted by the agent, but
+        # keep the high-level LLM completion/failure event adjacent to
+        # llm_started so the timeline reads naturally.
+        exec_events = result.pop("_exec_events", [])
+        used_fallback = any(
+            ev.get("event_type") == EVENT_FALLBACK_USED
+            and (ev.get("payload") or {}).get("fallback_type") != "plain_text_primary"
+            for ev in exec_events
+        )
+
+        # v6.1: Log LLM completion/failure
+        if "error" in result:
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_FAILED,
+                message=f"Agent 执行失败：{result['error'][:200]}",
+                agent_id=agent_name,
+                status="error",
+                payload={"error": result["error"][:500]},
+                latency_ms=agent_latency_ms,
+            )
+        else:
+            llm_usage = getattr(llm, "last_token_usage", None)
+            llm_tokens = llm_usage.total_tokens if llm_usage else 0
+            llm_duration = llm_usage.duration_ms if llm_usage else agent_latency_ms
+            completed_message = (
+                f"LLM 调用结束，已使用降级方案继续：耗时 {llm_duration/1000:.1f}s，{llm_tokens} tokens"
+                if used_fallback
+                else f"LLM 调用完成：耗时 {llm_duration/1000:.1f}s，{llm_tokens} tokens"
+            )
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_COMPLETED,
+                message=completed_message,
+                agent_id=agent_name,
+                status="warning" if used_fallback else "info",
+                token_count=llm_tokens,
+                latency_ms=llm_duration,
+            )
+
+        # v6.1: Log agent-specific execution events from _exec_events
+        for ev in exec_events:
+            try:
+                log_execution_event(
+                    repo, state,
+                    node_name=ev.get("node_name", agent_name),
+                    event_type=ev.get("event_type", "info"),
+                    message=ev.get("message", ""),
+                    agent_id=ev.get("agent_id", agent_name),
+                    status=ev.get("status", "info"),
+                    payload=ev.get("payload"),
+                    artifact_refs=ev.get("artifact_refs"),
+                    token_count=ev.get("token_count"),
+                    latency_ms=ev.get("latency_ms"),
+                )
+            except Exception:
+                pass  # Best-effort
+
+        # v6.1: Verify completion evidence on success
+        if "error" not in result and agent_name in ("planner", "screenwriter", "author", "polisher", "editor", "memory_curator"):
+            try:
+                evidence = verify_agent_completion_evidence(repo, state, agent_name)
+                severity = evidence["severity"]
+                missing_str = "、".join(evidence["missing"]) if evidence["missing"] else ""
+                warn_str = "、".join(evidence["warnings"]) if evidence["warnings"] else ""
+                if severity == EVIDENCE_STATUS_FAIL:
+                    ev_msg = f"完成证据校验失败：{missing_str}"
+                elif severity == EVIDENCE_STATUS_WARN:
+                    ev_msg = f"完成证据校验通过（有警告）：{warn_str}"
+                else:
+                    ev_msg = "完成证据校验通过"
+                log_execution_event(
+                    repo, state, agent_name, EVENT_EVIDENCE_VERIFIED,
+                    message=ev_msg,
+                    agent_id=agent_name,
+                    status=severity,
+                    payload={
+                        "ok": evidence["ok"],
+                        "severity": severity,
+                        "checks": evidence["checks"],
+                        "missing": evidence["missing"],
+                        "warnings": evidence["warnings"],
+                    },
+                )
+                # Log evidence failure as node-level warning but don't block
+                if severity == EVIDENCE_STATUS_FAIL:
+                    logger.warning(
+                        "Agent '%s' evidence verification FAILED: %s",
+                        agent_name, missing_str,
+                    )
+            except Exception:
+                pass  # Best-effort; never block workflow
 
         # v5.2: Accumulate token usage from LLM provider
         token_updates = _accumulate_tokens(state, llm)
@@ -295,13 +610,30 @@ def create_node_runners(
 
         # Handle error - set requires_human to stop downstream execution
         if "error" in result:
-            _log_node_event(state, repo, agent_name, "failed", status="failed", error_message=result["error"])
+            _log_node_event(
+                state,
+                repo,
+                agent_name,
+                "failed",
+                status="failed",
+                error_message=result["error"],
+                token_count=result.get("total_tokens"),
+                latency_ms=agent_latency_ms,
+            )
             _finalize_run(state, repo, "failed", result["error"])
             # P1 fix: Ensure requires_human is set so route_by_chapter_status
             # safety gate catches this and routes to human_review
             result["requires_human"] = True
         else:
-            _log_node_event(state, repo, agent_name, "completed", status="completed")
+            _log_node_event(
+                state,
+                repo,
+                agent_name,
+                "completed",
+                status="completed",
+                token_count=result.get("total_tokens"),
+                latency_ms=agent_latency_ms,
+            )
 
         # Record step after running
         step_info = {
@@ -309,6 +641,8 @@ def create_node_runners(
             "status_before": status_before,
             "status_after": result.get("chapter_status", status_before),
             "error": result.get("error"),
+            "contract_ok": contract_ok,
+            "contract_issues": contract_issues if contract_issues else None,
         }
         _append_step(state, step_info)
 
@@ -397,11 +731,20 @@ def task_discovery_node(state: FactoryState, repo: Repository) -> dict[str, Any]
     return {"has_instruction": has_instruction}
 
 
-def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
+def _v6_agent_kwargs(repo: Repository, skill_registry: Any | None = None) -> dict[str, Any]:
+    """v6.0: Build shared kwargs for core agent instantiation in legacy mode."""
+    return {
+        "skill_registry": _ensure_skill_registry(skill_registry),
+        "tool_registry": _ensure_tool_registry(),
+        "trace_store": _ensure_trace_store(repo),
+    }
+
+
+def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Planner agent."""
     _update_run_node(state, repo, "planner")
     _log_node_event(state, repo, "planner", "started", status="running")
-    agent = PlannerAgent(repo, llm)
+    agent = PlannerAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
     result = agent.run(state)
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
@@ -419,11 +762,11 @@ def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dic
     return result
 
 
-def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
+def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Screenwriter agent."""
     _update_run_node(state, repo, "screenwriter")
     _log_node_event(state, repo, "screenwriter", "started", status="running")
-    agent = ScreenwriterAgent(repo, llm)
+    agent = ScreenwriterAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
     result = agent.run(state)
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
@@ -441,11 +784,11 @@ def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider) -
     return result
 
 
-def author_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
+def author_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Author agent."""
     _update_run_node(state, repo, "author")
     _log_node_event(state, repo, "author", "started", status="running")
-    agent = AuthorAgent(repo, llm)
+    agent = AuthorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
     result = _handle_retryable_quality_gate(state, repo, agent.run(state))
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
@@ -467,14 +810,7 @@ def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill
     """Run the Polisher agent."""
     _update_run_node(state, repo, "polisher")
     _log_node_event(state, repo, "polisher", "started", status="running")
-    # R4: Support skill_registry injection
-    if skill_registry is None:
-        try:
-            from ..skills.registry import SkillRegistry
-            skill_registry = SkillRegistry()
-        except Exception as e:
-            logger.warning(f"Failed to create SkillRegistry: {e}")
-    agent = PolisherAgent(repo, llm, skill_registry=skill_registry)
+    agent = PolisherAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
     result = _handle_retryable_quality_gate(state, repo, agent.run(state))
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
@@ -496,14 +832,7 @@ def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
     """Run the Editor agent."""
     _update_run_node(state, repo, "editor")
     _log_node_event(state, repo, "editor", "started", status="running")
-    # R4: Support skill_registry injection
-    if skill_registry is None:
-        try:
-            from ..skills.registry import SkillRegistry
-            skill_registry = SkillRegistry()
-        except Exception as e:
-            logger.warning(f"Failed to create SkillRegistry: {e}")
-    agent = EditorAgent(repo, llm, skill_registry=skill_registry)
+    agent = EditorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
     result = agent.run(state)
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
@@ -521,7 +850,7 @@ def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
     return result
 
 
-def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider) -> dict[str, Any]:
+def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Memory Curator agent to extract story facts from reviewed chapter.
 
     v5.3.2 closure: In real mode, failure is blocking (requires_human=True).
@@ -529,8 +858,12 @@ def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider)
     """
     _update_run_node(state, repo, "memory_curator")
     _log_node_event(state, repo, "memory_curator", "started", status="running")
-    agent = MemoryCuratorAgent(repo, llm)
+    agent = MemoryCuratorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
     result = agent.run(state)
+    memory_error = _memory_curator_real_mode_error(state, result)
+    if memory_error and "error" not in result:
+        result["error"] = memory_error
+        result["requires_human"] = True
     # Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
     if token_updates:
@@ -606,9 +939,29 @@ def awaiting_publish_node(state: FactoryState, repo: Repository) -> dict[str, An
     }
 
 
-def revision_router_node(state: FactoryState) -> dict[str, Any]:
-    """Determine where to route revision based on review result."""
-    # Just pass through — routing is handled by conditional edges
+def revision_router_node(state: FactoryState, repo: Repository | None = None) -> dict[str, Any]:
+    """Determine where to route revision based on review result.
+
+    v6.2: Added mid-run hydration to protect against state corruption
+    during long-running revision flows.
+    """
+    if repo is not None:
+        _update_run_node(state, repo, "revision_router")
+        _log_node_event(state, repo, "revision_router", "started", status="running")
+
+        # Mid-run protection: re-hydrate revision state if needed. Return any
+        # recovered fields so LangGraph merges them before conditional routing.
+        from .conditions import hydrate_revision_state
+        hydrated = hydrate_revision_state(state, repo)
+        updates = {
+            key: hydrated[key]
+            for key in ("quality_gate", "_revision_review")
+            if hydrated.get(key) != state.get(key)
+        }
+
+        _log_node_event(state, repo, "revision_router", "completed", status="completed")
+        return updates
+    # Pass through — routing is handled by conditional edges
     return {}
 
 
@@ -624,7 +977,7 @@ def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
     error = state.get("error")
     if not error and gate.get("pass") is False:
         score = gate.get("score")
-        target = gate.get("revision_target") or "author"
+        target = revision_target_from_state(state)
         # P1: Include quality gate details (word count, etc.) in blocking error
         error = (
             f"章节审核未通过，已达到最大返修次数 "

@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { formatArtifactSummary, WorkflowArtifacts } from '../lib/artifacts'
+import { tWorkflowNodeNarrative, tEventNarrative } from '../lib/state-labels'
+import type { WorkflowExecutionEvent, WorkflowNodeEvidence } from '../lib/api'
 
 interface Step {
   key: string
@@ -7,7 +9,7 @@ interface Step {
   description: string
   node_group?: 'system' | 'creative_agent' | 'support_agent' | 'terminal' | 'router' | 'unknown'
   node_type?: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'skipped'
   error_message?: string
   error_is_legacy?: boolean
   logs?: {
@@ -17,11 +19,42 @@ interface Step {
     message: string
   }[]
   artifacts?: WorkflowArtifacts | null
+  events?: WorkflowExecutionEvent[]
+  evidence?: WorkflowNodeEvidence
 }
 
 interface Props {
   steps: Step[]
   compact?: boolean
+}
+
+// v6.1.1: Event type label mapping (Chinese)
+const EVENT_TYPE_LABELS: Record<string, string> = {
+  context_loaded: '上下文加载',
+  llm_started: 'LLM 调用开始',
+  llm_completed: 'LLM 调用完成',
+  llm_failed: 'LLM 调用失败',
+  long_form_generation: '长文生成模式',
+  artifact_saved: '产物保存',
+  skill_completed: 'Skill 完成',
+  self_check_completed: '自检完成',
+  fallback_used: '降级兜底',
+  diff_generated: '改动摘要',
+  evidence_verified: '证据校验',
+  revision_context_loaded: '返修依据',
+  revision_diff_generated: '返修改动',
+  revision_followup_verified: '返修复核',
+}
+
+function eventLabel(eventType: string): string {
+  return EVENT_TYPE_LABELS[eventType] || tEventNarrative(eventType) || eventType
+}
+
+function eventMessage(ev: WorkflowExecutionEvent): string {
+  if (ev.event_type === 'llm_completed') {
+    return ev.message || '模型返回完成'
+  }
+  return ev.message || ''
 }
 
 function stepStatusIcon(status: string): string {
@@ -34,6 +67,8 @@ function stepStatusIcon(status: string): string {
       return '✗'
     case 'blocked':
       return '!'
+    case 'skipped':
+      return '↷'
     default:
       return '○'
   }
@@ -49,6 +84,8 @@ function stepStatusClass(status: string): string {
       return 'step-failed'
     case 'blocked':
       return 'step-blocked'
+    case 'skipped':
+      return 'step-skipped'
     default:
       return 'step-pending'
   }
@@ -98,6 +135,7 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
             {group.steps.map((step) => {
               const isExpanded = expandedStep === step.key
               const hasArtifacts = step.status === 'completed' && step.artifacts
+              const hasExecutionEvents = Boolean(step.events && step.events.length > 0)
               const logs = step.logs || []
 
               return (
@@ -105,7 +143,18 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
                   <div className="step-header">
                     <div className="step-icon">{stepStatusIcon(step.status)}</div>
                     <div className="step-content">
-                      <div className="step-label">{step.label}</div>
+                      <div className="step-label">
+                        {step.label}
+                        {step.evidence?.has_evidence_failure && (
+                          <span className="evidence-badge evidence-fail" style={{ marginLeft: 8 }}>证据校验失败</span>
+                        )}
+                        {step.evidence?.has_warnings && !step.evidence?.has_evidence_failure && (
+                          <span className="evidence-badge evidence-warn" style={{ marginLeft: 8 }}>有警告</span>
+                        )}
+                        {step.status === 'completed' && step.evidence?.has_evidence && !step.evidence?.has_warnings && !step.evidence?.has_evidence_failure && (
+                          <span className="evidence-badge evidence-pass" style={{ marginLeft: 8 }}>已验证</span>
+                        )}
+                      </div>
                       {!compact && (
                         <div className="step-description">{step.description}</div>
                       )}
@@ -130,22 +179,64 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
                           {step.status === 'running' && logs.length === 0 && (
                             <div className="step-log step-log-info">
                               <span className="step-log-dot step-log-dot-pulse" />
-                              <span className="step-log-message">节点运行中，正在等待模型或工具返回。</span>
+                              <span className="step-log-message">{tWorkflowNodeNarrative(step.key)}</span>
                             </div>
                           )}
                         </div>
                       )}
                     </div>
-                    {hasArtifacts && (
+                    {(hasArtifacts || hasExecutionEvents) && (
                       <button
                         className="step-expand-btn"
                         onClick={() => toggleExpand(step.key)}
                       >
-                        {isExpanded ? '收起' : '查看过程稿'}
+                        {isExpanded ? '收起' : hasExecutionEvents ? '查看过程' : '查看过程稿'}
                       </button>
                     )}
                   </div>
-                  {hasArtifacts && isExpanded && (
+                  {isExpanded && hasExecutionEvents && (
+                    <div className="step-exec-events">
+                      <div className="exec-events-title">
+                        实时工作过程
+                        {step.evidence?.has_evidence_failure && (
+                          <span className="evidence-badge evidence-fail">证据校验失败</span>
+                        )}
+                        {step.evidence?.has_warnings && !step.evidence?.has_evidence_failure && (
+                          <span className="evidence-badge evidence-warn">有警告</span>
+                        )}
+                        {step.evidence?.has_evidence && !step.evidence?.has_warnings && !step.evidence?.has_evidence_failure && (
+                          <span className="evidence-badge evidence-pass">证据校验通过</span>
+                        )}
+                      </div>
+                      {step.events!.map((ev, idx) => {
+                        const isLowChange = ev.payload && (ev.payload as Record<string, unknown>).low_change_warning === true
+                        const hasMeta = (ev.latency_ms != null && ev.latency_ms > 0) || (ev.token_count != null && ev.token_count > 0)
+                        return (
+                          <div key={ev.id || `ev-${idx}`} className={`exec-event exec-event-${ev.status || 'info'}${isLowChange ? ' exec-event-low-change' : ''}`}>
+                            <span className="exec-event-dot" />
+                            <span className="exec-event-main">
+                              <span className="exec-event-type">{eventLabel(ev.event_type)}</span>
+                              <span className="exec-event-msg">{eventMessage(ev)}</span>
+                              {isLowChange && (
+                                <span className="exec-event-warn-tag">内容几乎未变</span>
+                              )}
+                            </span>
+                            {hasMeta && (
+                              <span className="exec-event-metas">
+                                {ev.token_count != null && ev.token_count > 0 && (
+                                  <span className="exec-event-meta">{ev.token_count} tokens</span>
+                                )}
+                                {ev.latency_ms != null && ev.latency_ms > 0 && (
+                                  <span className="exec-event-meta">{(ev.latency_ms / 1000).toFixed(1)}s</span>
+                                )}
+                              </span>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                  )}
+                  {isExpanded && hasArtifacts && (
                     <div className="step-artifacts">
                       <div className="artifacts-summary">{formatArtifactSummary(step.artifacts)}</div>
                       {step.artifacts!.output_preview && (
@@ -208,25 +299,29 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           flex-shrink: 0;
         }
         .wf-timeline .step-completed .step-icon {
-          background: #dcfce7;
-          color: #16a34a;
+          background: color-mix(in srgb, var(--success) 14%, transparent);
+          color: var(--success);
         }
         .wf-timeline .step-running .step-icon {
-          background: #dbeafe;
-          color: #2563eb;
+          background: var(--accent-soft);
+          color: var(--primary);
           animation: wf-pulse 1.5s infinite;
         }
         .wf-timeline .step-failed .step-icon {
-          background: #fef2f2;
-          color: #dc2626;
+          background: color-mix(in srgb, var(--danger) 14%, transparent);
+          color: var(--danger);
         }
         .wf-timeline .step-blocked .step-icon {
-          background: #fef3c7;
-          color: #d97706;
+          background: color-mix(in srgb, var(--warning) 14%, transparent);
+          color: var(--warning);
+        }
+        .wf-timeline .step-skipped .step-icon {
+          background: var(--bg-tertiary);
+          color: var(--text-secondary);
         }
         .wf-timeline .step-pending .step-icon {
-          background: #f3f4f6;
-          color: #9ca3af;
+          background: var(--bg-tertiary);
+          color: var(--text-muted);
         }
         .wf-timeline .step-content {
           flex: 1;
@@ -244,14 +339,14 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
         .wf-timeline .step-error {
           margin-top: 6px;
           padding: 6px 8px;
-          background: #fef2f2;
+          background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary));
           border-radius: 4px;
           font-size: 12px;
-          color: #dc2626;
+          color: var(--danger);
         }
         .wf-timeline .step-error-legacy {
-          background: #fffbeb;
-          color: #b45309;
+          background: color-mix(in srgb, var(--warning) 12%, var(--bg-primary));
+          color: var(--warning);
         }
         .wf-timeline .step-logs {
           margin-top: 8px;
@@ -260,8 +355,8 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           gap: 5px;
           padding: 8px 10px;
           border-radius: 6px;
-          background: rgba(255, 255, 255, 0.64);
-          border: 1px solid rgba(148, 163, 184, 0.2);
+          background: color-mix(in srgb, var(--bg-primary) 82%, transparent);
+          border: 1px solid var(--border-color);
         }
         .wf-timeline .step-logs-title {
           font-size: 11px;
@@ -282,19 +377,19 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           width: 6px;
           height: 6px;
           border-radius: 50%;
-          background: #94a3b8;
+          background: var(--text-muted);
         }
         .wf-timeline .step-log-success .step-log-dot {
-          background: #16a34a;
+          background: var(--success);
         }
         .wf-timeline .step-log-warning .step-log-dot {
-          background: #d97706;
+          background: var(--warning);
         }
         .wf-timeline .step-log-error .step-log-dot {
-          background: #dc2626;
+          background: var(--danger);
         }
         .wf-timeline .step-log-info .step-log-dot {
-          background: #2563eb;
+          background: var(--primary);
         }
         .wf-timeline .step-log-dot-pulse {
           animation: wf-pulse 1.5s infinite;
@@ -333,9 +428,119 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
           border-top: 1px solid var(--border-color);
           margin-top: 0;
         }
+        .wf-timeline .step-exec-events {
+          padding: 0 12px 10px 48px;
+          border-top: 1px solid var(--border-color);
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+        .wf-timeline .exec-events-title {
+          font-size: 11px;
+          font-weight: 600;
+          color: var(--text-muted);
+          padding: 8px 0 4px;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+        }
+        .wf-timeline .evidence-badge {
+          font-size: 10px;
+          font-weight: 500;
+          padding: 1px 6px;
+          border-radius: 3px;
+        }
+        .wf-timeline .evidence-pass {
+          background: color-mix(in srgb, var(--success) 14%, transparent);
+          color: var(--success);
+        }
+        .wf-timeline .evidence-warn {
+          background: color-mix(in srgb, var(--warning) 14%, transparent);
+          color: var(--warning);
+        }
+        .wf-timeline .evidence-fail {
+          background: color-mix(in srgb, var(--danger) 14%, transparent);
+          color: var(--danger);
+        }
+        .wf-timeline .exec-event {
+          display: grid;
+          grid-template-columns: auto minmax(0, 1fr) auto;
+          align-items: start;
+          gap: 7px;
+          font-size: 12px;
+          line-height: 1.5;
+          color: var(--text-secondary);
+          padding: 2px 0;
+        }
+        .wf-timeline .exec-event-dot {
+          width: 5px;
+          height: 5px;
+          border-radius: 50%;
+          background: var(--text-muted);
+          flex-shrink: 0;
+        }
+        .wf-timeline .exec-event-pass .exec-event-dot,
+        .wf-timeline .exec-event-info .exec-event-dot {
+          background: var(--primary);
+        }
+        .wf-timeline .exec-event-warning .exec-event-dot {
+          background: var(--warning);
+        }
+        .wf-timeline .exec-event-error .exec-event-dot {
+          background: var(--danger);
+        }
+        .wf-timeline .exec-event-msg {
+          min-width: 0;
+          overflow-wrap: anywhere;
+        }
+        .wf-timeline .exec-event-main {
+          min-width: 0;
+          display: flex;
+          align-items: center;
+          gap: 7px;
+          flex-wrap: wrap;
+        }
+        .wf-timeline .exec-event-type {
+          font-size: 11px;
+          font-weight: 500;
+          color: var(--text-muted);
+          white-space: nowrap;
+          padding: 1px 5px;
+          background: rgba(148, 163, 184, 0.1);
+          border-radius: 3px;
+          flex-shrink: 0;
+        }
+        .wf-timeline .exec-event-low-change {
+          background: color-mix(in srgb, var(--warning) 8%, transparent);
+          border-radius: 4px;
+          padding: 3px 6px;
+          margin: 1px -6px;
+        }
+        .wf-timeline .exec-event-warn-tag {
+          font-size: 10px;
+          font-weight: 500;
+          color: var(--warning);
+          padding: 1px 5px;
+          background: color-mix(in srgb, var(--warning) 14%, transparent);
+          border-radius: 3px;
+          white-space: nowrap;
+        }
+        .wf-timeline .exec-event-metas {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 7px;
+          white-space: nowrap;
+        }
+        .wf-timeline .exec-event-meta {
+          font-size: 10px;
+          color: var(--text-muted);
+          font-variant-numeric: tabular-nums;
+          white-space: nowrap;
+        }
         .wf-timeline .artifacts-summary {
           padding: 10px 12px;
-          background: #f0fdf4;
+          background: color-mix(in srgb, var(--success) 10%, var(--bg-primary));
           border-radius: 4px;
           font-size: 13px;
           color: var(--text-primary);

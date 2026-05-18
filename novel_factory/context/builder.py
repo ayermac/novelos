@@ -247,34 +247,6 @@ class ContextBuilder:
             5,
         )
 
-    # ── v2 Sidecar Agent fragments ───────────────────────────────
-
-    def _frag_market_report(self, project_id: str) -> ContextFragment:
-        """P6: Recent market report from Scout agent."""
-        reports = self.repo.get_market_reports(project_id, limit=1)
-        if not reports:
-            return ContextFragment("market_report", "", 6)
-
-        report = reports[0]
-        content_json = report.get("content_json", {})
-        
-        parts = []
-        if content_json.get("trends"):
-            parts.append("市场趋势: " + ", ".join(content_json["trends"][:3]))
-        if content_json.get("opportunities"):
-            parts.append("市场机会: " + ", ".join(content_json["opportunities"][:2]))
-        if content_json.get("reader_preferences"):
-            parts.append("读者偏好: " + ", ".join(content_json["reader_preferences"][:3]))
-        
-        if not parts:
-            return ContextFragment("market_report", "", 6)
-        
-        return ContextFragment(
-            "market_report",
-            f"【市场洞察（Scout报告）】\n" + "\n".join(parts),
-            6,
-        )
-
     def _frag_continuity_warning(self, project_id: str, chapter_number: int) -> ContextFragment:
         """P3: Continuity warnings from ContinuityChecker agent."""
         reports = self.repo.get_continuity_reports(project_id, limit=3)
@@ -455,7 +427,7 @@ class ContextBuilder:
 
     def build_for_planner(self, project_id: str, chapter_number: int) -> str:
         """Build context for Planner: state_card, characters, plots, messages,
-        market_report, continuity_warning, review_notes (v3.2),
+        continuity_warning, review_notes (v3.2),
         world_rules, outlines (v5.2)."""
         fragments = [
             self._frag_review_notes(project_id, chapter_number),    # P2 (v3.2)
@@ -467,7 +439,6 @@ class ContextBuilder:
             self._frag_story_facts(project_id),                     # P5 (v5.3.2)
             self._frag_world_rules(project_id),                      # P6 (v5.2)
             self._frag_outlines(project_id, chapter_number),         # P6 (v5.2)
-            self._frag_market_report(project_id),                    # P6 (v2)
         ]
 
         # Pending messages

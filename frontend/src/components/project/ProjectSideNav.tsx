@@ -200,8 +200,8 @@ export default function ProjectSideNav({ activeModule, onModuleChange, compact }
           flex-shrink: 0;
           overflow-y: auto;
           padding: 12px 10px;
-          border-right: 1px solid #dedbd4;
-          background: #fbfbfa;
+          border-right: 1px solid var(--border-color);
+          background: var(--sidebar-bg, var(--bg-primary));
           transition: width 0.18s ease, padding 0.18s ease;
         }
         .project-side-nav--compact {
@@ -224,10 +224,10 @@ export default function ProjectSideNav({ activeModule, onModuleChange, compact }
           width: 100%;
           min-height: 34px;
           padding: 0 10px;
-          border: 1px solid #dedbd4;
+          border: 1px solid var(--border-color);
           border-radius: 6px;
-          background: #fffefc;
-          color: #554f49;
+          background: var(--bg-primary);
+          color: var(--text-secondary);
           cursor: pointer;
           font-size: 12px;
           font-weight: 680;
@@ -236,9 +236,9 @@ export default function ProjectSideNav({ activeModule, onModuleChange, compact }
         }
         .project-side-nav-toggle:hover,
         .project-side-nav-toggle:focus-visible {
-          background: #f6f2f0;
-          border-color: rgba(118, 26, 52, 0.26);
-          color: #761a34;
+          background: var(--bg-tertiary);
+          border-color: var(--border-strong);
+          color: var(--primary);
           outline: none;
         }
         .project-side-nav--collapsed .project-side-nav-toggle {
@@ -262,7 +262,7 @@ export default function ProjectSideNav({ activeModule, onModuleChange, compact }
           padding: 0 8px 7px;
           font-size: 11px;
           font-weight: 720;
-          color: #8b837b;
+          color: var(--text-muted);
           text-transform: uppercase;
           letter-spacing: 0.04em;
         }
@@ -271,8 +271,8 @@ export default function ProjectSideNav({ activeModule, onModuleChange, compact }
           border-radius: 6px;
         }
         .project-side-nav-label.collapsible:hover {
-          color: #554f49;
-          background: #f6f2f0;
+          color: var(--text-secondary);
+          background: var(--bg-tertiary);
         }
         .project-side-nav-chevron {
           transition: transform 0.15s ease;
@@ -298,7 +298,7 @@ export default function ProjectSideNav({ activeModule, onModuleChange, compact }
           border: 1px solid transparent;
           border-radius: 6px;
           background: transparent;
-          color: #554f49;
+          color: var(--text-secondary);
           cursor: pointer;
           font-size: 12px;
           text-align: left;
@@ -324,11 +324,11 @@ export default function ProjectSideNav({ activeModule, onModuleChange, compact }
           min-width: max-content;
           max-width: 180px;
           padding: 6px 9px;
-          border: 1px solid rgba(34, 28, 24, 0.1);
+          border: 1px solid var(--border-color);
           border-radius: 4px;
-          background: #191715;
-          color: #fffefc;
-          box-shadow: 0 12px 28px rgba(31, 27, 25, 0.18);
+          background: var(--tooltip-bg);
+          color: var(--tooltip-text);
+          box-shadow: var(--shadow-md);
           font-size: 12px;
           font-weight: 620;
           line-height: 1;
@@ -346,13 +346,13 @@ export default function ProjectSideNav({ activeModule, onModuleChange, compact }
           opacity: 1;
         }
         .project-side-nav-item:hover {
-          background: #f6f2f0;
-          color: #191715;
+          background: var(--bg-tertiary);
+          color: var(--text-primary);
         }
         .project-side-nav-item.active {
-          background: #f3e8eb;
-          border-color: rgba(118, 26, 52, 0.22);
-          color: #761a34;
+          background: var(--accent-soft);
+          border-color: var(--accent-border);
+          color: var(--primary);
           font-weight: 680;
         }
         .project-side-nav-item svg {

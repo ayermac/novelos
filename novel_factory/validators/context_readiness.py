@@ -10,6 +10,14 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+def _is_protagonist_role(role: Any) -> bool:
+    """Return True for canonical or localized protagonist role labels."""
+    role_text = str(role or "").strip().lower()
+    if role_text in {"protagonist", "main", "lead", "主角", "男主", "女主", "主人公"}:
+        return True
+    return any(token in role_text for token in ("protagonist", "主角", "男主", "女主", "主人公"))
+
+
 @dataclass
 class ContextReadinessResult:
     """Result of context readiness check.
@@ -85,9 +93,10 @@ def check_context_readiness(
         actions.append("请至少添加一条世界观设定")
 
     # 3. Check characters >= 1 protagonist
-    protagonists = [c for c in characters if c.get("role") == "protagonist"]
+    protagonists = [c for c in characters if _is_protagonist_role(c.get("role"))]
     details["protagonist_count"] = len(protagonists)
     details["character_count"] = len(characters)
+    details["character_roles"] = [c.get("role", "") for c in characters[:20]]
     if len(protagonists) < 1:
         missing.append("主角角色")
         actions.append("请至少添加一个主角角色")
@@ -199,9 +208,12 @@ def format_readiness_error(result: ContextReadinessResult) -> dict[str, Any]:
     Returns:
         Error dict suitable for API error response.
     """
+    message = "项目资料不完整，无法生成章节"
+    if result.missing:
+        message = f"项目资料不完整，缺少：{', '.join(result.missing)}，无法生成章节"
     return {
         "error_code": "PROJECT_CONTEXT_INCOMPLETE",
-        "message": "项目资料不完整，无法生成章节",
+        "message": message,
         "missing": result.missing,
         "actions": result.actions,
         "details": result.details,

@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { post } from '../lib/api'
 import PageHeader from '../components/PageHeader'
-import { NumberInput, Select, TextArea, TextInput } from '../components/ui'
+import { InlineMessage, LoadingButton, NumberInput, Select, TextArea, TextInput, useToast } from '../components/ui'
 
 interface ProjectResult {
   project: {
@@ -31,6 +31,7 @@ function generateProjectId(name: string): string {
 }
 
 export default function Onboarding() {
+  const { showToast } = useToast()
   const [form, setForm] = useState({
     project_id: '',
     name: '',
@@ -73,20 +74,31 @@ export default function Onboarding() {
     setLoading(true)
     setError('')
 
-    const res = await post('/onboarding/projects', form)
+    try {
+      const res = await post('/onboarding/projects', form)
 
-    if (res.ok && res.data) {
-      setResult(res.data as ProjectResult)
-    } else {
-      const msg = res.error?.message || '创建失败'
-      // Translate known error codes
-      if (msg.includes('已存在')) {
-        setError(`项目 ID '${form.project_id}' 已被使用，请换一个项目 ID。`)
+      if (res.ok && res.data) {
+        setResult(res.data as ProjectResult)
+        showToast({
+          tone: 'success',
+          title: '项目创建成功',
+          message: '已进入创作准备流程，下一步建议生成创世设定。',
+        })
       } else {
-        setError(msg)
+        const msg = res.error?.message || '创建失败'
+        const translated = msg.includes('已存在')
+          ? `项目 ID '${form.project_id}' 已被使用，请换一个项目 ID。`
+          : msg
+        setError(translated)
+        showToast({ tone: 'danger', title: '创建失败', message: translated })
       }
+    } catch {
+      const msg = '请求失败，请检查后端服务是否正在运行。'
+      setError(msg)
+      showToast({ tone: 'danger', title: '创建失败', message: msg })
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }
 
   if (result) {
@@ -120,11 +132,11 @@ export default function Onboarding() {
           </div>
           <h3 style={{ marginBottom: 'var(--space-2)', fontSize: 'var(--text-xl)', fontWeight: 'var(--font-semibold)' }}>项目创建成功</h3>
           <p style={{ color: 'var(--text-charcoal)', marginBottom: 'var(--space-6)', fontSize: 'var(--text-base)' }}>
-            「{result.project.name}」已创建，共规划 {result.chapters.length} 个初始章节。
+            「{result.project.name}」已创建，共规划 {result.chapters.length} 个初始章节。建议先完成创世设定、世界观、人物、大纲和章节指令，再进入章节生成。
           </p>
           <div style={{ display: 'flex', gap: 'var(--space-3)', justifyContent: 'center' }}>
             <Link
-              to={`/projects/${result.project.project_id}`}
+              to={`/projects/${result.project.project_id}?module=overview`}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -147,10 +159,10 @@ export default function Onboarding() {
                 e.currentTarget.style.boxShadow = ''
               }}
             >
-              进入项目工作台
+              进入准备工作台
             </Link>
             <Link
-              to={`/projects/${result.project.project_id}?chapter=1`}
+              to={`/projects/${result.project.project_id}?module=genesis`}
               style={{
                 display: 'inline-flex',
                 alignItems: 'center',
@@ -174,7 +186,7 @@ export default function Onboarding() {
                 e.currentTarget.style.borderColor = 'rgba(30, 58, 95, 0.12)'
               }}
             >
-              进入工作台生成第一章
+              配置创世设定
             </Link>
           </div>
         </div>
@@ -187,16 +199,9 @@ export default function Onboarding() {
       <PageHeader title="创建新项目" backTo="/projects" backLabel="返回列表" />
 
       {error && (
-        <div style={{
-          marginBottom: 'var(--space-4)',
-          padding: 'var(--space-4)',
-          background: 'rgba(239, 68, 68, 0.08)',
-          color: '#991b1b',
-          borderRadius: 'var(--radius-md)',
-          fontSize: 'var(--text-sm)',
-        }}>
+        <InlineMessage variant="danger" title="无法创建项目" className="onboarding-error-message">
           {error}
-        </div>
+        </InlineMessage>
       )}
 
       <div style={{
@@ -559,23 +564,13 @@ export default function Onboarding() {
             </div>
 
             <div style={{ display: 'flex', gap: 'var(--space-3)', marginTop: 'var(--space-4)', paddingTop: 'var(--space-4)', borderTop: '1px solid rgba(30, 58, 95, 0.06)' }}>
-              <button
+              <LoadingButton
                 type="submit"
-                disabled={loading}
+                loading={loading}
+                loadingText="创建中..."
                 style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 'var(--space-2)',
                   padding: 'var(--space-3) var(--space-6)',
-                  background: loading ? 'var(--text-muted)' : 'var(--gradient-ink)',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: 'var(--radius-md)',
                   fontSize: 'var(--text-base)',
-                  fontWeight: 'var(--font-medium)',
-                  cursor: loading ? 'not-allowed' : 'pointer',
-                  transition: 'all var(--duration-fast) var(--ease-out)',
                 }}
                 onMouseEnter={(e) => {
                   if (!loading) {
@@ -588,8 +583,8 @@ export default function Onboarding() {
                   e.currentTarget.style.boxShadow = ''
                 }}
               >
-                {loading ? '创建中...' : '创建项目'}
-              </button>
+                创建项目
+              </LoadingButton>
             </div>
           </form>
         </div>

@@ -203,6 +203,98 @@ def test_planned_chapter_with_existing_content_cannot_be_generated():
             os.unlink(db_path)
 
 
+def test_planned_chapter_with_existing_content_can_run_after_explicit_reset():
+    """A completed reset_recovery marker is the explicit reset required before
+    regenerating a planned chapter that still has preserved text."""
+    _, repo, db_path = _client_with_repo()
+    try:
+        project_id = "v611-reset-planned-with-content"
+        repo.create_project(
+            project_id=project_id,
+            name="Reset Existing Content Test",
+            genre="fantasy",
+            description="test",
+            target_words=30000,
+            total_chapters_planned=10,
+        )
+        repo.add_chapter(project_id, 1, "第一章", status="planned")
+        repo.save_chapter(project_id, 1, "第一章", "恢复后保留的正文" * 20, 160, "planned")
+
+        # v6.3: context completeness guard requires approved genesis + world + characters + outlines + instructions
+        repo.create_genesis_run(project_id, input_json='{"title":"test"}', status="approved")
+        repo.create_world_setting(project_id, category="世界观", title="背景", content="test")
+        repo.create_character(project_id, name="主角", role="protagonist", description="test", traits="", first_appearance=1)
+        repo.create_outline(project_id, level="volume", sequence=1, title="第一卷", content="test", chapters_range="1-10")
+        repo.create_instruction(project_id, chapter_number=1, objective="test", key_events="test")
+
+        run_id = repo.create_workflow_run(project_id, 1)
+        repo.update_workflow_run(run_id, status="blocked", current_node="human_review")
+        repo.mark_blocked_workflow_runs_recovered_for_chapter(project_id, 1, run_id=run_id)
+
+        from novel_factory.api.routes._run_guards import check_chapter_run_guard
+
+        assert check_chapter_run_guard(repo, project_id, 1) is None
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
+def test_regenerate_reset_endpoint_confirms_planned_existing_content():
+    """The API exposes an explicit confirmation path for planned chapters that
+    preserve text after recovery, so the UI does not dead-end on the run guard."""
+    client, repo, db_path = _client_with_repo()
+    try:
+        project_id = "v656-confirm-regenerate"
+        repo.create_project(
+            project_id=project_id,
+            name="Confirm Regenerate Test",
+            genre="fantasy",
+            description="test",
+            target_words=30000,
+            total_chapters_planned=10,
+        )
+        repo.add_chapter(project_id, 1, "第一章", status="planned")
+        repo.save_chapter(project_id, 1, "第一章", "恢复后保留的正文" * 20, 160, "planned")
+
+        repo.create_genesis_run(project_id, input_json='{"title":"test"}', status="approved")
+        repo.create_world_setting(project_id, category="世界观", title="背景", content="test")
+        repo.create_character(project_id, name="主角", role="protagonist", description="test", traits="", first_appearance=1)
+        repo.create_outline(project_id, level="volume", sequence=1, title="第一卷", content="test", chapters_range="1-10")
+        repo.create_instruction(project_id, chapter_number=1, objective="test", key_events="test")
+
+        blocked_run_id = repo.create_workflow_run(project_id, 1)
+        repo.update_workflow_run(blocked_run_id, status="blocked", current_node="human_review")
+
+        missing_confirm = client.post(
+            f"/api/projects/{project_id}/chapters/1/regenerate-reset",
+            json={"confirm": False},
+        )
+        assert missing_confirm.status_code == 200
+        assert missing_confirm.json()["ok"] is False
+        assert missing_confirm.json()["error"]["code"] == "CONFIRM_REQUIRED"
+
+        from novel_factory.api.routes._run_guards import check_chapter_run_guard
+
+        before = check_chapter_run_guard(repo, project_id, 1)
+        assert before is not None
+        assert before.code == "CHAPTER_HAS_EXISTING_CONTENT"
+
+        confirmed = client.post(
+            f"/api/projects/{project_id}/chapters/1/regenerate-reset",
+            json={"confirm": True},
+        )
+        assert confirmed.status_code == 200
+        data = confirmed.json()["data"]
+        assert data["reset"] is True
+        assert data["recovered_blocked_runs"] == 1
+        assert data["new_status"] == "planned"
+
+        assert check_chapter_run_guard(repo, project_id, 1) is None
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
 def test_pending_memory_updates_surface_in_health_summary():
     """Pending memory items must appear in the health summary with
     an action that navigates to the memory inbox."""

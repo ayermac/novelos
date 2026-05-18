@@ -270,13 +270,13 @@ class TestFrontendRunPage:
         )
         assert "chapter_count||0)+1" not in content.replace(" ", "")
 
-    def test_run_chapter_selector_is_select(self):
-        """Run.tsx chapter selector should be a <select> element."""
+    def test_run_chapter_selector_uses_standard_select_control(self):
+        """Run.tsx chapter selector should use the shared Select control."""
         frontend_src = Path(__file__).parent.parent / "frontend" / "src"
         run_file = frontend_src / "pages" / "Run.tsx"
         content = run_file.read_text()
 
-        assert "<select" in content, "Run.tsx should use <select> for chapter selection"
+        assert "<Select" in content, "Run.tsx should use shared Select for chapter selection"
         assert "isRunnable" in content or "RUNNABLE_STATUSES" in content, (
             "Run.tsx should filter runnable chapters"
         )

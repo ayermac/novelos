@@ -1,22 +1,27 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Sparkles,
   Loader2,
   Play,
   CheckCircle2,
+  FileText,
+  PenLine,
 } from 'lucide-react'
 import { StepStatus } from '../../hooks/useSSEStream'
-import { tWorkflowNodeLabel } from '../../lib/state-labels'
+import { useWorkflowStream } from '../../hooks/useWorkflowStream'
+import { tWorkflowNodeLabel, tWorkflowNodeNarrative } from '../../lib/state-labels'
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
 import { post } from '../../lib/api'
-import type { WorkflowTimelineData } from '../../lib/api'
+import type { WorkflowTimelineData, WorkflowExecutionEvent, WorkflowNodeEvidence } from '../../lib/api'
 import { PROCESS_DRAFT_LABEL, formatArtifactSummary, getArtifactTitle } from '../../lib/artifacts'
+import { LoadingButton, SkeletonStack, InlineMessage, useToast } from '../ui'
 import AttentionPanel, { ActionHintList } from '../AttentionPanel'
 import WorkflowTimeline from '../WorkflowTimeline'
 import ChapterVersionPanel from './ChapterVersionPanel'
 import ChapterDiffViewer from './ChapterDiffViewer'
 import ChapterEditorSurface from './ChapterEditorSurface'
+import QualityDiagnosisPanel from './QualityDiagnosisPanel'
 
 export type SurfaceTabKey = 'content' | 'workflow' | 'artifacts' | 'history' | 'versions'
 
@@ -47,7 +52,7 @@ interface Step {
   description: string
   node_group?: 'system' | 'creative_agent' | 'support_agent' | 'terminal' | 'router' | 'unknown'
   node_type?: string
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'skipped'
   error_message?: string
   logs?: {
     id?: string
@@ -63,6 +68,8 @@ interface Step {
     artifact_types?: unknown
     [key: string]: unknown
   } | null
+  events?: WorkflowExecutionEvent[]
+  evidence?: WorkflowNodeEvidence
 }
 
 interface RunDetailData {
@@ -89,6 +96,60 @@ function elapsedMinutesSince(value?: string | null): number | null {
   const timestamp = new Date(normalized).getTime()
   if (Number.isNaN(timestamp)) return null
   return Math.max(0, Math.floor((Date.now() - timestamp) / 60000))
+}
+
+function mergeWorkflowEvents(
+  existingEvents: WorkflowExecutionEvent[],
+  liveEvents: WorkflowExecutionEvent[],
+): WorkflowExecutionEvent[] {
+  const merged: WorkflowExecutionEvent[] = []
+  const seen = new Set<string>()
+  for (const event of [...existingEvents, ...liveEvents]) {
+    const key = event.id != null
+      ? `id:${event.id}`
+      : `${event.node_name || ''}:${event.event_type}:${event.status || ''}:${event.created_at || ''}:${event.message || ''}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    merged.push(event)
+  }
+  return merged
+}
+
+function buildLiveEvidence(
+  events: WorkflowExecutionEvent[],
+  fallback?: WorkflowNodeEvidence,
+): WorkflowNodeEvidence | undefined {
+  if (events.length === 0) return fallback
+
+  let hasWarnings = false
+  let hasEvidenceFailure = false
+  let latestSummary = fallback?.latest_event_summary || ''
+
+  for (const event of events) {
+    const status = event.status || 'info'
+    if (event.event_type === 'evidence_verified' && status === 'fail') {
+      hasEvidenceFailure = true
+    }
+    if (status === 'warning' || status === 'error') {
+      hasWarnings = true
+    }
+    if (
+      event.message &&
+      (event.event_type === 'evidence_verified' ||
+        event.event_type === 'node_completed' ||
+        event.event_type === 'llm_completed')
+    ) {
+      latestSummary = event.message
+    }
+  }
+
+  return {
+    has_evidence: true,
+    has_warnings: hasWarnings || fallback?.has_warnings,
+    has_evidence_failure: hasEvidenceFailure || fallback?.has_evidence_failure,
+    latest_event_summary: latestSummary,
+    event_count: events.length,
+  }
 }
 
 const CANONICAL_GENERATING_STEPS = [
@@ -137,6 +198,14 @@ function getModuleForMissing(item: string): string {
   return 'settings'
 }
 
+export interface GenerationErrorDetails {
+  missing?: string[]
+  actions?: string[]
+  hint?: string
+  word_count?: number
+  chapter_status?: string
+}
+
 interface AuthorWritingSurfaceProps {
   activeTab: SurfaceTabKey
   chapterDetail: ChapterDetail | null
@@ -144,7 +213,7 @@ interface AuthorWritingSurfaceProps {
   currentChapter: number
   currentChapterRecord: { status: string; word_count: number; title?: string; quality_score?: number } | null
   genError: string
-  genErrorDetails: { missing?: string[]; actions?: string[] } | null
+  genErrorDetails: GenerationErrorDetails | null
   isLaunching: boolean
   isStub: boolean
   isStreaming: boolean
@@ -157,13 +226,17 @@ interface AuthorWritingSurfaceProps {
   timeline?: WorkflowTimelineData | null
   timelineError?: string
   onGenerate: () => void
+  onConfirmRegenerate?: () => void
   onGenerateNext?: () => void
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onPublish?: () => void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
+  onRetryRunNode?: (runId: string) => Promise<void> | void
+  onWorkflowDone?: (runId: string, status: string | null) => void
   publishPending?: boolean
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
+  regeneratePending?: boolean
   onTabChange: (tab: SurfaceTabKey) => void
   onViewContent: () => void
   onViewWorkflow: (runId: string) => void
@@ -190,12 +263,16 @@ export default function AuthorWritingSurface({
   timeline,
   timelineError,
   onGenerate,
+  onConfirmRegenerate,
   onMarkRunStuck,
   onPublish,
   onResetRunRecovery,
+  onRetryRunNode,
+  onWorkflowDone,
   publishPending,
   markStuckPending,
   resetRecoveryPending,
+  regeneratePending,
   onTabChange,
   onViewContent: _onViewContent,
   onViewWorkflow,
@@ -206,7 +283,9 @@ export default function AuthorWritingSurface({
   const status = currentChapterRecord?.status || ''
   const isTerminal = ['reviewed', 'awaiting_publish', 'published'].includes(status)
   const isReviewedReal = status === 'reviewed' && llmMode === 'real'
-  const qualityScore = chapterDetail?.quality_score ?? currentChapterRecord?.quality_score ?? null
+  const hasPreservedPlannedContent = status === 'planned' && (currentChapterRecord?.word_count || chapterDetail?.word_count || 0) > 0
+  const persistedQualityScore = chapterDetail?.quality_score ?? currentChapterRecord?.quality_score ?? null
+  const qualityScore = persistedQualityScore
   const statusLabel = tChapterStatus(status)
 
   const tabs: { key: SurfaceTabKey; label: string; disabled?: boolean }[] = [
@@ -243,26 +322,39 @@ export default function AuthorWritingSurface({
         </div>
         <div className="author-surface-actions">
           {isReviewedReal && onPublish && (
-            <button className="btn btn-primary btn-sm" onClick={onPublish} disabled={publishPending}>
-              {publishPending ? (
-                <><Loader2 size={12} className="spin" /> 发布中...</>
-              ) : (
-                <><CheckCircle2 size={12} /> 确认发布</>
-              )}
-            </button>
-          )}
-          {!isTerminal && (
-            <button
+            <LoadingButton
               className="btn btn-primary btn-sm"
+              variant="primary"
+              loading={!!publishPending}
+              loadingText="发布中..."
+              onClick={onPublish}
+              disabled={isStreaming || isWorkflowRunning}
+            >
+              <CheckCircle2 size={12} /> 确认发布
+            </LoadingButton>
+          )}
+          {hasPreservedPlannedContent && onConfirmRegenerate ? (
+            <LoadingButton
+              className="btn btn-primary btn-sm"
+              variant="primary"
+              loading={!!regeneratePending}
+              loadingText="确认中..."
+              onClick={onConfirmRegenerate}
+              disabled={isStreaming || isWorkflowRunning}
+            >
+              <Play size={12} /> 覆盖重生成
+            </LoadingButton>
+          ) : !isTerminal && (
+            <LoadingButton
+              className="btn btn-primary btn-sm"
+              variant="primary"
+              loading={isStreaming || isWorkflowRunning}
+              loadingText="生成中..."
               onClick={onGenerate}
               disabled={isStreaming || isWorkflowRunning}
             >
-              {isStreaming || isWorkflowRunning ? (
-                <><Loader2 size={12} className="spin" /> 生成中...</>
-              ) : (
-                <><Play size={12} /> 生成本章</>
-              )}
-            </button>
+              <Play size={12} /> 生成本章
+            </LoadingButton>
           )}
         </div>
       </div>
@@ -286,7 +378,7 @@ export default function AuthorWritingSurface({
           <span>{qualityScore ?? '—'}</span>
         </div>
         <div className="author-readiness-cell">
-          <strong>质量</strong>
+          <strong>审核分</strong>
           <span>{qualityScore !== null ? (qualityScore >= 85 ? '优秀' : qualityScore >= 70 ? '稳定' : '待增强') : '待评估'}</span>
         </div>
         <div className="author-readiness-cell">
@@ -323,7 +415,9 @@ export default function AuthorWritingSurface({
             isWorkflowRunning={isWorkflowRunning}
             projectId={projectId}
             onGenerate={onGenerate}
+            onConfirmRegenerate={onConfirmRegenerate}
             onRefreshContent={onRefreshContent}
+            regeneratePending={regeneratePending}
           />
         )}
         {activeTab === 'workflow' && (
@@ -336,6 +430,8 @@ export default function AuthorWritingSurface({
             sseSteps={sseSteps}
             onMarkRunStuck={onMarkRunStuck}
             onResetRunRecovery={onResetRunRecovery}
+            onRetryRunNode={onRetryRunNode}
+            onWorkflowDone={onWorkflowDone}
             markStuckPending={markStuckPending}
             resetRecoveryPending={resetRecoveryPending}
           />
@@ -375,28 +471,33 @@ function ContentBody({
   isWorkflowRunning,
   projectId,
   onGenerate,
+  onConfirmRegenerate,
   onRefreshContent,
+  regeneratePending,
 }: {
   chapterDetail: ChapterDetail | null
   chapterLoading: boolean
   currentChapter: number
   isTerminal: boolean
   genError: string
-  genErrorDetails: { missing?: string[]; actions?: string[] } | null
+  genErrorDetails: GenerationErrorDetails | null
   hasContent: boolean
   isStub: boolean
   isStreaming: boolean
   isWorkflowRunning?: boolean
   projectId: string
   onGenerate: () => void
+  onConfirmRegenerate?: () => void
   onRefreshContent?: () => void
+  regeneratePending?: boolean
 }) {
+  const { showToast } = useToast()
   const [filling, setFilling] = useState(false)
-  const [fillMsg, setFillMsg] = useState('')
+  const [inlineMsg, setInlineMsg] = useState<{ variant: 'success' | 'danger'; text: string } | null>(null)
 
   const handleAutoFill = async () => {
     setFilling(true)
-    setFillMsg('')
+    setInlineMsg(null)
     const start = currentChapter
     const end = currentChapter + 9
     try {
@@ -406,12 +507,18 @@ function ContentBody({
       )
       if (res.ok && res.data) {
         const total = Object.values(res.data.created).reduce((a, b) => a + b, 0)
-        setFillMsg(`已自动补齐 ${total} 项资料，请刷新页面查看。`)
+        const msg = `已自动补齐 ${total} 项资料，请刷新页面查看。`
+        setInlineMsg({ variant: 'success', text: msg })
+        showToast({ tone: 'success', title: '补齐完成', message: msg })
       } else {
-        setFillMsg(res.error?.message || '补齐失败')
+        const msg = res.error?.message || '补齐失败'
+        setInlineMsg({ variant: 'danger', text: msg })
+        showToast({ tone: 'danger', title: '补齐失败', message: msg })
       }
     } catch {
-      setFillMsg('网络异常，补齐失败')
+      const msg = '网络异常，补齐失败'
+      setInlineMsg({ variant: 'danger', text: msg })
+      showToast({ tone: 'danger', title: '请求失败', message: msg })
     } finally {
       setFilling(false)
     }
@@ -420,6 +527,7 @@ function ContentBody({
   const handleEditorContentSaved = useCallback(() => {
     onRefreshContent?.()
   }, [onRefreshContent])
+  const hasExistingContentGuard = genErrorDetails?.hint === 'review_existing_content'
 
   return (
     <div>
@@ -436,6 +544,28 @@ function ContentBody({
       {genError && (
         <AttentionPanel title="生成失败" tone="error" style={{ marginBottom: 16 }}>
           <div>{genError}</div>
+          {hasExistingContentGuard && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+              <LoadingButton
+                className="btn btn-secondary btn-sm"
+                variant="secondary"
+                onClick={onRefreshContent}
+              >
+                <FileText size={12} /> 查看已有正文
+              </LoadingButton>
+              {onConfirmRegenerate && (
+                <LoadingButton
+                  className="btn btn-primary btn-sm"
+                  variant="primary"
+                  loading={!!regeneratePending}
+                  loadingText="确认中..."
+                  onClick={onConfirmRegenerate}
+                >
+                  <Sparkles size={12} /> 确认覆盖并重新生成
+                </LoadingButton>
+              )}
+            </div>
+          )}
           {genErrorDetails?.missing && genErrorDetails.missing.length > 0 && (
             <ActionHintList title="缺失项">
               {genErrorDetails.missing.map((item, i) => (
@@ -452,12 +582,18 @@ function ContentBody({
           )}
           {genErrorDetails?.missing && genErrorDetails.missing.length > 0 && (
             <div style={{ marginTop: 10 }}>
-              <button className="btn btn-primary btn-sm" onClick={handleAutoFill} disabled={filling}>
-                {filling ? <><Loader2 size={12} className="spin" /> 补齐中...</> : <><Sparkles size={12} /> 让 AI 补齐缺失资料</>}
-              </button>
-              {fillMsg && (
-                <div style={{ marginTop: 6, fontSize: 12, color: fillMsg.includes('失败') ? 'var(--wb-danger)' : 'var(--wb-success)' }}>
-                  {fillMsg}
+              <LoadingButton
+                className="btn btn-primary btn-sm"
+                variant="primary"
+                loading={filling}
+                loadingText="补齐中..."
+                onClick={handleAutoFill}
+              >
+                <Sparkles size={12} /> 让 AI 补齐缺失资料
+              </LoadingButton>
+              {inlineMsg && (
+                <div style={{ marginTop: 8 }}>
+                  <InlineMessage variant={inlineMsg.variant}>{inlineMsg.text}</InlineMessage>
                 </div>
               )}
             </div>
@@ -473,36 +609,64 @@ function ContentBody({
       )}
 
       {chapterLoading && !isStreaming && (
-        <div style={{ padding: 40, textAlign: 'center', color: 'var(--wb-text-dark-muted)' }}>加载中...</div>
+        <div style={{ padding: 24 }}>
+          <SkeletonStack rows={6} />
+        </div>
       )}
 
       {!chapterLoading && !hasContent && !isStreaming && (
         <div className="author-surface-empty">
-          <h3>第 {currentChapter} 章</h3>
-          {chapterDetail?.title && <p style={{ fontSize: 16, color: 'var(--wb-text-dark-secondary)', marginBottom: 8 }}>{chapterDetail.title}</p>}
-          <p>本章尚未生成</p>
-          <p style={{ fontSize: 13 }}>编剧将规划章节场景和情节，执笔将撰写章节正文</p>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 12 }}>
+            <FileText size={24} color="var(--wb-text-dark-muted)" />
+          </div>
+          <h3>{chapterDetail?.title ? `第 ${currentChapter} 章：${chapterDetail.title}` : `第 ${currentChapter} 章`}</h3>
+          <p style={{ fontSize: 14, color: 'var(--wb-text-dark-secondary)', marginTop: 4, marginBottom: 8 }}>
+            本章还没有正文内容
+          </p>
+          <div style={{ fontSize: 13, color: 'var(--wb-text-dark-muted)', lineHeight: 1.6, maxWidth: 420, margin: '0 auto' }}>
+            <p style={{ marginBottom: 6 }}>下一步：</p>
+            <ul style={{ textAlign: 'left', paddingLeft: 18, margin: 0 }}>
+              <li>编剧将规划章节场景和情节</li>
+              <li>执笔将撰写章节正文</li>
+              <li>润色、审核后生成最终版本</li>
+            </ul>
+          </div>
           {!isTerminal && (
-            <button className="btn btn-primary" onClick={onGenerate} style={{ marginTop: 16 }} disabled={isWorkflowRunning}>
-              {isWorkflowRunning ? '生成中...' : '生成本章'}
-            </button>
+            <LoadingButton
+              className="btn btn-primary"
+              variant="primary"
+              loading={isWorkflowRunning}
+              loadingText="生成中..."
+              onClick={onGenerate}
+              disabled={isWorkflowRunning}
+              style={{ marginTop: 20, minWidth: 160 }}
+            >
+              <PenLine size={14} /> 生成本章
+            </LoadingButton>
           )}
-          <div style={{ marginTop: 12, fontSize: 12, color: 'var(--wb-text-dark-muted)' }}>
+          <div style={{ marginTop: 14, fontSize: 12, color: 'var(--wb-text-dark-muted)' }}>
             预计字数: 2,000-4,000 &middot; 生成模式: {isStub ? '演示模式' : '真实 LLM'}
           </div>
         </div>
       )}
 
       {!chapterLoading && hasContent && !isStreaming && (
-        <ChapterEditorSurface
-          projectId={projectId}
-          chapterNumber={currentChapter}
-          onContentSaved={handleEditorContentSaved}
-          initialContent={chapterDetail?.content || ''}
-          initialWordCount={chapterDetail?.word_count || 0}
-          initialStatus={chapterDetail?.status || ''}
-          initialVersionLabel={`更新时间 ${chapterDetail?.updated_at || chapterDetail?.created_at || '-'}`}
-        />
+        <>
+          <QualityDiagnosisPanel
+            projectId={projectId}
+            chapterNumber={currentChapter}
+            chapterStatus={chapterDetail?.status || ''}
+          />
+          <ChapterEditorSurface
+            projectId={projectId}
+            chapterNumber={currentChapter}
+            onContentSaved={handleEditorContentSaved}
+            initialContent={chapterDetail?.content || ''}
+            initialWordCount={chapterDetail?.word_count || 0}
+            initialStatus={chapterDetail?.status || ''}
+            initialVersionLabel={`更新时间 ${chapterDetail?.updated_at || chapterDetail?.created_at || '-'}`}
+          />
+        </>
       )}
     </div>
   )
@@ -521,6 +685,8 @@ function WorkflowBody({
   sseSteps,
   onMarkRunStuck,
   onResetRunRecovery,
+  onRetryRunNode,
+  onWorkflowDone,
   markStuckPending,
   resetRecoveryPending,
 }: {
@@ -532,15 +698,33 @@ function WorkflowBody({
   sseSteps: Record<string, StepStatus>
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
+  onRetryRunNode?: (runId: string) => Promise<void> | void
+  onWorkflowDone?: (runId: string, status: string | null) => void
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
 }) {
+  // v6.1: Connect to SSE stream for live execution events while running
+  const isRunActive = timeline?.run_status === 'running'
+  const { liveEvents, doneStatus } = useWorkflowStream(
+    isRunActive ? timeline?.project_id ?? null : null,
+    isRunActive ? timeline?.chapter_number ?? null : null,
+    isRunActive ? timeline?.run_id ?? null : null,
+    isRunActive,
+  )
+
+  useEffect(() => {
+    if (doneStatus && timeline?.run_id) {
+      onWorkflowDone?.(timeline.run_id, doneStatus)
+    }
+  }, [doneStatus, onWorkflowDone, timeline?.run_id])
+
   // v5.8.2: Timeline API is the primary workflow truth when available.
   if (timeline) {
     const nodeLabel = tWorkflowNodeLabel(timeline.current_node)
     const statusLabel = timeline.run_status ? tWorkflowStatus(timeline.run_status) : '—'
     const isStale = timeline.is_stale
     const isRunning = timeline.run_status === 'running'
+
     const statusTone = isStale || timeline.run_status === 'blocked' ? 'warning' : timeline.run_status === 'failed' ? 'error' : 'info'
     const statusHeadline = isStale
       ? '工作流疑似卡住'
@@ -565,21 +749,40 @@ function WorkflowBody({
     const checkpoint = timeline.checkpoint
 
     // Convert timeline nodes to WorkflowTimeline Step format
-    const timelineSteps: Step[] = timeline.nodes.map((n) => ({
-      key: n.node_name,
-      label: n.label,
-      description: n.messages[0] || '',
-      node_group: n.node_group,
-      node_type: n.node_type,
-      status: n.status as Step['status'],
-      logs: n.messages.map((m) => ({ level: 'info' as const, message: m })),
-      artifacts: n.artifacts.length > 0 ? {
-        summary: n.artifacts.map((a) => a.label).join('、'),
-        artifact_labels: n.artifacts.map((a) => a.label),
-        artifact_count: n.artifacts.length,
-        artifact_types: n.artifacts.map((a) => a.type),
-      } : null,
-    }))
+    // v6.1: Merge live SSE events into nodes while running
+    const liveEventsByNode: Record<string, WorkflowExecutionEvent[]> = {}
+    for (const ev of liveEvents) {
+      const nodeName = ev.node_name
+      if (nodeName) {
+        if (!liveEventsByNode[nodeName]) liveEventsByNode[nodeName] = []
+        liveEventsByNode[nodeName].push(ev)
+      }
+    }
+
+    const timelineSteps: Step[] = timeline.nodes.map((n) => {
+      const existingEvents = n.events || []
+      const live = liveEventsByNode[n.node_name] || []
+      const mergedEvents = live.length > 0
+        ? mergeWorkflowEvents(existingEvents, live)
+        : existingEvents
+      return {
+        key: n.node_name,
+        label: n.label,
+        description: n.messages[0] || '',
+        node_group: n.node_group,
+        node_type: n.node_type,
+        status: n.status as Step['status'],
+        logs: n.messages.map((m) => ({ level: 'info' as const, message: m })),
+        artifacts: n.artifacts.length > 0 ? {
+          summary: n.artifacts.map((a) => a.label).join('、'),
+          artifact_labels: n.artifacts.map((a) => a.label),
+          artifact_count: n.artifacts.length,
+          artifact_types: n.artifacts.map((a) => a.type),
+        } : null,
+        events: mergedEvents.length > 0 ? mergedEvents : undefined,
+        evidence: buildLiveEvidence(mergedEvents, n.evidence),
+      }
+    })
 
     return (
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -619,21 +822,49 @@ function WorkflowBody({
           )}
           {(isStale || recovery.recommended_action === 'mark_stuck') && onMarkRunStuck && timeline.run_id && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-              <button className="btn btn-secondary btn-sm" onClick={() => onMarkRunStuck(timeline.run_id!)} disabled={markStuckPending}>
-                {markStuckPending ? (
-                  <><Loader2 size={12} className="spin" /> 处理中...</>
-                ) : (
-                  <>标记为阻塞</>
-                )}
-              </button>
+              <LoadingButton
+                className="btn btn-secondary btn-sm"
+                variant="secondary"
+                loading={!!markStuckPending}
+                loadingText="处理中..."
+                onClick={() => onMarkRunStuck(timeline.run_id!)}
+              >
+                标记为阻塞
+              </LoadingButton>
               {onResetRunRecovery && (
-                <button className="btn btn-primary btn-sm" onClick={() => onResetRunRecovery(timeline.run_id!)} disabled={resetRecoveryPending}>
-                  {resetRecoveryPending ? (
-                    <><Loader2 size={12} className="spin" /> 处理中...</>
-                  ) : (
-                    <>清除阻塞并重置</>
-                  )}
-                </button>
+                <LoadingButton
+                  className="btn btn-primary btn-sm"
+                  variant="primary"
+                  loading={!!resetRecoveryPending}
+                  loadingText="处理中..."
+                  onClick={() => onResetRunRecovery(timeline.run_id!)}
+                >
+                  清除阻塞并重置
+                </LoadingButton>
+              )}
+            </div>
+          )}
+          {recovery.recommended_action === 'retry_node' && onRetryRunNode && timeline.run_id && (
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+              <LoadingButton
+                className="btn btn-primary btn-sm"
+                variant="primary"
+                loading={!!resetRecoveryPending}
+                loadingText="处理中..."
+                onClick={() => onRetryRunNode(timeline.run_id!)}
+              >
+                {recovery.safe_actions.find((a) => a.key === 'retry_node')?.label || '重试当前节点'}
+              </LoadingButton>
+              {onResetRunRecovery && (
+                <LoadingButton
+                  className="btn btn-secondary btn-sm"
+                  variant="secondary"
+                  loading={!!resetRecoveryPending}
+                  loadingText="处理中..."
+                  onClick={() => onResetRunRecovery(timeline.run_id!)}
+                >
+                  完整重置
+                </LoadingButton>
               )}
             </div>
           )}
@@ -737,22 +968,37 @@ function WorkflowBody({
           {(isStaleRunning || isContradictory || runDetail.chapter_status === 'blocking' || runDetail.chapter_status === 'revision') && (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
               {(isStaleRunning || isContradictory) && onMarkRunStuck && (
-                <button className="btn btn-secondary btn-sm" onClick={() => onMarkRunStuck(runDetail.run_id)} disabled={markStuckPending}>
-                  {markStuckPending ? (
-                    <><Loader2 size={12} className="spin" /> 处理中...</>
-                  ) : (
-                    <>标记为阻塞</>
-                  )}
-                </button>
+                <LoadingButton
+                  className="btn btn-secondary btn-sm"
+                  variant="secondary"
+                  loading={!!markStuckPending}
+                  loadingText="处理中..."
+                  onClick={() => onMarkRunStuck(runDetail.run_id)}
+                >
+                  标记为阻塞
+                </LoadingButton>
               )}
               {(runDetail.chapter_status === 'blocking' || runDetail.chapter_status === 'revision') && onResetRunRecovery && (
-                <button className="btn btn-primary btn-sm" onClick={() => onResetRunRecovery(runDetail.run_id)} disabled={resetRecoveryPending}>
-                  {resetRecoveryPending ? (
-                    <><Loader2 size={12} className="spin" /> 处理中...</>
-                  ) : (
-                    <>清除阻塞并重置</>
-                  )}
-                </button>
+                <LoadingButton
+                  className="btn btn-primary btn-sm"
+                  variant="primary"
+                  loading={!!resetRecoveryPending}
+                  loadingText="处理中..."
+                  onClick={() => onResetRunRecovery(runDetail.run_id)}
+                >
+                  清除阻塞并重置
+                </LoadingButton>
+              )}
+              {(runDetail.chapter_status === 'blocking' || runDetail.chapter_status === 'revision') && onRetryRunNode && ['author', 'polisher', 'editor'].includes(runDetail.current_node || '') && (
+                <LoadingButton
+                  className="btn btn-primary btn-sm"
+                  variant="primary"
+                  loading={!!resetRecoveryPending}
+                  loadingText="处理中..."
+                  onClick={() => onRetryRunNode(runDetail.run_id)}
+                >
+                  重试当前节点
+                </LoadingButton>
               )}
               <Link to={`/runs/${runDetail.run_id}`} className="btn btn-secondary btn-sm">
                 打开恢复详情
@@ -791,7 +1037,7 @@ function WorkflowBody({
       let logs: Step['logs'] = []
       if (stepStatus) {
         status = stepStatus.status as Step['status']
-        if (status === 'running') description = '处理中...'
+        if (status === 'running') description = tWorkflowNodeNarrative(s.key)
         else if (status === 'completed') description = `完成 (${stepStatus.duration_ms || 0}ms)`
         else if (status === 'failed') description = '失败'
         logs = stepStatus.logs
@@ -804,7 +1050,7 @@ function WorkflowBody({
         }
       }
       if (status === 'running' && (!logs || logs.length === 0)) {
-        logs = [{ level: 'info', message: '节点运行中，正在等待模型或工具返回。' }]
+        logs = [{ level: 'info', message: tWorkflowNodeNarrative(s.key) }]
       }
       return { key: s.key, label: s.label, node_group: s.node_group, description, status, logs }
     })

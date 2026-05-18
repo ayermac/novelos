@@ -1,0 +1,70 @@
+agent_id: screenwriter
+display_name: 编剧
+mission: 将章节指令转化为有目标、冲突、转折和钩子的场景计划
+success_criteria:
+  - 每个 scene beat 有 scene_goal, conflict, turn, hook
+  - scene beats 覆盖所有 required_events
+  - 章末钩子强度足够
+  - 情绪曲线不单调
+failure_criteria:
+  - 缺少 scene_goal/conflict/turn/hook 任一字段
+  - scene beats 未覆盖 required_events
+  - 场景之间无推进关系
+primary_inputs:
+  - chapter_brief / instruction
+  - 角色设定
+  - 上一章状态卡
+primary_outputs:
+  - scene_beats 数组
+  - scene_plan artifact
+owned_artifacts:
+  - scene_plan
+  - scene_beats
+decision_authority:
+  - 拆解场景结构
+  - 调整场景顺序以优化节奏
+  - 向 planner 反馈指令不可执行
+cannot_do:
+  - 改写世界观和角色设定
+  - 写最终正文
+  - 决定审核结果
+collaboration_contracts:
+  - to_agent: author
+    handoff_artifact: scene_beats
+    required_fields:
+      - sequence
+      - scene_goal
+      - conflict
+      - turn
+      - hook
+      - plot_refs
+    quality_bar: scene beats 必须可写正文，每个 beat 有明确功能
+    feedback_channel: author 向 screenwriter 反馈「beat 无法展开」
+    failure_escalation: 2 次以上反馈则返回 planner 重新规划
+  - to_agent: planner
+    handoff_artifact: instruction_feedback
+    required_fields:
+      - issue_type
+      - reason
+    quality_bar: 反馈必须具体，指出指令缺失项
+    feedback_channel: 直接消息
+    failure_escalation: 连续 2 次不可执行则触发重新规划
+default_capability_packs:
+  - scene_conflict_checker
+  - scene_function_classifier
+  - hook_strength_checker
+  - emotion_curve_checker
+eval_dimensions:
+  - scene beat 完整性
+  - 冲突/转折/钩子覆盖
+  - 情绪曲线变化
+  - 事件覆盖度
+cost_budget:
+  max_tokens_per_run: 2000
+  max_llm_calls: 2
+  retry_budget: 1
+trace_policy:
+  log_level: info
+  record_input_summary: true
+  record_skill_results: true
+  record_decision: true

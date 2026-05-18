@@ -297,6 +297,81 @@
   margin-bottom: 12px;
 }
 
+.core-agent-coverage {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 14px;
+  border: 1px solid var(--skill-border);
+  border-radius: 8px;
+  background: var(--skill-panel);
+}
+
+.coverage-label {
+  display: block;
+  color: var(--skill-muted);
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.core-agent-coverage strong {
+  display: block;
+  margin-top: 3px;
+  font-size: 24px;
+  line-height: 1.2;
+}
+
+.core-agent-coverage p {
+  margin: 6px 0 0;
+  color: var(--skill-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.coverage-chip-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 8px;
+}
+
+.coverage-chip {
+  display: flex;
+  min-height: 46px;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--skill-border);
+  border-radius: 7px;
+  background: var(--skill-soft);
+  color: var(--skill-ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.coverage-chip.covered {
+  border-color: rgba(47, 111, 115, 0.22);
+  background: rgba(47, 111, 115, 0.08);
+}
+
+.coverage-chip.missing {
+  border-color: rgba(163, 58, 58, 0.28);
+  background: rgba(163, 58, 58, 0.07);
+}
+
+.coverage-chip span {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.coverage-chip small {
+  color: var(--skill-muted);
+  font-size: 11px;
+}
+
 .skill-overview-card {
   appearance: none;
   text-align: left;
@@ -602,6 +677,36 @@
   font-size: 12px;
 }
 
+.stage-explanation-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.stage-explanation {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--skill-border);
+  border-radius: 7px;
+  background: var(--skill-soft);
+}
+
+.stage-explanation code {
+  color: var(--skill-accent);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.stage-explanation span {
+  color: var(--skill-muted);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .orchestration-scroll {
   overflow-x: auto;
   padding-bottom: 8px;
@@ -871,6 +976,7 @@
   }
 
   .skill-console-metrics,
+  .core-agent-coverage,
   .skill-overview-grid {
     grid-template-columns: 1fr;
   }
@@ -890,4 +996,177 @@
     min-width: 44px;
     min-height: 44px;
   }
+}
+
+/* ── Dark mode overrides ─────────────────────────────────────── */
+
+html[data-theme='dark'] .skill-console {
+  --skill-ink: #f4efe7;
+  --skill-muted: #918b84;
+  --skill-border: rgba(226, 218, 205, 0.14);
+  --skill-panel: #161b24;
+  --skill-soft: #202733;
+  --skill-accent: #78c9ca;
+  --skill-accent-soft: rgba(120, 201, 202, 0.13);
+  --skill-gold: #e0aa57;
+  --skill-danger: #ee8b91;
+}
+
+html[data-theme='dark'] .skill-console-nav {
+  background: #0f1319;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+}
+
+html[data-theme='dark'] .skill-console-nav-item {
+  color: #c8c1b8;
+}
+
+html[data-theme='dark'] .skill-console-nav-item.active {
+  background: #202733;
+  color: #f4efe7;
+}
+
+html[data-theme='dark'] .nav-badge {
+  background: rgba(145, 139, 132, 0.16);
+  color: #c8c1b8;
+}
+
+html[data-theme='dark'] .skill-console-nav-item.active .nav-badge {
+  background: rgba(120, 201, 202, 0.18);
+  color: var(--skill-accent);
+}
+
+html[data-theme='dark'] .skill-overview-card.primary {
+  background: #202733;
+}
+
+html[data-theme='dark'] .matrix-head-row {
+  background: #0f1319;
+}
+
+html[data-theme='dark'] .capability-card {
+  background: #161b24;
+}
+
+html[data-theme='dark'] .capability-card.disabled {
+  background: #0f1319;
+}
+
+html[data-theme='dark'] .matrix-stage-cell.not-applicable {
+  background: #0f1319;
+}
+
+html[data-theme='dark'] .matrix-chip-actions button {
+  background: #161b24;
+}
+
+html[data-theme='dark'] .matrix-skill-chip {
+  background: rgba(59, 130, 246, 0.15);
+  color: #93c5fd;
+}
+
+html[data-theme='dark'] .matrix-skill-chip.disabled {
+  background: #202733;
+  color: #918b84;
+}
+
+html[data-theme='dark'] .matrix-skill-chip.missing {
+  background: rgba(238, 139, 145, 0.15);
+  color: #ee8b91;
+}
+
+html[data-theme='dark'] .skill-message.danger {
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary));
+  color: var(--danger);
+}
+
+html[data-theme='dark'] .skill-message.warn {
+  background: color-mix(in srgb, var(--warning) 12%, var(--bg-primary));
+  color: var(--warning);
+}
+
+html[data-theme='dark'] .skill-message.info {
+  background: color-mix(in srgb, var(--info) 12%, var(--bg-primary));
+  color: var(--info);
+}
+
+html[data-theme='dark'] .skill-inline-status.ok {
+  background: color-mix(in srgb, var(--success) 12%, var(--bg-primary));
+  color: var(--success);
+}
+
+html[data-theme='dark'] .skill-inline-status.danger {
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary));
+  color: var(--danger);
+}
+
+html[data-theme='dark'] .test-summary.ok {
+  background: color-mix(in srgb, var(--success) 12%, var(--bg-primary));
+  color: var(--success);
+}
+
+html[data-theme='dark'] .test-summary.danger {
+  background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary));
+  color: var(--danger);
+}
+
+html[data-theme='dark'] .capability-tags span,
+html[data-theme='dark'] .capability-targets small,
+html[data-theme='dark'] .matrix-stats span,
+html[data-theme='dark'] .review-verdict {
+  background: #202733;
+  color: #c8c1b8;
+}
+
+html[data-theme='dark'] .capability-tags .danger,
+html[data-theme='dark'] .matrix-stats .danger,
+html[data-theme='dark'] .review-verdict.block {
+  background: color-mix(in srgb, var(--danger) 14%, var(--bg-primary));
+  color: var(--danger);
+}
+
+html[data-theme='dark'] .capability-tags .warn,
+html[data-theme='dark'] .review-verdict.warn {
+  background: color-mix(in srgb, var(--warning) 14%, var(--bg-primary));
+  color: var(--warning);
+}
+
+html[data-theme='dark'] .capability-tags .ok,
+html[data-theme='dark'] .review-verdict.pass {
+  background: color-mix(in srgb, var(--success) 14%, var(--bg-primary));
+  color: var(--success);
+}
+
+html[data-theme='dark'] .review-row {
+  background: #202733;
+}
+
+html[data-theme='dark'] .stage-explanation {
+  background: #202733;
+}
+
+html[data-theme='dark'] .statusChipStyle-ok,
+html[data-theme='dark'] .metric-icon.success {
+  background: color-mix(in srgb, var(--success) 14%, var(--bg-primary));
+  color: var(--success);
+}
+
+html[data-theme='dark'] .metric-icon.info {
+  background: color-mix(in srgb, var(--info) 14%, var(--bg-primary));
+  color: var(--info);
+}
+
+html[data-theme='dark'] .metric-icon.muted {
+  background: color-mix(in srgb, var(--text-muted) 14%, var(--bg-primary));
+  color: var(--text-muted);
+}
+
+html[data-theme='dark'] .coverage-chip.covered {
+  border-color: rgba(120, 201, 202, 0.28);
+  background: rgba(120, 201, 202, 0.08);
+}
+
+html[data-theme='dark'] .coverage-chip.missing {
+  border-color: rgba(238, 139, 145, 0.28);
+  background: rgba(238, 139, 145, 0.07);
 }

@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, post } from '../../lib/api'
 import { Sparkles, CheckCircle2, XCircle, Loader2, RotateCcw } from 'lucide-react'
-import { NumberInput, TextArea, TextInput } from '../ui'
+import { FormField, NumberInput, TextArea, TextInput } from '../ui'
 
 interface GenesisRun {
   id: string
@@ -24,11 +24,68 @@ interface DraftData {
   instructions?: Array<{ chapter_number: number; objective: string; key_events: string }>
 }
 
-interface Props {
-  projectId: string
+interface DraftPreview {
+  draft: DraftData | null
+  rawText: string
+  invalid: boolean
+  empty: boolean
+  incomplete: boolean
+  missingRequiredSections: string[]
 }
 
-export default function GenesisModule({ projectId }: Props) {
+type DraftArrayItem<K extends keyof DraftData> = NonNullable<DraftData[K]> extends Array<infer T> ? T : never
+
+const REQUIRED_DRAFT_LABELS = ['项目简介', '世界观设定', '角色', '势力/组织', '大纲', '伏笔/悬念', '章节指令']
+
+const REQUIRED_DRAFT_SECTIONS: Array<[keyof DraftData, string]> = [
+  ['world_settings', '世界观设定'],
+  ['characters', '角色'],
+  ['factions', '势力/组织'],
+  ['outlines', '大纲'],
+  ['plot_holes', '伏笔/悬念'],
+  ['instructions', '章节指令'],
+]
+
+const normalizeDraftValue = (value: unknown): DraftData | null => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as DraftData
+  }
+  if (!Array.isArray(value)) return null
+
+  const draft: DraftData = {}
+  value.forEach((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return
+    const record = item as Record<string, unknown>
+    if ('title' in record && 'category' in record && 'content' in record) {
+      draft.world_settings = [...(draft.world_settings || []), item as DraftArrayItem<'world_settings'>]
+    } else if ('chapter_number' in record) {
+      draft.instructions = [...(draft.instructions || []), item as DraftArrayItem<'instructions'>]
+    } else if ('chapters_range' in record || ('level' in record && 'sequence' in record && 'content' in record)) {
+      draft.outlines = [...(draft.outlines || []), item as DraftArrayItem<'outlines'>]
+    } else if ('code' in record) {
+      draft.plot_holes = [...(draft.plot_holes || []), item as DraftArrayItem<'plot_holes'>]
+    } else if ('relationship_with_protagonist' in record || ('name' in record && 'type' in record)) {
+      draft.factions = [...(draft.factions || []), item as DraftArrayItem<'factions'>]
+    } else if ('name' in record) {
+      draft.characters = [...(draft.characters || []), item as DraftArrayItem<'characters'>]
+    }
+  })
+
+  return Object.keys(draft).length > 0 ? draft : null
+}
+
+interface Props {
+  projectId: string
+  project?: {
+    name?: string
+    genre?: string
+    description?: string
+    target_words?: number
+    total_chapters_planned?: number
+  }
+}
+
+export default function GenesisModule({ projectId, project }: Props) {
   const [genesis, setGenesis] = useState<GenesisRun | null>(null)
   const [loading, setLoading] = useState(true)
   const [generating, setGenerating] = useState(false)
@@ -36,6 +93,7 @@ export default function GenesisModule({ projectId }: Props) {
   const [rejecting, setRejecting] = useState(false)
   const [showRejectConfirm, setShowRejectConfirm] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
+  const [formErrors, setFormErrors] = useState<Record<string, string>>({})
   const [form, setForm] = useState({
     title: '',
     genre: '',
@@ -47,6 +105,8 @@ export default function GenesisModule({ projectId }: Props) {
     constraints: '',
   })
   const [showForm, setShowForm] = useState(false)
+  const projectTitle = (project?.name || form.title).trim()
+  const projectGenre = (project?.genre || form.genre).trim()
 
   const loadGenesis = useCallback(async () => {
     setLoading(true)
@@ -61,10 +121,41 @@ export default function GenesisModule({ projectId }: Props) {
 
   useEffect(() => { loadGenesis() }, [loadGenesis])
 
+  useEffect(() => {
+    if (!project) return
+    setForm((prev) => ({
+      ...prev,
+      title: project.name || prev.title,
+      genre: project.genre || prev.genre,
+      premise: prev.premise || project.description || '',
+    }))
+  }, [project?.name, project?.genre, project?.description]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  const validateForm = () => {
+    const errors: Record<string, string> = {}
+    if (!projectTitle) errors.title = '项目标题缺失，请先在项目设置中补齐'
+    if (!projectGenre) errors.genre = '作品类型缺失，请先在项目设置中补齐'
+    // v6.3: premise is now optional — AI can generate it from title + genre + description
+    if (!Number.isFinite(form.target_chapters) || form.target_chapters < 1) errors.target_chapters = '首批规划章数必须大于 0'
+    if (!Number.isFinite(form.target_words) || form.target_words < 1) errors.target_words = '首批规划字数必须大于 0'
+    setFormErrors(errors)
+    return Object.keys(errors).length === 0
+  }
+
   const handleGenerate = async () => {
+    if (!validateForm()) {
+      setErrorMsg('请先补齐创世设定的必要信息')
+      return
+    }
     setGenerating(true)
     setErrorMsg('')
-    const res = await post('/genesis/generate', { ...form, project_id: projectId })
+    const res = await post('/genesis/generate', {
+      ...form,
+      title: projectTitle,
+      genre: projectGenre,
+      premise: form.premise.trim(),
+      project_id: projectId,
+    })
     if (res.ok) {
       setGenesis(res.data as GenesisRun)
       setShowForm(false)
@@ -101,12 +192,72 @@ export default function GenesisModule({ projectId }: Props) {
     setRejecting(false)
   }
 
-  const parseDraft = (): DraftData | null => {
-    if (!genesis?.draft_json) return null
-    try {
-      return JSON.parse(genesis.draft_json)
-    } catch {
-      return null
+  const parseDraft = (): DraftPreview => {
+    if (!genesis?.draft_json) {
+      return {
+        draft: null,
+        rawText: '',
+        invalid: true,
+        empty: true,
+        incomplete: true,
+        missingRequiredSections: REQUIRED_DRAFT_LABELS,
+      }
+    }
+
+    let value: unknown = genesis.draft_json
+    for (let i = 0; i < 2; i += 1) {
+      if (typeof value !== 'string') break
+      try {
+        value = JSON.parse(value)
+      } catch {
+        return {
+          draft: null,
+          rawText: genesis.draft_json,
+          invalid: true,
+          empty: true,
+          incomplete: true,
+          missingRequiredSections: REQUIRED_DRAFT_LABELS,
+        }
+      }
+    }
+
+    const draft = normalizeDraftValue(value)
+    if (!draft) {
+      return {
+        draft: null,
+        rawText: typeof value === 'string' ? value : genesis.draft_json,
+        invalid: true,
+        empty: true,
+        incomplete: true,
+        missingRequiredSections: REQUIRED_DRAFT_LABELS,
+      }
+    }
+
+    const missingRequiredSections = [
+      ...(!draft.project_updates?.description?.trim() ? ['项目简介'] : []),
+      ...REQUIRED_DRAFT_SECTIONS
+      .filter(([key]) => {
+        const section = draft[key]
+        return !Array.isArray(section) || section.length === 0
+      })
+      .map(([, label]) => label),
+    ]
+    const empty = !(
+      draft.project_updates?.description ||
+      draft.world_settings?.length ||
+      draft.characters?.length ||
+      draft.factions?.length ||
+      draft.outlines?.length ||
+      draft.plot_holes?.length ||
+      draft.instructions?.length
+    )
+    return {
+      draft,
+      rawText: JSON.stringify(draft, null, 2),
+      invalid: false,
+      empty,
+      incomplete: missingRequiredSections.length > 0,
+      missingRequiredSections,
     }
   }
 
@@ -134,7 +285,8 @@ export default function GenesisModule({ projectId }: Props) {
 
   if (loading) return <div className="module-loading">加载中...</div>
 
-  const draft = parseDraft()
+  const draftPreview = parseDraft()
+  const draft = draftPreview.draft
   const canGenerate = !genesis || genesis.status === 'approved' || genesis.status === 'rejected' || genesis.status === 'failed'
 
   return (
@@ -154,62 +306,93 @@ export default function GenesisModule({ projectId }: Props) {
       {/* Generate form */}
       {showForm && (
         <div className="genesis-form">
+          <div className="genesis-scope-note">
+            创世会生成整本书底盘设定；这里设置的是首批展开到章节指令的范围，不代表整本书总章数。
+          </div>
+          <div className="genesis-project-context">
+            <div className="context-intro">
+              <span className="context-label">已继承项目基础信息</span>
+              <strong>创建小说时填写的标题、类型和全书规模会直接用于创世</strong>
+            </div>
+            <div>
+              <span className="context-label">项目标题</span>
+              <strong>{projectTitle || '未填写'}</strong>
+            </div>
+            <div>
+              <span className="context-label">作品类型</span>
+              <strong>{projectGenre || '未填写'}</strong>
+            </div>
+            {project?.total_chapters_planned || project?.target_words ? (
+              <div>
+                <span className="context-label">全书规模</span>
+                <strong>
+                  {project.total_chapters_planned ? `${project.total_chapters_planned} 章` : '章数未设'}
+                  {project.target_words ? ` / 约 ${project.target_words.toLocaleString('zh-CN')} 字` : ''}
+                </strong>
+              </div>
+            ) : null}
+          </div>
+          {(formErrors.title || formErrors.genre) && (
+            <div className="genesis-error">
+              <XCircle size={16} /> {formErrors.title || formErrors.genre}
+            </div>
+          )}
           <div className="form-grid">
-            <label>
-              <span>标题</span>
-              <TextInput
-                value={form.title}
-                onChange={(e) => setForm({ ...form, title: e.target.value })}
-                placeholder="项目标题"
-              />
-            </label>
-            <label>
-              <span>类型</span>
-              <TextInput
-                value={form.genre}
-                onChange={(e) => setForm({ ...form, genre: e.target.value })}
-                placeholder="玄幻、都市、科幻..."
-              />
-            </label>
-            <label className="form-full">
-              <span>创意/前提</span>
+            <FormField label="创意/前提" helper="可留空，AI 会根据书名和类型自动推断故事前提" error={formErrors.premise} className="form-full">
               <TextArea
                 value={form.premise}
-                onChange={(e) => setForm({ ...form, premise: e.target.value })}
-                placeholder="描述你的故事核心创意..."
+                onChange={(e) => {
+                  setForm({ ...form, premise: e.target.value })
+                  if (formErrors.premise) setFormErrors({ ...formErrors, premise: '' })
+                }}
+                placeholder="描述你的故事核心创意（可选，留空让 AI 自动推断）..."
                 rows={3}
               />
-            </label>
-            <label>
-              <span>目标章数</span>
+            </FormField>
+            <FormField
+              label="首批规划章数"
+              helper="用于生成前 N 章章节指令，后续可继续通过章节批次规划扩展。"
+              required
+              error={formErrors.target_chapters}
+            >
               <NumberInput
                 value={form.target_chapters}
-                onChange={(e) => setForm({ ...form, target_chapters: Number(e.target.value) })}
+                min={1}
+                onChange={(e) => {
+                  setForm({ ...form, target_chapters: Number(e.target.value) })
+                  if (formErrors.target_chapters) setFormErrors({ ...formErrors, target_chapters: '' })
+                }}
               />
-            </label>
-            <label>
-              <span>目标字数</span>
+            </FormField>
+            <FormField
+              label="首批规划字数"
+              helper="用于估算首批章节的单章字数，不是全书总字数。"
+              required
+              error={formErrors.target_words}
+            >
               <NumberInput
                 value={form.target_words}
-                onChange={(e) => setForm({ ...form, target_words: Number(e.target.value) })}
+                min={1}
+                onChange={(e) => {
+                  setForm({ ...form, target_words: Number(e.target.value) })
+                  if (formErrors.target_words) setFormErrors({ ...formErrors, target_words: '' })
+                }}
               />
-            </label>
-            <label>
-              <span>目标读者</span>
+            </FormField>
+            <FormField label="目标读者">
               <TextInput
                 value={form.target_audience}
                 onChange={(e) => setForm({ ...form, target_audience: e.target.value })}
                 placeholder="男频、女频、全年龄..."
               />
-            </label>
-            <label>
-              <span>风格偏好</span>
+            </FormField>
+            <FormField label="风格偏好">
               <TextInput
                 value={form.style_preference}
                 onChange={(e) => setForm({ ...form, style_preference: e.target.value })}
                 placeholder="轻松、严肃、热血..."
               />
-            </label>
+            </FormField>
           </div>
           {errorMsg && (
             <div className="genesis-error" style={{ marginTop: 12 }}>
@@ -217,9 +400,9 @@ export default function GenesisModule({ projectId }: Props) {
             </div>
           )}
           <div className="form-actions">
-            <button className="btn btn-secondary" onClick={() => { setShowForm(false); setErrorMsg('') }}>取消</button>
+            <button className="btn btn-secondary" onClick={() => { setShowForm(false); setErrorMsg(''); setFormErrors({}) }}>取消</button>
             <button className="btn btn-primary" onClick={handleGenerate} disabled={generating}>
-              {generating ? <><Loader2 size={14} className="spin" /> 生成中...</> : <><Sparkles size={14} /> 开始生成</>}
+              {generating ? <><Loader2 size={14} className="spin" /> 生成中...</> : <><Sparkles size={14} /> 生成创世设定</>}
             </button>
           </div>
         </div>
@@ -230,7 +413,7 @@ export default function GenesisModule({ projectId }: Props) {
         <div className="data-empty">
           <div className="data-empty-icon"><Sparkles size={32} /></div>
           <div className="data-empty-title">项目初始化</div>
-          <div className="data-empty-desc">创世只需一次，生成整本书的底盘设定（世界观、角色、大纲等）。<br />后续章节通过「章节批次规划」延续。</div>
+          <div className="data-empty-desc">创世只需一次，生成整本书的底盘设定（世界观、角色、大纲等）。<br />表单里的章数只决定首批展开范围，后续章节通过「章节批次规划」延续。</div>
           <button className="btn btn-primary" onClick={() => setShowForm(true)} style={{ marginTop: 12 }}>
             <Sparkles size={14} /> 生成项目设定
           </button>
@@ -262,17 +445,47 @@ export default function GenesisModule({ projectId }: Props) {
           )}
 
           {/* Draft preview */}
-          {draft && genesis.status === 'generated' && (
+          {genesis.status === 'generated' && (
             <>
               <div className="genesis-draft">
-                {draft.project_updates?.description && (
+                {draftPreview.invalid && (
+                  <div className="draft-empty draft-invalid">
+                    <XCircle size={16} />
+                    <div>
+                      <strong>创世草案格式异常，无法应用</strong>
+                      <p>请拒绝当前草案后重新生成。系统不会把异常草案写入正式设定。</p>
+                    </div>
+                  </div>
+                )}
+
+                {!draftPreview.invalid && draftPreview.empty && (
+                  <div className="draft-empty">
+                    <Sparkles size={16} />
+                    <div>
+                      <strong>创世草案没有可应用内容</strong>
+                      <p>请拒绝当前草案后重新生成，或补充项目标题、类型和创意后再次生成。</p>
+                    </div>
+                  </div>
+                )}
+
+                {!draftPreview.invalid && !draftPreview.empty && draftPreview.incomplete && (
+                  <div className="draft-empty draft-invalid">
+                    <XCircle size={16} />
+                    <div>
+                      <strong>创世草案不完整，不能应用</strong>
+                      <p>缺少：{draftPreview.missingRequiredSections.join('、')}。请拒绝当前草案后重新生成。</p>
+                    </div>
+                  </div>
+                )}
+
+                {draft?.project_updates?.description && (
                   <div className="draft-section">
                     <h4>项目描述</h4>
                     <p>{draft.project_updates.description}</p>
                   </div>
                 )}
 
-                {draft.world_settings && draft.world_settings.length > 0 && (
+                {draft?.world_settings && draft.world_settings.length > 0 && (
                   <div className="draft-section">
                     <h4>世界观设定 ({draft.world_settings.length})</h4>
                     <ul>
@@ -283,7 +496,7 @@ export default function GenesisModule({ projectId }: Props) {
                   </div>
                 )}
 
-                {draft.characters && draft.characters.length > 0 && (
+                {draft?.characters && draft.characters.length > 0 && (
                   <div className="draft-section">
                     <h4>角色 ({draft.characters.length})</h4>
                     <ul>
@@ -294,7 +507,7 @@ export default function GenesisModule({ projectId }: Props) {
                   </div>
                 )}
 
-                {draft.factions && draft.factions.length > 0 && (
+                {draft?.factions && draft.factions.length > 0 && (
                   <div className="draft-section">
                     <h4>势力 ({draft.factions.length})</h4>
                     <ul>
@@ -305,7 +518,7 @@ export default function GenesisModule({ projectId }: Props) {
                   </div>
                 )}
 
-                {draft.outlines && draft.outlines.length > 0 && (
+                {draft?.outlines && draft.outlines.length > 0 && (
                   <div className="draft-section">
                     <h4>大纲 ({draft.outlines.length})</h4>
                     <ul>
@@ -316,7 +529,7 @@ export default function GenesisModule({ projectId }: Props) {
                   </div>
                 )}
 
-                {draft.plot_holes && draft.plot_holes.length > 0 && (
+                {draft?.plot_holes && draft.plot_holes.length > 0 && (
                   <div className="draft-section">
                     <h4>伏笔/悬念 ({draft.plot_holes.length})</h4>
                     <ul>
@@ -327,7 +540,7 @@ export default function GenesisModule({ projectId }: Props) {
                   </div>
                 )}
 
-                {draft.instructions && draft.instructions.length > 0 && (
+                {draft?.instructions && draft.instructions.length > 0 && (
                   <div className="draft-section">
                     <h4>章节指令 ({draft.instructions.length})</h4>
                     <ul>
@@ -336,6 +549,13 @@ export default function GenesisModule({ projectId }: Props) {
                       ))}
                     </ul>
                   </div>
+                )}
+
+                {(draftPreview.invalid || draftPreview.empty) && draftPreview.rawText && (
+                  <details className="draft-raw">
+                    <summary>查看原始草案</summary>
+                    <pre>{draftPreview.rawText}</pre>
+                  </details>
                 )}
               </div>
 
@@ -356,7 +576,7 @@ export default function GenesisModule({ projectId }: Props) {
                     <button className="btn btn-danger" onClick={() => setShowRejectConfirm(true)}>
                       <XCircle size={14} /> 拒绝
                     </button>
-                    <button className="btn btn-primary" onClick={handleApprove} disabled={approving}>
+                    <button className="btn btn-primary" onClick={handleApprove} disabled={approving || draftPreview.invalid || draftPreview.empty || draftPreview.incomplete}>
                       {approving ? <><Loader2 size={14} className="spin" /> 应用中...</> : <><CheckCircle2 size={14} /> 批准并应用</>}
                     </button>
                   </>
@@ -387,27 +607,59 @@ export default function GenesisModule({ projectId }: Props) {
           padding: 20px;
           margin-bottom: 16px;
         }
+        .genesis-scope-note {
+          margin-bottom: 14px;
+          padding: 10px 12px;
+          border: 1px solid var(--border, #e5e7eb);
+          border-radius: 6px;
+          background: var(--bg-primary, #fff);
+          color: var(--text-secondary, #4b5563);
+          font-size: 13px;
+          line-height: 1.6;
+        }
+        .genesis-project-context {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 10px;
+          margin-bottom: 14px;
+        }
+        .genesis-project-context > div {
+          min-width: 0;
+          padding: 10px 12px;
+          border: 1px solid var(--border, #e5e7eb);
+          border-radius: 6px;
+          background: var(--bg-primary, #fff);
+        }
+        .context-label {
+          display: block;
+          margin-bottom: 4px;
+          color: var(--text-muted, #6b7280);
+          font-size: 12px;
+        }
+        .genesis-project-context .context-intro {
+          grid-column: 1 / -1;
+        }
+        .genesis-project-context strong {
+          display: block;
+          overflow: hidden;
+          color: var(--text-primary, #111827);
+          font-size: 14px;
+          font-weight: 600;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
         .form-grid {
           display: grid;
           grid-template-columns: 1fr 1fr;
           gap: 12px;
         }
-        .form-grid label {
-          display: flex;
-          flex-direction: column;
-          gap: 4px;
-          font-size: 13px;
-          color: var(--text-secondary, #6b7280);
-        }
         .form-grid .form-full {
           grid-column: 1 / -1;
         }
-        .form-grid input, .form-grid textarea {
-          padding: 8px 10px;
-          border: 1px solid var(--border, #d1d5db);
-          border-radius: 6px;
-          font-size: 14px;
-          background: var(--bg-primary, #fff);
+        @media (max-width: 900px) {
+          .genesis-project-context {
+            grid-template-columns: 1fr;
+          }
         }
         .form-actions {
           display: flex;
@@ -429,11 +681,11 @@ export default function GenesisModule({ projectId }: Props) {
           font-size: 12px;
           font-weight: 500;
         }
-        .status-running { background: #dbeafe; color: #1d4ed8; }
-        .status-pending { background: #fef3c7; color: #92400e; }
-        .status-approved { background: #d1fae5; color: #065f46; }
-        .status-rejected { background: #fee2e2; color: #991b1b; }
-        .status-failed { background: #fee2e2; color: #991b1b; }
+        .status-running { background: var(--accent-soft); color: var(--primary); }
+        .status-pending { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
+        .status-approved { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+        .status-rejected { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
+        .status-failed { background: color-mix(in srgb, var(--danger) 16%, transparent); color: var(--danger); }
         .genesis-time {
           font-size: 12px;
           color: var(--text-muted, #9ca3af);
@@ -443,10 +695,10 @@ export default function GenesisModule({ projectId }: Props) {
           align-items: center;
           gap: 8px;
           padding: 12px;
-          background: #fef2f2;
-          border: 1px solid #fecaca;
+          background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary));
+          border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
           border-radius: 6px;
-          color: #991b1b;
+          color: var(--danger);
           font-size: 13px;
           margin-bottom: 16px;
         }
@@ -467,6 +719,47 @@ export default function GenesisModule({ projectId }: Props) {
           margin-bottom: 16px;
           max-height: 500px;
           overflow-y: auto;
+        }
+        .draft-empty {
+          display: flex;
+          gap: 10px;
+          align-items: flex-start;
+          padding: 14px;
+          border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+          border-radius: 6px;
+          background: color-mix(in srgb, var(--warning) 10%, var(--bg-primary));
+          color: var(--text-secondary);
+          font-size: 13px;
+          line-height: 1.6;
+        }
+        .draft-empty strong {
+          display: block;
+          color: var(--text-primary);
+          font-size: 14px;
+          margin-bottom: 2px;
+        }
+        .draft-empty p {
+          margin: 0;
+        }
+        .draft-invalid {
+          border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+          background: color-mix(in srgb, var(--danger) 10%, var(--bg-primary));
+        }
+        .draft-raw {
+          margin-top: 12px;
+          font-size: 12px;
+          color: var(--text-muted);
+        }
+        .draft-raw summary {
+          cursor: pointer;
+        }
+        .draft-raw pre {
+          margin: 8px 0 0;
+          max-height: 220px;
+          overflow: auto;
+          white-space: pre-wrap;
+          word-break: break-word;
+          color: var(--text-secondary);
         }
         .draft-section {
           margin-bottom: 16px;
@@ -495,7 +788,7 @@ export default function GenesisModule({ projectId }: Props) {
           font-size: 13px;
           line-height: 1.5;
           padding: 6px 0;
-          border-bottom: 1px solid var(--border-light, #f3f4f6);
+          border-bottom: 1px solid var(--border-color);
           color: var(--text-secondary, #374151);
         }
         .draft-section li:last-child {
@@ -514,7 +807,7 @@ export default function GenesisModule({ projectId }: Props) {
           gap: 6px;
           margin-right: auto;
           font-size: 13px;
-          color: #991b1b;
+          color: var(--danger);
         }
         .genesis-reject-confirm {
           display: flex;
@@ -528,10 +821,10 @@ export default function GenesisModule({ projectId }: Props) {
           align-items: center;
           gap: 8px;
           padding: 16px;
-          background: #f0fdf4;
-          border: 1px solid #bbf7d0;
+          background: color-mix(in srgb, var(--success) 12%, var(--bg-primary));
+          border: 1px solid color-mix(in srgb, var(--success) 28%, transparent);
           border-radius: 8px;
-          color: #065f46;
+          color: var(--success);
           font-size: 14px;
         }
         .spin {
