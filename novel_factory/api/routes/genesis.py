@@ -15,6 +15,17 @@ from ...llm.provider import is_configured_live_provider
 router = APIRouter()
 
 
+GENESIS_REQUIRED_SECTIONS = {
+    "project_description": "项目简介",
+    "world_settings": "世界观设定",
+    "characters": "角色",
+    "factions": "势力/组织",
+    "outlines": "大纲",
+    "plot_holes": "伏笔/悬念",
+    "instructions": "章节指令",
+}
+
+
 class GenesisGenerateRequest(BaseModel):
     """Input for project genesis generation."""
 
@@ -213,6 +224,379 @@ def _as_int(value, fallback: int) -> int:
         return fallback
 
 
+def _normalize_genesis_draft(value) -> dict | None:
+    """Normalize provider draft output into the canonical genesis object shape."""
+    if isinstance(value, dict):
+        return value
+    if not isinstance(value, list):
+        return None
+
+    grouped = {
+        "world_settings": [],
+        "characters": [],
+        "factions": [],
+        "outlines": [],
+        "plot_holes": [],
+        "instructions": [],
+    }
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        keys = set(item.keys())
+        if {"title", "category", "content"} <= keys:
+            grouped["world_settings"].append(item)
+        elif "chapter_number" in keys:
+            grouped["instructions"].append(item)
+        elif "chapters_range" in keys or {"level", "sequence", "content"} <= keys:
+            grouped["outlines"].append(item)
+        elif "code" in keys:
+            grouped["plot_holes"].append(item)
+        elif "relationship_with_protagonist" in keys or ("name" in keys and "type" in keys):
+            grouped["factions"].append(item)
+        elif "name" in keys:
+            grouped["characters"].append(item)
+
+    normalized = {key: items for key, items in grouped.items() if items}
+    return normalized or None
+
+
+def _parse_genesis_draft_json(raw_value) -> dict | None:
+    """Parse genesis draft_json into a JSON object.
+
+    Historical/real-provider failures can leave draft_json double-encoded or
+    shaped as a JSON string/list. Approval must reject those cleanly instead of
+    failing later with "'str' object has no attribute 'get'" after partial work.
+    """
+    value = raw_value
+    for _ in range(2):
+        normalized = _normalize_genesis_draft(value)
+        if normalized is not None:
+            return normalized
+        if isinstance(value, str):
+            try:
+                value = json.loads(value)
+                continue
+            except json.JSONDecodeError:
+                return None
+        return None
+    return _normalize_genesis_draft(value)
+
+
+def _missing_required_genesis_sections(draft: dict | None) -> list[str]:
+    """Return required genesis sections that are absent or empty."""
+    if not isinstance(draft, dict):
+        return list(GENESIS_REQUIRED_SECTIONS.values())
+    missing: list[str] = []
+    project_updates = draft.get("project_updates")
+    description = ""
+    if isinstance(project_updates, dict):
+        description = _as_text(project_updates.get("description", "")).strip()
+    else:
+        description = _as_text(project_updates).strip()
+    if not description:
+        missing.append(GENESIS_REQUIRED_SECTIONS["project_description"])
+    for key, label in GENESIS_REQUIRED_SECTIONS.items():
+        if key == "project_description":
+            continue
+        value = draft.get(key)
+        if isinstance(value, list) and value:
+            continue
+        if value and not isinstance(value, list):
+            continue
+        missing.append(label)
+    return missing
+
+
+def _validate_complete_genesis_draft(draft: dict | None) -> tuple[dict | None, list[str]]:
+    """Normalize and validate that a generated draft can initialize a project."""
+    normalized = _normalize_genesis_draft(draft)
+    missing = _missing_required_genesis_sections(normalized)
+    return normalized, missing
+
+
+def _incomplete_genesis_message(missing: list[str]) -> str:
+    return f"创世草案不完整，缺少：{', '.join(missing)}。请拒绝当前草案后重新生成。"
+
+
+def _merge_genesis_drafts(base: dict | None, patch: dict | None) -> dict:
+    """Merge a missing-section patch into a genesis draft."""
+    merged = dict(base or {})
+    patch = patch or {}
+    if not isinstance(patch, dict):
+        return merged
+
+    project_updates = patch.get("project_updates")
+    if isinstance(project_updates, dict) and project_updates:
+        merged_project = dict(merged.get("project_updates") or {})
+        merged_project.update(project_updates)
+        merged["project_updates"] = merged_project
+
+    for key in (
+        "world_settings",
+        "characters",
+        "factions",
+        "outlines",
+        "plot_holes",
+        "instructions",
+    ):
+        incoming = patch.get(key)
+        if isinstance(incoming, list) and incoming:
+            merged[key] = list(merged.get(key) or []) + incoming
+        elif key not in merged:
+            merged[key] = []
+
+    return merged
+
+
+def _project_description_from_body(body: GenesisGenerateRequest) -> str:
+    """Build a project description when the provider omits project_updates."""
+    title = body.title.strip() or "未命名项目"
+    genre = body.genre.strip() or "小说"
+    premise = body.premise.strip()
+    if premise:
+        return f"《{title}》是一部{genre}题材长篇小说。{premise}"
+    return f"《{title}》是一部{genre}题材长篇小说，围绕主角的成长、冲突升级和核心谜团展开。"
+
+
+def _target_word_count(body: GenesisGenerateRequest) -> int:
+    chapters = max(body.target_chapters, 1)
+    return max(body.target_words // chapters, 1500)
+
+
+def _genre_terms(body: GenesisGenerateRequest) -> dict[str, str]:
+    """Return lightweight genre-aware labels for deterministic fallback drafts."""
+    text = f"{body.genre} {body.title} {body.premise}".lower()
+    if any(token in text for token in ("xianxia", "玄幻", "仙侠", "修仙", "仙帝")):
+        return {
+            "power": "修炼体系",
+            "setting": "修行世界与凡俗秩序并存，力量、资源和势力共同决定人物命运。",
+            "resource": "灵气、功法、丹药、秘境和传承",
+            "conflict": "宗门、家族、隐秘组织与主角成长路线之间的冲突",
+            "tone": "热血、逆袭、压迫后的爆发",
+        }
+    if any(token in text for token in ("urban", "都市", "科技", "机甲")):
+        return {
+            "power": "都市能力体系",
+            "setting": "现代都市表层秩序下隐藏着技术、资本和特殊力量的暗线博弈。",
+            "resource": "技术资源、资本、人脉和关键情报",
+            "conflict": "校园、财阀、官方机构与地下势力围绕主角能力展开争夺",
+            "tone": "爽感、成长、现实压迫下的反击",
+        }
+    if any(token in text for token in ("sci", "科幻", "未来")):
+        return {
+            "power": "科技规则体系",
+            "setting": "未来科技社会中，资源、算法、组织权力和未知技术共同推动冲突。",
+            "resource": "核心技术、数据、能源和实验设施",
+            "conflict": "科研机构、企业、官方力量与未知威胁之间的争夺",
+            "tone": "探索、危机、理性推演后的震撼",
+        }
+    return {
+        "power": "核心成长体系",
+        "setting": "故事世界由日常秩序、隐藏规则和持续升级的外部冲突构成。",
+        "resource": "资源、情报、盟友和关键机会",
+        "conflict": "主角目标与反派、组织、环境压力之间的持续冲突",
+        "tone": "成长、悬念、冲突升级",
+    }
+
+
+def _generate_genesis_scaffold(body: GenesisGenerateRequest) -> dict:
+    """Create a complete editable Genesis draft when live output is incomplete.
+
+    This is a last-resort safety net. It preserves the user's title/genre/brief
+    and avoids letting a new project fail initialization just because a provider
+    returned an empty or section-only JSON payload.
+    """
+    title = body.title.strip() or "未命名项目"
+    genre = body.genre.strip() or "小说"
+    premise = body.premise.strip() or f"围绕《{title}》展开的{genre}故事。"
+    terms = _genre_terms(body)
+    target_chapters = max(body.target_chapters, 1)
+    target_words = _target_word_count(body)
+    arc_mid = max(1, min(target_chapters, max(3, target_chapters // 3)))
+    arc_two_end = max(arc_mid + 1, min(target_chapters, arc_mid * 2))
+
+    instructions = []
+    for chapter in range(1, target_chapters + 1):
+        if chapter == 1:
+            objective = "建立主角处境、核心目标和第一处关键冲突"
+            key_events = "主角登场；展示现实压力；触发核心机会或危机；埋下主线谜团"
+            hook = "主角发现事件背后还有更大的力量正在逼近"
+        elif chapter <= arc_mid:
+            objective = "完成开局冲突升级，让主角获得初步主动权"
+            key_events = "主角尝试解决眼前困境；盟友或对手登场；第一次能力/策略展示；反派压力升级"
+            hook = "新的敌意或更高层级势力注意到主角"
+        elif chapter <= arc_two_end:
+            objective = "扩大冲突范围，推动主角进入更复杂的势力局面"
+            key_events = "主角主动出击；关键资源或情报出现；对手设局；主角用成长成果反击"
+            hook = "主线谜团出现新的证据"
+        else:
+            objective = "收束首批章节阶段性冲突，并引出下一阶段主线"
+            key_events = "阶段反派被击退；主角关系网变化；核心谜团推进；更大危机浮出水面"
+            hook = "真正的幕后力量露出线索"
+        instructions.append({
+            "chapter_number": chapter,
+            "objective": objective,
+            "key_events": key_events,
+            "plots_to_plant": ["主角身世/能力来源", "幕后势力动机"] if chapter == 1 else [],
+            "plots_to_resolve": [],
+            "emotion_tone": terms["tone"],
+            "ending_hook": hook,
+            "word_target": target_words,
+        })
+
+    return {
+        "project_updates": {"description": _project_description_from_body(body)},
+        "world_settings": [
+            {
+                "title": "故事基础世界",
+                "category": "世界观",
+                "content": terms["setting"],
+            },
+            {
+                "title": terms["power"],
+                "category": "力量规则",
+                "content": f"故事的核心成长依赖{terms['resource']}。主角需要通过行动、判断和代价逐步掌握更高层级的力量。",
+            },
+            {
+                "title": "冲突结构",
+                "category": "叙事规则",
+                "content": terms["conflict"],
+            },
+            {
+                "title": "首批章节舞台",
+                "category": "场景",
+                "content": f"首批章节围绕《{title}》的核心卖点展开，从主角个人处境切入，逐步扩展到组织、资源和主线谜团。",
+            },
+        ],
+        "characters": [
+            {
+                "name": "主角",
+                "role": "protagonist",
+                "description": f"《{title}》的核心人物，初始处于压力或困境中，但拥有改变命运的关键潜力。",
+                "traits": "隐忍、聪明、目标感强、会在冲突中快速成长",
+            },
+            {
+                "name": "核心盟友",
+                "role": "supporting",
+                "description": "较早理解或帮助主角的人物，承担情报、情感支持或行动协作功能。",
+                "traits": "可靠、敏锐、与主角形成互补",
+            },
+            {
+                "name": "阶段反派",
+                "role": "antagonist",
+                "description": "首批章节中直接压迫主角的人物，代表既有秩序或敌对利益。",
+                "traits": "强势、自负、会推动主角被迫反击",
+            },
+            {
+                "name": "神秘观察者",
+                "role": "supporting",
+                "description": "掌握更高层级信息的人物，负责把故事从局部冲突引向主线谜团。",
+                "traits": "神秘、克制、目的不明",
+            },
+        ],
+        "factions": [
+            {
+                "name": "主角阵营",
+                "type": "成长阵营",
+                "description": "围绕主角逐步形成的行动网络，初期弱小但机动性强。",
+                "relationship_with_protagonist": "核心所属",
+            },
+            {
+                "name": "既有权力方",
+                "type": "压迫/竞争势力",
+                "description": "掌握资源和规则解释权的势力，对主角的崛起保持警惕或敌意。",
+                "relationship_with_protagonist": "早期冲突对象",
+            },
+            {
+                "name": "隐秘组织",
+                "type": "主线谜团势力",
+                "description": "隐藏在表层冲突后的组织，掌握更深层秘密。",
+                "relationship_with_protagonist": "观察、试探、潜在敌对",
+            },
+            {
+                "name": "中立资源方",
+                "type": "资源/情报势力",
+                "description": "拥有关键资源或信息，会根据利益变化与主角合作或对立。",
+                "relationship_with_protagonist": "可争取对象",
+            },
+        ],
+        "outlines": [
+            {
+                "chapters_range": f"1-{arc_mid}",
+                "title": "开局压迫与觉醒",
+                "content": f"{premise} 首批开局聚焦主角处境、核心机会出现以及第一次反击。",
+                "level": "arc",
+                "sequence": 1,
+            },
+            {
+                "chapters_range": f"{arc_mid + 1}-{arc_two_end}" if arc_mid + 1 <= arc_two_end else f"{arc_mid}",
+                "title": "能力验证与势力入场",
+                "content": "主角的行动引起外部势力注意，冲突从个人层面扩展到资源和组织层面。",
+                "level": "arc",
+                "sequence": 2,
+            },
+            {
+                "chapters_range": f"{arc_two_end + 1}-{target_chapters}" if arc_two_end + 1 <= target_chapters else f"{target_chapters}",
+                "title": "阶段高潮与主线揭示",
+                "content": "首批章节收束阶段冲突，同时揭示更高层级的主线谜团和后续威胁。",
+                "level": "arc",
+                "sequence": 3,
+            },
+        ],
+        "plot_holes": [
+            {
+                "code": "PH-001",
+                "type": "主线谜团",
+                "title": "主角关键能力或机会的来源",
+                "description": "主角获得改变命运机会的真正来源尚未完全解释，后续需要逐步揭示。",
+                "planted_chapter": 1,
+                "planned_resolve_chapter": min(target_chapters, 10),
+                "status": "planted",
+            },
+            {
+                "code": "PH-002",
+                "type": "势力伏笔",
+                "title": "隐秘组织为何关注主角",
+                "description": "更高层级势力对主角表现出异常关注，其真实目的需要后续推进。",
+                "planted_chapter": 2,
+                "planned_resolve_chapter": min(target_chapters, 12),
+                "status": "planted",
+            },
+            {
+                "code": "PH-003",
+                "type": "关系伏笔",
+                "title": "核心盟友的隐藏立场",
+                "description": "核心盟友与主角的关系将随着冲突升级接受考验。",
+                "planted_chapter": 3,
+                "planned_resolve_chapter": min(target_chapters, 15),
+                "status": "planted",
+            },
+        ],
+        "instructions": instructions,
+    }
+
+
+def _fill_missing_genesis_sections(body: GenesisGenerateRequest, draft: dict | None) -> dict:
+    """Fill any remaining required Genesis sections from a local editable scaffold."""
+    normalized = _normalize_genesis_draft(draft) or {}
+    scaffold = _generate_genesis_scaffold(body)
+
+    project_updates = normalized.get("project_updates")
+    description = ""
+    if isinstance(project_updates, dict):
+        description = _as_text(project_updates.get("description", "")).strip()
+    else:
+        description = _as_text(project_updates).strip()
+    if not description:
+        normalized["project_updates"] = scaffold["project_updates"]
+
+    for key in ("world_settings", "characters", "factions", "outlines", "plot_holes", "instructions"):
+        value = normalized.get(key)
+        if not isinstance(value, list) or not value:
+            normalized[key] = scaffold[key]
+    return normalized
+
+
 def _short_title(text: str, fallback: str, limit: int = 24) -> str:
     """Create a compact title from free-form text."""
     clean = " ".join(_as_text(text).split())
@@ -368,9 +752,7 @@ def _normalize_plot_status(status: str | None) -> str:
 
 async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
     """Generate a genesis draft using real LLM."""
-    from ...workflow.runner import _build_llm_router
-
-    llm = _build_llm_router(settings, "real").for_agent("genesis")
+    llm = _build_genesis_llm(settings)
     title_contract = build_title_contract({
         "name": body.title,
         "genre": body.genre,
@@ -408,10 +790,6 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
         "5. 世界观、角色、大纲和章节指令必须严格兑现【书名契约】，不得生成与书名无关的通用故事模板\n"
     )
 
-    if is_configured_live_provider(llm):
-        llm.config.request_timeout_seconds = max(llm.config.request_timeout_seconds, 180)
-        llm.config.retry_attempts = max(llm.config.retry_attempts, 2)
-
     return await asyncio.to_thread(
         llm.invoke_json,
         [
@@ -426,11 +804,99 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
     )
 
 
+def _build_genesis_llm(settings):
+    """Build the dedicated Genesis LLM profile."""
+    from ...workflow.runner import _build_llm_router
+
+    llm = _build_llm_router(settings, "real").for_agent("genesis")
+    if is_configured_live_provider(llm):
+        llm.config.request_timeout_seconds = max(llm.config.request_timeout_seconds, 180)
+        llm.config.retry_attempts = max(llm.config.retry_attempts, 2)
+    return llm
+
+
+def _build_genesis_completion_prompt(
+    body: GenesisGenerateRequest,
+    current_draft: dict,
+    missing_sections: list[str],
+) -> str:
+    """Build a focused prompt that asks the LLM to fill missing Genesis sections."""
+    missing_labels = "、".join(missing_sections)
+    current_json = json.dumps(current_draft, ensure_ascii=False)[:12000]
+    title_contract = build_title_contract({
+        "name": body.title,
+        "genre": body.genre,
+        "description": body.premise,
+        "target_words": body.target_words,
+        "total_chapters_planned": body.target_chapters,
+    })
+    return (
+        "下面的创世草案不完整。请只补齐缺失部分，保持已有设定方向一致，不要重写已有内容。\n"
+        f"标题: {body.title}\n"
+        f"类型: {body.genre}\n"
+        f"创意: {body.premise.strip() or '根据标题和类型推断'}\n"
+        f"首批章节规划范围: 前 {body.target_chapters} 章，约 {body.target_words} 字\n"
+        f"缺失部分: {missing_labels}\n\n"
+        f"{title_contract}\n\n"
+        f"【已有草案 JSON】\n{current_json}\n\n"
+        "请返回严格 JSON 对象，顶层字段可以只包含缺失部分，但字段结构必须符合：\n"
+        "- world_settings: [{\"title\": \"\", \"category\": \"\", \"content\": \"\"}]\n"
+        "- characters: [{\"name\": \"\", \"role\": \"protagonist|antagonist|supporting\", \"description\": \"\", \"traits\": \"\"}]\n"
+        "- factions: [{\"name\": \"\", \"type\": \"\", \"description\": \"\", \"relationship_with_protagonist\": \"\"}]\n"
+        "- outlines: [{\"chapters_range\": \"1-3\", \"title\": \"\", \"content\": \"\", \"level\": \"arc\", \"sequence\": 1}]\n"
+        "- plot_holes: [{\"code\": \"PH-001\", \"type\": \"\", \"title\": \"\", \"description\": \"\", \"planted_chapter\": 1, \"planned_resolve_chapter\": 10, \"status\": \"planted\"}]\n"
+        "- instructions: [{\"chapter_number\": 1, \"objective\": \"\", \"key_events\": \"\", \"emotion_tone\": \"\", \"word_target\": 3000}]\n\n"
+        "要求：\n"
+        "1. 角色至少包含主角、核心盟友/女主/重要配角、主要反派或对立势力人物。\n"
+        "2. 大纲至少覆盖首批章节范围。\n"
+        "3. 章节指令必须覆盖首批每一章。\n"
+        "4. 输出纯 JSON，不要 Markdown、解释、注释或尾逗号。"
+    )
+
+
+async def _complete_real_genesis_draft(
+    body: GenesisGenerateRequest,
+    settings,
+    draft: dict,
+) -> dict:
+    """Repair incomplete real Genesis output before it becomes reviewable."""
+    normalized = _normalize_genesis_draft(draft) or {}
+    missing = _missing_required_genesis_sections(normalized)
+    if not missing:
+        return normalized
+
+    llm = _build_genesis_llm(settings)
+    for _attempt in range(2):
+        prompt = _build_genesis_completion_prompt(body, normalized, missing)
+        patch = await asyncio.to_thread(
+            llm.invoke_json,
+            [
+                {
+                    "role": "system",
+                    "content": "你只输出纯 JSON 对象，用于补齐小说项目创世草案缺失部分。",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            max_tokens=9000,
+            max_retries=2,
+        )
+        normalized_patch = _normalize_genesis_draft(patch)
+        normalized = _merge_genesis_drafts(normalized, normalized_patch)
+        missing = _missing_required_genesis_sections(normalized)
+        if not missing:
+            return normalized
+
+    return _fill_missing_genesis_sections(body, normalized)
+
+
 def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
     """Apply an approved genesis draft to formal tables.
 
     Returns a summary of what was applied.
     """
+    if not isinstance(draft, dict):
+        raise ValueError("创世草案必须是 JSON 对象")
+
     applied = {
         "project_updated": False,
         "world_settings_created": 0,
@@ -636,6 +1102,12 @@ async def generate_genesis(
                 draft = _generate_stub_draft(body)
             else:
                 draft = await _generate_real_draft(body, settings)
+                draft = await _complete_real_genesis_draft(body, settings, draft)
+            draft, missing_sections = _validate_complete_genesis_draft(draft)
+            if draft is None:
+                raise ValueError("创世草案数据格式错误，未生成可应用的 JSON 对象")
+            if missing_sections:
+                raise ValueError(_incomplete_genesis_message(missing_sections))
 
             repo.update_genesis_run(genesis_run["id"], {
                 "status": "generated",
@@ -708,10 +1180,12 @@ async def approve_genesis(
             )
 
         # Parse draft
-        try:
-            draft = json.loads(genesis["draft_json"])
-        except (json.JSONDecodeError, TypeError):
+        draft = _parse_genesis_draft_json(genesis.get("draft_json"))
+        if draft is None:
             return error_response("INVALID_DRAFT", "创世草案数据格式错误")
+        missing_sections = _missing_required_genesis_sections(draft)
+        if missing_sections:
+            return error_response("INCOMPLETE_DRAFT", _incomplete_genesis_message(missing_sections))
 
         # Apply to formal tables
         applied = _apply_genesis_to_project(repo, project_id, draft)
@@ -811,6 +1285,12 @@ async def generate_genesis_canonical(
                 draft = _generate_stub_draft(body)
             else:
                 draft = await _generate_real_draft(body, settings)
+                draft = await _complete_real_genesis_draft(body, settings, draft)
+            draft, missing_sections = _validate_complete_genesis_draft(draft)
+            if draft is None:
+                raise ValueError("创世草案数据格式错误，未生成可应用的 JSON 对象")
+            if missing_sections:
+                raise ValueError(_incomplete_genesis_message(missing_sections))
 
             repo.update_genesis_run(genesis_run["id"], {
                 "status": "generated",
@@ -856,10 +1336,12 @@ async def approve_genesis_canonical(
                 f"只能批准已生成的创世记录，当前状态: {genesis['status']}",
             )
 
-        try:
-            draft = json.loads(genesis["draft_json"])
-        except (json.JSONDecodeError, TypeError):
+        draft = _parse_genesis_draft_json(genesis.get("draft_json"))
+        if draft is None:
             return error_response("INVALID_DRAFT", "创世草案数据格式错误")
+        missing_sections = _missing_required_genesis_sections(draft)
+        if missing_sections:
+            return error_response("INCOMPLETE_DRAFT", _incomplete_genesis_message(missing_sections))
 
         applied = _apply_genesis_to_project(repo, body.project_id, draft)
         repo.update_genesis_run(body.genesis_id, {"status": "approved"})

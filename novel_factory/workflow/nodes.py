@@ -254,6 +254,23 @@ def _handle_retryable_quality_gate(
     return updated
 
 
+def _memory_curator_real_mode_error(state: FactoryState, result: dict[str, Any]) -> str | None:
+    """Return a blocking error when real-mode memory extraction did not truly succeed."""
+    if state.get("llm_mode", "stub") != "real":
+        return None
+    if result.get("memory_curator_degraded"):
+        return (
+            result.get("memory_curator_warning")
+            or "记忆提取未成功：MemoryCurator 已降级且未创建可信记忆批次。"
+        )
+    if result.get("fallback_created") or result.get("extraction_success") is False:
+        return (
+            result.get("memory_curator_warning")
+            or "记忆提取未成功：仅生成状态卡兜底候选，请补跑或人工确认记忆后再发布。"
+        )
+    return None
+
+
 # ── v5.1.6: Node factory for LLMRouter-based injection ────────────────
 
 
@@ -483,6 +500,14 @@ def create_node_runners(
         )
         result = _handle_retryable_quality_gate(state, repo, agent.run(state))
         agent_latency_ms = int((time.perf_counter() - agent_started_at) * 1000)
+        memory_error = (
+            _memory_curator_real_mode_error(state, result)
+            if agent_name == "memory_curator" and "error" not in result
+            else None
+        )
+        if memory_error:
+            result["error"] = memory_error
+            result["requires_human"] = True
 
         # v6.1: Agent-specific execution events are emitted by the agent, but
         # keep the high-level LLM completion/failure event adjacent to
@@ -835,6 +860,10 @@ def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider,
     _log_node_event(state, repo, "memory_curator", "started", status="running")
     agent = MemoryCuratorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
     result = agent.run(state)
+    memory_error = _memory_curator_real_mode_error(state, result)
+    if memory_error and "error" not in result:
+        result["error"] = memory_error
+        result["requires_human"] = True
     # Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
     if token_updates:

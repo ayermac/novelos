@@ -105,6 +105,10 @@ interface MemoryBackfillResult {
   run_id?: string
   memory_batch_id?: string
   memory_items_count?: number
+  extraction_success?: boolean
+  fallback_created?: boolean
+  memory_curator_degraded?: boolean
+  memory_curator_fallback?: string | null
   message?: string
 }
 
@@ -219,10 +223,23 @@ export default function RunDetail() {
     setMemoryBackfilling(false)
 
     if (result.ok && result.data) {
-      setRecoveryMessage(result.data.message || (result.data.skipped ? '已有记忆提取证据，未重复补跑。' : '记忆提取补跑完成。'))
+      if (
+        result.data.extraction_success === false ||
+        result.data.fallback_created ||
+        result.data.memory_curator_degraded ||
+        result.data.memory_curator_fallback
+      ) {
+        setRecoveryError(result.data.message || '补跑未生成可信记忆，请检查 MemoryCurator 配置后重试。')
+      } else {
+        setRecoveryMessage(result.data.message || (result.data.skipped ? '已有可信记忆批次，未重复补跑。' : '记忆提取补跑完成。'))
+      }
       await load()
     } else {
-      setRecoveryError(result.error?.message || '补跑记忆提取失败')
+      const details = result.error?.details
+      const suffix = details?.memory_batch_id
+        ? `\n候选批次：${String(details.memory_batch_id)}`
+        : ''
+      setRecoveryError((result.error?.message || '补跑记忆提取失败') + suffix)
     }
   }
 
@@ -375,7 +392,7 @@ export default function RunDetail() {
         </div>
       </div>
       {/* v5.2: Token usage statistics - only show for real LLM mode */}
-      {!isStub && (data.total_tokens || data.duration_ms) && (
+      {!isStub && Boolean(data.total_tokens || data.duration_ms) && (
         <div className="card" style={{ marginBottom: '16px' }}>
           <div className="card-header"><h3>Token 统计</h3></div>
           <div className="card-body">

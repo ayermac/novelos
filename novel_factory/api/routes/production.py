@@ -44,8 +44,7 @@ class ArcPlanRequest(BaseModel):
 
 def _has_approved_genesis(repo, project_id: str) -> bool:
     """Check if project has an approved genesis run."""
-    latest = repo.get_latest_genesis_run(project_id)
-    return latest is not None and latest.get("status") == "approved"
+    return any(run.get("status") == "approved" for run in repo.list_genesis_runs(project_id))
 
 
 def _has_pending_genesis(repo, project_id: str) -> bool:
@@ -110,6 +109,10 @@ def _has_pending_memory_updates(repo, project_id: str) -> bool:
     return len(items) > 0
 
 
+def _is_chapter_production_run(run: dict) -> bool:
+    return (run.get("graph_name") or "chapter_production") == "chapter_production"
+
+
 def _has_running_chapter_workflow(repo, project_id: str, chapter_number: int) -> bool:
     """Check if a chapter has a currently running workflow run."""
     if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
@@ -118,7 +121,7 @@ def _has_running_chapter_workflow(repo, project_id: str, chapter_number: int) ->
             chapter_number=chapter_number,
         )
     runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=5)
-    return any(r.get("status") == "running" for r in runs)
+    return any(r.get("status") == "running" and _is_chapter_production_run(r) for r in runs)
 
 
 def _get_running_chapter_workflow(repo, project_id: str, chapter_number: int) -> dict | None:
@@ -130,7 +133,7 @@ def _get_running_chapter_workflow(repo, project_id: str, chapter_number: int) ->
         )
     runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=5)
     for run in runs:
-        if run.get("status") == "running":
+        if run.get("status") == "running" and _is_chapter_production_run(run):
             return run
     return None
 
@@ -293,7 +296,10 @@ def _detect_chapter_workflow_contradictions(repo, project_id: str) -> list[dict]
         if not runs:
             continue
 
-        running_runs = [r for r in runs if r.get("status") == "running"]
+        running_runs = [
+            r for r in runs
+            if r.get("status") == "running" and _is_chapter_production_run(r)
+        ]
         latest_run = runs[0]  # Most recent first
 
         # Contradiction 1: Chapter in terminal state but workflow is still "running"
@@ -453,7 +459,7 @@ def _build_health(repo, project_id: str, current_chapter: int) -> dict:
         )
     title_alignment = evaluate_title_alignment(project, context_items)
 
-    has_approved_genesis = latest_genesis is not None and latest_genesis.get("status") == "approved"
+    has_approved_genesis = _has_approved_genesis(repo, project_id)
     has_world = len(world_settings) > 0
     has_chars = len(characters) > 0
     has_outlines_ok = len(outlines) > 0

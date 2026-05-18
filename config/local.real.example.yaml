@@ -57,6 +57,17 @@ llm_profiles:
     retry_max_seconds: 30
     min_interval_seconds: 0.5
 
+  memory_curator:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: DeepSeek-V3.2
+    max_tokens: 4096
+    request_timeout_seconds: 180
+    retry_attempts: 3
+    retry_max_seconds: 30
+    min_interval_seconds: 0.5
+
   continuity_checker:
     provider: openai_compatible
     base_url_env: OPENAI_BASE_URL
@@ -74,6 +85,7 @@ agent_llm:
   author: author
   polisher: polisher
   editor: editor
+  memory_curator: memory_curator
   scout: default
   continuity_checker: continuity_checker
   architect: default

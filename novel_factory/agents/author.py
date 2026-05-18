@@ -31,6 +31,7 @@ from ..agent_runtime.chapter_text import ensure_chapter_heading, first_content_l
 from ..agent_runtime.revision_context import normalize_revision_review, revision_feedback_block
 from ..agent_runtime.skill_hooks import run_agent_skills
 from ..agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
+from ..quality.chapter_seam import build_chapter_seam_context
 
 logger = logging.getLogger(__name__)
 
@@ -95,6 +96,14 @@ class AuthorAgent(BaseAgent):
                          f"章末钩子: {instruction.get('ending_hook', '')}\n"
                          f"字数硬要求: 正文 content 至少 {minimum_required} 字符，"
                          f"建议写到 {recommended_target} 字符左右，低于硬要求会自动返修。")
+
+        seam_context = build_chapter_seam_context(
+            self.repo,
+            state["project_id"],
+            state["chapter_number"],
+        )
+        if seam_context:
+            parts.append(seam_context)
 
         # R3: Review notes from human review sessions (v3.2)
         project_id = state["project_id"]
@@ -808,6 +817,14 @@ class AuthorAgent(BaseAgent):
                 f"章末钩子: {instruction.get('ending_hook', '')}\n"
                 f"伏笔: {instruction.get('plots_to_plant', '')}"
             )
+
+        seam_context = build_chapter_seam_context(
+            self.repo,
+            state["project_id"],
+            state["chapter_number"],
+        )
+        if seam_context:
+            parts.append(seam_context)
 
         beats = self._get_scene_beats(state)
         if beats:

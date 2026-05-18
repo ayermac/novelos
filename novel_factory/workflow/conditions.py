@@ -205,6 +205,12 @@ def route_after_memory_curator(state: FactoryState) -> str:
 
     llm_mode = state.get("llm_mode", "stub")
     if llm_mode == "real":
+        if (
+            state.get("memory_curator_degraded")
+            or state.get("fallback_created")
+            or state.get("extraction_success") is False
+        ):
+            return "human_review"
         return "awaiting_publish"
     return "publish"
 

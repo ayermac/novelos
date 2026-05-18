@@ -15,7 +15,6 @@ from typing import Any
 
 from ..models.state import ChapterStatus, FactoryState
 from ..llm.openai_compatible import LLMTimeoutError, OutputValidationError
-from ..llm.provider import is_configured_live_provider
 from ..skills.registry import SkillRegistry
 from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.skill_hooks import run_agent_skills
@@ -37,7 +36,7 @@ MEMORY_CURATOR_SYSTEM_PROMPT = """你是网文工厂的记忆管理员（Memory 
 - outlines: 大纲偏移或新增弧线（chapters_range, title, content, level, sequence）
 - plot_holes: 新伏笔埋设、伏笔解决或废弃（code, type, title, description, planted_chapter, planned_resolve_chapter, status）
 - instructions: 下一章或后续章节的写作指令（chapter_number, objective, key_events, emotion_tone, word_target）
-- story_facts: 事实账本变化（fact_key, fact_type, subject, attribute, value, unit）
+- story_facts: 事实账本变化（fact_key, fact_type, subject, attribute, value, unit）。明确时间约定/期限/会面必须标为 fact_type=timeline_event 或 time_constraint
 
 输出格式：严格按 JSON 格式输出：
 - patches: patch 列表，每项包含：
@@ -53,6 +52,8 @@ MEMORY_CURATOR_SYSTEM_PROMPT = """你是网文工厂的记忆管理员（Memory 
 - 只提取本章新发生或变化的内容，不要重复已知信息
 - 对于已存在的角色/设定/伏笔，使用 update 操作并只提供变化字段
 - 对于新出现的，使用 create 操作并提供完整字段
+- 如果本章推进了已有伏笔，优先使用 plot_holes update/resolve，target_name 必须填写现有伏笔 code 或 title，禁止重复创建近义伏笔
+- "三天后/明天/今晚/旧工业区见"等时间地点约束必须同时沉淀到 story_facts，fact_type 使用 timeline_event/time_constraint/deadline/appointment
 - 伏笔状态：planted（埋设）、resolved（解决）、abandoned（废弃）
 - 指令只生成下一章（chapter_number = 当前章节号 + 1）的
 - 如果本章没有需要更新的项目资料，返回空列表"""
@@ -194,7 +195,8 @@ class MemoryCuratorAgent(BaseAgent):
             digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:10]
             return f"chapter_{chapter_number}.{kind}.{index}.{digest}"
 
-        for index, fact in enumerate(state_data.get("new_facts") or [], start=1):
+        new_facts = state_data.get("new_facts") or state_data.get("新增事实") or []
+        for index, fact in enumerate(new_facts, start=1):
             text = str(fact).strip()
             if not text:
                 continue
@@ -213,13 +215,13 @@ class MemoryCuratorAgent(BaseAgent):
                         "source_chapter": chapter_number,
                         "source_agent": "memory_curator",
                     },
-                    "confidence": 0.85,
+                    "confidence": 0.45,
                     "evidence_text": text[:240],
-                    "rationale": "LLM 记忆提取为空，使用 Editor 章节状态卡中的 new_facts 兜底生成。",
+                    "rationale": "状态卡兜底候选：来自 Editor 章节状态卡中的 new_facts，未经过 MemoryCurator LLM 复核，请人工确认后应用。",
                 }
             )
 
-        character_status = state_data.get("character_status") or {}
+        character_status = state_data.get("character_status") or state_data.get("角色状态") or {}
         if isinstance(character_status, dict):
             for index, (name, status) in enumerate(character_status.items(), start=1):
                 character_name = str(name).strip()
@@ -245,13 +247,14 @@ class MemoryCuratorAgent(BaseAgent):
                             "source_chapter": chapter_number,
                             "source_agent": "memory_curator",
                         },
-                        "confidence": 0.82,
+                        "confidence": 0.45,
                         "evidence_text": status_text[:240],
-                        "rationale": "LLM 记忆提取为空，使用 Editor 章节状态卡中的 character_status 兜底生成。",
+                        "rationale": "状态卡兜底候选：来自 Editor 章节状态卡中的 character_status，未经过 MemoryCurator LLM 复核，请人工确认后应用。",
                     }
                 )
 
-        for index, hook in enumerate(state_data.get("suspense_hooks") or [], start=1):
+        suspense_hooks = state_data.get("suspense_hooks") or state_data.get("悬念") or []
+        for index, hook in enumerate(suspense_hooks, start=1):
             if isinstance(hook, dict):
                 title = str(
                     hook.get("title")
@@ -281,13 +284,37 @@ class MemoryCuratorAgent(BaseAgent):
                         "source_chapter": chapter_number,
                         "source_agent": "memory_curator",
                     },
-                    "confidence": 0.8,
+                    "confidence": 0.45,
                     "evidence_text": description[:240],
-                    "rationale": "LLM 记忆提取为空，使用 Editor 章节状态卡中的 suspense_hooks 兜底生成。",
+                    "rationale": "状态卡兜底候选：来自 Editor 章节状态卡中的 suspense_hooks，未经过 MemoryCurator LLM 复核，请人工确认后应用。",
                 }
             )
 
         return patches
+
+    def _should_repair_empty_extraction(self, project_id: str, chapter_number: int) -> bool:
+        """Return True when an empty real-mode extraction is suspicious enough to retry."""
+        try:
+            chapter = self.repo.get_chapter(project_id, chapter_number)
+            content = str((chapter or {}).get("content") or "")
+            if len(content.strip()) >= 1000:
+                return True
+        except Exception:
+            pass
+
+        try:
+            state_card = self.repo.get_chapter_state(project_id, chapter_number)
+            state_data = (state_card or {}).get("state_data") or {}
+            if isinstance(state_data, str):
+                state_data = json.loads(state_data)
+            if not isinstance(state_data, dict):
+                return False
+            return any(
+                bool(state_data.get(key))
+                for key in ("new_facts", "character_status", "suspense_hooks", "新增事实", "角色状态", "悬念")
+            )
+        except Exception:
+            return False
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
@@ -299,6 +326,23 @@ class MemoryCuratorAgent(BaseAgent):
         # v6.0: Self-check loop for patch extraction quality
         loop = SelfCheckLoop(agent_id=self.agent_id, max_repair_attempts=1)
 
+        def _fallback_after_extraction_failure(error: Exception) -> dict[str, Any]:
+            fallback_patches = self._patches_from_chapter_state_card(project_id, chapter_number)
+            if fallback_patches:
+                logger.warning(
+                    "MemoryCurator: LLM extraction failed, using chapter_state fallback for project=%s chapter=%s: %s",
+                    project_id,
+                    chapter_number,
+                    error,
+                )
+                return {
+                    "output": fallback_patches,
+                    "fallback_source": "chapter_state_after_llm_extraction_failure",
+                    "warning": str(error),
+                }
+            logger.warning("MemoryCurator: degraded to no-op after LLM extraction failure: %s", error)
+            return {"output": [], "degraded": True, "warning": str(error)}
+
         def _generate_wrap() -> dict[str, Any]:
             messages = [
                 {"role": "system", "content": MEMORY_CURATOR_SYSTEM_PROMPT},
@@ -308,17 +352,32 @@ class MemoryCuratorAgent(BaseAgent):
                 },
             ]
             try:
-                invoke_kwargs = {"max_tokens": 700} if is_configured_live_provider(self.llm) else {}
-                raw = self.llm.invoke_json(messages, **invoke_kwargs)
-            except (LLMTimeoutError, OutputValidationError) as e:
-                logger.warning("MemoryCurator: degraded to no-op after LLM extraction failure: %s", e)
-                return {"output": [], "degraded": True, "warning": str(e)}
+                raw = self.llm.invoke_json(messages)
+            except LLMTimeoutError as e:
+                return _fallback_after_extraction_failure(e)
+            except OutputValidationError as e:
+                return {"output": [], "json_error": str(e), "warning": str(e)}
             patches = raw.get("patches", raw.get("facts", []))
             return {"output": patches}
 
         def _self_check_wrap(data: dict[str, Any]) -> SelfCheckResult:
             patches = data.get("output", [])
             issues: list[dict[str, Any]] = []
+            if (
+                state.get("llm_mode") == "real"
+                and not patches
+                and not data.get("fallback_source")
+                and self._should_repair_empty_extraction(project_id, chapter_number)
+            ):
+                issues.append({
+                    "type": "empty_extraction",
+                    "message": "真实 LLM 对长正文/状态卡章节返回空记忆提取结果",
+                })
+            if data.get("json_error"):
+                issues.append({
+                    "type": "json_parse",
+                    "message": f"MemoryCurator JSON 解析失败: {str(data.get('json_error'))[:160]}",
+                })
             for i, patch in enumerate(patches):
                 if not patch.get("target_table"):
                     issues.append({"type": "patch_structure", "message": f"Patch {i+1} missing target_table"})
@@ -334,19 +393,42 @@ class MemoryCuratorAgent(BaseAgent):
             )
 
         def _repair_wrap(data: dict[str, Any], check: SelfCheckResult) -> dict[str, Any] | None:
+            empty_extraction = any(issue.get("type") == "empty_extraction" for issue in check.issues)
+            json_parse_error = any(issue.get("type") == "json_parse" for issue in check.issues)
+            repair_instruction = (
+                "上一次返回了空 patches，但本章有较长正文或状态卡。请重新逐段提取本章新增/变化的角色、设定、势力、伏笔、下一章指令和事实账本；除非正文确实没有任何可沉淀信息，否则不要返回空 patches。"
+                if empty_extraction
+                else "请重新提取本章的项目资料变更建议，确保字段完整。"
+            )
+            if json_parse_error:
+                repair_instruction = (
+                    "上一次输出不是合法 JSON。请重新提取本章记忆，并严格返回一个 JSON 对象：{\"patches\": [...]}。"
+                    "不要使用 Markdown 代码块，不要输出解释文字。"
+                    "evidence_text 只能写 30 字以内摘要，不要复制带单双引号的对白原文，不要在 JSON 字符串里换行。"
+                    "所有字符串必须正确转义。"
+                )
             messages = [
                 {"role": "system", "content": MEMORY_CURATOR_SYSTEM_PROMPT + "\n\n注意：每个 patch 必须包含 target_table, operation, target_name, data, confidence 字段。"},
                 {
                     "role": "user",
-                    "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请重新提取本章的项目资料变更建议，确保字段完整。",
+                    "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n{repair_instruction}",
                 },
             ]
             try:
-                invoke_kwargs = {"max_tokens": 700} if is_configured_live_provider(self.llm) else {}
-                raw = self.llm.invoke_json(messages, **invoke_kwargs)
+                raw = self.llm.invoke_json(messages)
                 patches = raw.get("patches", raw.get("facts", []))
                 return {"output": patches}
             except Exception:
+                fallback_patches = self._patches_from_chapter_state_card(project_id, chapter_number)
+                if fallback_patches:
+                    return {
+                        "output": fallback_patches,
+                        "fallback_source": (
+                            "chapter_state_after_llm_extraction_failure"
+                            if json_parse_error else "chapter_state_after_llm_repair_failure"
+                        ),
+                        "warning": data.get("warning"),
+                    }
                 return None
 
         loop_result = loop.run(_generate_wrap, _self_check_wrap, _repair_wrap)
@@ -372,7 +454,18 @@ class MemoryCuratorAgent(BaseAgent):
                 "_autonomy": autonomy,
             }
 
-        fallback_source = None
+        fallback_source = loop_result.get("fallback_source")
+        warning = loop_result.get("warning")
+        if fallback_source:
+            exec_events.append({
+                "event_type": "fallback_used",
+                "message": f"记忆提取失败，已使用章节状态卡兜底生成 {len(patches)} 条候选",
+                "payload": {
+                    "fallback_type": fallback_source,
+                    "patch_count": len(patches),
+                    "warning": warning,
+                },
+            })
         if not patches:
             fallback_patches = self._patches_from_chapter_state_card(project_id, chapter_number)
             if fallback_patches:
@@ -414,20 +507,46 @@ class MemoryCuratorAgent(BaseAgent):
                 "status": "info",
                 "payload": {"memory_items_count": 0},
             })
+            degraded_empty = state.get("llm_mode") == "real"
             return {
                 "memory_curator_processed": True,
                 "memory_items_count": 0,
+                "extraction_success": not degraded_empty,
+                "fallback_created": False,
+                **(
+                    {
+                        "memory_curator_degraded": True,
+                        "memory_curator_warning": "LLM 未提取出记忆候选，且无状态卡兜底",
+                    }
+                    if degraded_empty else {}
+                ),
                 "_trace": trace,
                 "_autonomy": autonomy,
                 "_exec_events": exec_events,
             }
+
+        if fallback_source:
+            try:
+                from ..api.routes._memory_curator_gate import ignore_duplicate_state_card_fallback_batches
+
+                ignore_duplicate_state_card_fallback_batches(
+                    self.repo,
+                    project_id,
+                    chapter_number,
+                    keep_latest=False,
+                )
+            except Exception:
+                logger.debug("MemoryCurator fallback cleanup failed", exc_info=True)
 
         # Create memory update batch
         batch = self.repo.create_memory_batch(
             project_id,
             chapter_number=chapter_number,
             run_id=state.get("workflow_run_id"),
-            summary=f"第{chapter_number}章记忆提取 ({len(patches)}项)",
+            summary=(
+                f"第{chapter_number}章记忆提取 - 状态卡兜底 ({len(patches)}项)"
+                if fallback_source else f"第{chapter_number}章记忆提取 ({len(patches)}项)"
+            ),
         )
 
         # Create memory update items for each patch
@@ -481,6 +600,18 @@ class MemoryCuratorAgent(BaseAgent):
             chapter_number,
         )
 
+        if not fallback_source:
+            try:
+                from ..api.routes._memory_curator_gate import ignore_state_card_fallback_batches_for_chapter
+
+                ignore_state_card_fallback_batches_for_chapter(
+                    self.repo,
+                    project_id,
+                    chapter_number,
+                )
+            except Exception:
+                logger.debug("MemoryCurator trusted extraction cleanup failed", exc_info=True)
+
         exec_events.append({
             "event_type": "artifact_saved",
             "message": f"创建记忆批次：{items_created} 条候选" + ("（状态卡兜底）" if fallback_source else ""),
@@ -491,7 +622,11 @@ class MemoryCuratorAgent(BaseAgent):
             "memory_curator_processed": True,
             "memory_batch_id": batch["id"],
             "memory_items_count": items_created,
+            # v6.6.1: Clear semantics for extraction vs fallback
+            "extraction_success": fallback_source is None,
+            "fallback_created": fallback_source is not None,
             **({"memory_curator_fallback": fallback_source} if fallback_source else {}),
+            **({"memory_curator_warning": warning} if warning else {}),
             "_trace": trace,
             "_autonomy": autonomy,
             "_exec_events": exec_events,

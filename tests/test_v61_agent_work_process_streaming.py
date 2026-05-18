@@ -253,7 +253,7 @@ class TestExecutionEventHelpers:
         assert result["ok"] is False
         assert any("状态卡" in m for m in result["missing"])
 
-    def test_verify_memory_curator_no_patches_no_state(self, tmp_path):
+    def test_verify_memory_curator_requires_memory_batch(self, tmp_path):
         _, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "demo")
         _seed_run(repo, "demo")
@@ -262,8 +262,22 @@ class TestExecutionEventHelpers:
         state = {"project_id": "demo", "chapter_number": 1, "workflow_run_id": "test"}
 
         result = verify_agent_completion_evidence(repo, state, "memory_curator")
-        assert result["severity"] == "warn"
-        assert len(result["warnings"]) > 0
+        assert result["severity"] == "fail"
+        assert any("记忆收件箱批次" in m for m in result["missing"])
+
+    def test_verify_memory_curator_does_not_invent_state_card_fallback(self, tmp_path):
+        _, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "demo")
+        _seed_run(repo, "demo")
+        repo.save_chapter_state("demo", 1, {"new_facts": ["铜钥匙出现"]}, "第1章状态卡")
+
+        from novel_factory.workflow.execution_events import verify_agent_completion_evidence
+        state = {"project_id": "demo", "chapter_number": 1, "workflow_run_id": "test"}
+
+        result = verify_agent_completion_evidence(repo, state, "memory_curator")
+        assert result["severity"] == "fail"
+        assert any("记忆收件箱批次" in m for m in result["missing"])
+        assert not any("状态卡兜底" in w for w in result["warnings"])
 
     def test_verify_memory_curator_detects_chapter_batch(self, tmp_path):
         _, repo = _make_client(tmp_path)
@@ -350,6 +364,26 @@ class TestTimelineExecutionEvents:
         planner_node = next(n for n in data["nodes"] if n["node_name"] == "planner")
         assert "events" in planner_node
         assert "evidence" in planner_node
+
+    def test_timeline_survives_missing_config_file(self, tmp_path):
+        db_path = str(tmp_path / "missing-config.db")
+        init_db(db_path)
+        app = create_api_app(
+            db_path=db_path,
+            config_path=str(tmp_path / "missing-local.yaml"),
+            llm_mode="real",
+        )
+        client = TestClient(app)
+        repo = Repository(db_path)
+        _seed_project_and_chapter(repo, "demo", status="reviewed")
+        _seed_run(repo, "demo", status="completed", current_node="memory_curator")
+
+        resp = client.get("/api/projects/demo/chapters/1/workflow-timeline")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["checkpoint"]["checkpoint_exists"] is False
 
 
 class TestSSEStreamEndpoint:

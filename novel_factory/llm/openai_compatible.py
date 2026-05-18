@@ -351,11 +351,24 @@ class OpenAICompatibleProvider(LLMProvider):
         # Strip BOM and leading/trailing whitespace
         text = text.lstrip("\ufeff").strip()
 
-        # Try ```json ... ``` first
-        match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+        # Try fenced blocks first. Models often return variants such as
+        # ```json, ``` json, ```JSON, or even an unclosed fence.
+        match = re.match(
+            r"^\s*(```|~~~)[^\r\n]*[\r\n]+(.*?)(?:[\r\n]+\1\s*)?\s*$",
+            text,
+            re.DOTALL,
+        )
         if match:
-            candidate = match.group(1).strip()
-            return OpenAICompatibleProvider._sanitize_json(candidate)
+            text = match.group(2).strip()
+
+        # If a fence appears later in explanatory text, prefer its body.
+        match = re.search(
+            r"(```|~~~)[^\r\n]*[\r\n]+(.*?)(?:[\r\n]+\1)",
+            text,
+            re.DOTALL,
+        )
+        if match:
+            text = match.group(2).strip()
 
         # Try finding the first { ... } or [ ... ], respecting strings
         for start_char, end_char in [("{", "}"), ("[", "]")]:

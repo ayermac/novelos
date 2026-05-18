@@ -18,6 +18,7 @@ from ..llm.provider import is_configured_live_provider
 from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.revision_context import normalize_revision_review
 from ..agent_runtime.skill_hooks import run_agent_skills
+from ..quality.chapter_seam import build_chapter_seam_context, evaluate_chapter_seam
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +108,14 @@ class EditorAgent(BaseAgent):
         if prev_state:
             parts.append(f"【上一章状态卡】\n{json.dumps(prev_state.get('state_data', {}), ensure_ascii=False, indent=2)}")
 
+        seam_context = build_chapter_seam_context(
+            self.repo,
+            state["project_id"],
+            state["chapter_number"],
+        )
+        if seam_context:
+            parts.append(seam_context)
+
         # Characters
         characters = self.repo.get_characters(state["project_id"])
         if characters:
@@ -165,6 +174,14 @@ class EditorAgent(BaseAgent):
                 f"伏笔: {instruction.get('plots_to_plant', '')}\n"
                 f"钩子: {instruction.get('ending_hook', '')}"
             )
+
+        seam_context = build_chapter_seam_context(
+            self.repo,
+            state["project_id"],
+            state["chapter_number"],
+        )
+        if seam_context:
+            parts.append(seam_context)
 
         characters = self.repo.get_characters(state["project_id"])
         if characters:
@@ -336,6 +353,33 @@ class EditorAgent(BaseAgent):
             output.score = min(output.score, 50)
             output.issues = output.issues + [f"CRITICAL 死刑红线: {v}" for v in dp_result.violations]
 
+        seam_gate = evaluate_chapter_seam(self.repo, project_id, chapter_number, content)
+        seam_gate_details: dict[str, Any] = {}
+        if not seam_gate.get("pass", True):
+            output.pass_ = False
+            output.score = min(output.score, 79)
+            output.revision_target = "author"
+            for issue in seam_gate.get("blocking_issues", [])[:3]:
+                note = f"[章间衔接] {issue}"
+                if note not in output.issues:
+                    output.issues.append(note)
+            for suggestion in seam_gate.get("suggestions", [])[:3]:
+                note = f"[章间衔接修复] {suggestion}"
+                if note not in output.suggestions:
+                    output.suggestions.append(note)
+            seam_gate_details = {
+                "chapter_seam_fail": True,
+                "message": "; ".join(seam_gate.get("blocking_issues", [])[:3]),
+                "revision_target": "author",
+                "agent": "editor",
+                "workflow_run_id": state.get("workflow_run_id"),
+            }
+        else:
+            for issue in seam_gate.get("advisory_issues", [])[:2]:
+                note = f"[章间衔接建议] {issue}"
+                if note not in output.suggestions:
+                    output.suggestions.append(note)
+
         # Apply skills from config (before_review stage)
         if self.skill_registry:
             # v5.3.7: Inject style_bible into payload so style-bible-checker
@@ -379,16 +423,22 @@ class EditorAgent(BaseAgent):
                     ai_trace_score = result["data"].get("ai_trace_score", 0)
                     ai_issues = result["data"].get("issues", [])
                     
-                    # Add AI style issues to output
+                    # Add AI style issues as advisory audit notes. The v6.4/v6.6
+                    # quality signal layer must not override the Editor's review
+                    # score by itself; hard blocking is handled by death-penalty,
+                    # word-count, and explicit seam gates.
                     if ai_issues:
-                        ai_style_issues = [issue.get("message", "") for issue in ai_issues if issue.get("message")]
+                        ai_style_issues = [
+                            f"[质量诊断建议] {issue.get('message', '')}"
+                            for issue in ai_issues
+                            if issue.get("message")
+                        ]
                         output.issues = output.issues + ai_style_issues
                     
-                    # Adjust score if AI trace is high
                     if ai_trace_score > 70:
-                        output.score = min(output.score, 75)
-                        if "AI痕迹过重" not in output.issues:
-                            output.issues.append(f"AI痕迹过重 (评分: {ai_trace_score})")
+                        note = f"[质量诊断建议] AI痕迹偏高 (评分: {ai_trace_score})"
+                        if note not in output.suggestions:
+                            output.suggestions.append(note)
                 
                 # Handle NarrativeQualityScorer
                 elif skill_id == "narrative-quality":
@@ -396,20 +446,27 @@ class EditorAgent(BaseAgent):
                     narrative_issues_list = result["data"].get("issues", [])
                     suggestions = result["data"].get("suggestions", [])
                     
-                    # Add narrative issues to output
+                    # Add narrative quality findings for audit/revision focus only.
+                    # They should guide Polisher/Editor, not silently turn a
+                    # passing review into an automatic revision loop.
                     if narrative_issues_list:
-                        narrative_issues = [issue.get("message", "") for issue in narrative_issues_list if issue.get("message")]
+                        narrative_issues = [
+                            f"[质量诊断建议] {issue.get('message', '')}"
+                            for issue in narrative_issues_list
+                            if issue.get("message")
+                        ]
                         output.issues = output.issues + narrative_issues
                     
                     # Add suggestions
                     if suggestions:
-                        output.suggestions = output.suggestions + suggestions
+                        output.suggestions = output.suggestions + [
+                            f"[质量诊断建议] {suggestion}" for suggestion in suggestions
+                        ]
                     
-                    # Adjust score if narrative quality is low
                     if narrative_score < 50:
-                        output.score = min(output.score, 70)
-                        if "叙事质量不足" not in output.issues:
-                            output.issues.append(f"叙事质量不足 (评分: {narrative_score})")
+                        note = f"[质量诊断建议] 叙事质量偏低 (评分: {narrative_score})"
+                        if note not in output.suggestions:
+                            output.suggestions.append(note)
 
         # Q7: Classify issues and determine revision_target (overrides LLM self-report)
         if not output.pass_ and output.issues:
@@ -542,8 +599,13 @@ class EditorAgent(BaseAgent):
             output.suggestions = output.suggestions + [
                 f"[v6.6策略] {strategy_decision.reason}；保留为发布前建议，不进入自动返修。"
             ]
-        elif not strategy_decision.pass_ and strategy_decision.category == "blocking":
+        elif not strategy_decision.pass_:
             output.pass_ = False
+            if not output.revision_target:
+                output.revision_target = "polisher"
+            strategy_note = f"[v6.6策略] {strategy_decision.reason}"
+            if strategy_note not in output.issues:
+                output.issues.append(strategy_note)
 
         # Save review AFTER all gates have mutated output
         review_id = self.repo.save_review(
@@ -611,17 +673,17 @@ class EditorAgent(BaseAgent):
 
             try:
                 # Save state card if provided
-                if output.state_card:
-                    state_ok = self.repo.save_chapter_state(
-                        project_id, chapter_number, output.state_card,
-                        summary=f"第{chapter_number}章状态卡 (score={output.score})",
+                state_card = output.state_card or self._build_minimal_state_card(content)
+                state_ok = self.repo.save_chapter_state(
+                    project_id, chapter_number, state_card,
+                    summary=f"第{chapter_number}章状态卡 (score={output.score})",
+                )
+                if not state_ok:
+                    self._compensate_status(
+                        project_id, chapter_number,
+                        ChapterStatus.REVIEWED.value, rollback_status,
                     )
-                    if not state_ok:
-                        self._compensate_status(
-                            project_id, chapter_number,
-                            ChapterStatus.REVIEWED.value, rollback_status,
-                        )
-                        return {"error": "Editor: save_chapter_state failed", "chapter_status": rollback_status}
+                    return {"error": "Editor: save_chapter_state failed", "chapter_status": rollback_status}
 
                 # Save artifact (bind to workflow run for isolation)
                 workflow_run_id = state.get("workflow_run_id")
@@ -750,6 +812,7 @@ class EditorAgent(BaseAgent):
                 "score": output.score,
                 "revision_target": output.revision_target,
                 **word_gate_details,
+                **seam_gate_details,
             },
             "_exec_events": exec_events,
         }
@@ -758,6 +821,17 @@ class EditorAgent(BaseAgent):
         parsed = EditorOutput(**output)
         if parsed.revision_target and parsed.revision_target not in ("author", "polisher", "planner", None):
             raise ValueError(f"Invalid revision_target: {parsed.revision_target}")
+
+    def _build_minimal_state_card(self, content: str) -> dict[str, Any]:
+        """Build a conservative state card when the LLM returns an empty one."""
+        text = str(content or "").strip()
+        tail = text[-500:] if text else ""
+        return {
+            "summary": tail[:180] if tail else "本章已通过审核。",
+            "new_facts": [],
+            "character_status": {},
+            "suspense_hooks": [],
+        }
 
     def _save_learned_patterns(
         self, project_id: str, chapter_number: int, output: EditorOutput,

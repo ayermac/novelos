@@ -112,8 +112,9 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
     # Projects must have approved genesis + world settings + characters + outlines + instructions
     # before any chapter workflow can start. This prevents users from accidentally generating
     # chapters without proper creative context.
-    latest_genesis = repo.get_latest_genesis_run(project_id)
-    has_approved_genesis = latest_genesis is not None and latest_genesis.get("status") == "approved"
+    has_approved_genesis = any(
+        run.get("status") == "approved" for run in repo.list_genesis_runs(project_id)
+    )
     has_world = len(repo.list_world_settings(project_id)) > 0
     has_chars = len(repo.list_characters(project_id, include_inactive=True)) > 0
     has_outlines = len(repo.list_outlines(project_id)) > 0

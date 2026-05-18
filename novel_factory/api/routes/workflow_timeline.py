@@ -448,8 +448,11 @@ async def get_workflow_timeline(
 
     try:
         repo = get_repo(request)
-        settings = get_settings(request)
-        timeout_minutes = settings.workflow.task_timeout_minutes
+        try:
+            settings = get_settings(request)
+            timeout_minutes = settings.workflow.task_timeout_minutes
+        except Exception:
+            timeout_minutes = STUCK_THRESHOLD_MINUTES
 
         # Verify chapter exists
         chapter = repo.get_chapter(project_id, chapter_number)

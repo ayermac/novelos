@@ -13,6 +13,11 @@ from ..validators.chapter_checker import derive_word_target
 from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.revision_context import revision_feedback_block
 from ..agent_runtime.skill_hooks import run_agent_skills
+from ..quality.chapter_seam import (
+    build_chapter_seam_context,
+    build_planner_inheritance_context,
+    enforce_planner_inheritance,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +37,8 @@ PLANNER_SYSTEM_PROMPT = """你是网文工厂的总编（Planner），负责章�
 2. 反派行为必须逻辑化
 3. 每个伏笔必须有计划兑现
 4. 禁止抽象描述（如"主角变得更强"）
+5. 必须回应上一章未处理悬念、时间约束和地点约定；如暂不处理，必须写入明确延期事件
+6. 必须优先继承已应用事实账本和可信记忆候选，不得忽略上一章真实记忆
 
 禁止：
 - 写正文
@@ -81,6 +88,18 @@ class PlannerAgent(BaseAgent):
         else:
             parts.append("【初始状态】第一章，无上一章状态卡")
 
+        seam_context = build_chapter_seam_context(repo=self.repo, project_id=project_id, chapter_number=chapter_number)
+        if seam_context:
+            parts.append(seam_context)
+
+        inheritance_context = build_planner_inheritance_context(
+            self.repo,
+            project_id,
+            chapter_number,
+        )
+        if inheritance_context:
+            parts.append(inheritance_context)
+
         # Characters
         characters = self.repo.get_characters(state["project_id"])
         if characters:
@@ -128,6 +147,20 @@ class PlannerAgent(BaseAgent):
 
         # Save instruction to DB, preserving word_target if one already exists
         brief = output.chapter_brief
+        repaired_inheritance, inheritance_issues = enforce_planner_inheritance(
+            brief,
+            self.repo,
+            project_id,
+            chapter_number,
+        )
+        if repaired_inheritance:
+            exec_events.append({
+                "event_type": "planner_inheritance_repaired",
+                "message": f"自动补齐章节继承约束：{len(inheritance_issues)} 项",
+                "status": "warning",
+                "payload": {"issues": inheritance_issues[:5]},
+            })
+
         project_skill_overrides = self._get_project_skill_overrides(project_id)
         skill_result = run_agent_skills(
             repo=self.repo,

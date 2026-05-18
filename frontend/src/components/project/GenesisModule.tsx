@@ -24,6 +24,56 @@ interface DraftData {
   instructions?: Array<{ chapter_number: number; objective: string; key_events: string }>
 }
 
+interface DraftPreview {
+  draft: DraftData | null
+  rawText: string
+  invalid: boolean
+  empty: boolean
+  incomplete: boolean
+  missingRequiredSections: string[]
+}
+
+type DraftArrayItem<K extends keyof DraftData> = NonNullable<DraftData[K]> extends Array<infer T> ? T : never
+
+const REQUIRED_DRAFT_LABELS = ['项目简介', '世界观设定', '角色', '势力/组织', '大纲', '伏笔/悬念', '章节指令']
+
+const REQUIRED_DRAFT_SECTIONS: Array<[keyof DraftData, string]> = [
+  ['world_settings', '世界观设定'],
+  ['characters', '角色'],
+  ['factions', '势力/组织'],
+  ['outlines', '大纲'],
+  ['plot_holes', '伏笔/悬念'],
+  ['instructions', '章节指令'],
+]
+
+const normalizeDraftValue = (value: unknown): DraftData | null => {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    return value as DraftData
+  }
+  if (!Array.isArray(value)) return null
+
+  const draft: DraftData = {}
+  value.forEach((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return
+    const record = item as Record<string, unknown>
+    if ('title' in record && 'category' in record && 'content' in record) {
+      draft.world_settings = [...(draft.world_settings || []), item as DraftArrayItem<'world_settings'>]
+    } else if ('chapter_number' in record) {
+      draft.instructions = [...(draft.instructions || []), item as DraftArrayItem<'instructions'>]
+    } else if ('chapters_range' in record || ('level' in record && 'sequence' in record && 'content' in record)) {
+      draft.outlines = [...(draft.outlines || []), item as DraftArrayItem<'outlines'>]
+    } else if ('code' in record) {
+      draft.plot_holes = [...(draft.plot_holes || []), item as DraftArrayItem<'plot_holes'>]
+    } else if ('relationship_with_protagonist' in record || ('name' in record && 'type' in record)) {
+      draft.factions = [...(draft.factions || []), item as DraftArrayItem<'factions'>]
+    } else if ('name' in record) {
+      draft.characters = [...(draft.characters || []), item as DraftArrayItem<'characters'>]
+    }
+  })
+
+  return Object.keys(draft).length > 0 ? draft : null
+}
+
 interface Props {
   projectId: string
   project?: {
@@ -142,12 +192,72 @@ export default function GenesisModule({ projectId, project }: Props) {
     setRejecting(false)
   }
 
-  const parseDraft = (): DraftData | null => {
-    if (!genesis?.draft_json) return null
-    try {
-      return JSON.parse(genesis.draft_json)
-    } catch {
-      return null
+  const parseDraft = (): DraftPreview => {
+    if (!genesis?.draft_json) {
+      return {
+        draft: null,
+        rawText: '',
+        invalid: true,
+        empty: true,
+        incomplete: true,
+        missingRequiredSections: REQUIRED_DRAFT_LABELS,
+      }
+    }
+
+    let value: unknown = genesis.draft_json
+    for (let i = 0; i < 2; i += 1) {
+      if (typeof value !== 'string') break
+      try {
+        value = JSON.parse(value)
+      } catch {
+        return {
+          draft: null,
+          rawText: genesis.draft_json,
+          invalid: true,
+          empty: true,
+          incomplete: true,
+          missingRequiredSections: REQUIRED_DRAFT_LABELS,
+        }
+      }
+    }
+
+    const draft = normalizeDraftValue(value)
+    if (!draft) {
+      return {
+        draft: null,
+        rawText: typeof value === 'string' ? value : genesis.draft_json,
+        invalid: true,
+        empty: true,
+        incomplete: true,
+        missingRequiredSections: REQUIRED_DRAFT_LABELS,
+      }
+    }
+
+    const missingRequiredSections = [
+      ...(!draft.project_updates?.description?.trim() ? ['项目简介'] : []),
+      ...REQUIRED_DRAFT_SECTIONS
+      .filter(([key]) => {
+        const section = draft[key]
+        return !Array.isArray(section) || section.length === 0
+      })
+      .map(([, label]) => label),
+    ]
+    const empty = !(
+      draft.project_updates?.description ||
+      draft.world_settings?.length ||
+      draft.characters?.length ||
+      draft.factions?.length ||
+      draft.outlines?.length ||
+      draft.plot_holes?.length ||
+      draft.instructions?.length
+    )
+    return {
+      draft,
+      rawText: JSON.stringify(draft, null, 2),
+      invalid: false,
+      empty,
+      incomplete: missingRequiredSections.length > 0,
+      missingRequiredSections,
     }
   }
 
@@ -175,7 +285,8 @@ export default function GenesisModule({ projectId, project }: Props) {
 
   if (loading) return <div className="module-loading">加载中...</div>
 
-  const draft = parseDraft()
+  const draftPreview = parseDraft()
+  const draft = draftPreview.draft
   const canGenerate = !genesis || genesis.status === 'approved' || genesis.status === 'rejected' || genesis.status === 'failed'
 
   return (
@@ -334,17 +445,47 @@ export default function GenesisModule({ projectId, project }: Props) {
           )}
 
           {/* Draft preview */}
-          {draft && genesis.status === 'generated' && (
+          {genesis.status === 'generated' && (
             <>
               <div className="genesis-draft">
-                {draft.project_updates?.description && (
+                {draftPreview.invalid && (
+                  <div className="draft-empty draft-invalid">
+                    <XCircle size={16} />
+                    <div>
+                      <strong>创世草案格式异常，无法应用</strong>
+                      <p>请拒绝当前草案后重新生成。系统不会把异常草案写入正式设定。</p>
+                    </div>
+                  </div>
+                )}
+
+                {!draftPreview.invalid && draftPreview.empty && (
+                  <div className="draft-empty">
+                    <Sparkles size={16} />
+                    <div>
+                      <strong>创世草案没有可应用内容</strong>
+                      <p>请拒绝当前草案后重新生成，或补充项目标题、类型和创意后再次生成。</p>
+                    </div>
+                  </div>
+                )}
+
+                {!draftPreview.invalid && !draftPreview.empty && draftPreview.incomplete && (
+                  <div className="draft-empty draft-invalid">
+                    <XCircle size={16} />
+                    <div>
+                      <strong>创世草案不完整，不能应用</strong>
+                      <p>缺少：{draftPreview.missingRequiredSections.join('、')}。请拒绝当前草案后重新生成。</p>
+                    </div>
+                  </div>
+                )}
+
+                {draft?.project_updates?.description && (
                   <div className="draft-section">
                     <h4>项目描述</h4>
                     <p>{draft.project_updates.description}</p>
                   </div>
                 )}
 
-                {draft.world_settings && draft.world_settings.length > 0 && (
+                {draft?.world_settings && draft.world_settings.length > 0 && (
                   <div className="draft-section">
                     <h4>世界观设定 ({draft.world_settings.length})</h4>
                     <ul>
@@ -355,7 +496,7 @@ export default function GenesisModule({ projectId, project }: Props) {
                   </div>
                 )}
 
-                {draft.characters && draft.characters.length > 0 && (
+                {draft?.characters && draft.characters.length > 0 && (
                   <div className="draft-section">
                     <h4>角色 ({draft.characters.length})</h4>
                     <ul>
@@ -366,7 +507,7 @@ export default function GenesisModule({ projectId, project }: Props) {
                   </div>
                 )}
 
-                {draft.factions && draft.factions.length > 0 && (
+                {draft?.factions && draft.factions.length > 0 && (
                   <div className="draft-section">
                     <h4>势力 ({draft.factions.length})</h4>
                     <ul>
@@ -377,7 +518,7 @@ export default function GenesisModule({ projectId, project }: Props) {
                   </div>
                 )}
 
-                {draft.outlines && draft.outlines.length > 0 && (
+                {draft?.outlines && draft.outlines.length > 0 && (
                   <div className="draft-section">
                     <h4>大纲 ({draft.outlines.length})</h4>
                     <ul>
@@ -388,7 +529,7 @@ export default function GenesisModule({ projectId, project }: Props) {
                   </div>
                 )}
 
-                {draft.plot_holes && draft.plot_holes.length > 0 && (
+                {draft?.plot_holes && draft.plot_holes.length > 0 && (
                   <div className="draft-section">
                     <h4>伏笔/悬念 ({draft.plot_holes.length})</h4>
                     <ul>
@@ -399,7 +540,7 @@ export default function GenesisModule({ projectId, project }: Props) {
                   </div>
                 )}
 
-                {draft.instructions && draft.instructions.length > 0 && (
+                {draft?.instructions && draft.instructions.length > 0 && (
                   <div className="draft-section">
                     <h4>章节指令 ({draft.instructions.length})</h4>
                     <ul>
@@ -408,6 +549,13 @@ export default function GenesisModule({ projectId, project }: Props) {
                       ))}
                     </ul>
                   </div>
+                )}
+
+                {(draftPreview.invalid || draftPreview.empty) && draftPreview.rawText && (
+                  <details className="draft-raw">
+                    <summary>查看原始草案</summary>
+                    <pre>{draftPreview.rawText}</pre>
+                  </details>
                 )}
               </div>
 
@@ -428,7 +576,7 @@ export default function GenesisModule({ projectId, project }: Props) {
                     <button className="btn btn-danger" onClick={() => setShowRejectConfirm(true)}>
                       <XCircle size={14} /> 拒绝
                     </button>
-                    <button className="btn btn-primary" onClick={handleApprove} disabled={approving}>
+                    <button className="btn btn-primary" onClick={handleApprove} disabled={approving || draftPreview.invalid || draftPreview.empty || draftPreview.incomplete}>
                       {approving ? <><Loader2 size={14} className="spin" /> 应用中...</> : <><CheckCircle2 size={14} /> 批准并应用</>}
                     </button>
                   </>
@@ -571,6 +719,47 @@ export default function GenesisModule({ projectId, project }: Props) {
           margin-bottom: 16px;
           max-height: 500px;
           overflow-y: auto;
+        }
+        .draft-empty {
+          display: flex;
+          gap: 10px;
+          align-items: flex-start;
+          padding: 14px;
+          border: 1px solid color-mix(in srgb, var(--warning) 30%, transparent);
+          border-radius: 6px;
+          background: color-mix(in srgb, var(--warning) 10%, var(--bg-primary));
+          color: var(--text-secondary);
+          font-size: 13px;
+          line-height: 1.6;
+        }
+        .draft-empty strong {
+          display: block;
+          color: var(--text-primary);
+          font-size: 14px;
+          margin-bottom: 2px;
+        }
+        .draft-empty p {
+          margin: 0;
+        }
+        .draft-invalid {
+          border-color: color-mix(in srgb, var(--danger) 30%, transparent);
+          background: color-mix(in srgb, var(--danger) 10%, var(--bg-primary));
+        }
+        .draft-raw {
+          margin-top: 12px;
+          font-size: 12px;
+          color: var(--text-muted);
+        }
+        .draft-raw summary {
+          cursor: pointer;
+        }
+        .draft-raw pre {
+          margin: 8px 0 0;
+          max-height: 220px;
+          overflow: auto;
+          white-space: pre-wrap;
+          word-break: break-word;
+          color: var(--text-secondary);
         }
         .draft-section {
           margin-bottom: 16px;

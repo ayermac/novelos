@@ -30,6 +30,19 @@ from .checkpoint import (
 logger = logging.getLogger(__name__)
 
 STALE_RUNNING_RUN_SECONDS = 2 * 60 * 60
+STREAM_VISIBLE_NODES = frozenset(
+    {
+        "planner",
+        "screenwriter",
+        "author",
+        "polisher",
+        "editor",
+        "memory_curator",
+        "publisher",
+        "awaiting_publish",
+        "human_review",
+    }
+)
 
 
 def _mark_run_failed(repo: Repository, run_id: str | None, error: str) -> None:
@@ -678,7 +691,7 @@ def run_with_graph_stream(
                             }
 
                         # Emit step_start for new agent
-                        if node_name in ("planner", "screenwriter", "author", "polisher", "editor", "publisher", "human_review"):
+                        if node_name in STREAM_VISIBLE_NODES:
                             current_agent = node_name
                             agent_start_times[node_name] = time.time()
                             yield {

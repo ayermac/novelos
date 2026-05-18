@@ -114,6 +114,17 @@ class TestChapterRunGuardContextCompleteness:
 
         assert check_chapter_run_guard(repo_obj, project_id, 1) is None
 
+    def test_guard_uses_any_approved_genesis_not_only_latest(self, repo):
+        """A later failed/regenerated genesis draft must not erase an already approved initialization."""
+        repo_obj, db_path = repo
+        project_id = "v63-approved-then-latest-generated"
+        _seed_full_context(repo_obj, project_id)
+        repo_obj.create_genesis_run(project_id, input_json='{"title":"partial"}', status="generated")
+
+        from novel_factory.api.routes._run_guards import check_chapter_run_guard
+
+        assert check_chapter_run_guard(repo_obj, project_id, 1) is None
+
 
 class TestProductionNextHealth:
     """production-next health snapshot includes ready_for_chapter_1."""
@@ -147,6 +158,19 @@ class TestProductionNextHealth:
         assert health["has_characters"] is True
         assert health["has_outlines"] is True
         assert health["has_instructions_for_current_chapter"] is True
+
+    def test_ready_for_chapter_1_true_when_latest_genesis_is_pending_replacement(self, repo):
+        """Health should not regress just because a later replacement draft is pending."""
+        repo_obj, db_path = repo
+        project_id = "v63-health-approved-then-pending"
+        _seed_full_context(repo_obj, project_id)
+        repo_obj.create_genesis_run(project_id, input_json='{"title":"partial"}', status="generated")
+
+        from novel_factory.api.routes.production import _build_health
+
+        health = _build_health(repo_obj, project_id, 1)
+        assert health["ready_for_chapter_1"] is True
+        assert health["has_approved_genesis"] is True
 
     def test_manual_context_ready_unified_with_ready_for_chapter_1(self, repo):
         """manual_context_ready must equal ready_for_chapter_1 to prevent

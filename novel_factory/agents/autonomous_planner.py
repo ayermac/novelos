@@ -196,6 +196,60 @@ class LLMOutputInvalid(Exception):
     pass
 
 
+def _text(value: Any) -> str:
+    """Normalize provider scalar/list/dict values into DB-safe text."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+def _list_of_text(value: Any) -> list[str]:
+    """Normalize provider scalar/list output into a list of strings."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [_text(item) for item in value if _text(item)]
+    text = _text(value)
+    return [text] if text else []
+
+
+def _coerce_autofill_raw(raw: dict[str, Any]) -> dict[str, Any]:
+    """Coerce common real-LLM shape drift before Pydantic validation."""
+    data = dict(raw)
+
+    characters = []
+    for item in data.get("characters") or []:
+        if not isinstance(item, dict):
+            continue
+        next_item = dict(item)
+        next_item["name"] = _text(next_item.get("name"))
+        next_item["role"] = _text(next_item.get("role")) or "supporting"
+        next_item["description"] = _text(next_item.get("description"))
+        next_item["traits"] = _text(next_item.get("traits"))
+        characters.append(next_item)
+    data["characters"] = characters
+
+    instructions = []
+    for item in data.get("instructions") or []:
+        if not isinstance(item, dict):
+            continue
+        next_item = dict(item)
+        next_item["objective"] = _text(next_item.get("objective"))
+        next_item["key_events"] = _text(next_item.get("key_events"))
+        next_item["plots_to_plant"] = _list_of_text(next_item.get("plots_to_plant"))
+        next_item["plots_to_resolve"] = _list_of_text(next_item.get("plots_to_resolve"))
+        next_item["emotion_tone"] = _text(next_item.get("emotion_tone"))
+        next_item["ending_hook"] = _text(next_item.get("ending_hook"))
+        instructions.append(next_item)
+    data["instructions"] = instructions
+
+    return data
+
+
 # ---------------------------------------------------------------------------
 # Auto-fill executor
 # ---------------------------------------------------------------------------
@@ -231,6 +285,7 @@ def execute_autofill(
     project_id: str,
     chapter_start: int,
     chapter_end: int,
+    missing_types_override: list[str] | None = None,
 ) -> tuple[dict[str, int], list[str], list[str]]:
     """Execute real LLM auto-fill for missing project context.
 
@@ -246,11 +301,31 @@ def execute_autofill(
     }
     warnings: list[str] = []
 
-    missing_types = _determine_missing_types(repo, project_id, chapter_start, chapter_end)
+    missing_types = (
+        [item for item in missing_types_override if item]
+        if missing_types_override is not None
+        else _determine_missing_types(repo, project_id, chapter_start, chapter_end)
+    )
 
     # If nothing is missing, return early
     if not missing_types:
         return created, warnings, missing_types
+
+    if missing_types_override is None and len(missing_types) > 1:
+        all_missing = list(missing_types)
+        for missing_type in all_missing:
+            partial_created, partial_warnings, _partial_missing = execute_autofill(
+                repo,
+                llm,
+                project_id,
+                chapter_start,
+                chapter_end,
+                missing_types_override=[missing_type],
+            )
+            for key, count in partial_created.items():
+                created[key] += count
+            warnings.extend(partial_warnings)
+        return created, warnings, all_missing
 
     ctx = _build_project_context(repo, project_id)
     user_prompt = _build_autofill_prompt(ctx, chapter_start, chapter_end, missing_types)
@@ -263,7 +338,7 @@ def execute_autofill(
 
     # Validate against Pydantic schema
     try:
-        output = AutoFillLLMOutput(**raw)
+        output = AutoFillLLMOutput(**_coerce_autofill_raw(raw))
     except ValidationError as e:
         logger.warning("Auto-fill output validation failed: %s", e)
         warnings.append(f"LLM 输出结构校验失败: {e}")
@@ -288,7 +363,13 @@ def execute_autofill(
             if ch.name in existing_char_names:
                 warnings.append(f"角色 '{ch.name}' 已存在，跳过")
                 continue
-            repo.create_character(project_id, ch.name, ch.role, ch.description, ch.traits)
+            repo.create_character(
+                project_id,
+                name=ch.name,
+                role=ch.role,
+                description=ch.description,
+                traits=ch.traits,
+            )
             created["characters"] += 1
     elif output.characters:
         warnings.append("LLM 返回了 characters，但该类型已有数据，已忽略")

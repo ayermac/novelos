@@ -8,6 +8,12 @@ from fastapi import APIRouter, BackgroundTasks, Request
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ._memory_curator_gate import (
+    has_trusted_memory_batch,
+    memory_incomplete_details,
+    memory_incomplete_message,
+    memory_result_is_incomplete,
+)
 
 router = APIRouter()
 
@@ -240,31 +246,15 @@ class PublishChapterRequest(BaseModel):
 
 
 def _has_memory_curator_evidence(repo, project_id: str, chapter_number: int) -> bool:
-    """Return True when memory extraction already ran for this chapter.
+    """Return True when a trusted user-visible memory batch exists.
 
-    A reviewed chapter can legitimately produce zero memory patches, so this
-    checks both created memory batches and completed memory_curator node events.
+    Node events are not enough: a run can log that memory_curator executed while
+    the inbox has no batch, or only has a low-confidence state-card fallback.
     """
-    try:
-        for batch in repo.list_memory_batches(project_id):
-            if int(batch.get("chapter_number") or 0) == int(chapter_number):
-                return True
-    except Exception:
-        pass
-
-    try:
-        events = repo.get_workflow_node_events_for_chapter(project_id, chapter_number)
-        return any(
-            ev.get("node_name") == "memory_curator"
-            and ev.get("event_type") == "completed"
-            and ev.get("status") == "completed"
-            for ev in events
-        )
-    except Exception:
-        return False
+    return has_trusted_memory_batch(repo, project_id, chapter_number)
 
 
-def _ensure_memory_curated_before_publish(request: Request, repo, project_id: str, chapter_number: int) -> dict:
+async def _ensure_memory_curated_before_publish(request: Request, repo, project_id: str, chapter_number: int) -> dict:
     """Run MemoryCurator once before manual publish when evidence is missing."""
     if _has_memory_curator_evidence(repo, project_id, chapter_number):
         return {"memory_curator_processed": False, "memory_curator_skipped": True}
@@ -305,13 +295,16 @@ def _ensure_memory_curated_before_publish(request: Request, repo, project_id: st
         return {"error": str(exc), "run_id": run_id}
 
     agent = MemoryCuratorAgent(repo, llm, skill_registry=SkillRegistry())
-    result = agent.run({
-        "project_id": project_id,
-        "chapter_number": chapter_number,
-        "chapter_status": "reviewed",
-        "workflow_run_id": run_id,
-        "llm_mode": get_llm_mode(request),
-    })
+    result = await asyncio.to_thread(
+        agent.run,
+        {
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "chapter_status": "reviewed",
+            "workflow_run_id": run_id,
+            "llm_mode": get_llm_mode(request),
+        },
+    )
 
     if result.get("error"):
         error = str(result.get("error"))
@@ -327,22 +320,42 @@ def _ensure_memory_curated_before_publish(request: Request, repo, project_id: st
         repo.update_workflow_run(run_id, status="failed", current_node="memory_curator", error_message=error)
         return {"error": error, "run_id": run_id}
 
+    extraction_success = result.get("extraction_success", True)
+    incomplete = memory_result_is_incomplete(repo, project_id, chapter_number, result)
     repo.create_workflow_node_event(
         run_id=run_id,
         project_id=project_id,
         chapter_number=chapter_number,
         node_name="memory_curator",
         event_type="completed",
-        status="completed",
-        message="人工发布前记忆提取完成",
+        status="warning" if incomplete else "completed",
+        message="人工发布前记忆提取完成" if not incomplete else "人工发布前记忆提取未成功，未生成可信记忆批次",
         output_summary=f"{result.get('memory_items_count', 0)} 条候选记忆",
     )
+    if incomplete:
+        message = memory_incomplete_message(result)
+        repo.update_workflow_run(run_id, status="failed", current_node="memory_curator", error_message=message)
+        return {
+            "error": message,
+            "memory_incomplete": True,
+            "memory_curator_processed": True,
+            "memory_run_id": run_id,
+            "memory_batch_id": result.get("memory_batch_id"),
+            "memory_items_count": result.get("memory_items_count", 0),
+            "extraction_success": extraction_success,
+            "fallback_created": result.get("fallback_created", False),
+            "memory_curator_degraded": result.get("memory_curator_degraded", False),
+            "memory_curator_fallback": result.get("memory_curator_fallback"),
+            "memory_curator_warning": result.get("memory_curator_warning"),
+        }
     repo.update_workflow_run(run_id, status="completed", current_node="memory_curator", clear_error=True)
     return {
         "memory_curator_processed": True,
         "memory_run_id": run_id,
         "memory_batch_id": result.get("memory_batch_id"),
         "memory_items_count": result.get("memory_items_count", 0),
+        "extraction_success": extraction_success,
+        "fallback_created": result.get("fallback_created", False),
         "memory_curator_degraded": result.get("memory_curator_degraded", False),
         "memory_curator_fallback": result.get("memory_curator_fallback"),
     }
@@ -380,21 +393,23 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 details={"current_status": current_status},
             )
 
-        memory_result = _ensure_memory_curated_before_publish(
+        memory_result = await _ensure_memory_curated_before_publish(
             request,
             repo,
             body.project_id,
             body.chapter,
         )
         if memory_result.get("error"):
+            code = "MEMORY_CURATOR_INCOMPLETE" if memory_result.get("memory_incomplete") else "MEMORY_CURATOR_FAILED"
             return error_response(
-                "MEMORY_CURATOR_FAILED",
+                code,
                 f"发布前记忆提取失败: {memory_result['error']}",
-                details={
-                    "project_id": body.project_id,
-                    "chapter": body.chapter,
-                    "run_id": memory_result.get("run_id"),
-                },
+                details=memory_incomplete_details(
+                    memory_result,
+                    project_id=body.project_id,
+                    chapter_number=body.chapter,
+                    run_id=memory_result.get("memory_run_id") or memory_result.get("run_id"),
+                ),
             )
 
         # Publish the chapter

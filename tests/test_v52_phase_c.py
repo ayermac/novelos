@@ -62,6 +62,8 @@ class TestSSEStreaming(unittest.TestCase):
         self.assertIn("step_start", event_types)
         self.assertIn("step_complete", event_types)
         self.assertIn("run_complete", event_types)
+        step_agents = [e["agent"] for e in events if e["type"] == "step_start"]
+        self.assertIn("memory_curator", step_agents)
 
     def test_step_start_has_required_fields(self):
         """step_start 事件包含必需字段。"""

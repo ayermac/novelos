@@ -494,18 +494,8 @@ def _verify_memory_curator(
     if has_batch:
         checks.append({"check": "memory_batch_created", "passed": True})
     else:
-        try:
-            state_card = repo.get_chapter_state(project_id, chapter_number)
-            has_state = state_card is not None
-        except Exception:
-            has_state = False
-
-        if has_state:
-            checks.append({"check": "fallback_used", "passed": True})
-            warnings.append("LLM 提取为空，使用章节状态卡兜底")
-        else:
-            checks.append({"check": "no_memory_changes", "passed": True})
-            warnings.append("无可提取记忆，无状态卡可用")
+        checks.append({"check": "memory_batch_created", "passed": False})
+        missing.append("未创建记忆收件箱批次")
 
 
 # ── Timer context manager ───────────────────────────────────────

@@ -140,6 +140,31 @@ class TestContextReadinessGate:
         assert result.ready is False
         assert "主角角色" in result.missing
 
+    def test_chinese_protagonist_role_is_ready(self):
+        """Localized protagonist labels should satisfy readiness."""
+        project = {
+            "description": "一部玄幻小说",
+            "target_words": 1500000,
+            "total_chapters_planned": 500,
+        }
+        world_settings = [{"category": "world", "title": "世界观", "content": "修仙世界"}]
+        characters = [{"name": "张三", "role": "主角", "description": "主角"}]
+        outlines = [{"level": "chapter", "chapters_range": "1-10", "title": "第一卷"}]
+        instruction = {"objective": "测试指令", "word_target": 3000}
+
+        result = check_context_readiness(
+            project=project,
+            world_settings=world_settings,
+            characters=characters,
+            outlines=outlines,
+            instruction=instruction,
+            chapter_number=1,
+            chapter_status="planned",
+        )
+
+        assert result.ready is True
+        assert result.details["protagonist_count"] == 1
+
     def test_missing_outline_coverage_fails(self):
         """Missing outline coverage for chapter should fail readiness check."""
         project = {
@@ -228,7 +253,7 @@ class TestContextReadinessGate:
         error = format_readiness_error(result)
 
         assert error["error_code"] == "PROJECT_CONTEXT_INCOMPLETE"
-        assert error["message"] == "项目资料不完整，无法生成章节"
+        assert error["message"] == "项目资料不完整，缺少：项目简介, 主角角色，无法生成章节"
         assert "项目简介" in error["missing"]
         assert "主角角色" in error["missing"]
 

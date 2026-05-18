@@ -218,11 +218,12 @@ class WorkflowRepositoryMixin:
         conn = self._conn()
         try:
             query = (
-                "SELECT wr.id, wr.project_id, wr.chapter_number, c.status AS chapter_status "
+                "SELECT wr.id, wr.project_id, wr.chapter_number, wr.graph_name, c.status AS chapter_status "
                 "FROM workflow_runs wr "
                 "JOIN chapters c ON c.project_id = wr.project_id "
                 "AND c.chapter_number = wr.chapter_number "
                 "WHERE wr.status='running' "
+                "AND wr.graph_name='chapter_production' "
                 "AND c.status IN (?, ?, ?)"
             )
             params: list[Any] = list(terminal_statuses)

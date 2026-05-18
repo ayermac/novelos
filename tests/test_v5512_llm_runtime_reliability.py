@@ -191,6 +191,28 @@ def test_llm_json_sanitizer_quotes_unquoted_prose_values():
     assert json.loads(sanitized)["scene_beats"][0]["turn"] == "林澈在广播中听见失踪者声音"
 
 
+def test_llm_json_extractor_accepts_markdown_fenced_json_variants():
+    fenced = '''``` json
+    {
+      "patches": [
+        {"target_table": "characters", "operation": "create"}
+      ]
+    }
+    ```'''
+    unclosed = '''```JSON
+    {
+      "patches": [
+        {"target_table": "story_facts", "operation": "create"}
+      ]
+    }'''
+
+    fenced_data = json.loads(OpenAICompatibleProvider._extract_json(fenced))
+    unclosed_data = json.loads(OpenAICompatibleProvider._extract_json(unclosed))
+
+    assert fenced_data["patches"][0]["target_table"] == "characters"
+    assert unclosed_data["patches"][0]["target_table"] == "story_facts"
+
+
 def test_chapter_token_budget_failure_finalizes_workflow_run(tmp_path):
     db_path = str(tmp_path / "budget.db")
     init_db(db_path)

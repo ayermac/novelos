@@ -913,6 +913,8 @@ class TestFrontendCopy:
         assert "不代表整本书总章数" in source
         assert "目标章数" not in source
         assert "请先补齐创世设定的必要信息" in source
+        assert "创世草案不完整，不能应用" in source
+        assert "missingRequiredSections" in source
         assert "required" in source
         assert "已继承项目基础信息" in source
 
