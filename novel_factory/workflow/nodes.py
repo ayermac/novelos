@@ -17,11 +17,13 @@ from ..llm.provider import LLMProvider
 from ..models.state import ChapterStatus, FactoryState
 from .conditions import revision_target_from_state
 from ..agents.planner import PlannerAgent
+from ..agents.planner import build_memory_context_audit
 from ..agents.screenwriter import ScreenwriterAgent
 from ..agents.author import AuthorAgent
 from ..agents.polisher import PolisherAgent
 from ..agents.editor import EditorAgent
 from ..agents.memory_curator import MemoryCuratorAgent
+from ..agent_runtime.context_builder import AgentContextBuilder
 from .execution_events import (
     log_execution_event,
     CONTEXT_SUMMARIZERS,
@@ -150,6 +152,62 @@ def _append_step(state: FactoryState, step_info: dict[str, Any]) -> None:
     steps = state.get("steps", [])
     steps.append(step_info)
     state["steps"] = steps
+
+
+def _save_memory_context_audit_if_missing(
+    state: FactoryState,
+    repo: Repository,
+    *,
+    built_at_node: str,
+) -> dict[str, Any] | None:
+    """Persist memory context audit even when Planner is skipped.
+
+    Planned chapters with pre-generated instructions route directly to
+    Screenwriter. Without this, chapter-to-chapter memory inheritance becomes
+    invisible in run detail because the original audit was only saved by the
+    Planner agent.
+    """
+    project_id = state.get("project_id", "")
+    chapter_number = int(state.get("chapter_number") or 0)
+    run_id = state.get("workflow_run_id")
+    if not project_id or not chapter_number or not run_id:
+        return None
+
+    try:
+        conn = repo._conn()
+        try:
+            existing = conn.execute(
+                "SELECT id FROM agent_artifacts "
+                "WHERE workflow_run_id=? AND agent_id='planner' "
+                "AND artifact_type='memory_context_audit' "
+                "LIMIT 1",
+                (run_id,),
+            ).fetchone()
+            if existing:
+                return None
+        finally:
+            conn.close()
+
+        bundle = AgentContextBuilder(repo).build_for_planner(project_id, chapter_number, state)
+        audit = build_memory_context_audit(chapter_number, bundle)
+        audit["built_at_node"] = built_at_node
+        repo.save_artifact(
+            project_id,
+            chapter_number,
+            "planner",
+            "memory_context_audit",
+            content_json=audit,
+            workflow_run_id=run_id,
+        )
+        return audit
+    except Exception:
+        logger.exception(
+            "failed to save memory_context_audit project=%s chapter=%s run=%s",
+            project_id,
+            chapter_number,
+            run_id,
+        )
+        return None
 
 
 def _accumulate_tokens(state: FactoryState, llm: LLMProvider) -> dict[str, int]:
@@ -399,6 +457,15 @@ def create_node_runners(
 
         # Record step before running (for run_with_graph return value)
         status_before = state.get("chapter_status", "")
+        memory_context_audit = (
+            _save_memory_context_audit_if_missing(
+                state,
+                repo,
+                built_at_node="screenwriter_node",
+            )
+            if agent_name == "screenwriter"
+            else None
+        )
 
         # v6.0: Best-effort handoff contract validation from previous agent
         contract_ok = True
@@ -512,6 +579,8 @@ def create_node_runners(
             status="running",
         )
         result = _handle_retryable_quality_gate(state, repo, agent.run(state))
+        if memory_context_audit:
+            result.setdefault("memory_context_audit", memory_context_audit)
         agent_latency_ms = int((time.perf_counter() - agent_started_at) * 1000)
         memory_error = (
             _memory_curator_real_mode_error(state, result)
@@ -787,8 +856,15 @@ def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider, s
     """Run the Screenwriter agent."""
     _update_run_node(state, repo, "screenwriter")
     _log_node_event(state, repo, "screenwriter", "started", status="running")
+    audit = _save_memory_context_audit_if_missing(
+        state,
+        repo,
+        built_at_node="screenwriter_node",
+    )
     agent = ScreenwriterAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
     result = agent.run(state)
+    if audit:
+        result.setdefault("memory_context_audit", audit)
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
     if token_updates:

@@ -779,25 +779,89 @@ async def backfill_run_memory(
 
     try:
         if not body.confirm:
-            return error_response("CONFIRM_REQUIRED", "请确认补跑记忆提取")
+            message = "请确认补跑记忆提取"
+            return error_response(
+                "CONFIRM_REQUIRED",
+                message,
+                details={
+                    "domain_result": blocked(
+                        message,
+                        user_message=message,
+                        next_action="confirm_memory_backfill",
+                        action_label="确认补跑",
+                        details={"run_id": run_id, "error_code": "CONFIRM_REQUIRED"},
+                        flags={"memory_backfill_blocked": True},
+                    ).to_dict()
+                },
+            )
 
         repo = get_repo(request)
         run_data = _get_run_by_id(repo, run_id)
         if not run_data:
-            return error_response("RUN_NOT_FOUND", f"运行记录 '{run_id}' 不存在")
+            message = f"运行记录 '{run_id}' 不存在"
+            return error_response(
+                "RUN_NOT_FOUND",
+                message,
+                details={
+                    "domain_result": failed(
+                        message,
+                        user_message="运行记录不存在，无法补跑记忆",
+                        retryable=False,
+                        details={"run_id": run_id, "error_code": "RUN_NOT_FOUND"},
+                        flags={"memory_backfill_failed": True},
+                    ).to_dict()
+                },
+            )
 
         project_id = run_data["project_id"]
         chapter_number = int(run_data["chapter_number"])
         chapter = repo.get_chapter(project_id, chapter_number)
         if not chapter:
-            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+            message = f"章节 {chapter_number} 不存在"
+            return error_response(
+                "CHAPTER_NOT_FOUND",
+                message,
+                details={
+                    "domain_result": failed(
+                        message,
+                        user_message="章节不存在，无法补跑记忆",
+                        retryable=False,
+                        details={
+                            "run_id": run_id,
+                            "project_id": project_id,
+                            "chapter_number": chapter_number,
+                            "error_code": "CHAPTER_NOT_FOUND",
+                        },
+                        flags={"memory_backfill_failed": True},
+                    ).to_dict()
+                },
+            )
 
         current_status = chapter.get("status", "")
         if current_status not in ("reviewed", "awaiting_publish", "published") and not body.force:
+            message = (
+                f"章节状态为 '{current_status}'，仅 reviewed / awaiting_publish / published 可补跑记忆提取"
+            )
             return error_response(
                 "INVALID_STATUS",
-                f"章节状态为 '{current_status}'，仅 reviewed / awaiting_publish / published 可补跑记忆提取",
-                details={"current_status": current_status},
+                message,
+                details={
+                    "current_status": current_status,
+                    "domain_result": blocked(
+                        message,
+                        user_message="当前章节状态不允许补跑记忆",
+                        next_action="run_chapter",
+                        action_label="继续生成章节",
+                        details={
+                            "run_id": run_id,
+                            "project_id": project_id,
+                            "chapter_number": chapter_number,
+                            "current_status": current_status,
+                            "error_code": "INVALID_STATUS",
+                        },
+                        flags={"memory_backfill_blocked": True},
+                    ).to_dict(),
+                },
             )
 
         # v6.6.7: Only skip if trusted batch exists AND force=false
@@ -856,7 +920,19 @@ async def backfill_run_memory(
                 error_message=error,
             )
             repo.update_workflow_run(backfill_run_id, status="failed", current_node="memory_curator", error_message=error)
-            return error_response("LLM_CONFIG_MISSING", error, details={"run_id": backfill_run_id})
+            details = {
+                "run_id": backfill_run_id,
+                "domain_result": failed(
+                    error,
+                    user_message="补跑记忆提取失败：LLM 配置缺失",
+                    retryable=True,
+                    next_action="configure_llm",
+                    action_label="配置 LLM",
+                    details={"run_id": backfill_run_id, "error_code": "LLM_CONFIG_MISSING"},
+                    flags={"memory_backfill_failed": True, "llm_config_missing": True},
+                ).to_dict(),
+            }
+            return error_response("LLM_CONFIG_MISSING", error, details=details)
 
         agent = MemoryCuratorAgent(repo, llm, skill_registry=SkillRegistry())
         result = await asyncio.to_thread(
@@ -882,7 +958,19 @@ async def backfill_run_memory(
                 error_message=error,
             )
             repo.update_workflow_run(backfill_run_id, status="failed", current_node="memory_curator", error_message=error)
-            return error_response("MEMORY_CURATOR_FAILED", error, details={"run_id": backfill_run_id})
+            details = {
+                "run_id": backfill_run_id,
+                "domain_result": failed(
+                    error,
+                    user_message="补跑记忆提取失败，可尝试重新补跑",
+                    retryable=True,
+                    next_action="backfill_memory",
+                    action_label="重新补跑记忆",
+                    details={"run_id": backfill_run_id, "error_code": "MEMORY_CURATOR_FAILED"},
+                    flags={"memory_backfill_failed": True},
+                ).to_dict(),
+            }
+            return error_response("MEMORY_CURATOR_FAILED", error, details=details)
 
         extraction_success = result.get("extraction_success", True)
         incomplete = memory_result_is_incomplete(repo, project_id, chapter_number, result)
@@ -985,7 +1073,22 @@ async def backfill_run_memory(
             "domain_result": domain_result.to_dict(),
         })
     except Exception as e:
-        return error_response("INTERNAL_ERROR", f"补跑记忆提取失败: {str(e)}")
+        message = f"补跑记忆提取失败: {str(e)}"
+        return error_response(
+            "INTERNAL_ERROR",
+            message,
+            details={
+                "domain_result": failed(
+                    message,
+                    user_message="补跑记忆提取失败，可稍后重试",
+                    retryable=True,
+                    next_action="backfill_memory",
+                    action_label="重新补跑记忆",
+                    details={"run_id": run_id, "error_code": "INTERNAL_ERROR"},
+                    flags={"memory_backfill_failed": True},
+                ).to_dict()
+            },
+        )
 
 
 def _get_run_by_id(repo, run_id: str) -> dict | None:

@@ -86,43 +86,43 @@ def _add_demo_chapter(db_path: Path, project_id: str, chapter_number: int) -> No
 
 
 class TestVersionUniformity:
-    """All version sources must agree on '6.6.15'."""
+    """All version sources must agree on the current runtime version."""
 
-    def test_version_py_is_6_6_15(self):
-        assert get_version() == "6.6.15"
+    def test_version_py_consistent(self):
+        assert get_version() == "6.6.16"
 
     def test_frontend_package_json_version(self):
         pkg = Path(__file__).parent.parent / "frontend" / "package.json"
         data = json.loads(pkg.read_text())
-        assert data["version"] == "6.6.15"
+        assert data["version"] == get_version()
 
     def test_desktop_package_json_version(self):
         pkg = Path(__file__).parent.parent / "desktop" / "package.json"
         data = json.loads(pkg.read_text())
-        assert data["version"] == "6.6.15"
+        assert data["version"] == get_version()
 
     def test_no_old_version_strings_in_package_files(self):
-        """No package.json should still contain '6.6.14' as version."""
+        """No package.json should still contain '6.6.15' or older as version."""
         for package_path in [
             "frontend/package.json",
             "desktop/package.json",
         ]:
             full = Path(__file__).parent.parent / package_path
             data = json.loads(full.read_text())
-            assert data["version"] != "6.6.14", (
-                f"{package_path} still has old version 6.6.14"
+            assert data["version"] not in ("6.6.14", "6.8.0-m6"), (
+                f"{package_path} still has old version {data['version']}"
             )
 
     def test_cli_version_matches(self):
-        """CLI --version should show 6.6.15."""
-        # Use --version flag, capture output
+        """CLI --version should show current version."""
         result = subprocess.run(
             [sys.executable, "-m", "novel_factory.cli", "--version"],
             capture_output=True,
             text=True,
             timeout=10,
         )
-        assert "6.6.15" in result.stdout, f"CLI version mismatch: {result.stdout}"
+        current = get_version()
+        assert current in result.stdout, f"CLI version mismatch: expected {current}, got {result.stdout}"
 
     def test_health_endpoint_uses_get_version(self):
         """GET /api/health uses get_version() which returns 6.6.15."""

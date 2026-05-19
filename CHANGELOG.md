@@ -14,6 +14,27 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 (nothing)
 
+## v6.6.16 - Real Project Burn-in & Regression Closure
+
+Date: 2026-05-20
+
+Key changes:
+
+- **Burn-in Fixture**: 新增 `tests/fixtures/burnin_project.py` — 以《异常修正员》为主题的完整项目 fixture，包含世界设定、角色、势力、大纲、伏笔、1-3 章指令。
+- **Burn-in 测试**: 新增 `tests/test_v6616_real_project_burnin.py` — 29 个测试覆盖 fixture 完整性、章 1 stub 生成、domain_result、memory 状态、workflow timeline、发布 guard、章 2 继承、手动脚本、无敏感泄露。
+- **Bugfix — CLI domain_result**: 修复 `cmd_run_chapter` 在 CLI 模式下不输出 `domain_result` 的问题。新增 `_build_cli_domain_result()` 辅助函数，与 API 端点行为一致。
+- **Bugfix — API error domain_result**: 补齐 memory backfill / publish 失败路径中的 `error.details.domain_result`，避免错误响应回到旧语义。
+- **Bugfix — Pre-instructed chapter audit**: 修复预置章节指令跳过 Planner 时 `memory_context_audit` 不写入的问题；现在 Screenwriter 前会补写审计 artifact。
+- **手动 burn-in 脚本**: 新增 `scripts/burnin_real_project.py` — 支持 stub/real 模式的完整链路脚本，打印每步摘要和 JSON summary。
+- 统一版本号为 `6.6.16`。
+
+Verification:
+- Full test suite: **2596 passed**
+- Frontend typecheck/lint/build: passed
+- All burn-in tests: 29 passed
+- No LangGraph topology changes
+- `docs/superpowers/` excluded from git
+
 ## v6.6.15 - Release Readiness & Desktop Packaging Closure
 
 Date: 2026-05-19
@@ -34,7 +55,7 @@ Verification:
 - `docs/superpowers/` excluded from git
 
 Known follow-up:
-- `plot_holes` compliance deferred to v6.6.16
+- `plot_holes` compliance deferred to v6.6.17
 - low-risk UX polish items documented in review
 
 ## v6.6.14 - Continuity & Memory Enforcement Closure

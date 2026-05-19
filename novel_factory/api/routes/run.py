@@ -475,10 +475,26 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
         # Verify chapter status is 'reviewed'
         current_status = chapter.get("status")
         if current_status != "reviewed":
+            message = f"章节状态为 '{current_status}'，只有 'reviewed' 状态的章节可以发布"
             return error_response(
                 "INVALID_STATUS",
-                f"章节状态为 '{current_status}'，只有 'reviewed' 状态的章节可以发布",
-                details={"current_status": current_status},
+                message,
+                details={
+                    "current_status": current_status,
+                    "domain_result": blocked(
+                        message,
+                        user_message="当前章节状态不允许发布",
+                        next_action="run_chapter",
+                        action_label="继续生成章节",
+                        details={
+                            "project_id": body.project_id,
+                            "chapter": body.chapter,
+                            "current_status": current_status,
+                            "error_code": "INVALID_STATUS",
+                        },
+                        flags={"publish_blocked": True},
+                    ).to_dict(),
+                },
             )
 
         memory_result = await _ensure_memory_curated_before_publish(
@@ -512,7 +528,26 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
         # Publish the chapter
         ok = repo.publish_chapter(body.project_id, body.chapter, expected_status="reviewed")
         if not ok:
-            return error_response("PUBLISH_FAILED", "发布章节失败")
+            message = "发布章节失败"
+            return error_response(
+                "PUBLISH_FAILED",
+                message,
+                details={
+                    "domain_result": failed(
+                        message,
+                        user_message="发布章节失败，请重试或查看章节状态",
+                        retryable=True,
+                        next_action="publish_chapter",
+                        action_label="重试发布",
+                        details={
+                            "project_id": body.project_id,
+                            "chapter": body.chapter,
+                            "error_code": "PUBLISH_FAILED",
+                        },
+                        flags={"publish_failed": True},
+                    ).to_dict()
+                },
+            )
 
         # v6.6.12: Build domain_result for publish
         has_trusted_mem = has_trusted_memory_batch(repo, body.project_id, body.chapter)
