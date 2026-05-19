@@ -286,8 +286,8 @@ def _ensure_skill_registry(skill_registry: Any | None) -> Any | None:
     try:
         from ..skills.registry import SkillRegistry
         return SkillRegistry()
-    except Exception as e:
-        logger.warning(f"Failed to create SkillRegistry: {e}")
+    except Exception:
+        logger.warning("Failed to create SkillRegistry", exc_info=True)
         return None
 
 
@@ -296,8 +296,8 @@ def _ensure_tool_registry() -> Any | None:
     try:
         from ..tools.registry import ToolRegistry
         return ToolRegistry()
-    except Exception as e:
-        logger.warning(f"Failed to create ToolRegistry: {e}")
+    except Exception:
+        logger.warning("Failed to create ToolRegistry", exc_info=True)
         return None
 
 
@@ -306,8 +306,8 @@ def _ensure_trace_store(repo: Repository) -> Any | None:
     try:
         from ..agent_runtime.decision_trace import DecisionTraceStore
         return DecisionTraceStore(repo)
-    except Exception as e:
-        logger.warning(f"Failed to create DecisionTraceStore: {e}")
+    except Exception:
+        logger.warning("Failed to create DecisionTraceStore", exc_info=True)
         return None
 
 
@@ -350,6 +350,11 @@ def _latest_artifact_content(
             return {}
         return json.loads(row["content_json"])
     except Exception:
+        logger.debug(
+            "Failed to read latest artifact for %s/%s agent=%s type=%s",
+            project_id, chapter_number, agent_id, artifact_type,
+            exc_info=True,
+        )
         return {}
     finally:
         conn.close()
@@ -451,7 +456,11 @@ def create_node_runners(
                         prev_agent, agent_name, contract_issues,
                     )
             except Exception:
-                pass  # Best-effort; never block workflow
+                logger.debug(
+                    "Handoff contract validation %s -> %s failed (best-effort)",
+                    prev_agent, agent_name,
+                    exc_info=True,
+                )  # Best-effort; never block workflow
 
         # Get LLM for this agent
         try:
@@ -489,7 +498,11 @@ def create_node_runners(
                     payload=ctx_summary,
                 )
             except Exception:
-                pass  # Best-effort
+                logger.debug(
+                    "Context summarizer failed for %s (best-effort)",
+                    agent_name,
+                    exc_info=True,
+                )  # Best-effort
 
         agent_started_at = time.perf_counter()
         log_execution_event(
@@ -563,7 +576,11 @@ def create_node_runners(
                     latency_ms=ev.get("latency_ms"),
                 )
             except Exception:
-                pass  # Best-effort
+                logger.debug(
+                    "Execution event logging failed for %s (best-effort)",
+                    agent_name,
+                    exc_info=True,
+                )  # Best-effort
 
         # v6.1: Verify completion evidence on success
         if "error" not in result and agent_name in ("planner", "screenwriter", "author", "polisher", "editor", "memory_curator"):
@@ -598,7 +615,11 @@ def create_node_runners(
                         agent_name, missing_str,
                     )
             except Exception:
-                pass  # Best-effort; never block workflow
+                logger.debug(
+                    "Completion evidence verification failed for %s (best-effort)",
+                    agent_name,
+                    exc_info=True,
+                )  # Best-effort; never block workflow
 
         # v5.2: Accumulate token usage from LLM provider
         token_updates = _accumulate_tokens(state, llm)

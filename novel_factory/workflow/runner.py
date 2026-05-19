@@ -26,6 +26,7 @@ from .checkpoint import (
     get_checkpoint_config,
     get_sqlite_checkpointer,
 )
+from ..security.redaction import redact_sensitive_text
 
 logger = logging.getLogger(__name__)
 
@@ -481,13 +482,14 @@ def run_with_graph(
             )
             result_state = graph.invoke(state, config=config)
     except Exception as e:
-        logger.exception("LangGraph execution failed")
-        _mark_run_failed(repo, state.get("workflow_run_id"), str(e))
+        logger.exception("LangGraph execution failed for project=%s chapter=%s", project_id, chapter_number)
+        safe_error = redact_sensitive_text(str(e))
+        _mark_run_failed(repo, state.get("workflow_run_id"), safe_error)
         return {
             "run_id": state.get("workflow_run_id", ""),
             "chapter_status": current_status,
             "steps": state.get("steps", []),
-            "error": str(e),
+            "error": safe_error,
             "requires_human": True,
             "prompt_tokens": state.get("prompt_tokens", 0),
             "completion_tokens": state.get("completion_tokens", 0),
@@ -543,9 +545,11 @@ def run_with_graph_stream(
     try:
         _validate_llm_config(settings, llm_mode)
     except Exception as e:
+        safe_error = redact_sensitive_text(str(e))
+        logger.warning("LLM config validation failed: %s", safe_error)
         yield {
             "type": "run_error",
-            "error": str(e),
+            "error": safe_error,
             "chapter_status": None,
         }
         return
@@ -636,9 +640,11 @@ def run_with_graph_stream(
     try:
         llm_router = _build_llm_router(settings, llm_mode)
     except Exception as e:
+        safe_error = redact_sensitive_text(str(e))
+        logger.warning("Failed to build LLM router: %s", safe_error)
         yield {
             "type": "run_error",
-            "error": str(e),
+            "error": safe_error,
             "chapter_status": current_status,
         }
         return
@@ -726,12 +732,13 @@ def run_with_graph_stream(
         }
 
     except Exception as e:
-        logger.exception("LangGraph streaming failed")
-        _mark_run_failed(repo, state.get("workflow_run_id"), str(e))
+        logger.exception("LangGraph streaming failed for project=%s chapter=%s", project_id, chapter_number)
+        safe_error = redact_sensitive_text(str(e))
+        _mark_run_failed(repo, state.get("workflow_run_id"), safe_error)
         yield {
             "type": "run_error",
             "run_id": state.get("workflow_run_id", ""),
-            "error": str(e),
+            "error": safe_error,
             "chapter_status": state.get("chapter_status", current_status),
             "prompt_tokens": state.get("prompt_tokens", 0),
             "completion_tokens": state.get("completion_tokens", 0),

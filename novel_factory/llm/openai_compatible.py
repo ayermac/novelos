@@ -23,6 +23,7 @@ from tenacity import (
 
 from ..config.settings import LLMConfig
 from .provider import LLMProvider
+from ..security.redaction import redact_sensitive_text
 
 logger = logging.getLogger(__name__)
 
@@ -130,8 +131,13 @@ class OpenAICompatibleProvider(LLMProvider):
         return result
 
     def _handle_api_error(self, error: Exception, timeout_seconds: int | None = None) -> None:
-        """Convert API errors to Chinese error messages."""
+        """Convert API errors to Chinese error messages.
+
+        Original error messages are redacted before inclusion in raised
+        exceptions to prevent API keys or tokens from leaking.
+        """
         error_str = str(error).lower()
+        safe_error = redact_sensitive_text(str(error))
 
         # Check for common error patterns
         if "invalid" in error_str and "api" in error_str:
@@ -162,9 +168,9 @@ class OpenAICompatibleProvider(LLMProvider):
                 "write error",
             )
         ):
-            raise LLMConnectionError(f"LLM 网络连接失败，请稍后重试: {error}") from error
+            raise LLMConnectionError(f"LLM 网络连接失败，请稍后重试: {safe_error}") from error
         else:
-            raise LLMError(f"LLM 调用失败: {error}") from error
+            raise LLMError(f"LLM 调用失败: {safe_error}") from error
 
     def _invoke_with_retry(
         self,

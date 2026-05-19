@@ -56,8 +56,8 @@ class BaseAgent:
             self._role_profile = get_role_profile(self.agent_id)
             if self._role_profile:
                 logger.debug("Loaded role profile for %s", self.agent_id)
-        except Exception as e:
-            logger.debug("Role profile load failed for %s: %s", self.agent_id, e)
+        except Exception:
+            logger.debug("Role profile load failed for %s", self.agent_id, exc_info=True)
 
     def _get_role_profile_context(self) -> str:
         """v6.0: Return role profile mission/context for prompt injection."""
@@ -78,8 +78,8 @@ class BaseAgent:
                 agent_id=self.agent_id,
                 enabled_only=True,
             )
-        except Exception as e:
-            logger.debug("Agent memory query failed: %s", e)
+        except Exception:
+            logger.debug("Agent memory query failed for %s", self.agent_id, exc_info=True)
             return ""
         if not items:
             return ""
@@ -211,8 +211,8 @@ class BaseAgent:
                 latency_ms=latency_ms,
             )
             self.trace_store.save(trace)
-        except Exception as e:
-            logger.debug("Trace save failed for %s: %s", self.agent_id, e)
+        except Exception:
+            logger.debug("Trace save failed for %s", self.agent_id, exc_info=True)
 
     def run(self, state: FactoryState) -> dict[str, Any]:
         """Execute the agent's core logic with precondition and validation guards.
@@ -290,6 +290,7 @@ class BaseAgent:
             logger.warning(
                 "Failed to compensate status %s->%s for %s/%s",
                 current_status, target_status, project_id, chapter_number,
+                exc_info=True,
             )
 
     def _get_chapter_info(self, state: FactoryState) -> dict | None:
@@ -321,6 +322,7 @@ class BaseAgent:
             from ..style_bible.loader import get_style_context_for_agent
             return get_style_context_for_agent(project_id, agent_id, self.repo)
         except Exception:
+            logger.debug("Style bible context load failed for %s", agent_id, exc_info=True)
             return ""
 
     def _get_title_contract_context(self, project_id: str) -> str:
@@ -330,6 +332,7 @@ class BaseAgent:
             project = self.repo.get_project(project_id)
             return build_title_contract(project)
         except Exception:
+            logger.debug("Title contract build failed for %s", project_id, exc_info=True)
             return ""
 
     def _get_project_skill_overrides(self, project_id: str) -> dict[str, Any]:
@@ -344,4 +347,5 @@ class BaseAgent:
             overrides = record.get("overrides", {})
             return overrides if isinstance(overrides, dict) else {}
         except Exception:
+            logger.debug("Project skill overrides load failed for %s", project_id, exc_info=True)
             return {}
