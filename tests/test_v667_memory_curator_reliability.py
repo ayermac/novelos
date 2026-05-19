@@ -165,10 +165,49 @@ def test_classify_memory_batch_trusted():
 
     class FakeRepo:
         def list_memory_items(self, batch_id):
-            return [{"rationale": "正常提取", "confidence": 0.85}]
+            return [{"rationale": "正常提取", "confidence": 0.85, "evidence_text": "Alice appears in ch1"}]
 
     batch = {"id": "b1", "status": "pending", "summary": "test"}
     assert classify_memory_batch(FakeRepo(), batch) == "trusted"
+
+
+def test_classify_memory_batch_low_confidence_not_trusted():
+    """Low-confidence items must not be classified as trusted."""
+    from novel_factory.api.routes._memory_curator_gate import classify_memory_batch
+
+    class FakeRepo:
+        def list_memory_items(self, batch_id):
+            return [{"rationale": "normal", "confidence": 0.5, "evidence_text": "something"}]
+
+    batch = {"id": "b1", "status": "pending", "summary": "test"}
+    assert classify_memory_batch(FakeRepo(), batch) == "fallback"
+
+
+def test_classify_memory_batch_no_evidence_not_trusted():
+    """Items without evidence_text must not be classified as trusted."""
+    from novel_factory.api.routes._memory_curator_gate import classify_memory_batch
+
+    class FakeRepo:
+        def list_memory_items(self, batch_id):
+            return [{"rationale": "normal", "confidence": 0.85, "evidence_text": ""}]
+
+    batch = {"id": "b1", "status": "pending", "summary": "test"}
+    assert classify_memory_batch(FakeRepo(), batch) == "fallback"
+
+
+def test_classify_memory_batch_mixed_items_not_trusted():
+    """A batch with mixed trusted/untrusted items must not be trusted."""
+    from novel_factory.api.routes._memory_curator_gate import classify_memory_batch
+
+    class FakeRepo:
+        def list_memory_items(self, batch_id):
+            return [
+                {"rationale": "normal", "confidence": 0.85, "evidence_text": "ok"},
+                {"rationale": "normal", "confidence": 0.5, "evidence_text": "weak"},
+            ]
+
+    batch = {"id": "b1", "status": "pending", "summary": "test"}
+    assert classify_memory_batch(FakeRepo(), batch) == "fallback"
 
 
 def test_get_memory_status_for_chapter_trusted():
@@ -182,7 +221,7 @@ def test_get_memory_status_for_chapter_trusted():
             ]
 
         def list_memory_items(self, batch_id):
-            return [{"rationale": "正常提取", "confidence": 0.85}]
+            return [{"rationale": "正常提取", "confidence": 0.85, "evidence_text": "Alice appears"}]
 
     status = get_memory_status_for_chapter(FakeRepo(), "proj", 1)
     assert status["memory_status"] == "trusted"
@@ -332,6 +371,40 @@ def test_backfill_skips_when_trusted_exists(client, db_path):
     assert "已有可信记忆" in data["message"]
 
 
+def test_backfill_should_not_skip_untrusted_batch(client, db_path):
+    """Backfill must not skip when existing batch is low-confidence (not trusted)."""
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    repo.create_project(project_id="test-untrusted-proj", name="Test", genre="test")
+    repo.add_chapter("test-untrusted-proj", 1, title="Ch1", status="reviewed")
+
+    # Create a low-confidence memory batch (not trusted)
+    batch = repo.create_memory_batch("test-untrusted-proj", chapter_number=1, run_id=None, summary="低可信提取")
+    repo.create_memory_item(
+        batch_id=batch["id"],
+        project_id="test-untrusted-proj",
+        target_table="characters",
+        operation="create",
+        target_id=None,
+        before_json=None,
+        after_json=json.dumps({"name": "Alice"}, ensure_ascii=False),
+        confidence=0.5,
+        evidence_text="Alice appears",
+        rationale="正常提取",
+    )
+
+    run_id = repo.create_workflow_run("test-untrusted-proj", 1)
+    repo.update_workflow_run(run_id, status="completed", current_node="awaiting_publish")
+
+    # Backfill without force should NOT skip because batch is not trusted
+    response = client.post(f"/api/runs/{run_id}/memory/backfill", json={"confirm": True, "force": False})
+    assert response.status_code == 200
+
+    data = response.json()["data"]
+    assert data["skipped"] is False
+
+
 def test_backfill_force_ignores_fallback_and_reruns(client, db_path):
     """Test backfill force=true ignores old fallback and re-runs."""
     from novel_factory.db.repository import Repository
@@ -425,7 +498,7 @@ def test_old_fallback_batch_compatibility():
             if batch_id == "old_fallback":
                 return [{"rationale": "状态卡兜底候选", "confidence": 0.45}]
             if batch_id == "old_trusted":
-                return [{"rationale": "正常提取", "confidence": 0.85}]
+                return [{"rationale": "正常提取", "confidence": 0.85, "evidence_text": "Alice appears"}]
             return []
 
     fallback_batch = {"id": "old_fallback", "status": "pending", "summary": "old batch"}

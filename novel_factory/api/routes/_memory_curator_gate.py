@@ -11,14 +11,37 @@ from __future__ import annotations
 
 from typing import Any
 
+_TRUSTED_MEMORY_MIN_CONFIDENCE = 0.75
+
 
 # ── Classification ───────────────────────────────────────────────
 
 
-def is_trusted_memory_batch(repo: Any, batch: dict) -> bool:
-    """Return True only for user-visible, non-fallback memory batches.
+def _is_trusted_memory_item(item: dict[str, Any]) -> bool:
+    """Return True if a single memory item qualifies as trusted.
 
-    v6.6.7: Also checks batch metadata for explicit untrusted markers.
+    Strictly aligned with context_builder._is_trusted_memory_item so
+    API/UI classification never diverges from what the Planner inherits.
+    """
+    confidence = float(item.get("confidence") or 0)
+    if confidence < _TRUSTED_MEMORY_MIN_CONFIDENCE:
+        return False
+    evidence = str(item.get("evidence_text") or "").strip()
+    if not evidence:
+        return False
+    rationale = str(item.get("rationale") or "").lower()
+    if "状态卡兜底" in rationale or "fallback" in rationale or "degraded" in rationale:
+        return False
+    if "no-op" in rationale or " degraded " in rationale:
+        return False
+    return True
+
+
+def is_trusted_memory_batch(repo: Any, batch: dict) -> bool:
+    """Return True only when every item in the batch is trusted.
+
+    v6.6.7-fix: Requires confidence >= 0.75 and non-empty evidence_text
+    per item, matching the Planner's trusted memory rules.
     """
     if str(batch.get("status") or "") == "ignored":
         return False
@@ -36,11 +59,7 @@ def is_trusted_memory_batch(repo: Any, batch: dict) -> bool:
     if not items:
         return False
     for item in items:
-        rationale = str(item.get("rationale") or "")
-        confidence = float(item.get("confidence") or 0)
-        if "状态卡兜底候选" in rationale or "fallback" in rationale.lower():
-            return False
-        if confidence <= 0.45 and "MemoryCurator LLM 复核" in rationale:
+        if not _is_trusted_memory_item(item):
             return False
     return True
 
