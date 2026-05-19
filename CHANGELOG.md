@@ -14,6 +14,38 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 (nothing)
 
+## v6.6.14 - Continuity & Memory Enforcement Closure
+
+Key changes:
+
+- **P1 — Memory context annotation:** Added `memory_context_degraded` and
+  `trusted_memory_batch_id` fields to `AgentContextBundle`. When no trusted
+  memory batch exists for a chapter (chapter > 1), `memory_context_degraded`
+  is set to `True` and `format_context_bundle_for_prompt()` prepends a
+  `[记忆上下文降级]` notice to Planner/Author/Editor/Polisher system prompts.
+  Empty memory never blocks generation; chapter 1 and manual projects are
+  unaffected.
+- **P2 — Editor story_facts compliance check:** Added `_run_story_facts_compliance()`
+  to `EditorAgent` as pipeline step 4.5. Loads `status="active"` story_facts
+  and makes one LLM pass checking for explicit contradictions (absent facts are
+  not violations). Module constant `FACTS_COMPLIANCE_BLOCK_THRESHOLD = 3`: below
+  threshold the result is advisory only; at or above it `output.pass_` is set to
+  `False`. Stub mode always returns empty. Editor result dict always contains
+  `story_facts_compliance`.
+- **P3 — Memory context audit trail:** `PlannerAgent._execute()` builds a
+  `memory_context_audit` dict from the bundle flags and saves it as a
+  `memory_context_audit` agent artifact. `FactoryState` gains a
+  `memory_context_audit: dict` field. `GET /runs/{run_id}` response now includes
+  `memory_context_audit` (empty `{}` for pre-v6.6.14 runs). Chapter 1 is marked
+  `batch_status="not_applicable"` instead of pretending it consumed trusted
+  previous-chapter memory.
+- `story_facts_compliance` is included in the Editor review artifact as well as
+  the workflow state update, so fact-compliance decisions are auditable after
+  the run completes.
+- 17 new acceptance tests in `tests/test_v6614_continuity_enforcement.py`.
+- No LangGraph topology changes. No blocking on empty memory. No frontend UI
+  changes. `plot_holes` compliance deferred to v6.6.15.
+
 ## v6.6.13 - Frontend Contract Adoption Closure
 
 Key changes:

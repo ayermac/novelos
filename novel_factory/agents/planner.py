@@ -48,6 +48,24 @@ PLANNER_SYSTEM_PROMPT = """你是网文工厂的总编（Planner），负责章�
 - 唤醒其他 Agent"""
 
 
+def build_memory_context_audit(chapter_number: int, bundle) -> dict:
+    """Build an auditable summary of the memory context consumed by Planner."""
+    if chapter_number <= 1:
+        batch_status = "not_applicable"
+    elif bundle.memory_context_degraded or not bundle.trusted_memory_batch_id:
+        batch_status = "missing"
+    else:
+        batch_status = "trusted"
+    return {
+        "chapter_number": chapter_number,
+        "batch_id": bundle.trusted_memory_batch_id,
+        "batch_status": batch_status,
+        "memory_items_count": len(bundle.trusted_memory),
+        "memory_context_degraded": bundle.memory_context_degraded,
+        "built_at_node": "planner_node",
+    }
+
+
 class PlannerAgent(BaseAgent):
     """Planner: creates writing instructions for a chapter."""
 
@@ -130,6 +148,10 @@ class PlannerAgent(BaseAgent):
         prev_state = self._get_prev_state_card(state)
         builder = AgentContextBuilder(self.repo)
         bundle = builder.build_for_planner(project_id, chapter_number, state)
+
+        # v6.6.14: Build memory context audit from the bundle metadata
+        memory_context_audit: dict = build_memory_context_audit(chapter_number, bundle)
+
         inheritance_check = validate_chapter_inheritance(
             prev_state,
             bundle,
@@ -229,11 +251,18 @@ class PlannerAgent(BaseAgent):
             content_json=output.model_dump(),
             workflow_run_id=workflow_run_id,
         )
+        # v6.6.14: persist memory context audit for run detail observability
+        self.repo.save_artifact(
+            project_id, chapter_number, "planner", "memory_context_audit",
+            content_json=memory_context_audit,
+            workflow_run_id=workflow_run_id,
+        )
 
         return {
             "chapter_status": ChapterStatus.PLANNED.value,
             "current_stage": "planned",
             "_exec_events": exec_events,
+            "memory_context_audit": memory_context_audit,
         }
 
     def validate_output(self, output: dict) -> None:

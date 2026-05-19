@@ -136,6 +136,27 @@ class EditorStrategyResult:
     word_gate_details: dict[str, Any] = field(default_factory=dict)
 
 
+# v6.6.14: story_facts compliance threshold
+FACTS_COMPLIANCE_BLOCK_THRESHOLD = 3
+
+
+@dataclass
+class StoryFactsComplianceResult:
+    """Result from lightweight story_facts contradiction check."""
+    checked: bool = False
+    violation_count: int = 0
+    blocking_violation_count: int = 0
+    violations: list[dict] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "checked": self.checked,
+            "violation_count": self.violation_count,
+            "blocking_violation_count": self.blocking_violation_count,
+            "violations": self.violations,
+        }
+
+
 class EditorAgent(BaseAgent):
     """Editor: five-dimension quality review."""
 
@@ -795,6 +816,7 @@ class EditorAgent(BaseAgent):
         quality_result: QualityDiagnosisResult,
         seam_result: SeamCheckResult,
         strategy_result: EditorStrategyResult,
+        compliance_result: StoryFactsComplianceResult | None = None,
     ) -> int | None:
         """Step 6: Save review, state card, and artifacts.
 
@@ -843,6 +865,7 @@ class EditorAgent(BaseAgent):
         seam_result: SeamCheckResult,
         strategy_result: EditorStrategyResult,
         exec_events: list[dict],
+        compliance_result: StoryFactsComplianceResult | None = None,
     ) -> dict[str, Any]:
         """Step 7: Build final state updates.
 
@@ -871,9 +894,15 @@ class EditorAgent(BaseAgent):
             })
 
         if output.pass_:
-            return self._build_pass_updates(inputs, output, quality_result, seam_result, strategy_result, exec_events)
+            return self._build_pass_updates(
+                inputs, output, quality_result, seam_result, strategy_result,
+                exec_events, compliance_result,
+            )
         else:
-            return self._build_fail_updates(inputs, output, quality_result, seam_result, strategy_result, exec_events)
+            return self._build_fail_updates(
+                inputs, output, quality_result, seam_result, strategy_result,
+                exec_events, compliance_result,
+            )
 
     def _build_pass_updates(
         self,
@@ -883,6 +912,7 @@ class EditorAgent(BaseAgent):
         seam_result: SeamCheckResult,
         strategy_result: EditorStrategyResult,
         exec_events: list[dict],
+        compliance_result: StoryFactsComplianceResult | None = None,
     ) -> dict[str, Any]:
         """Build state updates for passing review."""
         ok = self.repo.update_chapter_status(
@@ -908,7 +938,9 @@ class EditorAgent(BaseAgent):
                 return {"error": "Editor: save_chapter_state failed", "chapter_status": inputs.rollback_status}
 
             # Save artifact with policy snapshots
-            artifact_payload = self._build_artifact_payload(output, quality_result, seam_result, strategy_result)
+            artifact_payload = self._build_artifact_payload(
+                output, quality_result, seam_result, strategy_result, compliance_result,
+            )
             self.repo.save_artifact(
                 inputs.project_id, inputs.chapter_number, "editor", "review",
                 content_json=artifact_payload,
@@ -955,6 +987,7 @@ class EditorAgent(BaseAgent):
         seam_result: SeamCheckResult,
         strategy_result: EditorStrategyResult,
         exec_events: list[dict],
+        compliance_result: StoryFactsComplianceResult | None = None,
     ) -> dict[str, Any]:
         """Build state updates for failing review."""
         # Use DB retry count as source of truth (may differ from state)
@@ -962,10 +995,16 @@ class EditorAgent(BaseAgent):
 
         # Check circuit breaker
         if retry_count >= inputs.max_retries:
-            return self._build_human_review_updates(inputs, output, quality_result, seam_result, strategy_result, exec_events, retry_count)
+            return self._build_human_review_updates(
+                inputs, output, quality_result, seam_result, strategy_result,
+                exec_events, retry_count, compliance_result,
+            )
 
         # Revision
-        return self._build_revision_updates(inputs, output, quality_result, seam_result, strategy_result, exec_events, retry_count)
+        return self._build_revision_updates(
+            inputs, output, quality_result, seam_result, strategy_result,
+            exec_events, retry_count, compliance_result,
+        )
 
     def _build_human_review_updates(
         self,
@@ -976,6 +1015,7 @@ class EditorAgent(BaseAgent):
         strategy_result: EditorStrategyResult,
         exec_events: list[dict],
         retry_count: int,
+        compliance_result: StoryFactsComplianceResult | None = None,
     ) -> dict[str, Any]:
         """Build state updates for human_review (max retries reached)."""
         ok = self.repo.update_chapter_status(
@@ -992,7 +1032,9 @@ class EditorAgent(BaseAgent):
                 {"reason": f"Chapter {inputs.chapter_number} reached max retries ({retry_count})"},
                 priority="urgent", chapter_number=inputs.chapter_number,
             )
-            artifact_payload = self._build_artifact_payload(output, quality_result, seam_result, strategy_result)
+            artifact_payload = self._build_artifact_payload(
+                output, quality_result, seam_result, strategy_result, compliance_result,
+            )
             self.repo.save_artifact(
                 inputs.project_id, inputs.chapter_number, "editor", "review",
                 content_json=artifact_payload,
@@ -1040,6 +1082,7 @@ class EditorAgent(BaseAgent):
         strategy_result: EditorStrategyResult,
         exec_events: list[dict],
         retry_count: int,
+        compliance_result: StoryFactsComplianceResult | None = None,
     ) -> dict[str, Any]:
         """Build state updates for revision routing."""
         retry_agent = output.revision_target or "author"
@@ -1066,7 +1109,9 @@ class EditorAgent(BaseAgent):
                     {"issues": output.issues[:3], "chapter": inputs.chapter_number},
                     chapter_number=inputs.chapter_number,
                 )
-            artifact_payload = self._build_artifact_payload(output, quality_result, seam_result, strategy_result)
+            artifact_payload = self._build_artifact_payload(
+                output, quality_result, seam_result, strategy_result, compliance_result,
+            )
             self.repo.save_artifact(
                 inputs.project_id, inputs.chapter_number, "editor", "review",
                 content_json=artifact_payload,
@@ -1111,6 +1156,7 @@ class EditorAgent(BaseAgent):
         quality_result: QualityDiagnosisResult,
         seam_result: SeamCheckResult,
         strategy_result: EditorStrategyResult,
+        compliance_result: StoryFactsComplianceResult | None = None,
     ) -> dict[str, Any]:
         """Build artifact payload with full observability data (v6.6.8)."""
         payload = output.model_dump()
@@ -1130,6 +1176,8 @@ class EditorAgent(BaseAgent):
         policy_output = asdict(strategy_result.decision)
         payload["_policy_input"] = policy_input
         payload["_policy_output"] = policy_output
+        if compliance_result is not None:
+            payload["story_facts_compliance"] = compliance_result.to_dict()
 
         # Strategy decision snapshot (legacy artifact shape)
         payload["_strategy_decision"] = {
@@ -1145,6 +1193,93 @@ class EditorAgent(BaseAgent):
 
     # ── Main _execute entry point ────────────────────────────────────
 
+    def _run_story_facts_compliance(
+        self, inputs: "EditorInputs"
+    ) -> StoryFactsComplianceResult:
+        """Run lightweight story_facts contradiction check (v6.6.14).
+
+        Only flags explicit contradictions where chapter text directly opposes a
+        confirmed fact. A fact that is simply absent from the chapter is NOT a
+        violation.
+        """
+        result = StoryFactsComplianceResult()
+
+        # Stub mode: no LLM call
+        if inputs.llm_mode == "stub":
+            return result
+
+        # Load confirmed story_facts (status="active" = confirmed in this schema)
+        try:
+            confirmed_facts = self.repo.list_story_facts(inputs.project_id, status="active")
+        except Exception:
+            confirmed_facts = []
+
+        if not confirmed_facts:
+            return result
+
+        # Prefer facts whose subject/key tokens appear in the chapter text (up to 30)
+        chapter_lower = inputs.content.lower()
+
+        def _relevance(fact: dict) -> int:
+            tokens = str(fact.get("subject") or fact.get("fact_key") or "").lower().split()
+            return sum(1 for t in tokens if len(t) > 1 and t in chapter_lower)
+
+        sorted_facts = sorted(confirmed_facts, key=_relevance, reverse=True)
+        facts_to_check = sorted_facts[:30]
+
+        facts_lines = []
+        for f in facts_to_check:
+            subject = f.get("subject") or f.get("fact_key") or "unknown"
+            attribute = f.get("attribute") or ""
+            value = f.get("value_json") or ""
+            if isinstance(value, str) and value.startswith(("{", "[")):
+                try:
+                    import json as _j
+                    value = _j.loads(value)
+                except Exception:
+                    pass
+            label = f"{subject}.{attribute}" if attribute else subject
+            facts_lines.append(f"- {label}: {value}")
+
+        facts_str = "\n".join(facts_lines)
+        chapter_excerpt = inputs.content[:12000]
+
+        system_msg = (
+            "你是连续性审核员。请核查章节正文中是否存在与已确认事实的【明确矛盾】。\n\n"
+            "核查规则：\n"
+            "1. 只报告明确矛盾：正文直接与事实相悖（例如事实记录角色叫林泽，"
+            "正文把同一角色写成另一个身份、名字、阵营或状态）。\n"
+            "2. 事实未被章节提及 = 不算违规，不要报告。\n"
+            "3. 伏笔未兑现 = 不算违规。\n"
+            "4. 严格输出 JSON，无额外说明。\n\n"
+            '输出格式：{"violations": [{"fact_key": "...", "fact_statement": "...", '
+            '"violation_text": "章节中矛盾段落(30-80字)", "severity": "blocking"|"warning"}]}'
+        )
+        user_msg = (
+            f"【已确认事实列表】\n{facts_str}\n\n"
+            f"【章节正文（节选）】\n{chapter_excerpt}"
+        )
+
+        try:
+            raw = self.llm.invoke_json(
+                [
+                    {"role": "system", "content": system_msg},
+                    {"role": "user", "content": user_msg},
+                ],
+                schema=None,
+            )
+            violations = raw.get("violations") or [] if isinstance(raw, dict) else []
+        except Exception as e:
+            logger.warning("Editor: story_facts compliance check failed: %s", e)
+            return result
+
+        blocking = [v for v in violations if v.get("severity") == "blocking"]
+        result.checked = True
+        result.violations = violations
+        result.violation_count = len(violations)
+        result.blocking_violation_count = len(blocking)
+        return result
+
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         """Execute editor review — refactored to clear pipeline steps."""
         # Step 1: Load inputs
@@ -1159,6 +1294,20 @@ class EditorAgent(BaseAgent):
         # Step 4: Chapter seam check
         seam_result = self._run_chapter_seam_check(inputs, output)
 
+        # Step 4.5: Story facts compliance check (v6.6.14)
+        compliance_result = self._run_story_facts_compliance(inputs)
+        if compliance_result.blocking_violation_count >= FACTS_COMPLIANCE_BLOCK_THRESHOLD:
+            for v in compliance_result.violations:
+                if v.get("severity") == "blocking":
+                    issue_msg = (
+                        f"[事实一致性违规] {v.get('fact_statement', '')[:60]}: "
+                        f"{v.get('violation_text', '')[:80]}"
+                    )
+                    if issue_msg not in output.issues:
+                        output.issues.append(issue_msg)
+            output.pass_ = False
+            output.revision_target = output.revision_target or "author"
+
         # Step 5: Apply review strategy (THE single decision point)
         strategy_result = self._apply_review_strategy(
             output, quality_result, seam_result, inputs,
@@ -1167,14 +1316,16 @@ class EditorAgent(BaseAgent):
         # Step 6: Persist artifacts
         self._persist_editor_artifacts(
             inputs, output, quality_result, seam_result,
-            strategy_result,
+            strategy_result, compliance_result,
         )
 
         # Step 7: Build state updates
-        return self._build_editor_state_updates(
+        result = self._build_editor_state_updates(
             inputs, output, quality_result, seam_result,
-            strategy_result, exec_events,
+            strategy_result, exec_events, compliance_result,
         )
+        result["story_facts_compliance"] = compliance_result.to_dict()
+        return result
 
     def validate_output(self, output: dict) -> None:
         parsed = EditorOutput(**output)

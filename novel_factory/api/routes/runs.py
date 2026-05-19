@@ -409,6 +409,26 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             memory_status=memory_status if memory_status else None,
         )
 
+        # v6.6.14: Fetch memory context audit from planner artifact
+        memory_context_audit: dict = {}
+        try:
+            _conn = repo._conn()
+            try:
+                _row = _conn.execute(
+                    "SELECT content_json FROM agent_artifacts "
+                    "WHERE workflow_run_id=? AND agent_id='planner' "
+                    "AND artifact_type='memory_context_audit' "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (run_id,),
+                ).fetchone()
+                if _row and _row["content_json"]:
+                    import json as _json
+                    memory_context_audit = _json.loads(_row["content_json"])
+            finally:
+                _conn.close()
+        except Exception:
+            pass
+
         return envelope_response({
             "run_id": run_id,
             "project_id": run_data["project_id"],
@@ -435,6 +455,8 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             "memory_status": memory_status,
             # v6.6.10: Unified domain result
             "domain_result": domain_result.to_dict(),
+            # v6.6.14: Memory context audit
+            "memory_context_audit": memory_context_audit,
         })
 
     except Exception as e:

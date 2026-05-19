@@ -62,6 +62,9 @@ class AgentContextBundle:
     hard_constraints: list[ContextItem] = field(default_factory=list)
     advisory_context: list[ContextItem] = field(default_factory=list)
     diagnostics: list[ContextItem] = field(default_factory=list)
+    # v6.6.14: memory context annotation
+    memory_context_degraded: bool = False
+    trusted_memory_batch_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for trace / artifact metadata (no API keys)."""
@@ -74,6 +77,8 @@ class AgentContextBundle:
             "revision_feedback_count": len(self.revision_feedback),
             "story_facts_count": len(self.story_facts),
             "character_states_count": len(self.character_states),
+            "memory_context_degraded": self.memory_context_degraded,
+            "trusted_memory_batch_id": self.trusted_memory_batch_id,
         }
 
 
@@ -445,7 +450,10 @@ class AgentContextBuilder:
 
         return items
 
-    def _trusted_memory_context(self, project_id: str, chapter_number: int) -> list[ContextItem]:
+    def _trusted_memory_context(
+        self, project_id: str, chapter_number: int,
+        _bundle: "AgentContextBundle | None" = None,
+    ) -> list[ContextItem]:
         """Return trusted memory items from the best batch for prev chapter."""
         items: list[ContextItem] = []
         if chapter_number <= 1:
@@ -454,7 +462,16 @@ class AgentContextBuilder:
 
         batch, memory_items = _select_trusted_memory_batch(self.repo, project_id, prev_ch)
         if not batch or not memory_items:
+            # v6.6.14: annotate bundle with degraded flag when no trusted batch
+            if _bundle is not None:
+                _bundle.memory_context_degraded = True
+                _bundle.trusted_memory_batch_id = None
             return items
+
+        # v6.6.14: record which batch was used
+        if _bundle is not None:
+            _bundle.memory_context_degraded = False
+            _bundle.trusted_memory_batch_id = str(batch.get("id") or "")
 
         for item in memory_items:
             if _is_trusted_memory_item(item):
@@ -766,7 +783,7 @@ class AgentContextBuilder:
         bundle = AgentContextBundle()
         bundle.project_context = self._project_context(project_id)
         bundle.chapter_inheritance = self._previous_chapter_context(project_id, chapter_number)
-        bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number)
+        bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number, bundle)
         bundle.story_facts = self._story_facts_context(project_id, chapter_number)
         bundle.plot_obligations = self._pending_plots_context(project_id)
         bundle.timeline_constraints = extract_timeline_constraints(
@@ -798,7 +815,7 @@ class AgentContextBuilder:
         bundle = AgentContextBundle()
         bundle.project_context = self._project_context(project_id)
         bundle.chapter_inheritance = self._previous_chapter_context(project_id, chapter_number)
-        bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number)
+        bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number, bundle)
         bundle.story_facts = self._story_facts_context(project_id, chapter_number)
         bundle.plot_obligations = self._instruction_context(project_id, chapter_number)
         bundle.timeline_constraints = extract_timeline_constraints(
@@ -824,7 +841,7 @@ class AgentContextBuilder:
         bundle = AgentContextBundle()
         bundle.project_context = self._project_context(project_id)
         bundle.chapter_inheritance = self._previous_chapter_context(project_id, chapter_number)
-        bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number)
+        bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number, bundle)
         bundle.story_facts = self._story_facts_context(project_id, chapter_number)
         bundle.plot_obligations = self._instruction_context(project_id, chapter_number)
         bundle.timeline_constraints = extract_timeline_constraints(
@@ -850,7 +867,7 @@ class AgentContextBuilder:
         bundle = AgentContextBundle()
         bundle.project_context = self._project_context(project_id)
         bundle.chapter_inheritance = self._previous_chapter_context(project_id, chapter_number)
-        bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number)
+        bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number, bundle)
         bundle.story_facts = self._story_facts_context(project_id, chapter_number)
         bundle.plot_obligations = self._instruction_context(project_id, chapter_number)
         bundle.timeline_constraints = extract_timeline_constraints(
@@ -877,7 +894,7 @@ class AgentContextBuilder:
         bundle = AgentContextBundle()
         bundle.project_context = self._project_context(project_id)
         bundle.chapter_inheritance = self._previous_chapter_context(project_id, chapter_number)
-        bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number)
+        bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number, bundle)
         bundle.story_facts = self._story_facts_context(project_id, chapter_number)
         bundle.plot_obligations = self._instruction_context(project_id, chapter_number)
         bundle.timeline_constraints = extract_timeline_constraints(
@@ -935,6 +952,17 @@ def format_context_bundle_for_prompt(
     parts: list[str] = []
     total_len = 0
     truncated = False
+
+    # v6.6.14: prepend degraded notice when no trusted memory batch is available
+    if bundle.memory_context_degraded:
+        degraded_notice = (
+            "【记忆上下文降级 / Memory Context Degraded】\n"
+            "当前章节暂无可信记忆批次。"
+            "请严格以 story_facts 中已确认 (confirmed=True) 的事实和硬约束为准，"
+            "禁止脑补未在项目资料中出现的人物状态、剧情发展或世界设定细节。"
+        )
+        parts.append(degraded_notice)
+        total_len += len(degraded_notice)
 
     for header, items in ordered_buckets:
         if not items:
