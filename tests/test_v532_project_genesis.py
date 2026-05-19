@@ -334,6 +334,113 @@ class TestGenesisCanonicalRoutes:
 
 
 @pytest.mark.asyncio
+async def test_real_genesis_invalid_json_falls_back_to_blocked_scaffold(monkeypatch):
+    """Invalid real-LLM JSON should not leave Genesis stuck in failed state."""
+    from novel_factory.api.routes import genesis as genesis_routes
+    from novel_factory.llm.openai_compatible import OutputValidationError
+
+    class InvalidJsonProvider:
+        def invoke_json(self, messages, max_tokens=None, max_retries=1):
+            raise OutputValidationError(
+                "LLM 输出不是有效的 JSON 格式: Expecting value: line 1 column 1 (char 0)"
+            )
+
+    class Router:
+        def for_agent(self, agent_name):
+            return InvalidJsonProvider()
+
+    monkeypatch.setattr(
+        "novel_factory.workflow.runner._build_llm_router",
+        lambda settings, llm_mode: Router(),
+    )
+
+    body = genesis_routes.GenesisGenerateRequest(
+        title="异常修正员",
+        genre="现代超自然",
+        premise="修正员处理异常却发现系统并不可信",
+        target_chapters=3,
+        target_words=9000,
+    )
+
+    draft = await genesis_routes._generate_real_draft_with_scaffold_fallback(
+        body,
+        SimpleNamespace(),
+    )
+
+    assert genesis_routes._missing_required_genesis_sections(draft) == []
+    assert draft["_meta"]["source"] == "scaffold_fallback"
+    assert draft["_meta"]["generation_fallback"] is True
+    assert draft["_meta"]["fallback_reason"] == "invalid_json"
+    assert "Expecting value" in draft["_meta"]["original_error"]
+
+    quality_report = genesis_routes.evaluate_genesis_draft(
+        draft,
+        title=body.title,
+        genre=body.genre,
+        premise=body.premise,
+        target_chapters=body.target_chapters,
+    )
+    assert quality_report.passed is False
+    assert quality_report.quality_status == "scaffold_fallback"
+
+
+def test_real_genesis_api_invalid_json_returns_reviewable_scaffold(monkeypatch, tmp_path):
+    """API should return a quality-blocked draft instead of a raw JSON parse failure."""
+    from novel_factory.api_app import create_api_app
+    from novel_factory.db.connection import init_db
+    from novel_factory.llm.openai_compatible import OutputValidationError
+
+    class InvalidJsonProvider:
+        def invoke_json(self, messages, max_tokens=None, max_retries=1):
+            raise OutputValidationError(
+                "LLM 输出不是有效的 JSON 格式: Expecting value: line 1 column 1 (char 0)"
+            )
+
+    class Router:
+        def for_agent(self, agent_name):
+            return InvalidJsonProvider()
+
+    monkeypatch.setattr(
+        "novel_factory.workflow.runner._build_llm_router",
+        lambda settings, llm_mode: Router(),
+    )
+
+    db_path = str(tmp_path / "genesis-invalid-json.db")
+    init_db(db_path)
+    app = create_api_app(db_path=db_path, llm_mode="real")
+    with TestClient(app) as client:
+        create_resp = client.post("/api/onboarding/projects", json={
+            "project_id": "invalid-json-genesis",
+            "name": "异常修正员",
+            "genre": "现代超自然",
+            "description": "修正员处理异常却发现系统并不可信",
+            "total_chapters_planned": 10,
+            "target_words": 30000,
+        })
+        assert create_resp.status_code == 200
+
+        resp = client.post("/api/genesis/generate", json={
+            "project_id": "invalid-json-genesis",
+            "title": "异常修正员",
+            "genre": "现代超自然",
+            "premise": "修正员处理异常却发现系统并不可信",
+            "target_chapters": 3,
+            "target_words": 9000,
+        })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["data"]["status"] == "generated"
+    assert body["data"]["error_message"] in (None, "")
+    draft = json.loads(body["data"]["draft_json"])
+    assert draft["_meta"]["source"] == "scaffold_fallback"
+    assert draft["_meta"]["generation_fallback"] is True
+    assert body["data"]["quality_report"]["passed"] is False
+    assert body["data"]["quality_report"]["quality_status"] == "scaffold_fallback"
+
+
+@pytest.mark.asyncio
 async def test_real_genesis_generation_does_not_block_event_loop(monkeypatch):
     """Real genesis LLM calls must be offloaded so status APIs can stay responsive."""
     from novel_factory.api.routes import genesis as genesis_routes

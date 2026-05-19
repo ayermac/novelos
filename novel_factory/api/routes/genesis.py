@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import asyncio
+import logging
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -14,6 +15,7 @@ from ...llm.provider import is_configured_live_provider
 from ...quality.genesis_quality_gate import evaluate_genesis_draft
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 GENESIS_REQUIRED_SECTIONS = {
@@ -1108,6 +1110,57 @@ async def _complete_real_genesis_draft(
     return _fill_missing_genesis_sections(body, normalized)
 
 
+def _mark_genesis_generation_fallback(
+    draft: dict,
+    *,
+    reason: str,
+    error_message: str,
+) -> dict:
+    """Mark a generated Genesis draft as a degraded local fallback."""
+    marked = dict(draft)
+    meta = marked.get("_meta")
+    if not isinstance(meta, dict):
+        meta = {}
+    warnings = list(meta.get("warnings") or [])
+    warning = "真实 LLM 输出不是可解析 JSON，已生成系统兜底草案。请重新生成或人工补全后再批准。"
+    if warning not in warnings:
+        warnings.append(warning)
+    meta.update({
+        "source": "scaffold_fallback",
+        "quality_status": "scaffold_fallback",
+        "generation_fallback": True,
+        "fallback_reason": reason,
+        "original_error": error_message[:500],
+        "warnings": warnings,
+    })
+    marked["_meta"] = meta
+    return marked
+
+
+async def _generate_real_draft_with_scaffold_fallback(
+    body: GenesisGenerateRequest,
+    settings,
+) -> dict:
+    """Generate Genesis with real LLM, falling back only for invalid JSON output."""
+    from ...llm.openai_compatible import OutputValidationError
+
+    try:
+        draft = await _generate_real_draft(body, settings)
+        return await _complete_real_genesis_draft(body, settings, draft)
+    except OutputValidationError as exc:
+        logger.warning(
+            "Genesis real LLM returned invalid JSON; using scaffold fallback title=%s genre=%s",
+            body.title,
+            body.genre,
+            exc_info=True,
+        )
+        return _mark_genesis_generation_fallback(
+            _generate_genesis_scaffold(body),
+            reason="invalid_json",
+            error_message=str(exc),
+        )
+
+
 def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
     """Apply an approved genesis draft to formal tables.
 
@@ -1330,8 +1383,7 @@ async def generate_genesis(
             if llm_mode == "stub":
                 draft = _generate_stub_draft(body)
             else:
-                draft = await _generate_real_draft(body, settings)
-                draft = await _complete_real_genesis_draft(body, settings, draft)
+                draft = await _generate_real_draft_with_scaffold_fallback(body, settings)
             draft, missing_sections = _validate_complete_genesis_draft(draft)
             if draft is None:
                 raise ValueError("创世草案数据格式错误，未生成可应用的 JSON 对象")
@@ -1574,8 +1626,7 @@ async def generate_genesis_canonical(
             if llm_mode == "stub":
                 draft = _generate_stub_draft(body)
             else:
-                draft = await _generate_real_draft(body, settings)
-                draft = await _complete_real_genesis_draft(body, settings, draft)
+                draft = await _generate_real_draft_with_scaffold_fallback(body, settings)
             draft, missing_sections = _validate_complete_genesis_draft(draft)
             if draft is None:
                 raise ValueError("创世草案数据格式错误，未生成可应用的 JSON 对象")
