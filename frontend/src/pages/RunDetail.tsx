@@ -7,6 +7,16 @@ import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
 import { useAppDialog } from '../components/AppDialogContext'
 import { ArrowLeft, DatabaseZap } from 'lucide-react'
+import {
+  getActionHint,
+  getMemoryStatusDisplay,
+  getStatusBadge,
+  isBusinessSuccess,
+  normalizeOperationResult,
+  severityBadgeClass,
+  type MemoryStatusCode,
+  type OperationResult,
+} from '../lib/statusSemantics'
 
 interface Step {
   key: string
@@ -48,6 +58,8 @@ interface RunDetail {
     trusted_batch_count: number
     fallback_batch_count: number
   }
+  // v6.6.10: Unified domain result
+  domain_result?: OperationResult
 }
 
 interface RunRecovery {
@@ -119,6 +131,7 @@ interface MemoryBackfillResult {
   memory_curator_degraded?: boolean
   memory_curator_fallback?: string | null
   message?: string
+  domain_result?: OperationResult
 }
 
 export default function RunDetail() {
@@ -234,24 +247,24 @@ export default function RunDetail() {
     setMemoryBackfilling(false)
 
     if (result.ok && result.data) {
-      if (
-        result.data.extraction_success === false ||
-        result.data.fallback_created ||
-        result.data.memory_curator_degraded ||
-        result.data.memory_curator_fallback
-      ) {
-        // v6.6.7: Never show success toast for fallback/failure
-        setRecoveryError(result.data.message || '补跑未生成可信记忆，请检查 MemoryCurator 配置后重试。')
+      const domainResult = normalizeOperationResult(result.data as unknown as Record<string, unknown>)
+      if (!isBusinessSuccess(domainResult)) {
+        setRecoveryError(domainResult.user_message || domainResult.message || result.data.message || '补跑未生成可信记忆，请检查 MemoryCurator 配置后重试。')
       } else {
-        setRecoveryMessage(result.data.message || (result.data.skipped ? '已有可信记忆批次，未重复补跑。' : '记忆提取补跑完成。'))
+        setRecoveryMessage(domainResult.user_message || domainResult.message || result.data.message || (result.data.skipped ? '已有可信记忆批次，未重复补跑。' : '记忆提取补跑完成。'))
       }
       await load()
     } else {
       const details = result.error?.details
+      const domainResult = details?.domain_result && typeof details.domain_result === 'object'
+        ? details.domain_result as OperationResult
+        : null
       const suffix = details?.memory_batch_id
         ? `\n候选批次：${String(details.memory_batch_id)}`
         : ''
-      setRecoveryError((result.error?.message || '补跑记忆提取失败') + suffix)
+      const actionHint = domainResult ? getActionHint(domainResult) : ''
+      const actionSuffix = actionHint ? `\n建议操作：${actionHint}` : ''
+      setRecoveryError((domainResult?.user_message || domainResult?.message || result.error?.message || '补跑记忆提取失败') + suffix + actionSuffix)
     }
   }
 
@@ -263,6 +276,11 @@ export default function RunDetail() {
   const workspaceHref = `/projects/${data.project_id}?chapter=${data.chapter_number}`
   const workflowHref = `/projects/${data.project_id}?module=chapters&chapter=${data.chapter_number}&view=workflow`
   const hasRunError = Boolean(data.error_message)
+  const domainResult = normalizeOperationResult(data as unknown as Record<string, unknown>)
+  const domainBadge = getStatusBadge(domainResult)
+  const memoryDisplay = data.memory_status
+    ? getMemoryStatusDisplay(data.memory_status.memory_status as MemoryStatusCode)
+    : null
 
   return (
     <div>
@@ -292,6 +310,18 @@ export default function RunDetail() {
           </div>
         </div>
       )}
+      <div className={`alert alert-${domainResult.severity === 'success' ? 'success' : domainResult.severity === 'error' ? 'error' : domainResult.severity === 'warning' ? 'warn' : 'info'}`} style={{ marginBottom: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <strong>业务状态：</strong>
+          <span className={`badge ${severityBadgeClass(domainBadge.severity)}`}>{domainBadge.label}</span>
+          <span>{domainResult.user_message || domainResult.message}</span>
+        </div>
+        {domainResult.retryable && (
+          <div style={{ marginTop: 6, fontSize: 13 }}>
+            建议操作：{getActionHint(domainResult) || '重试'}
+          </div>
+        )}
+      </div>
       <div className="card" style={{ marginBottom: '16px' }}>
         <div className="card-header"><h3>基本信息</h3></div>
         <div className="card-body">
@@ -371,17 +401,14 @@ export default function RunDetail() {
                   {recoveryError}
                 </div>
               )}
-              {/* v6.6.7: Memory status display */}
-              {data.memory_status && data.chapter_status !== 'planned' && data.chapter_status !== 'drafted' && (
-                <div className={`alert alert-${data.memory_status.memory_trusted ? 'success' : 'warn'}`} style={{ marginBottom: '12px' }}>
+              {/* v6.6.10: Memory status display via unified semantics */}
+              {data.memory_status && memoryDisplay && data.chapter_status !== 'planned' && data.chapter_status !== 'drafted' && (
+                <div className={`alert alert-${memoryDisplay.severity === 'success' ? 'success' : memoryDisplay.severity === 'error' ? 'error' : 'warn'}`} style={{ marginBottom: '12px' }}>
                   <strong>记忆状态：</strong>
-                  {data.memory_status.memory_trusted
-                    ? `可信记忆已提取（${data.memory_status.trusted_batch_count} 批次）`
-                    : data.memory_status.memory_status === 'fallback'
-                      ? `低可信候选（${data.memory_status.fallback_batch_count} 批次），需人工确认或重新提取`
-                      : data.memory_status.memory_status === 'missing'
-                        ? '尚未提取记忆'
-                        : '记忆提取失败'}
+                  <span className={`badge ${severityBadgeClass(memoryDisplay.severity)}`} style={{ marginRight: 8 }}>{memoryDisplay.label}</span>
+                  {memoryDisplay.userMessage}
+                  {data.memory_status.memory_status === 'trusted' && `（${data.memory_status.trusted_batch_count} 批次）`}
+                  {data.memory_status.memory_status === 'fallback' && `（${data.memory_status.fallback_batch_count} 批次）`}
                 </div>
               )}
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
