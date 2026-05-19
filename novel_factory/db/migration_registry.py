@@ -122,7 +122,28 @@ MIGRATION_REGISTRY: list[MigrationEntry] = [
         migration_id="000_base_schema",
         sql_filename="000_base_schema.sql",
         description="Base schema — projects, chapters, reviews, etc.",
-        requirements=(_T("projects"),),
+        requirements=(
+            _T("projects"),
+            _T("world_settings"),
+            _T("characters"),
+            _T("factions"),
+            _T("chapters"),
+            _T("instructions"),
+            _T("plot_holes"),
+            _T("chapter_plots"),
+            _T("reviews"),
+            _T("task_status"),
+            _T("market_reports"),
+            _T("chapter_state"),
+            _T("outlines"),
+            _T("chapter_versions"),
+            _T("state_history"),
+            _T("agent_messages"),
+            _T("learned_patterns"),
+            _T("best_practices"),
+            _T("anti_patterns"),
+            _T("context_rules"),
+        ),
     ),
 
     # ── 001 ──
@@ -130,7 +151,12 @@ MIGRATION_REGISTRY: list[MigrationEntry] = [
         migration_id="001_add_workflow_tables",
         sql_filename="001_add_workflow_tables.sql",
         description="Workflow tables — scene_beats, polish_reports, workflow_runs, agent_artifacts",
-        requirements=(_T("workflow_runs"),),
+        requirements=(
+            _T("scene_beats"),
+            _T("polish_reports"),
+            _T("workflow_runs"),
+            _T("agent_artifacts"),
+        ),
     ),
 
     # ── 002 ──
@@ -175,7 +201,10 @@ MIGRATION_REGISTRY: list[MigrationEntry] = [
         migration_id="006_v2_1_qualityhub_skill",
         sql_filename="006_v2_1_qualityhub_skill.sql",
         description="QualityHub — quality_reports table",
-        requirements=(_T("quality_reports"),),
+        requirements=(
+            _T("quality_reports"),
+            _T("skill_runs"),
+        ),
     ),
 
     # ── 007 ──
@@ -285,7 +314,13 @@ MIGRATION_REGISTRY: list[MigrationEntry] = [
         migration_id="022_v5_3_2_genesis_memory",
         sql_filename="022_v5_3_2_genesis_memory.sql",
         description="Genesis & memory — genesis_runs, memory_update_batches, memory_update_items, story_facts, story_fact_events",
-        requirements=(_T("genesis_memories") if False else _T("genesis_runs"),),
+        requirements=(
+            _T("genesis_runs"),
+            _T("memory_update_batches"),
+            _T("memory_update_items"),
+            _T("story_facts"),
+            _T("story_fact_events"),
+        ),
         # Note: original detector checked genesis_memories, but the SQL creates genesis_runs.
         # Using genesis_runs as the true indicator.
     ),
@@ -327,7 +362,10 @@ MIGRATION_REGISTRY: list[MigrationEntry] = [
         migration_id="027_v5_5_8_auto_run_sessions",
         sql_filename="027_v5_5_8_auto_run_sessions.sql",
         description="Auto-run — auto_run_sessions table",
-        requirements=(_T("auto_run_sessions"),),
+        requirements=(
+            _T("auto_run_sessions"),
+            _T("auto_run_steps"),
+        ),
     ),
 
     # ── 028 ──

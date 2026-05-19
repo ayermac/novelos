@@ -598,6 +598,65 @@ class TestSpecificMigrationDetection:
         columns = {row[1] for row in cursor.fetchall()}
         assert {"prompt_tokens", "completion_tokens", "total_tokens", "duration_ms"}.issubset(columns)
 
+    def test_multi_table_migration_001_requires_all_tables(self, tmp_path):
+        """Migration 001 must not be marked applied when only workflow_runs exists."""
+        db_path = tmp_path / "partial_001.db"
+        schema_file = (
+            Path(__file__).resolve().parent.parent
+            / "novel_factory" / "db" / "schema" / "000_base_schema.sql"
+        )
+        conn = sqlite3.connect(str(db_path))
+        conn.executescript(schema_file.read_text(encoding="utf-8"))
+        conn.execute("CREATE TABLE workflow_runs (id TEXT PRIMARY KEY, project_id TEXT, status TEXT)")
+        conn.commit()
+
+        assert not _is_migration_applied_by_schema(conn, "001_add_workflow_tables")
+        conn.close()
+
+    def test_multi_table_migration_022_requires_all_tables(self, tmp_path):
+        """Migration 022 must not be marked applied when only genesis_runs exists."""
+        db_path = tmp_path / "partial_022.db"
+        schema_file = (
+            Path(__file__).resolve().parent.parent
+            / "novel_factory" / "db" / "schema" / "000_base_schema.sql"
+        )
+        conn = sqlite3.connect(str(db_path))
+        conn.executescript(schema_file.read_text(encoding="utf-8"))
+        conn.execute("CREATE TABLE genesis_runs (id TEXT PRIMARY KEY, project_id TEXT, status TEXT)")
+        conn.commit()
+
+        assert not _is_migration_applied_by_schema(conn, "022_v5_3_2_genesis_memory")
+        conn.close()
+
+    def test_init_db_recovers_partial_create_table_migration(self, tmp_path):
+        """Partial CREATE TABLE migrations should be completed by rerunning idempotent SQL."""
+        db_path = tmp_path / "recover_partial.db"
+        schema_file = (
+            Path(__file__).resolve().parent.parent
+            / "novel_factory" / "db" / "schema" / "000_base_schema.sql"
+        )
+        conn = sqlite3.connect(str(db_path))
+        conn.executescript(schema_file.read_text(encoding="utf-8"))
+        conn.execute("CREATE TABLE genesis_runs (id TEXT PRIMARY KEY, project_id TEXT, status TEXT)")
+        conn.commit()
+        conn.close()
+
+        init_db(db_path)
+
+        conn = sqlite3.connect(str(db_path))
+        tables = {
+            row[0]
+            for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+        }
+        assert {
+            "genesis_runs",
+            "memory_update_batches",
+            "memory_update_items",
+            "story_facts",
+            "story_fact_events",
+        }.issubset(tables)
+        conn.close()
+
 
 # ── Test: Migration health on partially migrated DB ──────────────────
 
