@@ -19,6 +19,7 @@ import {
   isBusinessSuccess,
   isRetryable,
   isBlocking,
+  isActionable,
   getStatusBadge,
   getNodeStatusBadge,
   getActionHint,
@@ -428,6 +429,137 @@ describe("getNodeStatusBadge", () => {
     const badge = getNodeStatusBadge("completed");
     expect(badge.severity).toBe("success");
     expect(badge.cssClass).toBe("step-completed");
+  });
+});
+
+// ── isActionable ──────────────────────────────────────────────────
+
+describe("isActionable", () => {
+  it("returns true when action_label is set", () => {
+    const result = makeResult("fallback", { action_label: "重新补跑" });
+    expect(isActionable(result)).toBe(true);
+  });
+
+  it("returns true when next_action is set", () => {
+    const result = makeResult("partial_success", { next_action: "backfill_memory" });
+    expect(isActionable(result)).toBe(true);
+  });
+
+  it("returns true when both are set", () => {
+    const result = makeResult("failed", { next_action: "retry", action_label: "重试" });
+    expect(isActionable(result)).toBe(true);
+  });
+
+  it("returns false when neither is set", () => {
+    const result = makeResult("success");
+    expect(isActionable(result)).toBe(false);
+  });
+
+  it("returns false for pending with no action", () => {
+    const result = makeResult("pending");
+    expect(isActionable(result)).toBe(false);
+  });
+
+  it("returns false for ignored with no action", () => {
+    const result = makeResult("ignored");
+    expect(isActionable(result)).toBe(false);
+  });
+});
+
+// ── Badge edge cases ───────────────────────────────────────────────
+
+describe("badge edge cases", () => {
+  it("ignored shows info severity, not success", () => {
+    const badge = getStatusBadge(makeResult("ignored"));
+    expect(badge.severity).toBe("info");
+    expect(badge.cssClass).toBe("badge-info");
+  });
+
+  it("needs_human shows warning severity, not error", () => {
+    const badge = getStatusBadge(makeResult("needs_human"));
+    expect(badge.severity).toBe("warning");
+    expect(badge.cssClass).toBe("badge-warning");
+  });
+
+  it("pending shows info severity", () => {
+    const badge = getStatusBadge(makeResult("pending"));
+    expect(badge.severity).toBe("info");
+  });
+
+  it("partial_success is never success severity", () => {
+    const badge = getStatusBadge(makeResult("partial_success"));
+    expect(badge.severity).not.toBe("success");
+    expect(badge.severity).toBe("warning");
+  });
+
+  it("fallback is never success severity", () => {
+    const badge = getStatusBadge(makeResult("fallback"));
+    expect(badge.severity).not.toBe("success");
+    expect(badge.severity).toBe("warning");
+  });
+
+  it("degraded is never success severity", () => {
+    const badge = getStatusBadge(makeResult("degraded"));
+    expect(badge.severity).not.toBe("success");
+    expect(badge.severity).toBe("warning");
+  });
+});
+
+// ── domain_result priority over legacy fields ──────────────────────
+
+describe("normalizeOperationResult: domain_result priority", () => {
+  it("domain_result takes priority when workflow_status says failed", () => {
+    const raw = {
+      workflow_status: "failed",
+      domain_result: {
+        ok: true,
+        domain_status: "partial_success",
+        message: "partial",
+        user_message: "部分完成",
+        technical_message: null,
+        retryable: true,
+        blocking: false,
+        next_action: "backfill_memory",
+        action_label: "补跑记忆",
+        severity: "warning",
+        flags: {},
+        details: {},
+      },
+    };
+    const result = normalizeOperationResult(raw);
+    expect(result.domain_status).toBe("partial_success");
+    expect(isBusinessSuccess(result)).toBe(false);
+    expect(isActionable(result)).toBe(true);
+    expect(result.action_label).toBe("补跑记忆");
+  });
+
+  it("domain_result fallback is still not business success", () => {
+    const raw = {
+      workflow_status: "completed",
+      domain_result: {
+        ok: true,
+        domain_status: "fallback",
+        message: "fallback",
+        user_message: "已降级",
+        technical_message: null,
+        retryable: true,
+        blocking: false,
+        next_action: "retry",
+        action_label: "重试",
+        severity: "warning",
+        flags: {},
+        details: {},
+      },
+    };
+    const result = normalizeOperationResult(raw);
+    expect(result.domain_status).toBe("fallback");
+    expect(isBusinessSuccess(result)).toBe(false);
+  });
+
+  it("legacy response without domain_result returns pending for unknown workflow_status", () => {
+    const raw = { workflow_status: "unknown_future_state" };
+    const result = normalizeOperationResult(raw);
+    expect(result.domain_status).toBe("pending");
   });
 });
 

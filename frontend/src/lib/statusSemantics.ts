@@ -256,6 +256,14 @@ export function isBlocking(result: OperationResult): boolean {
 }
 
 /**
+ * True when the result has a concrete next action to present to the user.
+ * Use this to conditionally render action hint buttons or labels.
+ */
+export function isActionable(result: OperationResult): boolean {
+  return !!(result.next_action || result.action_label);
+}
+
+/**
  * Get action hint for the user — what to do next.
  */
 export function getActionHint(result: OperationResult): string {
