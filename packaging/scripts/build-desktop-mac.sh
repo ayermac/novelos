@@ -50,12 +50,17 @@ done
 
 cd "$REPO_ROOT"
 
+VERSION=$(python3 -c "from novel_factory.version import get_version; print(get_version())" 2>/dev/null || echo "unknown")
+
 echo "=========================================="
-echo "  Novelos Desktop macOS build"
+echo "  Novelos Desktop macOS build  v$VERSION"
 echo "=========================================="
+echo "  Version:       $VERSION"
 echo "  Mode:          $MODE"
 echo "  Skip sidecar:  $SKIP_SIDECAR"
 echo ""
+echo "  --dir   → 构建本地 .app (默认，用于开发验证)"
+echo "  --dmg   → 构建 .app + DMG 安装包"
 
 echo "Step 1/3: Building frontend..."
 (cd frontend && npm run build)

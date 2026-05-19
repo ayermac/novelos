@@ -1,7 +1,7 @@
 {
   "name": "novelos-desktop",
-  "version": "6.8.0-m6",
-  "description": "Novelos Desktop Client — M6 Release Diagnostics and Recovery",
+  "version": "6.6.15",
+  "description": "Novelos Desktop Client — v6.6.15 Release Readiness",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",

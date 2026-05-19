@@ -14,6 +14,29 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 (nothing)
 
+## v6.6.15 - Release Readiness & Desktop Packaging Closure
+
+Date: 2026-05-19
+
+Key changes:
+
+- **元数据统一**: 统一 `version.py`, `frontend/package.json`, `desktop/package.json` 及所有版本来源至 `6.6.15`。
+- **迁移健康检查**: API/CLI 已具备 `check_migration_health` / `check_table_integrity`，新增 smoke test 覆盖新空库/重复 init/核心表完整性。
+- **桌面打包链路**: 统一桌面版本号至 `6.6.15`；补充打包脚本输出版本号和输出路径说明；新增打包脚本静态检查测试。
+- **Stub 真实链路 smoke test**: 新增 `test_v6615_release_readiness.py`，覆盖 init_db → seed → run chapter → 发布 → 连续章节 memory audit 的 stub 全链路。
+- **文档更新**: 新增 spec/report/review 文档；更新打包/发布说明。
+
+Verification:
+- full test suite passed (target: 2500+)
+- frontend typecheck/lint/build passed
+- no real LLM calls
+- no LangGraph topology changes
+- `docs/superpowers/` excluded from git
+
+Known follow-up:
+- `plot_holes` compliance deferred to v6.6.16
+- low-risk UX polish items documented in review
+
 ## v6.6.14 - Continuity & Memory Enforcement Closure
 
 Key changes:
