@@ -23,6 +23,9 @@
 - **当前交互体验基线**: v6.5.7 Visual Polish Pass
 - **当前创世质量基线**: v6.6.4 Genesis Initialization Depth & Specificity Closure
 - **当前运行时卫生基线**: v6.6.5 Runtime Hygiene & Observability Closure
+- **当前工作流恢复基线**: v6.6.6 Workflow Recovery & State Integrity Closure
+- **当前记忆可靠性基线**: v6.6.7 Memory Curator Reliability Closure
+- **当前审核语义基线**: v6.6.8 Editor Refactor & Review Semantics Closure
 - **当前下一步**: v6.6+ Agent Evidence UX / Structured Memory Canonicalization
 - **状态**: v6.6.4 已完成 Genesis Initialization Depth & Specificity Closure。核心交付：Genesis Prompt 深度要求、Draft Normalization 扩展、Quality Gate 加强（SHALLOW_INSTRUCTION/ABSTRACT_OBJECTIVE/OUTLINE_TOO_ABSTRACT 等 blocker）、前端质量报告按 section 分组、API 语义保持并补充 _meta 审计保留。
 - **v6.4 规格**: [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md) — 解决生成章节"AI 味重"问题，聚焦 prompt 增强、deterministic validator 补充和 skill 升级。
