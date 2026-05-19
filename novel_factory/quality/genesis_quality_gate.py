@@ -90,6 +90,20 @@ GENERIC_PLOT_TITLES = [
     "神秘信物",
 ]
 
+# v6.6.4: Abstract objective patterns that lack specificity
+ABSTRACT_OBJECTIVE_PATTERNS = [
+    r"扩大冲突",
+    r"推动剧情",
+    r"获得主动权",
+    r"进入复杂局面",
+    r"冲突升级",
+    r"主角成长",
+    r"势力入场",
+    r"故事展开",
+    r"局面复杂",
+    r"矛盾加深",
+]
+
 
 def _normalize_text(text: str | None) -> str:
     """Normalize text for comparison."""
@@ -123,6 +137,17 @@ def _count_repeated_values(items: list[dict], key: str) -> dict[str, list[int]]:
             value_to_chapters[value] = []
         value_to_chapters[value].append(chapter)
     return value_to_chapters
+
+
+def _objective_similarity(a: str, b: str) -> float:
+    """Jaccard similarity of character sets for detecting paraphrased templates."""
+    set_a = set(a)
+    set_b = set(b)
+    if not set_a or not set_b:
+        return 0.0
+    intersection = len(set_a & set_b)
+    union = len(set_a | set_b)
+    return intersection / union if union else 0.0
 
 
 def _check_instruction_repetition(
@@ -166,6 +191,26 @@ def _check_instruction_repetition(
                         suggestion="连续章节应有不同的写作目标，体现剧情推进",
                     )
                 )
+
+    # v6.6.4: Check for paraphrased (highly similar but not identical) consecutive objectives
+    sorted_insts = sorted(
+        [i for i in dict_instructions if i.get("chapter_number") is not None],
+        key=lambda x: x["chapter_number"],
+    )
+    for i in range(len(sorted_insts) - 1):
+        a = _normalize_text(sorted_insts[i].get("objective", ""))
+        b = _normalize_text(sorted_insts[i + 1].get("objective", ""))
+        if a and b and a != b and _objective_similarity(a, b) >= 0.65:
+            issues.append(
+                GenesisQualityIssue(
+                    code="CONSECUTIVE_OBJECTIVE",
+                    severity="warning",
+                    message=f"第 {sorted_insts[i]['chapter_number']}、{sorted_insts[i + 1]['chapter_number']} 章 objective 高度相似（同义模板）",
+                    section="instructions",
+                    item_ref=f"chapters: {sorted_insts[i]['chapter_number']}, {sorted_insts[i + 1]['chapter_number']}",
+                    suggestion="连续章节应有不同的写作目标，避免换说法复用同一模板",
+                )
+            )
 
     # Check key_events repetition
     events_to_chapters = _count_repeated_values(instructions, "key_events")
@@ -217,29 +262,6 @@ def _check_instruction_specificity(
     if not dict_instructions:
         return issues
 
-    # Genre/premise keywords that should trigger specific content
-    supernatural_keywords = [
-        "异常",
-        "灵异",
-        "超自然",
-        "鬼怪",
-        "系统",
-        "修正",
-        "异能",
-        "超能力",
-        "魔法",
-        "修仙",
-        "玄幻",
-        "仙侠",
-    ]
-    urban_keywords = ["都市", "现代", "科技", "机甲", "商业", "职场"]
-    fantasy_keywords = ["玄幻", "仙侠", "修仙", "奇幻", "魔法", "异界"]
-
-    combined_text = f"{title} {genre} {premise}".lower()
-    has_supernatural = any(kw in combined_text for kw in supernatural_keywords)
-    has_urban = any(kw in combined_text for kw in urban_keywords)
-    has_fantasy = any(kw in combined_text for kw in fantasy_keywords)
-
     generic_count = 0
     for inst in dict_instructions:
         objective = _normalize_text(inst.get("objective", ""))
@@ -252,19 +274,6 @@ def _check_instruction_specificity(
         if _is_generic_pattern(key_events, GENERIC_KEY_EVENTS_PATTERNS):
             generic_count += 1
 
-        # Check for specific elements
-        has_character = bool(re.search(r"[^\x00-\xff]{2,4}", objective + key_events))
-        has_location = bool(
-            re.search(
-                r"(地点|场所|场景|城市|学院|公司|宗门|家族|组织|基地|实验室)",
-                objective + key_events,
-            )
-        )
-
-        if not has_character and not has_location:
-            # Very generic instruction
-            pass
-
     if generic_count >= len(dict_instructions) * 0.5:
         issues.append(
             GenesisQualityIssue(
@@ -275,6 +284,130 @@ def _check_instruction_specificity(
                 suggestion="章节指令应包含具体人物、地点、事件和冲突，避免空泛描述",
             )
         )
+
+    return issues
+
+
+def _check_instruction_depth(instructions: list[dict]) -> list[GenesisQualityIssue]:
+    """v6.6.4: Check if instructions have depth (specific characters, locations, actions, results)."""
+    issues: list[GenesisQualityIssue] = []
+
+    if not instructions:
+        return issues
+
+    dict_instructions = [i for i in instructions if isinstance(i, dict)]
+    if not dict_instructions:
+        return issues
+
+    shallow_count = 0
+    abstract_count = 0
+    weak_events_count = 0
+    missing_hook_count = 0
+    missing_seed_count = 0
+
+    for inst in dict_instructions:
+        objective = _normalize_text(inst.get("objective", ""))
+        key_events = _normalize_text(inst.get("key_events", ""))
+        combined = objective + " " + key_events
+
+        # ABSTRACT_OBJECTIVE: check for abstract patterns
+        if _is_generic_pattern(objective, ABSTRACT_OBJECTIVE_PATTERNS):
+            abstract_count += 1
+
+        # SHALLOW_INSTRUCTION: must have specific character, location, action verb, result change
+        has_character = bool(re.search(r"[^\x00-\xff]{2,4}", combined))
+        has_location = bool(
+            re.search(
+                r"(地点|场所|场景|城市|学院|公司|宗门|家族|组织|基地|实验室|学校|街道|家中|办公室|战场|山谷|洞穴|塔|殿|阁|村|镇|城|医院|事务所|公寓|大楼|工厂|仓库|墓地|教堂|车站|码头|酒吧|餐厅|酒店|宫殿|密室|禁地|废墟|森林|沙漠|海岛|地下|天际|荒野)",
+                combined,
+            )
+        )
+        has_action = bool(
+            re.search(
+                r"(发现|找到|击败|逃离|潜入|揭露|保护|摧毁|夺取|谈判|背叛|拯救|追杀|埋伏|破解|触发|遭遇|拒绝|接受|质疑|展示|失控|击碎|试探|出手|相助|暗示|暴露|引发|遭到|监视|被迫|面对|挑战|测试|觉醒|制造|引起|使用|产生|碰撞|交锋|博弈|争夺|反击|投降|逃脱|追击|拦截|封锁|围困|逆转)",
+                combined,
+            )
+        )
+        has_result = bool(
+            re.search(
+                r"(导致|结果|因此|从而|使得|失去|获得|暴露|隐藏|改变|决定|意识到|明白|确认|否认|牺牲|代价)",
+                combined,
+            )
+        )
+        if not (has_character and has_location and has_action and has_result):
+            shallow_count += 1
+
+        # WEAK_KEY_EVENTS: count distinguishable events (split by common delimiters)
+        events_text = str(inst.get("key_events", ""))
+        event_parts = re.split(r"[；;。\.\n\r,，]", events_text)
+        distinct_events = [p.strip() for p in event_parts if len(p.strip()) >= 4]
+        if len(distinct_events) < 2:
+            weak_events_count += 1
+
+        # MISSING_CONTINUITY_SEED
+        ending_hook = _normalize_text(inst.get("ending_hook", ""))
+        continuity_seed = _normalize_text(inst.get("continuity_seed", ""))
+        if not ending_hook:
+            missing_hook_count += 1
+        if not continuity_seed:
+            missing_seed_count += 1
+
+    total = len(dict_instructions)
+    if abstract_count >= max(1, total // 2):
+        issues.append(
+            GenesisQualityIssue(
+                code="ABSTRACT_OBJECTIVE",
+                severity="blocker",
+                message=f"{abstract_count} 章的 objective 使用了抽象表达（如\"扩大冲突/推动剧情/获得主动权\"）",
+                section="instructions",
+                suggestion="每章 objective 必须写出具体的主角目标、阻力和结果变化",
+            )
+        )
+
+    if shallow_count >= max(1, total // 2):
+        issues.append(
+            GenesisQualityIssue(
+                code="SHALLOW_INSTRUCTION",
+                severity="blocker",
+                message=f"{shallow_count} 章的指令缺少具体人物、地点、行动或结果变化",
+                section="instructions",
+                suggestion="章节指令应包含具体人物、地点、行动动词和结果变化",
+            )
+        )
+
+    if weak_events_count >= max(1, total // 2):
+        issues.append(
+            GenesisQualityIssue(
+                code="WEAK_KEY_EVENTS",
+                severity="warning",
+                message=f"{weak_events_count} 章的 key_events 少于 2 个可区分事件",
+                section="instructions",
+                suggestion="每章应至少包含 2-3 个不同的具体事件",
+            )
+        )
+
+    # MISSING_CONTINUITY_SEED only matters for multi-chapter plans
+    if total >= 2:
+        if missing_hook_count >= max(1, total // 2):
+            issues.append(
+                GenesisQualityIssue(
+                    code="MISSING_CONTINUITY_SEED",
+                    severity="warning",
+                    message=f"{missing_hook_count} 章缺少 ending_hook",
+                    section="instructions",
+                    suggestion="多章规划应为每章设置结尾钩子，支撑悬念延续",
+                )
+            )
+        if missing_seed_count >= max(1, total // 2):
+            issues.append(
+                GenesisQualityIssue(
+                    code="MISSING_CONTINUITY_SEED",
+                    severity="warning",
+                    message=f"{missing_seed_count} 章缺少 continuity_seed",
+                    section="instructions",
+                    suggestion="多章规划应设置继承点，确保下一章能衔接悬念",
+                )
+            )
 
     return issues
 
@@ -334,6 +467,7 @@ def _check_outline_quality(
 
     # Check for stage-label-only outlines
     stage_only_count = 0
+    abstract_count = 0
     for outline in dict_outlines:
         content = _normalize_text(outline.get("content", ""))
         title_text = _normalize_text(outline.get("title", ""))
@@ -346,12 +480,39 @@ def _check_outline_quality(
             r"高潮",
             r"收束",
             r"结局",
+            r"前期",
+            r"中期",
+            r"后期",
+            r"过渡",
+            r"铺垫",
         ]
         if (
             _is_generic_pattern(title_text, stage_patterns)
             and len(content) < 50
         ):
             stage_only_count += 1
+
+        # v6.6.4: OUTLINE_TOO_ABSTRACT - check for missing conflict, twist, result
+        has_conflict = bool(
+            re.search(
+                r"(冲突|对抗|争夺|矛盾|斗争|较量|博弈|对立|厮杀|伏击|围杀|背叛|决裂|摩擦|压制|反抗)",
+                content,
+            )
+        )
+        has_twist = bool(
+            re.search(
+                r"(转折|反转|突变|意外|震惊|发现|揭露|识破|中计|落网|逃脱|反杀|翻盘|失衡|破裂)",
+                content,
+            )
+        )
+        has_result = bool(
+            re.search(
+                r"(结果|结局|代价|收获|改变|决定|立场|归属|胜负|生死|覆灭|崛起|退败|妥协|联合)",
+                content,
+            )
+        )
+        if not (has_conflict or has_twist or has_result) and len(content) < 60:
+            abstract_count += 1
 
     if stage_only_count == len(dict_outlines) and len(dict_outlines) > 0:
         issues.append(
@@ -361,6 +522,17 @@ def _check_outline_quality(
                 message="大纲仅有阶段标签，缺少具体剧情推进",
                 section="outlines",
                 suggestion="大纲应包含具体剧情发展、转折和冲突，而非仅阶段标签",
+            )
+        )
+
+    if abstract_count >= max(1, len(dict_outlines) // 2):
+        issues.append(
+            GenesisQualityIssue(
+                code="OUTLINE_TOO_ABSTRACT",
+                severity="blocker",
+                message=f"{abstract_count} 个大纲缺少阶段冲突、转折或阶段结果",
+                section="outlines",
+                suggestion="大纲不能只写阶段标签，必须写出阶段冲突、转折和阶段结果",
             )
         )
 
@@ -403,9 +575,11 @@ def _check_plot_hole_quality(plot_holes: list[dict]) -> list[GenesisQualityIssue
         return issues
 
     generic_count = 0
+    weak_design_count = 0
     for ph in dict_plot_holes:
         title = _normalize_text(ph.get("title", ""))
         description = _normalize_text(ph.get("description", ""))
+        combined = title + " " + description
 
         # Check for generic titles
         for generic_title in GENERIC_PLOT_TITLES:
@@ -415,12 +589,12 @@ def _check_plot_hole_quality(plot_holes: list[dict]) -> list[GenesisQualityIssue
 
         # Check for missing specifics
         has_specific_object = bool(
-            re.search(r"[^\x00-\xff]{2,8}(的|之)", title + description)
+            re.search(r"[^\x00-\xff]{2,8}(的|之)", combined)
         )
         has_trigger = bool(
             re.search(
-                r"(当|在|如果|一旦|触发|激活|出现|发现)",
-                title + description,
+                r"(当|在|如果|一旦|触发|激活|出现|发现|场景|时刻|条件)",
+                combined,
             )
         )
 
@@ -437,6 +611,28 @@ def _check_plot_hole_quality(plot_holes: list[dict]) -> list[GenesisQualityIssue
                     )
                 )
 
+        # v6.6.4: WEAK_PLOT_HOLE_DESIGN
+        has_appearance = bool(
+            re.search(
+                r"(表象|表面|看似|看起来|读者|发现|注意到|看到|听到|察觉)",
+                combined,
+            )
+        )
+        has_truth = bool(
+            re.search(
+                r"(真相|真实|实际|背后|内幕|实质|谜底|揭秘)",
+                combined,
+            )
+        )
+        has_resolve = bool(
+            re.search(
+                r"(兑现|解决|揭示|揭晓|推进|展开|于第|在.*章|预计|计划)",
+                combined,
+            )
+        ) or ph.get("planned_resolve_chapter")
+        if not (has_trigger and has_appearance and has_truth and has_resolve):
+            weak_design_count += 1
+
     if generic_count >= len(dict_plot_holes) * 0.7 and len(dict_plot_holes) > 0:
         issues.append(
             GenesisQualityIssue(
@@ -445,6 +641,17 @@ def _check_plot_hole_quality(plot_holes: list[dict]) -> list[GenesisQualityIssue
                 message="大部分伏笔使用了通用模板",
                 section="plot_holes",
                 suggestion="伏笔应针对具体故事设计，避免通用模板",
+            )
+        )
+
+    if weak_design_count >= max(1, len(dict_plot_holes) // 2):
+        issues.append(
+            GenesisQualityIssue(
+                code="WEAK_PLOT_HOLE_DESIGN",
+                severity="warning",
+                message=f"{weak_design_count} 个伏笔缺少触发场景、表象、真相方向或预计兑现章节",
+                section="plot_holes",
+                suggestion="伏笔应包含触发场景、读者表象、真相方向和预计兑现计划",
             )
         )
 
@@ -464,6 +671,7 @@ def _check_character_quality(characters: list[dict]) -> list[GenesisQualityIssue
         return issues
 
     generic_name_count = 0
+    shallow_motivation_count = 0
     for char in dict_characters:
         name = _normalize_text(char.get("name", ""))
         description = _normalize_text(char.get("description", ""))
@@ -487,13 +695,19 @@ def _check_character_quality(characters: list[dict]) -> list[GenesisQualityIssue
         # Check for missing motivation/conflict
         has_motivation = bool(
             re.search(
-                r"(动机|目的|目标|渴望|追求|想要)",
+                r"(动机|目的|目标|渴望|追求|想要|欲望|志向|执念|心愿|野心|理想)",
                 description,
             )
         )
         has_conflict = bool(
             re.search(
-                r"(矛盾|冲突|困境|压力|对立|敌对|秘密)",
+                r"(矛盾|冲突|困境|压力|对立|敌对|秘密|心结|隐痛|挣扎|纠结|背叛|隐瞒|欺骗)",
+                description,
+            )
+        )
+        has_interest = bool(
+            re.search(
+                r"(利益|关系|同盟|敌对|合作|利用|依附|背叛|保护|监视|忌惮|赏识|排斥)",
                 description,
             )
         )
@@ -510,6 +724,10 @@ def _check_character_quality(characters: list[dict]) -> list[GenesisQualityIssue
                 )
             )
 
+        # v6.6.4: SHALLOW_CHARACTER_MOTIVATION
+        if not (has_motivation and has_conflict and has_interest):
+            shallow_motivation_count += 1
+
     if generic_name_count >= len(dict_characters) * 0.5 and len(dict_characters) > 0:
         issues.append(
             GenesisQualityIssue(
@@ -518,6 +736,17 @@ def _check_character_quality(characters: list[dict]) -> list[GenesisQualityIssue
                 message="大部分角色使用了通用模板名",
                 section="characters",
                 suggestion="角色应有具体姓名和设定，避免通用称呼",
+            )
+        )
+
+    if shallow_motivation_count >= max(1, len(dict_characters) // 2):
+        issues.append(
+            GenesisQualityIssue(
+                code="SHALLOW_CHARACTER_MOTIVATION",
+                severity="warning",
+                message=f"{shallow_motivation_count} 个角色缺少目标、矛盾、秘密或利益关系",
+                section="characters",
+                suggestion="角色应包含具体目标、内在矛盾/秘密、与主角的利益关系",
             )
         )
 
@@ -537,12 +766,14 @@ def _check_faction_quality(factions: list[dict]) -> list[GenesisQualityIssue]:
         return issues
 
     generic_name_count = 0
+    shallow_action_count = 0
     for fac in dict_factions:
         name = _normalize_text(fac.get("name", ""))
         description = _normalize_text(fac.get("description", ""))
         relationship = _normalize_text(
             fac.get("relationship_with_protagonist", "")
         )
+        combined = description + " " + relationship
 
         # Check for generic names
         for generic_name in GENERIC_FACTION_NAMES:
@@ -564,7 +795,7 @@ def _check_faction_quality(factions: list[dict]) -> list[GenesisQualityIssue]:
         has_conflict = bool(
             re.search(
                 r"(冲突|对立|敌对|竞争|合作|利用|试探)",
-                description + relationship,
+                combined,
             )
         )
 
@@ -580,6 +811,22 @@ def _check_faction_quality(factions: list[dict]) -> list[GenesisQualityIssue]:
                 )
             )
 
+        # v6.6.4: SHALLOW_FACTION_ACTION
+        has_resources = bool(
+            re.search(
+                r"(资源|手段|武器|资金|技术|人力|情报|网络|势力|地盘|产业|传承|秘术|科技|资本|人脉|丹药|功法|秘籍)",
+                combined,
+            )
+        )
+        has_action = bool(
+            re.search(
+                r"(行动|出击|围剿|拉拢|监视|渗透|暗杀|策反|封锁|压制|扶植|收购|毁灭|保护|驱逐|结盟|背叛|试探|追捕|救援)",
+                combined,
+            )
+        )
+        if not (has_resources and has_action):
+            shallow_action_count += 1
+
     if generic_name_count >= len(dict_factions) * 0.5 and len(dict_factions) > 0:
         issues.append(
             GenesisQualityIssue(
@@ -588,6 +835,17 @@ def _check_faction_quality(factions: list[dict]) -> list[GenesisQualityIssue]:
                 message="大部分势力使用了通用模板名",
                 section="factions",
                 suggestion="势力应有具体名称和设定",
+            )
+        )
+
+    if shallow_action_count >= max(1, len(dict_factions) // 2):
+        issues.append(
+            GenesisQualityIssue(
+                code="SHALLOW_FACTION_ACTION",
+                severity="warning",
+                message=f"{shallow_action_count} 个势力缺少资源/手段或阶段行动",
+                section="factions",
+                suggestion="势力应包含资源/手段和对主角采取的阶段行动",
             )
         )
 
@@ -661,6 +919,7 @@ def evaluate_genesis_draft(
         issues.extend(
             _check_instruction_specificity(instructions, title, genre, premise)
         )
+        issues.extend(_check_instruction_depth(instructions))
 
     # Check outlines
     outlines = draft.get("outlines", [])

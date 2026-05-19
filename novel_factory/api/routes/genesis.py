@@ -115,7 +115,11 @@ def _approve_genesis_run_with_quality_audit(
 
 
 def _quality_report_for_genesis(genesis: dict, project: dict) -> dict | None:
-    """Evaluate and serialize quality for a persisted genesis run."""
+    """Evaluate and serialize quality for a persisted genesis run.
+
+    v6.6.4: Recomputes quality from current draft_json. Preserves _meta audit
+    if the draft was previously force-applied.
+    """
     draft = _parse_genesis_draft_json(genesis.get("draft_json"))
     if draft is None:
         return None
@@ -135,7 +139,17 @@ def _quality_report_for_genesis(genesis: dict, project: dict) -> dict | None:
         premise=input_data.get("premise", project.get("description", "")),
         target_chapters=input_data.get("target_chapters", project.get("total_chapters_planned", 10) or 10),
     )
-    return _quality_report_payload(quality_report)
+    payload = _quality_report_payload(quality_report)
+
+    # v6.6.4: Preserve forced_quality_apply audit in quality report
+    meta = draft.get("_meta") if isinstance(draft, dict) else None
+    if isinstance(meta, dict) and meta.get("forced_quality_apply"):
+        payload["_meta"] = {
+            "forced_quality_apply": True,
+            "quality_report_snapshot": meta.get("quality_report_snapshot"),
+        }
+
+    return payload
 
 
 def _validate_genesis_generate_request(body: GenesisGenerateRequest) -> tuple[str, str] | None:
@@ -733,11 +747,22 @@ def _coerce_world_setting(item, index: int) -> dict | None:
 def _coerce_character(item, index: int) -> dict | None:
     if isinstance(item, dict):
         name = _as_text(item.get("name", "")) or f"角色 {index}"
+        # v6.6.4: Merge extra depth fields into description so nothing is lost on approval
+        description = _as_text(item.get("description", ""))
+        goal = _as_text(item.get("goal", "")) or _as_text(item.get("desire", "")) or _as_text(item.get("current_goal", ""))
+        conflict = _as_text(item.get("conflict", "")) or _as_text(item.get("inner_conflict", "")) or _as_text(item.get("secret", ""))
+        interest = _as_text(item.get("interest_relation", "")) or _as_text(item.get("relationship_with_protagonist", ""))
+        if goal and goal not in description:
+            description = f"{description}\n当前目标: {goal}".strip()
+        if conflict and conflict not in description:
+            description = f"{description}\n内在矛盾/秘密: {conflict}".strip()
+        if interest and interest not in description:
+            description = f"{description}\n与主角利益关系: {interest}".strip()
         return {
             **item,
             "name": name,
             "role": _normalize_character_role(_as_text(item.get("role", "supporting"))),
-            "description": _as_text(item.get("description", "")),
+            "description": description,
             "traits": _as_text(item.get("traits", "")),
         }
     text = _as_text(item).strip()
@@ -753,7 +778,21 @@ def _coerce_character(item, index: int) -> dict | None:
 
 def _coerce_named_item(item, index: int, fallback_prefix: str) -> dict | None:
     if isinstance(item, dict):
-        return item
+        # v6.6.4: Merge extra depth fields into description for factions
+        description = _as_text(item.get("description", ""))
+        resources = _as_text(item.get("resources", "")) or _as_text(item.get("means", ""))
+        attitude = _as_text(item.get("attitude", "")) or _as_text(item.get("attitude_toward_protagonist", ""))
+        action = _as_text(item.get("action", "")) or _as_text(item.get("current_action", ""))
+        if resources and resources not in description:
+            description = f"{description}\n资源/手段: {resources}".strip()
+        if attitude and attitude not in description:
+            description = f"{description}\n对主角态度: {attitude}".strip()
+        if action and action not in description:
+            description = f"{description}\n当前阶段行动: {action}".strip()
+        return {
+            **item,
+            "description": description,
+        }
     text = _as_text(item).strip()
     if not text:
         return None
@@ -767,12 +806,23 @@ def _coerce_named_item(item, index: int, fallback_prefix: str) -> dict | None:
 
 def _coerce_outline(item, index: int) -> dict | None:
     if isinstance(item, dict):
+        # v6.6.4: Merge extra depth fields into content for outlines
+        content = _as_text(item.get("content", ""))
+        stage_conflict = _as_text(item.get("stage_conflict", "")) or _as_text(item.get("conflict", ""))
+        twist = _as_text(item.get("twist", "")) or _as_text(item.get("turning_point", ""))
+        stage_result = _as_text(item.get("stage_result", "")) or _as_text(item.get("result", ""))
+        if stage_conflict and stage_conflict not in content:
+            content = f"{content}\n阶段冲突: {stage_conflict}".strip()
+        if twist and twist not in content:
+            content = f"{content}\n转折: {twist}".strip()
+        if stage_result and stage_result not in content:
+            content = f"{content}\n阶段结果: {stage_result}".strip()
         return {
             **item,
             "level": _as_text(item.get("level", "arc")) or "arc",
             "sequence": _as_int(item.get("sequence"), index),
             "title": _as_text(item.get("title", "")) or f"大纲 {index}",
-            "content": _as_text(item.get("content", "")),
+            "content": content,
             "chapters_range": _as_text(item.get("chapters_range", "")),
         }
     text = _as_text(item).strip()
@@ -790,12 +840,26 @@ def _coerce_outline(item, index: int) -> dict | None:
 def _coerce_plot_hole(item, index: int) -> dict | None:
     if isinstance(item, dict):
         code = _as_text(item.get("code", "")) or f"PH-{index:03d}"
+        # v6.6.4: Merge extra depth fields into description for plot holes
+        description = _as_text(item.get("description", ""))
+        trigger_scene = _as_text(item.get("trigger_scene", "")) or _as_text(item.get("trigger", ""))
+        appearance = _as_text(item.get("reader_appearance", "")) or _as_text(item.get("appearance", ""))
+        truth_direction = _as_text(item.get("truth_direction", "")) or _as_text(item.get("truth", ""))
+        resolve_plan = _as_text(item.get("resolve_plan", "")) or _as_text(item.get("planned_resolve_chapter", ""))
+        if trigger_scene and trigger_scene not in description:
+            description = f"{description}\n触发场景: {trigger_scene}".strip()
+        if appearance and appearance not in description:
+            description = f"{description}\n读者表象: {appearance}".strip()
+        if truth_direction and truth_direction not in description:
+            description = f"{description}\n真相方向: {truth_direction}".strip()
+        if resolve_plan and str(resolve_plan) not in description:
+            description = f"{description}\n预计兑现: {resolve_plan}".strip()
         return {
             **item,
             "code": code,
             "type": _as_text(item.get("type", "")),
             "title": _as_text(item.get("title", "")) or code,
-            "description": _as_text(item.get("description", "")),
+            "description": description,
             "status": _normalize_plot_status(_as_text(item.get("status", "planted"))),
         }
     text = _as_text(item).strip()
@@ -808,12 +872,20 @@ def _coerce_plot_hole(item, index: int) -> dict | None:
 def _coerce_instruction(item, index: int) -> dict | None:
     if isinstance(item, dict):
         chapter_number = _as_int(item.get("chapter_number"), index)
+        # v6.6.4: Normalize key_events array into structured text without losing info
+        raw_key_events = item.get("key_events", "")
+        if isinstance(raw_key_events, list):
+            key_events = "；".join(str(ev) for ev in raw_key_events if ev)
+        else:
+            key_events = _as_text(raw_key_events)
         return {
             **item,
             "chapter_number": chapter_number,
             "objective": _as_text(item.get("objective", "")),
-            "key_events": _as_text(item.get("key_events", "")),
+            "key_events": key_events,
             "emotion_tone": _as_text(item.get("emotion_tone", "")),
+            "ending_hook": _as_text(item.get("ending_hook", "")),
+            "continuity_seed": _as_text(item.get("continuity_seed", "")),
         }
     text = _as_text(item).strip()
     if not text:
@@ -823,6 +895,8 @@ def _coerce_instruction(item, index: int) -> dict | None:
         "objective": text,
         "key_events": text,
         "emotion_tone": "",
+        "ending_hook": "",
+        "continuity_seed": "",
     }
 
 
@@ -892,7 +966,41 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
         "- factions: [{\"name\": \"\", \"type\": \"\", \"description\": \"\", \"relationship_with_protagonist\": \"\"}]\n"
         "- outlines: [{\"chapters_range\": \"1-3\", \"title\": \"\", \"content\": \"\", \"level\": \"arc\", \"sequence\": 1}]\n"
         "- plot_holes: [{\"code\": \"PH-001\", \"type\": \"\", \"title\": \"\", \"description\": \"\", \"planted_chapter\": 1, \"planned_resolve_chapter\": 10, \"status\": \"planted\"}]\n"
-        "- instructions: [{\"chapter_number\": 1, \"objective\": \"\", \"key_events\": \"\", \"emotion_tone\": \"\", \"word_target\": 3000}]\n\n"
+        "- instructions: [{\"chapter_number\": 1, \"objective\": \"\", \"key_events\": \"\", \"emotion_tone\": \"\", \"ending_hook\": \"\", \"continuity_seed\": \"\", \"word_target\": 3000}]\n\n"
+        "【章节指令深度要求 - 必须逐章具体】\n"
+        "每章 instructions 必须包含：\n"
+        "- chapter_number: 章序号\n"
+        "- objective: 具体到本章的主角目标、遇到的阻力、以及结果变化。禁止使用\"扩大冲突/推动剧情/获得主动权/进入复杂局面\"等抽象表达。\n"
+        "- key_events: 至少 3 个具体事件，不能只有\"冲突升级/主角成长/势力入场\"。必须写出谁、在哪里、做了什么、产生了什么后果。\n"
+        "- emotion_tone: 本章情感基调\n"
+        "- ending_hook: 本章结尾钩子，明确写出悬念或转折\n"
+        "- continuity_seed: 给下一章必须继承的悬念、时间或任务\n"
+        "- word_target: 本章目标字数\n"
+        "相邻章节的 objective 和 key_events 不得复用同一抽象目标或同一套事件。\n\n"
+        "【角色深度要求】\n"
+        "每个角色必须包含：\n"
+        "- 具体姓名（不能是\"主角\"\"反派\"等通用称呼）\n"
+        "- 角色功能（protagonist/antagonist/supporting）\n"
+        "- 当前欲望/目标\n"
+        "- 内在矛盾或秘密\n"
+        "- 与主角的利益关系\n\n"
+        "【势力深度要求】\n"
+        "每个势力必须包含：\n"
+        "- 具体名称（不能是\"主角阵营\"\"敌对势力\"等通用称呼）\n"
+        "- 资源/手段\n"
+        "- 对主角的态度\n"
+        "- 当前阶段会采取的行动\n\n"
+        "【伏笔深度要求】\n"
+        "每个伏笔必须包含：\n"
+        "- 触发场景\n"
+        "- 读者看到的表象\n"
+        "- 真相方向\n"
+        "- 预计推进/兑现章节\n\n"
+        "【大纲深度要求】\n"
+        "大纲不能只写\"前期/中期/高潮\"等阶段标签，必须写出：\n"
+        "- 阶段冲突（谁和谁因什么发生冲突）\n"
+        "- 转折（什么事件打破了原有平衡）\n"
+        "- 阶段结果（这一阶段结束时主角和局势发生了什么变化）\n\n"
         "重要规则：\n"
         "1. 输出必须是纯 JSON，不要添加任何注释、解释或 Markdown 标记\n"
         "2. 不要在 JSON 中使用尾逗号\n"
@@ -958,9 +1066,9 @@ def _build_genesis_completion_prompt(
         "- plot_holes: [{\"code\": \"PH-001\", \"type\": \"\", \"title\": \"\", \"description\": \"\", \"planted_chapter\": 1, \"planned_resolve_chapter\": 10, \"status\": \"planted\"}]\n"
         "- instructions: [{\"chapter_number\": 1, \"objective\": \"\", \"key_events\": \"\", \"emotion_tone\": \"\", \"word_target\": 3000}]\n\n"
         "要求：\n"
-        "1. 角色至少包含主角、核心盟友/女主/重要配角、主要反派或对立势力人物。\n"
-        "2. 大纲至少覆盖首批章节范围。\n"
-        "3. 章节指令必须覆盖首批每一章。\n"
+        "1. 角色至少包含主角、核心盟友/女主/重要配角、主要反派或对立势力人物，必须有具体姓名、目标、矛盾和利益关系。\n"
+        "2. 大纲至少覆盖首批章节范围，必须包含阶段冲突、转折和阶段结果。\n"
+        "3. 章节指令必须覆盖首批每一章，包含 objective、key_events、ending_hook、continuity_seed。\n"
         "4. 输出纯 JSON，不要 Markdown、解释、注释或尾逗号。"
     )
 
@@ -1150,11 +1258,21 @@ def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
         ch_num = inst.get("chapter_number")
         if ch_num is None:
             continue
+        # v6.6.4: Merge ending_hook/continuity_seed into key_events/emotion_tone if DB lacks columns
+        objective = _as_text(inst.get("objective", ""))
+        key_events = _as_text(inst.get("key_events", ""))
+        emotion_tone = _as_text(inst.get("emotion_tone", ""))
+        ending_hook = _as_text(inst.get("ending_hook", ""))
+        continuity_seed = _as_text(inst.get("continuity_seed", ""))
+        if ending_hook and ending_hook not in key_events:
+            key_events = f"{key_events}\n结尾钩子: {ending_hook}".strip()
+        if continuity_seed and continuity_seed not in emotion_tone:
+            emotion_tone = f"{emotion_tone}\n继承点: {continuity_seed}".strip()
         instruction_data = {
             **inst,
-            "objective": _as_text(inst.get("objective", "")),
-            "key_events": _as_text(inst.get("key_events", "")),
-            "emotion_tone": _as_text(inst.get("emotion_tone", "")),
+            "objective": objective,
+            "key_events": key_events,
+            "emotion_tone": emotion_tone,
         }
         existing_inst = repo.get_instruction_by_chapter(project_id, ch_num)
         if existing_inst:
@@ -1345,7 +1463,7 @@ async def approve_genesis(
             if not (force_apply and confirm_quality_risk):
                 return error_response(
                     "GENESIS_QUALITY_BLOCKED",
-                    "创世草案质量门未通过，请重新生成或人工补全",
+                    "创世草案质量不足，请重新生成或人工补全后再批准",
                     {
                         "quality_report": _quality_report_payload(quality_report)
                     },
@@ -1551,7 +1669,7 @@ async def approve_genesis_canonical(
             if not (body.force_apply and body.confirm_quality_risk):
                 return error_response(
                     "GENESIS_QUALITY_BLOCKED",
-                    "创世草案质量门未通过，请重新生成或人工补全。如需强制应用，请设置 force_apply=true 和 confirm_quality_risk=true",
+                    "创世草案质量不足，请重新生成或人工补全后再批准。如需强制应用，请设置 force_apply=true 和 confirm_quality_risk=true",
                     {
                         "quality_report": _quality_report_payload(quality_report)
                     },

@@ -21,11 +21,12 @@
 - **当前创作者闭环基线**: v6.3.2 Creator Onboarding Closure
 - **当前章节质量基线**: v6.4.6 Chapter Generation Quality Closure
 - **当前交互体验基线**: v6.5.7 Visual Polish Pass
-- **当前下一步**: v6.6 Agent Evidence UX / Structured Memory Canonicalization
-- **状态**: v6.5 已完成 Visual Polish Pass。v6.5 核心交付：交互体验规格、Toast/LoadingButton/Skeleton 交互底座、Project Overview 创作驾驶舱、章节写作台 polish、Agent 过程叙事、Settings/Desktop Runtime polish、日间/夜间主题切换与视觉质感升级。
+- **当前创世质量基线**: v6.6.4 Genesis Initialization Depth & Specificity Closure
+- **当前下一步**: v6.6+ Agent Evidence UX / Structured Memory Canonicalization
+- **状态**: v6.6.4 已完成 Genesis Initialization Depth & Specificity Closure。核心交付：Genesis Prompt 深度要求、Draft Normalization 扩展、Quality Gate 加强（SHALLOW_INSTRUCTION/ABSTRACT_OBJECTIVE/OUTLINE_TOO_ABSTRACT 等 blocker）、前端质量报告按 section 分组、API 语义保持并补充 _meta 审计保留。
 - **v6.4 规格**: [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md) — 解决生成章节"AI 味重"问题，聚焦 prompt 增强、deterministic validator 补充和 skill 升级。
 - **v6.5 规格**: [planning/novel-factory-v6.5-interaction-excellence-spec.md](planning/novel-factory-v6.5-interaction-excellence-spec.md) — 解决桌面客户端"后台感"问题，先建立 toast/loading/skeleton 等交互基础设施，再逐页升级工作台体验。
-- **测试基线**: backend full suite **2071 passed, 0 failed**；v6.5.7 frontend vitest **198 passed**；`scripts/verify.py smoke` 28 passed；frontend typecheck/lint/build passed；desktop build passed
+- **测试基线**: backend full suite **2239 passed, 0 failed**；v6.5.7 frontend vitest **198 passed**；`scripts/verify.py smoke` 28 passed；frontend typecheck/lint/build passed；desktop build passed
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
@@ -63,6 +64,9 @@
 - **v6.5.6 Interaction Excellence Review 记录**: [reviews/novel-factory-v6.5.6-interaction-excellence-closure-review.md](reviews/novel-factory-v6.5.6-interaction-excellence-closure-review.md)
 - **v6.5.7 Visual Polish Pass 完成报告**: [reports/novel-factory-v6.5.7-visual-polish-pass-report.md](reports/novel-factory-v6.5.7-visual-polish-pass-report.md)
 - **v6.5.7 Visual Polish Pass Review 记录**: [reviews/novel-factory-v6.5.7-visual-polish-pass-review.md](reviews/novel-factory-v6.5.7-visual-polish-pass-review.md)
+- **v6.6.4 Genesis Depth & Specificity 规格**: [planning/novel-factory-v6.6.4-genesis-depth-specificity-closure-spec.md](planning/novel-factory-v6.6.4-genesis-depth-specificity-closure-spec.md)
+- **v6.6.4 完成报告**: [reports/novel-factory-v6.6.4-completion-report.md](reports/novel-factory-v6.6.4-completion-report.md)
+- **v6.6.4 Review 记录**: [reviews/novel-factory-v6.6.4-review.md](reviews/novel-factory-v6.6.4-review.md)
 
 ## 当前执行规则
 

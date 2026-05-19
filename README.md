@@ -24,6 +24,7 @@ It ships as an Electron desktop client with an embedded React workbench and a lo
 - **Desktop-first writing workbench** for planning, drafting, revising, reviewing, and publishing chapters.
 - **Agent chapter workflow** powered by LangGraph: planner, screenwriter, author, polisher, editor, memory curator, and publisher.
 - **Project memory system** for characters, world settings, factions, outlines, plot holes, instructions, and story facts.
+- **Genesis quality gate** with depth checks for character motivations, faction actions, plot hole design, and outline specificity to prevent shallow project initialization.
 - **Quality diagnosis and revision support** for AI trace, pacing, dialogue, scene texture, info dumps, show-don't-tell, and editor gates.
 - **Run observability** with node events, artifacts, LLM latency/tokens, retry actions, recovery tools, and memory backfill.
 - **Agent-level LLM routing** so different agents can use different model profiles.

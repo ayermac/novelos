@@ -327,9 +327,12 @@ export default function GenesisModule({ projectId, project }: Props) {
   const draft = draftPreview.draft
   const canGenerate = !genesis || genesis.status === 'approved' || genesis.status === 'rejected' || genesis.status === 'failed'
 
-  // v6.6.3: Check quality gate
-  const qualityBlocked = genesis?.quality_report && !genesis.quality_report.passed
-  const isScaffold = genesis?.quality_report?.quality_status === 'scaffold_fallback'
+  // v6.6.4: Quality gate semantics
+  const qualityReport = genesis?.quality_report
+  const isScaffold = qualityReport?.quality_status === 'scaffold_fallback'
+  const hasBlockers = qualityReport?.issues?.some((i) => i.severity === 'blocker') ?? false
+  const hasWarnings = qualityReport?.issues?.some((i) => i.severity === 'warning') ?? false
+  const approveDisabled = approving || draftPreview.invalid || draftPreview.empty || draftPreview.incomplete || isScaffold || hasBlockers
 
   return (
     <div className="project-module">
@@ -489,29 +492,62 @@ export default function GenesisModule({ projectId, project }: Props) {
           {/* Draft preview */}
           {genesis.status === 'generated' && (
             <>
-              {/* v6.6.3: Quality report */}
-              {genesis.quality_report && (
-                <div className={`genesis-quality-report ${qualityStatusClass(genesis.quality_report.quality_status)}`}>
+              {/* v6.6.4: Quality report grouped by section */}
+              {qualityReport && (
+                <div className={`genesis-quality-report ${qualityStatusClass(qualityReport.quality_status)}`}>
                   <div className="quality-header">
-                    <span className="quality-status">{qualityStatusLabel(genesis.quality_report.quality_status)}</span>
-                    <span className="quality-score">评分: {genesis.quality_report.score.toFixed(0)}</span>
+                    <span className="quality-status">{qualityStatusLabel(qualityReport.quality_status)}</span>
+                    <span className="quality-score">评分: {qualityReport.score.toFixed(0)}</span>
                   </div>
-                  {genesis.quality_report.quality_status === 'scaffold_fallback' && (
+                  {isScaffold && (
                     <div className="quality-scaffold-warning">
                       当前草案包含兜底模板内容，不建议批准。请重新生成或人工补全。
                     </div>
                   )}
-                  {genesis.quality_report.issues.length > 0 && (
+                  {hasBlockers && !isScaffold && (
+                    <div className="quality-scaffold-warning">
+                      草案存在阻塞性问题，建议重新生成或人工补全后再批准。
+                    </div>
+                  )}
+                  {hasWarnings && !hasBlockers && !isScaffold && (
+                    <div style={{ marginBottom: 10, fontSize: 12, color: 'var(--warning)' }}>
+                      草案存在质量警告，批准后可继续，但可能影响后续章节生产。
+                    </div>
+                  )}
+                  {qualityReport.issues.length > 0 && (
                     <div className="quality-issues">
-                      {genesis.quality_report.issues.map((issue, i) => (
-                        <div key={i} className={`quality-issue issue-${issue.severity}`}>
-                          <span className="issue-severity">
-                            {issue.severity === 'blocker' ? '阻塞' : issue.severity === 'warning' ? '警告' : '建议'}
-                          </span>
-                          <span className="issue-message">{issue.message}</span>
-                          {issue.suggestion && <span className="issue-suggestion">{issue.suggestion}</span>}
-                        </div>
-                      ))}
+                      {(() => {
+                        const groups: Record<string, QualityIssue[]> = {}
+                        qualityReport.issues.forEach((issue) => {
+                          const sec = issue.section || '其他'
+                          if (!groups[sec]) groups[sec] = []
+                          groups[sec].push(issue)
+                        })
+                        const sectionNames: Record<string, string> = {
+                          instructions: '章节指令',
+                          characters: '角色',
+                          factions: '势力',
+                          outlines: '大纲',
+                          plot_holes: '伏笔/悬念',
+                          meta: '系统兜底',
+                        }
+                        return Object.entries(groups).map(([sec, secIssues]) => (
+                          <div key={sec} style={{ marginBottom: 10 }}>
+                            <div style={{ fontWeight: 600, fontSize: 12, marginBottom: 6, color: 'var(--text-secondary)' }}>
+                              {sectionNames[sec] || sec}
+                            </div>
+                            {secIssues.map((issue, i) => (
+                              <div key={i} className={`quality-issue issue-${issue.severity}`}>
+                                <span className="issue-severity">
+                                  {issue.severity === 'blocker' ? '阻塞' : issue.severity === 'warning' ? '警告' : '建议'}
+                                </span>
+                                <span className="issue-message">{issue.message}</span>
+                                {issue.suggestion && <span className="issue-suggestion">{issue.suggestion}</span>}
+                              </div>
+                            ))}
+                          </div>
+                        ))
+                      })()}
                     </div>
                   )}
                 </div>
@@ -649,13 +685,16 @@ export default function GenesisModule({ projectId, project }: Props) {
                     <button
                       className="btn btn-primary"
                       onClick={handleApprove}
-                      disabled={approving || draftPreview.invalid || draftPreview.empty || draftPreview.incomplete || qualityBlocked}
-                      title={qualityBlocked ? '质量门未通过，无法批准' : ''}
+                      disabled={approveDisabled}
+                      title={isScaffold ? '兜底模板不建议直接批准' : hasBlockers ? '创世草案质量不足，不能批准' : ''}
                     >
                       {approving ? <><Loader2 size={14} className="spin" /> 应用中...</> : <><CheckCircle2 size={14} /> 批准并应用</>}
                     </button>
-                    {qualityBlocked && !isScaffold && (
-                      <span className="quality-block-hint">草案存在质量问题，请重新生成</span>
+                    {hasBlockers && !isScaffold && (
+                      <span className="quality-block-hint">存在阻塞问题，建议重新生成或补全</span>
+                    )}
+                    {hasWarnings && !hasBlockers && !isScaffold && (
+                      <span className="quality-block-hint" style={{ color: 'var(--warning)' }}>存在质量警告，批准后可能影响后续生产</span>
                     )}
                     {isScaffold && (
                       <span className="quality-block-hint">兜底模板不建议直接批准</span>
