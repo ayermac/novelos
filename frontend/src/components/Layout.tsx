@@ -19,6 +19,7 @@ import {
 import { get } from '../lib/api'
 import DesktopRuntimeBanner from './DesktopRuntimeBanner'
 import DesktopFirstRunSetup from './desktop/DesktopFirstRunSetup'
+import packageInfo from '../../package.json'
 
 interface NavItem {
   to: string
@@ -40,6 +41,7 @@ const navItems: NavItem[] = [
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'novelos.mainSidebar.collapsed'
 const THEME_STORAGE_KEY = 'novelos.theme'
+const APP_VERSION = packageInfo.version
 type ThemeMode = 'light' | 'dark'
 
 function getInitialTheme(): ThemeMode {
@@ -133,7 +135,7 @@ export default function Layout() {
             <span className="brand-tagline">长篇小说生产系统</span>
           </div>
           <div className="brand-meta-row">
-            <span className="version">v5.5.9</span>
+            <span className="version">v{APP_VERSION}</span>
             <div className="sidebar-brand-actions">
               <button
                 type="button"

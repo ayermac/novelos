@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MemoryRouter, Route, Routes } from 'react-router-dom'
 import Layout from '../Layout'
+import packageInfo from '../../../package.json'
 
 vi.mock('../../lib/api', () => ({
   get: vi.fn().mockResolvedValue({ ok: true, data: null }),
@@ -78,5 +79,12 @@ describe('Layout', () => {
     const { container } = renderLayout()
 
     expect(container.querySelector('.brand-icon img')).toHaveAttribute('src', './logo.png')
+  })
+
+  it('renders the package version in the sidebar badge', () => {
+    renderLayout()
+
+    expect(screen.getByText(`v${packageInfo.version}`)).toBeInTheDocument()
+    expect(screen.queryByText('v5.5.9')).not.toBeInTheDocument()
   })
 })
