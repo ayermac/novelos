@@ -136,6 +136,7 @@ interface AutoRunResponse {
   stop_reason: string
   chapters_touched: number[]
   steps_executed?: number
+  domain_result?: Record<string, unknown>
 }
 
 interface AutoRunEventData {
@@ -225,6 +226,11 @@ function deriveAutoRunSeverity(
   steps: AutoRunStep[],
 ): 'success' | 'warning' | 'error' {
   if (!result) return 'success'
+  if (result.domain_result) {
+    const domainResult = normalizeOperationResult(result as unknown as Record<string, unknown>)
+    if (domainResult.severity === 'error') return 'error'
+    if (!isBusinessSuccess(domainResult) && domainResult.domain_status !== 'pending') return 'warning'
+  }
   if (result.status === 'failed') return 'error'
   if (result.status !== 'completed' && result.status !== 'dry_run') return 'warning'
   const effectiveSteps = steps.length > 0 ? steps : result.steps || []
@@ -376,7 +382,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const [loading, setLoading] = useState(true)
   const [filling, setFilling] = useState(false)
   const [primaryActionLoading, setPrimaryActionLoading] = useState(false)
-  const [inlineMessage, setInlineMessage] = useState<{ variant: 'success' | 'danger'; children: string } | null>(null)
+  const [inlineMessage, setInlineMessage] = useState<{ variant: 'success' | 'warning' | 'danger'; children: string } | null>(null)
 
   /* Auto-run state */
   const [autoRunning, setAutoRunning] = useState(false)
@@ -695,13 +701,13 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
       if (res.ok && res.data) {
         setAutoResult(res.data)
-        // Forward-compat: surface domain_result if backend adds it to run-auto response
+        // Surface backend domain_result when run-auto completed with warnings/degraded results.
         const rawData = res.data as unknown as Record<string, unknown>
         if ('domain_result' in rawData && rawData.domain_result) {
           const domainResult = normalizeOperationResult(rawData)
           if (!isBusinessSuccess(domainResult) && domainResult.domain_status !== 'pending') {
             setInlineMessage({
-              variant: 'danger',
+              variant: domainResult.severity === 'error' ? 'danger' : 'warning',
               children: domainResult.user_message || domainResult.message || '运行完成但有异常',
             })
           }

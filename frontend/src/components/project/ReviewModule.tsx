@@ -33,14 +33,14 @@ export default function ReviewModule({ projectId }: Props) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [loading, setLoading] = useState(true)
   const [publishingChapter, setPublishingChapter] = useState<number | null>(null)
-  const [error, setError] = useState('')
+  const [notice, setNotice] = useState<{ variant: 'error' | 'warning'; text: string } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
-    setError('')
+    setNotice(null)
     const res = await get<Workspace>(`/projects/${projectId}/workspace`)
     if (res.ok && res.data) setWorkspace(res.data)
-    else setError(res.error?.message || '获取审核数据失败')
+    else setNotice({ variant: 'error', text: res.error?.message || '获取审核数据失败' })
     setLoading(false)
   }, [projectId])
 
@@ -48,16 +48,19 @@ export default function ReviewModule({ projectId }: Props) {
 
   const handlePublish = async (chapterNumber: number) => {
     setPublishingChapter(chapterNumber)
-    setError('')
+    setNotice(null)
     const res = await post<Record<string, unknown>>('/publish/chapter', { project_id: projectId, chapter: chapterNumber })
     if (res.ok) {
       const domainResult = normalizeOperationResult(res.data ?? {})
       if (!isBusinessSuccess(domainResult) && domainResult.domain_status !== 'pending') {
-        setError(domainResult.user_message || domainResult.message || '发布完成但请确认状态')
+        setNotice({
+          variant: domainResult.severity === 'error' ? 'error' : 'warning',
+          text: domainResult.user_message || domainResult.message || '发布完成但请确认状态',
+        })
       }
       load()
     } else {
-      setError(res.error?.message || '发布失败')
+      setNotice({ variant: 'error', text: res.error?.message || '发布失败' })
     }
     setPublishingChapter(null)
   }
@@ -95,7 +98,14 @@ export default function ReviewModule({ projectId }: Props) {
         <h3><CheckCircle2 size={18} /> 审核中心</h3>
       </div>
 
-      {error && <div className="alert alert-error" style={{ marginBottom: 12 }}>{error}</div>}
+      {notice && (
+        <div
+          className={`alert ${notice.variant === 'warning' ? 'alert-warning' : 'alert-error'}`}
+          style={{ marginBottom: 12 }}
+        >
+          {notice.text}
+        </div>
+      )}
 
       {/* Summary stats */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
@@ -145,7 +155,7 @@ export default function ReviewModule({ projectId }: Props) {
                   onClick={async () => {
                     const res = await post(`/projects/${projectId}/chapters/${ch.chapter_number}/reset`)
                     if (res.ok) load()
-                    else setError(res.error?.message || '重置失败')
+                    else setNotice({ variant: 'error', text: res.error?.message || '重置失败' })
                   }}
                 >
                   重置章节

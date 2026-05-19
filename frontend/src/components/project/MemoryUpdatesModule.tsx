@@ -77,7 +77,7 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
   const [applying, setApplying] = useState<string | null>(null)
   const [ignoring, setIgnoring] = useState<string | null>(null)
   const [retrying, setRetrying] = useState<string | null>(null)
-  const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
+  const [message, setMessage] = useState<{ type: 'success' | 'warning' | 'error'; text: string } | null>(null)
 
   const loadBatches = useCallback(async () => {
     setLoading(true)
@@ -119,7 +119,8 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
         setMessage({ type: 'success', text: domainResult.user_message || '批次已应用' })
       } else if (domainResult.domain_status !== 'pending') {
         // Non-success with real domain info (partial_success, fallback, degraded, etc.)
-        setMessage({ type: 'error', text: domainResult.user_message || domainResult.message || '部分应用完成，请检查结果' })
+        const type = domainResult.severity === 'error' ? 'error' : 'warning'
+        setMessage({ type, text: domainResult.user_message || domainResult.message || '部分应用完成，请检查结果' })
       } else {
         // Legacy endpoint without domain_result — show success as before
         setMessage({ type: 'success', text: '批次已应用' })
@@ -289,6 +290,7 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
         .memory-section-title { font-size: 14px; font-weight: 600; color: var(--text-secondary, #6b7280); margin-bottom: 12px; }
         .memory-msg { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
         .memory-msg-success { background: color-mix(in srgb, var(--success) 12%, var(--bg-primary)); border: 1px solid color-mix(in srgb, var(--success) 28%, transparent); color: var(--success); }
+        .memory-msg-warning { background: color-mix(in srgb, var(--warning) 12%, var(--bg-primary)); border: 1px solid color-mix(in srgb, var(--warning) 28%, transparent); color: var(--warning); }
         .memory-msg-error { background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary)); border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent); color: var(--danger); }
         .batch-card { border: 1px solid var(--border-color, #e5e7eb); border-radius: 8px; margin-bottom: 8px; overflow: hidden; background: var(--bg-primary); }
         .batch-header { display: flex; align-items: center; gap: 10px; padding: 12px 14px; cursor: pointer; background: var(--bg-primary); transition: background 0.15s; }
