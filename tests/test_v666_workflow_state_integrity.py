@@ -297,6 +297,38 @@ def test_local_edit_on_awaiting_publish_does_not_block():
     assert "local_edit" in result["safe_actions"]
 
 
+def test_local_edit_content_save_keeps_awaiting_publish_status(client, db_path):
+    """Saving an accepted local edit on awaiting_publish must not re-enter review workflow."""
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    project_id = "test-local-edit-save"
+    repo.create_project(project_id=project_id, name="Local Edit Save", genre="test")
+    repo.add_chapter(project_id, 1, title="Chapter 1", status="planned")
+    original = "待发布章节正文" * 20
+    repo.save_chapter(project_id, 1, "Chapter 1", original, len(original), "awaiting_publish")
+    version_id = repo.save_version(project_id, 1, original, source="ai_generation")
+
+    edited = original + " 局部润色。"
+    response = client.post(
+        f"/api/projects/{project_id}/chapters/1/content",
+        json={
+            "content": edited,
+            "base_version_id": version_id,
+            "summary": "接受局部返修",
+            "confirm": True,
+            "is_local_edit": True,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"], body.get("error")
+    assert body["data"]["status"] == "awaiting_publish"
+    assert body["data"]["status_changed"] is False
+    assert repo.get_chapter(project_id, 1)["status"] == "awaiting_publish"
+
+
 # ── Checkpoint Stale Detection Tests ───────────────────────────────
 
 

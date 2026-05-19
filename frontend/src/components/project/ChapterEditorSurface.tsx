@@ -40,6 +40,7 @@ export default function ChapterEditorSurface({
   const [error, setError] = useState('')
   const [fullscreen, setFullscreen] = useState(false)
   const [revisionDraftReady, setRevisionDraftReady] = useState(false)
+  const [localRevisionApplied, setLocalRevisionApplied] = useState(false)
 
   // Local revision state
   const [selectedText, setSelectedText] = useState('')
@@ -100,10 +101,12 @@ export default function ChapterEditorSurface({
         summary: revisionDraftReady ? '人工修订保存' : '人工编辑保存',
         base_version_id: editorState.current_version_id,
         confirm: revisionDraftReady,
+        is_local_edit: localRevisionApplied,
       })
       if (resp.ok) {
         setViewMode('read')
         setRevisionDraftReady(false)
+        setLocalRevisionApplied(false)
         await loadEditor()
         onContentSaved?.()
       } else {
@@ -114,7 +117,7 @@ export default function ChapterEditorSurface({
     } finally {
       setSaving(false)
     }
-  }, [projectId, chapterNumber, editContent, editorState, revisionDraftReady, saving, loadEditor, onContentSaved])
+  }, [projectId, chapterNumber, editContent, editorState, revisionDraftReady, localRevisionApplied, saving, loadEditor, onContentSaved])
 
   // Create revision draft for published chapters
   const handleCreateRevisionDraft = useCallback(async () => {
@@ -188,6 +191,7 @@ export default function ChapterEditorSurface({
     const before = editContent.substring(0, revisionResult.selection_start)
     const after = editContent.substring(revisionResult.selection_end)
     setEditContent(before + revisionResult.replacement_text + after)
+    setLocalRevisionApplied(true)
     setRevisionResult(null)
     setSelectedText('')
     setRevisionInstruction('')
@@ -270,6 +274,7 @@ export default function ChapterEditorSurface({
                 setViewMode('read')
                 setRevisionResult(null)
                 setRevisionDraftReady(false)
+                setLocalRevisionApplied(false)
               }}
               disabled={saving}
             >

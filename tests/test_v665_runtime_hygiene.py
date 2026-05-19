@@ -10,6 +10,7 @@ Validates:
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -26,15 +27,15 @@ from novel_factory.api_app import create_api_app
 
 class TestUnifiedVersion:
     def test_version_constant(self):
-        assert __version__ == "6.6.5"
+        assert __version__ == get_version()
 
     def test_get_version(self):
-        assert get_version() == "6.6.5"
+        assert get_version()
 
     def test_fastapi_metadata_uses_version(self):
         app = create_api_app()
-        assert app.version == "6.6.5"
-        assert "6.6.5" in app.description
+        assert app.version == get_version()
+        assert get_version() in app.description
 
     def test_health_returns_version(self):
         app = create_api_app()
@@ -42,7 +43,7 @@ class TestUnifiedVersion:
         response = client.get("/api/health")
         assert response.status_code == 200
         data = response.json()["data"]
-        assert data["version"] == "6.6.5"
+        assert data["version"] == get_version()
 
     def test_health_has_timestamp(self):
         app = create_api_app()
@@ -328,8 +329,8 @@ class TestGlobalExceptionHandler:
 class TestFrontendPackageVersion:
     def test_package_json_version(self):
         package_json = Path(__file__).parent.parent / "frontend" / "package.json"
-        content = package_json.read_text()
-        assert '"version": "6.6.5"' in content
+        data = json.loads(package_json.read_text())
+        assert data["version"] == get_version()
 
 
 # ── G. Desktop Runtime Info Version ────────────────────────────────
@@ -343,7 +344,7 @@ class TestDesktopRuntimeInfo:
         response = client.get("/api/desktop/runtime-info")
         assert response.status_code == 200
         data = response.json()["data"]
-        assert data["version"] == "6.6.5"
+        assert data["version"] == get_version()
 
 
 # ── H. CLI Version ─────────────────────────────────────────────────
@@ -353,4 +354,4 @@ class TestCLIVersion:
     def test_cli_version_uses_unified_version(self):
         """CLI --version should use unified version source."""
         from novel_factory.cli_app.main import _get_version
-        assert _get_version() == "6.6.5"
+        assert _get_version() == get_version()
