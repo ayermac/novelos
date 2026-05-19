@@ -147,6 +147,34 @@ class TestRedaction:
         assert "DEEPSEEK_API_KEY=" in result
         assert "***" in result
 
+    def test_redacts_env_with_spaces(self):
+        raw = "Config: OPENAI_API_KEY = sk-live-12345abcde"
+        result = redact_sensitive_text(raw)
+        assert "sk-live-12345abcde" not in result
+        assert "OPENAI_API_KEY" in result
+        assert "***" in result
+
+    def test_redacts_env_with_colon(self):
+        raw = "Config: api_key : supersecret123"
+        result = redact_sensitive_text(raw)
+        assert "supersecret123" not in result
+        assert "api_key" in result.lower()
+        assert "***" in result
+
+    def test_redacts_x_api_key_header(self):
+        raw = "HTTP header: x-api-key: abc123def456"
+        result = redact_sensitive_text(raw)
+        assert "abc123def456" not in result
+        assert "x-api-key:" in result.lower()
+        assert "***" in result
+
+    def test_redacts_authorization_header(self):
+        raw = "HTTP header: Authorization: Bearer tokensecret123"
+        result = redact_sensitive_text(raw)
+        assert "tokensecret123" not in result
+        assert "Authorization:" in result or "authorization:" in result
+        assert "***" in result
+
     def test_preserves_safe_context(self):
         raw = "Connection timeout to api.openai.com:443 after 30s"
         result = redact_sensitive_text(raw)
@@ -302,3 +330,27 @@ class TestFrontendPackageVersion:
         package_json = Path(__file__).parent.parent / "frontend" / "package.json"
         content = package_json.read_text()
         assert '"version": "6.6.5"' in content
+
+
+# ── G. Desktop Runtime Info Version ────────────────────────────────
+
+
+class TestDesktopRuntimeInfo:
+    def test_desktop_runtime_info_uses_unified_version(self):
+        """Desktop runtime-info should use unified version source."""
+        app = create_api_app()
+        client = TestClient(app)
+        response = client.get("/api/desktop/runtime-info")
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["version"] == "6.6.5"
+
+
+# ── H. CLI Version ─────────────────────────────────────────────────
+
+
+class TestCLIVersion:
+    def test_cli_version_uses_unified_version(self):
+        """CLI --version should use unified version source."""
+        from novel_factory.cli_app.main import _get_version
+        assert _get_version() == "6.6.5"

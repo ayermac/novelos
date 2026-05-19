@@ -18,15 +18,20 @@ _REDACTION_PATTERNS: list[tuple[re.Pattern, str]] = [
     (re.compile(r"sk-[a-zA-Z0-9_-]+"), "***"),
     # Bearer tokens
     (re.compile(r"Bearer\s+[a-zA-Z0-9_\-\.]{10,}", re.IGNORECASE), "Bearer ***"),
-    # Env-style key assignments for known providers (before generic query params)
-    (re.compile(r"OPENAI_API_KEY=[^\s]+", re.IGNORECASE), "OPENAI_API_KEY=***"),
-    (re.compile(r"OPENROUTER_API_KEY=[^\s]+", re.IGNORECASE), "OPENROUTER_API_KEY=***"),
-    (re.compile(r"DEEPSEEK_API_KEY=[^\s]+", re.IGNORECASE), "DEEPSEEK_API_KEY=***"),
+    # HTTP headers with secrets
+    (re.compile(r"Authorization\s*:\s*[a-zA-Z0-9_\-\.]{10,}", re.IGNORECASE), "Authorization: ***"),
+    (re.compile(r"x-api-key\s*:\s*[a-zA-Z0-9_\-]+", re.IGNORECASE), "x-api-key: ***"),
+    # Env-style key assignments for known providers (before generic patterns)
+    (re.compile(r"OPENAI_API_KEY\s*=\s*[^\s]+", re.IGNORECASE), "OPENAI_API_KEY=***"),
+    (re.compile(r"OPENROUTER_API_KEY\s*=\s*[^\s]+", re.IGNORECASE), "OPENROUTER_API_KEY=***"),
+    (re.compile(r"DEEPSEEK_API_KEY\s*=\s*[^\s]+", re.IGNORECASE), "DEEPSEEK_API_KEY=***"),
+    # Generic env-style assignments with flexible spacing (after specific providers)
+    (re.compile(r"([A-Z_]+API_KEY)\s*=\s*[^\s]+", re.IGNORECASE), r"\1=***"),
     # Query param tokens — use negative lookahead to avoid re-matching our own replacements
-    (re.compile(r"api_key=(?!\*\*\*)[^&\s]+", re.IGNORECASE), "api_key=***"),
-    (re.compile(r"access_token=(?!\*\*\*)[^&\s]+", re.IGNORECASE), "access_token=***"),
-    (re.compile(r"token=(?!\*\*\*)[^&\s]+", re.IGNORECASE), "token=***"),
-    (re.compile(r"key=(?!\*\*\*)[^&\s]+", re.IGNORECASE), "key=***"),
+    (re.compile(r"api_key\s*[=:]\s*(?!\*\*\*)[^&\s]+", re.IGNORECASE), "api_key=***"),
+    (re.compile(r"access_token\s*[=:]\s*(?!\*\*\*)[^&\s]+", re.IGNORECASE), "access_token=***"),
+    (re.compile(r"token\s*[=:]\s*(?!\*\*\*)[^&\s]+", re.IGNORECASE), "token=***"),
+    (re.compile(r"key\s*[=:]\s*(?!\*\*\*)[^&\s]+", re.IGNORECASE), "key=***"),
 ]
 
 

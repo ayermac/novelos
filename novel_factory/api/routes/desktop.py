@@ -141,6 +141,7 @@ async def get_runtime_info(request: Request) -> EnvelopeResponse:
     Never returns API keys.
     """
     from ..deps import get_config_path, get_db_path, get_llm_mode
+    from ...version import get_version
 
     try:
         config_path = get_config_path(request)
@@ -167,7 +168,7 @@ async def get_runtime_info(request: Request) -> EnvelopeResponse:
             "db_exists": bool(db_path and Path(db_path).exists()),
             "sidecar_pid": os.getpid(),
             "platform": os.environ.get("NOVELOS_PLATFORM", ""),
-            "version": "6.8.0-m6",
+            "version": get_version(),
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取运行时信息失败: {str(e)}")

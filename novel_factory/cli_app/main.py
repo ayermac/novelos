@@ -138,11 +138,13 @@ class JSONArgumentParser(argparse.ArgumentParser):
 
 
 def _get_version() -> str:
-    """Get package version from importlib.metadata, with fallback for source mode."""
-    try:
-        return importlib.metadata.version("novel-factory")
-    except importlib.metadata.PackageNotFoundError:
-        return "dev"
+    """Get runtime version from unified source.
+
+    CLI shows the same version as /api/health and FastAPI metadata.
+    Package metadata version is shown separately when available.
+    """
+    from ..version import get_version
+    return get_version()
 
 
 def build_parser() -> argparse.ArgumentParser:
