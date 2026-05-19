@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ..contracts import success, partial_success, failed, blocked as blocked_result, ignored
 
 router = APIRouter()
 
@@ -413,7 +414,80 @@ def _fallback_apply_error() -> EnvelopeResponse:
     return error_response(
         "FALLBACK_MEMORY_REQUIRES_REEXTRACTION",
         "该批次是状态卡兜底候选，不是 MemoryCurator 真实提取结果。请重新补跑记忆提取，或逐条人工复核后再应用。",
+        details={
+            "domain_result": blocked_result(
+                "状态卡兜底记忆不能直接应用",
+                user_message="这批记忆来自状态卡兜底，不是可信提取结果。请先补跑记忆提取。",
+                next_action="backfill_memory",
+                action_label="补跑记忆提取",
+                flags={"fallback_memory_blocked": True},
+            ).to_dict(),
+        },
     )
+
+
+def _build_memory_apply_domain_result(
+    batch_id: str,
+    new_status: str,
+    results: list[dict],
+) -> dict:
+    """Build v6.6.12 domain_result for memory batch apply routes."""
+    failed_count = sum(1 for r in results if not r.get("success"))
+    success_count = len(results) - failed_count
+    if new_status == "applied":
+        return success(
+            f"记忆批次应用成功：{success_count} 条已应用",
+            user_message="记忆更新已成功应用到项目",
+            details={
+                "batch_id": batch_id,
+                "items_processed": len(results),
+                "success_count": success_count,
+            },
+            flags={"memory_applied": True},
+        ).to_dict()
+    if new_status == "partial":
+        return partial_success(
+            f"记忆批次部分应用：{success_count} 成功，{failed_count} 失败",
+            user_message="部分记忆项应用失败，可重试失败项",
+            next_action="retry_failed_memory",
+            action_label="重试失败项",
+            details={
+                "batch_id": batch_id,
+                "items_processed": len(results),
+                "success_count": success_count,
+                "failed_count": failed_count,
+            },
+            flags={"memory_partial": True},
+        ).to_dict()
+    if new_status == "mixed":
+        return success(
+            f"记忆批次应用完成：{success_count} 成功，部分已忽略",
+            user_message="记忆更新已应用，部分项被忽略",
+            details={
+                "batch_id": batch_id,
+                "items_processed": len(results),
+                "success_count": success_count,
+            },
+            flags={"memory_mixed": True},
+        ).to_dict()
+    if new_status == "ignored":
+        return ignored(
+            "记忆批次已全部忽略",
+            user_message="所有记忆项已被忽略，未应用到项目",
+            details={
+                "batch_id": batch_id,
+                "items_processed": len(results),
+            },
+            flags={"memory_ignored": True},
+        ).to_dict()
+    return success(
+        f"记忆批次处理完成：{new_status}",
+        details={
+            "batch_id": batch_id,
+            "status": new_status,
+            "items_processed": len(results),
+        },
+    ).to_dict()
 
 
 @router.get("/projects/{project_id}/memory-batches")
@@ -535,12 +609,14 @@ async def apply_memory_batch(
         # Recalculate batch status from all items
         new_status = _compute_batch_status(batch_id, repo)
         repo.update_memory_batch(batch_id, {"status": new_status})
+        domain_result = _build_memory_apply_domain_result(batch_id, new_status, results)
 
         return envelope_response({
             "batch_id": batch_id,
             "status": new_status,
             "items_processed": len(results),
             "results": results,
+            "domain_result": domain_result,
         })
 
     except Exception as e:
@@ -671,11 +747,14 @@ async def apply_memory_batch_canonical(
         new_status = _compute_batch_status(body.batch_id, repo)
         repo.update_memory_batch(body.batch_id, {"status": new_status})
 
+        domain_result = _build_memory_apply_domain_result(body.batch_id, new_status, results)
+
         return envelope_response({
             "batch_id": body.batch_id,
             "status": new_status,
             "items_processed": len(results),
             "results": results,
+            "domain_result": domain_result,
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"应用批次失败: {str(e)}")

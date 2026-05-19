@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Edit3, Loader2, Maximize2, Minimize2, Save, Sparkles, X } from 'lucide-react'
 import { get, post, type EditorState, type LocalRevisionResult } from '../../lib/api'
 import { tVersionSource, tRevisionMode } from '../../lib/state-labels'
+import { normalizeOperationResult, type OperationResult } from '../../lib/statusSemantics'
 import { TextArea, TextInput } from '../ui'
 
 interface Props {
@@ -174,9 +175,16 @@ export default function ChapterEditorSurface({
         },
       )
       if (resp.ok && resp.data) {
-        setRevisionResult(resp.data)
+        const domainResult = normalizeOperationResult(resp.data as unknown as Record<string, unknown>)
+        if (domainResult.domain_status !== 'success') {
+          setError(domainResult.user_message || domainResult.message || '局部返修未成功')
+        } else {
+          setRevisionResult(resp.data)
+        }
       } else {
-        setError(resp.error?.message || '局部返修失败')
+        const details = resp.error?.details as { domain_result?: OperationResult } | undefined
+        const domainResult = details?.domain_result
+        setError(domainResult?.user_message || domainResult?.message || resp.error?.message || '局部返修失败')
       }
     } catch {
       setError('网络异常，局部返修失败')

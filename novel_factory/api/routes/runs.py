@@ -12,6 +12,14 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ..contracts import (
+    success,
+    partial_success,
+    failed,
+    blocked,
+    needs_human,
+    ignored,
+)
 from ._memory_curator_gate import (
     has_trusted_memory_batch,
     is_trusted_memory_batch,
@@ -536,6 +544,20 @@ async def reset_run_chapter(
             timeout_minutes=settings.workflow.task_timeout_minutes,
         )
 
+        # v6.6.12: Build domain_result for recovery reset
+        domain_result = success(
+            f"章节已恢复重置：{current_status} → planned",
+            user_message=f"第 {chapter_number} 章已恢复到 planned 状态，可重新开始生成",
+            details={
+                "previous_status": current_status,
+                "new_status": "planned",
+                "retries_cleared": max(0, retry_count_before - retry_count_after),
+                "next_action": "start_workflow",
+                "action_label": "开始生成",
+            },
+            flags={"recovery_reset": True},
+        ).to_dict()
+
         return envelope_response({
             "recovered": True,
             "run_id": run_id,
@@ -551,6 +573,7 @@ async def reset_run_chapter(
             "checkpoint_before": checkpoint_before,
             "checkpoint_cleared": checkpoint_cleared,
             "recovery": recovery,
+            "domain_result": domain_result,
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"恢复运行失败: {str(e)}")
@@ -583,7 +606,24 @@ async def mark_stuck_run(
                 result["message"],
                 details=result.get("details"),
             )
-        return envelope_response(result["data"])
+
+        # v6.6.12: Build domain_result for mark-stuck
+        domain_result = blocked(
+            "运行已标记为卡住",
+            user_message="运行已标记为卡住，需要恢复重置后重新开始",
+            next_action="reset_chapter",
+            action_label="恢复重置",
+            details={
+                "run_id": run_id,
+                "marked_stuck": True,
+            },
+            flags={"workflow_stuck": True},
+        ).to_dict()
+
+        return envelope_response({
+            **result["data"],
+            "domain_result": domain_result,
+        })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"标记卡住运行失败: {str(e)}")
 
@@ -657,6 +697,22 @@ async def retry_run_node(
         )
 
         refreshed = _get_run_by_id(repo, run_id) or run_data
+
+        # v6.6.12: Build domain_result for node retry
+        domain_result = success(
+            f"节点重试恢复成功：{previous_status} → {next_status}",
+            user_message=f"已保留已有产物，可从 {target['label']} 重新继续",
+            details={
+                "previous_status": previous_status,
+                "new_status": next_status,
+                "retry_node": target["node"],
+                "retry_label": target["label"],
+                "next_action": "start_workflow",
+                "action_label": "继续生成",
+            },
+            flags={"node_retry_recovery": True},
+        ).to_dict()
+
         return envelope_response({
             "recovered": True,
             "run_id": run_id,
@@ -673,6 +729,7 @@ async def retry_run_node(
                 max_retries=settings.quality_gate.max_retries,
                 timeout_minutes=settings.workflow.task_timeout_minutes,
             ),
+            "domain_result": domain_result,
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"定点重试恢复失败: {str(e)}")

@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ..contracts import success, partial_success, failed, blocked as blocked_result, needs_human
 
 router = APIRouter()
 
@@ -851,6 +852,9 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
                 "method": "POST",
             })
 
+        # v6.6.12: Build domain_result for production-next
+        domain_result = _build_production_next_domain_result(health, next_action, missing)
+
         return envelope_response({
             "project_id": project_id,
             "current_chapter": current_chapter,
@@ -858,6 +862,7 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
             "health": health,
             "missing": missing,
             "actions": actions,
+            "domain_result": domain_result,
         })
 
     except Exception as e:
@@ -1907,12 +1912,28 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
         error_events = [e for e in events if e["event"] == "auto_run_error"]
         if error_events:
             err_data = error_events[0]["data"]
-            return error_response(err_data["error"], err_data["message"])
+            domain_result = failed(
+                err_data["message"],
+                user_message=err_data["message"],
+                retryable=True,
+                next_action="retry_auto_run",
+                action_label="重试自动生产",
+                details={
+                    "project_id": project_id,
+                    "error_code": err_data["error"],
+                },
+                flags={"auto_run_failed": True},
+            ).to_dict()
+            return error_response(
+                err_data["error"],
+                err_data["message"],
+                details={"domain_result": domain_result},
+            )
 
         # Check for step failure
         failed_events = [e for e in events if e["event"] == "step_failed"]
         if failed_events:
-            failed = failed_events[0]["data"]
+            failed_data = failed_events[0]["data"]
             all_steps = [
                 {
                     "step": e["data"]["step"],
@@ -1926,22 +1947,43 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
                 for e in events
                 if e["event"] in ("step_completed", "step_failed")
             ]
+            domain_result = failed(
+                f"第 {failed_data['step']} 步执行失败",
+                user_message=(
+                    f"第 {failed_data['step']} 步执行失败："
+                    f"{failed_data.get('error', '未知错误')}"
+                ),
+                retryable=True,
+                next_action="retry_auto_run_step",
+                action_label="重试失败步骤",
+                details={
+                    "step": failed_data["step"],
+                    "action": failed_data["action"],
+                    "stop_reason": STOP_REASON_FAILED,
+                    "steps_executed": failed_data["steps_executed"],
+                },
+                flags={"auto_run_step_failed": True},
+            ).to_dict()
             return error_response(
                 "AUTO_RUN_STEP_FAILED",
-                f"第 {failed['step']} 步执行失败: {failed.get('error', '未知错误')}",
+                f"第 {failed_data['step']} 步执行失败: {failed_data.get('error', '未知错误')}",
                 details={
-                    "step": failed["step"],
-                    "action": failed["action"],
+                    "step": failed_data["step"],
+                    "action": failed_data["action"],
                     "steps": all_steps,
-                    "chapters_touched": failed.get("chapters_touched", []),
+                    "chapters_touched": failed_data.get("chapters_touched", []),
                     "stop_reason": STOP_REASON_FAILED,
-                    "steps_executed": failed["steps_executed"],
+                    "steps_executed": failed_data["steps_executed"],
+                    "domain_result": domain_result,
                 },
             )
 
         # Find final event
         final_event = events[-1]
         data = final_event["data"]
+
+        # v6.6.12: Build domain_result for run-auto
+        domain_result = _build_run_auto_domain_result(data)
 
         return envelope_response({
             "status": data["status"],
@@ -1952,10 +1994,24 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
             "steps_executed": data["steps_executed"],
             "session_tokens_used": data.get("session_tokens_used", 0),
             "max_session_tokens": data.get("max_session_tokens"),
+            "domain_result": domain_result,
         })
 
     except Exception as e:
-        return error_response("INTERNAL_ERROR", f"自动生产运行失败: {str(e)}")
+        message = f"自动生产运行失败: {str(e)}"
+        domain_result = failed(
+            message,
+            user_message="自动生产运行失败，请检查日志后重试",
+            retryable=True,
+            next_action="retry_auto_run",
+            action_label="重试自动生产",
+            flags={"auto_run_failed": True},
+        ).to_dict()
+        return error_response(
+            "INTERNAL_ERROR",
+            message,
+            details={"domain_result": domain_result},
+        )
 
 
 @router.get("/projects/{project_id}/production/run-auto/stream")
@@ -2648,3 +2704,163 @@ async def cleanup_auto_run_sessions(
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"清理会话失败: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# v6.6.12: Domain result helpers for production endpoints
+# ---------------------------------------------------------------------------
+
+
+def _build_production_next_domain_result(
+    health: dict,
+    next_action: dict,
+    missing: list[dict],
+) -> dict:
+    """Build domain_result for production-next endpoint.
+
+    Maps project health state to domain-level semantics:
+    - Blocking issues → blocked/needs_human
+    - Missing context → blocked
+    - Running workflow → pending
+    - Ready to generate → success
+    """
+    # Check for blocking issues
+    if health.get("has_blocking_chapter") or health.get("has_stuck_run"):
+        return needs_human(
+            "项目存在阻塞章节或卡住运行",
+            user_message="需要先处理阻塞/卡住的章节才能继续生产",
+            next_action=next_action.get("key", "recover_blocked_run"),
+            action_label=next_action.get("label", "处理阻塞"),
+            details={
+                "next_action_key": next_action.get("key"),
+                "has_blocking_chapter": health.get("has_blocking_chapter", False),
+                "has_stuck_run": health.get("has_stuck_run", False),
+            },
+            flags={"production_blocked": True},
+        ).to_dict()
+
+    # Check for missing context
+    blocking_missing = [m for m in missing if m.get("severity") == "blocking"]
+    if blocking_missing:
+        return blocked_result(
+            "项目资料不完整，无法生成章节",
+            user_message="需要补齐项目基础资料后才能开始章节生成",
+            next_action=next_action.get("key", "generate_genesis"),
+            action_label=next_action.get("label", "生成项目设定"),
+            details={
+                "next_action_key": next_action.get("key"),
+                "missing_count": len(blocking_missing),
+                "missing_keys": [m.get("key") for m in blocking_missing],
+            },
+            flags={"context_incomplete": True},
+        ).to_dict()
+
+    # Check for running workflow
+    if health.get("has_running_chapter_workflow"):
+        from ..contracts import OperationResult
+        return OperationResult(
+            ok=True,
+            domain_status="pending",
+            message="章节工作流运行中",
+            user_message="当前章节正在生成中，请等待完成",
+            severity="info",
+            details={
+                "next_action_key": next_action.get("key"),
+            },
+            flags={"workflow_running": True},
+        ).to_dict()
+
+    # Ready to generate
+    return success(
+        "项目已就绪，可开始章节生成",
+        user_message=next_action.get("description", "项目已就绪"),
+        details={
+            "next_action_key": next_action.get("key"),
+            "next_action_label": next_action.get("label"),
+            "current_chapter": health.get("current_chapter"),
+        },
+        flags={"production_ready": True},
+    ).to_dict()
+
+
+def _build_run_auto_domain_result(data: dict) -> dict:
+    """Build domain_result for run-auto endpoint.
+
+    Maps auto-run outcome to domain-level semantics:
+    - stop_reason=failed → failed
+    - stop_reason=review_needed → needs_human
+    - stop_reason=blocked → blocked
+    - stop_reason=completed with chapters → success
+    - stop_reason=completed without chapters → partial_success
+    """
+    stop_reason = data.get("stop_reason", "")
+    steps_executed = data.get("steps_executed", 0)
+    chapters_touched = data.get("chapters_touched", [])
+    status = data.get("status", "unknown")
+
+    if stop_reason == "failed" or status == "failed":
+        return failed(
+            "自动生产执行失败",
+            user_message="自动生产过程中发生错误，请检查后重试",
+            retryable=True,
+            next_action="retry_auto_run",
+            action_label="重试自动生产",
+            details={
+                "stop_reason": stop_reason,
+                "steps_executed": steps_executed,
+                "chapters_touched": chapters_touched,
+            },
+            flags={"auto_run_failed": True},
+        ).to_dict()
+
+    if stop_reason == "review_needed":
+        return needs_human(
+            "自动生产暂停：需要人工审核",
+            user_message="章节已到待发布状态，需要人工确认发布后继续",
+            next_action="publish_chapter",
+            action_label="确认发布",
+            details={
+                "stop_reason": stop_reason,
+                "steps_executed": steps_executed,
+                "chapters_touched": chapters_touched,
+            },
+            flags={"auto_run_review_needed": True},
+        ).to_dict()
+
+    if stop_reason == "blocked":
+        return blocked_result(
+            "自动生产被阻塞",
+            user_message="生产过程中遇到阻塞，需要处理后继续",
+            next_action="recover_blocked_run",
+            action_label="处理阻塞",
+            details={
+                "stop_reason": stop_reason,
+                "steps_executed": steps_executed,
+                "chapters_touched": chapters_touched,
+            },
+            flags={"auto_run_blocked": True},
+        ).to_dict()
+
+    if chapters_touched:
+        return success(
+            f"自动生产完成：已处理 {len(chapters_touched)} 章",
+            user_message=f"自动生产已完成，共处理 {len(chapters_touched)} 章",
+            details={
+                "stop_reason": stop_reason,
+                "steps_executed": steps_executed,
+                "chapters_touched": chapters_touched,
+            },
+            flags={"auto_run_completed": True},
+        ).to_dict()
+
+    return partial_success(
+        "自动生产完成，但未生成章节",
+        user_message="自动生产已完成，但未实际生成章节内容",
+        next_action="check_production_next",
+        action_label="查看下一步",
+        details={
+            "stop_reason": stop_reason,
+            "steps_executed": steps_executed,
+        },
+        flags={"auto_run_no_chapters": True},
+    ).to_dict()

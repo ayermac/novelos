@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ..contracts import success, failed
 
 router = APIRouter()
 
@@ -629,7 +630,24 @@ async def local_revision(
             replacement_text = str(result.get("replacement_text", ""))
 
         if not result or (not replacement_text.strip() and not deletion_requested):
-            return error_response("REVISION_FAILED", "AI 返修返回为空，请重试")
+            return error_response(
+                "REVISION_FAILED",
+                "AI 返修返回为空，请重试",
+                details={
+                    "domain_result": failed(
+                        "AI 返修返回为空",
+                        user_message="AI 返修返回为空，请重试",
+                        retryable=True,
+                        next_action="retry_local_revision",
+                        action_label="重试局部返修",
+                        details={
+                            "mode": body.mode.value,
+                            "selection_length": len(body.selected_text),
+                        },
+                        flags={"local_revision_failed": True},
+                    ).to_dict(),
+                },
+            )
         if deletion_requested and not replacement_text.strip():
             replacement_text = ""
 
@@ -648,6 +666,16 @@ async def local_revision(
             "selection_start": body.selection_start,
             "selection_end": body.selection_end,
             "mode": body.mode.value,
+            "domain_result": success(
+                "局部返修候选已生成",
+                user_message="局部返修候选已生成，请确认是否应用",
+                details={
+                    "mode": body.mode.value,
+                    "selection_length": len(body.selected_text),
+                    "replacement_length": len(replacement_text),
+                },
+                flags={"local_revision_candidate": True},
+            ).to_dict(),
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"局部返修失败: {str(e)}")
