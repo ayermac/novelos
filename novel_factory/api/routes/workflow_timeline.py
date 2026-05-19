@@ -1,7 +1,12 @@
-"""Workflow timeline API for chapter-level observability (v5.8).
+"""Workflow timeline API for chapter-level observability (v6.6.11).
 
 GET /api/projects/{project_id}/chapters/{chapter_number}/workflow-timeline
 GET /api/projects/{project_id}/chapters/{chapter_number}/workflow-stream (v6.1 SSE)
+
+v6.6.11: Each timeline node now includes node_status, domain_status, severity,
+retryable, blocking, next_action, action_label, user_message, flags — derived
+from NodeOperationResult. memory_curator node correctly shows warning/fallback
+instead of success green when memory is not trusted.
 """
 
 from __future__ import annotations
@@ -66,6 +71,132 @@ def _artifact_label(artifact_type: str | None) -> str:
     if not artifact_type:
         return "产物"
     return ARTIFACT_TYPE_LABELS.get(artifact_type, artifact_type)
+
+
+def _derive_node_semantics(
+    node_name: str,
+    status: str,
+    events: list[dict] | None = None,
+    *,
+    memory_status: dict | None = None,
+) -> dict[str, Any]:
+    """Derive node-level semantic fields for timeline response (v6.6.11).
+
+    Uses NodeOperationResult contract for memory_curator and
+    generic derivation for other nodes.
+
+    Returns dict with: node_status, domain_status, severity, retryable,
+    blocking, next_action, action_label, user_message, flags.
+    """
+    from ..contracts import (
+        NodeOperationResult,
+        node_success,
+        node_warning,
+        node_failed,
+        node_blocked,
+        node_skipped,
+        memory_curator_node_result,
+    )
+
+    # Special handling for memory_curator
+    if node_name == "memory_curator" and memory_status is not None:
+        mem_st = memory_status.get("memory_status", "missing")
+        event_st = None
+        has_error = False
+        error_message = None
+
+        if events:
+            failed_events = [e for e in events if e.get("event_type") == "failed"]
+            if failed_events:
+                has_error = True
+                error_message = failed_events[-1].get("message")
+            elif status == "running":
+                event_st = "running"
+            elif status == "skipped":
+                event_st = "skipped"
+            elif status == "completed":
+                event_st = "completed"
+
+        result = memory_curator_node_result(
+            memory_status=mem_st,
+            event_status=event_st,
+            batch_count=memory_status.get("batch_count", 0),
+            trusted_batch_count=memory_status.get("trusted_batch_count", 0),
+            fallback_batch_count=memory_status.get("fallback_batch_count", 0),
+            has_error=has_error,
+            error_message=error_message,
+        )
+        d = result.to_dict()
+        # Remove node_name from output (redundant in timeline node)
+        d.pop("node_name", None)
+        d.pop("message", None)  # internal message, not for timeline
+        return d
+
+    # Generic node derivation
+    if status == "completed":
+        # Check if node events indicate warnings/degradation
+        has_warnings = False
+        warning_msg = ""
+        if events:
+            for ev in events:
+                ev_status = ev.get("status", "")
+                if ev_status in ("warning", "error"):
+                    has_warnings = True
+                    warning_msg = ev.get("message", "")
+                    break
+
+        if has_warnings:
+            result = node_warning(
+                node_name,
+                warning_msg or "节点执行产生警告",
+                domain_status="degraded",
+                user_message=warning_msg or "节点执行有警告，建议检查",
+            )
+        else:
+            result = node_success(node_name)
+    elif status == "running":
+        result = NodeOperationResult(
+            node_name=node_name,
+            node_status="running",
+            domain_status="pending",
+            severity="info",
+            message="节点运行中",
+        )
+    elif status == "failed":
+        error_msg = ""
+        if events:
+            failed_events = [e for e in events if e.get("event_type") == "failed"]
+            if failed_events:
+                error_msg = failed_events[-1].get("message", "")
+        result = node_failed(
+            node_name,
+            error_msg or "节点执行失败",
+            user_message=error_msg or "节点执行失败，可重试",
+            retryable=True,
+        )
+    elif status == "blocked":
+        result = node_blocked(
+            node_name,
+            "节点被阻塞",
+            next_action="retry_node",
+            action_label="重试节点",
+        )
+    elif status == "skipped":
+        result = node_skipped(node_name)
+    else:
+        # pending
+        result = NodeOperationResult(
+            node_name=node_name,
+            node_status="pending",
+            domain_status="pending",
+            severity="info",
+            message="等待执行",
+        )
+
+    d = result.to_dict()
+    d.pop("node_name", None)
+    d.pop("message", None)  # internal message, not for timeline
+    return d
 
 
 def _get_workflow_run_by_id(
@@ -250,10 +381,13 @@ def _build_node_timeline(
     artifacts: list[dict],
     run_status: str | None = None,
     current_node: str | None = None,
+    memory_status: dict | None = None,
 ) -> list[dict]:
     """Build canonical node timeline overlaid with workflow_node_events.
 
     Groups events by node_name and derives status, duration, messages, artifacts.
+    v6.6.11: Enriches each node with node_status, domain_status, severity,
+    retryable, blocking, next_action, action_label, user_message, flags.
     """
     # Group events by node_name
     node_events: dict[str, list[dict]] = {}
@@ -352,12 +486,28 @@ def _build_node_timeline(
                 "artifact_id": art.get("id", ""),
             })
 
+        # v6.6.11: Derive node-level semantic fields
+        node_semantics = _derive_node_semantics(
+            node_name, status, evs,
+            memory_status=memory_status if node_name == "memory_curator" else None,
+        )
+
         return {
             "node_name": node_name,
             "label": base.get("label") or _node_label(node_name),
             "node_group": base.get("node_group", "unknown"),
             "node_type": base.get("node_type", base.get("node_group", "unknown")),
             "status": status,
+            # v6.6.11: Node-level semantic fields
+            "node_status": node_semantics.get("node_status", status),
+            "domain_status": node_semantics.get("domain_status", "pending"),
+            "severity": node_semantics.get("severity", "info"),
+            "retryable": node_semantics.get("retryable", False),
+            "blocking": node_semantics.get("blocking", False),
+            "next_action": node_semantics.get("next_action"),
+            "action_label": node_semantics.get("action_label"),
+            "user_message": node_semantics.get("user_message", ""),
+            "flags": node_semantics.get("flags", {}),
             "started_at": started_at,
             "completed_at": completed_at,
             "duration_ms": duration_ms,
@@ -629,11 +779,25 @@ async def get_workflow_timeline(
         except Exception:
             artifacts = []
 
+        # v6.6.11: Fetch memory status for node-level semantics
+        memory_status = None
+        try:
+            from ..routes._memory_curator_gate import get_memory_status_for_chapter
+            memory_status = get_memory_status_for_chapter(
+                repo,
+                project_id,
+                chapter_number,
+                run_id=run_id_str,
+            )
+        except Exception:
+            pass
+
         nodes = _build_node_timeline(
             events,
             artifacts,
             run_status=run_status,
             current_node=current_node,
+            memory_status=memory_status,
         )
 
         # v6.1: Embed execution events into timeline nodes

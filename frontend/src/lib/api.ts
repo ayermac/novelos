@@ -218,6 +218,16 @@ export interface WorkflowTimelineNode {
   node_group?: 'system' | 'creative_agent' | 'support_agent' | 'terminal' | 'router' | 'unknown'
   node_type?: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'skipped'
+  // v6.6.11: Node-level semantic fields
+  node_status?: 'pending' | 'running' | 'succeeded' | 'warning' | 'failed' | 'skipped' | 'blocked'
+  domain_status?: 'success' | 'partial_success' | 'fallback' | 'degraded' | 'failed' | 'blocked' | 'needs_human' | 'pending' | 'ignored'
+  severity?: 'success' | 'info' | 'warning' | 'error'
+  retryable?: boolean
+  blocking?: boolean
+  next_action?: string | null
+  action_label?: string | null
+  user_message?: string
+  flags?: Record<string, boolean>
   started_at: string | null
   completed_at: string | null
   duration_ms: number | null

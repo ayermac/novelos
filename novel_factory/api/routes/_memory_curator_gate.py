@@ -107,7 +107,10 @@ def classify_memory_batch(repo: Any, batch: dict) -> str:
 
 
 def get_memory_status_for_chapter(
-    repo: Any, project_id: str, chapter_number: int
+    repo: Any,
+    project_id: str,
+    chapter_number: int,
+    run_id: str | None = None,
 ) -> dict[str, Any]:
     """Return canonical memory status for a chapter.
 
@@ -118,6 +121,11 @@ def get_memory_status_for_chapter(
     - batch_count: int
     - trusted_batch_count: int
     - fallback_batch_count: int
+
+    If run_id is provided, prefer batches created by that workflow run. Legacy
+    batches without run_id are considered only when the chapter has no run-bound
+    batches at all, so old timeline records are not made green by a later
+    backfill run.
     """
     try:
         batches = repo.list_memory_batches(project_id)
@@ -131,11 +139,27 @@ def get_memory_status_for_chapter(
             "fallback_batch_count": 0,
         }
 
-    chapter_batches = [
+    chapter_batches_all = [
         b for b in batches
         if int(b.get("chapter_number") or 0) == int(chapter_number)
         and str(b.get("status") or "") != "ignored"
     ]
+    chapter_batches = chapter_batches_all
+    if run_id:
+        run_batches = [
+            b for b in chapter_batches_all
+            if str(b.get("run_id") or "") == str(run_id)
+        ]
+        has_run_bound_batches = any(str(b.get("run_id") or "") for b in chapter_batches_all)
+        if run_batches:
+            chapter_batches = run_batches
+        elif has_run_bound_batches:
+            chapter_batches = []
+        else:
+            chapter_batches = [
+                b for b in chapter_batches_all
+                if not str(b.get("run_id") or "")
+            ]
 
     trusted_count = 0
     fallback_count = 0

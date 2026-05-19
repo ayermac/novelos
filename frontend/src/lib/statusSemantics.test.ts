@@ -1,5 +1,5 @@
 /**
- * Tests for statusSemantics.ts (v6.6.10).
+ * Tests for statusSemantics.ts (v6.6.11).
  *
  * Covers:
  * - success/fallback/degraded/failed/blocked/partial_success badge semantics
@@ -8,6 +8,9 @@
  * - dark mode class / token coverage
  * - memory status display
  * - normalizeOperationResult handles legacy and new formats
+ * - normalizeNodeStatus for v6.6.11 node-level status
+ * - isNodeBusinessSuccess for node-level business success
+ * - getNodeStatusBadge for warning/succeeded node statuses
  */
 
 import { describe, it, expect } from "vitest";
@@ -17,10 +20,13 @@ import {
   isRetryable,
   isBlocking,
   getStatusBadge,
+  getNodeStatusBadge,
   getActionHint,
   getMemoryStatusDisplay,
   severityColor,
   severityBadgeClass,
+  normalizeNodeStatus,
+  isNodeBusinessSuccess,
   type OperationResult,
   type DomainStatus,
 } from "./statusSemantics";
@@ -277,6 +283,151 @@ describe("normalizeOperationResult", () => {
     const result = normalizeOperationResult(raw);
     expect(result.domain_status).toBe("blocked");
     expect(isBlocking(result)).toBe(true);
+  });
+});
+
+// ── normalizeNodeStatus (v6.6.11) ──────────────────────────────────
+
+describe("normalizeNodeStatus", () => {
+  it("uses node_status when available", () => {
+    const node = { status: "completed", node_status: "warning" as const };
+    expect(normalizeNodeStatus(node)).toBe("warning");
+  });
+
+  it("maps legacy completed to succeeded", () => {
+    const node = { status: "completed" };
+    expect(normalizeNodeStatus(node)).toBe("succeeded");
+  });
+
+  it("maps legacy completed + fallback domain to warning", () => {
+    const node = { status: "completed", domain_status: "fallback" };
+    expect(normalizeNodeStatus(node)).toBe("warning");
+  });
+
+  it("maps legacy completed + degraded domain to warning", () => {
+    const node = { status: "completed", domain_status: "degraded" };
+    expect(normalizeNodeStatus(node)).toBe("warning");
+  });
+
+  it("maps legacy completed + warning severity to warning", () => {
+    const node = { status: "completed", severity: "warning" };
+    expect(normalizeNodeStatus(node)).toBe("warning");
+  });
+
+  it("maps legacy running to running", () => {
+    const node = { status: "running" };
+    expect(normalizeNodeStatus(node)).toBe("running");
+  });
+
+  it("maps legacy failed to failed", () => {
+    const node = { status: "failed" };
+    expect(normalizeNodeStatus(node)).toBe("failed");
+  });
+
+  it("maps legacy blocked to blocked", () => {
+    const node = { status: "blocked" };
+    expect(normalizeNodeStatus(node)).toBe("blocked");
+  });
+
+  it("maps legacy skipped to skipped", () => {
+    const node = { status: "skipped" };
+    expect(normalizeNodeStatus(node)).toBe("skipped");
+  });
+
+  it("maps legacy pending to pending", () => {
+    const node = { status: "pending" };
+    expect(normalizeNodeStatus(node)).toBe("pending");
+  });
+
+  it("prefers node_status over legacy status", () => {
+    const node = { status: "completed", node_status: "failed" as const };
+    expect(normalizeNodeStatus(node)).toBe("failed");
+  });
+});
+
+// ── isNodeBusinessSuccess (v6.6.11) ──────────────────────────────
+
+describe("isNodeBusinessSuccess", () => {
+  it("returns true for succeeded with success domain", () => {
+    expect(isNodeBusinessSuccess({ node_status: "succeeded", domain_status: "success" })).toBe(true);
+  });
+
+  it("returns false for warning node", () => {
+    expect(isNodeBusinessSuccess({ node_status: "warning", domain_status: "fallback" })).toBe(false);
+  });
+
+  it("returns false for failed node", () => {
+    expect(isNodeBusinessSuccess({ node_status: "failed", domain_status: "failed" })).toBe(false);
+  });
+
+  it("returns false for succeeded with fallback domain", () => {
+    expect(isNodeBusinessSuccess({ node_status: "succeeded", domain_status: "fallback" })).toBe(false);
+  });
+
+  it("returns false for succeeded with degraded domain", () => {
+    expect(isNodeBusinessSuccess({ node_status: "succeeded", domain_status: "degraded" })).toBe(false);
+  });
+
+  it("returns false for skipped node", () => {
+    expect(isNodeBusinessSuccess({ node_status: "skipped", domain_status: "ignored" })).toBe(false);
+  });
+
+  it("returns false when node_status is undefined", () => {
+    expect(isNodeBusinessSuccess({ domain_status: "success" })).toBe(false);
+  });
+});
+
+// ── getNodeStatusBadge (v6.6.11) ──────────────────────────────────
+
+describe("getNodeStatusBadge", () => {
+  it("returns warning badge for warning node status", () => {
+    const badge = getNodeStatusBadge("warning");
+    expect(badge.severity).toBe("warning");
+    expect(badge.cssClass).toBe("step-warning");
+    expect(badge.icon).toBe("⚠");
+  });
+
+  it("returns succeeded badge for succeeded node status", () => {
+    const badge = getNodeStatusBadge("succeeded");
+    expect(badge.severity).toBe("success");
+    expect(badge.cssClass).toBe("step-completed");
+    expect(badge.icon).toBe("✓");
+  });
+
+  it("returns failed badge for failed node status", () => {
+    const badge = getNodeStatusBadge("failed");
+    expect(badge.severity).toBe("error");
+    expect(badge.cssClass).toBe("step-failed");
+  });
+
+  it("returns blocked badge for blocked node status", () => {
+    const badge = getNodeStatusBadge("blocked");
+    expect(badge.severity).toBe("error");
+    expect(badge.cssClass).toBe("step-blocked");
+  });
+
+  it("returns skipped badge for skipped node status", () => {
+    const badge = getNodeStatusBadge("skipped");
+    expect(badge.severity).toBe("info");
+    expect(badge.cssClass).toBe("step-skipped");
+  });
+
+  it("returns pending badge for pending node status", () => {
+    const badge = getNodeStatusBadge("pending");
+    expect(badge.severity).toBe("info");
+    expect(badge.cssClass).toBe("step-pending");
+  });
+
+  it("returns running badge for running node status", () => {
+    const badge = getNodeStatusBadge("running");
+    expect(badge.severity).toBe("info");
+    expect(badge.cssClass).toBe("step-running");
+  });
+
+  it("returns completed badge (legacy) for completed node status", () => {
+    const badge = getNodeStatusBadge("completed");
+    expect(badge.severity).toBe("success");
+    expect(badge.cssClass).toBe("step-completed");
   });
 });
 

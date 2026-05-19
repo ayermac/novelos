@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { formatArtifactSummary, WorkflowArtifacts } from '../lib/artifacts'
 import { tWorkflowNodeNarrative, tEventNarrative } from '../lib/state-labels'
+import { normalizeNodeStatus, isNodeBusinessSuccess, getNodeStatusBadge } from '../lib/statusSemantics'
 import type { WorkflowExecutionEvent, WorkflowNodeEvidence } from '../lib/api'
 
 interface Step {
@@ -10,6 +11,16 @@ interface Step {
   node_group?: 'system' | 'creative_agent' | 'support_agent' | 'terminal' | 'router' | 'unknown'
   node_type?: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'skipped'
+  // v6.6.11: Node-level semantic fields
+  node_status?: 'pending' | 'running' | 'succeeded' | 'warning' | 'failed' | 'skipped' | 'blocked'
+  domain_status?: 'success' | 'partial_success' | 'fallback' | 'degraded' | 'failed' | 'blocked' | 'needs_human' | 'pending' | 'ignored'
+  severity?: 'success' | 'info' | 'warning' | 'error'
+  retryable?: boolean
+  blocking?: boolean
+  next_action?: string | null
+  action_label?: string | null
+  user_message?: string
+  flags?: Record<string, boolean>
   error_message?: string
   error_is_legacy?: boolean
   logs?: {
@@ -57,38 +68,14 @@ function eventMessage(ev: WorkflowExecutionEvent): string {
   return ev.message || ''
 }
 
-function stepStatusIcon(status: string): string {
-  switch (status) {
-    case 'completed':
-      return '✓'
-    case 'running':
-      return '●'
-    case 'failed':
-      return '✗'
-    case 'blocked':
-      return '!'
-    case 'skipped':
-      return '↷'
-    default:
-      return '○'
-  }
+function stepStatusIcon(step: Step): string {
+  const nodeStatus = normalizeNodeStatus(step)
+  return getNodeStatusBadge(nodeStatus).icon
 }
 
-function stepStatusClass(status: string): string {
-  switch (status) {
-    case 'completed':
-      return 'step-completed'
-    case 'running':
-      return 'step-running'
-    case 'failed':
-      return 'step-failed'
-    case 'blocked':
-      return 'step-blocked'
-    case 'skipped':
-      return 'step-skipped'
-    default:
-      return 'step-pending'
-  }
+function stepStatusClass(step: Step): string {
+  const nodeStatus = normalizeNodeStatus(step)
+  return getNodeStatusBadge(nodeStatus).cssClass
 }
 
 const NODE_GROUP_LABELS: Record<string, string> = {
@@ -139,20 +126,29 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
               const logs = step.logs || []
 
               return (
-                <div key={step.key} className={`step-item ${stepStatusClass(step.status)}`}>
+                <div key={step.key} className={`step-item ${stepStatusClass(step)}`}>
                   <div className="step-header">
-                    <div className="step-icon">{stepStatusIcon(step.status)}</div>
+                    <div className="step-icon">{stepStatusIcon(step)}</div>
                     <div className="step-content">
                       <div className="step-label">
                         {step.label}
+                        {/* v6.6.11: Node-level warning/fallback badge */}
+                        {step.node_status === 'warning' && (
+                          <span className="evidence-badge evidence-warn" style={{ marginLeft: 8 }}>
+                            {step.domain_status === 'fallback' ? '记忆未可信' : step.domain_status === 'degraded' ? '降级' : '警告'}
+                          </span>
+                        )}
                         {step.evidence?.has_evidence_failure && (
                           <span className="evidence-badge evidence-fail" style={{ marginLeft: 8 }}>证据校验失败</span>
                         )}
-                        {step.evidence?.has_warnings && !step.evidence?.has_evidence_failure && (
+                        {step.evidence?.has_warnings && !step.evidence?.has_evidence_failure && step.node_status !== 'warning' && (
                           <span className="evidence-badge evidence-warn" style={{ marginLeft: 8 }}>有警告</span>
                         )}
-                        {step.status === 'completed' && step.evidence?.has_evidence && !step.evidence?.has_warnings && !step.evidence?.has_evidence_failure && (
+                        {isNodeBusinessSuccess(step) && step.evidence?.has_evidence && !step.evidence?.has_warnings && !step.evidence?.has_evidence_failure && (
                           <span className="evidence-badge evidence-pass" style={{ marginLeft: 8 }}>已验证</span>
+                        )}
+                        {step.retryable && step.node_status !== 'succeeded' && step.action_label && (
+                          <span className="evidence-badge evidence-warn" style={{ marginLeft: 8, cursor: 'pointer' }} title={step.user_message || ''}>{step.action_label}</span>
                         )}
                       </div>
                       {!compact && (
@@ -318,6 +314,10 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
         .wf-timeline .step-skipped .step-icon {
           background: var(--bg-tertiary);
           color: var(--text-secondary);
+        }
+        .wf-timeline .step-warning .step-icon {
+          background: color-mix(in srgb, var(--warning) 14%, transparent);
+          color: var(--warning);
         }
         .wf-timeline .step-pending .step-icon {
           background: var(--bg-tertiary);

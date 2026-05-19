@@ -53,6 +53,15 @@ interface Step {
   node_group?: 'system' | 'creative_agent' | 'support_agent' | 'terminal' | 'router' | 'unknown'
   node_type?: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked' | 'skipped'
+  node_status?: 'pending' | 'running' | 'succeeded' | 'warning' | 'failed' | 'skipped' | 'blocked'
+  domain_status?: 'success' | 'partial_success' | 'fallback' | 'degraded' | 'failed' | 'blocked' | 'needs_human' | 'pending' | 'ignored'
+  severity?: 'success' | 'info' | 'warning' | 'error'
+  retryable?: boolean
+  blocking?: boolean
+  next_action?: string | null
+  action_label?: string | null
+  user_message?: string
+  flags?: Record<string, boolean>
   error_message?: string
   logs?: {
     id?: string
@@ -772,6 +781,15 @@ function WorkflowBody({
         node_group: n.node_group,
         node_type: n.node_type,
         status: n.status as Step['status'],
+        node_status: n.node_status,
+        domain_status: n.domain_status,
+        severity: n.severity,
+        retryable: n.retryable,
+        blocking: n.blocking,
+        next_action: n.next_action,
+        action_label: n.action_label,
+        user_message: n.user_message,
+        flags: n.flags,
         logs: n.messages.map((m) => ({ level: 'info' as const, message: m })),
         artifacts: n.artifacts.length > 0 ? {
           summary: n.artifacts.map((a) => a.label).join('、'),

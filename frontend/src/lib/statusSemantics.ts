@@ -1,11 +1,15 @@
 /**
- * Unified status semantics for frontend (v6.6.10).
+ * Unified status semantics for frontend (v6.6.11).
  *
  * Provides a single source of truth for interpreting domain-level
- * operation results, memory status, and workflow status.
+ * operation results, memory status, workflow status, and node-level
+ * timeline status.
  *
  * No component should do raw string comparison like
  * `status === 'fallback'` — use these helpers instead.
+ *
+ * v6.6.11: Added normalizeNodeStatus(), isNodeBusinessSuccess(),
+ * getNodeStatusBadge() now supports warning/succeeded node statuses.
  */
 
 // ── Types ──────────────────────────────────────────────────────────
@@ -26,6 +30,7 @@ export type Severity = "success" | "info" | "warning" | "error";
 export type NodeStatus =
   | "pending"
   | "running"
+  | "succeeded"
   | "completed"
   | "warning"
   | "failed"
@@ -204,6 +209,7 @@ const DOMAIN_STATUS_BADGES: Record<DomainStatus, StatusBadge> = {
 const NODE_STATUS_BADGES: Record<NodeStatus, StatusBadge> = {
   pending: { label: "等待中", severity: "info", cssClass: "step-pending", icon: "◌" },
   running: { label: "运行中", severity: "info", cssClass: "step-running", icon: "●" },
+  succeeded: { label: "已完成", severity: "success", cssClass: "step-completed", icon: "✓" },
   completed: { label: "已完成", severity: "success", cssClass: "step-completed", icon: "✓" },
   warning: { label: "警告", severity: "warning", cssClass: "step-warning", icon: "⚠" },
   failed: { label: "失败", severity: "error", cssClass: "step-failed", icon: "✗" },
@@ -362,4 +368,75 @@ export function severityBadgeClass(severity: Severity): string {
     default:
       return "badge-info";
   }
+}
+
+// ── Node-level status helpers (v6.6.11) ───────────────────────────
+
+/**
+ * Normalize a timeline node's status for display.
+ *
+ * Handles backward compatibility:
+ * - If node_status is present (v6.6.11+), use it
+ * - If only legacy status is present, map completed→succeeded, etc.
+ * - Returns the most accurate NodeStatus for display
+ */
+export function normalizeNodeStatus(node: {
+  status: string;
+  node_status?: string;
+  domain_status?: string;
+  severity?: string;
+}): NodeStatus {
+  // v6.6.11+: Use node_status if available
+  if (node.node_status) {
+    return node.node_status as NodeStatus;
+  }
+
+  // Legacy mapping: derive node_status from old status field
+  const legacy = node.status;
+  switch (legacy) {
+    case "completed":
+      // Check if domain_status indicates non-success
+      if (node.domain_status === "fallback" || node.domain_status === "degraded" || node.domain_status === "partial_success") {
+        return "warning";
+      }
+      // Check if severity indicates warning
+      if (node.severity === "warning") {
+        return "warning";
+      }
+      return "succeeded";
+    case "running":
+      return "running";
+    case "failed":
+      return "failed";
+    case "blocked":
+      return "blocked";
+    case "skipped":
+      return "skipped";
+    default:
+      return "pending";
+  }
+}
+
+/**
+ * True only when a node has genuinely succeeded at the business level.
+ * warning, failed, skipped, blocked are NOT business success.
+ * "succeeded" with domain_status=fallback is also NOT business success.
+ */
+export function isNodeBusinessSuccess(node: {
+  node_status?: string;
+  domain_status?: string;
+  severity?: string;
+}): boolean {
+  const ns = node.node_status;
+  if (!ns) return false;
+
+  if (ns !== "succeeded") return false;
+
+  // Even succeeded nodes can have fallback/degraded domain
+  const ds = node.domain_status;
+  if (ds === "fallback" || ds === "degraded" || ds === "partial_success" || ds === "failed") {
+    return false;
+  }
+
+  return true;
 }
