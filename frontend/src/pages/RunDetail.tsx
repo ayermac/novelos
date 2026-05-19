@@ -39,6 +39,15 @@ interface RunDetail {
   completion_tokens?: number
   total_tokens?: number
   duration_ms?: number
+  // v6.6.7: Memory status
+  memory_status?: {
+    memory_status: string
+    memory_trusted: boolean
+    latest_memory_batch_id: string | null
+    batch_count: number
+    trusted_batch_count: number
+    fallback_batch_count: number
+  }
 }
 
 interface RunRecovery {
@@ -206,20 +215,22 @@ export default function RunDetail() {
     }
   }
 
-  const handleMemoryBackfill = async () => {
+  const handleMemoryBackfill = async (force = false) => {
     if (!runId || memoryBackfilling) return
     const ok = await dialog.confirm({
-      title: '补跑记忆提取',
-      message: '确认为本章补跑 Memory Curator？如果已有记忆提取证据，系统会自动跳过。',
+      title: force ? '强制重新提取记忆' : '补跑记忆提取',
+      message: force
+        ? '确认强制重新提取？这会忽略旧的低可信候选，重新调用 Memory Curator。'
+        : '确认为本章补跑 Memory Curator？如果已有可信记忆提取，系统会自动跳过。',
       tone: 'warning',
-      confirmLabel: '补跑记忆',
+      confirmLabel: force ? '强制提取' : '补跑记忆',
     })
     if (!ok) return
 
     setMemoryBackfilling(true)
     setRecoveryError(null)
     setRecoveryMessage(null)
-    const result = await post<MemoryBackfillResult>(`/runs/${runId}/memory/backfill`, { confirm: true })
+    const result = await post<MemoryBackfillResult>(`/runs/${runId}/memory/backfill`, { confirm: true, force })
     setMemoryBackfilling(false)
 
     if (result.ok && result.data) {
@@ -229,6 +240,7 @@ export default function RunDetail() {
         result.data.memory_curator_degraded ||
         result.data.memory_curator_fallback
       ) {
+        // v6.6.7: Never show success toast for fallback/failure
         setRecoveryError(result.data.message || '补跑未生成可信记忆，请检查 MemoryCurator 配置后重试。')
       } else {
         setRecoveryMessage(result.data.message || (result.data.skipped ? '已有可信记忆批次，未重复补跑。' : '记忆提取补跑完成。'))
@@ -359,14 +371,51 @@ export default function RunDetail() {
                   {recoveryError}
                 </div>
               )}
+              {/* v6.6.7: Memory status display */}
+              {data.memory_status && data.chapter_status !== 'planned' && data.chapter_status !== 'drafted' && (
+                <div className={`alert alert-${data.memory_status.memory_trusted ? 'success' : 'warn'}`} style={{ marginBottom: '12px' }}>
+                  <strong>记忆状态：</strong>
+                  {data.memory_status.memory_trusted
+                    ? `可信记忆已提取（${data.memory_status.trusted_batch_count} 批次）`
+                    : data.memory_status.memory_status === 'fallback'
+                      ? `低可信候选（${data.memory_status.fallback_batch_count} 批次），需人工确认或重新提取`
+                      : data.memory_status.memory_status === 'missing'
+                        ? '尚未提取记忆'
+                        : '记忆提取失败'}
+                </div>
+              )}
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-                <button
-                  className="btn btn-primary"
-                  onClick={handleMemoryBackfill}
-                  disabled={memoryBackfilling}
-                >
-                  <DatabaseZap size={14} /> {memoryBackfilling ? '补跑中...' : '修补记忆提取'}
-                </button>
+                {/* v6.6.7: Memory backfill button with state-aware labels */}
+                {(() => {
+                  const ms = data.memory_status
+                  const hasTrusted = ms?.memory_trusted
+                  const hasFallback = ms?.memory_status === 'fallback'
+                  const isTerminal = ['reviewed', 'awaiting_publish', 'published'].includes(data.chapter_status)
+                  if (!isTerminal) return null
+                  return (
+                    <>
+                      <button
+                        className={`btn ${hasTrusted ? 'btn-secondary' : 'btn-primary'}`}
+                        onClick={() => handleMemoryBackfill(hasFallback)}
+                        disabled={memoryBackfilling || hasTrusted}
+                        title={hasTrusted ? '已存在可信记忆批次' : hasFallback ? '重新提取可信记忆' : '补跑记忆提取'}
+                      >
+                        <DatabaseZap size={14} />
+                        {memoryBackfilling ? '补跑中...' : hasTrusted ? '已存在可信记忆' : hasFallback ? '重新提取可信记忆' : '补跑记忆提取'}
+                      </button>
+                      {hasTrusted && (
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => handleMemoryBackfill(true)}
+                          disabled={memoryBackfilling}
+                          title="强制重新提取（会忽略旧候选）"
+                        >
+                          <DatabaseZap size={14} /> 强制重跑
+                        </button>
+                      )}
+                    </>
+                  )
+                })()}
                 <button
                   className="btn btn-secondary"
                   onClick={handleMarkStuck}

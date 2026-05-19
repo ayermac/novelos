@@ -1,16 +1,33 @@
-"""Shared safety gates for MemoryCurator API entry points."""
+"""Shared safety gates for MemoryCurator API entry points.
+
+v6.6.7: Enhanced trusted/untrusted/fallback classification with
+three-category result taxonomy:
+  - trusted_extraction: real LLM succeeded, patches validated
+  - fallback_candidate: extraction failed, state-card fallback only
+  - failed_no_memory: no patches and no fallback available
+"""
 
 from __future__ import annotations
 
 from typing import Any
 
 
+# ── Classification ───────────────────────────────────────────────
+
+
 def is_trusted_memory_batch(repo: Any, batch: dict) -> bool:
-    """Return True only for user-visible, non-fallback memory batches."""
+    """Return True only for user-visible, non-fallback memory batches.
+
+    v6.6.7: Also checks batch metadata for explicit untrusted markers.
+    """
     if str(batch.get("status") or "") == "ignored":
         return False
     summary = str(batch.get("summary") or "")
     if "状态卡兜底" in summary:
+        return False
+    if "fallback" in summary.lower():
+        return False
+    if "degraded" in summary.lower():
         return False
     try:
         items = repo.list_memory_items(batch["id"])
@@ -21,9 +38,9 @@ def is_trusted_memory_batch(repo: Any, batch: dict) -> bool:
     for item in items:
         rationale = str(item.get("rationale") or "")
         confidence = float(item.get("confidence") or 0)
-        if "状态卡兜底候选" in rationale or (
-            confidence <= 0.45 and "MemoryCurator LLM 复核" in rationale
-        ):
+        if "状态卡兜底候选" in rationale or "fallback" in rationale.lower():
+            return False
+        if confidence <= 0.45 and "MemoryCurator LLM 复核" in rationale:
             return False
     return True
 
@@ -33,6 +50,8 @@ def is_state_card_fallback_batch(repo: Any, batch: dict) -> bool:
     summary = str(batch.get("summary") or "")
     if "状态卡兜底" in summary:
         return True
+    if "fallback" in summary.lower():
+        return True
     try:
         items = repo.list_memory_items(batch["id"])
     except Exception:
@@ -40,11 +59,102 @@ def is_state_card_fallback_batch(repo: Any, batch: dict) -> bool:
     for item in items:
         rationale = str(item.get("rationale") or "")
         confidence = float(item.get("confidence") or 0)
-        if "状态卡兜底候选" in rationale or (
-            confidence <= 0.45 and "MemoryCurator LLM 复核" in rationale
-        ):
+        if "状态卡兜底候选" in rationale or "fallback" in rationale.lower():
+            return True
+        if confidence <= 0.45 and "MemoryCurator LLM 复核" in rationale:
             return True
     return False
+
+
+def classify_memory_batch(repo: Any, batch: dict) -> str:
+    """Classify a batch into trusted / fallback / empty.
+
+    Returns one of: "trusted", "fallback", "empty", "ignored".
+    """
+    if str(batch.get("status") or "") == "ignored":
+        return "ignored"
+    try:
+        items = repo.list_memory_items(batch["id"])
+    except Exception:
+        items = []
+    if not items:
+        return "empty"
+    if is_state_card_fallback_batch(repo, batch):
+        return "fallback"
+    if is_trusted_memory_batch(repo, batch):
+        return "trusted"
+    # Has items but neither trusted nor fallback → mixed/unclassified
+    return "fallback"
+
+
+def get_memory_status_for_chapter(
+    repo: Any, project_id: str, chapter_number: int
+) -> dict[str, Any]:
+    """Return canonical memory status for a chapter.
+
+    Returns dict with:
+    - memory_status: trusted / fallback / failed / missing
+    - memory_trusted: bool
+    - latest_memory_batch_id: str | None
+    - batch_count: int
+    - trusted_batch_count: int
+    - fallback_batch_count: int
+    """
+    try:
+        batches = repo.list_memory_batches(project_id)
+    except Exception:
+        return {
+            "memory_status": "missing",
+            "memory_trusted": False,
+            "latest_memory_batch_id": None,
+            "batch_count": 0,
+            "trusted_batch_count": 0,
+            "fallback_batch_count": 0,
+        }
+
+    chapter_batches = [
+        b for b in batches
+        if int(b.get("chapter_number") or 0) == int(chapter_number)
+        and str(b.get("status") or "") != "ignored"
+    ]
+
+    trusted_count = 0
+    fallback_count = 0
+    latest_batch = None
+    latest_time = ""
+
+    for batch in chapter_batches:
+        cls = classify_memory_batch(repo, batch)
+        if cls == "trusted":
+            trusted_count += 1
+        elif cls == "fallback":
+            fallback_count += 1
+        created = str(batch.get("created_at") or "")
+        if created > latest_time:
+            latest_time = created
+            latest_batch = batch
+
+    if trusted_count > 0:
+        status = "trusted"
+        trusted = True
+    elif fallback_count > 0:
+        status = "fallback"
+        trusted = False
+    elif chapter_batches:
+        status = "failed"
+        trusted = False
+    else:
+        status = "missing"
+        trusted = False
+
+    return {
+        "memory_status": status,
+        "memory_trusted": trusted,
+        "latest_memory_batch_id": latest_batch["id"] if latest_batch else None,
+        "batch_count": len(chapter_batches),
+        "trusted_batch_count": trusted_count,
+        "fallback_batch_count": fallback_count,
+    }
 
 
 def ignore_duplicate_state_card_fallback_batches(

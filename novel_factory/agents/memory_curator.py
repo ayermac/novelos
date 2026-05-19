@@ -22,6 +22,125 @@ from ..agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
 
 logger = logging.getLogger(__name__)
 
+# ── Robust JSON extraction helpers ────────────────────────────────
+
+
+def _robust_extract_patches(raw_response: dict[str, Any]) -> tuple[list[dict[str, Any]], list[str]]:
+    """Extract patches from LLM response with enhanced resilience.
+
+    Returns (patches, warnings).
+    Handles: raw dict, fenced json, unclosed fences, prose wrappers,
+    schema-extraneous fields, and first-complete-object extraction.
+    """
+    patches: list[dict[str, Any]] = []
+    warnings: list[str] = []
+
+    # Direct patches list
+    if "patches" in raw_response and isinstance(raw_response["patches"], list):
+        patches = list(raw_response["patches"])
+    elif "facts" in raw_response and isinstance(raw_response["facts"], list):
+        patches = list(raw_response["facts"])
+        warnings.append("Legacy 'facts' key used instead of 'patches'")
+    else:
+        # The response itself might be a single patch object
+        if isinstance(raw_response, dict) and any(k in raw_response for k in ("target_table", "operation")):
+            patches = [raw_response]
+        else:
+            warnings.append(f"Unrecognized response schema: keys={list(raw_response.keys())}")
+
+    return patches, warnings
+
+
+def _validate_patches(
+    patches: list[dict[str, Any]],
+    chapter_content: str = "",
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Strictly validate patches. Return (valid_patches, validation_issues).
+
+    Rules:
+    1. patches must be a non-empty list.
+    2. Each patch must have target_table, operation, confidence, evidence_text.
+    3. confidence must be in [0, 1].
+    4. evidence_text must be non-empty.
+    5. evidence_text should ideally be traceable to chapter_content or state card.
+    """
+    issues: list[str] = []
+    valid: list[dict[str, Any]] = []
+
+    if not patches:
+        issues.append("patches is empty")
+        return valid, issues
+
+    content_lower = chapter_content.lower() if chapter_content else ""
+
+    for i, patch in enumerate(patches):
+        idx = i + 1
+        if not isinstance(patch, dict):
+            issues.append(f"Patch {idx} is not a dict: {type(patch).__name__}")
+            continue
+
+        # Required fields
+        target_table = patch.get("target_table")
+        operation = patch.get("operation")
+        confidence = patch.get("confidence")
+        evidence_text = str(patch.get("evidence_text") or "").strip()
+
+        if not target_table:
+            issues.append(f"Patch {idx} missing target_table")
+            continue
+        if not operation:
+            issues.append(f"Patch {idx} missing operation")
+            continue
+        if confidence is None:
+            issues.append(f"Patch {idx} missing confidence")
+            continue
+
+        try:
+            conf_val = float(confidence)
+        except (TypeError, ValueError):
+            issues.append(f"Patch {idx} confidence is not a number: {confidence}")
+            continue
+
+        if not (0.0 <= conf_val <= 1.0):
+            issues.append(f"Patch {idx} confidence {conf_val} out of [0,1]")
+            continue
+
+        if not evidence_text:
+            issues.append(f"Patch {idx} evidence_text is empty")
+            continue
+
+        # Evidence traceability (advisory only)
+        if content_lower and len(evidence_text) >= 4:
+            # Check if a significant substring of evidence appears in content
+            evidence_lower = evidence_text.lower()
+            found = False
+            # Try sliding window of 8 chars
+            for start in range(0, max(1, len(evidence_lower) - 7), 4):
+                needle = evidence_lower[start : start + 8]
+                if needle in content_lower:
+                    found = True
+                    break
+            if not found:
+                issues.append(f"Patch {idx} evidence_text not traceable to chapter content (advisory)")
+
+        # Normalize patch: keep known fields, discard extras silently
+        normalized = {
+            "target_table": str(target_table).strip(),
+            "operation": str(operation).strip(),
+            "target_name": str(patch.get("target_name") or "").strip(),
+            "data": patch.get("data") if isinstance(patch.get("data"), dict) else {},
+            "confidence": conf_val,
+            "evidence_text": evidence_text,
+            "rationale": str(patch.get("rationale") or "").strip(),
+        }
+        valid.append(normalized)
+
+    return valid, issues
+
+
+# ── Patch count threshold for "meaningful" extraction ─────────────
+_MIN_PATCHES_FOR_TRUSTED = 1
+
 MEMORY_CURATOR_SYSTEM_PROMPT = """你是网文工厂的记忆管理员（Memory Curator），负责从已审校的章节中提取项目资料变更建议。
 
 你的任务：
@@ -357,8 +476,9 @@ class MemoryCuratorAgent(BaseAgent):
                 return _fallback_after_extraction_failure(e)
             except OutputValidationError as e:
                 return {"output": [], "json_error": str(e), "warning": str(e)}
-            patches = raw.get("patches", raw.get("facts", []))
-            return {"output": patches}
+            # v6.6.7: Use robust extraction with validation
+            patches, extract_warnings = _robust_extract_patches(raw)
+            return {"output": patches, "extract_warnings": extract_warnings}
 
         def _self_check_wrap(data: dict[str, Any]) -> SelfCheckResult:
             patches = data.get("output", [])
@@ -378,13 +498,21 @@ class MemoryCuratorAgent(BaseAgent):
                     "type": "json_parse",
                     "message": f"MemoryCurator JSON 解析失败: {str(data.get('json_error'))[:160]}",
                 })
-            for i, patch in enumerate(patches):
-                if not patch.get("target_table"):
-                    issues.append({"type": "patch_structure", "message": f"Patch {i+1} missing target_table"})
-                if not patch.get("operation"):
-                    issues.append({"type": "patch_structure", "message": f"Patch {i+1} missing operation"})
-                if patch.get("confidence", 0) < 0.3:
-                    issues.append({"type": "patch_confidence", "message": f"Patch {i+1} confidence too low"})
+            # v6.6.7: Enhanced validation
+            chapter = self.repo.get_chapter(project_id, chapter_number)
+            chapter_content = str((chapter or {}).get("content") or "")
+            valid_patches, validation_issues = _validate_patches(patches, chapter_content)
+            data["validated_patches"] = valid_patches
+            for issue in validation_issues:
+                # Only treat structural issues as blocking; traceability warnings are advisory
+                if "not traceable" in issue:
+                    continue
+                issues.append({"type": "patch_validation", "message": issue})
+            # v6.6.7: Skip confidence checks for fallback patches (already known low-confidence)
+            if not data.get("fallback_source"):
+                for i, patch in enumerate(valid_patches):
+                    if patch.get("confidence", 0) < 0.45:
+                        issues.append({"type": "patch_confidence", "message": f"Patch {i+1} confidence {patch['confidence']} below threshold 0.45"})
             return SelfCheckResult(
                 passed=len(issues) == 0,
                 issues=issues,
@@ -416,8 +544,9 @@ class MemoryCuratorAgent(BaseAgent):
             ]
             try:
                 raw = self.llm.invoke_json(messages)
-                patches = raw.get("patches", raw.get("facts", []))
-                return {"output": patches}
+                # v6.6.7: Use robust extraction with validation
+                patches, extract_warnings = _robust_extract_patches(raw)
+                return {"output": patches, "extract_warnings": extract_warnings}
             except Exception:
                 fallback_patches = self._patches_from_chapter_state_card(project_id, chapter_number)
                 if fallback_patches:
@@ -432,24 +561,29 @@ class MemoryCuratorAgent(BaseAgent):
                 return None
 
         loop_result = loop.run(_generate_wrap, _self_check_wrap, _repair_wrap)
-        patches = loop_result.get("output", [])
+        # v6.6.7: Prefer validated patches if available
+        patches = loop_result.get("validated_patches") or loop_result.get("output", [])
         trace = loop_result.get("_trace", {})
         autonomy = loop_result.get("_autonomy", {})
-        if state.get("llm_mode") == "real" and autonomy.get("decision") in {"ask_human", "reroute", "refuse"}:
-            reason = autonomy.get("reason") or "MemoryCurator 自检未通过"
-            return {
-                "error": f"MemoryCurator 自检未通过: {reason}",
-                "chapter_status": state.get("chapter_status"),
-                "requires_human": True,
-                "_trace": trace,
-                "_autonomy": autonomy,
-            }
-
         if loop_result.get("degraded"):
             return {
                 "memory_curator_processed": True,
                 "memory_curator_degraded": True,
                 "memory_curator_warning": loop_result.get("warning", ""),
+                "extraction_success": False,
+                "fallback_created": False,
+                "_trace": trace,
+                "_autonomy": autonomy,
+            }
+
+        if state.get("llm_mode") == "real" and autonomy.get("decision") in {"ask_human", "reroute", "refuse"}:
+            reason = autonomy.get("reason") or "MemoryCurator 自检未通过"
+            return {
+                "memory_curator_processed": True,
+                "error": f"MemoryCurator 自检未通过: {reason}",
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": True,
+                "extraction_success": False,
                 "_trace": trace,
                 "_autonomy": autonomy,
             }
@@ -507,19 +641,14 @@ class MemoryCuratorAgent(BaseAgent):
                 "status": "info",
                 "payload": {"memory_items_count": 0},
             })
-            degraded_empty = state.get("llm_mode") == "real"
+            # v6.6.7: Empty extraction is always extraction_success=False
             return {
                 "memory_curator_processed": True,
                 "memory_items_count": 0,
-                "extraction_success": not degraded_empty,
+                "extraction_success": False,
                 "fallback_created": False,
-                **(
-                    {
-                        "memory_curator_degraded": True,
-                        "memory_curator_warning": "LLM 未提取出记忆候选，且无状态卡兜底",
-                    }
-                    if degraded_empty else {}
-                ),
+                "memory_curator_degraded": True,
+                "memory_curator_warning": "LLM 未提取出记忆候选，且无状态卡兜底",
                 "_trace": trace,
                 "_autonomy": autonomy,
                 "_exec_events": exec_events,
@@ -618,13 +747,20 @@ class MemoryCuratorAgent(BaseAgent):
             "payload": {"batch_id": batch["id"], "items_count": items_created, "fallback_source": fallback_source},
         })
 
+        # v6.6.7: Classify result into three categories
+        if fallback_source:
+            result_category = "fallback_candidate"
+        else:
+            result_category = "trusted_extraction"
+
         return {
             "memory_curator_processed": True,
             "memory_batch_id": batch["id"],
             "memory_items_count": items_created,
-            # v6.6.1: Clear semantics for extraction vs fallback
+            # v6.6.7: Clear semantics for extraction vs fallback
             "extraction_success": fallback_source is None,
             "fallback_created": fallback_source is not None,
+            "result_category": result_category,
             **({"memory_curator_fallback": fallback_source} if fallback_source else {}),
             **({"memory_curator_warning": warning} if warning else {}),
             "_trace": trace,

@@ -166,8 +166,15 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
 
   if (loading) return <div className="module-loading">加载中...</div>
 
+  // v6.6.7: Separate trusted vs fallback batches visually
+  const isFallbackBatch = (batch: MemoryBatch) =>
+    batch.summary.includes('状态卡兜底') ||
+    batch.summary.toLowerCase().includes('fallback')
+
   const pendingBatches = batches.filter((b) => b.status === 'pending' || b.status === 'partial')
   const historyBatches = batches.filter((b) => b.status !== 'pending' && b.status !== 'partial')
+  const fallbackBatches = pendingBatches.filter(isFallbackBatch)
+  const trustedPendingBatches = pendingBatches.filter((b) => !isFallbackBatch(b))
 
   return (
     <div className="project-module">
@@ -191,13 +198,43 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
         </div>
       ) : (
         <>
-          {pendingBatches.length > 0 && (
+          {/* v6.6.7: Trusted pending batches */}
+          {trustedPendingBatches.length > 0 && (
             <div className="memory-section">
-              <h4 className="memory-section-title">待处理 ({pendingBatches.length})</h4>
-              {pendingBatches.map((batch) => (
+              <h4 className="memory-section-title">待处理 ({trustedPendingBatches.length})</h4>
+              {trustedPendingBatches.map((batch) => (
                 <BatchCard
                   key={batch.id}
                   batch={batch}
+                  expanded={expandedBatchId === batch.id}
+                  detail={expandedBatchId === batch.id ? batchDetail : null}
+                  detailLoading={detailLoading && expandedBatchId === batch.id}
+                  onExpand={handleExpand}
+                  onApply={handleApply}
+                  onIgnore={handleIgnore}
+                  onRetry={handleRetry}
+                  applying={applying === batch.id}
+                  ignoring={ignoring}
+                  retrying={retrying === batch.id}
+                />
+              ))}
+            </div>
+          )}
+
+          {/* v6.6.7: Fallback batches — visually distinct */}
+          {fallbackBatches.length > 0 && (
+            <div className="memory-section">
+              <h4 className="memory-section-title" style={{ color: 'var(--warning)' }}>
+                待人工确认候选 ({fallbackBatches.length})
+              </h4>
+              <div style={{ fontSize: '13px', color: 'var(--text-secondary)', marginBottom: '12px' }}>
+                以下批次来自状态卡兜底或低置信度提取，未经过 LLM 可信验证，请人工确认后再应用。
+              </div>
+              {fallbackBatches.map((batch) => (
+                <BatchCard
+                  key={batch.id}
+                  batch={batch}
+                  isFallback
                   expanded={expandedBatchId === batch.id}
                   detail={expandedBatchId === batch.id ? batchDetail : null}
                   detailLoading={detailLoading && expandedBatchId === batch.id}
@@ -289,7 +326,7 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
 }
 
 function BatchCard({
-  batch, expanded, detail, detailLoading, onExpand, onApply, onIgnore, onRetry, applying, ignoring, retrying,
+  batch, expanded, detail, detailLoading, onExpand, onApply, onIgnore, onRetry, applying, ignoring, retrying, isFallback,
 }: {
   batch: MemoryBatch
   expanded: boolean
@@ -302,17 +339,21 @@ function BatchCard({
   applying: boolean
   ignoring: string | null
   retrying: boolean
+  isFallback?: boolean
 }) {
   const canApply = batch.status === 'pending' || batch.status === 'partial'
   const failedCount = detail?.items?.filter((i) => i.status === 'failed').length ?? 0
 
   return (
-    <div className="batch-card">
+    <div className="batch-card" style={isFallback ? { borderLeft: '3px solid var(--warning)' } : undefined}>
       <div className="batch-header" onClick={() => onExpand(batch.id)}>
         <span className="batch-toggle">
           {expanded ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
         </span>
-        <span className="batch-summary">{batch.summary}</span>
+        <span className="batch-summary">
+          {batch.summary}
+          {isFallback && <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--warning)', fontWeight: 500 }}>[低可信]</span>}
+        </span>
         <div className="batch-meta">
           <span className="batch-chapter">第{batch.chapter_number}章</span>
           <span className={`batch-status batch-status-${batch.status}`}>
@@ -333,7 +374,7 @@ function BatchCard({
               </button>
             )}
             <button
-              className="btn btn-primary btn-sm"
+              className={`btn ${isFallback ? 'btn-secondary' : 'btn-primary'} btn-sm`}
               onClick={(e) => { e.stopPropagation(); onApply(batch.id) }}
               disabled={applying}
             >

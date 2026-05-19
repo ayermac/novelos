@@ -381,6 +381,18 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             timeout_minutes=timeout_minutes,
         )
 
+        # v6.6.7: Memory status for reviewed/awaiting_publish/published chapters
+        memory_status: dict[str, Any] = {}
+        if chapter and chapter.get("status") in ("reviewed", "awaiting_publish", "published"):
+            try:
+                from ...api.routes._memory_curator_gate import get_memory_status_for_chapter
+
+                memory_status = get_memory_status_for_chapter(
+                    repo, run_data["project_id"], run_data["chapter_number"]
+                )
+            except Exception:
+                pass
+
         return envelope_response({
             "run_id": run_id,
             "project_id": run_data["project_id"],
@@ -403,6 +415,8 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             "reconciled_running_tasks": reconciliation.get("tasks", 0),
             # v6.6.6: Recovery state
             "recovery_state": recovery_state.get("recovery_state", recovery_state),
+            # v6.6.7: Memory status
+            "memory_status": memory_status,
         })
 
     except Exception as e:
@@ -660,7 +674,13 @@ async def backfill_run_memory(
     run_id: str,
     body: RunMemoryBackfillRequest,
 ) -> EnvelopeResponse:
-    """Backfill MemoryCurator for a reviewed/awaiting/published chapter."""
+    """Backfill MemoryCurator for a reviewed/awaiting/published chapter.
+
+    v6.6.7:
+    - force=true ignores old fallback/untrusted batches and re-runs extraction.
+    - Only skips when a trusted batch exists AND force=false.
+    - Returns clear semantics: trusted vs fallback vs failed.
+    """
     from ..deps import get_repo, get_llm_provider_for_agent, get_llm_mode, LLMConfigMissingError
     from ...agents.memory_curator import MemoryCuratorAgent
     from ...skills.registry import SkillRegistry
@@ -688,7 +708,8 @@ async def backfill_run_memory(
                 details={"current_status": current_status},
             )
 
-        if _has_memory_batch_for_chapter(repo, project_id, chapter_number) and not body.force:
+        # v6.6.7: Only skip if trusted batch exists AND force=false
+        if has_trusted_memory_batch(repo, project_id, chapter_number) and not body.force:
             return envelope_response({
                 "skipped": True,
                 "project_id": project_id,
@@ -696,6 +717,17 @@ async def backfill_run_memory(
                 "chapter_status": current_status,
                 "message": "该章节已有可信记忆收件箱批次，未重复补跑。",
             })
+
+        # v6.6.7: If force=true, mark old fallback batches as ignored before re-running
+        if body.force:
+            try:
+                from ...api.routes._memory_curator_gate import ignore_state_card_fallback_batches_for_chapter
+
+                ignored = ignore_state_card_fallback_batches_for_chapter(repo, project_id, chapter_number)
+                if ignored:
+                    logger.info("backfill force=true: ignored %d old fallback batches", ignored)
+            except Exception:
+                pass
 
         backfill_run_id = repo.create_workflow_run(
             project_id,
@@ -797,15 +829,16 @@ async def backfill_run_memory(
             "chapter_status": current_status,
             "memory_batch_id": result.get("memory_batch_id"),
             "memory_items_count": result.get("memory_items_count", 0),
-            # v6.6.1: Clear semantics for extraction vs fallback
+            # v6.6.7: Clear three-category semantics
             "extraction_success": extraction_success,
             "fallback_created": result.get("fallback_created", False),
+            "trusted": extraction_success and not result.get("fallback_created", False),
             "memory_curator_degraded": result.get("memory_curator_degraded", False),
             "memory_curator_fallback": result.get("memory_curator_fallback"),
             "message": (
-                f"记忆提取补跑完成：{result.get('memory_items_count', 0)} 条候选"
-                if result.get("extraction_success", True)
-                else f"记忆提取失败，已创建兜底候选：{result.get('memory_items_count', 0)} 条"
+                f"记忆提取补跑完成：{result.get('memory_items_count', 0)} 条可信候选"
+                if extraction_success
+                else f"记忆提取失败，仅生成低可信候选：{result.get('memory_items_count', 0)} 条"
             ),
         })
     except Exception as e:
