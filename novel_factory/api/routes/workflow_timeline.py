@@ -135,12 +135,31 @@ def _build_recovery(
     run_data: dict | None,
     chapter_status: str | None,
     timeout_minutes: int = STUCK_THRESHOLD_MINUTES,
+    chapter: dict | None = None,
+    checkpoint_info: dict | None = None,
 ) -> dict[str, Any]:
+    """Build recovery recommendations for a workflow run.
+
+    v6.6.6: Uses derive_workflow_recovery_state() for canonical state,
+    then enriches with legacy safe_actions format for backward compatibility.
+    """
+    from ...workflow.state_integrity import derive_workflow_recovery_state
+
     stale_info = _detect_stale(run_data, timeout_minutes)
     is_stale = stale_info["is_stale"]
     chapter_status = chapter_status or "unknown"
     terminal_statuses = {"reviewed", "awaiting_publish", "published"}
 
+    # v6.6.6: Derive canonical recovery state
+    has_existing_content = bool(chapter and chapter.get("content")) if chapter else False
+    recovery_state = derive_workflow_recovery_state(
+        chapter=chapter,
+        latest_run=run_data,
+        checkpoint_info=checkpoint_info,
+        has_existing_content=has_existing_content,
+    )
+
+    # Build legacy safe_actions format for backward compatibility
     recommended_action = None
     reason = None
     safe_actions: list[dict] = []
@@ -152,6 +171,9 @@ def _build_recovery(
             recommended_action = "mark_stuck"
             reason = "终态章节仍有运行中工作流，建议标记为阻塞。"
             safe_actions.append({"key": "mark_stuck", "label": "标记为阻塞", "safe": True})
+        else:
+            # v6.6.6: publish_ready for terminal chapters
+            safe_actions.append({"key": "publish", "label": "确认发布", "safe": True})
     elif is_stale:
         recommended_action = "mark_stuck"
         reason = stale_info["reason"]
@@ -183,11 +205,34 @@ def _build_recovery(
             "safe": True,
             "note": "回到 planned，完整重跑",
         })
+    else:
+        # v6.6.6: Use canonical recovery_state for other statuses
+        for action_key in recovery_state.get("safe_actions", []):
+            action_labels = {
+                "view_content": "查看正文",
+                "view_detail": "查看详情",
+                "generate": "生成本章",
+                "publish": "确认发布",
+                "resume": "继续/恢复运行",
+                "rerun": "重新运行",
+                "reset": "清除阻塞并重置",
+                "mark_stuck": "标记为阻塞",
+                "local_edit": "局部编辑",
+                "create_revision_draft": "创建修订版",
+                "reset_explicitly": "显式重置",
+                "reopen_revision": "重新返修",
+            }
+            label = action_labels.get(action_key, action_key)
+            safe_actions.append({"key": action_key, "label": label, "safe": True})
+        recommended_action = recovery_state.get("recommended_action")
+        reason = recovery_state.get("blocking_reason") or recovery_state.get("recovery_hint")
 
     return {
         "recommended_action": recommended_action,
         "reason": reason,
         "safe_actions": safe_actions,
+        # v6.6.6: Include canonical recovery_state
+        "recovery_state": recovery_state,
     }
 
 
@@ -530,6 +575,14 @@ async def get_workflow_timeline(
         # No run -> empty timeline
         if not target_run:
             checkpoint = _checkpoint_metadata(repo, project_id, chapter_number)
+            # v6.6.6: Build recovery state even without run
+            recovery = _build_recovery(
+                None,
+                chapter.get("status"),
+                timeout_minutes,
+                chapter=chapter,
+                checkpoint_info=checkpoint,
+            )
             return envelope_response({
                 "project_id": project_id,
                 "chapter_number": chapter_number,
@@ -539,11 +592,7 @@ async def get_workflow_timeline(
                 "started_at": None,
                 "elapsed_minutes": None,
                 "is_stale": False,
-                "recovery": {
-                    "recommended_action": None,
-                    "reason": None,
-                    "safe_actions": [],
-                },
+                "recovery": recovery,
                 "checkpoint": checkpoint,
                 "nodes": _build_node_timeline([], []),
             })
@@ -554,7 +603,16 @@ async def get_workflow_timeline(
         started_at = target_run.get("started_at")
 
         stale_info = _detect_stale(target_run, timeout_minutes)
-        recovery = _build_recovery(target_run, chapter.get("status"), timeout_minutes)
+
+        # v6.6.6: Get checkpoint info for recovery state
+        checkpoint = _checkpoint_metadata(repo, project_id, chapter_number)
+        recovery = _build_recovery(
+            target_run,
+            chapter.get("status"),
+            timeout_minutes,
+            chapter=chapter,
+            checkpoint_info=checkpoint,
+        )
 
         # Fetch node events
         events = repo.get_workflow_node_events(run_id_str)

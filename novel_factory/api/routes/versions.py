@@ -43,6 +43,7 @@ class SaveContentRequest(BaseModel):
     summary: str | None = None
     base_version_id: int | None = None
     confirm: bool = False
+    is_local_edit: bool = False  # v6.6.6: Flag for local edit context
 
 
 class LocalRevisionMode(str, Enum):
@@ -243,28 +244,49 @@ async def save_chapter_content(
         )
 
         # Status transition: human edits after review/blocking/revision need re-review.
+        # v6.6.6: Local edit protection - don't pollute main workflow blocking state
         new_status = status
         status_changed = False
+        from ...workflow.state_integrity import should_protect_from_blocking
+
+        # Check if this is a protected local edit
+        is_protected_local_edit = should_protect_from_blocking(status, body.is_local_edit)
+
         if status in PUBLISHED_STATUSES:
+            if is_protected_local_edit:
+                # v6.6.6: Local edit on published/awaiting_publish - don't change status
+                # Just save the content and version, keep terminal status
+                new_status = status
+                status_changed = False
+            else:
+                # Explicit edit with confirmation - transition to polished for re-review
+                new_status = "polished"
+                repo.update_chapter_status(project_id, chapter_number, "polished")
+                status_changed = True
+        elif status in {"reviewed", "awaiting_publish"}:
+            if is_protected_local_edit:
+                # v6.6.6: Local edit on reviewed/awaiting_publish - don't enter main workflow
+                new_status = status
+                status_changed = False
+            else:
+                new_status = "polished"
+                repo.update_chapter_status(project_id, chapter_number, "polished")
+                status_changed = True
+        elif status in {"blocking", "revision"}:
             new_status = "polished"
             repo.update_chapter_status(project_id, chapter_number, "polished")
             status_changed = True
-        elif status in {"reviewed", "blocking", "revision"}:
-            new_status = "polished"
-            repo.update_chapter_status(project_id, chapter_number, "polished")
-            status_changed = True
-            if status in {"blocking", "revision"}:
-                reset_task_id = repo.start_task(
-                    project_id,
-                    chapter_number,
-                    "reset",
-                    "human",
-                )
-                repo.complete_task(
-                    reset_task_id,
-                    success=True,
-                    error="人工编辑保存：清空本轮自动返修计数。",
-                )
+            reset_task_id = repo.start_task(
+                project_id,
+                chapter_number,
+                "reset",
+                "human",
+            )
+            repo.complete_task(
+                reset_task_id,
+                success=True,
+                error="人工编辑保存：清空本轮自动返修计数。",
+            )
 
         return envelope_response({
             "saved": True,

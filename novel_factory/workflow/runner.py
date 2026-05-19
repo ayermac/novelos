@@ -99,21 +99,85 @@ def _clear_stale_checkpoint_for_new_run(
     manual retry can resume from that stale node and fail an optimistic status
     transition such as planned->scripted. Keep checkpoints only while the latest
     run is still marked running; every other new run starts from DB truth.
+
+    v6.6.6: Enhanced with stale checkpoint detection and explanatory logging.
     """
+    from .state_integrity import _checkpoint_is_stale, STALE_CHECKPOINT_SECONDS
+    from .checkpoint import inspect_checkpoint_thread
+
     try:
         latest_runs = repo.get_workflow_runs_for_project(
             project_id, chapter_number=chapter_number, limit=1
         )
         latest_status = latest_runs[0].get("status") if latest_runs else None
+
+        # Check if checkpoint exists at all
+        checkpoint_info = None
+        try:
+            checkpoint_info = inspect_checkpoint_thread(repo.db_path, project_id, chapter_number)
+        except Exception:
+            pass
+
+        checkpoint_exists = bool(checkpoint_info and checkpoint_info.get("checkpoint_exists"))
+
         if latest_status == "running" and _running_run_is_recent(latest_runs[0]):
+            # Healthy running run - do NOT clear checkpoint
+            logger.debug(
+                "Skipping checkpoint clear for %s/%s: healthy running run",
+                project_id, chapter_number,
+            )
             return
+
         if latest_status == "running":
+            # Stale running run - mark as failed and clear checkpoint
             run_id = latest_runs[0].get("id") or latest_runs[0].get("run_id")
             _mark_run_failed(
                 repo,
                 run_id,
                 "Stale running workflow detected; clearing checkpoint before fresh run.",
             )
+            logger.info(
+                "Marked stale running run %s as failed for %s/%s",
+                run_id, project_id, chapter_number,
+            )
+
+        # v6.6.6: Check if checkpoint is stale before clearing
+        if checkpoint_exists:
+            chapter = repo.get_chapter(project_id, chapter_number)
+            chapter_status = chapter.get("status", "planned") if chapter else "planned"
+            checkpoint_node = checkpoint_info.get("checkpoint_node")
+            checkpoint_chapter_status = None  # Not easily available from inspect
+
+            is_stale, stale_reason = _checkpoint_is_stale(
+                run_status=latest_status,
+                checkpoint_exists=checkpoint_exists,
+                checkpoint_node=checkpoint_node,
+                checkpoint_chapter_status=checkpoint_chapter_status,
+                current_chapter_status=chapter_status,
+                checkpoint_age_seconds=None,
+            )
+
+            if is_stale:
+                logger.info(
+                    "Clearing stale checkpoint for %s/%s: %s",
+                    project_id, chapter_number, stale_reason,
+                )
+                # Record explanatory event if possible
+                try:
+                    run_id = latest_runs[0].get("id") if latest_runs else None
+                    if run_id:
+                        repo.create_workflow_node_event(
+                            run_id=run_id,
+                            project_id=project_id,
+                            chapter_number=chapter_number,
+                            node_name="checkpoint_cleanup",
+                            event_type="stale_checkpoint_cleared",
+                            status="info",
+                            message=f"清理过期检查点: {stale_reason}",
+                        )
+                except Exception:
+                    pass  # Non-critical: logging is best-effort
+
         delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
     except Exception:
         logger.warning(

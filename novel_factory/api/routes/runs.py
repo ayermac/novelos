@@ -365,6 +365,22 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
         # Build steps timeline (with observability data from task_status and agent_artifacts)
         steps = _build_steps_timeline(run_data, chapter, llm_mode, repo=repo)
 
+        # v6.6.6: Build recovery state
+        from ..deps import get_settings
+        try:
+            settings = get_settings(request)
+            max_retries = settings.quality_gate.max_retries
+            timeout_minutes = settings.workflow.task_timeout_minutes
+        except Exception:
+            max_retries = 3
+            timeout_minutes = 30
+        recovery_state = _build_recovery_state(
+            repo,
+            run_data,
+            max_retries=max_retries,
+            timeout_minutes=timeout_minutes,
+        )
+
         return envelope_response({
             "run_id": run_id,
             "project_id": run_data["project_id"],
@@ -385,6 +401,8 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             "duration_ms": run_data.get("duration_ms", 0),
             "reconciled_terminal_run": bool(reconciliation.get("runs")),
             "reconciled_running_tasks": reconciliation.get("tasks", 0),
+            # v6.6.6: Recovery state
+            "recovery_state": recovery_state.get("recovery_state", recovery_state),
         })
 
     except Exception as e:
@@ -1015,7 +1033,14 @@ def _build_recovery_state(
     max_retries: int = 3,
     timeout_minutes: int = 30,
 ) -> dict:
-    """Build user-facing recovery state for a run."""
+    """Build user-facing recovery state for a run.
+
+    v6.6.6: Uses derive_workflow_recovery_state() for canonical recovery state,
+    then merges with existing fields for backward compatibility.
+    """
+    from ...workflow.state_integrity import derive_workflow_recovery_state
+    from ...workflow.checkpoint import inspect_checkpoint_thread
+
     project_id = run_data["project_id"]
     chapter_number = run_data["chapter_number"]
     chapter = repo.get_chapter(project_id, chapter_number)
@@ -1040,6 +1065,23 @@ def _build_recovery_state(
     else:
         reason = f"章节状态为 '{chapter_status}'，无需或不可执行恢复。"
 
+    # v6.6.6: Get checkpoint info for recovery state derivation
+    checkpoint_info = None
+    try:
+        checkpoint_info = inspect_checkpoint_thread(repo.db_path, project_id, chapter_number)
+    except Exception:
+        checkpoint_info = {"checkpoint_exists": False}
+
+    # v6.6.6: Derive canonical recovery state
+    has_existing_content = bool(chapter and chapter.get("content"))
+    recovery_state = derive_workflow_recovery_state(
+        chapter=chapter,
+        latest_run=run_data,
+        checkpoint_info=checkpoint_info,
+        has_existing_content=has_existing_content,
+    )
+
+    # Merge canonical state with legacy fields for backward compatibility
     return {
         "run_id": run_data.get("id"),
         "project_id": project_id,
@@ -1084,6 +1126,8 @@ def _build_recovery_state(
                 "target_node": retry_target["node"] if retry_target else None,
             },
         },
+        # v6.6.6: Canonical recovery state
+        "recovery_state": recovery_state,
     }
 
 
