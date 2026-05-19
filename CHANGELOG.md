@@ -12,7 +12,21 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
-- Next planned line: v6.6.11 Workflow Timeline & Node Semantics Closure.
+(nothing)
+
+## v6.6.13 - Frontend Contract Adoption Closure
+
+Key changes:
+
+- Extended `statusSemantics.ts` with `isActionable()` helper.
+- Patched `MemoryUpdatesModule`, `ReviewModule`, `ContextSidebar` handlers to check
+  `domain_result` for business success — `partial_success`/`fallback`/`degraded`
+  now display warning, never green success.
+- Patched `ProjectOverviewModule` auto-run status bar: completed sessions with
+  step-level warnings show ⚠ instead of ✓; `handleRunAuto` wired for forward-compat
+  domain_result when backend ships it.
+- Added 15 new tests to `statusSemantics.test.ts` (total: 75 tests).
+- No backend changes. No API additions. No UI architectural changes.
 
 ## v6.6.10 - API Contract & Frontend State Semantics Closure
 
