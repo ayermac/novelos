@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, post } from '../../lib/api'
+import { normalizeOperationResult, isBusinessSuccess } from '../../lib/statusSemantics'
 import {
   Database, ChevronDown, ChevronRight, CheckCircle2,
   Loader2, AlertCircle,
@@ -111,15 +112,24 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
   const handleApply = async (batchId: string) => {
     setApplying(batchId)
     setMessage(null)
-    const res = await post('/memory/apply', { project_id: projectId, batch_id: batchId })
+    const res = await post<Record<string, unknown>>('/memory/apply', { project_id: projectId, batch_id: batchId })
     if (res.ok) {
-      setMessage({ type: 'success', text: '批次已应用' })
+      const domainResult = normalizeOperationResult(res.data ?? {})
+      if (isBusinessSuccess(domainResult)) {
+        setMessage({ type: 'success', text: domainResult.user_message || '批次已应用' })
+      } else if (domainResult.domain_status !== 'pending') {
+        // Non-success with real domain info (partial_success, fallback, degraded, etc.)
+        setMessage({ type: 'error', text: domainResult.user_message || domainResult.message || '部分应用完成，请检查结果' })
+      } else {
+        // Legacy endpoint without domain_result — show success as before
+        setMessage({ type: 'success', text: '批次已应用' })
+      }
       await loadBatches()
       if (expandedBatchId === batchId) {
         await loadBatchDetail(batchId)
       }
     } else if (res.error?.code === 'NO_PENDING_MEMORY_ITEMS') {
-      // Stale partial batch — refresh UI just like success so user sees current state
+      // Stale partial batch — refresh UI so user sees current state
       setMessage({ type: 'error', text: res.error?.message || '无待处理项' })
       await loadBatches()
       if (expandedBatchId === batchId) {

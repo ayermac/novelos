@@ -1,5 +1,6 @@
 import { tChapterStatusLabel, tWorkflowStatus } from '../lib/i18n'
 import { post } from '../lib/api'
+import { normalizeOperationResult, isBusinessSuccess } from '../lib/statusSemantics'
 import { useState } from 'react'
 import { useAppDialog } from './AppDialogContext'
 
@@ -96,11 +97,19 @@ export default function ContextSidebar({
 
   const handlePublish = async () => {
     setPublishing(true)
-    const res = await post('/publish/chapter', {
+    const res = await post<Record<string, unknown>>('/publish/chapter', {
       project_id: projectId,
       chapter: chapterNumber,
     })
     if (res.ok) {
+      const domainResult = normalizeOperationResult(res.data ?? {})
+      if (!isBusinessSuccess(domainResult) && domainResult.domain_status !== 'pending') {
+        await dialog.alert({
+          title: '发布状态',
+          message: domainResult.user_message || domainResult.message || '发布完成但请确认状态',
+          tone: 'warning',
+        })
+      }
       onPublish()
     } else {
       await dialog.alert({

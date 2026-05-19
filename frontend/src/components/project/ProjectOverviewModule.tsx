@@ -16,6 +16,7 @@ import {
   Zap,
 } from 'lucide-react'
 import { get, post, apiUrl, getApiBase } from '../../lib/api'
+import { normalizeOperationResult, isBusinessSuccess } from '../../lib/statusSemantics'
 import { tSessionStopLabel, tActionKey, tStepResult } from '../../lib/state-labels'
 import { Checkbox, InlineMessage, LoadingButton, NumberInput, SkeletonStack, useToast } from '../ui'
 
@@ -212,6 +213,23 @@ function getActionRole(key: string): string {
     repair_title_contract: '书名修复',
   }
   return map[key] || key
+}
+
+/**
+ * Derives display severity for a completed auto-run session.
+ * A session can complete while individual steps had warnings (partial/fallback results).
+ * Returns 'warning' when completed with step-level warnings, 'success' when fully clean.
+ */
+function deriveAutoRunSeverity(
+  result: AutoRunResponse | null,
+  steps: AutoRunStep[],
+): 'success' | 'warning' | 'error' {
+  if (!result) return 'success'
+  if (result.status === 'failed') return 'error'
+  if (result.status !== 'completed' && result.status !== 'dry_run') return 'warning'
+  const effectiveSteps = steps.length > 0 ? steps : result.steps || []
+  const hasWarnSteps = effectiveSteps.some((s) => (s.warnings || []).length > 0)
+  return hasWarnSteps ? 'warning' : 'success'
 }
 
 /* ------------------------------------------------------------------ */
@@ -677,6 +695,17 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
       if (res.ok && res.data) {
         setAutoResult(res.data)
+        // Forward-compat: surface domain_result if backend adds it to run-auto response
+        const rawData = res.data as unknown as Record<string, unknown>
+        if ('domain_result' in rawData && rawData.domain_result) {
+          const domainResult = normalizeOperationResult(rawData)
+          if (!isBusinessSuccess(domainResult) && domainResult.domain_status !== 'pending') {
+            setInlineMessage({
+              variant: 'danger',
+              children: domainResult.user_message || domainResult.message || '运行完成但有异常',
+            })
+          }
+        }
         if (!dryRun && res.data.status !== 'failed') {
           load()
         }
@@ -1574,7 +1603,11 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                       {streamStatus === 'running' && <Loader2 size={14} className="spin" color="var(--primary)" />}
-                      {autoResult?.status === 'completed' && <CheckCircle2 size={14} color="var(--success)" />}
+                      {autoResult?.status === 'completed' && (
+                        deriveAutoRunSeverity(autoResult, streamSteps) === 'warning'
+                          ? <AlertCircle size={14} color="var(--warning)" />
+                          : <CheckCircle2 size={14} color="var(--success)" />
+                      )}
                       {autoResult?.status === 'failed' && <XCircle size={14} color="var(--danger)" />}
                       {autoResult?.status === 'dry_run' && <Sparkles size={14} color="var(--primary)" />}
                       {autoResult?.status === 'stopped' && <AlertCircle size={14} color="var(--warning)" />}
@@ -1582,7 +1615,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                       <span style={{ fontSize: 13, fontWeight: 500 }}>
                         {streamStatus === 'running' ? '生产中...'
                           : streamStatus === 'error' ? '出错了'
-                          : autoResult?.status === 'completed' ? '已完成'
+                          : autoResult?.status === 'completed'
+                            ? (deriveAutoRunSeverity(autoResult, streamSteps) === 'warning' ? '已完成（含警告）' : '已完成')
                           : autoResult?.status === 'failed' ? '失败'
                           : autoResult?.status === 'dry_run' ? '预览结果'
                           : '已停止'}

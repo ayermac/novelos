@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, post } from '../../lib/api'
+import { normalizeOperationResult, isBusinessSuccess } from '../../lib/statusSemantics'
 import { CheckCircle2, AlertTriangle, Clock } from 'lucide-react'
 
 interface Chapter {
@@ -48,8 +49,12 @@ export default function ReviewModule({ projectId }: Props) {
   const handlePublish = async (chapterNumber: number) => {
     setPublishingChapter(chapterNumber)
     setError('')
-    const res = await post('/publish/chapter', { project_id: projectId, chapter: chapterNumber })
+    const res = await post<Record<string, unknown>>('/publish/chapter', { project_id: projectId, chapter: chapterNumber })
     if (res.ok) {
+      const domainResult = normalizeOperationResult(res.data ?? {})
+      if (!isBusinessSuccess(domainResult) && domainResult.domain_status !== 'pending') {
+        setError(domainResult.user_message || domainResult.message || '发布完成但请确认状态')
+      }
       load()
     } else {
       setError(res.error?.message || '发布失败')
