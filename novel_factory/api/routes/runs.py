@@ -393,6 +393,14 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             except Exception:
                 pass
 
+        # v6.6.10: Derive domain-level result for the entire workflow run
+        from ..contracts import workflow_run_to_domain_status
+        domain_result = workflow_run_to_domain_status(
+            run_data.get("status", "unknown"),
+            chapter.get("status", "unknown") if chapter else "unknown",
+            memory_status=memory_status if memory_status else None,
+        )
+
         return envelope_response({
             "run_id": run_id,
             "project_id": run_data["project_id"],
@@ -417,6 +425,8 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             "recovery_state": recovery_state.get("recovery_state", recovery_state),
             # v6.6.7: Memory status
             "memory_status": memory_status,
+            # v6.6.10: Unified domain result
+            "domain_result": domain_result.to_dict(),
         })
 
     except Exception as e:
@@ -680,6 +690,9 @@ async def backfill_run_memory(
     - force=true ignores old fallback/untrusted batches and re-runs extraction.
     - Only skips when a trusted batch exists AND force=false.
     - Returns clear semantics: trusted vs fallback vs failed.
+
+    v6.6.10:
+    - Response now includes domain_result with unified domain_status.
     """
     from ..deps import get_repo, get_llm_provider_for_agent, get_llm_mode, LLMConfigMissingError
     from ...agents.memory_curator import MemoryCuratorAgent
@@ -710,12 +723,17 @@ async def backfill_run_memory(
 
         # v6.6.7: Only skip if trusted batch exists AND force=false
         if has_trusted_memory_batch(repo, project_id, chapter_number) and not body.force:
+            from ..contracts import success as domain_success
             return envelope_response({
                 "skipped": True,
                 "project_id": project_id,
                 "chapter": chapter_number,
                 "chapter_status": current_status,
                 "message": "该章节已有可信记忆收件箱批次，未重复补跑。",
+                "domain_result": domain_success(
+                    "记忆提取已存在可信结果，无需重复补跑",
+                    flags={"memory_trusted": True, "skipped": True},
+                ).to_dict(),
             })
 
         # v6.6.7: If force=true, mark old fallback batches as ignored before re-running
@@ -807,18 +825,62 @@ async def backfill_run_memory(
                 current_node="memory_curator",
                 error_message=message,
             )
+            # v6.6.10: Determine domain result for incomplete extraction
+            from ..contracts import fallback as domain_fallback, failed as domain_failed, degraded as domain_degraded
+            incomplete_details = memory_incomplete_details(
+                result,
+                project_id=project_id,
+                chapter_number=chapter_number,
+                run_id=backfill_run_id,
+            )
+            if result.get("fallback_created") or result.get("memory_curator_fallback"):
+                domain_result = domain_fallback(
+                    message,
+                    user_message="补跑记忆提取仅产生低可信候选，不可作为后续章节可信记忆",
+                    next_action="backfill_memory",
+                    action_label="重新补跑记忆",
+                    details=incomplete_details,
+                )
+            elif result.get("memory_curator_degraded"):
+                domain_result = domain_degraded(
+                    message,
+                    user_message="MemoryCurator 降级，未生成可信记忆",
+                    next_action="backfill_memory",
+                    action_label="重新补跑记忆",
+                    details=incomplete_details,
+                )
+            else:
+                domain_result = domain_failed(
+                    message,
+                    user_message="补跑记忆提取失败，可尝试重新补跑",
+                    next_action="backfill_memory",
+                    action_label="重新补跑记忆",
+                    details=incomplete_details,
+                )
+            incomplete_details["domain_result"] = domain_result.to_dict()
             return error_response(
                 "MEMORY_CURATOR_INCOMPLETE",
                 message,
-                details=memory_incomplete_details(
-                    result,
-                    project_id=project_id,
-                    chapter_number=chapter_number,
-                    run_id=backfill_run_id,
-                ),
+                details=incomplete_details,
             )
 
         repo.update_workflow_run(backfill_run_id, status="completed", current_node="memory_curator", clear_error=True)
+
+        # v6.6.10: Domain result for successful extraction
+        from ..contracts import success as domain_success, fallback as domain_fallback
+        if extraction_success and not result.get("fallback_created", False):
+            domain_result = domain_success(
+                f"记忆提取补跑完成：{result.get('memory_items_count', 0)} 条可信候选",
+                flags={"memory_trusted": True},
+            )
+        else:
+            domain_result = domain_fallback(
+                f"记忆提取补跑产生低可信候选：{result.get('memory_items_count', 0)} 条",
+                user_message="补跑仅产生低可信候选，不可作为后续章节可信记忆",
+                next_action="backfill_memory",
+                action_label="重新补跑记忆",
+                flags={"memory_trusted": False, "memory_fallback": True},
+            )
 
         return envelope_response({
             "skipped": False,
@@ -840,6 +902,8 @@ async def backfill_run_memory(
                 if extraction_success
                 else f"记忆提取失败，仅生成低可信候选：{result.get('memory_items_count', 0)} 条"
             ),
+            # v6.6.10: Unified domain result
+            "domain_result": domain_result.to_dict(),
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"补跑记忆提取失败: {str(e)}")
