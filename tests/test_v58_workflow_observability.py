@@ -467,6 +467,37 @@ class TestWorkflowTimelineApi:
         assert runs[0]["status"] == "completed"
         assert runs[0]["current_node"] == "reset_recovery"
 
+    def test_chapter_reset_recovers_failed_running_run_instead_of_reblocking(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_reset_failed_running", status="blocking")
+        run_id = _seed_run(repo, "obs_reset_failed_running", status="running", current_node="screenwriter")
+        repo.update_workflow_run(
+            run_id,
+            status="failed",
+            current_node="screenwriter",
+            error_message="Screenwriter: stale state, status advance failed",
+        )
+
+        reset_resp = client.post("/api/projects/obs_reset_failed_running/chapters/1/reset")
+        assert reset_resp.status_code == 200
+        reset_data = reset_resp.json()["data"]
+        assert reset_data["new_status"] == "planned"
+        assert reset_data["recovered_blocked_runs"] == 1
+        assert reset_data["invalidated_runs"] == 1
+
+        chapter = repo.get_chapter("obs_reset_failed_running", 1)
+        assert chapter["status"] == "planned"
+        runs = repo.get_workflow_runs_for_project("obs_reset_failed_running", chapter_number=1, limit=1)
+        assert runs[0]["id"] == run_id
+        assert runs[0]["status"] == "completed"
+        assert runs[0]["current_node"] == "reset_recovery"
+        assert runs[0]["error_message"] is None
+
+        workspace_resp = client.get("/api/projects/obs_reset_failed_running/workspace")
+        assert workspace_resp.status_code == 200
+        workspace = workspace_resp.json()["data"]
+        assert workspace["chapters"][0]["status"] == "planned"
+
     def test_production_next_reconciles_blocked_run_before_recommendation(self, tmp_path):
         client, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "obs_prod_next_blocked", status="planned")

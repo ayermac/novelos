@@ -591,9 +591,9 @@ class TestAPIRoutes:
             finally:
                 conn.close()
 
-            assert row["status"] == "blocked"
-            assert row["current_node"] == "human_review"
-            assert "旧运行已作废" in row["error_message"]
+            assert row["status"] == "completed"
+            assert row["current_node"] == "reset_recovery"
+            assert row["error_message"] is None
             assert row["completed_at"]
 
         finally:

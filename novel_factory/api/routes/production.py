@@ -2268,11 +2268,14 @@ async def _execute_auto_step(
                 result["error"] = "重置章节失败"
                 return result
 
-            repo.invalidate_running_workflow_runs_for_chapter(
-                project_id,
-                chapter_num,
-                "章节已重置，旧运行已作废，请重新开始新的工作流。",
-            )
+            if hasattr(repo, "recover_active_workflow_runs_for_chapter"):
+                repo.recover_active_workflow_runs_for_chapter(project_id, chapter_num)
+            else:
+                repo.invalidate_running_workflow_runs_for_chapter(
+                    project_id,
+                    chapter_num,
+                    "章节已重置，旧运行已作废，请重新开始新的工作流。",
+                )
 
             # Clear checkpoint
             from ...workflow.checkpoint import delete_checkpoint_thread

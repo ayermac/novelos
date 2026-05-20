@@ -71,6 +71,19 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
             },
         )
 
+    # Guard 2: Blocked/revision chapters must be recovered explicitly before
+    # starting a fresh production run. Letting "生成本章" run from these states
+    # enters the graph with stale state and usually fails later inside an agent.
+    if chapter and chapter.get("status") in {"blocking", "revision"}:
+        return RunGuardError(
+            "CHAPTER_NEEDS_RECOVERY",
+            f"第 {chapter_number} 章处于 {chapter.get('status')} 状态，请先清除阻塞/返修状态后再重新生成。",
+            details={
+                "chapter_status": chapter.get("status"),
+                "hint": "reset_chapter",
+            },
+        )
+
     # Guard 2: A planned chapter with content is not an empty generation slot.
     # This can happen after recovery reset: reset only clears workflow state and
     # preserves the author's current text. Starting generation directly would

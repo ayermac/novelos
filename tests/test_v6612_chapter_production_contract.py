@@ -280,6 +280,24 @@ class TestChapterProductionEndpointContract:
         assert domain["blocking"] is True
         assert domain["next_action"] == "reset_chapter"
 
+    def test_run_chapter_blocking_guard_error_includes_domain_result(self, contract_client):
+        client, repo = contract_client
+        project_id = "v6612-blocking-guard"
+        repo.create_project(project_id=project_id, name="Blocking Guard")
+        repo.add_chapter(project_id, 1, title="Ch1", status="blocking")
+
+        resp = client.post(
+            "/api/run/chapter",
+            json={"project_id": project_id, "chapter": 1, "llm_mode": "stub"},
+        )
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["error"]["code"] == "CHAPTER_NEEDS_RECOVERY"
+        domain = body["error"]["details"]["domain_result"]
+        assert domain["domain_status"] == "blocked"
+        assert domain["blocking"] is True
+        assert domain["next_action"] == "reset_chapter"
+
     def test_local_revision_success_includes_domain_result(self, contract_client):
         client, repo = contract_client
         project_id = "v6612-local-revision-success"

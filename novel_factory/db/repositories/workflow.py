@@ -168,6 +168,48 @@ class WorkflowRepositoryMixin:
         finally:
             conn.close()
 
+    def recover_active_workflow_runs_for_chapter(
+        self,
+        project_id: str,
+        chapter_number: int,
+        run_id: str | None = None,
+    ) -> int:
+        """Mark active failed/blocked/running runs recovered after explicit reset.
+
+        A user-confirmed reset means old workflow bookkeeping must no longer
+        poison the next attempt. In particular, a just-failed running row should
+        not be converted into a fresh blocked run after the chapter has already
+        been moved back to planned.
+        """
+        conn = self._conn()
+        try:
+            query = (
+                "UPDATE workflow_runs SET status='completed', "
+                "current_node='reset_recovery', "
+                "error_message=NULL, "
+                "completed_at=datetime('now','+8 hours') "
+                "WHERE project_id=? AND chapter_number=? "
+                "AND status IN ('blocked', 'running', 'failed')"
+            )
+            params: list[Any] = [project_id, chapter_number]
+            if run_id:
+                query += " AND id=?"
+                params.append(run_id)
+            cursor = conn.execute(query, params)
+            if cursor.rowcount:
+                conn.execute(
+                    "UPDATE task_status SET status='completed', "
+                    "completed_at=COALESCE(completed_at, datetime('now','+8 hours')), "
+                    "error_message=NULL "
+                    "WHERE project_id=? AND chapter_number=? "
+                    "AND status IN ('running', 'failed', 'blocked')",
+                    (project_id, chapter_number),
+                )
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()
+
     def mark_blocked_workflow_runs_recovered_for_chapter(
         self,
         project_id: str,

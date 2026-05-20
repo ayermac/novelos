@@ -407,17 +407,23 @@ async def reset_chapter(
         # For planned: no state reset needed, already at planned
 
         recovered_blocked_runs = 0
-        if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
-            recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+        if hasattr(repo, "recover_active_workflow_runs_for_chapter"):
+            recovered_blocked_runs = repo.recover_active_workflow_runs_for_chapter(
                 project_id,
                 chapter_number,
             )
-
-        invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
-            project_id,
-            chapter_number,
-            "章节已重置，旧运行已作废，请重新开始新的工作流。",
-        )
+            invalidated_runs = recovered_blocked_runs
+        else:
+            if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
+                recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+                    project_id,
+                    chapter_number,
+                )
+            invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
+                project_id,
+                chapter_number,
+                "章节已重置，旧运行已作废，请重新开始新的工作流。",
+            )
 
         from ...workflow.checkpoint import delete_checkpoint_thread
         checkpoint_cleared = delete_checkpoint_thread(
@@ -516,17 +522,23 @@ async def restore_chapter_best_version(
             conn.close()
 
         recovered_blocked_runs = 0
-        if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
-            recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+        if hasattr(repo, "recover_active_workflow_runs_for_chapter"):
+            recovered_blocked_runs = repo.recover_active_workflow_runs_for_chapter(
                 project_id,
                 chapter_number,
             )
-
-        invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
-            project_id,
-            chapter_number,
-            "章节已恢复历史最佳版本，旧运行已作废，请重新开始新的工作流。",
-        )
+            invalidated_runs = recovered_blocked_runs
+        else:
+            if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
+                recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+                    project_id,
+                    chapter_number,
+                )
+            invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
+                project_id,
+                chapter_number,
+                "章节已恢复历史最佳版本，旧运行已作废，请重新开始新的工作流。",
+            )
         checkpoint_cleared = delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
 
         return envelope_response({
@@ -596,10 +608,22 @@ async def confirm_chapter_regeneration(
             clear_error=True,
         )
         recovered_blocked_runs = 0
-        if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
-            recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+        if hasattr(repo, "recover_active_workflow_runs_for_chapter"):
+            recovered_blocked_runs = repo.recover_active_workflow_runs_for_chapter(
                 project_id,
                 chapter_number,
+            )
+            invalidated_runs = recovered_blocked_runs
+        else:
+            if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
+                recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+                    project_id,
+                    chapter_number,
+                )
+            invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
+                project_id,
+                chapter_number,
+                "用户已确认覆盖已有正文，旧运行已作废。",
             )
 
         conn = repo._conn()
@@ -621,11 +645,6 @@ async def confirm_chapter_regeneration(
         finally:
             conn.close()
 
-        invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
-            project_id,
-            chapter_number,
-            "用户已确认覆盖已有正文，旧运行已作废。",
-        )
         checkpoint_cleared = delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
 
         return envelope_response({

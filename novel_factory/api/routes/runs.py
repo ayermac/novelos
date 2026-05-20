@@ -544,18 +544,25 @@ async def reset_run_chapter(
         # For planned: no state reset needed, already at planned
 
         recovered_blocked_runs = 0
-        if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
-            recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+        if hasattr(repo, "recover_active_workflow_runs_for_chapter"):
+            recovered_blocked_runs = repo.recover_active_workflow_runs_for_chapter(
                 project_id,
                 chapter_number,
                 run_id=run_id,
             )
-
-        invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
-            project_id,
-            chapter_number,
-            "章节已恢复重置，旧运行已作废，请重新开始新的工作流。",
-        )
+            invalidated_runs = recovered_blocked_runs
+        else:
+            if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
+                recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+                    project_id,
+                    chapter_number,
+                    run_id=run_id,
+                )
+            invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
+                project_id,
+                chapter_number,
+                "章节已恢复重置，旧运行已作废，请重新开始新的工作流。",
+            )
 
         checkpoint_cleared = delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
         retry_count_after = repo.get_chapter_retry_count(project_id, chapter_number)
