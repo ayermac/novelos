@@ -139,8 +139,14 @@ def _checkpoint_is_stale(
     if run_status and run_status not in ("running", "blocked"):
         return True, f"Run status is '{run_status}' but checkpoint exists"
 
-    # Rule 2: Checkpoint node doesn't match current run node (for blocked/running runs)
-    if run_status in ("running", "blocked") and current_node and checkpoint_node:
+    # Rule 2: Checkpoint node doesn't match current run node.
+    #
+    # Active LangGraph runs can legitimately have a checkpoint at a routing
+    # node (for example "loop") while workflow_runs.current_node has already
+    # advanced to the next agent. Treating that transient mismatch as stale
+    # creates false "rerun" recommendations while the chapter is still moving.
+    # For running runs, staleness is determined by the run age window below.
+    if run_status == "blocked" and current_node and checkpoint_node:
         if checkpoint_node != current_node:
             return True, f"Checkpoint node '{checkpoint_node}' doesn't match current node '{current_node}'"
 
@@ -156,7 +162,8 @@ def _checkpoint_is_stale(
     }
     expected_node = expected_node_for_status.get(current_chapter_status)
     if (
-        checkpoint_node
+        run_status != "running"
+        and checkpoint_node
         and expected_node
         and checkpoint_node not in (expected_node, "task_discovery", "health_check")
     ):
@@ -165,7 +172,8 @@ def _checkpoint_is_stale(
 
     # Rule 4: Checkpoint chapter_status doesn't match current chapter status
     if (
-        checkpoint_chapter_status
+        run_status != "running"
+        and checkpoint_chapter_status
         and checkpoint_chapter_status != current_chapter_status
         and checkpoint_chapter_status not in ("planned",)  # Allow planned as starting state
     ):

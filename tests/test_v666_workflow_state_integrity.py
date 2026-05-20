@@ -350,12 +350,12 @@ def test_checkpoint_stale_by_run_status():
     assert "failed" in reason
 
 
-def test_checkpoint_stale_by_node_mismatch():
-    """Test checkpoint is stale when node doesn't match expected workflow stage."""
+def test_blocked_checkpoint_stale_by_node_mismatch():
+    """Test blocked checkpoint is stale when node doesn't match current node."""
     from novel_factory.workflow.state_integrity import _checkpoint_is_stale
 
     is_stale, reason = _checkpoint_is_stale(
-        run_status="running",
+        run_status="blocked",
         checkpoint_exists=True,
         checkpoint_node="planner",
         checkpoint_chapter_status=None,
@@ -365,6 +365,24 @@ def test_checkpoint_stale_by_node_mismatch():
     )
 
     assert is_stale is True
+
+
+def test_running_checkpoint_node_mismatch_is_not_stale_while_active():
+    """Active runs may have routing checkpoints that lag the current node."""
+    from novel_factory.workflow.state_integrity import _checkpoint_is_stale
+
+    is_stale, reason = _checkpoint_is_stale(
+        run_status="running",
+        checkpoint_exists=True,
+        checkpoint_node="loop",
+        checkpoint_chapter_status="scripted",
+        current_chapter_status="drafted",
+        current_node="author",
+        checkpoint_age_seconds=None,
+    )
+
+    assert is_stale is False
+    assert reason is None
 
 
 def test_checkpoint_stale_by_age():
