@@ -79,6 +79,25 @@ class AuthorAgent(BaseAgent):
         super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
 
+    def _load_revision_review(
+        self,
+        state: FactoryState,
+        chapter: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Load revision feedback from state, with DB fallback for direct/resumed runs."""
+        revision_review = normalize_revision_review(state.get("_revision_review"))
+        if revision_review:
+            return revision_review
+        if not chapter or chapter.get("status") != ChapterStatus.REVISION.value:
+            return None
+        try:
+            return normalize_revision_review(
+                self.repo.get_latest_review(state.get("project_id"), chapter.get("id"))
+            )
+        except Exception:
+            logger.warning("Author: failed to load revision review fallback", exc_info=True)
+            return None
+
     def build_context(self, state: FactoryState) -> str:
         parts = []
         project_id = state["project_id"]
@@ -195,10 +214,10 @@ class AuthorAgent(BaseAgent):
 
         chapter = self._get_chapter_info(state)
         is_revision = chapter and chapter.get("status") == ChapterStatus.REVISION.value
+        revision_review = self._load_revision_review(state, chapter) if is_revision else None
 
         # v6.1.1: Emit revision context loaded event
         if is_revision:
-            revision_review = normalize_revision_review(state.get("_revision_review"))
             if revision_review:
                 issues = revision_review.get("issues") or []
                 suggestions = revision_review.get("suggestions") or []
@@ -492,7 +511,7 @@ class AuthorAgent(BaseAgent):
         if is_revision and chapter and chapter.get("content"):
             from ..quality.version_regression_guard import VersionRegressionGuard
 
-            revision_review = normalize_revision_review(state.get("_revision_review")) or {}
+            revision_review = revision_review or {}
             reject, reason = VersionRegressionGuard.should_reject_new_draft(
                 chapter.get("content", "") or "",
                 output.content,
@@ -522,6 +541,7 @@ class AuthorAgent(BaseAgent):
                         "version_regression": True,
                         "message": reason,
                     },
+                    "_revision_review": revision_review,
                     "_exec_events": exec_events,
                 }
 
@@ -559,7 +579,7 @@ class AuthorAgent(BaseAgent):
             artifact_payload = output.model_dump()
             # v6.1.1: Embed revision metadata in artifact for auditability
             if is_revision:
-                revision_review = normalize_revision_review(state.get("_revision_review")) or {}
+                revision_review = revision_review or {}
                 artifact_payload["_revision_metadata"] = {
                     "revision_source_review_id": revision_review.get("review_id"),
                     "revision_target": revision_review.get("revision_target", "author"),
@@ -581,6 +601,7 @@ class AuthorAgent(BaseAgent):
         return {
             "chapter_status": ChapterStatus.DRAFTED.value,
             "current_stage": "drafted",
+            "_revision_review": revision_review if is_revision else state.get("_revision_review"),
             "_trace": trace,
             "_autonomy": autonomy,
             "_exec_events": exec_events,

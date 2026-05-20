@@ -357,6 +357,25 @@ class TestRevisionTargetSemantics:
         from novel_factory.quality.editor_strategy import determine_revision_target
         assert determine_revision_target(issues=["逻辑漏洞"]) == "author"
 
+    def test_structural_dialogue_issues_route_to_author(self):
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(issues=[
+            "[LOW_DIALOGUE_RATIO] 对白占比2.8%严重偏低",
+            "冲突强度不足，缺乏面对面的张力场景",
+            "人物动机表达不够清晰",
+        ]) == "author"
+
+    def test_truncated_hook_and_dialogue_issues_route_to_author(self):
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=[
+                "[CRITICAL] 正文以'林泽'一句未完戛然而止，章节在核心冲突高潮处断裂",
+                "[DIALOGUE] 对白仅占全文约3%，大量剧情推进依赖叙述者转述而非角色言行",
+                "[HOOK] 章末钩子缺失，悬念被截断的结尾覆盖",
+            ],
+            llm_revision_target="polisher",
+        ) == "author"
+
     def test_polisher_level_issues_route_to_polisher(self):
         from novel_factory.quality.editor_strategy import determine_revision_target
         assert determine_revision_target(issues=["AI 痕迹偏高"]) == "polisher"

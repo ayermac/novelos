@@ -414,7 +414,18 @@ def determine_revision_target(
             return "planner"
 
     # Check if issues contain author-level problems
-    author_keywords = ("逻辑漏洞", "剧情", "伏笔", "设定", "info dump", "旁白式", "直白情绪")
+    author_keywords = (
+        "逻辑漏洞", "剧情", "伏笔", "设定", "info dump", "旁白式", "直白情绪",
+        "[CRITICAL]", "[DIALOGUE]", "[HOOK]",
+        "LOW_DIALOGUE_RATIO", "对白占比", "对白仅占", "对白过低",
+        "缺少角色言行", "角色对话", "动作场景呈现",
+        "增加对话", "新增对话", "补充对话",
+        "有分歧的对话", "面对面的张力", "冲突强度", "缺乏冲突",
+        "章节在核心冲突", "断裂", "没有后续动作", "没有后续决定",
+        "没有后续动作/决定/结果", "无法得知", "严重破坏阅读完整性",
+        "章末钩子缺失", "钩子缺失", "被截断",
+        "人物动机", "动机表达", "目标、阻力",
+    )
     for issue in issues:
         if any(kw in str(issue) for kw in author_keywords):
             return "author"

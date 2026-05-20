@@ -330,8 +330,39 @@ class TestRevisionStateHydration:
 
         hydrated = hydrate_revision_state(state, repo)
 
-        assert hydrated is state
         assert hydrated["quality_gate"]["revision_target"] == "polisher"
+        assert hydrated["_revision_review"]["review_id"] == 9
+        assert hydrated["_revision_review"]["revision_target"] == "planner"
+
+    def test_hydrate_revision_state_preserves_existing_revision_review(self):
+        repo = self.FakeRepo({"id": 10, "revision_target": "planner"})
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "chapter_status": ChapterStatus.REVISION.value,
+            "quality_gate": {"pass": False, "revision_target": "polisher"},
+            "_revision_review": {"review_id": 5, "revision_target": "polisher"},
+        }
+
+        hydrated = hydrate_revision_state(state, repo)
+
+        assert hydrated["quality_gate"]["revision_target"] == "polisher"
+        assert hydrated["_revision_review"]["review_id"] == 5
+        assert hydrated["_revision_review"]["revision_target"] == "polisher"
+
+    def test_hydrate_revision_state_fills_missing_gate_target(self):
+        repo = self.FakeRepo({"id": 11, "revision_target": "author"})
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "chapter_status": ChapterStatus.REVISION.value,
+            "quality_gate": {"pass": False},
+        }
+
+        hydrated = hydrate_revision_state(state, repo)
+
+        assert hydrated["quality_gate"]["revision_target"] == "author"
+        assert hydrated["_revision_review"]["review_id"] == 11
 
     def test_prepare_resume_after_human_review_clears_checkpoint_and_flags(self):
         repo = self.FakeRepo()
@@ -459,6 +490,8 @@ class TestWorkflowNodeRevisionHardening:
         assert updated["chapter_status"] == ChapterStatus.REVISION.value
         assert updated["retry_count"] == 1
         assert updated["requires_human"] is False
+        assert updated["retryable_quality_gate"] is True
+        assert updated["_exec_events"][0]["event_type"] == "quality_gate_retry"
         assert "error" not in updated
         assert repo.started_tasks[0]["agent_id"] == "polisher"
 

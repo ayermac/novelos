@@ -68,23 +68,27 @@ def hydrate_revision_state(state: FactoryState, repo: Any) -> FactoryState:
     """
     if state.get("chapter_status") != ChapterStatus.REVISION.value:
         return state
-    if state.get("quality_gate"):
-        return state
 
     project_id = state.get("project_id")
     chapter_number = state.get("chapter_number")
     if not project_id or chapter_number is None:
         return state
 
-    resolved_target = resolve_revision_target(repo, project_id, int(chapter_number))
     hydrated: FactoryState = dict(state)
-    hydrated["quality_gate"] = {
-        "pass": False,
-        "revision_target": resolved_target,
-    }
+    resolved_target = resolve_revision_target(repo, project_id, int(chapter_number))
+    if not hydrated.get("quality_gate"):
+        hydrated["quality_gate"] = {
+            "pass": False,
+            "revision_target": resolved_target,
+        }
+    elif not (hydrated.get("quality_gate") or {}).get("revision_target"):
+        hydrated["quality_gate"] = {
+            **(hydrated.get("quality_gate") or {}),
+            "revision_target": resolved_target,
+        }
 
     review = get_latest_review_data(repo, project_id, int(chapter_number))
-    if review:
+    if review and not hydrated.get("_revision_review"):
         hydrated["_revision_review"] = {
             "review_id": review.get("id"),
             "score": review.get("score"),

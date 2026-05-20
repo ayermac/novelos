@@ -309,6 +309,18 @@ def _handle_retryable_quality_gate(
     updated["current_stage"] = "revision"
     updated["retry_count"] = retry_count + 1
     updated["requires_human"] = False
+    updated["retryable_quality_gate"] = True
+    updated.setdefault("_exec_events", []).append({
+        "event_type": "quality_gate_retry",
+        "message": gate.get("message") or "质量门未通过，已进入返修重试",
+        "status": "warning",
+        "payload": {
+            "revision_target": revision_target,
+            "retry_count": retry_count + 1,
+            "max_retries": max_retries,
+            "quality_gate": gate,
+        },
+    })
     return updated
 
 
@@ -652,7 +664,11 @@ def create_node_runners(
                 )  # Best-effort
 
         # v6.1: Verify completion evidence on success
-        if "error" not in result and agent_name in ("planner", "screenwriter", "author", "polisher", "editor", "memory_curator"):
+        if (
+            "error" not in result
+            and not result.get("retryable_quality_gate")
+            and agent_name in ("planner", "screenwriter", "author", "polisher", "editor", "memory_curator")
+        ):
             try:
                 evidence = verify_agent_completion_evidence(repo, state, agent_name)
                 severity = evidence["severity"]

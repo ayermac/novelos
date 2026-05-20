@@ -1293,6 +1293,47 @@ class TestEditorAgent:
         result = agent.run(state)
         assert result["chapter_status"] == ChapterStatus.REVISION.value
         assert result["quality_gate"]["pass"] is False
+        assert result["_revision_review"]["revision_target"] == result["quality_gate"]["revision_target"]
+        assert result["_revision_review"]["review_id"] is not None
+        assert result["_revision_review"]["issues"]
+
+    def test_editor_corrects_structural_issue_target_to_author(self, seeded_repo):
+        from novel_factory.agents.editor import EditorAgent
+
+        base_content = "这是一段测试正文内容，用于验证 Editor Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 45
+
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "polished")
+
+        stub = StubLLMProvider([{
+            "pass": False,
+            "score": 81,
+            "scores": {"setting": 20, "logic": 20, "poison": 16, "text": 12, "pacing": 13},
+            "issues": [
+                "[LOW_DIALOGUE_RATIO] 对白占比2.8%严重偏低（目标10%）",
+                "冲突强度不足，缺乏面对面的张力场景",
+                "人物动机表达不够清晰",
+            ],
+            "suggestions": ["增加一段有分歧的对话"],
+            "revision_target": "polisher",
+            "state_card": {},
+        }])
+
+        agent = EditorAgent(seeded_repo, stub)
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"]["revision_target"] == "author"
+        assert result["_revision_review"]["revision_target"] == "author"
 
     def test_editor_low_score_llm_pass_is_forced_to_revision(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent

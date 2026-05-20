@@ -77,6 +77,29 @@ class PolisherAgent(BaseAgent):
         super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
 
+    def _load_revision_review(
+        self,
+        state: FactoryState,
+        chapter: dict[str, Any] | None,
+    ) -> dict[str, Any] | None:
+        """Load revision feedback from state, with DB fallback for direct/resumed runs."""
+        revision_review = normalize_revision_review(state.get("_revision_review"))
+        if revision_review:
+            return revision_review
+        if state.get("chapter_status") != ChapterStatus.REVISION.value and (
+            not chapter or chapter.get("status") != ChapterStatus.REVISION.value
+        ):
+            return None
+        if not chapter:
+            return None
+        try:
+            return normalize_revision_review(
+                self.repo.get_latest_review(state.get("project_id"), chapter.get("id"))
+            )
+        except Exception:
+            logger.warning("Polisher: failed to load revision review fallback", exc_info=True)
+            return None
+
     def build_context(self, state: FactoryState) -> str:
         """Build context using AgentContextBuilder.
 
@@ -99,7 +122,7 @@ class PolisherAgent(BaseAgent):
             parts.append(formatted)
 
         chapter = self._get_chapter_info(state)
-        if state.get("chapter_status") == ChapterStatus.REVISION.value or (
+        if state.get("_revision_review") or state.get("chapter_status") == ChapterStatus.REVISION.value or (
             chapter and chapter.get("status") == ChapterStatus.REVISION.value
         ):
             review = state.get("_revision_review")
@@ -193,11 +216,13 @@ class PolisherAgent(BaseAgent):
         passthrough_mode = False
 
         context = self._build_v6_context(state)
+        chapter = self._get_chapter_info(state)
 
         # v6.1.1: Emit revision context loaded event for revision chapters
         current_status = state.get("chapter_status", "")
-        if current_status == ChapterStatus.REVISION.value:
-            revision_review = normalize_revision_review(state.get("_revision_review"))
+        revision_review = self._load_revision_review(state, chapter)
+        in_revision_chain = current_status == ChapterStatus.REVISION.value or bool(revision_review)
+        if in_revision_chain:
             if revision_review:
                 issues = revision_review.get("issues") or []
                 suggestions = revision_review.get("suggestions") or []
@@ -253,7 +278,6 @@ class PolisherAgent(BaseAgent):
 
         # Q8: Fact lock hard verification — BEFORE status advance
         original_content = ""
-        chapter = self._get_chapter_info(state)
         if chapter:
             original_content = chapter.get("content", "") or ""
 
@@ -409,7 +433,7 @@ class PolisherAgent(BaseAgent):
         if abs(polished_wc - original_wc) < 10:
             diff_msg += "（内容几乎未变）"
         low_change = abs(polished_wc - original_wc) < 10
-        event_type = "revision_diff_generated" if current_status == ChapterStatus.REVISION.value else "diff_generated"
+        event_type = "revision_diff_generated" if in_revision_chain else "diff_generated"
         exec_events.append({
             "event_type": event_type,
             "message": diff_msg,
@@ -424,10 +448,10 @@ class PolisherAgent(BaseAgent):
         })
 
         # v6.6.0: Protect the current draft from a regressing revision pass.
-        if current_status == ChapterStatus.REVISION.value and original_content:
+        if in_revision_chain and original_content:
             from ..quality.version_regression_guard import VersionRegressionGuard
 
-            revision_review = normalize_revision_review(state.get("_revision_review")) or {}
+            revision_review = revision_review or {}
             reject, reason = VersionRegressionGuard.should_reject_new_draft(
                 original_content,
                 polished_content,
@@ -457,6 +481,7 @@ class PolisherAgent(BaseAgent):
                         "version_regression": True,
                         "message": reason,
                     },
+                    "_revision_review": revision_review,
                     "_exec_events": exec_events,
                 }
 
@@ -530,8 +555,8 @@ class PolisherAgent(BaseAgent):
             if quality_hub_compact:
                 artifact_payload["_quality_feedback"]["quality_hub_compact"] = quality_hub_compact
             # v6.1.1: Embed revision metadata in artifact for auditability
-            if current_status == ChapterStatus.REVISION.value:
-                revision_review = normalize_revision_review(state.get("_revision_review")) or {}
+            if in_revision_chain:
+                revision_review = revision_review or {}
                 artifact_payload["_revision_metadata"] = {
                     "revision_source_review_id": revision_review.get("review_id"),
                     "revision_target": revision_review.get("revision_target", "polisher"),
@@ -559,6 +584,7 @@ class PolisherAgent(BaseAgent):
         return {
             "chapter_status": ChapterStatus.POLISHED.value,
             "current_stage": "polished",
+            "_revision_review": revision_review if in_revision_chain else state.get("_revision_review"),
             "_exec_events": exec_events,
         }
 

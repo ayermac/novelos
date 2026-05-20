@@ -173,6 +173,63 @@ class TestRevisionContextEvents:
         event_types = [e["event_type"] for e in exec_events]
         assert "revision_context_loaded" in event_types
 
+    def test_author_loads_revision_context_from_db_fallback(self, tmp_path):
+        _, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "demo")
+        repo.update_chapter_status("demo", 1, "revision")
+        chapter = repo.get_chapter("demo", 1)
+        review_id = repo.save_review(
+            "demo", chapter["id"], False, 80,
+            issues=["剧情逻辑问题"],
+            suggestions=["重写关键场景"],
+            revision_target="author",
+        )
+
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.llm.stub_provider import StubLLM
+
+        agent = AuthorAgent(repo, StubLLM())
+        result = agent.run({
+            "project_id": "demo",
+            "chapter_number": 1,
+            "chapter_status": "revision",
+            "llm_mode": "stub",
+            "workflow_run_id": "test-run",
+        })
+
+        ctx_event = next(e for e in result.get("_exec_events", []) if e["event_type"] == "revision_context_loaded")
+        assert ctx_event["payload"]["review_id"] == review_id
+        assert ctx_event["payload"]["issues"] == ["剧情逻辑问题"]
+
+    def test_polisher_loads_revision_context_from_db_fallback(self, tmp_path):
+        _, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "demo")
+        repo.update_chapter_status("demo", 1, "revision")
+        repo.save_chapter_content("demo", 1, "这是测试正文内容。" * 50, "测试章节")
+        chapter = repo.get_chapter("demo", 1)
+        review_id = repo.save_review(
+            "demo", chapter["id"], False, 82,
+            issues=["AI痕迹过重"],
+            suggestions=["优化句式节奏"],
+            revision_target="polisher",
+        )
+
+        from novel_factory.agents.polisher import PolisherAgent
+        from novel_factory.llm.stub_provider import StubLLM
+
+        agent = PolisherAgent(repo, StubLLM())
+        result = agent.run({
+            "project_id": "demo",
+            "chapter_number": 1,
+            "chapter_status": "revision",
+            "llm_mode": "stub",
+            "workflow_run_id": "test-run",
+        })
+
+        ctx_event = next(e for e in result.get("_exec_events", []) if e["event_type"] == "revision_context_loaded")
+        assert ctx_event["payload"]["review_id"] == review_id
+        assert ctx_event["payload"]["suggestions"] == ["优化句式节奏"]
+
 
 class TestRevisionDiffEvent:
     """Tests for revision diff generated events."""
@@ -238,6 +295,53 @@ class TestRevisionDiffEvent:
         assert "original_word_count" in diff_event["payload"]
         assert "revised_word_count" in diff_event["payload"]
         assert "word_count_delta" in diff_event["payload"]
+
+    def test_polisher_keeps_revision_chain_after_author_advances_to_drafted(self, tmp_path):
+        _, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "demo")
+        run_id = repo.create_workflow_run("demo", 1)
+        repo.update_workflow_run(run_id, status="running")
+        repo.update_chapter_status("demo", 1, "drafted")
+        repo.save_chapter_content("demo", 1, "原始正文内容。" * 100, "测试章节")
+
+        from novel_factory.agents.polisher import PolisherAgent
+        from novel_factory.llm.stub_provider import StubLLM
+
+        agent = PolisherAgent(repo, StubLLM())
+        state = {
+            "project_id": "demo",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "llm_mode": "stub",
+            "workflow_run_id": run_id,
+            "_revision_review": {
+                "review_id": 8,
+                "score": 67,
+                "revision_target": "author",
+                "issues": '["对白占比过低"]',
+                "suggestions": '["增加有冲突的对话"]',
+            },
+        }
+        result = agent.run(state)
+
+        event_types = [e["event_type"] for e in result.get("_exec_events", [])]
+        assert "revision_context_loaded" in event_types
+        assert "revision_diff_generated" in event_types
+        assert result["_revision_review"]["review_id"] == 8
+
+        conn = repo._conn()
+        try:
+            row = conn.execute(
+                "SELECT content_json FROM agent_artifacts "
+                "WHERE project_id='demo' AND chapter_number=1 AND agent_id='polisher' "
+                "AND artifact_type='polished_draft' AND workflow_run_id=? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+        content = json.loads(row["content_json"])
+        assert content["_revision_metadata"]["revision_source_review_id"] == 8
 
 
 class TestRevisionFollowupVerified:
@@ -310,6 +414,7 @@ class TestRevisionArtifactMetadata:
         }
         result = agent.run(state)
         assert "error" not in result
+        assert result["_revision_review"]["review_id"] == 5
 
         # Query artifact content directly since get_artifacts_for_chapter omits content_json
         conn = repo._conn()

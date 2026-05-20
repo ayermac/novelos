@@ -611,9 +611,10 @@ class EditorAgent(BaseAgent):
         if not output.pass_ and output.issues:
             pre_classify_target = output.revision_target
             classify_result = classify_issues(output.issues, output.revision_target)
-            # Only override if classify_issues found a dominant target AND
-            # no specific gate had already set one
-            if classify_result.dominant_target and not pre_classify_target:
+            gate_forced_target = bool(word_gate_details) or seam_result.blocking_count > 0
+            # Override the LLM's self-reported target when issue semantics are clearer.
+            # Preserve targets set by hard gates such as word count and chapter seam.
+            if classify_result.dominant_target and not gate_forced_target:
                 output.revision_target = classify_result.dominant_target
             elif classify_result.dominant_target and pre_classify_target:
                 # Gate-set target takes precedence over issue classification
@@ -866,6 +867,7 @@ class EditorAgent(BaseAgent):
         strategy_result: EditorStrategyResult,
         exec_events: list[dict],
         compliance_result: StoryFactsComplianceResult | None = None,
+        review_id: int | None = None,
     ) -> dict[str, Any]:
         """Step 7: Build final state updates.
 
@@ -901,7 +903,7 @@ class EditorAgent(BaseAgent):
         else:
             return self._build_fail_updates(
                 inputs, output, quality_result, seam_result, strategy_result,
-                exec_events, compliance_result,
+                exec_events, compliance_result, review_id,
             )
 
     def _build_pass_updates(
@@ -988,6 +990,7 @@ class EditorAgent(BaseAgent):
         strategy_result: EditorStrategyResult,
         exec_events: list[dict],
         compliance_result: StoryFactsComplianceResult | None = None,
+        review_id: int | None = None,
     ) -> dict[str, Any]:
         """Build state updates for failing review."""
         # Use DB retry count as source of truth (may differ from state)
@@ -997,13 +1000,13 @@ class EditorAgent(BaseAgent):
         if retry_count >= inputs.max_retries:
             return self._build_human_review_updates(
                 inputs, output, quality_result, seam_result, strategy_result,
-                exec_events, retry_count, compliance_result,
+                exec_events, retry_count, compliance_result, review_id,
             )
 
         # Revision
         return self._build_revision_updates(
             inputs, output, quality_result, seam_result, strategy_result,
-            exec_events, retry_count, compliance_result,
+            exec_events, retry_count, compliance_result, review_id,
         )
 
     def _build_human_review_updates(
@@ -1016,6 +1019,7 @@ class EditorAgent(BaseAgent):
         exec_events: list[dict],
         retry_count: int,
         compliance_result: StoryFactsComplianceResult | None = None,
+        review_id: int | None = None,
     ) -> dict[str, Any]:
         """Build state updates for human_review (max retries reached)."""
         ok = self.repo.update_chapter_status(
@@ -1070,6 +1074,13 @@ class EditorAgent(BaseAgent):
                 **strategy_result.word_gate_details,
                 **seam_result.details,
             },
+            "_revision_review": {
+                "review_id": review_id,
+                "score": output.score,
+                "revision_target": output.revision_target,
+                "issues": output.issues,
+                "suggestions": output.suggestions,
+            },
             "_exec_events": exec_events,
         }
 
@@ -1083,6 +1094,7 @@ class EditorAgent(BaseAgent):
         exec_events: list[dict],
         retry_count: int,
         compliance_result: StoryFactsComplianceResult | None = None,
+        review_id: int | None = None,
     ) -> dict[str, Any]:
         """Build state updates for revision routing."""
         retry_agent = output.revision_target or "author"
@@ -1146,6 +1158,13 @@ class EditorAgent(BaseAgent):
                 "revision_target": output.revision_target,
                 **strategy_result.word_gate_details,
                 **seam_result.details,
+            },
+            "_revision_review": {
+                "review_id": review_id,
+                "score": output.score,
+                "revision_target": output.revision_target,
+                "issues": output.issues,
+                "suggestions": output.suggestions,
             },
             "_exec_events": exec_events,
         }
@@ -1314,7 +1333,7 @@ class EditorAgent(BaseAgent):
         )
 
         # Step 6: Persist artifacts
-        self._persist_editor_artifacts(
+        review_id = self._persist_editor_artifacts(
             inputs, output, quality_result, seam_result,
             strategy_result, compliance_result,
         )
@@ -1322,7 +1341,7 @@ class EditorAgent(BaseAgent):
         # Step 7: Build state updates
         result = self._build_editor_state_updates(
             inputs, output, quality_result, seam_result,
-            strategy_result, exec_events, compliance_result,
+            strategy_result, exec_events, compliance_result, review_id,
         )
         result["story_facts_compliance"] = compliance_result.to_dict()
         return result
