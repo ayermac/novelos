@@ -931,6 +931,15 @@ html[data-theme='dark'] .chapter-version-error {
   background: #e8f0fe;
 }
 
+.version-item.expanded {
+  border-color: #6b7280;
+  background: var(--paper-surface);
+}
+
+.version-item.current.expanded {
+  border-color: #1a73e8;
+}
+
 .version-item-header {
   display: flex;
   justify-content: space-between;
@@ -981,7 +990,8 @@ html[data-theme='dark'] .chapter-version-error {
   font-size: 12px;
 }
 
-.version-detail-panel {
+.version-detail-panel,
+.version-detail-inline {
   margin-top: 16px;
   padding: 12px;
   background: var(--bg-secondary);
@@ -989,24 +999,33 @@ html[data-theme='dark'] .chapter-version-error {
   border: 1px solid var(--border-color);
 }
 
+.version-detail-inline {
+  margin-top: 10px;
+}
+
 .version-detail-header {
   display: flex;
   justify-content: space-between;
+  align-items: center;
+  gap: 12px;
   margin-bottom: 8px;
   font-weight: 600;
   color: var(--text-primary);
 }
 
 .version-detail-close {
-  border: none;
-  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: var(--paper-surface);
   cursor: pointer;
-  font-size: 16px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
+  font-size: 12px;
+  padding: 3px 8px;
 }
 
 .version-detail-close:hover {
   color: var(--text-primary);
+  border-color: var(--text-muted);
 }
 
 .version-detail-meta {
@@ -1030,6 +1049,15 @@ html[data-theme='dark'] .chapter-version-error {
 html[data-theme='dark'] .version-item.current {
   border-color: #4a9eff;
   background: rgba(26, 115, 232, 0.15);
+}
+
+html[data-theme='dark'] .version-item.expanded {
+  border-color: color-mix(in srgb, var(--text-secondary) 55%, transparent);
+  background: var(--paper-surface);
+}
+
+html[data-theme='dark'] .version-item.current.expanded {
+  border-color: #4a9eff;
 }
 
 html[data-theme='dark'] .version-source,

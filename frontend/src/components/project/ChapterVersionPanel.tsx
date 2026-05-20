@@ -14,6 +14,7 @@ export default function ChapterVersionPanel({ projectId, chapterNumber, onRestor
   const [versions, setVersions] = useState<VersionSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [detailVersion, setDetailVersion] = useState<VersionDetail | null>(null)
+  const [viewingVersionId, setViewingVersionId] = useState<number | null>(null)
   const [restoring, setRestoring] = useState(false)
   const [error, setError] = useState('')
   const dialog = useAppDialog()
@@ -40,7 +41,13 @@ export default function ChapterVersionPanel({ projectId, chapterNumber, onRestor
   useEffect(() => { loadVersions() }, [loadVersions])
 
   const handleViewDetail = useCallback(async (versionId: number) => {
+    if (detailVersion?.version_id === versionId && viewingVersionId === null) {
+      setDetailVersion(null)
+      return
+    }
+
     setError('')
+    setViewingVersionId(versionId)
     try {
       const resp = await get<VersionDetail>(
         `/projects/${projectId}/chapters/${chapterNumber}/versions/${versionId}`,
@@ -49,11 +56,15 @@ export default function ChapterVersionPanel({ projectId, chapterNumber, onRestor
         setDetailVersion(resp.data)
       } else {
         setError(resp.error?.message || '加载版本详情失败')
+        setDetailVersion(null)
       }
     } catch {
       setError('网络异常，加载版本详情失败')
+      setDetailVersion(null)
+    } finally {
+      setViewingVersionId(null)
     }
-  }, [projectId, chapterNumber])
+  }, [projectId, chapterNumber, detailVersion?.version_id, viewingVersionId])
 
   const handleRestore = useCallback(async (versionId: number) => {
     if (restoring) return
@@ -124,7 +135,7 @@ export default function ChapterVersionPanel({ projectId, chapterNumber, onRestor
           {versions.map(v => (
             <div
               key={v.version_id}
-              className={`version-item ${v.is_current ? 'current' : ''}`}
+              className={`version-item ${v.is_current ? 'current' : ''} ${detailVersion?.version_id === v.version_id ? 'expanded' : ''}`}
             >
               <div className="version-item-header">
                 <div>
@@ -138,20 +149,30 @@ export default function ChapterVersionPanel({ projectId, chapterNumber, onRestor
               <div className="version-time">{v.created_at}</div>
               <div className="version-actions">
                 <button
+                  type="button"
                   className="btn btn-sm btn-secondary"
+                  disabled={viewingVersionId === v.version_id}
+                  aria-expanded={detailVersion?.version_id === v.version_id}
+                  aria-controls={`version-detail-${v.version_id}`}
                   onClick={() => handleViewDetail(v.version_id)}
                 >
-                  查看
+                  {viewingVersionId === v.version_id
+                    ? '加载中…'
+                    : detailVersion?.version_id === v.version_id
+                      ? '收起'
+                      : '查看'}
                 </button>
                 {!v.is_current && (
                   <>
                     <button
+                      type="button"
                       className="btn btn-sm btn-secondary"
                       onClick={() => handleDiffWithCurrent(v.version_id)}
                     >
                       对比
                     </button>
                     <button
+                      type="button"
                       className="btn btn-sm btn-danger"
                       onClick={() => handleRestore(v.version_id)}
                       disabled={restoring}
@@ -161,24 +182,22 @@ export default function ChapterVersionPanel({ projectId, chapterNumber, onRestor
                   </>
                 )}
               </div>
+              {detailVersion?.version_id === v.version_id && (
+                <div id={`version-detail-${v.version_id}`} className="version-detail-inline">
+                  <div className="version-detail-header">
+                    <span>V{detailVersion.version} 版本内容</span>
+                    <button type="button" className="version-detail-close" onClick={() => setDetailVersion(null)}>关闭</button>
+                  </div>
+                  <div className="version-detail-meta">
+                    {tVersionSource(detailVersion.source)} · {detailVersion.word_count} 字 · {detailVersion.created_at}
+                  </div>
+                  <div className="version-detail-content">
+                    {detailVersion.content}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
-        </div>
-      )}
-
-      {/* Version detail modal/panel */}
-      {detailVersion && (
-        <div className="version-detail-panel">
-          <div className="version-detail-header">
-            <span>版本 #{detailVersion.version_id} 详情</span>
-            <button className="version-detail-close" onClick={() => setDetailVersion(null)}>✕</button>
-          </div>
-          <div className="version-detail-meta">
-            {tVersionSource(detailVersion.source)} · {detailVersion.word_count} 字 · {detailVersion.created_at}
-          </div>
-          <div className="version-detail-content">
-            {detailVersion.content}
-          </div>
         </div>
       )}
     </div>
