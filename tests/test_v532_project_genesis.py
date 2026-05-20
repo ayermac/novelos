@@ -519,6 +519,44 @@ def test_genesis_completion_merge_deduplicates_full_draft_patch():
     assert merged["instructions"][0]["objective"] == "新目标"
 
 
+def test_genesis_world_settings_deduplicate_semantic_slots():
+    """World settings should collapse near-duplicate LLM/local recovery concepts."""
+    from novel_factory.api.routes import genesis as genesis_routes
+
+    draft = {
+        "world_settings": [
+            {
+                "title": "异常的起源与定义",
+                "category": "core_concept",
+                "content": "2056年3月15日，地球突然出现异常。异常分为五级。",
+            },
+            {
+                "title": "异常的定义与分类",
+                "category": "core_concept",
+                "content": "异常是2056年3月15日突然出现的无法用科学解释的现象，分为五级。",
+            },
+            {
+                "title": "修正员等级与能力",
+                "category": "game_mechanic",
+                "content": "修正员通过完成任务提升等级并解锁权限。",
+            },
+            {
+                "title": "同化机制",
+                "category": "mystery",
+                "content": "同化程度越高能力越强，但人性流失也越严重。",
+            },
+        ]
+    }
+
+    deduped = genesis_routes._dedupe_genesis_draft(draft)
+
+    assert [item["title"] for item in deduped["world_settings"]] == [
+        "异常的定义与分类",
+        "修正员等级与能力",
+        "同化机制",
+    ]
+
+
 @pytest.mark.asyncio
 async def test_real_genesis_generation_does_not_block_event_loop(monkeypatch):
     """Real genesis LLM calls must be offloaded so status APIs can stay responsive."""

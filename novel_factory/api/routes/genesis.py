@@ -366,12 +366,37 @@ def _merge_key_text(value) -> str:
     return " ".join(_as_text(value).split()).strip().lower()
 
 
+def _world_setting_semantic_key(item: dict) -> str | None:
+    """Collapse common Genesis worldbuilding duplicates into stable slots."""
+    title = _as_text(item.get("title"))
+    text = f"{title} {_as_text(item.get('category'))} {_as_text(item.get('content'))}"
+
+    if "异常" in title and any(term in title for term in ("定义", "分类", "起源")):
+        return "anomaly_definition"
+    if "异常" in title and any(term in title for term in ("规律", "进化", "目的", "深层")):
+        return "anomaly_pattern"
+    if "异常处理局" in text or "国家异常事态处理局" in text:
+        return "anomaly_bureau"
+    if "修正系统" in text or "裁衡" in text:
+        return "correction_system"
+    if "同化" in title:
+        return "assimilation"
+    if "修正员" in title and any(term in title for term in ("等级", "能力", "体系")):
+        return "corrector_capability"
+    if "2056" in title or "世界" in title or "时代" in title or "社会" in title:
+        return "era_background"
+    return None
+
+
 def _genesis_item_key(section: str, item, index: int) -> str:
     """Return a stable semantic key for a Genesis list item."""
     if not isinstance(item, dict):
         return f"raw:{index}:{_merge_key_text(item)[:80]}"
 
     if section == "world_settings":
+        semantic_key = _world_setting_semantic_key(item)
+        if semantic_key:
+            return f"world:{semantic_key}"
         title = _merge_key_text(item.get("title"))
         category = _merge_key_text(item.get("category"))
         content = _merge_key_text(item.get("content"))
