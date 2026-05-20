@@ -35,10 +35,10 @@
 - **当前发布准备基线**: v6.6.15 Release Readiness & Desktop Packaging Closure
 - **当前真实项目 burn-in 基线**: v6.6.16 Real Project Burn-in & Regression Closure
 - **当前下一步**: v6.6.17 plot_holes compliance / post-burn-in deep review follow-up
-- **状态**: v6.6.16 已完成真实项目 burn-in、RC 深度审查与 post-RC 修复。核心交付：异常修正员 fixture、CLI/API domain_result 回归、手动 burn-in 脚本、预置指令跳过 Planner 时的 memory_context_audit 补写、Genesis local_recovery 恢复、世界观语义去重、运行中 checkpoint 误报修正、全量 2601 测试通过。
+- **状态**: v6.6.16 已完成真实项目 burn-in、RC 深度审查与 post-RC 修复。核心交付：异常修正员 fixture、CLI/API domain_result 回归、手动 burn-in 脚本、预置指令跳过 Planner 时的 memory_context_audit 补写、Genesis local_recovery 恢复、世界观语义去重、运行中 checkpoint 误报修正、阻塞/返修章节恢复闭环、返修路由与审稿反馈传递修复、全量 2616 测试通过。
 - **v6.4 规格**: [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md) — 解决生成章节"AI 味重"问题，聚焦 prompt 增强、deterministic validator 补充和 skill 升级。
 - **v6.5 规格**: [planning/novel-factory-v6.5-interaction-excellence-spec.md](planning/novel-factory-v6.5-interaction-excellence-spec.md) — 解决桌面客户端"后台感"问题，先建立 toast/loading/skeleton 等交互基础设施，再逐页升级工作台体验。
-- **测试基线**: backend full suite **2601 passed, 0 failed**；v6.6.16 burn-in tests **29 passed**；frontend typecheck/lint/build/vitest **283 passed**；`git diff --check` clean
+- **测试基线**: backend full suite **2616 passed, 0 failed**；v6.6.16 burn-in tests **29 passed**；frontend typecheck/lint/build/vitest **285 passed**；`git diff --check` clean
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)

@@ -55,6 +55,16 @@
 **问题**: 运行中的 LangGraph checkpoint 可能停在 `loop` 等路由节点，而 `workflow_runs.current_node` 已推进到 `author/polisher`。旧逻辑把这个瞬时不一致判为 stale，误提示"建议重新运行"。
 **修复**: `running` 状态不再因 checkpoint node/current node 不一致判 stale；真正卡住仍按运行时间窗口判断。
 
+### P1 — 阻塞/返修章节可绕过恢复直接生成 (FIXED)
+
+**问题**: 章节处于 `blocking` 或 `revision` 时，部分入口仍允许点击"生成本章"，后端会在 Screenwriter/Author 状态推进时遇到 stale state。重置流程也会先恢复 blocked run、再把 running/failed run 标记为 blocked，导致用户看到"清除阻塞并重置"后仍解除不了。
+**修复**: 运行 guard 对 `blocking` / `revision` 返回 `CHAPTER_NEEDS_RECOVERY` 和 `reset_chapter` next_action；reset/recovery 路径统一把旧 active workflow/task 记录改为 `completed/reset_recovery` 并清空错误；遗留侧栏不再从阻塞态提供直接重生成入口。
+
+### P1 — 结构性返修误退给 Polisher (FIXED)
+
+**问题**: Editor 对章节断裂、对白过低、章末钩子缺失、冲突弱、人物动机不清等结构性问题可能保留 LLM 自报的 `revision_target=polisher`，导致 Polisher 连续空转并触发版本退化保护。
+**修复**: 返修分类器和策略层按 issue 语义强制纠偏到 `author`；Editor 输出 `_revision_review`，Author 返修后继续传给 Polisher；质量门重试增加 `quality_gate_retry` 事件，避免旧 artifact 造成“证据通过”的误导。
+
 ### P2 — None
 
 ## Detailed Checks
@@ -101,6 +111,6 @@ ch1 → ch2 链路实际通过 `_run_chapter()` 调用 CLI subprocess，非 mock
 All checks passed. Release is ready.
 
 Post-RC verification:
-- Backend full suite: `2601 passed`
+- Backend full suite: `2616 passed`
 - Frontend typecheck/lint/build: passed
 - Frontend vitest: `283 passed`

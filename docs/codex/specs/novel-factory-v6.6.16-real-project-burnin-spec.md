@@ -93,7 +93,7 @@ python scripts/burnin_real_project.py --config config/local.yaml --real-mode
 ## 验证结果
 
 ```
-tests/ -q:              2596 passed
+tests/ -q:              2616 passed
 test_v6616:              29 passed
 frontend typecheck:      passed
 frontend lint:           passed

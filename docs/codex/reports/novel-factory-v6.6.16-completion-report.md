@@ -50,6 +50,8 @@
 7. **Genesis 坏 JSON 进入不可用模板** — 真实 LLM 返回 invalid/incomplete JSON 时曾降级为 `scaffold_fallback` → 改为生成可审核的 `local_recovery` 草案，质量门按内容判断，真正 scaffold fallback 评分为 0
 8. **Genesis 世界观近义重复** — "异常起源与定义" 与 "异常定义与分类" 等语义重复不能仅靠标题去重 → 新增世界观语义槽位去重
 9. **运行中 checkpoint 误判过期** — 活跃 LangGraph run 的 checkpoint 可停在 `loop` 路由节点，旧逻辑误判为 stale → running 状态不再因 checkpoint/current_node 瞬时不一致建议重跑
+10. **阻塞/返修章节解除后仍无法生成** — blocked/revision 章节曾允许直接生成，导致 stale state；reset 也可能重新留下 blocked run → 现在直接生成返回 `CHAPTER_NEEDS_RECOVERY`，恢复流程把 active run/task 清成 `completed/reset_recovery` 后再回到 planned
+11. **结构性返修误退给 Polisher** — 章节断裂、低对白、缺钩子、弱冲突、动机不清等需要补戏的问题曾被 LLM 自报为 `polisher` → 现在按 issue 语义纠偏为 `author`，并保持 `_revision_review` 在 Author→Polisher 链路中持续可见
 
 ## 未解决风险
 
@@ -60,7 +62,7 @@
 ## 验证结果
 
 ```
-pytest tests/ -q:             2601 passed
+pytest tests/ -q:             2616 passed
 test_v6615_release:           27 passed
 test_v6616_burnin:            29 passed
 frontend typecheck:           passed
