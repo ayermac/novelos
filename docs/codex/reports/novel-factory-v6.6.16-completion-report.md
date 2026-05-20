@@ -6,7 +6,7 @@
 
 ## 执行摘要
 
-使用真实项目数据（异常修正员）完成全链路 burn-in，修复 CLI domain_result 缺失等问题。
+使用真实项目数据（异常修正员）完成全链路 burn-in，修复 CLI domain_result 缺失等问题。Post-RC 进一步修复 Genesis 真实 LLM 坏 JSON 恢复、世界观语义重复，以及运行中 checkpoint 误判过期提示。
 
 ## 修改文件清单
 
@@ -47,6 +47,9 @@
 4. **手动 burn-in 脚本假绿** — 旧脚本使用 demo seed、命令参数顺序错误且没有硬失败 → 改为直接初始化真实 fixture，并逐步断言 CLI/API 链路
 5. **API 错误语义缺口** — memory backfill / publish 的错误路径缺少 `domain_result` → 补齐 blocked/failed contract
 6. **预置指令跳过 Planner 导致审计消失** — Chapter 2 已有 instruction 时直接进入 Screenwriter，Planner 不会写 `memory_context_audit` → 在 Screenwriter 前补写审计 artifact
+7. **Genesis 坏 JSON 进入不可用模板** — 真实 LLM 返回 invalid/incomplete JSON 时曾降级为 `scaffold_fallback` → 改为生成可审核的 `local_recovery` 草案，质量门按内容判断，真正 scaffold fallback 评分为 0
+8. **Genesis 世界观近义重复** — "异常起源与定义" 与 "异常定义与分类" 等语义重复不能仅靠标题去重 → 新增世界观语义槽位去重
+9. **运行中 checkpoint 误判过期** — 活跃 LangGraph run 的 checkpoint 可停在 `loop` 路由节点，旧逻辑误判为 stale → running 状态不再因 checkpoint/current_node 瞬时不一致建议重跑
 
 ## 未解决风险
 
@@ -57,12 +60,13 @@
 ## 验证结果
 
 ```
-pytest tests/ -q:             2596 passed
+pytest tests/ -q:             2601 passed
 test_v6615_release:           27 passed
 test_v6616_burnin:            29 passed
 frontend typecheck:           passed
 frontend lint:                passed
 frontend build:               passed
+frontend vitest:              283 passed
 git diff --check:             clean
 docs/superpowers/:            not in git
 ```

@@ -39,6 +39,22 @@
 **问题**: `cmd_run_chapter` 直接输出 `run_with_graph` 的原始结果，不包含 `domain_result`。CLI 和 API 行为不一致。
 **修复**: 新增 `_build_cli_domain_result()`，在 CLI JSON 输出中嵌入 domain_result。
 
+### P1 — Genesis invalid/incomplete JSON 降级为不可用模板 (FIXED)
+
+**问题**: 真实 LLM 返回空文本、Markdown、解释文字、半截 JSON 或不完整 JSON 时，系统把结果标记为 `scaffold_fallback`，导致用户看到不可审批模板、通用角色名、重复章节指令。
+**影响**: 用户提供了足够项目描述，仍无法得到可用初始化数据。
+**修复**: invalid/incomplete JSON 改为生成 `local_recovery` 草案，基于项目描述恢复具体角色、势力、章节指令，并由质量门按内容判断；真正 scaffold fallback 评分强制为 0。
+
+### P2 — Genesis 世界观近义重复 (FIXED)
+
+**问题**: 世界观列表只按精确标题/类别去重，"异常的起源与定义" 与 "异常的定义与分类" 会同时保留。
+**修复**: 新增世界观语义槽位去重，覆盖异常定义、异常规律、异常处理局、修正系统、同化、修正员能力、时代背景等常见槽位。
+
+### P2 — 活跃运行误报 checkpoint 过期 (FIXED)
+
+**问题**: 运行中的 LangGraph checkpoint 可能停在 `loop` 等路由节点，而 `workflow_runs.current_node` 已推进到 `author/polisher`。旧逻辑把这个瞬时不一致判为 stale，误提示"建议重新运行"。
+**修复**: `running` 状态不再因 checkpoint node/current node 不一致判 stale；真正卡住仍按运行时间窗口判断。
+
 ### P2 — None
 
 ## Detailed Checks
@@ -83,3 +99,8 @@ ch1 → ch2 链路实际通过 `_run_chapter()` 调用 CLI subprocess，非 mock
 ## Summary
 
 All checks passed. Release is ready.
+
+Post-RC verification:
+- Backend full suite: `2601 passed`
+- Frontend typecheck/lint/build: passed
+- Frontend vitest: `283 passed`

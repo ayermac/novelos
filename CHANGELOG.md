@@ -16,6 +16,8 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 - Synchronized frontend and desktop package-lock root versions to `6.6.16`.
 - Hardened Genesis initialization fallback: completion patches now deduplicate repeatable sections instead of appending duplicates, scaffold instructions are chapter-specific, and scaffold previews are shown as recovery panels rather than normal drafts.
 - Fixed Genesis real-LLM failure recovery: invalid or incomplete JSON now produces a reviewable `local_recovery` draft based on the project premise instead of an automatically blocked scaffold template; true scaffold fallback reports now score `0`.
+- Fixed Genesis semantic worldbuilding dedupe so near-duplicate concepts such as anomaly definition/classification collapse into one setting slot.
+- Fixed active workflow recovery false positives: running LangGraph checkpoints at routing nodes no longer trigger stale "rerun" recommendations while the run is still progressing.
 
 ## v6.6.16 - Real Project Burn-in & Regression Closure
 
@@ -32,8 +34,8 @@ Key changes:
 - 统一版本号为 `6.6.16`。
 
 Verification:
-- Full test suite: **2596 passed**
-- Frontend typecheck/lint/build: passed
+- Full test suite: **2601 passed**
+- Frontend typecheck/lint/build/vitest: passed (`283 passed`)
 - All burn-in tests: 29 passed
 - No LangGraph topology changes
 - `docs/superpowers/` excluded from git
