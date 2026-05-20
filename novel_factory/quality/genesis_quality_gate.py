@@ -952,6 +952,8 @@ def evaluate_genesis_draft(
     score -= warning_count * 10
     score -= advisory_count * 3
     score = max(0.0, min(100.0, score))
+    if scaffold_issue:
+        score = 0.0
 
     # Determine quality status
     if scaffold_issue:

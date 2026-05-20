@@ -1325,7 +1325,11 @@ async def _complete_real_genesis_draft(
         if not missing:
             return normalized
 
-    return _fill_missing_genesis_sections(body, normalized)
+    return _mark_genesis_local_recovery(
+        _fill_missing_genesis_sections(body, normalized),
+        reason="incomplete_json",
+        error_message="真实 LLM 草案在两次补齐后仍缺少必需创世章节，系统已用本地恢复内容补齐。",
+    )
 
 
 def _mark_genesis_generation_fallback(
@@ -1355,6 +1359,58 @@ def _mark_genesis_generation_fallback(
     return marked
 
 
+def _mark_genesis_local_recovery(
+    draft: dict,
+    *,
+    reason: str,
+    error_message: str,
+) -> dict:
+    """Mark local Genesis recovery content as reviewable instead of blocked."""
+    recovered = dict(draft)
+    meta = dict(recovered.get("_meta") or {})
+    warnings = [
+        warning
+        for warning in list(meta.get("warnings") or [])
+        if "兜底模板" not in str(warning) and "系统模板补齐" not in str(warning)
+    ]
+    warning = "真实 LLM 输出不完整或不是可解析 JSON，系统已根据项目描述生成可审核的本地恢复草案。"
+    if warning not in warnings:
+        warnings.append(warning)
+    meta.update({
+        "source": "local_recovery",
+        "quality_status": "recovered_from_invalid_json"
+        if reason == "invalid_json"
+        else "recovered_from_incomplete_json",
+        "generation_fallback": True,
+        "fallback_reason": reason,
+        "original_error": error_message[:500],
+        "warnings": warnings,
+    })
+    recovered["_meta"] = meta
+    return recovered
+
+
+def _build_genesis_recovery_draft(
+    body: GenesisGenerateRequest,
+    *,
+    reason: str,
+    error_message: str,
+) -> dict:
+    """Build a usable local Genesis draft after provider JSON failure.
+
+    Invalid provider JSON is a transport/model formatting failure, not proof
+    that the user's project should degrade into an unapprovable template. This
+    recovery path uses the same deterministic section builder, but marks the
+    result as a reviewable local recovery draft so the normal quality gate can
+    judge the actual content instead of automatically blocking it as scaffold.
+    """
+    return _mark_genesis_local_recovery(
+        _generate_genesis_scaffold(body),
+        reason=reason,
+        error_message=error_message,
+    )
+
+
 async def _generate_real_draft_with_scaffold_fallback(
     body: GenesisGenerateRequest,
     settings,
@@ -1372,8 +1428,8 @@ async def _generate_real_draft_with_scaffold_fallback(
             body.genre,
             exc_info=True,
         )
-        return _mark_genesis_generation_fallback(
-            _generate_genesis_scaffold(body),
+        return _build_genesis_recovery_draft(
+            body,
             reason="invalid_json",
             error_message=str(exc),
         )

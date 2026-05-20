@@ -334,8 +334,8 @@ class TestGenesisCanonicalRoutes:
 
 
 @pytest.mark.asyncio
-async def test_real_genesis_invalid_json_falls_back_to_blocked_scaffold(monkeypatch):
-    """Invalid real-LLM JSON should not leave Genesis stuck in failed state."""
+async def test_real_genesis_invalid_json_recovers_to_usable_local_draft(monkeypatch):
+    """Invalid real-LLM JSON should recover to usable data, not a blocked template."""
     from novel_factory.api.routes import genesis as genesis_routes
     from novel_factory.llm.openai_compatible import OutputValidationError
 
@@ -368,7 +368,8 @@ async def test_real_genesis_invalid_json_falls_back_to_blocked_scaffold(monkeypa
     )
 
     assert genesis_routes._missing_required_genesis_sections(draft) == []
-    assert draft["_meta"]["source"] == "scaffold_fallback"
+    assert draft["_meta"]["source"] == "local_recovery"
+    assert draft["_meta"]["quality_status"] == "recovered_from_invalid_json"
     assert draft["_meta"]["generation_fallback"] is True
     assert draft["_meta"]["fallback_reason"] == "invalid_json"
     assert "Expecting value" in draft["_meta"]["original_error"]
@@ -380,8 +381,9 @@ async def test_real_genesis_invalid_json_falls_back_to_blocked_scaffold(monkeypa
         premise=body.premise,
         target_chapters=body.target_chapters,
     )
-    assert quality_report.passed is False
-    assert quality_report.quality_status == "scaffold_fallback"
+    assert quality_report.passed is True
+    assert quality_report.quality_status in {"pass", "warning"}
+    assert not any(issue.severity == "blocker" for issue in quality_report.issues)
     objectives = [item["objective"] for item in draft["instructions"]]
     key_events = [item["key_events"] for item in draft["instructions"]]
     assert len(objectives) == len(set(objectives))
@@ -394,8 +396,8 @@ async def test_real_genesis_invalid_json_falls_back_to_blocked_scaffold(monkeypa
     ]
 
 
-def test_real_genesis_api_invalid_json_returns_reviewable_scaffold(monkeypatch, tmp_path):
-    """API should return a quality-blocked draft instead of a raw JSON parse failure."""
+def test_real_genesis_api_invalid_json_returns_usable_recovery_draft(monkeypatch, tmp_path):
+    """API should return reviewable concrete data instead of blocked template fallback."""
     from novel_factory.api_app import create_api_app
     from novel_factory.db.connection import init_db
     from novel_factory.llm.openai_compatible import OutputValidationError
@@ -444,10 +446,15 @@ def test_real_genesis_api_invalid_json_returns_reviewable_scaffold(monkeypatch, 
     assert body["data"]["status"] == "generated"
     assert body["data"]["error_message"] in (None, "")
     draft = json.loads(body["data"]["draft_json"])
-    assert draft["_meta"]["source"] == "scaffold_fallback"
+    assert draft["_meta"]["source"] == "local_recovery"
+    assert draft["_meta"]["quality_status"] == "recovered_from_invalid_json"
     assert draft["_meta"]["generation_fallback"] is True
-    assert body["data"]["quality_report"]["passed"] is False
-    assert body["data"]["quality_report"]["quality_status"] == "scaffold_fallback"
+    assert body["data"]["quality_report"]["passed"] is True
+    assert body["data"]["quality_report"]["quality_status"] in {"pass", "warning"}
+    assert not any(
+        issue["severity"] == "blocker"
+        for issue in body["data"]["quality_report"]["issues"]
+    )
 
 
 def test_genesis_completion_merge_deduplicates_full_draft_patch():
@@ -708,7 +715,7 @@ async def test_real_genesis_completion_repairs_world_only_output(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_real_genesis_completion_falls_back_to_complete_local_scaffold(monkeypatch):
-    """If provider repair keeps returning empty JSON, Genesis still produces an editable complete draft."""
+    """If provider repair returns empty JSON, Genesis recovers to reviewable local data."""
     from novel_factory.api.routes import genesis as genesis_routes
 
     class EmptyProvider:
@@ -744,6 +751,9 @@ async def test_real_genesis_completion_falls_back_to_complete_local_scaffold(mon
 
     assert provider.calls == 2
     assert genesis_routes._missing_required_genesis_sections(completed) == []
+    assert completed["_meta"]["source"] == "local_recovery"
+    assert completed["_meta"]["quality_status"] == "recovered_from_incomplete_json"
+    assert completed["_meta"]["fallback_reason"] == "incomplete_json"
     assert completed["project_updates"]["description"].startswith("《仙帝归来》")
     assert len(completed["world_settings"]) >= 1
     assert len(completed["characters"]) >= 3
@@ -751,6 +761,17 @@ async def test_real_genesis_completion_falls_back_to_complete_local_scaffold(mon
     assert len(completed["outlines"]) >= 1
     assert len(completed["plot_holes"]) >= 1
     assert len(completed["instructions"]) == 5
+
+    quality_report = genesis_routes.evaluate_genesis_draft(
+        completed,
+        title=body.title,
+        genre=body.genre,
+        premise=body.premise,
+        target_chapters=body.target_chapters,
+    )
+    assert quality_report.passed is True
+    assert quality_report.quality_status in {"pass", "warning"}
+    assert not any(issue.severity == "blocker" for issue in quality_report.issues)
 
 
 @pytest.mark.asyncio

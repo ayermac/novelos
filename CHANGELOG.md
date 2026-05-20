@@ -15,6 +15,7 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 - Fixed the sidebar version badge so the client UI reads from `frontend/package.json` instead of a stale hardcoded `v5.5.9`.
 - Synchronized frontend and desktop package-lock root versions to `6.6.16`.
 - Hardened Genesis initialization fallback: completion patches now deduplicate repeatable sections instead of appending duplicates, scaffold instructions are chapter-specific, and scaffold previews are shown as recovery panels rather than normal drafts.
+- Fixed Genesis real-LLM failure recovery: invalid or incomplete JSON now produces a reviewable `local_recovery` draft based on the project premise instead of an automatically blocked scaffold template; true scaffold fallback reports now score `0`.
 
 ## v6.6.16 - Real Project Burn-in & Regression Closure
 

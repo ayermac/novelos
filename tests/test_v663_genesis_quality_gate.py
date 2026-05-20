@@ -152,6 +152,7 @@ def test_scaffold_fallback_detected():
 
     assert report.quality_status == "scaffold_fallback"
     assert not report.passed
+    assert report.score == 0.0
     assert any(i.code == "SCAFFOLD_FALLBACK" for i in report.issues)
 
 
