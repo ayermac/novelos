@@ -553,7 +553,24 @@ export default function GenesisModule({ projectId, project }: Props) {
                 </div>
               )}
 
-              <div className="genesis-draft">
+              <div className={`genesis-draft ${isScaffold ? 'draft-scaffold-muted' : ''}`}>
+                {isScaffold && (
+                  <div className="draft-scaffold-recovery">
+                    <XCircle size={18} />
+                    <div>
+                      <strong>真实 LLM 输出不可用，当前只是恢复草案</strong>
+                      <p>系统没有拿到可用的结构化创世结果。此草案不会被直接批准，建议重新生成；如需排查，可展开查看兜底草案详情。</p>
+                      <button
+                        type="button"
+                        className="btn btn-primary btn-sm"
+                        onClick={() => setShowForm(true)}
+                      >
+                        <RotateCcw size={14} /> 重新生成
+                      </button>
+                    </div>
+                  </div>
+                )}
+
                 {draftPreview.invalid && (
                   <div className="draft-empty draft-invalid">
                     <XCircle size={16} />
@@ -660,6 +677,13 @@ export default function GenesisModule({ projectId, project }: Props) {
                 {(draftPreview.invalid || draftPreview.empty) && draftPreview.rawText && (
                   <details className="draft-raw">
                     <summary>查看原始草案</summary>
+                    <pre>{draftPreview.rawText}</pre>
+                  </details>
+                )}
+
+                {isScaffold && draftPreview.rawText && (
+                  <details className="draft-raw">
+                    <summary>查看兜底草案详情</summary>
                     <pre>{draftPreview.rawText}</pre>
                   </details>
                 )}
@@ -864,6 +888,30 @@ export default function GenesisModule({ projectId, project }: Props) {
         .draft-invalid {
           border-color: color-mix(in srgb, var(--danger) 30%, transparent);
           background: color-mix(in srgb, var(--danger) 10%, var(--bg-primary));
+        }
+        .draft-scaffold-muted .draft-section {
+          display: none;
+        }
+        .draft-scaffold-recovery {
+          display: flex;
+          gap: 12px;
+          align-items: flex-start;
+          padding: 14px;
+          border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent);
+          border-radius: 6px;
+          background: color-mix(in srgb, var(--danger) 9%, var(--bg-primary));
+          color: var(--text-secondary);
+          font-size: 13px;
+          line-height: 1.6;
+        }
+        .draft-scaffold-recovery strong {
+          display: block;
+          color: var(--text-primary);
+          font-size: 14px;
+          margin-bottom: 2px;
+        }
+        .draft-scaffold-recovery p {
+          margin: 0 0 10px;
         }
         .draft-raw {
           margin-top: 12px;

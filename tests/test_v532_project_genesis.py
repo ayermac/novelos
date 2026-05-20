@@ -382,6 +382,16 @@ async def test_real_genesis_invalid_json_falls_back_to_blocked_scaffold(monkeypa
     )
     assert quality_report.passed is False
     assert quality_report.quality_status == "scaffold_fallback"
+    objectives = [item["objective"] for item in draft["instructions"]]
+    key_events = [item["key_events"] for item in draft["instructions"]]
+    assert len(objectives) == len(set(objectives))
+    assert len(key_events) == len(set(key_events))
+    assert [item["name"] for item in draft["characters"]] == [
+        "林泽",
+        "许知夏",
+        "魏承霜",
+        "周砚白",
+    ]
 
 
 def test_real_genesis_api_invalid_json_returns_reviewable_scaffold(monkeypatch, tmp_path):
@@ -438,6 +448,68 @@ def test_real_genesis_api_invalid_json_returns_reviewable_scaffold(monkeypatch, 
     assert draft["_meta"]["generation_fallback"] is True
     assert body["data"]["quality_report"]["passed"] is False
     assert body["data"]["quality_report"]["quality_status"] == "scaffold_fallback"
+
+
+def test_genesis_completion_merge_deduplicates_full_draft_patch():
+    """Completion patches that repeat full sections must replace/merge, not append."""
+    from novel_factory.api.routes import genesis as genesis_routes
+
+    base = {
+        "project_updates": {"description": "old"},
+        "world_settings": [
+            {"title": "异常分类", "category": "规则", "content": "旧内容"},
+        ],
+        "characters": [
+            {"name": "林泽", "role": "protagonist", "description": "旧描述"},
+        ],
+        "factions": [
+            {"name": "异常处理局深城分部", "type": "官方", "description": "旧描述"},
+        ],
+        "outlines": [
+            {"level": "arc", "sequence": 1, "chapters_range": "1-3", "title": "旧大纲", "content": "旧内容"},
+        ],
+        "plot_holes": [
+            {"code": "PH-001", "title": "旧伏笔", "description": "旧描述"},
+        ],
+        "instructions": [
+            {"chapter_number": 1, "objective": "旧目标", "key_events": "旧事件"},
+        ],
+    }
+    patch = {
+        "world_settings": [
+            {"title": "异常分类", "category": "规则", "content": "新内容"},
+            {"title": "同化机制", "category": "规则", "content": "新增内容"},
+        ],
+        "characters": [
+            {"name": "林泽", "role": "protagonist", "description": "新描述"},
+        ],
+        "factions": [
+            {"name": "异常处理局深城分部", "type": "官方", "description": "新描述"},
+        ],
+        "outlines": [
+            {"level": "arc", "sequence": 1, "chapters_range": "1-3", "title": "新大纲", "content": "新内容"},
+        ],
+        "plot_holes": [
+            {"code": "PH-001", "title": "新伏笔", "description": "新描述"},
+        ],
+        "instructions": [
+            {"chapter_number": 1, "objective": "新目标", "key_events": "新事件"},
+        ],
+    }
+
+    merged = genesis_routes._merge_genesis_drafts(base, patch)
+
+    assert len(merged["world_settings"]) == 2
+    assert merged["world_settings"][0]["content"] == "新内容"
+    assert len(merged["characters"]) == 1
+    assert merged["characters"][0]["description"] == "新描述"
+    assert len(merged["factions"]) == 1
+    assert len(merged["outlines"]) == 1
+    assert merged["outlines"][0]["title"] == "新大纲"
+    assert len(merged["plot_holes"]) == 1
+    assert merged["plot_holes"][0]["title"] == "新伏笔"
+    assert len(merged["instructions"]) == 1
+    assert merged["instructions"][0]["objective"] == "新目标"
 
 
 @pytest.mark.asyncio

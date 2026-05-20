@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import asyncio
 import logging
+import re
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -360,6 +361,102 @@ def _normalize_genesis_draft(value) -> dict | None:
     return normalized or None
 
 
+def _merge_key_text(value) -> str:
+    """Normalize text for Genesis merge/dedup keys."""
+    return " ".join(_as_text(value).split()).strip().lower()
+
+
+def _genesis_item_key(section: str, item, index: int) -> str:
+    """Return a stable semantic key for a Genesis list item."""
+    if not isinstance(item, dict):
+        return f"raw:{index}:{_merge_key_text(item)[:80]}"
+
+    if section == "world_settings":
+        title = _merge_key_text(item.get("title"))
+        category = _merge_key_text(item.get("category"))
+        content = _merge_key_text(item.get("content"))
+        return f"title:{category}:{title}" if title else f"content:{content[:100]}"
+
+    if section in ("characters", "factions"):
+        name = _merge_key_text(item.get("name"))
+        return f"name:{name}" if name else f"idx:{index}"
+
+    if section == "outlines":
+        level = _merge_key_text(item.get("level", "arc"))
+        sequence = item.get("sequence")
+        if sequence not in (None, ""):
+            return f"seq:{level}:{sequence}"
+        chapters_range = _merge_key_text(item.get("chapters_range"))
+        if chapters_range:
+            return f"range:{chapters_range}"
+        return f"title:{_merge_key_text(item.get('title'))}"
+
+    if section == "plot_holes":
+        code = _merge_key_text(item.get("code"))
+        if code:
+            return f"code:{code}"
+        return f"title:{_merge_key_text(item.get('title'))}"
+
+    if section == "instructions":
+        chapter_number = item.get("chapter_number")
+        if chapter_number not in (None, ""):
+            try:
+                return f"chapter:{int(chapter_number)}"
+            except (TypeError, ValueError):
+                return f"chapter:{_merge_key_text(chapter_number)}"
+        return f"objective:{_merge_key_text(item.get('objective'))}"
+
+    return f"idx:{index}"
+
+
+def _merge_genesis_item(existing, incoming):
+    """Merge duplicate Genesis items without letting empty incoming values erase data."""
+    if not isinstance(existing, dict) or not isinstance(incoming, dict):
+        return incoming if incoming not in (None, "", [], {}) else existing
+    merged = dict(existing)
+    for key, value in incoming.items():
+        if value in (None, "", [], {}):
+            continue
+        merged[key] = value
+    return merged
+
+
+def _merge_unique_genesis_list(existing: list, incoming: list, section: str) -> list:
+    """Merge Genesis list sections by semantic keys instead of blindly appending."""
+    result: list = []
+    key_to_index: dict[str, int] = {}
+
+    for source in (existing or [], incoming or []):
+        for item in source:
+            key = _genesis_item_key(section, item, len(result) + 1)
+            if key in key_to_index:
+                idx = key_to_index[key]
+                result[idx] = _merge_genesis_item(result[idx], item)
+            else:
+                key_to_index[key] = len(result)
+                result.append(item)
+    return result
+
+
+def _dedupe_genesis_draft(draft: dict | None) -> dict | None:
+    """Deduplicate all repeatable Genesis sections in a normalized draft."""
+    if not isinstance(draft, dict):
+        return draft
+    deduped = dict(draft)
+    for key in (
+        "world_settings",
+        "characters",
+        "factions",
+        "outlines",
+        "plot_holes",
+        "instructions",
+    ):
+        value = deduped.get(key)
+        if isinstance(value, list):
+            deduped[key] = _merge_unique_genesis_list([], value, key)
+    return deduped
+
+
 def _parse_genesis_draft_json(raw_value) -> dict | None:
     """Parse genesis draft_json into a JSON object.
 
@@ -371,7 +468,7 @@ def _parse_genesis_draft_json(raw_value) -> dict | None:
     for _ in range(2):
         normalized = _normalize_genesis_draft(value)
         if normalized is not None:
-            return normalized
+            return _dedupe_genesis_draft(normalized)
         if isinstance(value, str):
             try:
                 value = json.loads(value)
@@ -379,7 +476,7 @@ def _parse_genesis_draft_json(raw_value) -> dict | None:
             except json.JSONDecodeError:
                 return None
         return None
-    return _normalize_genesis_draft(value)
+    return _dedupe_genesis_draft(_normalize_genesis_draft(value))
 
 
 def _missing_required_genesis_sections(draft: dict | None) -> list[str]:
@@ -409,7 +506,7 @@ def _missing_required_genesis_sections(draft: dict | None) -> list[str]:
 
 def _validate_complete_genesis_draft(draft: dict | None) -> tuple[dict | None, list[str]]:
     """Normalize and validate that a generated draft can initialize a project."""
-    normalized = _normalize_genesis_draft(draft)
+    normalized = _dedupe_genesis_draft(_normalize_genesis_draft(draft))
     missing = _missing_required_genesis_sections(normalized)
     return normalized, missing
 
@@ -441,11 +538,11 @@ def _merge_genesis_drafts(base: dict | None, patch: dict | None) -> dict:
     ):
         incoming = patch.get(key)
         if isinstance(incoming, list) and incoming:
-            merged[key] = list(merged.get(key) or []) + incoming
+            merged[key] = _merge_unique_genesis_list(merged.get(key) or [], incoming, key)
         elif key not in merged:
             merged[key] = []
 
-    return merged
+    return _dedupe_genesis_draft(merged) or {}
 
 
 def _project_description_from_body(body: GenesisGenerateRequest) -> str:
@@ -461,6 +558,38 @@ def _project_description_from_body(body: GenesisGenerateRequest) -> str:
 def _target_word_count(body: GenesisGenerateRequest) -> int:
     chapters = max(body.target_chapters, 1)
     return max(body.target_words // chapters, 1500)
+
+
+def _infer_protagonist_name(body: GenesisGenerateRequest) -> str:
+    """Infer a concrete protagonist name from user input when possible."""
+    source = f"{body.title} {body.premise}"
+    patterns = [
+        r"([\u4e00-\u9fff]{2,4})作为",
+        r"主角[：:，,]?\s*([\u4e00-\u9fff]{2,4})",
+    ]
+    generic = {
+        "故事",
+        "异常",
+        "系统",
+        "现实",
+        "修正",
+        "修正员",
+        "处理局",
+        "普通人",
+        "政府",
+        "地球",
+    }
+    for pattern in patterns:
+        for match in re.finditer(pattern, source):
+            name = match.group(1).strip()
+            if name and name not in generic and len(name) <= 4:
+                return name
+    return "林泽" if "异常" in source or "修正" in source else "沈砚"
+
+
+def _is_anomaly_genesis(body: GenesisGenerateRequest) -> bool:
+    source = f"{body.title} {body.genre} {body.premise}"
+    return any(token in source for token in ("异常", "修正员", "异常处理局", "超自然", "灵异"))
 
 
 def _genre_terms(body: GenesisGenerateRequest) -> dict[str, str]:
@@ -517,33 +646,122 @@ def _generate_genesis_scaffold(body: GenesisGenerateRequest) -> dict:
     target_words = _target_word_count(body)
     arc_mid = max(1, min(target_chapters, max(3, target_chapters // 3)))
     arc_two_end = max(arc_mid + 1, min(target_chapters, arc_mid * 2))
+    protagonist = _infer_protagonist_name(body)
+    anomaly_mode = _is_anomaly_genesis(body)
+    ally = "许知夏" if anomaly_mode else "顾清禾"
+    antagonist = "魏承霜" if anomaly_mode else "陆怀川"
+    observer = "周砚白" if anomaly_mode else "闻人述"
+    primary_faction = "异常处理局深城分部" if anomaly_mode else "星环事务所"
+    rival_faction = "监管组第七办公室" if anomaly_mode else "曜石评议会"
+    hidden_faction = "白塔观测会" if anomaly_mode else "雾港档案馆"
+    neutral_faction = "旧城区互助网络" if anomaly_mode else "灰鲸情报社"
+
+    instruction_templates = [
+        (
+            f"{protagonist}在旧城区废弃地铁站完成第一次异常勘察，目标是救出被困住的住户并确认修正系统的任务边界",
+            f"{protagonist}抵达旧城区废弃地铁站后发现监控画面与现场时间不一致；{ally}在处理局终端协助定位被困住户；修正系统要求直接抹除异常表征，结果会连同住户记忆一起清空；{protagonist}选择先隔离站台入口再救人，因此被系统记录一次违规",
+            f"{protagonist}看到任务结算里出现一行被隐藏的失败名单",
+            "下一章必须追查失败名单中的第一个名字，并延续系统违规记录",
+        ),
+        (
+            f"{protagonist}追查失败名单上的失踪修正员，目标是弄清对方是否死于异常还是死于处理局善后",
+            f"{protagonist}在市立医院精神科找到失踪修正员留下的病历；{ally}发现病历里的脑波图与修正系统接口频率一致；{antagonist}以监管名义要求{protagonist}交出证据；{protagonist}把病历复制进私人终端，导致同化度首次上升",
+            f"病历最后一页写着：系统比异常更早抵达现场",
+            "下一章必须让监管组介入，并让同化度变化影响主角判断",
+        ),
+        (
+            f"{protagonist}在监管审查中保住证据，目标是证明修正系统给出的最优解会伤害普通人",
+            f"监管组在处理局深城分部对{protagonist}进行问询；{antagonist}展示被清洗记忆的幸存者录像；{protagonist}发现录像中幸存者仍能听见异常噪音；{observer}暗中递来一份未登记异常坐标，结果把{protagonist}引向更高等级事件",
+            "未登记坐标的位置正好是富人区净化装置地下",
+            "下一章必须进入富人区净化装置，并揭露异常处理的阶层差异",
+        ),
+        (
+            f"{protagonist}潜入富人区净化装置地下层，目标是确认装置是否在把异常转嫁给旧城区",
+            f"{protagonist}借维修通道进入净化装置地下层；{ally}发现装置排出的不是污染而是异常残响；旧城区居民的失眠病例与排放周期吻合；{protagonist}关闭一组阀门后让市中心短暂出现异常影像，结果引来处理局高层关注",
+            "市中心屏幕上闪过一句话：转嫁协议执行中",
+            "下一章必须处理高层关注，并让旧城区病例成为现实压力",
+        ),
+        (
+            f"{protagonist}面对高层封口命令，目标是在不暴露异常真相的前提下保住旧城区居民证词",
+            f"处理局要求{protagonist}提交全部调查资料；{antagonist}安排记忆清洗小队接触旧城区居民；{protagonist}用记忆编织伪造一份无害证词；伪造行为保护了居民却让系统判定修正失败，结果扣除权限积分",
+            "被保护的居民突然认出{protagonist}后颈的接口编号",
+            "下一章必须追查接口编号来源，并让权限扣除限制主角行动",
+        ),
+        (
+            f"{protagonist}追查自己的接口编号，目标是弄清自己是否早在入职前就被系统标记",
+            f"{protagonist}进入处理局档案室查询接口记录；{ally}冒险帮他绕过低级权限墙；档案显示{protagonist}的编号来自一批已注销实验体；{observer}承认白塔观测会一直在记录系统同化数据，结果让{protagonist}开始怀疑所有任务来源",
+            "注销名单里出现了{protagonist}亲属的名字",
+            "下一章必须让亲属线索与异常任务发生碰撞",
+        ),
+        (
+            f"{protagonist}调查亲属注销记录，目标是找回被处理局删除的家庭记忆",
+            f"{protagonist}回到儿时居住的老楼寻找残留物；楼道异常会重放被删除的家庭晚餐；系统建议立即抹除整栋楼记忆以防扩散；{protagonist}拒绝执行并用现实锚定保留一段影像，结果同化度升到危险阈值",
+            "影像里的亲属对镜头说：不要相信裁衡",
+            "下一章必须解释裁衡代号，并让同化危险影响任务选择",
+        ),
+        (
+            f"{protagonist}在同化警报下接到Ⅲ类异常任务，目标是救人同时验证裁衡是否故意隐瞒信息",
+            f"商业综合体出现时间错乱点并困住上百名普通人；裁衡只标记一个出口却隐藏第二个低风险通道；{protagonist}依靠前几章证据找到隐藏通道；{antagonist}现场接管指挥并要求牺牲少数人换取稳定，结果双方公开冲突",
+            "隐藏通道尽头不是出口，而是一间白塔观测室",
+            "下一章必须进入白塔观测室，并揭示异常不是随机出现",
+        ),
+        (
+            f"{protagonist}进入白塔观测室，目标是确认异常爆发与人类决策之间的因果关系",
+            f"观测室保存着多起异常爆发前的社会冲突记录；{observer}说明白塔只观测不制造，但裁衡会根据人类选择调整任务目标；{ally}发现处理局高层与白塔共享同化数据；{protagonist}意识到修正成功可能是在训练修正员放弃道德判断",
+            "白塔档案把{protagonist}标注为可偏离样本",
+            "下一章必须让主角做出第一次明确偏离系统规则的选择",
+        ),
+        (
+            f"{protagonist}在处理局围堵中选择偏离系统规则，目标是保住现实世界而不是完成裁衡定义的修正",
+            f"处理局封锁旧城区并准备执行大范围记忆清洗；裁衡给出最快修正方案：牺牲旧城区作为隔离带；{protagonist}联合{ally}和旧城区互助网络公开异常后果的伪装证据；他用现实锚定把异常锁在自己身上，结果赢得短暂喘息也让同化进入下一层",
+            "裁衡第一次用非任务语气询问：你想成为例外吗",
+            "下一阶段必须围绕主角如何利用而非服从系统展开",
+        ),
+    ]
+    if not anomaly_mode:
+        instruction_templates = [
+            (
+                f"{protagonist}在开场地点遭遇现实压力，目标是保住一项会改变命运的关键资源",
+                f"{protagonist}在旧宅或工作场所发现资源被{antagonist}夺走；{ally}带来一条能证明真相的线索；{protagonist}选择冒险追查而不是妥协，结果得罪{rival_faction}",
+                f"{protagonist}发现关键资源上刻着{hidden_faction}的标记",
+                "下一章必须追查标记来源，并延续主角与对立势力的冲突",
+            ),
+            (
+                f"{protagonist}追查{hidden_faction}的标记，目标是找到资源背后的真正交易方",
+                f"{protagonist}进入{neutral_faction}控制的情报场所；{ally}用私人关系换到交易记录；{antagonist}派人封锁出口；{protagonist}带着半份记录逃脱，结果暴露自己的行动路线",
+                f"交易记录缺失的半页指向{primary_faction}内部",
+                "下一章必须让主角进入核心组织内部，并处理行动暴露的后果",
+            ),
+            (
+                f"{protagonist}进入{primary_faction}内部核对交易记录，目标是确认谁在操控局面",
+                f"{protagonist}借助{ally}身份进入资料室；资料显示{rival_faction}只是执行者；{observer}提醒主角不要相信公开档案；{protagonist}复制档案后触发警报，结果被迫与{antagonist}正面对峙",
+                f"{observer}留下的坐标指向一处被地图抹掉的地点",
+                "下一章必须前往被抹掉的地点，并揭示更高层级势力",
+            ),
+        ]
+        while len(instruction_templates) < target_chapters:
+            chapter = len(instruction_templates) + 1
+            instruction_templates.append(
+                (
+                    f"{protagonist}在第 {chapter} 章围绕前章坐标展开行动，目标是取得能改变局势的证据",
+                    f"{protagonist}抵达新地点后发现证据被转移；{ally}与{neutral_faction}交换情报；{antagonist}制造阻碍迫使主角选择公开或隐藏真相；{protagonist}选择保留关键证据，结果让局势转向下一轮对抗",
+                    f"证据中出现一个与{protagonist}过去有关的名字",
+                    f"下一章必须解释第 {chapter} 章证据中的名字，并让主角付出代价",
+                )
+            )
 
     instructions = []
     for chapter in range(1, target_chapters + 1):
-        if chapter == 1:
-            objective = "建立主角处境、核心目标和第一处关键冲突"
-            key_events = "主角登场；展示现实压力；触发核心机会或危机；埋下主线谜团"
-            hook = "主角发现事件背后还有更大的力量正在逼近"
-        elif chapter <= arc_mid:
-            objective = "完成开局冲突升级，让主角获得初步主动权"
-            key_events = "主角尝试解决眼前困境；盟友或对手登场；第一次能力/策略展示；反派压力升级"
-            hook = "新的敌意或更高层级势力注意到主角"
-        elif chapter <= arc_two_end:
-            objective = "扩大冲突范围，推动主角进入更复杂的势力局面"
-            key_events = "主角主动出击；关键资源或情报出现；对手设局；主角用成长成果反击"
-            hook = "主线谜团出现新的证据"
-        else:
-            objective = "收束首批章节阶段性冲突，并引出下一阶段主线"
-            key_events = "阶段反派被击退；主角关系网变化；核心谜团推进；更大危机浮出水面"
-            hook = "真正的幕后力量露出线索"
+        objective, key_events, hook, continuity_seed = instruction_templates[(chapter - 1) % len(instruction_templates)]
         instructions.append({
             "chapter_number": chapter,
             "objective": objective,
             "key_events": key_events,
-            "plots_to_plant": ["主角身世/能力来源", "幕后势力动机"] if chapter == 1 else [],
+            "plots_to_plant": ["裁衡系统真实目的", "异常转嫁协议"] if chapter == 1 else [],
             "plots_to_resolve": [],
             "emotion_tone": terms["tone"],
             "ending_hook": hook,
+            "continuity_seed": continuity_seed,
             "word_target": target_words,
         })
 
@@ -578,53 +796,53 @@ def _generate_genesis_scaffold(body: GenesisGenerateRequest) -> dict:
         ],
         "characters": [
             {
-                "name": "主角",
+                "name": protagonist,
                 "role": "protagonist",
-                "description": f"《{title}》的核心人物，初始处于压力或困境中，但拥有改变命运的关键潜力。",
-                "traits": "隐忍、聪明、目标感强、会在冲突中快速成长",
+                "description": f"《{title}》的核心人物，当前目标是在制度压力和现实危机中保住自己的判断权。\n内在矛盾/秘密: 他既依赖系统能力，又怀疑系统会把人训练成工具。\n与主角利益关系: 本人，所有组织选择都直接影响他的同化风险。",
+                "traits": "克制、警觉、共情尚未完全磨损、会用规则漏洞保护普通人",
             },
             {
-                "name": "核心盟友",
+                "name": ally,
                 "role": "supporting",
-                "description": "较早理解或帮助主角的人物，承担情报、情感支持或行动协作功能。",
-                "traits": "可靠、敏锐、与主角形成互补",
+                "description": f"{primary_faction}的数据分析员，当前目标是查清异常任务记录被篡改的来源。\n内在矛盾/秘密: 她的家人曾被善后程序清洗记忆，因此不完全信任处理局。\n与主角利益关系: 帮助{protagonist}取得情报，也要求他别把普通人当任务代价。",
+                "traits": "敏锐、嘴硬、技术强、对制度有保留的忠诚",
             },
             {
-                "name": "阶段反派",
+                "name": antagonist,
                 "role": "antagonist",
-                "description": "首批章节中直接压迫主角的人物，代表既有秩序或敌对利益。",
-                "traits": "强势、自负、会推动主角被迫反击",
+                "description": f"{rival_faction}负责人，当前目标是把{protagonist}的偏离行为压回系统流程。\n内在矛盾/秘密: 他知道系统存在漏洞，但认为牺牲少数人是维持现实稳定的必要成本。\n与主角利益关系: 代表处理局强硬秩序，持续阻断主角的第三条路。",
+                "traits": "冷静、强硬、擅长审讯和流程压制",
             },
             {
-                "name": "神秘观察者",
+                "name": observer,
                 "role": "supporting",
-                "description": "掌握更高层级信息的人物，负责把故事从局部冲突引向主线谜团。",
-                "traits": "神秘、克制、目的不明",
+                "description": f"{hidden_faction}联络人，当前目标是观察{protagonist}是否能偏离系统最优解。\n内在矛盾/秘密: 他曾经也是修正员，保留着被判定失败的任务记忆。\n与主角利益关系: 提供线索但不直接救人，逼迫主角自己做选择。",
+                "traits": "克制、讽刺、信息量大、立场暧昧",
             },
         ],
         "factions": [
             {
-                "name": "主角阵营",
-                "type": "成长阵营",
-                "description": "围绕主角逐步形成的行动网络，初期弱小但机动性强。",
-                "relationship_with_protagonist": "核心所属",
+                "name": primary_faction,
+                "type": "官方一线机构",
+                "description": f"掌握修正系统、任务调度和异常善后资源。当前阶段要求{protagonist}完成低级异常任务，同时限制他接触高层情报。\n资源/手段: 任务权限、异常档案、记忆清洗队、修正装备。\n当前阶段行动: 继续派发任务并记录主角的同化数据。",
+                "relationship_with_protagonist": "工作所属，同时是限制主角真相探索的制度来源",
             },
             {
-                "name": "既有权力方",
-                "type": "压迫/竞争势力",
-                "description": "掌握资源和规则解释权的势力，对主角的崛起保持警惕或敌意。",
-                "relationship_with_protagonist": "早期冲突对象",
+                "name": rival_faction,
+                "type": "内部监管势力",
+                "description": f"负责审查修正员偏离行为和封存敏感任务。当前阶段将{protagonist}列入观察名单。\n资源/手段: 审讯权限、任务冻结、记忆审查、处分流程。\n当前阶段行动: 通过程序压力迫使主角交出异常调查证据。",
+                "relationship_with_protagonist": "早期直接冲突对象",
             },
             {
-                "name": "隐秘组织",
+                "name": hidden_faction,
                 "type": "主线谜团势力",
-                "description": "隐藏在表层冲突后的组织，掌握更深层秘密。",
-                "relationship_with_protagonist": "观察、试探、潜在敌对",
+                "description": f"记录异常、系统和人类选择之间的关系。当前阶段只向{protagonist}投放线索，不承诺帮助。\n资源/手段: 未登记异常坐标、同化样本档案、失踪修正员记录。\n当前阶段行动: 测试主角是否会为了现实世界违背系统指令。",
+                "relationship_with_protagonist": "观察、试探、潜在合作但不可信",
             },
             {
-                "name": "中立资源方",
+                "name": neutral_faction,
                 "type": "资源/情报势力",
-                "description": "拥有关键资源或信息，会根据利益变化与主角合作或对立。",
+                "description": f"由异常幸存者、旧城区居民和被边缘化研究者组成。当前阶段掌握官方没有登记的异常后果。\n资源/手段: 民间目击记录、地下避难点、未清洗记忆者。\n当前阶段行动: 在保护自身安全的前提下向{protagonist}提供碎片证词。",
                 "relationship_with_protagonist": "可争取对象",
             },
         ],
@@ -632,21 +850,21 @@ def _generate_genesis_scaffold(body: GenesisGenerateRequest) -> dict:
             {
                 "chapters_range": f"1-{arc_mid}",
                 "title": "开局压迫与觉醒",
-                "content": f"{premise} 首批开局聚焦主角处境、核心机会出现以及第一次反击。",
+                "content": f"{premise} 阶段冲突: {protagonist}必须在{primary_faction}任务规则和普通人安全之间做选择。转折: 他发现系统的修正成功会掩盖现实代价。阶段结果: 主角被监管关注，但保留了第一份质疑系统的证据。",
                 "level": "arc",
                 "sequence": 1,
             },
             {
                 "chapters_range": f"{arc_mid + 1}-{arc_two_end}" if arc_mid + 1 <= arc_two_end else f"{arc_mid}",
                 "title": "能力验证与势力入场",
-                "content": "主角的行动引起外部势力注意，冲突从个人层面扩展到资源和组织层面。",
+                "content": f"阶段冲突: {protagonist}追查异常善后链条时遭到{rival_faction}压制。转折: {hidden_faction}投放未登记坐标，证明异常处理存在转嫁机制。阶段结果: 主角获得线索，同时同化度和处分风险一起上升。",
                 "level": "arc",
                 "sequence": 2,
             },
             {
                 "chapters_range": f"{arc_two_end + 1}-{target_chapters}" if arc_two_end + 1 <= target_chapters else f"{target_chapters}",
                 "title": "阶段高潮与主线揭示",
-                "content": "首批章节收束阶段冲突，同时揭示更高层级的主线谜团和后续威胁。",
+                "content": f"阶段冲突: 处理局要求{protagonist}牺牲局部现实稳定来完成系统定义的修正。转折: 白塔档案显示异常并非随机出现，而是会响应人类选择。阶段结果: 主角第一次明确偏离系统规则，把系统当作可利用但不可服从的工具。",
                 "level": "arc",
                 "sequence": 3,
             },
@@ -655,8 +873,8 @@ def _generate_genesis_scaffold(body: GenesisGenerateRequest) -> dict:
             {
                 "code": "PH-001",
                 "type": "主线谜团",
-                "title": "主角关键能力或机会的来源",
-                "description": "主角获得改变命运机会的真正来源尚未完全解释，后续需要逐步揭示。",
+                "title": "裁衡系统为何选择林泽",
+                "description": f"触发场景: {protagonist}第一次违规后仍获得任务结算。读者表象: 系统像是在容忍新人错误。真相方向: 裁衡需要观察能偏离最优解的样本。预计兑现: 第 {min(target_chapters, 10)} 章以后逐步揭示。",
                 "planted_chapter": 1,
                 "planned_resolve_chapter": min(target_chapters, 10),
                 "status": "planted",
@@ -664,8 +882,8 @@ def _generate_genesis_scaffold(body: GenesisGenerateRequest) -> dict:
             {
                 "code": "PH-002",
                 "type": "势力伏笔",
-                "title": "隐秘组织为何关注主角",
-                "description": "更高层级势力对主角表现出异常关注，其真实目的需要后续推进。",
+                "title": "白塔观测会的可偏离样本档案",
+                "description": f"触发场景: {observer}向{protagonist}投放未登记坐标。读者表象: 白塔像是在帮助主角。真相方向: 白塔只记录选择结果，并不保证人类安全。预计兑现: 第 {min(target_chapters, 12)} 章后揭露观测目的。",
                 "planted_chapter": 2,
                 "planned_resolve_chapter": min(target_chapters, 12),
                 "status": "planted",
@@ -673,8 +891,8 @@ def _generate_genesis_scaffold(body: GenesisGenerateRequest) -> dict:
             {
                 "code": "PH-003",
                 "type": "关系伏笔",
-                "title": "核心盟友的隐藏立场",
-                "description": "核心盟友与主角的关系将随着冲突升级接受考验。",
+                "title": f"{ally}家属被记忆清洗的旧案",
+                "description": f"触发场景: {ally}拒绝执行一次善后命令。读者表象: 她只是同情普通人。真相方向: 她的家属曾是异常善后牺牲者。预计兑现: 第 {min(target_chapters, 15)} 章后影响她与主角的信任。",
                 "planted_chapter": 3,
                 "planned_resolve_chapter": min(target_chapters, 15),
                 "status": "planted",
@@ -690,7 +908,7 @@ def _fill_missing_genesis_sections(body: GenesisGenerateRequest, draft: dict | N
     v6.6.3: If any section is filled from scaffold, mark the draft with
     _meta.scaffold_sections to track which parts are fallback.
     """
-    normalized = _normalize_genesis_draft(draft) or {}
+    normalized = _dedupe_genesis_draft(_normalize_genesis_draft(draft)) or {}
     scaffold = _generate_genesis_scaffold(body)
 
     scaffold_sections: list[str] = []
@@ -721,7 +939,7 @@ def _fill_missing_genesis_sections(body: GenesisGenerateRequest, draft: dict | N
         meta["warnings"] = [f"以下部分由系统模板补齐：{', '.join(scaffold_sections)}"]
         normalized["_meta"] = meta
 
-    return normalized
+    return _dedupe_genesis_draft(normalized) or {}
 
 
 def _short_title(text: str, fallback: str, limit: int = 24) -> str:
@@ -1081,7 +1299,7 @@ async def _complete_real_genesis_draft(
     draft: dict,
 ) -> dict:
     """Repair incomplete real Genesis output before it becomes reviewable."""
-    normalized = _normalize_genesis_draft(draft) or {}
+    normalized = _dedupe_genesis_draft(_normalize_genesis_draft(draft)) or {}
     missing = _missing_required_genesis_sections(normalized)
     if not missing:
         return normalized
@@ -1101,7 +1319,7 @@ async def _complete_real_genesis_draft(
             max_tokens=9000,
             max_retries=2,
         )
-        normalized_patch = _normalize_genesis_draft(patch)
+        normalized_patch = _dedupe_genesis_draft(_normalize_genesis_draft(patch))
         normalized = _merge_genesis_drafts(normalized, normalized_patch)
         missing = _missing_required_genesis_sections(normalized)
         if not missing:
