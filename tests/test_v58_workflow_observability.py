@@ -575,6 +575,19 @@ class TestWorkflowTimelineApi:
         assert any(a["key"] == "mark_stuck" for a in recovery["safe_actions"])
         assert any(a["key"] == "reset_chapter" for a in recovery["safe_actions"])
 
+    def test_timeline_hides_recovery_for_healthy_running_run(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_active", status="scripted")
+        _seed_run(repo, "obs_active", status="running", current_node="author")
+
+        resp = client.get("/api/projects/obs_active/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["run_status"] == "running"
+        assert data["is_stale"] is False
+        assert data["recovery"]["recommended_action"] is None
+        assert data["recovery"]["safe_actions"] == []
+
     def test_timeline_no_recovery_for_terminal_chapter(self, tmp_path):
         client, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "obs_terminal", status="published")

@@ -585,6 +585,138 @@
   color: var(--wb-ink-secondary);
 }
 
+.workflow-recovery-panel {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--wb-border-soft);
+}
+
+.workflow-recovery-title {
+  margin-bottom: 4px;
+  color: var(--wb-text);
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 1.5;
+}
+
+.workflow-recovery-reason {
+  max-width: 760px;
+  margin-bottom: 10px;
+  color: var(--wb-ink-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.workflow-recovery-quick-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  margin-bottom: 10px;
+}
+
+.workflow-recovery-link-button {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--wb-accent);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 620;
+  line-height: 1.5;
+}
+
+.workflow-recovery-link-button:hover {
+  color: var(--wb-accent-hover);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.workflow-recovery-link-button:focus-visible {
+  outline: 2px solid var(--wb-accent-soft);
+  outline-offset: 3px;
+}
+
+.workflow-recovery-actions {
+  display: grid;
+  gap: 8px;
+  max-width: 680px;
+}
+
+.workflow-recovery-action > .btn {
+  min-width: 118px;
+  justify-content: center;
+  white-space: nowrap;
+}
+
+.workflow-recovery-action {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.workflow-recovery-note {
+  color: var(--wb-text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.workflow-recovery-reset-button {
+  color: var(--wb-accent);
+}
+
+.workflow-recovery-action.recommended .workflow-recovery-note {
+  color: var(--wb-ink-secondary);
+}
+
+.workflow-recovery-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 150px;
+  max-width: 220px;
+  padding: 7px 0;
+  color: var(--wb-text-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.workflow-recovery-hint-label {
+  font-weight: 600;
+  color: var(--wb-ink-secondary);
+}
+
+.workflow-recovery-hint-note {
+  font-size: 11px;
+}
+
+@media (max-width: 720px) {
+  .workflow-recovery-action {
+    grid-template-columns: 1fr;
+    gap: 5px;
+  }
+
+  .workflow-recovery-action > .btn {
+    width: max-content;
+  }
+}
+
+.run-detail-recovery-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.run-detail-recovery-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
 /* Right agent panel */
 .author-agent {
   width: clamp(292px, 22vw, 390px);

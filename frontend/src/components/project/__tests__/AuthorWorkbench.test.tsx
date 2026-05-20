@@ -660,7 +660,7 @@ describe('AuthorWorkbench', () => {
     expect(publishBtn).toBeDisabled()
   })
 
-  it('agent panel recovery buttons show pending spinner', () => {
+  it('workflow tab keeps recovery controls in the workflow surface, not the agent panel', () => {
     render(
       <AuthorWorkbench
         {...baseProps}
@@ -688,15 +688,74 @@ describe('AuthorWorkbench', () => {
           status: 'blocked',
           created_at: '2026-05-13T10:00:00',
         }]}
-        resetRecoveryPending
       />
     )
     const panel = screen.getByLabelText('AI 助手面板')
-    const resetBtn = screen.getAllByRole('button', { name: /处理中/ }).find((b) =>
-      panel.contains(b)
+    expect(within(panel).queryByRole('button', { name: /清除阻塞并重置/ })).not.toBeInTheDocument()
+    expect(within(panel).getByText('需要先恢复运行')).toBeInTheDocument()
+    expect(screen.getByLabelText('写作区')).toContainElement(screen.getByRole('button', { name: /清除阻塞并重置/ }))
+  })
+
+  it('workflow tab agent panel does not duplicate preserved-content overwrite actions', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        currentChapter={4}
+        currentChapterRecord={{ chapter_number: 4, status: 'planned', word_count: 900, title: '第四章' }}
+        chapterDetail={{
+          project_id: 'test-proj',
+          project_name: '测试项目',
+          chapter_number: 4,
+          title: '第四章',
+          content: '已有正文',
+          word_count: 900,
+          status: 'planned',
+          quality_score: null,
+          created_at: '2026-05-16 10:00:00',
+          updated_at: '2026-05-16 10:00:00',
+        }}
+        runDetail={{
+          run_id: 'run-planned-content',
+          project_id: 'test-proj',
+          chapter_number: 4,
+          workflow_status: 'failed',
+          chapter_status: 'planned',
+          current_node: 'human_review',
+          llm_mode: 'real',
+          started_at: '2026-05-16 10:00:00',
+          steps: [],
+        }}
+      />
     )
-    expect(resetBtn).toBeDefined()
-    expect(resetBtn).toBeDisabled()
+    const panel = screen.getByLabelText('AI 助手面板')
+    expect(within(panel).queryByRole('button', { name: /覆盖重生成/ })).not.toBeInTheDocument()
+    expect(within(panel).getByText('已有正文待确认')).toBeInTheDocument()
+  })
+
+  it('non-workflow tabs use a single agent-panel shortcut into workflow recovery', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="content"
+        currentChapterRecord={{ chapter_number: 3, status: 'blocking', word_count: 3800, title: '第三章' }}
+        runDetail={{
+          run_id: 'run-block',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'blocked',
+          chapter_status: 'blocking',
+          current_node: 'human_review',
+          llm_mode: 'real',
+          started_at: '2026-05-13 10:00:00',
+          steps: [],
+        }}
+      />
+    )
+    const panel = screen.getByLabelText('AI 助手面板')
+    const shortcut = within(panel).getByRole('button', { name: /打开工作流恢复/ })
+    fireEvent.click(shortcut)
+    expect(baseProps.onViewWorkflow).toHaveBeenCalledWith('run-block')
   })
 
   /* v5.8 Workflow Observability tests ----------------------------------- */
@@ -761,7 +820,7 @@ describe('AuthorWorkbench', () => {
           project_id: 'test-proj',
           chapter_number: 3,
           run_id: 'run-canon',
-          run_status: 'running',
+          run_status: 'blocked',
           current_node: 'memory_curator',
           started_at: '2026-05-13T10:00:00',
           elapsed_minutes: 4,
@@ -914,7 +973,7 @@ describe('AuthorWorkbench', () => {
           project_id: 'test-proj',
           chapter_number: 3,
           run_id: 'run-run',
-          run_status: 'running',
+          run_status: 'blocked',
           current_node: 'polisher',
           started_at: '2026-05-13T10:00:00',
           elapsed_minutes: 5,
@@ -961,7 +1020,7 @@ describe('AuthorWorkbench', () => {
           project_id: 'test-proj',
           chapter_number: 3,
           run_id: 'run-stale-tl',
-          run_status: 'running',
+          run_status: 'blocked',
           current_node: 'author',
           started_at: '2026-05-13T10:00:00',
           elapsed_minutes: 35,
@@ -994,6 +1053,96 @@ describe('AuthorWorkbench', () => {
     expect(screen.getAllByText('标记为阻塞').length).toBeGreaterThanOrEqual(1)
     expect(screen.getAllByText('清除阻塞并重置').length).toBeGreaterThanOrEqual(1)
     expect(screen.getByText(/保留当前正文和版本/)).toBeInTheDocument()
+    expect(screen.getByText('清除阻塞并重置').closest('.workflow-recovery-action')).toBeTruthy()
+  })
+
+  it('renders timeline recovery safe actions as real controls when handlers exist', () => {
+    const onConfirmRegenerate = vi.fn()
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        currentChapter={4}
+        currentChapterRecord={{ chapter_number: 4, status: 'planned', word_count: 900, title: '第四章' }}
+        chapterDetail={{
+          project_id: 'test-proj',
+          project_name: '测试项目',
+          chapter_number: 4,
+          title: '第四章',
+          content: '已有正文',
+          word_count: 900,
+          status: 'planned',
+          quality_score: null,
+          created_at: '2026-05-16 10:00:00',
+          updated_at: '2026-05-16 10:00:00',
+        }}
+        onConfirmRegenerate={onConfirmRegenerate}
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 4,
+          run_id: 'run-planned-content',
+          run_status: 'blocked',
+          current_node: 'loop',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 0,
+          is_stale: false,
+          recovery: {
+            recommended_action: 'view_content',
+            reason: '章节已有内容但状态为 planned，建议先查看内容或显式重置。',
+            safe_actions: [
+              { key: 'view_detail', label: '查看详情', safe: true },
+              { key: 'view_content', label: '查看正文', safe: true },
+              { key: 'reset_explicitly', label: '显式重置', safe: true },
+              { key: 'generate', label: '生成本章', safe: true },
+            ],
+          },
+          nodes: [],
+        }}
+      />
+    )
+
+    fireEvent.click(screen.getAllByRole('button', { name: '查看正文' })[0])
+    expect(baseProps.onViewContent).toHaveBeenCalled()
+
+    expect(screen.queryByRole('button', { name: '显式重置' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '生成本章' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '查看详情' })).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '覆盖重生成' }))
+    expect(onConfirmRegenerate).toHaveBeenCalledTimes(1)
+    expect(baseProps.onGenerate).not.toHaveBeenCalled()
+  })
+
+  it('does not show recovery suggestions while workflow is healthy running', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 1,
+          run_id: 'run-active',
+          run_status: 'running',
+          current_node: 'author',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 1,
+          is_stale: false,
+          recovery: {
+            recommended_action: 'resume',
+            reason: '工作流运行中，可从检查点恢复。',
+            safe_actions: [
+              { key: 'view_detail', label: '查看详情', safe: true },
+              { key: 'resume', label: '继续/恢复运行', safe: true },
+            ],
+          },
+          nodes: [],
+        }}
+      />
+    )
+
+    expect(screen.getByText('工作流正在推进')).toBeInTheDocument()
+    expect(screen.queryByText('恢复建议')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /继续\/恢复运行/ })).not.toBeInTheDocument()
   })
 
   it('shows targeted retry action for blocked author node', () => {
@@ -1038,6 +1187,40 @@ describe('AuthorWorkbench', () => {
 
     fireEvent.click(screen.getByRole('button', { name: '重试执笔' }))
     expect(onRetryRunNode).toHaveBeenCalledWith('run-author-blocked')
+    const recoveryActions = document.querySelector('.workflow-recovery-actions')
+    expect(recoveryActions).toBeTruthy()
+    expect(within(recoveryActions as HTMLElement).getAllByRole('button').map((button) => button.textContent)).toEqual(['重试执笔', '清除阻塞并重置'])
+    expect(screen.getByText(/跳过已完成上游节点/)).toBeInTheDocument()
+  })
+
+  it('renders unavailable recovery actions as text hints instead of fake buttons', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-author-blocked',
+          run_status: 'blocked',
+          current_node: 'author',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 5,
+          is_stale: false,
+          recovery: {
+            recommended_action: 'retry_node',
+            reason: '章节处于阻塞/返修状态，可保留已有产物并重试执笔。',
+            safe_actions: [
+              { key: 'retry_node', label: '重试执笔', safe: true, note: '恢复到 scripted，跳过已完成上游节点' },
+            ],
+          },
+          nodes: [],
+        }}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: '重试执笔' })).not.toBeInTheDocument()
+    expect(screen.getByText('重试执笔').closest('.workflow-recovery-hint')).toBeTruthy()
     expect(screen.getByText(/跳过已完成上游节点/)).toBeInTheDocument()
   })
 
@@ -1187,7 +1370,7 @@ describe('AuthorWorkbench', () => {
     expect(generateBtn).toBeDefined()
   })
 
-  it('planned chapter with preserved content asks for explicit overwrite instead of normal generate', () => {
+  it('workflow tab does not show preserved-content overwrite in the page chrome', () => {
     const onConfirmRegenerate = vi.fn()
     const preserved = { chapter_number: 4, status: 'planned', word_count: 900, title: '第四章' }
 
@@ -1214,11 +1397,62 @@ describe('AuthorWorkbench', () => {
       />
     )
 
-    expect(screen.getAllByRole('button', { name: /覆盖重生成/ }).length).toBeGreaterThanOrEqual(2)
+    expect(screen.queryAllByRole('button', { name: /覆盖重生成/ })).toHaveLength(0)
     expect(screen.queryAllByRole('button', { name: /^生成本章$/ })).toHaveLength(0)
+    expect(screen.getByText('已有正文待确认')).toBeInTheDocument()
+    expect(onConfirmRegenerate).not.toHaveBeenCalled()
+  })
 
-    fireEvent.click(screen.getAllByRole('button', { name: /覆盖重生成/ })[0])
-    expect(onConfirmRegenerate).toHaveBeenCalled()
+  it('workflow view keeps recovery actions single-sourced instead of duplicating sidebar actions', () => {
+    const onConfirmRegenerate = vi.fn()
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        currentChapter={4}
+        currentChapterRecord={{ chapter_number: 4, status: 'planned', word_count: 900, title: '第四章' }}
+        chapterDetail={{
+          project_id: 'test-proj',
+          project_name: '测试项目',
+          chapter_number: 4,
+          title: '第四章',
+          content: '已有正文',
+          word_count: 900,
+          status: 'planned',
+          quality_score: null,
+          created_at: '2026-05-16 10:00:00',
+          updated_at: '2026-05-16 10:00:00',
+        }}
+        onConfirmRegenerate={onConfirmRegenerate}
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 4,
+          run_id: 'run-single-source',
+          run_status: 'blocked',
+          current_node: 'loop',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 0,
+          is_stale: false,
+          recovery: {
+            recommended_action: 'view_content',
+            reason: '章节已有内容但状态为 planned，建议先查看内容或显式重置。',
+            safe_actions: [
+              { key: 'view_detail', label: '查看详情', safe: true },
+              { key: 'view_content', label: '查看正文', safe: true },
+              { key: 'reset_explicitly', label: '显式重置', safe: true },
+              { key: 'generate', label: '生成本章', safe: true },
+            ],
+          },
+          nodes: [],
+        }}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: /显式重置/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /生成本章/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: /查看详情/ })).not.toBeInTheDocument()
+    expect(screen.getAllByRole('button', { name: '查看正文' })).toHaveLength(1)
+    expect(screen.getAllByRole('button', { name: '覆盖重生成' })).toHaveLength(1)
   })
 
   it('existing-content guard error shows review and confirm actions', () => {

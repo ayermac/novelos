@@ -31,6 +31,17 @@ from ._memory_curator_gate import (
 router = APIRouter()
 
 
+def _get_run_recovery_settings(request: Request):
+    """Load settings for recovery endpoints without blocking reset on cwd loss."""
+    from ..deps import get_settings
+    from ...config.settings import Settings
+
+    try:
+        return get_settings(request)
+    except FileNotFoundError:
+        return Settings()
+
+
 class RunRecoveryResetRequest(BaseModel):
     """Run recovery reset request."""
 
@@ -503,7 +514,7 @@ async def reset_run_chapter(
     artifacts; it only moves the chapter back to planned, inserts an audit task,
     and clears stale LangGraph checkpoints.
     """
-    from ..deps import get_repo, get_settings
+    from ..deps import get_repo
     from ...workflow.checkpoint import delete_checkpoint_thread
 
     try:
@@ -511,7 +522,7 @@ async def reset_run_chapter(
             return error_response("CONFIRM_REQUIRED", "请确认恢复操作")
 
         repo = get_repo(request)
-        settings = get_settings(request)
+        settings = _get_run_recovery_settings(request)
         run_data = _get_run_by_id(repo, run_id)
         if not run_data:
             return error_response("RUN_NOT_FOUND", f"运行记录 '{run_id}' 不存在")

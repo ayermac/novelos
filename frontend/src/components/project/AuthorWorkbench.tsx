@@ -205,6 +205,7 @@ export default function AuthorWorkbench({
         onRefreshContent={onRefreshContent}
       />
       <AuthorAgentPanel
+        activeTab={activeTab}
         currentChapter={currentChapter}
         currentChapterRecord={currentChapterRecord}
         llmMode={llmMode}
@@ -217,13 +218,9 @@ export default function AuthorWorkbench({
         timeline={timeline}
         onGenerate={onGenerate}
         onConfirmRegenerate={onConfirmRegenerate}
-        onMarkRunStuck={onMarkRunStuck}
         onPublish={onPublish}
         onGenerateNext={onGenerateNext}
-        onResetRunRecovery={onResetRunRecovery}
         publishPending={publishPending}
-        markStuckPending={markStuckPending}
-        resetRecoveryPending={resetRecoveryPending}
         regeneratePending={regeneratePending}
         onViewContent={onViewContent}
         onViewWorkflow={onViewWorkflow}

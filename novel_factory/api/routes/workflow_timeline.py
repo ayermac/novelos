@@ -290,11 +290,26 @@ def _build_recovery(
         has_existing_content=has_existing_content,
     )
 
+    def _payload() -> dict[str, Any]:
+        return {
+            "recommended_action": recommended_action,
+            "reason": reason,
+            "safe_actions": safe_actions,
+            # v6.6.6: Include canonical recovery_state
+            "recovery_state": recovery_state,
+        }
+
     # Build legacy safe_actions format for backward compatibility
     recommended_action = None
     reason = None
     safe_actions: list[dict] = []
     retry_target = _node_retry_target(run_data.get("current_node") if run_data else None)
+
+    # A healthy active run is not a recovery scenario. Checkpoint availability is
+    # shown in the checkpoint panel; turning it into a recovery CTA makes a
+    # normal in-progress workflow look broken.
+    if run_data and run_data.get("status") == "running" and not is_stale and chapter_status != "blocking":
+        return _payload()
 
     if chapter_status in terminal_statuses:
         safe_actions.append({"key": "view_artifacts", "label": "查看产物", "safe": True})
@@ -358,13 +373,7 @@ def _build_recovery(
         recommended_action = recovery_state.get("recommended_action")
         reason = recovery_state.get("blocking_reason") or recovery_state.get("recovery_hint")
 
-    return {
-        "recommended_action": recommended_action,
-        "reason": reason,
-        "safe_actions": safe_actions,
-        # v6.6.6: Include canonical recovery_state
-        "recovery_state": recovery_state,
-    }
+    return _payload()
 
 
 def _node_retry_target(current_node: str | None) -> dict[str, str] | None:

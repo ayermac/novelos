@@ -403,13 +403,12 @@ def _derive_recovery_capability(
     if chapter_status == "revision":
         if run_status == "running":
             if checkpoint_state == CheckpointState.RESUMABLE:
-                safe_actions = ["view_detail", "resume"]
                 return (
-                    RecoveryCapability.RESUME_FROM_CHECKPOINT,
-                    safe_actions,
-                    "resume",
+                    RecoveryCapability.NO_RECOVERY_NEEDED,
+                    [],
                     None,
-                    "返修运行中，可从检查点恢复。",
+                    None,
+                    "返修工作流正在运行，请等待当前节点完成。",
                 )
             # Stale running run
             safe_actions = ["view_detail", "rerun"]
@@ -509,13 +508,12 @@ def _derive_recovery_capability(
 
     if run_status == "running":
         if checkpoint_state == CheckpointState.RESUMABLE:
-            safe_actions = ["view_detail", "resume"]
             return (
-                RecoveryCapability.RESUME_FROM_CHECKPOINT,
-                safe_actions,
-                "resume",
+                RecoveryCapability.NO_RECOVERY_NEEDED,
+                [],
                 None,
-                "工作流运行中，可从检查点恢复。",
+                None,
+                "工作流正在运行，请等待当前节点完成。",
             )
 
         if checkpoint_state == CheckpointState.STALE:
@@ -528,14 +526,14 @@ def _derive_recovery_capability(
                 f"运行已过期（{stale_reason}），建议重新运行。",
             )
 
-        # Running without checkpoint (edge case)
-        safe_actions = ["view_detail"]
+        # Running without checkpoint is observable, but not a user recovery task
+        # while the run is still inside the active window.
         return (
-            RecoveryCapability.MANUAL_INTERVENTION_REQUIRED,
-            safe_actions,
-            "view_detail",
+            RecoveryCapability.NO_RECOVERY_NEEDED,
+            [],
             None,
-            "工作流运行中但无检查点，请查看详情。",
+            None,
+            "工作流正在运行，请等待当前节点完成。",
         )
 
     # ── Failed run ────────────────────────────────────────────────

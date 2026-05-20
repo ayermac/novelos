@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback, useEffect, type ReactNode } from 'react'
 import { Link } from 'react-router-dom'
 import {
   Sparkles,
@@ -98,6 +98,13 @@ interface RunDetailData {
 }
 
 const STUCK_RUN_THRESHOLD_MINUTES = 30
+
+function recoveryActionRank(key: string, recommendedAction?: string | null): number {
+  if (key === recommendedAction || (key === 'generate' && recommendedAction === 'reset_explicitly')) return 0
+  if (key === 'retry_node' || key === 'mark_stuck' || key === 'generate') return 1
+  if (key === 'reset' || key === 'reset_chapter' || key === 'reset_explicitly') return 2
+  return 3
+}
 
 function elapsedMinutesSince(value?: string | null): number | null {
   if (!value) return null
@@ -283,11 +290,10 @@ export default function AuthorWritingSurface({
   resetRecoveryPending,
   regeneratePending,
   onTabChange,
-  onViewContent: _onViewContent,
+  onViewContent,
   onViewWorkflow,
   onRefreshContent,
 }: AuthorWritingSurfaceProps) {
-  void _onViewContent
   const hasContent = (chapterDetail?.word_count || 0) > 0
   const status = currentChapterRecord?.status || ''
   const isTerminal = ['reviewed', 'awaiting_publish', 'published'].includes(status)
@@ -296,6 +302,8 @@ export default function AuthorWritingSurface({
   const persistedQualityScore = chapterDetail?.quality_score ?? currentChapterRecord?.quality_score ?? null
   const qualityScore = persistedQualityScore
   const statusLabel = tChapterStatus(status)
+  const isWorkflowActive = isStreaming || isWorkflowRunning || timeline?.run_status === 'running'
+  const showHeaderGenerationAction = activeTab !== 'workflow'
 
   const tabs: { key: SurfaceTabKey; label: string; disabled?: boolean }[] = [
     { key: 'content', label: '正文' },
@@ -342,25 +350,25 @@ export default function AuthorWritingSurface({
               <CheckCircle2 size={12} /> 确认发布
             </LoadingButton>
           )}
-          {hasPreservedPlannedContent && onConfirmRegenerate ? (
+          {showHeaderGenerationAction && hasPreservedPlannedContent && onConfirmRegenerate ? (
             <LoadingButton
               className="btn btn-primary btn-sm"
               variant="primary"
               loading={!!regeneratePending}
               loadingText="确认中..."
               onClick={onConfirmRegenerate}
-              disabled={isStreaming || isWorkflowRunning}
+              disabled={isWorkflowActive}
             >
               <Play size={12} /> 覆盖重生成
             </LoadingButton>
-          ) : !isTerminal && (
+          ) : showHeaderGenerationAction && !isTerminal && (
             <LoadingButton
               className="btn btn-primary btn-sm"
               variant="primary"
-              loading={isStreaming || isWorkflowRunning}
+              loading={isWorkflowActive}
               loadingText="生成中..."
               onClick={onGenerate}
-              disabled={isStreaming || isWorkflowRunning}
+              disabled={isWorkflowActive}
             >
               <Play size={12} /> 生成本章
             </LoadingButton>
@@ -437,12 +445,17 @@ export default function AuthorWritingSurface({
             isLaunching={isLaunching}
             isStreaming={isStreaming}
             sseSteps={sseSteps}
+            onGenerate={onGenerate}
+            onConfirmRegenerate={onConfirmRegenerate}
             onMarkRunStuck={onMarkRunStuck}
             onResetRunRecovery={onResetRunRecovery}
             onRetryRunNode={onRetryRunNode}
             onWorkflowDone={onWorkflowDone}
             markStuckPending={markStuckPending}
             resetRecoveryPending={resetRecoveryPending}
+            regeneratePending={regeneratePending}
+            onTabChange={onTabChange}
+            onViewContent={onViewContent}
           />
         )}
         {activeTab === 'artifacts' && (
@@ -692,12 +705,17 @@ function WorkflowBody({
   isLaunching,
   isStreaming,
   sseSteps,
+  onGenerate,
+  onConfirmRegenerate,
   onMarkRunStuck,
   onResetRunRecovery,
   onRetryRunNode,
   onWorkflowDone,
   markStuckPending,
   resetRecoveryPending,
+  regeneratePending,
+  onTabChange,
+  onViewContent,
 }: {
   runDetail: RunDetailData | null
   timeline?: WorkflowTimelineData | null
@@ -705,12 +723,17 @@ function WorkflowBody({
   isLaunching: boolean
   isStreaming: boolean
   sseSteps: Record<string, StepStatus>
+  onGenerate: () => void
+  onConfirmRegenerate?: () => void
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
   onRetryRunNode?: (runId: string) => Promise<void> | void
   onWorkflowDone?: (runId: string, status: string | null) => void
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
+  regeneratePending?: boolean
+  onTabChange: (tab: SurfaceTabKey) => void
+  onViewContent: () => void
 }) {
   // v6.1: Connect to SSE stream for live execution events while running
   const isRunActive = timeline?.run_status === 'running'
@@ -756,6 +779,123 @@ function WorkflowBody({
 
     const recovery = timeline.recovery
     const checkpoint = timeline.checkpoint
+    const hasExplicitResetAction = recovery.safe_actions.some((action) => action.key === 'reset_explicitly')
+    const hasGenerateAction = recovery.safe_actions.some((action) => action.key === 'generate')
+    const visibleRecoveryActions = recovery.safe_actions.filter((action) => (
+      action.key !== 'view_detail' &&
+      !(action.key === 'reset_explicitly' && hasGenerateAction)
+    ))
+    const recoveryQuickActions = visibleRecoveryActions.filter((action) => action.key === 'view_content' || action.key === 'view_artifacts')
+    const recoveryDecisionActions = visibleRecoveryActions
+      .filter((action) => action.key !== 'view_content' && action.key !== 'view_artifacts')
+      .sort((a, b) => recoveryActionRank(a.key, recovery.recommended_action) - recoveryActionRank(b.key, recovery.recommended_action))
+    const shouldShowRecoveryPanel = Boolean(
+      recovery.recommended_action &&
+      visibleRecoveryActions.length > 0 &&
+      !(isRunning && !isStale),
+    )
+
+    const renderRecoveryQuickAction = (action: WorkflowTimelineData['recovery']['safe_actions'][number]) => {
+      switch (action.key) {
+        case 'view_content':
+          return (
+            <button key={action.key} type="button" className="workflow-recovery-link-button" onClick={onViewContent}>
+              {action.label}
+            </button>
+          )
+        case 'view_artifacts':
+          return (
+            <button key={action.key} type="button" className="workflow-recovery-link-button" onClick={() => onTabChange('artifacts')}>
+              {action.label}
+            </button>
+          )
+        default:
+          return null
+      }
+    }
+
+    const renderRecoveryAction = (action: WorkflowTimelineData['recovery']['safe_actions'][number]) => {
+      const isRecommended = action.key === recovery.recommended_action || (action.key === 'generate' && recovery.recommended_action === 'reset_explicitly')
+      const actionRow = (button: ReactNode, note = action.note) => (
+        <div key={action.key} className={`workflow-recovery-action${isRecommended ? ' recommended' : ''}`}>
+          {button}
+          {note && <span className="workflow-recovery-note">{note}</span>}
+        </div>
+      )
+      const staticHint = (
+        <div key={action.key} className="workflow-recovery-hint">
+          <span className="workflow-recovery-hint-label">{action.label}</span>
+          {action.note && <span className="workflow-recovery-hint-note">{action.note}</span>}
+        </div>
+      )
+
+      switch (action.key) {
+        case 'mark_stuck':
+          return onMarkRunStuck && timeline.run_id ? actionRow(
+            <LoadingButton
+              className="btn btn-secondary btn-sm"
+              variant="secondary"
+              loading={!!markStuckPending}
+              loadingText="处理中..."
+              onClick={() => onMarkRunStuck(timeline.run_id!)}
+            >
+              {action.label}
+            </LoadingButton>
+          ) : staticHint
+        case 'retry_node':
+          return onRetryRunNode && timeline.run_id ? actionRow(
+            <LoadingButton
+              className="btn btn-primary btn-sm"
+              variant="primary"
+              loading={!!resetRecoveryPending}
+              loadingText="处理中..."
+              onClick={() => onRetryRunNode(timeline.run_id!)}
+            >
+              {action.label}
+            </LoadingButton>
+          ) : staticHint
+        case 'reset':
+        case 'reset_chapter':
+          return onResetRunRecovery && timeline.run_id ? actionRow(
+            <LoadingButton
+              className="btn btn-secondary btn-sm workflow-recovery-reset-button"
+              variant="secondary"
+              loading={!!resetRecoveryPending}
+              loadingText="处理中..."
+              onClick={() => onResetRunRecovery(timeline.run_id!)}
+            >
+              {action.label}
+            </LoadingButton>
+          ) : staticHint
+        case 'reset_explicitly':
+          return onConfirmRegenerate ? actionRow(
+            <LoadingButton
+              className="btn btn-danger btn-sm"
+              variant="danger"
+              loading={!!regeneratePending}
+              loadingText="确认中..."
+              onClick={onConfirmRegenerate}
+            >
+              覆盖重生成
+            </LoadingButton>
+          ) : staticHint
+        case 'generate':
+          return actionRow(
+            <LoadingButton
+              className="btn btn-danger btn-sm"
+              variant="danger"
+              loading={!!regeneratePending}
+              loadingText="确认中..."
+              onClick={hasExplicitResetAction && onConfirmRegenerate ? onConfirmRegenerate : onGenerate}
+            >
+              覆盖重生成
+            </LoadingButton>,
+            '会覆盖当前正文并启动新一轮生成',
+          )
+        default:
+          return staticHint
+      }
+    }
 
     // Convert timeline nodes to WorkflowTimeline Step format
     // v6.1: Merge live SSE events into nodes while running
@@ -825,64 +965,19 @@ function WorkflowBody({
               <span className={`status-badge status-${timeline.run_status || 'unknown'}`}>{statusLabel}</span>
             </div>
           </div>
-          {recovery.recommended_action && recovery.safe_actions.length > 0 && (
-            <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid rgba(0,0,0,0.06)' }}>
-              <div style={{ fontSize: 12, fontWeight: 500, marginBottom: 6 }}>恢复建议：{recovery.reason}</div>
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                {recovery.safe_actions.map((action) => (
-                  <span key={action.key} style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '2px 8px', background: 'var(--bg-tertiary)', borderRadius: 4 }}>
-                    {action.label}
-                    {action.note && <span style={{ color: 'var(--text-muted)', marginLeft: 4 }}>({action.note})</span>}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-          {(isStale || recovery.recommended_action === 'mark_stuck') && onMarkRunStuck && timeline.run_id && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-              <LoadingButton
-                className="btn btn-secondary btn-sm"
-                variant="secondary"
-                loading={!!markStuckPending}
-                loadingText="处理中..."
-                onClick={() => onMarkRunStuck(timeline.run_id!)}
-              >
-                标记为阻塞
-              </LoadingButton>
-              {onResetRunRecovery && (
-                <LoadingButton
-                  className="btn btn-primary btn-sm"
-                  variant="primary"
-                  loading={!!resetRecoveryPending}
-                  loadingText="处理中..."
-                  onClick={() => onResetRunRecovery(timeline.run_id!)}
-                >
-                  清除阻塞并重置
-                </LoadingButton>
+          {shouldShowRecoveryPanel && (
+            <div className="workflow-recovery-panel">
+              <div className="workflow-recovery-title">恢复建议</div>
+              {recovery.reason && <div className="workflow-recovery-reason">{recovery.reason}</div>}
+              {recoveryQuickActions.length > 0 && (
+                <div className="workflow-recovery-quick-actions">
+                  {recoveryQuickActions.map(renderRecoveryQuickAction)}
+                </div>
               )}
-            </div>
-          )}
-          {recovery.recommended_action === 'retry_node' && onRetryRunNode && timeline.run_id && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
-              <LoadingButton
-                className="btn btn-primary btn-sm"
-                variant="primary"
-                loading={!!resetRecoveryPending}
-                loadingText="处理中..."
-                onClick={() => onRetryRunNode(timeline.run_id!)}
-              >
-                {recovery.safe_actions.find((a) => a.key === 'retry_node')?.label || '重试当前节点'}
-              </LoadingButton>
-              {onResetRunRecovery && (
-                <LoadingButton
-                  className="btn btn-secondary btn-sm"
-                  variant="secondary"
-                  loading={!!resetRecoveryPending}
-                  loadingText="处理中..."
-                  onClick={() => onResetRunRecovery(timeline.run_id!)}
-                >
-                  完整重置
-                </LoadingButton>
+              {recoveryDecisionActions.length > 0 && (
+                <div className="workflow-recovery-actions">
+                  {recoveryDecisionActions.map(renderRecoveryAction)}
+                </div>
               )}
             </div>
           )}
@@ -984,7 +1079,7 @@ function WorkflowBody({
             </div>
           </div>
           {(isStaleRunning || isContradictory || runDetail.chapter_status === 'blocking' || runDetail.chapter_status === 'revision') && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 12 }}>
+            <div className="run-detail-recovery-actions">
               {(isStaleRunning || isContradictory) && onMarkRunStuck && (
                 <LoadingButton
                   className="btn btn-secondary btn-sm"
@@ -1003,24 +1098,26 @@ function WorkflowBody({
                   loading={!!resetRecoveryPending}
                   loadingText="处理中..."
                   onClick={() => onResetRunRecovery(runDetail.run_id)}
-                >
+                  >
                   清除阻塞并重置
                 </LoadingButton>
               )}
-              {(runDetail.chapter_status === 'blocking' || runDetail.chapter_status === 'revision') && onRetryRunNode && ['author', 'polisher', 'editor'].includes(runDetail.current_node || '') && (
-                <LoadingButton
-                  className="btn btn-primary btn-sm"
-                  variant="primary"
-                  loading={!!resetRecoveryPending}
-                  loadingText="处理中..."
-                  onClick={() => onRetryRunNode(runDetail.run_id)}
-                >
-                  重试当前节点
-                </LoadingButton>
-              )}
-              <Link to={`/runs/${runDetail.run_id}`} className="btn btn-secondary btn-sm">
-                打开恢复详情
-              </Link>
+              <div className="run-detail-recovery-links">
+                {(runDetail.chapter_status === 'blocking' || runDetail.chapter_status === 'revision') && onRetryRunNode && ['author', 'polisher', 'editor'].includes(runDetail.current_node || '') && (
+                  <LoadingButton
+                    className="btn btn-primary btn-sm"
+                    variant="primary"
+                    loading={!!resetRecoveryPending}
+                    loadingText="处理中..."
+                    onClick={() => onRetryRunNode(runDetail.run_id)}
+                  >
+                    重试当前节点
+                  </LoadingButton>
+                )}
+                <Link to={`/runs/${runDetail.run_id}`} className="btn btn-secondary btn-sm">
+                  打开恢复详情
+                </Link>
+              </div>
             </div>
           )}
         </div>

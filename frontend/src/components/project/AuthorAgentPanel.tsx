@@ -59,6 +59,7 @@ function elapsedMinutesSince(value?: string | null): number | null {
 }
 
 interface AuthorAgentPanelProps {
+  activeTab?: string
   currentChapter: number
   currentChapterRecord: { status: string; word_count: number; title?: string } | null
   llmMode: string
@@ -71,13 +72,9 @@ interface AuthorAgentPanelProps {
   timeline?: WorkflowTimelineData | null
   onGenerate: () => void
   onConfirmRegenerate?: () => void
-  onMarkRunStuck?: (runId: string) => Promise<void> | void
   onPublish?: () => void
   onGenerateNext?: () => void
-  onResetRunRecovery?: (runId: string) => Promise<void> | void
   publishPending?: boolean
-  markStuckPending?: boolean
-  resetRecoveryPending?: boolean
   regeneratePending?: boolean
   onViewContent: () => void
   onViewWorkflow: (runId: string) => void
@@ -114,6 +111,7 @@ function getAgentActionDesc(node: string | null | undefined): string {
 }
 
 export default function AuthorAgentPanel({
+  activeTab,
   currentChapterRecord,
   llmMode,
   runDetail,
@@ -125,13 +123,9 @@ export default function AuthorAgentPanel({
   timeline,
   onGenerate,
   onConfirmRegenerate,
-  onMarkRunStuck,
   onPublish,
   onGenerateNext,
-  onResetRunRecovery,
   publishPending,
-  markStuckPending,
-  resetRecoveryPending,
   regeneratePending,
   onViewContent,
   onViewWorkflow,
@@ -149,9 +143,13 @@ export default function AuthorAgentPanel({
   const isReviewedReal = status === 'reviewed' && llmMode === 'real'
   const elapsedMinutes = elapsedMinutesSince(runDetail?.started_at)
   const isStaleRunning = effectiveRunStatus === 'running' && effectiveElapsed !== null && effectiveElapsed >= STUCK_RUN_THRESHOLD_MINUTES
+  const isWorkflowActive = isStreaming || isWorkflowRunning || effectiveRunStatus === 'running'
   const hasPreservedPlannedContent = status === 'planned' && hasContent
   const needsRecovery = status === 'blocking' || status === 'revision'
-  const canDirectGenerate = !hasPreservedPlannedContent && !needsRecovery
+  const canShowPrimaryAction = activeTab !== 'workflow'
+  const canDirectGenerate = canShowPrimaryAction && !isWorkflowActive && !hasPreservedPlannedContent && !needsRecovery
+  const recoveryRunId = runDetail?.run_id
+  const showRecoveryShortcut = activeTab !== 'workflow' && Boolean(recoveryRunId) && (isStaleRunning || needsRecovery)
 
   return (
     <aside className="author-agent" aria-label="AI 助手面板">
@@ -199,7 +197,7 @@ export default function AuthorAgentPanel({
             <div className="action-label">
               {isStaleRunning
                 ? '运行疑似卡住'
-                : isStreaming || isWorkflowRunning
+                : isWorkflowActive
                   ? tWorkflowNodeNarrative(currentNode || timeline?.current_node)
                   : hasPreservedPlannedContent
                     ? '已有正文待确认'
@@ -212,7 +210,7 @@ export default function AuthorAgentPanel({
             <div className="action-desc">
               {isStaleRunning
                 ? `当前运行已超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未完成，建议进入运行恢复处理。`
-                : isStreaming || isWorkflowRunning
+                : isWorkflowActive
                   ? getAgentActionDesc(currentNode || timeline?.current_node)
                   : hasPreservedPlannedContent
                     ? '本章保留了已有正文。请先查看正文，或明确确认覆盖后再重新生成。'
@@ -222,14 +220,14 @@ export default function AuthorAgentPanel({
                     ? '本章已完成生成，可以查看正文或重新生成。'
                     : '本章尚未生成，点击下方按钮开始。'}
             </div>
-            {hasPreservedPlannedContent && onConfirmRegenerate ? (
+            {canShowPrimaryAction && !isWorkflowActive && hasPreservedPlannedContent && onConfirmRegenerate ? (
               <LoadingButton
                 className="btn btn-primary btn-sm"
                 variant="primary"
                 loading={!!regeneratePending}
                 loadingText="确认中..."
                 onClick={onConfirmRegenerate}
-                disabled={isStreaming || isWorkflowRunning}
+                disabled={isWorkflowActive}
                 style={{ marginTop: 8, width: '100%' }}
               >
                 <Sparkles size={12} /> 覆盖重生成
@@ -238,38 +236,24 @@ export default function AuthorAgentPanel({
               <LoadingButton
                 className="btn btn-primary btn-sm"
                 variant="primary"
-                loading={isStreaming || isWorkflowRunning}
+                loading={isWorkflowActive}
                 loadingText="生成中..."
                 onClick={onGenerate}
-                disabled={isStreaming || isWorkflowRunning}
+                disabled={isWorkflowActive}
                 style={{ marginTop: 8, width: '100%' }}
               >
                 <Play size={12} /> 生成本章
               </LoadingButton>
             )}
-            {isStaleRunning && runDetail && onMarkRunStuck && (
-              <LoadingButton
+            {showRecoveryShortcut && (
+              <button
                 className="btn btn-secondary btn-sm"
-                variant="secondary"
-                loading={!!markStuckPending}
-                loadingText="处理中..."
-                onClick={() => onMarkRunStuck(runDetail.run_id)}
-                style={{ marginTop: 8, width: '100%' }}
+                type="button"
+                onClick={() => recoveryRunId && onViewWorkflow(recoveryRunId)}
+                style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
               >
-                标记为阻塞
-              </LoadingButton>
-            )}
-            {needsRecovery && runDetail && onResetRunRecovery && (
-              <LoadingButton
-                className="btn btn-secondary btn-sm"
-                variant="secondary"
-                loading={!!resetRecoveryPending}
-                loadingText="处理中..."
-                onClick={() => onResetRunRecovery(runDetail.run_id)}
-                style={{ marginTop: 8, width: '100%' }}
-              >
-                清除阻塞并重置
-              </LoadingButton>
+                <Eye size={12} /> 打开工作流恢复
+              </button>
             )}
           </div>
         )}
@@ -287,18 +271,18 @@ export default function AuthorAgentPanel({
           {runDetail ? (
             <>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                {workflowStatus === 'running' && !isStaleRunning && <span className="author-agent-status-light info pulse" />}
+                {effectiveRunStatus === 'running' && !isStaleRunning && <span className="author-agent-status-light info pulse" />}
                 {isStaleRunning && <span className="author-agent-status-light warning" />}
-                {workflowStatus === 'completed' && <span className="author-agent-status-light success" />}
-                {workflowStatus === 'failed' && <span className="author-agent-status-light danger" />}
-                {workflowStatus === 'blocked' && <span className="author-agent-status-light warning" />}
+                {effectiveRunStatus === 'completed' && <span className="author-agent-status-light success" />}
+                {effectiveRunStatus === 'failed' && <span className="author-agent-status-light danger" />}
+                {effectiveRunStatus === 'blocked' && <span className="author-agent-status-light warning" />}
                 <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--wb-text)' }}>
                   {isStaleRunning ? '疑似卡住'
-                    : workflowStatus === 'running' ? '执行中'
-                    : workflowStatus === 'completed' ? '已完成'
-                    : workflowStatus === 'failed' ? '失败'
-                    : workflowStatus === 'blocked' ? '阻塞'
-                    : workflowStatus || '—'}
+                    : effectiveRunStatus === 'running' ? '执行中'
+                    : effectiveRunStatus === 'completed' ? '已完成'
+                    : effectiveRunStatus === 'failed' ? '失败'
+                    : effectiveRunStatus === 'blocked' ? '阻塞'
+                    : effectiveRunStatus || '—'}
                 </span>
               </div>
               {currentNode && (
@@ -374,18 +358,20 @@ export default function AuthorAgentPanel({
         )}
 
         {/* Secondary actions */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-          {hasContent && (
-            <button className="btn btn-secondary btn-sm" onClick={onViewContent} style={{ justifyContent: 'flex-start' }}>
-              <FileText size={12} /> 查看正文
-            </button>
-          )}
-          {runDetail && (
-            <button className="btn btn-secondary btn-sm" onClick={() => onViewWorkflow(runDetail.run_id)} style={{ justifyContent: 'flex-start' }}>
-              <Eye size={12} /> 查看运行详情
-            </button>
-          )}
-        </div>
+        {activeTab !== 'workflow' && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {hasContent && (
+              <button className="btn btn-secondary btn-sm" onClick={onViewContent} style={{ justifyContent: 'flex-start' }}>
+                <FileText size={12} /> 查看正文
+              </button>
+            )}
+            {runDetail && (
+              <button className="btn btn-secondary btn-sm" onClick={() => onViewWorkflow(runDetail.run_id)} style={{ justifyContent: 'flex-start' }}>
+                <Eye size={12} /> 查看运行详情
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Recent runs */}
         {runsForChapter.length > 0 && (

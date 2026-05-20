@@ -38,7 +38,7 @@ def test_state_matrix_planned_no_run():
 
 
 def test_state_matrix_running_resumable_checkpoint():
-    """Test running run with resumable checkpoint."""
+    """Healthy running runs should not show recovery actions."""
     now = datetime.utcnow() + timedelta(hours=8)
     started_at = (now - timedelta(minutes=30)).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -56,8 +56,9 @@ def test_state_matrix_running_resumable_checkpoint():
 
     assert result["chapter_status"] == "drafted"
     assert result["run_status"] == "running"
-    assert result["recovery_capability"] == RecoveryCapability.RESUME_FROM_CHECKPOINT.value
-    assert "resume" in result["safe_actions"]
+    assert result["recovery_capability"] == RecoveryCapability.NO_RECOVERY_NEEDED.value
+    assert result["recommended_action"] is None
+    assert result["safe_actions"] == []
     assert result["checkpoint_status"] in (CheckpointState.RESUMABLE.value, CheckpointState.EXISTS.value)
 
 

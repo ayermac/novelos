@@ -136,6 +136,29 @@ def test_run_recovery_reset_clears_retry_checkpoint_and_audits_run(tmp_path):
     assert row["status"] == "completed"
 
 
+def test_run_recovery_reset_survives_missing_cwd_settings_load(tmp_path, monkeypatch):
+    """Reset recovery should not fail when .env/settings discovery hits missing cwd."""
+    client, repo, _ = _make_client(tmp_path)
+    run_id = _seed_run(repo, "recover_missing_cwd")
+
+    def missing_cwd_settings(**_kwargs):
+        raise FileNotFoundError(2, "No such file or directory")
+
+    monkeypatch.setattr(
+        "novel_factory.api.deps.load_settings_with_cli",
+        missing_cwd_settings,
+    )
+
+    resp = client.post(f"/api/runs/{run_id}/recovery/reset", json={"confirm": True})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["data"]["recovered"] is True
+    assert body["data"]["new_status"] == "planned"
+    assert repo.get_chapter("recover_missing_cwd", 1)["status"] == "planned"
+
+
 def test_run_recovery_reset_rejects_non_recoverable_status(tmp_path):
     client, repo, _ = _make_client(tmp_path)
     run_id = _seed_run(repo, "recover_invalid", status="polished")
