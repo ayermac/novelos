@@ -35,8 +35,18 @@ def find_project_root() -> Path:
     Looks for .git, pyproject.toml, or setup.py markers.
     Falls back to current working directory.
     """
-    # Try to find project root by looking for markers
-    current = Path.cwd()
+    # Try to find project root by looking for markers. Desktop/App-bundled
+    # processes can occasionally inherit a deleted working directory; Path.cwd()
+    # raises FileNotFoundError in that case. Configuration loading must remain
+    # best-effort because recovery/reset endpoints should not fail just because
+    # optional .env discovery cannot inspect cwd.
+    try:
+        current = Path.cwd()
+    except FileNotFoundError:
+        logger.warning(
+            "Current working directory is unavailable; falling back to package path for project root discovery"
+        )
+        current = Path(__file__).resolve().parent
     for parent in [current] + list(current.parents):
         if (parent / ".git").exists():
             return parent

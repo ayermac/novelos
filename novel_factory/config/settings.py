@@ -92,7 +92,14 @@ def load_settings(config_path: str | Path | None = None) -> Settings:
     """Load settings from YAML + env overrides."""
     data: dict[str, Any] = {}
 
-    if config_path and Path(config_path).exists():
+    config_exists = False
+    if config_path:
+        try:
+            config_exists = Path(config_path).exists()
+        except OSError:
+            config_exists = False
+
+    if config_path and config_exists:
         with open(config_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
 
