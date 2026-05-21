@@ -897,6 +897,46 @@ class TestMemoryStructuredFieldNormalization:
         assert qin is not None
         assert "敌对" in qin["relationship_with_protagonist"]
 
+    def test_apply_outline_update_without_target_id_creates_new_outline(self, client, project_id):
+        """Outline update patches without target_id should upsert instead of failing as unsupported."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="Outline upsert")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="outlines",
+            operation="update",
+            target_id=None,
+            after_json=json.dumps({
+                "chapters_range": "1-∞",
+                "title": "林泽的观察名单之路",
+                "content": "林泽因选择个体判断优先而被列入观察名单。",
+                "level": "主线",
+                "sequence": 1,
+            }, ensure_ascii=False),
+            confidence=0.9,
+            evidence_text="报告的结论是：修正员林泽在本次任务中表现出明显的个体判断优先倾向。",
+            rationale="大纲偏移：林泽正式进入被监控状态",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+        assert body["data"]["results"][0]["operation"] == "create"
+
+        outlines = repo.list_outlines(project_id)
+        created = next((outline for outline in outlines if outline["title"] == "林泽的观察名单之路"), None)
+        assert created is not None
+        assert created["level"] == "主线"
+
 
 class TestMemoryCuratorRouting:
     """v5.3.2: Memory curator failure routing in workflow conditions."""

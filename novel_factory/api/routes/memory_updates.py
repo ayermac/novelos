@@ -110,6 +110,54 @@ def _infer_faction_name(repo, project_id: str, item: dict, after_data: dict) -> 
     return ""
 
 
+def _coerce_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _find_outline_for_memory_update(repo, project_id: str, after_data: dict) -> dict | None:
+    """Find an outline target for update patches that omitted target_id."""
+    title = str(after_data.get("title") or "").strip()
+    chapters_range = str(after_data.get("chapters_range") or "").strip()
+    level = str(after_data.get("level") or "").strip()
+    outlines = repo.list_outlines(project_id)
+
+    if title:
+        exact_title = next((outline for outline in outlines if str(outline.get("title") or "").strip() == title), None)
+        if exact_title:
+            return exact_title
+
+    if chapters_range:
+        same_range = [
+            outline
+            for outline in outlines
+            if str(outline.get("chapters_range") or "").strip() == chapters_range
+        ]
+        if level:
+            same_level_range = [
+                outline
+                for outline in same_range
+                if str(outline.get("level") or "").strip() == level
+            ]
+            if same_level_range:
+                return same_level_range[0]
+        if same_range:
+            return same_range[0]
+
+    return None
+
+
+def _next_outline_sequence(repo, project_id: str, level: str) -> int:
+    sequences = [
+        _coerce_int(outline.get("sequence"), 0)
+        for outline in repo.list_outlines(project_id)
+        if str(outline.get("level") or "") == level
+    ]
+    return max(sequences, default=0) + 1
+
+
 def _apply_memory_item(
     repo,
     project_id: str,
@@ -223,16 +271,46 @@ def _apply_memory_item(
                 o = repo.create_outline(
                     project_id,
                     level=after_data.get("level", "arc"),
-                    sequence=after_data.get("sequence", 1),
+                    sequence=_coerce_int(after_data.get("sequence"), 1),
                     title=after_data.get("title", ""),
                     content=after_data.get("content", ""),
                     chapters_range=after_data.get("chapters_range", ""),
                 )
                 result["success"] = True
                 result["created_id"] = o["id"] if o else None
-            elif operation == "update" and target_id:
-                repo.update_outline(project_id, target_id, after_data)
-                result["success"] = True
+            elif operation == "update":
+                outline = repo.get_outline(project_id, _coerce_int(target_id)) if target_id else None
+                if not outline:
+                    outline = _find_outline_for_memory_update(repo, project_id, after_data)
+
+                if outline:
+                    updated = repo.update_outline(project_id, outline["id"], after_data)
+                    result["success"] = updated is not None
+                    result["created_id"] = outline["id"]
+                    if not updated:
+                        result["error"] = f"大纲 {outline['id']} 不存在，无法更新"
+                else:
+                    title = str(after_data.get("title") or "").strip()
+                    content = str(after_data.get("content") or "").strip()
+                    if not title and not content:
+                        result["error"] = "大纲更新缺少 target_id，且没有可创建的大纲标题或内容"
+                    else:
+                        level = str(after_data.get("level") or "arc").strip() or "arc"
+                        sequence = _coerce_int(
+                            after_data.get("sequence"),
+                            _next_outline_sequence(repo, project_id, level),
+                        )
+                        created = repo.create_outline(
+                            project_id,
+                            level=level,
+                            sequence=sequence,
+                            title=title or f"第{chapter_number}章记忆大纲",
+                            content=content,
+                            chapters_range=str(after_data.get("chapters_range") or ""),
+                        )
+                        result["operation"] = "create"
+                        result["success"] = True
+                        result["created_id"] = created["id"] if created else None
 
         elif target_table == "plot_holes":
             if operation == "create":
