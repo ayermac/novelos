@@ -182,6 +182,7 @@ class MemoryCuratorAgent(BaseAgent):
     """Memory Curator: extracts story facts from reviewed chapters."""
 
     agent_id = "memory_curator"
+    context_char_limit = 9000
 
     def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, **kwargs):
         super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
@@ -190,11 +191,34 @@ class MemoryCuratorAgent(BaseAgent):
     def build_context(self, state: FactoryState) -> str:
         parts = []
         project_id = state.get("project_id", "")
+        chapter_number = int(state.get("chapter_number", 0) or 0)
+
+        state_card_data: dict[str, Any] | None = None
+        try:
+            state_card = self.repo.get_chapter_state(project_id, chapter_number)
+            raw_state = (state_card or {}).get("state_data") or {}
+            if isinstance(raw_state, str):
+                raw_state = json.loads(raw_state)
+            if isinstance(raw_state, dict) and raw_state:
+                state_card_data = raw_state
+                parts.append(
+                    "【编辑状态卡】\n"
+                    + json.dumps(raw_state, ensure_ascii=False)[:3000]
+                )
+        except Exception:
+            logger.debug("MemoryCurator: state card context unavailable", exc_info=True)
 
         # Chapter content
         chapter = self._get_chapter_info(state)
         if chapter and chapter.get("content"):
-            parts.append(f"【本章正文】\n{chapter['content'][:10000]}")
+            content = str(chapter["content"])
+            if state_card_data:
+                excerpt = content[:2500]
+                if len(content) > 3500:
+                    excerpt += "\n\n【正文末尾摘录】\n" + content[-1000:]
+                parts.append(f"【本章正文摘录】\n{excerpt}")
+            else:
+                parts.append(f"【本章正文】\n{content[:7000]}")
 
         # Instruction for context
         instruction = self._get_instruction(state)

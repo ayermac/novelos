@@ -127,6 +127,36 @@ class EditorOutput(BaseModel):
 
     model_config = {"populate_by_name": True}
 
+    @field_validator("issues", "suggestions", mode="before")
+    @classmethod
+    def normalize_review_text_list(cls, value):
+        """Accept real LLMs that return issue objects instead of strings."""
+        if value is None:
+            return []
+        if isinstance(value, str):
+            return [value]
+        if not isinstance(value, list):
+            return [str(value)]
+
+        normalized = []
+        for item in value:
+            if isinstance(item, str):
+                normalized.append(item)
+                continue
+            if isinstance(item, dict):
+                parts = []
+                for key in ("type", "severity", "title", "message", "detail", "suggestion"):
+                    text = item.get(key)
+                    if text:
+                        parts.append(str(text))
+                if parts:
+                    normalized.append(": ".join(parts))
+                else:
+                    normalized.append(str(item))
+                continue
+            normalized.append(str(item))
+        return normalized
+
     @field_validator("state_card", mode="before")
     @classmethod
     def normalize_state_card(cls, value):

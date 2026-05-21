@@ -41,7 +41,7 @@ llm_profiles:
     api_key_env: OPENAI_API_KEY
     model: DeepSeek-V3.2
     max_tokens: 4096
-    request_timeout_seconds: 180
+    request_timeout_seconds: 300
     retry_attempts: 3
     retry_max_seconds: 30
     min_interval_seconds: 0.5

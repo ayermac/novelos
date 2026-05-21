@@ -12,6 +12,7 @@ Decision Types:
 """
 
 from __future__ import annotations
+import json
 from typing import Literal
 from dataclasses import dataclass, field
 
@@ -73,8 +74,11 @@ _ADVISORY_MARKERS = (
     "LOW_COLLOQUIAL",
     "STRAIGHT_EMOTION",
     "EXPOSITION_PARAGRAPH",
+    "EXPOSITION_PARAGRAPH残留",
     "场景描写较少",
+    "冲突强度不足",
     "章末钩子强度不足",
+    "章末钩子削弱",
     "人物动机表达不够清晰",
     "字数偏低",
     "质量诊断建议",
@@ -99,7 +103,25 @@ def _is_advisory_only(issues: list[str]) -> bool:
     )
 
 
-def count_issue_types(issues: list[str]) -> tuple[int, int, int]:
+def _normalize_issue_items(issues: list[str] | str | None) -> list[str]:
+    """Normalize in-memory issue lists and DB JSON strings for policy counting."""
+    if issues is None:
+        return []
+    parsed = issues
+    if isinstance(issues, str):
+        text = issues.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = [text]
+    if isinstance(parsed, list):
+        return [str(item).strip() for item in parsed if str(item).strip()]
+    return [str(parsed).strip()] if str(parsed).strip() else []
+
+
+def count_issue_types(issues: list[str] | str | None) -> tuple[int, int, int]:
     """Count (blocking, priority, advisory) issues by text markers.
 
     Classification heuristic:
@@ -110,7 +132,7 @@ def count_issue_types(issues: list[str]) -> tuple[int, int, int]:
     blocking = 0
     priority = 0
     advisory = 0
-    for issue in issues:
+    for issue in _normalize_issue_items(issues):
         text = str(issue)
         is_blocking = any(m in text for m in _HARD_ISSUE_MARKERS)
         is_advisory = any(m in text for m in _ADVISORY_MARKERS)

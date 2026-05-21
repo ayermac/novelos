@@ -432,6 +432,141 @@ class TestAuthorAgent:
         assert "至少 2550 字符" in context
         assert "建议写到 3050 字符左右" in context
 
+    def test_author_context_includes_scene_beat_turn(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {
+                "sequence": 1,
+                "scene_goal": "林默进入废弃车站",
+                "conflict": "监控画面与现实环境不一致",
+                "turn": "服务器显示目标已死亡，本地缓存却显示微弱存活",
+                "hook": "通讯里出现不属于队友的人声",
+            },
+        ])
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
+        context = agent.build_context({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+        })
+
+        assert "【场景 Beat】" in context
+        assert "目标: 林默进入废弃车站" in context
+        assert "冲突: 监控画面与现实环境不一致" in context
+        assert "转折: 服务器显示目标已死亡，本地缓存却显示微弱存活" in context
+        assert "钩子: 通讯里出现不属于队友的人声" in context
+
+    def test_author_plain_text_context_includes_all_scene_beats(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {
+                "sequence": i,
+                "scene_goal": f"第{i}个场景目标",
+                "conflict": f"第{i}个场景冲突",
+                "turn": f"第{i}个场景转折",
+                "hook": f"第{i}个场景钩子",
+            }
+            for i in range(1, 8)
+        ])
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
+        context = agent._build_plain_text_context({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+        }, "")
+
+        assert "1. 第1个场景目标" in context
+        assert "7. 第7个场景目标" in context
+        assert "第7个场景转折" in context
+        assert "第7个场景钩子" in context
+        assert "必须按 sequence 覆盖全部 beat" in context
+
+    def test_author_scene_beat_coverage_detects_missing_ending_beats(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "进入车站", "turn": "发现异常", "hook": "下探站台"},
+            {"sequence": 2, "scene_goal": "定位住户", "turn": "数据被篡改", "hook": "系统建议忽略"},
+            {"sequence": 3, "scene_goal": "触发隔离", "turn": "系统记录违规", "hook": "住户醒来"},
+            {"sequence": 4, "scene_goal": "救出住户", "turn": "灵体停止追击", "hook": "许知夏追问选择"},
+            {"sequence": 5, "scene_goal": "任务结算界面三段式展示", "turn": "失败名单滚动出现", "hook": "周砚白名字浮现"},
+            {"sequence": 6, "scene_goal": "白塔私信出现", "turn": "周砚白发来坐标", "hook": "聊聊十二年前的事"},
+        ])
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
+        issues = agent._scene_beat_coverage_issues({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+        }, "林默进入车站，定位住户，触发隔离，然后故事停在站台对抗中。")
+
+        assert issues
+        assert any("scene beat" in issue["message"] for issue in issues)
+
+    def test_author_scene_beat_coverage_passes_when_ending_lands(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "进入车站", "turn": "发现异常", "hook": "下探站台"},
+            {"sequence": 2, "scene_goal": "定位住户", "turn": "数据被篡改", "hook": "系统建议忽略"},
+            {"sequence": 3, "scene_goal": "触发隔离", "turn": "系统记录违规", "hook": "住户醒来"},
+            {"sequence": 4, "scene_goal": "救出住户", "turn": "灵体停止追击", "hook": "许知夏追问选择"},
+            {"sequence": 5, "scene_goal": "任务结算界面三段式展示", "turn": "失败名单滚动出现", "hook": "周砚白名字浮现"},
+            {"sequence": 6, "scene_goal": "白塔私信出现", "turn": "周砚白发来坐标", "hook": "聊聊十二年前的事"},
+        ])
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
+        content = (
+            "林默进入车站，定位住户，完成隔离救援。\n\n"
+            "尾段里，他救出住户后，灵体停止追击，许知夏追问选择。"
+            "随后任务结算界面三段式展示，失败名单滚动出现，周砚白名字浮现。"
+            "随后白塔私信出现，周砚白发来坐标，邀请他聊聊十二年前的事。"
+            "林默回头确认救出住户，灵体停止追击，许知夏追问选择。悬念没有消失。"
+        )
+        issues = agent._scene_beat_coverage_issues({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+        }, content)
+
+        assert issues == []
+
+    def test_author_scene_beat_coverage_allows_middle_beats_before_tail(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "进入车站", "turn": "发现异常", "hook": "下探站台"},
+            {"sequence": 2, "scene_goal": "定位住户", "turn": "数据被篡改", "hook": "系统建议忽略"},
+            {"sequence": 3, "scene_goal": "触发隔离", "turn": "系统记录违规", "hook": "住户醒来"},
+            {"sequence": 4, "scene_goal": "提出替代方案", "turn": "隔离结界展开", "hook": "魏承霜通讯切入"},
+            {"sequence": 5, "scene_goal": "强行突破进入站台", "turn": "住户手腕有制服编码", "hook": "别相信系统"},
+            {"sequence": 6, "scene_goal": "任务结算界面三段式展示", "turn": "失败名单滚动出现", "hook": "周砚白名字浮现"},
+        ])
+
+        middle = (
+            "进入车站后，林默发现异常，下探站台。定位住户时数据被篡改，系统建议忽略。"
+            "他触发隔离，系统记录违规，住户醒来。随后他提出替代方案，隔离结界展开，"
+            "魏承霜通讯切入。林默强行突破进入站台，看到住户手腕有制服编码，对方低声说别相信系统。"
+        )
+        tail = (
+            "尾段里，任务结算界面三段式展示，失败名单滚动出现。"
+            "周砚白名字浮现，林默盯着那行字没有说话。悬念没有消失。"
+        )
+        content = middle + ("过渡描写。" * 120) + tail
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
+        issues = agent._scene_beat_coverage_issues({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+        }, content)
+
+        assert issues == []
+
     def test_author_context_is_capped_but_preserves_head_and_tail(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent, AUTHOR_CONTEXT_CHAR_LIMIT
 
@@ -1158,6 +1293,18 @@ class TestPolisherAgent:
 
 
 class TestEditorAgent:
+    def test_editor_review_excerpt_preserves_chapter_tail(self):
+        from novel_factory.agents.editor import EditorAgent
+
+        content = "开头。" + ("中段内容。" * 1000) + "【任务状态：部分完成】\n【失败名单】\n周砚白。"
+
+        excerpt = EditorAgent._format_review_content_excerpt(content, 1200)
+
+        assert "正文开头节选" in excerpt
+        assert "正文章末尾段" in excerpt
+        assert "失败名单" in excerpt
+        assert "周砚白" in excerpt
+
     def test_editor_pass(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent
 

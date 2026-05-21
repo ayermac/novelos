@@ -775,6 +775,28 @@ class AgentContextBuilder:
             )
         return items
 
+    @staticmethod
+    def _apply_memory_degraded_hard_constraint(bundle: AgentContextBundle) -> None:
+        """Promote no-trusted-memory guidance into hard constraints."""
+        if not bundle.memory_context_degraded:
+            return
+        if any(it.kind == "memory_degraded_warning" for it in bundle.hard_constraints):
+            return
+        bundle.hard_constraints.insert(
+            0,
+            ContextItem(
+                kind="memory_degraded_warning",
+                text=(
+                    "当前章节暂无可信记忆批次，必须严格以 story_facts 中已确认 "
+                    "(confirmed=True) 的事实和硬约束为准；禁止脑补未在项目资料中"
+                    "出现的人物状态、剧情发展或世界设定细节。"
+                ),
+                source="context_builder",
+                priority=0,
+                trusted=True,
+            ),
+        )
+
     # ── Per-agent build methods ──────────────────────────────────
 
     def build_for_planner(
@@ -802,6 +824,7 @@ class AgentContextBuilder:
         hard.extend(bundle.timeline_constraints)
         hard.extend(bundle.revision_feedback)
         bundle.hard_constraints = hard
+        self._apply_memory_degraded_hard_constraint(bundle)
 
         # Advisory: low-confidence memory + world rules
         bundle.advisory_context = self._advisory_memory_context(project_id, chapter_number)
@@ -830,6 +853,7 @@ class AgentContextBuilder:
             + bundle.timeline_constraints
             + bundle.revision_feedback
         )
+        self._apply_memory_degraded_hard_constraint(bundle)
         bundle.advisory_context = self._advisory_memory_context(project_id, chapter_number)
         bundle.advisory_context.extend(self._world_rules_context(project_id))
         bundle.advisory_context.extend(self._continuity_warnings_context(project_id, chapter_number))
@@ -856,6 +880,7 @@ class AgentContextBuilder:
             + bundle.timeline_constraints
             + bundle.revision_feedback
         )
+        self._apply_memory_degraded_hard_constraint(bundle)
         bundle.advisory_context = self._advisory_memory_context(project_id, chapter_number)
         bundle.advisory_context.extend(self._world_rules_context(project_id))
         bundle.advisory_context.extend(self._continuity_warnings_context(project_id, chapter_number))
@@ -884,6 +909,7 @@ class AgentContextBuilder:
                 hard.append(it)
         hard.extend(bundle.revision_feedback)
         bundle.hard_constraints = hard
+        self._apply_memory_degraded_hard_constraint(bundle)
         bundle.advisory_context = self._advisory_memory_context(project_id, chapter_number)
         bundle.advisory_context.extend(self._world_rules_context(project_id))
         return bundle
@@ -909,6 +935,7 @@ class AgentContextBuilder:
             + bundle.timeline_constraints
             + bundle.revision_feedback
         )
+        self._apply_memory_degraded_hard_constraint(bundle)
         bundle.advisory_context = self._advisory_memory_context(project_id, chapter_number)
         bundle.advisory_context.extend(self._world_rules_context(project_id))
         bundle.advisory_context.extend(self._continuity_warnings_context(project_id, chapter_number))

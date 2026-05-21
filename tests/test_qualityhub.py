@@ -161,6 +161,38 @@ class TestNarrativeQualityScorerRealChineseProse:
         assert result["ok"] is True
         assert result["data"]["scores"]["hook_strength"] >= 45
 
+    def test_scores_system_cost_confrontation_as_conflict(self):
+        scorer = NarrativeQualityScorer()
+        text = (
+            "【推荐方案：异常表征清除，关联人员记忆清除。代价：目标记忆清除率100%。】\n\n"
+            "老先生没动。\n\n"
+            "“跟你走？”他问，“去哪儿？”\n\n"
+            "林泽握紧隔离锚。“先离开这里。”\n\n"
+            "“出去之后呢？你知道出去之后我们会变成什么样吗？”老先生盯着他。"
+            "“你那个系统会把我们的脑子清空。你自己清楚这一点吗？”\n\n"
+            "站台深处传来金属刮擦声，隔离锚弹出红色警告：方案偏离，绩效评分-15。"
+        )
+
+        result = scorer.run({"text": text})
+
+        assert result["ok"] is True
+        assert result["data"]["scores"]["conflict_intensity"] >= 40
+
+    def test_scores_hidden_name_and_record_warning_as_strong_hook(self):
+        scorer = NarrativeQualityScorer()
+        text = (
+            "任务结算界面闪了一下，灰色小字只剩一个姓氏。周。\n"
+            "许知夏的声音压得很低：“有人调了你刚才的任务记录，我拦不住。”\n"
+            "“谁？”\n"
+            "“第七办公室，魏承霜的人。”\n"
+            "林泽需要找到那个名字，在被系统彻底抹掉之前。"
+        )
+
+        result = scorer.run({"text": text})
+
+        assert result["ok"] is True
+        assert result["data"]["scores"]["hook_strength"] >= 50
+
 
 class TestQualityReports:
     """Test quality_reports database operations."""

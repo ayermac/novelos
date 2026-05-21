@@ -362,6 +362,25 @@ class TestEditorAdvisoryIntegration:
         assert result["quality_gate"]["pass"] is True
         assert result["chapter_status"] == ChapterStatus.REVIEWED.value
 
+    def test_final_gate_ignores_stale_failed_review_during_editor_run(self, seeded_repo):
+        """A previous failed review must not poison the next passing Editor run."""
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter is not None
+        seeded_repo.save_review(
+            project_id="test_proj",
+            chapter_id=chapter["id"],
+            passed=False,
+            score=82,
+            issues=["[质量诊断建议] 章末钩子强度不足（45.0 < 50）"],
+            suggestions=["增加悬念"],
+            revision_target="author",
+        )
+
+        result = self._run_editor(seeded_repo, SAMPLE_GOOD_TEXT, llm_pass=True)
+
+        assert result["quality_gate"]["pass"] is True
+        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
+
     def test_no_skill_registry_graceful(self, seeded_repo):
         """Editor without skill_registry should not crash."""
         result = self._run_editor(seeded_repo, SAMPLE_GOOD_TEXT, llm_pass=True, skill_registry=None)

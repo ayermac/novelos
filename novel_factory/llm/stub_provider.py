@@ -403,6 +403,7 @@ class StubLLM(LLMProvider):
     def __init__(self):
         """Initialize stub LLM with token usage tracking (v5.2)."""
         self.last_token_usage: TokenUsage | None = None
+        self.last_call_trace: dict | None = None
 
     def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
         # Set mock token usage for tracking (v5.2)
@@ -412,6 +413,19 @@ class StubLLM(LLMProvider):
             total_tokens=300,
             duration_ms=50,
         )
+        self.last_call_trace = {
+            "request": {
+                "provider": "stub",
+                "model": "stub",
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "message_count": len(messages or []),
+                "messages": messages,
+                "schema": getattr(schema, "__name__", None) if schema else None,
+            },
+            "response": {"content": "<stub>", "usage": self.last_token_usage.to_dict()},
+            "error": None,
+        }
 
         schema_name = getattr(schema, "__name__", "") if schema else ""
         if not schema and _is_memory_curator_request(messages):
@@ -501,4 +515,17 @@ class StubLLM(LLMProvider):
             total_tokens=150,
             duration_ms=30,
         )
+        self.last_call_trace = {
+            "request": {
+                "provider": "stub",
+                "model": "stub",
+                "temperature": temperature,
+                "max_tokens": max_tokens,
+                "message_count": len(messages or []),
+                "messages": messages,
+                "call_type": "text",
+            },
+            "response": {"content": "{}", "usage": self.last_token_usage.to_dict()},
+            "error": None,
+        }
         return "{}"

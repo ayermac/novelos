@@ -160,6 +160,29 @@ class StoryFactsComplianceResult:
 class EditorAgent(BaseAgent):
     """Editor: five-dimension quality review."""
 
+    @staticmethod
+    def _format_review_content_excerpt(content: str, max_chars: int) -> str:
+        """Return a review excerpt that preserves the chapter ending.
+
+        Editor decisions often depend on the ending hook and final state. A
+        simple head-only excerpt can make the reviewer falsely report missing
+        endings on long chapters.
+        """
+        text = str(content or "")
+        if len(text) <= max_chars:
+            return text
+
+        head_chars = max(1200, int(max_chars * 0.42))
+        tail_chars = max_chars - head_chars
+        head = text[:head_chars].rstrip()
+        tail = text[-tail_chars:].lstrip()
+        omitted = len(text) - len(head) - len(tail)
+        return (
+            f"【正文开头节选】\n{head}\n\n"
+            f"【中段省略：约 {omitted} 字】\n\n"
+            f"【正文章末尾段，审核 ending_hook / 任务结算 / 悬念必须以此为准】\n{tail}"
+        )
+
     agent_id = "editor"
 
     def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, **kwargs):
@@ -192,7 +215,8 @@ class EditorAgent(BaseAgent):
         # Chapter content
         chapter = self._get_chapter_info(state)
         if chapter and chapter.get("content"):
-            parts.append(f"【本章正文】\n{chapter['content'][:8000]}")
+            excerpt = self._format_review_content_excerpt(chapter["content"], 8000)
+            parts.append(f"【本章正文】\n{excerpt}")
 
         # Instruction (redundant with bundle but ensures explicit visibility)
         instruction = self._get_instruction(state)
@@ -260,7 +284,8 @@ class EditorAgent(BaseAgent):
         chapter = self._get_chapter_info(state)
         if chapter and chapter.get("content"):
             content = chapter["content"]
-            parts.append(f"【本章正文】\n{content[:3000]}")
+            excerpt = self._format_review_content_excerpt(content, 6000)
+            parts.append(f"【本章正文】\n{excerpt}")
 
         instruction = self._get_instruction(state)
         if instruction:
@@ -770,7 +795,11 @@ class EditorAgent(BaseAgent):
         try:
             from ..quality.hub import QualityHub
             hub = QualityHub(self.repo, self.skill_registry)
-            gate_result = hub.final_gate(inputs.project_id, inputs.chapter_number)
+            gate_result = hub.final_gate(
+                inputs.project_id,
+                inputs.chapter_number,
+                include_editor_review=False,
+            )
 
             if not gate_result.get("ok"):
                 logger.error("Editor: QualityHub final_gate failed: %s", gate_result.get("error"))

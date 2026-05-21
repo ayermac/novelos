@@ -431,6 +431,26 @@ class TestCountIssueTypes:
         b, p, a = count_issue_types(["[诊断建议] 叙事质量偏低"])
         assert a == 1
 
+    def test_quality_signal_labels_do_not_force_priority_revision(self):
+        import json
+        from novel_factory.quality.editor_strategy import count_issue_types
+        issues = [
+            "【高优先级】EXPOSITION_PARAGRAPH残留：仍有纯说明段落",
+            "【高优先级】冲突强度不足：核心对峙压缩",
+            "【高优先级】章末钩子削弱：隐藏名单诱饵不足",
+        ]
+
+        b, p, a = count_issue_types(issues)
+
+        assert b == 0
+        assert p == 0
+        assert a == 3
+
+        b, p, a = count_issue_types(json.dumps(issues, ensure_ascii=False))
+        assert b == 0
+        assert p == 0
+        assert a == 3
+
 
 # ── D. Legacy backward compatibility ────────────────────────────
 

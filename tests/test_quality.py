@@ -482,6 +482,15 @@ class TestQ7RevisionClassifier:
         ], llm_revision_target="polisher")
         assert result.dominant_target == "author"
 
+    def test_missing_scene_beat_ending_routes_to_author(self):
+        from novel_factory.validators.revision_classifier import classify_issues
+        result = classify_issues([
+            "[CRITICAL-硬阻塞] 正文第五次在关键选择处截断，缺失撤离过程、任务结算界面、结尾钩子的全部描写。",
+            "[BLOCKING-伏笔债务违约] 失败名单钩子未实现。",
+            "[v6.4质量信号] EXPOSITION_PARAGRAPH: 检测到 5 处纯说明段落",
+        ], llm_revision_target="polisher")
+        assert result.dominant_target == "author"
+
     def test_logic_issue_routes_to_author(self):
         from novel_factory.validators.revision_classifier import classify_issues
         result = classify_issues(["逻辑漏洞", "伏笔未兑现"])

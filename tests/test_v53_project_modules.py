@@ -228,8 +228,8 @@ class TestReviewModule:
         batches = repo.list_memory_batches(project_id)
         assert len(batches) == 1
 
-    def test_publish_endpoint_blocks_state_card_fallback_memory(self, test_client, monkeypatch):
-        """Manual publish must not proceed when MemoryCurator only creates fallback hints."""
+    def test_publish_endpoint_allows_state_card_fallback_memory_as_partial_success(self, test_client, monkeypatch):
+        """Manual publish may proceed with fallback hints, but reports partial success."""
         client, db_path = test_client
         repo = Repository(db_path)
 
@@ -281,10 +281,13 @@ class TestReviewModule:
         })
         assert resp.status_code == 200
         data = resp.json()
-        assert data["ok"] is False
-        assert data["error"]["code"] == "MEMORY_CURATOR_INCOMPLETE"
-        assert data["error"]["details"]["fallback_created"] is True
-        assert repo.get_chapter(project_id, 1)["status"] == "reviewed"
+        assert data["ok"] is True
+        assert data["data"]["chapter_status"] == "published"
+        assert data["data"]["memory_incomplete"] is True
+        assert data["data"]["fallback_created"] is True
+        assert data["data"]["domain_result"]["domain_status"] == "partial_success"
+        assert data["data"]["domain_result"]["flags"]["memory_trusted"] is False
+        assert repo.get_chapter(project_id, 1)["status"] == "published"
 
     def test_run_detail_memory_backfill_endpoint(self, test_client):
         """Run detail page can backfill MemoryCurator for an already published chapter."""

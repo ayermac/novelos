@@ -187,7 +187,12 @@ def route_after_agent(state: FactoryState) -> str:
     # the gate is stale from a previous failed attempt that was retried.
     if (
         gate.get("pass") is False
-        and (gate.get("word_count_fail") or gate.get("death_penalty_fail"))
+        and (
+            gate.get("word_count_fail")
+            or gate.get("death_penalty_fail")
+            or gate.get("scene_beat_coverage_fail")
+            or gate.get("version_regression")
+        )
         and current_status not in (
             ChapterStatus.DRAFTED.value,
             ChapterStatus.POLISHED.value,

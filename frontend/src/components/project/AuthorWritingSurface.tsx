@@ -23,7 +23,7 @@ import ChapterDiffViewer from './ChapterDiffViewer'
 import ChapterEditorSurface from './ChapterEditorSurface'
 import QualityDiagnosisPanel from './QualityDiagnosisPanel'
 
-export type SurfaceTabKey = 'content' | 'workflow' | 'artifacts' | 'history' | 'versions'
+export type SurfaceTabKey = 'content' | 'workflow' | 'artifacts' | 'history' | 'logs' | 'versions'
 
 interface ChapterDetail {
   project_id: string
@@ -97,7 +97,27 @@ interface RunDetailData {
   duration_ms?: number | null
 }
 
+interface WorkflowLogRow {
+  id: string
+  source: 'timeline' | 'live' | 'run_detail'
+  timestamp?: string | null
+  node: string
+  nodeLabel: string
+  category: 'agent' | 'flow' | 'revision' | 'artifact' | 'error'
+  level: 'info' | 'success' | 'warning' | 'error'
+  eventType: string
+  message: string
+  payload?: Record<string, unknown> | null
+  tokenCount?: number | null
+  latencyMs?: number | null
+}
+
 const STUCK_RUN_THRESHOLD_MINUTES = 30
+const TERMINAL_CHAPTER_STATUSES = new Set(['reviewed', 'awaiting_publish', 'published'])
+
+function isCompletedBeforeTerminal(runStatus?: string | null, chapterStatus?: string | null): boolean {
+  return runStatus === 'completed' && !!chapterStatus && !TERMINAL_CHAPTER_STATUSES.has(chapterStatus)
+}
 
 function recoveryActionRank(key: string, recommendedAction?: string | null): number {
   if (key === recommendedAction || (key === 'generate' && recommendedAction === 'reset_explicitly')) return 0
@@ -166,6 +186,243 @@ function buildLiveEvidence(
     latest_event_summary: latestSummary,
     event_count: events.length,
   }
+}
+
+function logLevelFromStatus(status?: string | null): WorkflowLogRow['level'] {
+  if (status === 'error' || status === 'failed' || status === 'fail' || status === 'blocked') return 'error'
+  if (status === 'warning' || status === 'degraded') return 'warning'
+  if (status === 'success' || status === 'completed' || status === 'pass') return 'success'
+  return 'info'
+}
+
+function logCategoryFromEvent(eventType: string, level: WorkflowLogRow['level']): WorkflowLogRow['category'] {
+  if (level === 'error') return 'error'
+  if (eventType.includes('revision') || eventType.includes('retry') || eventType.includes('quality_gate')) return 'revision'
+  if (eventType.includes('llm') || eventType.includes('context') || eventType.includes('skill') || eventType.includes('evidence')) return 'agent'
+  if (eventType.includes('artifact')) return 'artifact'
+  return 'flow'
+}
+
+function logLevelLabel(level: WorkflowLogRow['level']): string {
+  if (level === 'success') return '成功'
+  if (level === 'warning') return '警告'
+  if (level === 'error') return '错误'
+  return '信息'
+}
+
+function logCategoryLabel(category: WorkflowLogRow['category']): string {
+  if (category === 'agent') return 'Agent'
+  if (category === 'revision') return '返修'
+  if (category === 'artifact') return '产物'
+  if (category === 'error') return '错误'
+  return '流转'
+}
+
+function formatLogPayload(payload?: Record<string, unknown> | null): string {
+  if (!payload || Object.keys(payload).length === 0) return ''
+  try {
+    return JSON.stringify(payload, null, 2)
+  } catch {
+    return String(payload)
+  }
+}
+
+function buildWorkflowLogJsonList(
+  rows: WorkflowLogRow[],
+  runDetail: RunDetailData | null,
+  timeline?: WorkflowTimelineData | null,
+): string {
+  const runId = timeline?.run_id || runDetail?.run_id || null
+  const runStatus = timeline?.run_status || runDetail?.workflow_status || null
+  const currentNode = timeline?.current_node || runDetail?.current_node || null
+  const projectId = timeline?.project_id || runDetail?.project_id || null
+  const chapterNumber = timeline?.chapter_number || runDetail?.chapter_number || null
+
+  return JSON.stringify(
+    rows.map((row, index) => ({
+      index: index + 1,
+      run_id: runId,
+      project_id: projectId,
+      chapter_number: chapterNumber,
+      run_status: runStatus,
+      current_node: currentNode,
+      source: row.source,
+      timestamp: row.timestamp || null,
+      level: row.level,
+      category: row.category,
+      event_type: row.eventType,
+      node: row.node,
+      node_label: row.nodeLabel,
+      message: row.message,
+      token_count: row.tokenCount ?? null,
+      latency_ms: row.latencyMs ?? null,
+      payload: row.payload ?? null,
+    })),
+    null,
+    2,
+  )
+}
+
+function buildWorkflowLogRows(
+  runDetail: RunDetailData | null,
+  timeline?: WorkflowTimelineData | null,
+  sseSteps?: Record<string, StepStatus>,
+): WorkflowLogRow[] {
+  const rows: WorkflowLogRow[] = []
+  const seen = new Set<string>()
+
+  const pushRow = (row: WorkflowLogRow) => {
+    const dedupe = `${row.timestamp || ''}:${row.node}:${row.eventType}:${row.message}:${row.tokenCount || ''}:${row.latencyMs || ''}`
+    if (seen.has(dedupe)) return
+    seen.add(dedupe)
+    rows.push(row)
+  }
+
+  for (const node of timeline?.nodes || []) {
+    if (node.started_at) {
+      pushRow({
+        id: `node-start:${node.node_name}:${node.started_at}`,
+        source: 'timeline',
+        timestamp: node.started_at,
+        node: node.node_name,
+        nodeLabel: node.label || tWorkflowNodeLabel(node.node_name),
+        category: 'flow',
+        level: node.status === 'failed' || node.status === 'blocked' ? 'error' : 'info',
+        eventType: 'node_started',
+        message: `${node.label || tWorkflowNodeLabel(node.node_name)} 节点开始执行`,
+      })
+    }
+    if (node.completed_at) {
+      const level = logLevelFromStatus(node.status)
+      pushRow({
+        id: `node-complete:${node.node_name}:${node.completed_at}`,
+        source: 'timeline',
+        timestamp: node.completed_at,
+        node: node.node_name,
+        nodeLabel: node.label || tWorkflowNodeLabel(node.node_name),
+        category: logCategoryFromEvent('node_completed', level),
+        level,
+        eventType: 'node_completed',
+        message: `${node.label || tWorkflowNodeLabel(node.node_name)} 节点${level === 'error' ? '失败或阻塞' : '执行完成'}`,
+        latencyMs: node.duration_ms,
+      })
+    }
+    for (const message of node.messages || []) {
+      const level = logLevelFromStatus(node.status)
+      pushRow({
+        id: `node-message:${node.node_name}:${message}`,
+        source: 'timeline',
+        timestamp: node.completed_at || node.started_at,
+        node: node.node_name,
+        nodeLabel: node.label || tWorkflowNodeLabel(node.node_name),
+        category: logCategoryFromEvent('node_message', level),
+        level,
+        eventType: 'node_message',
+        message,
+      })
+    }
+    for (const event of node.events || []) {
+      const level = logLevelFromStatus(event.status)
+      const eventType = event.event_type || 'execution_event'
+      pushRow({
+        id: `exec:${event.id ?? `${node.node_name}:${eventType}:${event.created_at || ''}`}`,
+        source: 'timeline',
+        timestamp: event.created_at,
+        node: node.node_name,
+        nodeLabel: node.label || tWorkflowNodeLabel(node.node_name),
+        category: logCategoryFromEvent(eventType, level),
+        level,
+        eventType,
+        message: event.message || eventType,
+        payload: event.payload,
+        tokenCount: event.token_count,
+        latencyMs: event.latency_ms,
+      })
+    }
+  }
+
+  for (const [nodeKey, step] of Object.entries(sseSteps || {})) {
+    const nodeLabel = tWorkflowNodeLabel(nodeKey)
+    if (step.started_at) {
+      pushRow({
+        id: `live-start:${nodeKey}:${step.started_at}`,
+        source: 'live',
+        timestamp: step.started_at,
+        node: nodeKey,
+        nodeLabel,
+        category: 'flow',
+        level: step.status === 'failed' ? 'error' : 'info',
+        eventType: 'live_node_started',
+        message: `${nodeLabel} 节点开始执行`,
+      })
+    }
+    for (const log of step.logs || []) {
+      const level = log.level || 'info'
+      pushRow({
+        id: `live-log:${nodeKey}:${log.id || `${log.timestamp}:${log.message}`}`,
+        source: 'live',
+        timestamp: log.timestamp,
+        node: nodeKey,
+        nodeLabel,
+        category: logCategoryFromEvent(log.message || 'live_task_log', level),
+        level,
+        eventType: 'live_task_log',
+        message: log.message,
+      })
+    }
+    if (step.completed_at) {
+      const level = step.status === 'failed' ? 'error' : 'success'
+      pushRow({
+        id: `live-complete:${nodeKey}:${step.completed_at}`,
+        source: 'live',
+        timestamp: step.completed_at,
+        node: nodeKey,
+        nodeLabel,
+        category: logCategoryFromEvent('live_node_completed', level),
+        level,
+        eventType: 'live_node_completed',
+        message: `${nodeLabel} 节点${level === 'error' ? '失败' : '执行完成'}`,
+        latencyMs: step.duration_ms,
+      })
+    }
+  }
+
+  for (const step of runDetail?.steps || []) {
+    for (const log of step.logs || []) {
+      const level = log.level || 'info'
+      pushRow({
+        id: `step-log:${step.key}:${log.timestamp || ''}:${log.message}`,
+        source: 'run_detail',
+        timestamp: log.timestamp,
+        node: step.key,
+        nodeLabel: step.label || tWorkflowNodeLabel(step.key),
+        category: logCategoryFromEvent('task_log', level),
+        level,
+        eventType: 'task_log',
+        message: log.message,
+      })
+    }
+    if (step.error_message) {
+      pushRow({
+        id: `step-error:${step.key}:${step.error_message}`,
+        source: 'run_detail',
+        timestamp: runDetail?.completed_at || runDetail?.started_at,
+        node: step.key,
+        nodeLabel: step.label || tWorkflowNodeLabel(step.key),
+        category: 'error',
+        level: 'error',
+        eventType: 'step_error',
+        message: step.error_message,
+      })
+    }
+  }
+
+  return rows.sort((a, b) => {
+    const ta = a.timestamp ? new Date(a.timestamp.replace(' ', 'T')).getTime() : 0
+    const tb = b.timestamp ? new Date(b.timestamp.replace(' ', 'T')).getTime() : 0
+    if (Number.isNaN(ta) || Number.isNaN(tb) || ta === tb) return a.id.localeCompare(b.id)
+    return ta - tb
+  })
 }
 
 const CANONICAL_GENERATING_STEPS = [
@@ -296,7 +553,7 @@ export default function AuthorWritingSurface({
 }: AuthorWritingSurfaceProps) {
   const hasContent = (chapterDetail?.word_count || 0) > 0
   const status = currentChapterRecord?.status || ''
-  const isTerminal = ['reviewed', 'awaiting_publish', 'published'].includes(status)
+  const isTerminal = TERMINAL_CHAPTER_STATUSES.has(status)
   const isReviewedReal = status === 'reviewed' && llmMode === 'real'
   const hasPreservedPlannedContent = status === 'planned' && (currentChapterRecord?.word_count || chapterDetail?.word_count || 0) > 0
   const persistedQualityScore = chapterDetail?.quality_score ?? currentChapterRecord?.quality_score ?? null
@@ -311,6 +568,7 @@ export default function AuthorWritingSurface({
     { key: 'workflow', label: '工作流', disabled: runsForChapter.length === 0 && !isStreaming },
     { key: 'artifacts', label: PROCESS_DRAFT_LABEL },
     { key: 'history', label: '历史', disabled: runsForChapter.length === 0 },
+    { key: 'logs', label: '日志', disabled: runsForChapter.length === 0 && !isStreaming },
   ]
 
   return (
@@ -411,7 +669,7 @@ export default function AuthorWritingSurface({
           <span>{hasContent ? '可读' : '待评估'}</span>
         </div>
         <div className="author-readiness-state">
-          <strong>发布就绪</strong>
+          <strong>章节状态</strong>
           <span>{statusLabel}</span>
         </div>
       </div>
@@ -441,6 +699,7 @@ export default function AuthorWritingSurface({
           <WorkflowBody
             runDetail={runDetail}
             timeline={timeline}
+            currentChapterStatus={status}
             timelineError={timelineError}
             isLaunching={isLaunching}
             isStreaming={isStreaming}
@@ -463,6 +722,9 @@ export default function AuthorWritingSurface({
         )}
         {activeTab === 'history' && (
           <HistoryBody runsForChapter={runsForChapter} onViewWorkflow={onViewWorkflow} />
+        )}
+        {activeTab === 'logs' && (
+          <LogsBody runDetail={runDetail} timeline={timeline} timelineError={timelineError} sseSteps={sseSteps} />
         )}
         {activeTab === 'versions' && (
           <VersionBody
@@ -701,6 +963,7 @@ function ContentBody({
 function WorkflowBody({
   runDetail,
   timeline,
+  currentChapterStatus,
   timelineError,
   isLaunching,
   isStreaming,
@@ -719,6 +982,7 @@ function WorkflowBody({
 }: {
   runDetail: RunDetailData | null
   timeline?: WorkflowTimelineData | null
+  currentChapterStatus: string
   timelineError?: string
   isLaunching: boolean
   isStreaming: boolean
@@ -754,16 +1018,20 @@ function WorkflowBody({
   if (timeline) {
     const nodeLabel = tWorkflowNodeLabel(timeline.current_node)
     const statusLabel = timeline.run_status ? tWorkflowStatus(timeline.run_status) : '—'
+    const timelineChapterStatus = timeline.chapter_status || currentChapterStatus || ''
+    const incompleteCompletedRun = isCompletedBeforeTerminal(timeline.run_status, timelineChapterStatus)
     const isStale = timeline.is_stale
     const isRunning = timeline.run_status === 'running'
 
-    const statusTone = isStale || timeline.run_status === 'blocked' ? 'warning' : timeline.run_status === 'failed' ? 'error' : 'info'
+    const statusTone = isStale || incompleteCompletedRun || timeline.run_status === 'blocked' ? 'warning' : timeline.run_status === 'failed' ? 'error' : 'info'
     const statusHeadline = isStale
       ? '工作流疑似卡住'
       : isRunning
         ? '工作流正在推进'
         : timeline.run_status === 'blocked'
           ? '工作流已阻塞'
+          : incompleteCompletedRun
+            ? '工作流提前结束'
           : timeline.run_status === 'completed'
             ? '工作流已完成'
             : '最近一次运行'
@@ -773,6 +1041,8 @@ function WorkflowBody({
         ? `当前节点：${nodeLabel}，仍在处理。若超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未变化，请按卡住运行处理。`
         : timeline.run_status === 'blocked'
           ? `本次运行已阻塞，需要先处理最近的失败或返修原因。`
+          : incompleteCompletedRun
+            ? `本次运行没有到达发布终态，章节仍停在 ${tChapterStatus(timelineChapterStatus)}，当前节点：${nodeLabel}。请继续生成或进入运行详情排查。`
           : timeline.run_status === 'completed'
             ? '工作流已完成，可查看产物或继续下一章。'
             : '最近一次运行记录如下。'
@@ -1032,10 +1302,11 @@ function WorkflowBody({
     const chapterStatusLabel = tChapterStatus(runDetail.chapter_status)
     const elapsedMinutes = elapsedMinutesSince(runDetail.started_at)
     const isStaleRunning = runDetail.workflow_status === 'running' && elapsedMinutes !== null && elapsedMinutes >= STUCK_RUN_THRESHOLD_MINUTES
-    const isTerminalChapter = ['published', 'awaiting_publish', 'reviewed'].includes(runDetail.chapter_status)
+    const isTerminalChapter = TERMINAL_CHAPTER_STATUSES.has(runDetail.chapter_status)
     const isRunning = runDetail.workflow_status === 'running'
     const isContradictory = isTerminalChapter && isRunning
-    const statusTone = isContradictory || isStaleRunning || runDetail.workflow_status === 'blocked' ? 'warning' : runDetail.workflow_status === 'failed' ? 'error' : 'info'
+    const incompleteCompletedRun = isCompletedBeforeTerminal(runDetail.workflow_status, runDetail.chapter_status)
+    const statusTone = isContradictory || isStaleRunning || incompleteCompletedRun || runDetail.workflow_status === 'blocked' ? 'warning' : runDetail.workflow_status === 'failed' ? 'error' : 'info'
     const statusHeadline = isContradictory
       ? '状态矛盾：终态章节仍有运行中工作流'
       : isStaleRunning
@@ -1044,6 +1315,8 @@ function WorkflowBody({
           ? '工作流正在推进'
           : runDetail.workflow_status === 'blocked'
             ? '工作流已阻塞'
+            : incompleteCompletedRun
+              ? '工作流提前结束'
             : runDetail.workflow_status === 'completed' && runDetail.chapter_status === 'reviewed'
               ? '审核已完成'
               : '最近一次运行'
@@ -1055,6 +1328,8 @@ function WorkflowBody({
           ? `当前节点：${nodeLabel}，仍在处理。若超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未变化，请按卡住运行处理。`
           : runDetail.workflow_status === 'blocked'
             ? `本次运行已阻塞，需要先处理最近的失败或返修原因。`
+            : incompleteCompletedRun
+              ? `本次运行没有到达发布终态，章节仍停在 ${chapterStatusLabel}，当前节点：${nodeLabel}。请继续生成或进入运行详情排查。`
             : runDetail.workflow_status === 'completed' && runDetail.chapter_status === 'reviewed'
               ? 'AI 审核已完成，当前等待人工发布。'
               : '最近一次运行记录如下。'
@@ -1335,6 +1610,168 @@ function HistoryBody({
           </button>
         </div>
       ))}
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Logs Body                                                         */
+/* ------------------------------------------------------------------ */
+
+function LogsBody({
+  runDetail,
+  timeline,
+  timelineError,
+  sseSteps,
+}: {
+  runDetail: RunDetailData | null
+  timeline?: WorkflowTimelineData | null
+  timelineError?: string
+  sseSteps?: Record<string, StepStatus>
+}) {
+  const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const [jsonExpanded, setJsonExpanded] = useState(false)
+  const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const rows = buildWorkflowLogRows(runDetail, timeline, sseSteps)
+  const runId = timeline?.run_id || runDetail?.run_id
+  const runStatus = timeline?.run_status || runDetail?.workflow_status
+  const currentNode = timeline?.current_node || runDetail?.current_node
+  const totalTokens = runDetail?.total_tokens || rows.reduce((sum, row) => sum + (row.tokenCount || 0), 0)
+  const revisionCount = rows.filter((row) => row.category === 'revision').length
+  const warningCount = rows.filter((row) => row.level === 'warning' || row.level === 'error').length
+  const jsonList = buildWorkflowLogJsonList(rows, runDetail, timeline)
+
+  const handleCopyJson = useCallback(async () => {
+    try {
+      await navigator.clipboard.writeText(jsonList)
+      setCopyState('copied')
+      window.setTimeout(() => setCopyState('idle'), 1600)
+    } catch {
+      setCopyState('failed')
+      setJsonExpanded(true)
+      window.setTimeout(() => setCopyState('idle'), 2200)
+    }
+  }, [jsonList])
+
+  if (!runDetail && !timeline && rows.length === 0) {
+    return (
+      <div className="artifacts-empty">
+        <div className="artifacts-empty-icon">日志</div>
+        <div className="artifacts-empty-title">暂无工作流日志</div>
+        <div className="artifacts-empty-desc">生成章节后，可在此查看 agent 工作日志、节点流转、返修原因和质量门 payload。</div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="workflow-log-view">
+      {timelineError && (
+        <div className="alert alert-error" style={{ marginBottom: 0 }}>
+          <div style={{ fontSize: 13 }}>刷新失败：{timelineError}</div>
+        </div>
+      )}
+
+      <div className="workflow-log-summary">
+        <div>
+          <span>运行 ID</span>
+          <strong title={runId || undefined}>{runId ? runId.slice(0, 8) : '—'}</strong>
+        </div>
+        <div>
+          <span>状态</span>
+          <strong>{runStatus ? tWorkflowStatus(runStatus) : '—'}</strong>
+        </div>
+        <div>
+          <span>当前节点</span>
+          <strong>{tWorkflowNodeLabel(currentNode)}</strong>
+        </div>
+        <div>
+          <span>日志</span>
+          <strong>{rows.length}</strong>
+        </div>
+        <div>
+          <span>返修</span>
+          <strong>{revisionCount}</strong>
+        </div>
+        <div>
+          <span>告警</span>
+          <strong>{warningCount}</strong>
+        </div>
+        <div>
+          <span>Tokens</span>
+          <strong>{totalTokens || '—'}</strong>
+        </div>
+      </div>
+
+      {rows.length > 0 && (
+        <div className="workflow-log-export" aria-label="可复制 JSON 日志">
+          <div className="workflow-log-export-head">
+            <div>
+              <strong>JSON list</strong>
+              <span>可直接复制给排查人员，包含 run、节点、事件、tokens、耗时和 payload。</span>
+            </div>
+            <div className="workflow-log-export-actions">
+              <button type="button" className="btn btn-secondary btn-sm" onClick={handleCopyJson}>
+                {copyState === 'copied' ? '已复制' : copyState === 'failed' ? '复制失败' : '复制 JSON'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-secondary btn-sm"
+                onClick={() => setJsonExpanded((prev) => !prev)}
+              >
+                {jsonExpanded ? '收起 JSON' : '展开 JSON'}
+              </button>
+            </div>
+          </div>
+          {jsonExpanded && <pre>{jsonList}</pre>}
+        </div>
+      )}
+
+      {rows.length === 0 ? (
+        <div className="artifacts-empty">
+          <div className="artifacts-empty-icon">日志</div>
+          <div className="artifacts-empty-title">日志尚未写入</div>
+          <div className="artifacts-empty-desc">当前运行没有可展示的节点日志或 agent 执行事件。</div>
+        </div>
+      ) : (
+        <div className="workflow-log-list" aria-label="工作流详细日志">
+          {rows.map((row) => {
+            const payloadText = formatLogPayload(row.payload)
+            const isExpanded = !!expanded[row.id]
+            return (
+              <div key={row.id} className={`workflow-log-row ${row.level}`}>
+                <div className="workflow-log-time">{row.timestamp || '—'}</div>
+                <div className="workflow-log-main">
+                  <div className="workflow-log-head">
+                    <span className={`workflow-log-level ${row.level}`}>{logLevelLabel(row.level)}</span>
+                    <span className="workflow-log-category">{logCategoryLabel(row.category)}</span>
+                    <span className="workflow-log-node">{row.nodeLabel}</span>
+                    <span className="workflow-log-event">{row.eventType}</span>
+                  </div>
+                  <div className="workflow-log-message">{row.message}</div>
+                  {(row.tokenCount || row.latencyMs) && (
+                    <div className="workflow-log-metrics">
+                      {row.tokenCount ? <span>{row.tokenCount} tokens</span> : null}
+                      {row.latencyMs ? <span>{(row.latencyMs / 1000).toFixed(1)}s</span> : null}
+                    </div>
+                  )}
+                  {payloadText && (
+                    <div className="workflow-log-payload">
+                      <button
+                        type="button"
+                        className="workflow-log-payload-toggle"
+                        onClick={() => setExpanded((prev) => ({ ...prev, [row.id]: !prev[row.id] }))}
+                      >
+                        {isExpanded ? '收起 payload' : '展开 payload'}
+                      </button>
+                      {isExpanded && <pre>{payloadText}</pre>}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </div>
   )
 }

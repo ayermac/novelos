@@ -823,6 +823,7 @@ async def get_workflow_timeline(
             "chapter_number": chapter_number,
             "run_id": run_id_str,
             "run_status": run_status,
+            "chapter_status": chapter.get("status"),
             "current_node": current_node,
             "started_at": started_at,
             "elapsed_minutes": stale_info.get("elapsed_minutes"),

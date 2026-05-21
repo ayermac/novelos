@@ -90,5 +90,6 @@ class FactoryState(TypedDict, total=False):
     has_instruction: bool
     # v5.3.0: Trusted Generation Chain - LLM mode for publish routing
     llm_mode: str  # "stub" or "real"
+    awaiting_publish: bool
     # v6.6.14: Memory context audit written by planner_node
     memory_context_audit: dict

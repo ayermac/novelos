@@ -15,7 +15,7 @@ from typing import Any, Callable
 from ..db.repository import Repository
 from ..llm.provider import LLMProvider
 from ..models.state import ChapterStatus, FactoryState
-from .conditions import revision_target_from_state
+from .conditions import hydrate_revision_state, revision_target_from_state
 from ..agents.planner import PlannerAgent
 from ..agents.planner import build_memory_context_audit
 from ..agents.screenwriter import ScreenwriterAgent
@@ -31,6 +31,8 @@ from .execution_events import (
     verify_agent_completion_evidence,
     EVENT_CONTEXT_LOADED,
     EVENT_LLM_STARTED,
+    EVENT_LLM_REQUEST_DETAIL,
+    EVENT_LLM_RESPONSE_DETAIL,
     EVENT_LLM_COMPLETED,
     EVENT_LLM_FAILED,
     EVENT_EVIDENCE_VERIFIED,
@@ -72,6 +74,60 @@ def _node_message(node_name: str, event_type: str) -> str:
     """Get author-facing Chinese message for a node event."""
     msgs = _NODE_MESSAGES.get(node_name, {})
     return msgs.get(event_type, f"{node_name} {event_type}")
+
+
+def _redact_trace_value(value: Any) -> Any:
+    """Recursively redact sensitive strings in trace payloads."""
+    if isinstance(value, str):
+        from ..security.redaction import redact_sensitive_text
+        return redact_sensitive_text(value)
+    if isinstance(value, dict):
+        return {str(k): _redact_trace_value(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_trace_value(item) for item in value]
+    return value
+
+
+def _log_llm_trace_events(state: FactoryState, repo: Repository, agent_name: str, llm: LLMProvider) -> None:
+    """Best-effort log detailed LLM request/response traces."""
+    trace = getattr(llm, "last_call_trace", None)
+    if not isinstance(trace, dict):
+        return
+    request = trace.get("request")
+    if isinstance(request, dict) and request:
+        try:
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_REQUEST_DETAIL,
+                message=f"LLM 请求详情：{agent_name}",
+                agent_id=agent_name,
+                status="info",
+                payload=_redact_trace_value(request),
+            )
+        except Exception:
+            logger.debug("Failed to log LLM request detail for %s", agent_name, exc_info=True)
+    response = trace.get("response")
+    if isinstance(response, dict) and response:
+        try:
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_RESPONSE_DETAIL,
+                message=f"LLM 响应详情：{agent_name}",
+                agent_id=agent_name,
+                status="info",
+                payload=_redact_trace_value(response),
+            )
+        except Exception:
+            logger.debug("Failed to log LLM response detail for %s", agent_name, exc_info=True)
+    elif trace.get("error"):
+        try:
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_RESPONSE_DETAIL,
+                message=f"LLM 响应详情：{agent_name} 调用失败",
+                agent_id=agent_name,
+                status="error",
+                payload={"error": _redact_trace_value(trace.get("error"))},
+            )
+        except Exception:
+            logger.debug("Failed to log LLM error detail for %s", agent_name, exc_info=True)
 
 
 def _log_node_event(
@@ -266,13 +322,19 @@ def _handle_retryable_quality_gate(
 ) -> dict[str, Any]:
     """Convert retryable quality gate failures into revision routing.
 
-    Author/Polisher word-count failures and death-penalty red-line failures
-    are expected recoverable defects. They should consume a revision attempt
-    and route back to the responsible agent until the chapter-level retry cap
-    is reached. Other errors remain blocking.
+    Author/Polisher word-count failures, death-penalty red-line failures,
+    scene-beat coverage gaps, and regression-guard rejections are expected
+    recoverable defects. They should consume a revision attempt and route back
+    to the responsible agent until the chapter-level retry cap is reached.
+    Other errors remain blocking.
     """
     gate = result.get("quality_gate") or {}
-    retryable_gate = gate.get("word_count_fail") or gate.get("death_penalty_fail")
+    retryable_gate = (
+        gate.get("word_count_fail")
+        or gate.get("death_penalty_fail")
+        or gate.get("scene_beat_coverage_fail")
+        or gate.get("version_regression")
+    )
     if not result.get("error") or not retryable_gate:
         return result
 
@@ -615,6 +677,7 @@ def create_node_runners(
 
         # v6.1: Log LLM completion/failure
         if "error" in result:
+            _log_llm_trace_events(state, repo, agent_name, llm)
             log_execution_event(
                 repo, state, agent_name, EVENT_LLM_FAILED,
                 message=f"Agent 执行失败：{result['error'][:200]}",
@@ -632,6 +695,7 @@ def create_node_runners(
                 if used_fallback
                 else f"LLM 调用完成：耗时 {llm_duration/1000:.1f}s，{llm_tokens} tokens"
             )
+            _log_llm_trace_events(state, repo, agent_name, llm)
             log_execution_event(
                 repo, state, agent_name, EVENT_LLM_COMPLETED,
                 message=completed_message,
@@ -825,6 +889,23 @@ def task_discovery_node(state: FactoryState, repo: Repository) -> dict[str, Any]
     has_instruction = instruction is not None and bool(instruction.get("objective"))
 
     state_status = state.get("chapter_status", "")
+    if db_status == ChapterStatus.REVISION.value:
+        base_state = {
+            **state,
+            "chapter_status": db_status,
+            "has_instruction": has_instruction,
+        }
+        hydrated = hydrate_revision_state(base_state, repo)
+        hydrated_updates = {
+            key: value
+            for key, value in hydrated.items()
+            if key not in state or state.get(key) != value
+        }
+        hydrated_updates["chapter_status"] = db_status
+        hydrated_updates["has_instruction"] = has_instruction
+        _log_node_event(state, repo, "task_discovery", "completed", status="completed")
+        return hydrated_updates
+
     if db_status != state_status:
         logger.info(
             "task_discovery: DB status '%s' overrides state status '%s'",
@@ -1104,6 +1185,8 @@ def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
             word_target = gate.get("word_target")
             if actual_wc is not None and word_target is not None:
                 error += f"，该次失败字数: {actual_wc} (目标 {word_target})"
+        if gate.get("scene_beat_coverage_fail"):
+            error += "，该次失败原因: 正文未覆盖完整场景 beat / 章末钩子"
 
     if not error and state.get("chapter_status") == ChapterStatus.BLOCKING.value:
         error = "章节已处于阻塞状态，请先解除阻塞后再重新执行工作流。"

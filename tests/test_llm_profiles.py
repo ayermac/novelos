@@ -91,6 +91,18 @@ class TestLLMProfile:
         assert display["base_url_env"] == "OPENAI_BASE_URL"
         assert display["api_key_env"] == "OPENAI_API_KEY"
 
+    def test_profile_accepts_legacy_timeout_alias(self):
+        """Desktop configs that still use timeout should configure request timeout."""
+        profile = LLMProfile(
+            provider="openai_compatible",
+            base_url="https://api.openai.com/v1",
+            api_key="sk-test-key",
+            model="gpt-4o-mini",
+            timeout=180,
+        )
+
+        assert profile.request_timeout_seconds == 180
+
 
 class TestLLMProfilesConfig:
     """Tests for LLMProfilesConfig."""

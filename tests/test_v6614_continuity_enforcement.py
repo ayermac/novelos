@@ -153,6 +153,22 @@ def test_memory_context_degraded_flag_set_when_no_trusted_batch():
     assert bundle.trusted_memory_batch_id is None
 
 
+def test_memory_context_degraded_is_hard_constraint():
+    """No-trusted-memory warning is promoted to hard_constraints for prompt priority."""
+    _, repo = _make_db()
+    project_id = "proj_degraded_hard"
+    _seed_project(repo, project_id, chapter_number=2)
+
+    builder = AgentContextBuilder(repo)
+    bundle = builder.build_for_author(project_id, chapter_number=2)
+
+    assert bundle.memory_context_degraded is True
+    assert bundle.hard_constraints
+    assert bundle.hard_constraints[0].kind == "memory_degraded_warning"
+    assert "story_facts" in bundle.hard_constraints[0].text
+    assert "禁止脑补" in bundle.hard_constraints[0].text
+
+
 def test_memory_context_degraded_flag_not_set_when_trusted_batch_exists():
     """bundle.memory_context_degraded is False when a trusted batch exists for prev chapter."""
     _, repo = _make_db()

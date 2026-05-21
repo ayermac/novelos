@@ -570,6 +570,7 @@ class QualityHub:
         self,
         project_id: str,
         chapter_number: int,
+        include_editor_review: bool = True,
     ) -> dict[str, Any]:
         """最终质量门禁（Editor审核后）
         
@@ -664,8 +665,14 @@ class QualityHub:
                     quality_dimensions["narrative_quality"] = narrative_score
         
         # 3. Editor review结果（从reviews表读取最新review）
+        #
+        # EditorAgent calls final_gate before saving the current review. In that
+        # path, reading reviews would load the previous run's failed review and
+        # poison the new pass decision after recovery/reset. External report
+        # callers keep the historical behavior by leaving include_editor_review
+        # enabled.
         chapter_id = chapter.get("id")
-        if chapter_id:
+        if include_editor_review and chapter_id:
             latest_review = self.repo.get_latest_review(project_id, chapter_id)
             if latest_review:
                 editor_score = latest_review.get("score", 0)
@@ -773,8 +780,9 @@ class QualityHub:
         sentences = [s.strip() for s in re.split(r"[。！？]", text) if s.strip()]
         avg_sent_len = sum(len(s) for s in sentences) / max(len(sentences), 1)
 
-        # 对话比例
-        dialogue_pattern = r'[""「『]([^""」』]+)[""」』]'
+        # 对话比例。中文正文常用 “...” 弯引号；漏掉它会把大量真实对白
+        # 误判为 0，继而污染对白、冲突和润色诊断。
+        dialogue_pattern = r'["“「『]([^"“”」』]+)["”」』]'
         dialogues = re.findall(dialogue_pattern, text)
         dialogue_chars = sum(len(d) for d in dialogues)
         dialogue_ratio = dialogue_chars / max(len(text), 1)

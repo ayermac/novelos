@@ -15,6 +15,16 @@ from .provider import LLMProvider
 logger = logging.getLogger(__name__)
 
 
+AGENT_MIN_TIMEOUT_SECONDS: dict[str, int] = {
+    "author": 300,
+    "polisher": 300,
+    "editor": 240,
+    "genesis": 240,
+    "memory_curator": 180,
+    "continuity_checker": 60,
+}
+
+
 class LLMRouter:
     """Routes agents to their configured LLM providers.
     
@@ -73,16 +83,18 @@ class LLMRouter:
                 f"可用档案: {list(self.config.llm_profiles.keys())}"
             )
         
-        # Check cache
-        if profile_name in self._provider_cache:
-            return self._provider_cache[profile_name]
+        # Cache per agent because the same profile may need different runtime
+        # timeout floors for long-form vs short-form agents.
+        cache_key = f"{profile_name}:{agent_id}"
+        if cache_key in self._provider_cache:
+            return self._provider_cache[cache_key]
         
         # Create new provider
-        provider = self._create_provider(profile_name, profile)
-        self._provider_cache[profile_name] = provider
+        provider = self._create_provider(profile_name, profile, agent_id=agent_id)
+        self._provider_cache[cache_key] = provider
         return provider
     
-    def _create_provider(self, profile_name: str, profile: LLMProfile) -> LLMProvider:
+    def _create_provider(self, profile_name: str, profile: LLMProfile, *, agent_id: str = "") -> LLMProvider:
         """Create LLM provider from profile.
         
         Args:
@@ -136,7 +148,10 @@ class LLMRouter:
             model=profile.model,
             temperature=profile.temperature,
             max_tokens=profile.max_tokens,
-            request_timeout_seconds=profile.request_timeout_seconds,
+            request_timeout_seconds=max(
+                int(profile.request_timeout_seconds),
+                AGENT_MIN_TIMEOUT_SECONDS.get(agent_id, 0),
+            ),
             retry_attempts=profile.retry_attempts,
             retry_min_seconds=profile.retry_min_seconds,
             retry_max_seconds=profile.retry_max_seconds,
@@ -184,7 +199,10 @@ class LLMRouter:
             "model": profile.model,
             "temperature": profile.temperature,
             "max_tokens": profile.max_tokens,
-            "request_timeout_seconds": profile.request_timeout_seconds,
+            "request_timeout_seconds": max(
+                int(profile.request_timeout_seconds),
+                AGENT_MIN_TIMEOUT_SECONDS.get(agent_id, 0),
+            ),
             "retry_attempts": profile.retry_attempts,
         }
     

@@ -44,6 +44,96 @@ STREAM_VISIBLE_NODES = frozenset(
         "human_review",
     }
 )
+GRAPH_SUCCESS_STATUSES = frozenset(
+    {
+        ChapterStatus.REVIEWED.value,
+        "awaiting_publish",
+        ChapterStatus.PUBLISHED.value,
+    }
+)
+
+
+def _run_current_node(repo: Repository, state: FactoryState, fallback: str | None = None) -> str:
+    """Resolve the best current node label for a run outcome message."""
+    run_id = state.get("workflow_run_id")
+    project_id = state.get("project_id")
+    chapter_number = state.get("chapter_number")
+    if run_id and project_id and chapter_number:
+        try:
+            runs = repo.get_workflow_runs_for_project(
+                str(project_id),
+                chapter_number=int(chapter_number),
+                limit=10,
+            )
+            for run in runs:
+                if (run.get("id") or run.get("run_id")) == run_id:
+                    return run.get("current_node") or fallback or "workflow_exit_guard"
+        except Exception:
+            logger.debug("Failed to resolve workflow current_node for %s", run_id, exc_info=True)
+    return fallback or "workflow_exit_guard"
+
+
+def _graph_exit_error_message(state: FactoryState, current_node: str) -> str:
+    """Explain a graph exit that did not reach a terminal workflow outcome."""
+    chapter_status = state.get("chapter_status") or "unknown"
+    return (
+        "WORKFLOW_INTERRUPTED_BEFORE_TERMINAL: "
+        f"workflow stopped at {current_node} while chapter_status={chapter_status}. "
+        "The run was not finalized by a terminal node."
+    )
+
+
+def _graph_exit_is_success(state: FactoryState) -> bool:
+    """Return True only when graph state represents a coherent successful exit."""
+    if state.get("error"):
+        return False
+    if state.get("requires_human") and not state.get("awaiting_publish"):
+        return False
+    chapter_status = state.get("chapter_status") or ""
+    if chapter_status == ChapterStatus.REVIEWED.value:
+        return bool(state.get("awaiting_publish"))
+    return chapter_status in GRAPH_SUCCESS_STATUSES
+
+
+def _block_incomplete_graph_exit(
+    repo: Repository,
+    state: FactoryState,
+    current_node: str | None = None,
+) -> str:
+    """Mark a run blocked when LangGraph exits before a terminal node."""
+    node = _run_current_node(repo, state, current_node)
+    message = _graph_exit_error_message(state, node)
+    run_id = state.get("workflow_run_id")
+    if run_id:
+        try:
+            repo.update_workflow_run(
+                run_id,
+                status="blocked",
+                current_node=node,
+                error_message=message,
+                prompt_tokens=state.get("prompt_tokens", 0),
+                completion_tokens=state.get("completion_tokens", 0),
+                total_tokens=state.get("total_tokens", 0),
+                duration_ms=state.get("duration_ms", 0),
+            )
+        except Exception:
+            logger.warning("Failed to block incomplete workflow run %s", run_id, exc_info=True)
+
+        try:
+            repo.create_workflow_node_event(
+                run_id=run_id,
+                project_id=str(state.get("project_id", "")),
+                chapter_number=int(state.get("chapter_number", 0)),
+                node_name=node,
+                event_type="workflow_interrupted",
+                status="blocked",
+                message=message,
+                error_code="WORKFLOW_INTERRUPTED_BEFORE_TERMINAL",
+                error_message=message,
+            )
+        except Exception:
+            logger.debug("Failed to log incomplete workflow exit for %s", run_id, exc_info=True)
+    return message
 
 
 def _mark_run_failed(repo: Repository, run_id: str | None, error: str) -> None:
@@ -561,6 +651,26 @@ def run_with_graph(
             "duration_ms": state.get("duration_ms", 0),
         }
 
+    if not _graph_exit_is_success(result_state):
+        interrupted_error = result_state.get("error") or _block_incomplete_graph_exit(
+            repo,
+            result_state,
+            result_state.get("current_node"),
+        )
+        return {
+            "run_id": result_state.get("workflow_run_id", ""),
+            "chapter_status": result_state.get("chapter_status"),
+            "steps": result_state.get("steps", []),
+            "error": interrupted_error,
+            "requires_human": True,
+            "workflow_interrupted": True,
+            "awaiting_publish": False,
+            "prompt_tokens": result_state.get("prompt_tokens", 0),
+            "completion_tokens": result_state.get("completion_tokens", 0),
+            "total_tokens": result_state.get("total_tokens", 0),
+            "duration_ms": result_state.get("duration_ms", 0),
+        }
+
     # Map to Dispatcher return shape
     return {
         "run_id": result_state.get("workflow_run_id", ""),
@@ -783,7 +893,27 @@ def run_with_graph_stream(
                 "duration_ms": duration_ms,
             }
 
-        # Emit run_complete
+        if not _graph_exit_is_success(state):
+            interrupted_error = state.get("error") or _block_incomplete_graph_exit(
+                repo,
+                state,
+                current_agent,
+            )
+            yield {
+                "type": "run_error",
+                "run_id": state.get("workflow_run_id", ""),
+                "error": interrupted_error,
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": True,
+                "workflow_interrupted": True,
+                "prompt_tokens": state.get("prompt_tokens", 0),
+                "completion_tokens": state.get("completion_tokens", 0),
+                "total_tokens": state.get("total_tokens", 0),
+                "duration_ms": state.get("duration_ms", 0),
+            }
+            return
+
+        # Emit run_complete only after a coherent terminal graph outcome.
         yield {
             "type": "run_complete",
             "chapter_status": state.get("chapter_status"),

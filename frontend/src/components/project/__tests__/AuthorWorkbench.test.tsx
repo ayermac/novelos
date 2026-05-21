@@ -191,6 +191,33 @@ describe('AuthorWorkbench', () => {
     expect(screen.getByText('完成正文')).toBeInTheDocument()
   })
 
+  it('does not label completed run with polished/editor state as publish-ready', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="workflow"
+        currentChapterRecord={{ chapter_number: 3, status: 'polished', word_count: 3800, title: '第三章' }}
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-incomplete',
+          run_status: 'completed',
+          chapter_status: 'polished',
+          current_node: 'editor',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 8,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          nodes: [],
+        }}
+      />
+    )
+
+    expect(screen.getByText('工作流提前结束')).toBeInTheDocument()
+    expect(screen.getByText(/章节仍停在/)).toHaveTextContent('已润色')
+    expect(screen.queryByText('工作流已完成，可查看产物或继续下一章。')).not.toBeInTheDocument()
+  })
+
   it('renders node logs while workflow is streaming', () => {
     render(
       <AuthorWorkbench
@@ -217,6 +244,110 @@ describe('AuthorWorkbench', () => {
     expect(screen.getByText('工作流运行中')).toBeInTheDocument()
     expect(screen.getByText('节点日志')).toBeInTheDocument()
     expect(screen.getByText('润色节点已开始处理。')).toBeInTheDocument()
+  })
+
+  it('renders detailed workflow logs with flow, agent, revision, and payload rows', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="logs"
+        runDetail={{
+          run_id: 'run-logs',
+          project_id: 'test-proj',
+          chapter_number: 3,
+          workflow_status: 'running',
+          chapter_status: 'drafted',
+          current_node: 'author',
+          llm_mode: 'real',
+          total_tokens: 9679,
+          steps: [],
+        }}
+        runsForChapter={[{
+          run_id: 'run-logs',
+          chapter_number: 3,
+          status: 'running',
+          created_at: '2026-05-13T10:00:00',
+        }]}
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 3,
+          run_id: 'run-logs',
+          run_status: 'running',
+          current_node: 'author',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 2,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          nodes: [
+            {
+              node_name: 'author',
+              label: '执笔',
+              node_group: 'creative_agent',
+              node_type: 'creative_agent',
+              status: 'running',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: null,
+              duration_ms: null,
+              messages: ['读取上下文完成：6 个场景、字数目标 3000'],
+              artifacts: [],
+              events: [
+                {
+                  id: 1,
+                  node_name: 'author',
+                  event_type: 'llm_completed',
+                  status: 'success',
+                  message: 'LLM 调用完成：耗时 110.2s，9679 tokens',
+                  token_count: 9679,
+                  latency_ms: 110200,
+                  created_at: '2026-05-13T10:01:50',
+                  payload: { model: 'author', word_count_target: 3000 },
+                },
+                {
+                  id: 2,
+                  node_name: 'author',
+                  event_type: 'quality_gate_retry',
+                  status: 'warning',
+                  message: 'Author 未完成场景 beat 覆盖，正文未写到章末钩子',
+                  created_at: '2026-05-13T10:01:55',
+                  payload: { revision_target: 'author', retry_count: 2 },
+                },
+              ],
+            },
+          ],
+        }}
+        sseSteps={{
+          author: {
+            status: 'running',
+            started_at: '2026-05-13T10:00:00',
+            logs: [
+              {
+                id: 'live-context',
+                timestamp: '2026-05-13T10:00:01',
+                level: 'info',
+                message: '上下文加载：读取 scene beats 和章节指令',
+              },
+            ],
+          },
+        }}
+      />
+    )
+
+    expect(screen.getByRole('button', { name: '日志' })).toBeInTheDocument()
+    expect(screen.getByLabelText('工作流详细日志')).toBeInTheDocument()
+    expect(screen.getByText('LLM 调用完成：耗时 110.2s，9679 tokens')).toBeInTheDocument()
+    expect(screen.getByText('Author 未完成场景 beat 覆盖，正文未写到章末钩子')).toBeInTheDocument()
+    expect(screen.getByText('上下文加载：读取 scene beats 和章节指令')).toBeInTheDocument()
+    expect(screen.getByText('9679 tokens')).toBeInTheDocument()
+    expect(screen.getAllByText('返修').length).toBeGreaterThan(0)
+    expect(screen.getByText('JSON list')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '复制 JSON' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getAllByRole('button', { name: '展开 payload' })[0])
+    expect(screen.getByText(/word_count_target/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '展开 JSON' }))
+    expect(screen.getByText(/"event_type": "quality_gate_retry"/)).toBeInTheDocument()
+    expect(screen.getByText(/"source": "live"/)).toBeInTheDocument()
   })
 
   it('content tab shows loading state without workflow steps while streaming', () => {

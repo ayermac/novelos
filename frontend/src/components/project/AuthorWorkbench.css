@@ -1477,6 +1477,223 @@
   box-shadow: none;
 }
 
+.workflow-log-view {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.workflow-log-summary {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(108px, 1fr));
+  gap: 8px;
+}
+
+.workflow-log-summary > div {
+  min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--wb-border);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.workflow-log-summary span {
+  display: block;
+  font-size: 11px;
+  color: var(--wb-text-dark-muted);
+  margin-bottom: 4px;
+}
+
+.workflow-log-summary strong {
+  display: block;
+  font-size: 13px;
+  color: var(--wb-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workflow-log-export {
+  border: 1px solid var(--wb-border);
+  border-radius: 4px;
+  background: #fff;
+}
+
+.workflow-log-export-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+}
+
+.workflow-log-export-head strong {
+  display: block;
+  font-size: 13px;
+  color: var(--wb-ink);
+  margin-bottom: 3px;
+}
+
+.workflow-log-export-head span {
+  display: block;
+  font-size: 12px;
+  color: var(--wb-text-dark-muted);
+  line-height: 1.5;
+}
+
+.workflow-log-export-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.workflow-log-export pre {
+  margin: 0;
+  padding: 10px 12px;
+  max-height: 420px;
+  overflow: auto;
+  border-top: 1px solid var(--wb-border-soft);
+  background: #1f2933;
+  color: #f6f1e7;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.workflow-log-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--wb-border);
+  border-radius: 4px;
+  background: #fff;
+  overflow: hidden;
+}
+
+.workflow-log-row {
+  display: grid;
+  grid-template-columns: 156px minmax(0, 1fr);
+  gap: 12px;
+  padding: 12px;
+  border-bottom: 1px solid var(--wb-border-soft);
+}
+
+.workflow-log-row:last-child {
+  border-bottom: none;
+}
+
+.workflow-log-row.warning {
+  background: rgba(188, 113, 31, 0.06);
+}
+
+.workflow-log-row.error {
+  background: rgba(159, 24, 72, 0.06);
+}
+
+.workflow-log-time {
+  font-size: 11px;
+  color: var(--wb-text-dark-muted);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.5;
+}
+
+.workflow-log-main {
+  min-width: 0;
+}
+
+.workflow-log-head {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.workflow-log-level,
+.workflow-log-category,
+.workflow-log-node,
+.workflow-log-event {
+  display: inline-flex;
+  align-items: center;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 4px;
+  font-size: 11px;
+  line-height: 1;
+  background: var(--wb-paper-muted);
+  color: var(--wb-text-dark-secondary);
+}
+
+.workflow-log-level.success {
+  color: var(--wb-success);
+  background: var(--wb-success-soft);
+}
+
+.workflow-log-level.warning {
+  color: var(--wb-warning);
+  background: var(--wb-warning-soft);
+}
+
+.workflow-log-level.error {
+  color: var(--wb-danger);
+  background: var(--wb-danger-soft);
+}
+
+.workflow-log-node {
+  font-weight: 650;
+  color: var(--wb-ink);
+}
+
+.workflow-log-message {
+  color: var(--wb-ink);
+  font-size: 13px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.workflow-log-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--wb-text-dark-muted);
+}
+
+.workflow-log-payload {
+  margin-top: 8px;
+}
+
+.workflow-log-payload-toggle {
+  min-height: 28px;
+  border: 1px solid var(--wb-border);
+  border-radius: 4px;
+  background: var(--wb-paper-muted);
+  color: var(--wb-text-dark-secondary);
+  font-size: 12px;
+  padding: 0 9px;
+  cursor: pointer;
+}
+
+.workflow-log-payload-toggle:hover {
+  color: var(--wb-ink);
+  border-color: var(--wb-border-strong);
+}
+
+.workflow-log-payload pre {
+  margin: 8px 0 0;
+  padding: 10px;
+  max-height: 360px;
+  overflow: auto;
+  border-radius: 4px;
+  background: #1f2933;
+  color: #f6f1e7;
+  font-size: 11px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 .author-surface-empty {
   background: #fff;
   border-color: var(--wb-border);

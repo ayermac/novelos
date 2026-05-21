@@ -285,6 +285,7 @@ export interface WorkflowTimelineData {
   chapter_number: number
   run_id: string | null
   run_status: string | null
+  chapter_status?: string | null
   current_node: string | null
   started_at: string | null
   elapsed_minutes: number | null

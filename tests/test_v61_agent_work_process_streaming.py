@@ -347,6 +347,54 @@ class TestTimelineExecutionEvents:
         assert author_node["evidence"]["has_evidence_failure"] is False
         assert author_node["evidence"]["event_count"] == 3
 
+    def test_timeline_exposes_detailed_llm_request_response_payloads(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "demo")
+        run_id = _seed_run(repo, "demo", status="running", current_node="author")
+
+        request_payload = {
+            "provider": "openai_compatible",
+            "model": "trace-model",
+            "message_count": 2,
+            "messages": [
+                {"role": "system", "content": "系统提示"},
+                {"role": "user", "content": "完整章节上下文"},
+            ],
+            "temperature": 0.7,
+            "max_tokens": 4096,
+        }
+        response_payload = {
+            "content": "{\"title\": \"第一章\"}",
+            "usage": {"prompt_tokens": 100, "completion_tokens": 200, "total_tokens": 300},
+            "finish_reason": "stop",
+        }
+        repo.create_workflow_execution_event(
+            run_id=run_id, project_id="demo", chapter_number=1,
+            node_name="author", event_type="llm_request_detail",
+            message="LLM 请求详情：author",
+            payload=request_payload,
+        )
+        repo.create_workflow_execution_event(
+            run_id=run_id, project_id="demo", chapter_number=1,
+            node_name="author", event_type="llm_response_detail",
+            message="LLM 响应详情：author",
+            payload=response_payload,
+            token_count=300,
+            latency_ms=64000,
+        )
+
+        resp = client.get("/api/projects/demo/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        author_node = next(n for n in data["nodes"] if n["node_name"] == "author")
+        events = author_node["events"]
+
+        assert [e["event_type"] for e in events] == ["llm_request_detail", "llm_response_detail"]
+        assert events[0]["payload"]["messages"][1]["content"] == "完整章节上下文"
+        assert events[1]["payload"]["usage"]["total_tokens"] == 300
+        assert events[1]["token_count"] == 300
+        assert events[1]["latency_ms"] == 64000
+
     def test_timeline_backward_compatible_without_execution_events(self, tmp_path):
         client, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "demo")

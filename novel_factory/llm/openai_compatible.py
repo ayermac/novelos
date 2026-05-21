@@ -88,6 +88,18 @@ class TokenUsage:
         }
 
 
+def _message_to_dict(message: Any) -> dict[str, Any]:
+    """Convert LangChain or plain message objects to loggable dicts."""
+    if isinstance(message, dict):
+        return {
+            "role": str(message.get("role", "user")),
+            "content": redact_sensitive_text(str(message.get("content", ""))),
+        }
+    role = getattr(message, "type", None) or getattr(message, "role", None) or message.__class__.__name__
+    content = getattr(message, "content", "")
+    return {"role": str(role), "content": redact_sensitive_text(str(content))}
+
+
 class OpenAICompatibleProvider(LLMProvider):
     """LLM provider using OpenAI-compatible API via LangChain."""
 
@@ -95,6 +107,7 @@ class OpenAICompatibleProvider(LLMProvider):
         self.config = config or LLMConfig()
         self._client: BaseChatModel | None = None
         self.last_token_usage: TokenUsage | None = None
+        self.last_call_trace: dict[str, Any] | None = None
         self._last_call_started_at: float | None = None
 
     @property
@@ -194,13 +207,35 @@ class OpenAICompatibleProvider(LLMProvider):
                 min=self.config.retry_min_seconds,
                 max=self.config.retry_max_seconds,
             ),
-            retry=retry_if_exception_type((RateLimitError, LLMTimeoutError, LLMConnectionError)),
+            retry=retry_if_exception_type((RateLimitError, LLMConnectionError)),
             before_sleep=before_sleep_log(logger, logging.WARNING),
             reraise=True,
         )
 
         for attempt in retryer:
             with attempt:
+                attempt_number = attempt.retry_state.attempt_number
+                request_payload = {
+                    "provider": self.config.provider,
+                    "base_url": redact_sensitive_text(self.config.base_url),
+                    "model": self.config.model,
+                    "temperature": kwargs.get("temperature", self.config.temperature),
+                    "max_tokens": kwargs.get("max_tokens", self.config.max_tokens),
+                    "request_timeout_seconds": request_timeout_seconds or self.config.request_timeout_seconds,
+                    "retry_attempts_configured": attempts,
+                    "attempt_number": attempt_number,
+                    "message_count": len(lc_messages),
+                    "messages": [_message_to_dict(msg) for msg in lc_messages],
+                    "kwargs": {
+                        key: redact_sensitive_text(str(value))
+                        for key, value in kwargs.items()
+                    },
+                }
+                self.last_call_trace = {
+                    "request": request_payload,
+                    "response": None,
+                    "error": None,
+                }
                 try:
                     interval = max(0.0, float(getattr(self.config, "min_interval_seconds", 0.0) or 0.0))
                     if interval > 0 and self._last_call_started_at is not None:
@@ -211,9 +246,13 @@ class OpenAICompatibleProvider(LLMProvider):
                     self._last_call_started_at = start_time
                     response = client.invoke(lc_messages, **kwargs)
                     duration_ms = int((time.time() - start_time) * 1000)
-                except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
+                except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError) as e:
+                    if self.last_call_trace is not None:
+                        self.last_call_trace["error"] = redact_sensitive_text(str(e))
                     raise
                 except Exception as e:
+                    if self.last_call_trace is not None:
+                        self.last_call_trace["error"] = redact_sensitive_text(str(e))
                     self._handle_api_error(e, timeout_seconds=request_timeout_seconds)
 
                 # Extract token usage if available
@@ -237,10 +276,29 @@ class OpenAICompatibleProvider(LLMProvider):
                     total_tokens=total_tokens,
                     duration_ms=duration_ms,
                 )
+                response_text = redact_sensitive_text(str(getattr(response, "content", "")))
+                response_payload = {
+                    "content": response_text,
+                    "content_preview": response_text[:2000],
+                    "content_length": len(response_text),
+                    "usage": self.last_token_usage.to_dict(),
+                    "response_metadata": getattr(response, "response_metadata", None) or {},
+                    "finish_reason": (
+                        (getattr(response, "response_metadata", None) or {}).get("finish_reason")
+                        or (getattr(response, "response_metadata", None) or {}).get("stop_reason")
+                    ),
+                    "attempt_number": attempt_number,
+                    "duration_ms": duration_ms,
+                }
+                self.last_call_trace = {
+                    "request": request_payload,
+                    "response": response_payload,
+                    "error": None,
+                }
                 logger.info(
                     "LLM call completed model=%s attempt=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s duration_ms=%s",
                     self.config.model,
-                    attempt.retry_state.attempt_number,
+                    attempt_number,
                     prompt_tokens,
                     completion_tokens,
                     total_tokens,
@@ -284,6 +342,14 @@ class OpenAICompatibleProvider(LLMProvider):
         for attempt in range(max_retries + 1):
             try:
                 response = self._invoke_with_retry(lc_messages, **kwargs)
+                if self.last_call_trace is not None:
+                    self.last_call_trace.setdefault("request", {})
+                    self.last_call_trace["request"].update({
+                        "call_type": "json",
+                        "schema": getattr(schema, "__name__", None) if schema else None,
+                        "json_parse_attempt": attempt + 1,
+                        "json_parse_max_attempts": max_retries + 1,
+                    })
                 text = response.content
                 json_str = self._extract_json(text)
                 return json.loads(json_str)
@@ -341,6 +407,11 @@ class OpenAICompatibleProvider(LLMProvider):
                 request_timeout_seconds=request_timeout_seconds,
                 **kwargs,
             )
+            if self.last_call_trace is not None:
+                self.last_call_trace.setdefault("request", {})
+                self.last_call_trace["request"].update({
+                    "call_type": "text",
+                })
             return response.content
         except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
             raise

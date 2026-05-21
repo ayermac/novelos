@@ -84,9 +84,10 @@ def _run_chapter_background(
         )
         if result.get("error"):
             # Some setup failures return before a workflow node can finalize.
+            status = "blocked" if result.get("workflow_interrupted") else "failed"
             repo.update_workflow_run(
                 run_id,
-                status="failed",
+                status=status,
                 error_message=result.get("error"),
             )
     except Exception as exc:
@@ -272,7 +273,10 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
                 },
             )
 
-        if error:
+        if error and result.get("workflow_interrupted"):
+            workflow_status = "blocked"
+            message = "章节生成提前结束，需要继续生成或人工检查"
+        elif error:
             workflow_status = "failed"
             message = "章节生成失败"
         elif requires_human or chapter_status == "blocking":
@@ -313,6 +317,7 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
             "requires_human": requires_human,
             "awaiting_publish": awaiting_publish,
             "error": error,
+            "workflow_interrupted": bool(result.get("workflow_interrupted")),
             "llm_mode": llm_mode,
             "message": message,
             "prompt_tokens": result.get("prompt_tokens", 0),
@@ -503,7 +508,8 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
             body.project_id,
             body.chapter,
         )
-        if memory_result.get("error"):
+        memory_incomplete = bool(memory_result.get("memory_incomplete"))
+        if memory_result.get("error") and not memory_incomplete:
             code = "MEMORY_CURATOR_INCOMPLETE" if memory_result.get("memory_incomplete") else "MEMORY_CURATOR_FAILED"
             details = memory_incomplete_details(
                 memory_result,

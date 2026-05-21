@@ -137,6 +137,25 @@ class TestEditorOutput:
         output = EditorOutput(**data)
         assert output.state_card == {}
 
+    def test_issue_objects_normalize_to_strings(self):
+        """Real LLMs often return structured issue objects."""
+        data = {
+            "pass": False,
+            "score": 78,
+            "scores": {"setting": 22, "logic": 18, "poison": 18, "text": 12, "pacing": 8},
+            "issues": [
+                {"type": "CRITICAL-硬阻", "message": "章末钩子未完成"},
+            ],
+            "suggestions": [
+                {"type": "ENDING", "suggestion": "补足任务结算界面"},
+            ],
+            "revision_target": "author",
+            "state_card": {},
+        }
+        output = EditorOutput(**data)
+        assert output.issues == ["CRITICAL-硬阻: 章末钩子未完成"]
+        assert output.suggestions == ["ENDING: 补足任务结算界面"]
+
     def test_invalid_revision_target(self):
         """revision_target must be author/polisher/planner/null."""
         data = {

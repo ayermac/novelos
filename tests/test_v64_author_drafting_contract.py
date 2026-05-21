@@ -763,3 +763,145 @@ class TestAuthorLiveCallBudget:
         assert llm.calls[-1]["max_tokens"] <= 4096
         assert llm.config.request_timeout_seconds == 60
         assert llm.config.retry_attempts == 3
+
+    def test_revision_plain_text_prompt_preserves_existing_length_when_not_compressing(self, repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.config.settings import LLMConfig
+        from novel_factory.llm.provider import LLMProvider
+
+        class LiveLikeLLM(LLMProvider):
+            def __init__(self):
+                self.config = LLMConfig(
+                    base_url="https://example.test/v1",
+                    api_key="sk-test",
+                    model="revision-author-model",
+                )
+                self.calls = []
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None, max_retries=None):
+                return {}
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ):
+                self.calls.append({
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "max_retries": max_retries,
+                    "request_timeout_seconds": request_timeout_seconds,
+                })
+                return "他推开门，潮湿的风贴着袖口钻进来。" * 180
+
+        existing = "第1章 测试\n\n" + ("旧稿内容，场景仍在推进。" * 260)
+        repo.save_chapter_content("test_proj", 1, existing, "第一章 测试")
+        repo.update_chapter_status("test_proj", 1, "revision")
+
+        llm = LiveLikeLLM()
+        agent = AuthorAgent(repo, llm)
+        output = agent._try_plain_text_draft(
+            {
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "revision",
+                "llm_mode": "real",
+                "_revision_review": {
+                    "suggestions": ["补足章末钩子", "增加对白冲突"],
+                },
+            },
+            "返修",
+            agent.build_context({
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "revision",
+            }),
+        )
+
+        prompt = llm.calls[-1]["messages"][1]["content"]
+        assert output.content
+        assert "Editor 未要求压缩" in prompt
+        assert "不要主动压缩" in prompt
+        assert "【当前保留稿 / 必须在此基础上返修】" in prompt
+        assert "旧稿内容，场景仍在推进。" in prompt
+        assert "禁止脱离该底稿另起炉灶重写短版" in prompt
+        assert "最多不要超过 3250 字符" not in prompt
+        assert llm.calls[-1]["max_tokens"] > 4096
+
+    def test_revision_length_regression_repair_merges_candidate_with_current_draft(self, repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.config.settings import LLMConfig
+        from novel_factory.llm.provider import LLMProvider
+        from novel_factory.models.schemas import AuthorOutput
+
+        class LiveLikeLLM(LLMProvider):
+            def __init__(self):
+                self.config = LLMConfig(
+                    base_url="https://example.test/v1",
+                    api_key="sk-test",
+                    model="revision-repair-model",
+                )
+                self.calls = []
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None, max_retries=None):
+                return {}
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ):
+                self.calls.append({
+                    "messages": messages,
+                    "max_tokens": max_tokens,
+                    "max_retries": max_retries,
+                    "request_timeout_seconds": request_timeout_seconds,
+                })
+                return "第1章 测试\n\n" + ("旧稿主体继续推进，候选钩子已合并。" * 260)
+
+        current = "第1章 测试\n\n" + ("旧稿主体继续推进。" * 260)
+        repo.save_chapter_content("test_proj", 1, current, "第一章 测试")
+        repo.update_chapter_status("test_proj", 1, "revision")
+
+        llm = LiveLikeLLM()
+        agent = AuthorAgent(repo, llm)
+        repaired = agent._try_repair_revision_length_regression(
+            state={
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "revision",
+                "llm_mode": "real",
+            },
+            output=AuthorOutput(
+                title="第一章 测试",
+                content="第1章 测试\n\n" + ("短返修稿补了章末钩子。" * 40),
+                word_count=100,
+                implemented_events=[],
+                used_plot_refs=[],
+            ),
+            chapter=repo.get_chapter("test_proj", 1),
+            revision_review={
+                "issues": ["正文章末被截断", "章末钩子不完整"],
+                "suggestions": ["补全任务结算和失败名单编号"],
+            },
+            fallback_context=agent.build_context({
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "revision",
+            }),
+        )
+
+        prompt = llm.calls[-1]["messages"][1]["content"]
+        assert repaired is not None
+        assert "返修候选稿明显变短" in prompt
+        assert "【当前保留稿】" in prompt
+        assert "【候选返修稿】" in prompt
+        assert "不要另起炉灶重写短版" in prompt
+        assert "旧稿主体继续推进。" in prompt
+        assert "短返修稿补了章末钩子。" in prompt

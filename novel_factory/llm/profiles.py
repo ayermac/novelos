@@ -6,7 +6,7 @@ Defines the structure of LLM profiles that can be assigned to different agents.
 from __future__ import annotations
 
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class LLMProfile(BaseModel):
@@ -38,6 +38,15 @@ class LLMProfile(BaseModel):
     retry_min_seconds: float = 1.0
     retry_max_seconds: float = 30.0
     min_interval_seconds: float = 0.0
+
+    @model_validator(mode="before")
+    @classmethod
+    def _normalize_legacy_timeout(cls, data):
+        """Accept desktop-era `timeout` as an alias for request_timeout_seconds."""
+        if isinstance(data, dict) and data.get("request_timeout_seconds") is None and data.get("timeout") is not None:
+            data = dict(data)
+            data["request_timeout_seconds"] = data["timeout"]
+        return data
     
     def get_resolved_base_url(self, env_getter) -> Optional[str]:
         """Resolve base_url from direct value or environment variable.

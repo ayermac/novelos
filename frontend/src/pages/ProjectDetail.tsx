@@ -152,7 +152,7 @@ export default function ProjectDetail() {
 
   useEffect(() => {
     if (activeModule !== 'chapters') return
-    if (requestedView && ['content', 'workflow', 'artifacts', 'history', 'versions'].includes(requestedView)) {
+    if (requestedView && ['content', 'workflow', 'artifacts', 'history', 'logs', 'versions'].includes(requestedView)) {
       setActiveTab(requestedView)
     } else if (!requestedView) {
       setActiveTab('content')
@@ -219,7 +219,7 @@ export default function ProjectDetail() {
   }, [])
 
   useEffect(() => {
-    if (activeTab !== 'workflow' && activeTab !== 'artifacts') return
+    if (activeTab !== 'workflow' && activeTab !== 'artifacts' && activeTab !== 'logs') return
 
     const runsForCurrentChapter = (workspace?.recent_runs || [])
       .filter((r) => r.chapter_number === currentChapter)
@@ -227,15 +227,15 @@ export default function ProjectDetail() {
     if (latestRun) loadRunDetail(latestRun.run_id)
     else setRunDetail(null)
 
-    // v5.8: Load timeline for workflow/artifacts tabs
-    if ((activeTab === 'workflow' || activeTab === 'artifacts') && id) {
+    // v5.8: Load timeline for workflow/artifacts/logs tabs
+    if ((activeTab === 'workflow' || activeTab === 'artifacts' || activeTab === 'logs') && id) {
       loadTimeline(id, currentChapter)
     }
   }, [activeTab, currentChapter, workspace?.recent_runs, loadRunDetail, loadTimeline, id])
 
   // v5.8: Auto-refresh timeline when in workflow view
   useEffect(() => {
-    if ((activeModule !== 'chapters' && activeModule !== 'overview') || activeTab !== 'workflow') return
+    if ((activeModule !== 'chapters' && activeModule !== 'overview') || (activeTab !== 'workflow' && activeTab !== 'logs')) return
     if (!id) return
 
     const shouldPoll = timeline?.run_status === 'running' || runDetail?.workflow_status === 'running'
@@ -258,7 +258,7 @@ export default function ProjectDetail() {
 
   // Legacy run detail polling (keep for backward compatibility)
   useEffect(() => {
-    if ((activeModule !== 'chapters' && activeModule !== 'overview') || activeTab !== 'workflow') return
+    if ((activeModule !== 'chapters' && activeModule !== 'overview') || (activeTab !== 'workflow' && activeTab !== 'logs')) return
     const runsForCurrentChapter = (workspace?.recent_runs || [])
       .filter((r) => r.chapter_number === currentChapter)
     const latestRun = runsForCurrentChapter.length > 0 ? runsForCurrentChapter[0] : null
@@ -367,13 +367,13 @@ export default function ProjectDetail() {
       chapter: String(chapterNumber),
       ...(tab === 'content' ? {} : { view: tab }),
     }, { replace: true })
-    if (tab === 'workflow' || tab === 'artifacts') {
+    if (tab === 'workflow' || tab === 'artifacts' || tab === 'logs') {
       const runsForChapter = (workspace?.recent_runs || [])
         .filter((r) => r.chapter_number === chapterNumber)
       const latestRun = runsForChapter.length > 0 ? runsForChapter[0] : null
       if (latestRun) loadRunDetail(latestRun.run_id)
       else setRunDetail(null)
-      if ((tab === 'workflow' || tab === 'artifacts') && id) {
+      if ((tab === 'workflow' || tab === 'artifacts' || tab === 'logs') && id) {
         loadTimeline(id, chapterNumber)
       }
     }

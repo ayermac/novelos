@@ -15,7 +15,11 @@ from novel_factory.workflow.conditions import (
     route_by_revision_type,
     route_after_agent,
 )
-from novel_factory.workflow.runner import _clear_stale_checkpoint_for_new_run
+from novel_factory.workflow.runner import (
+    _block_incomplete_graph_exit,
+    _clear_stale_checkpoint_for_new_run,
+    _graph_exit_is_success,
+)
 
 
 class TestRouteByChapterStatus:
@@ -154,6 +158,69 @@ class TestFreshRunCheckpointCleanup:
         assert repo.failed_runs[0]["status"] == "failed"
 
 
+class TestGraphExitGuard:
+    class FakeRepo:
+        def __init__(self):
+            self.updates = []
+            self.events = []
+
+        def get_workflow_runs_for_project(self, project_id, chapter_number=None, limit=20):
+            return [
+                {
+                    "id": "run-1",
+                    "status": "running",
+                    "current_node": "editor",
+                }
+            ]
+
+        def update_workflow_run(self, run_id, **kwargs):
+            self.updates.append({"run_id": run_id, **kwargs})
+            return True
+
+        def create_workflow_node_event(self, **kwargs):
+            self.events.append(kwargs)
+            return len(self.events)
+
+    def test_graph_exit_requires_terminal_status(self):
+        assert _graph_exit_is_success({"chapter_status": "published"}) is True
+        assert _graph_exit_is_success({"chapter_status": "awaiting_publish"}) is True
+        assert _graph_exit_is_success({
+            "chapter_status": "reviewed",
+            "awaiting_publish": True,
+            "requires_human": True,
+        }) is True
+        assert _graph_exit_is_success({"chapter_status": "polished"}) is False
+        assert _graph_exit_is_success({"chapter_status": "reviewed"}) is False
+
+    def test_incomplete_graph_exit_marks_run_blocked_at_current_node(self):
+        repo = self.FakeRepo()
+        state = {
+            "workflow_run_id": "run-1",
+            "project_id": "demo",
+            "chapter_number": 1,
+            "chapter_status": "polished",
+            "total_tokens": 123,
+        }
+
+        message = _block_incomplete_graph_exit(repo, state, current_node="polisher")
+
+        assert "WORKFLOW_INTERRUPTED_BEFORE_TERMINAL" in message
+        assert repo.updates == [
+            {
+                "run_id": "run-1",
+                "status": "blocked",
+                "current_node": "editor",
+                "error_message": message,
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 123,
+                "duration_ms": 0,
+            }
+        ]
+        assert repo.events[0]["event_type"] == "workflow_interrupted"
+        assert repo.events[0]["node_name"] == "editor"
+
+
 class TestRouteByReviewResult:
     def test_pass_goes_to_memory_curator_in_stub_mode(self):
         """v5.3.2: Stub mode routes to memory_curator after pass."""
@@ -181,6 +248,17 @@ class TestRouteByReviewResult:
                 "revision_target": "author",
                 "death_penalty_fail": True,
             }
+        }
+        assert route_after_agent(state) == "revision_router"
+
+    def test_version_regression_gate_after_agent_goes_to_revision(self):
+        state = {
+            "chapter_status": "revision",
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "author",
+                "version_regression": True,
+            },
         }
         assert route_after_agent(state) == "revision_router"
 
@@ -494,6 +572,63 @@ class TestWorkflowNodeRevisionHardening:
         assert updated["_exec_events"][0]["event_type"] == "quality_gate_retry"
         assert "error" not in updated
         assert repo.started_tasks[0]["agent_id"] == "polisher"
+
+    def test_scene_beat_coverage_gate_is_retryable_to_author(self):
+        from novel_factory.workflow.nodes import _handle_retryable_quality_gate
+
+        repo = self.FakeGateRepo()
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "workflow_run_id": "run-1",
+            "max_retries": 3,
+        }
+        result = {
+            "error": "scene beat coverage failed",
+            "quality_gate": {
+                "pass": False,
+                "scene_beat_coverage_fail": True,
+                "revision_target": "author",
+            },
+        }
+
+        updated = _handle_retryable_quality_gate(state, repo, result)
+
+        assert updated["chapter_status"] == ChapterStatus.REVISION.value
+        assert updated["retry_count"] == 1
+        assert updated["requires_human"] is False
+        assert updated["retryable_quality_gate"] is True
+        assert "error" not in updated
+        assert repo.started_tasks[0]["agent_id"] == "author"
+
+    def test_version_regression_gate_is_retryable_to_author(self):
+        from novel_factory.workflow.nodes import _handle_retryable_quality_gate
+
+        repo = self.FakeGateRepo()
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "workflow_run_id": "run-1",
+            "max_retries": 3,
+        }
+        result = {
+            "error": "revision regressed",
+            "quality_gate": {
+                "pass": False,
+                "version_regression": True,
+                "revision_target": "author",
+                "message": "新稿比当前短 41.7%，且 Editor 未要求压缩",
+            },
+        }
+
+        updated = _handle_retryable_quality_gate(state, repo, result)
+
+        assert updated["chapter_status"] == ChapterStatus.REVISION.value
+        assert updated["retry_count"] == 1
+        assert updated["requires_human"] is False
+        assert updated["retryable_quality_gate"] is True
+        assert "error" not in updated
+        assert repo.started_tasks[0]["agent_id"] == "author"
 
     def test_revision_router_node_returns_hydrated_updates_for_langgraph_merge(self):
         from novel_factory.workflow.nodes import revision_router_node

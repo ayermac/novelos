@@ -166,6 +166,27 @@ class TestQualityHubDiagnose:
             if os.path.exists(db_path):
                 os.unlink(db_path)
 
+    def test_diagnose_counts_chinese_curly_quote_dialogue(self):
+        """Chinese curly quotes must count as dialogue in aggregate metrics."""
+        from novel_factory.quality.hub import QualityHub
+        from novel_factory.skills.registry import SkillRegistry
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        repo = Repository(db_path)
+        try:
+            hub = QualityHub(repo, skill_registry=SkillRegistry())
+            result = hub.diagnose("林泽停下脚步。“你知道代价吗？”老先生问。“我知道。”")
+
+            assert result["metrics"]["dialogue_count"] == 2
+            assert result["metrics"]["dialogue_ratio"] > 0
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
     def test_diagnose_structure(self):
         """Diagnosis result must have the expected structure."""
         from novel_factory.quality.hub import QualityHub
