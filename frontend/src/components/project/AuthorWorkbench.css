@@ -2347,6 +2347,55 @@ html[data-theme='dark'] .author-workbench .history-item:hover {
   border-color: rgba(240, 184, 106, 0.22) !important;
 }
 
+html[data-theme='dark'] .workflow-log-summary > div,
+html[data-theme='dark'] .workflow-log-export,
+html[data-theme='dark'] .workflow-log-list {
+  background: var(--wb-panel-soft) !important;
+  border-color: var(--wb-border) !important;
+  color: var(--wb-ink) !important;
+}
+
+html[data-theme='dark'] .workflow-log-row {
+  background: transparent !important;
+  border-color: var(--wb-border-soft) !important;
+}
+
+html[data-theme='dark'] .workflow-log-row.warning {
+  background: rgba(224, 170, 87, 0.08) !important;
+}
+
+html[data-theme='dark'] .workflow-log-row.error {
+  background: rgba(238, 139, 145, 0.08) !important;
+}
+
+html[data-theme='dark'] .workflow-log-summary strong,
+html[data-theme='dark'] .workflow-log-export-head strong,
+html[data-theme='dark'] .workflow-log-node,
+html[data-theme='dark'] .workflow-log-message {
+  color: var(--wb-ink) !important;
+}
+
+html[data-theme='dark'] .workflow-log-summary span,
+html[data-theme='dark'] .workflow-log-export-head span,
+html[data-theme='dark'] .workflow-log-time,
+html[data-theme='dark'] .workflow-log-metrics {
+  color: var(--wb-ink-muted) !important;
+}
+
+html[data-theme='dark'] .workflow-log-level,
+html[data-theme='dark'] .workflow-log-category,
+html[data-theme='dark'] .workflow-log-event,
+html[data-theme='dark'] .workflow-log-payload-toggle {
+  background: var(--wb-paper-soft) !important;
+  border-color: var(--wb-border) !important;
+  color: var(--wb-ink-secondary) !important;
+}
+
+html[data-theme='dark'] .workflow-log-payload-toggle:hover {
+  color: var(--wb-accent) !important;
+  border-color: rgba(240, 184, 106, 0.28) !important;
+}
+
 html[data-theme='dark'] .content-generation-banner,
 html[data-theme='dark'] .workflow-running-banner,
 html[data-theme='dark'] .chapter-editor-readonly-note {
