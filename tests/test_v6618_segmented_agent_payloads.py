@@ -161,6 +161,102 @@ def test_genesis_quality_gate_no_false_positives_for_structured_fields():
     assert "SHALLOW_FACTION_ACTION" not in codes, f"False positive: {codes}"
 
 
+def test_genesis_quality_gate_reads_natural_language_character_dimensions():
+    """High-quality character prose should satisfy goal/conflict/interest checks."""
+    from novel_factory.quality.genesis_quality_gate import evaluate_genesis_draft
+
+    draft = {
+        "project_updates": {
+            "description": "《潮汐档案》以2107年海洋城邦的潮汐能源系统为核心，将系列失联案、城市记忆改写与个体身份危机交织成一部冷峻克制的近未来科幻悬疑。",
+        },
+        "world_settings": [
+            {
+                "title": "2107年的海渊城",
+                "category": "时代背景",
+                "content": "海渊城依靠潮汐能源实现供电、供氧、温控、交通调度和信息同步。",
+            },
+            {
+                "title": "潮汐能源系统",
+                "category": "核心科技",
+                "content": "系统产生的低频潮汐噪声能够影响海马体记忆巩固机制。",
+            },
+        ],
+        "characters": [
+            {
+                "name": "陆澈",
+                "role": "protagonist",
+                "description": "海渊城调查员，专门处理失联案与异常档案比对，习惯从潮汐日志、通勤轨迹和监控残片里拼出真相。他追查一连串失联者时，发现自己过去某段关键经历被潮汐系统动过手脚，而他越接近核心，越怀疑自己也曾被改写过。目标是查明失联案背后的系统真相并保住自我记忆完整性。",
+            },
+            {
+                "name": "沈珂",
+                "role": "supporting",
+                "description": "潮汐档案中心的高级校验员，负责比对能源调度记录与居民神经共振数据，表面上只按规程办事，实际上一直在私下保存被删除的异常条目。她希望找出失联者真正的去向，但她自己也有一段关于家人的记忆空洞，疑似被系统修正过。她与陆澈既是线索互换的盟友，也是彼此都不完全信任的同路人。",
+            },
+            {
+                "name": "唐屿",
+                "role": "supporting",
+                "description": "海底能源塔的维护技师，出身下沉式居住层，熟悉潮汐噪声的物理传输和设备层绕行路径。他最初只想借调查保护自己被列入失联风险名单的妹妹，后来被迫承认自己曾参与过一次掩盖事故的维修任务，而那次事故可能就是记忆改写的起点之一。对陆澈的帮助是真实的，但他的立场会随着妹妹的下落不断摇摆。",
+            },
+            {
+                "name": "祁闻舟",
+                "role": "antagonist",
+                "description": "潮汐调度局记忆协调司负责人，公开身份是维护城市稳定的高阶官员，实际掌握潮汐噪声的阈值调控权限，知道系统可以在特定条件下重排居民记忆。他的目标是用有限度的记忆修正维持海渊城秩序，必要时抹除个体真相以避免城市级崩溃。陆澈越逼近失联案核心，越会触碰他刻意封存的旧事故。",
+            },
+            {
+                "name": "纪梓",
+                "role": "supporting",
+                "description": "曾与陆澈共同处理失联案的调查员，后在一次暴潮事件后突然调岗并从陆澈的社交记录中被整体抹去痕迹。她究竟是主动失联、被系统收编，还是已经成为潮汐改写的样本，都是推动主线的重要悬念。她和陆澈之间残留着一种说不清来源的熟悉感，成为他判断自己记忆是否可靠的关键参照。",
+            },
+        ],
+        "factions": [
+            {
+                "name": "潮汐调度局",
+                "type": "官方机构",
+                "description": "掌管海渊城供能、供氧、温控、交通与信息同步，拥有潮汐能源系统的最高调度权限。当前阶段正在以系统维护为名压低失联案曝光度。",
+            },
+            {
+                "name": "失联者互助网",
+                "type": "地下组织",
+                "description": "成员依靠手写记录、离线存储和低频信号交换情报，当前阶段正在收集失联者最后一次真实活动轨迹。",
+            },
+        ],
+        "outlines": [
+            {
+                "chapters_range": "1-3",
+                "title": "失联者仍在通勤",
+                "content": "陆澈接手梁述失联案。阶段冲突集中在陆澈与官方程序之间。转折：梁述最后一次真实出现的时间与一次短暂暴潮重合。阶段结果：陆澈获得梁述留下的离线录音，并在案件记录里看到陌生姓名纪梓。",
+            },
+        ],
+        "plot_holes": [
+            {
+                "code": "identity-partner",
+                "title": "不存在于陆澈记忆中的前搭档",
+                "description": "触发场景：陆澈在案件系统的旧权限栏里看到纪梓。读者看到的表象：可能是系统误录或档案串档。真相方向：纪梓曾与陆澈共同调查三年前暴潮事故。预计兑现章节：第8章。",
+            },
+        ],
+        "instructions": [
+            {
+                "chapter_number": 1,
+                "objective": "陆澈接手梁述失联案，确认案件不是普通人口流失，而是与海渊城的潮汐系统有关",
+                "key_events": "陆澈核验梁述通勤记录；家属证词与系统记录冲突；他争取原始档案权限",
+                "ending_hook": "案件系统出现陌生的共同经办人纪梓",
+                "continuity_seed": "下一章继续验证梁述案中的时间异常",
+            },
+        ],
+    }
+
+    report = evaluate_genesis_draft(
+        draft,
+        title="潮汐档案",
+        genre="近未来科幻悬疑",
+        premise="海洋城邦潮汐能源系统导致系列失联案、城市记忆改写与个体身份危机。",
+        target_chapters=3,
+    )
+
+    codes = {i.code for i in report.issues}
+    assert "SHALLOW_CHARACTER_MOTIVATION" not in codes, f"False positive: {codes}"
+
+
 def test_genesis_quality_gate_still_catches_low_quality_template_draft():
     """Low-quality template drafts must still be intercepted."""
     from novel_factory.quality.genesis_quality_gate import evaluate_genesis_draft

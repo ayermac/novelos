@@ -698,7 +698,32 @@ _CHARACTER_RELATIONSHIP_WORDS = [
     "协助", "保护", "牵制", "摇摆", "隐瞒", "补救", "利用价值", "镜像", "旧账",
     "被卷入", "被处理对象", "表面配合", "真实摇摆", "关键证人", "线索提供者",
     "合作", "敌对", "同盟", "依附", "背叛", "监视", "忌惮", "赏识", "排斥",
-    "利益", "关系", "利用",
+    "利益", "关系", "利用", "盟友", "同路人", "前搭档", "不完全信任", "帮助",
+    "共同处理", "关键参照", "熟悉感", "线索互换", "推动主线",
+]
+_CHARACTER_GOAL_PATTERNS = [
+    r"(动机|目的|目标|渴望|追求|想要|欲望|志向|执念|心愿|野心|理想)",
+    r"(希望|想|试图|企图|力图|为了|要|打算|计划|准备).{0,36}"
+    r"(查|找|寻找|确认|证明|保护|保住|维持|阻止|保存|揭|追|救|抹除|处理)",
+    r"(专门处理|负责.{0,24}(比对|维护|调控|封存|校验)|追查|寻找|查明|确认|保护|保住|"
+    r"维持|阻止|保存|揭露|证明|推动|调查)",
+]
+_CHARACTER_CONFLICT_PATTERNS = [
+    r"(矛盾|冲突|困境|压力|对立|敌对|秘密|心结|隐痛|挣扎|纠结|背叛|隐瞒|欺骗)",
+    r"(记忆空洞|被.{0,12}(改写|修正|重排|抹去|收编|封存|处理)|曾参与|掩盖事故|"
+    r"旧事故|旧案|风险名单|下落不明|身份危机|无法确认|不完全信任|立场.{0,12}摇摆|"
+    r"刻意封存|不能公开|悬念|样本|触碰)",
+    r"(怀疑自己|发现自己|被迫承认|究竟是|疑似|可能曾|越接近.{0,24}越怀疑)",
+]
+_CHARACTER_INTEREST_PATTERNS = [
+    r"(与|和|对).{0,12}(陆澈|林潮|主角).{0,32}"
+    r"(盟友|同路人|信任|帮助|触碰|对抗|压制|协助|保护|利用|参照|摇摆|阻止|"
+    r"逼近|共同|处理|熟悉感)",
+    r"(陆澈|林潮|主角).{0,32}(越|共同|帮助|关键|记忆|调查|逼近|触碰|参照|信任)",
+    r"(盟友|同路人|前搭档|关键参照|线索互换|共同处理|帮助|协助|保护|利益|立场|"
+    r"摇摆|对抗|压制|监控|利用|触碰|熟悉感|关键证人|线索提供者|推动主线)",
+    r"(自己|自身|自我|身份|记忆完整性|家人|妹妹|亲人|下落).{0,24}"
+    r"(保护|保住|风险|危机|完整性|风险名单|空洞|修正|改写)",
 ]
 
 
@@ -727,6 +752,11 @@ def _character_has_structured_interest(char: dict) -> bool:
         if value and len(value) >= 4:
             return True
     return False
+
+
+def _matches_any_pattern(text: str, patterns: list[str]) -> bool:
+    """Return True when text matches any semantic regex pattern."""
+    return any(re.search(pattern, text) for pattern in patterns)
 
 
 def _check_character_quality(characters: list[dict]) -> list[GenesisQualityIssue]:
@@ -770,22 +800,14 @@ def _check_character_quality(characters: list[dict]) -> list[GenesisQualityIssue
 
         # Fallback to description keyword scan if structured fields are absent
         if not has_motivation:
-            has_motivation = bool(
-                re.search(
-                    r"(动机|目的|目标|渴望|追求|想要|欲望|志向|执念|心愿|野心|理想)",
-                    description,
-                )
-            )
+            has_motivation = _matches_any_pattern(description, _CHARACTER_GOAL_PATTERNS)
         if not has_conflict:
-            has_conflict = bool(
-                re.search(
-                    r"(矛盾|冲突|困境|压力|对立|敌对|秘密|心结|隐痛|挣扎|纠结|背叛|隐瞒|欺骗)",
-                    description,
-                )
-            )
+            has_conflict = _matches_any_pattern(description, _CHARACTER_CONFLICT_PATTERNS)
         if not has_interest:
             interest_pattern = "|".join(re.escape(w) for w in _CHARACTER_RELATIONSHIP_WORDS)
-            has_interest = bool(re.search(interest_pattern, description))
+            has_interest = bool(re.search(interest_pattern, description)) or _matches_any_pattern(
+                description, _CHARACTER_INTEREST_PATTERNS
+            )
 
         if not has_motivation and not has_conflict and len(description) < 50:
             issues.append(
