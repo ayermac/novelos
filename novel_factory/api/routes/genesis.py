@@ -33,6 +33,13 @@ GENESIS_REQUIRED_SECTIONS = {
     "instructions": "章节指令",
 }
 
+GENESIS_SEGMENT_MAX_TOKENS = {
+    "foundation": 2400,
+    "cast": 3000,
+    "plot": 3200,
+}
+GENESIS_INSTRUCTION_CHUNK_SIZE = 5
+
 
 class GenesisGenerateRequest(BaseModel):
     """Input for project genesis generation."""
@@ -1245,9 +1252,8 @@ def _normalize_plot_status(status: str | None) -> str:
     return "planted"
 
 
-async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
-    """Generate a genesis draft using real LLM."""
-    llm = _build_genesis_llm(settings)
+def _build_genesis_common_context(body: GenesisGenerateRequest) -> str:
+    """Build shared project context for segmented Genesis prompts."""
     title_contract = build_title_contract({
         "name": body.title,
         "genre": body.genre,
@@ -1255,10 +1261,8 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
         "target_words": body.target_words,
         "total_chapters_planned": body.target_chapters,
     })
-    # v6.3.1: When premise is empty, ask the LLM to infer from title + genre.
     premise_display = body.premise.strip() or f"基于标题《{body.title}》和类型「{body.genre}」自动推断故事前提"
-    prompt = (
-        "你是一个小说项目设定专家。根据以下创作意图，生成完整的项目圣经草案。\n"
+    return (
         f"标题: {body.title}\n"
         f"类型: {body.genre}\n"
         f"创意: {premise_display}\n"
@@ -1268,57 +1272,96 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
         f"读者: {body.target_audience}\n"
         f"风格: {body.style_preference}\n"
         f"约束: {body.constraints}\n\n"
-        f"{title_contract}\n\n"
-        "请返回严格的 JSON 格式（不要用 Markdown 代码块包裹），包含以下字段:\n"
-        "- project_updates: {\"description\": \"项目描述\"}\n"
-        "- world_settings: [{\"title\": \"\", \"category\": \"\", \"content\": \"\"}]\n"
-        "- characters: [{\"name\": \"\", \"role\": \"protagonist|antagonist|supporting\", \"description\": \"\", \"traits\": \"\"}]\n"
-        "- factions: [{\"name\": \"\", \"type\": \"\", \"description\": \"\", \"relationship_with_protagonist\": \"\"}]\n"
-        "- outlines: [{\"chapters_range\": \"1-3\", \"title\": \"\", \"content\": \"\", \"level\": \"arc\", \"sequence\": 1}]\n"
-        "- plot_holes: [{\"code\": \"PH-001\", \"type\": \"\", \"title\": \"\", \"description\": \"\", \"planted_chapter\": 1, \"planned_resolve_chapter\": 10, \"status\": \"planted\"}]\n"
-        "- instructions: [{\"chapter_number\": 1, \"objective\": \"\", \"key_events\": \"\", \"emotion_tone\": \"\", \"ending_hook\": \"\", \"continuity_seed\": \"\", \"word_target\": 3000}]\n\n"
-        "【章节指令深度要求 - 必须逐章具体】\n"
-        "每章 instructions 必须包含：\n"
-        "- chapter_number: 章序号\n"
-        "- objective: 具体到本章的主角目标、遇到的阻力、以及结果变化。禁止使用\"扩大冲突/推动剧情/获得主动权/进入复杂局面\"等抽象表达。\n"
-        "- key_events: 至少 3 个具体事件，不能只有\"冲突升级/主角成长/势力入场\"。必须写出谁、在哪里、做了什么、产生了什么后果。\n"
-        "- emotion_tone: 本章情感基调\n"
-        "- ending_hook: 本章结尾钩子，明确写出悬念或转折\n"
-        "- continuity_seed: 给下一章必须继承的悬念、时间或任务\n"
-        "- word_target: 本章目标字数\n"
-        "相邻章节的 objective 和 key_events 不得复用同一抽象目标或同一套事件。\n\n"
-        "【角色深度要求】\n"
-        "每个角色必须包含：\n"
-        "- 具体姓名（不能是\"主角\"\"反派\"等通用称呼）\n"
-        "- 角色功能（protagonist/antagonist/supporting）\n"
-        "- 当前欲望/目标\n"
-        "- 内在矛盾或秘密\n"
-        "- 与主角的利益关系\n\n"
-        "【势力深度要求】\n"
-        "每个势力必须包含：\n"
-        "- 具体名称（不能是\"主角阵营\"\"敌对势力\"等通用称呼）\n"
-        "- 资源/手段\n"
-        "- 对主角的态度\n"
-        "- 当前阶段会采取的行动\n\n"
-        "【伏笔深度要求】\n"
-        "每个伏笔必须包含：\n"
-        "- 触发场景\n"
-        "- 读者看到的表象\n"
-        "- 真相方向\n"
-        "- 预计推进/兑现章节\n\n"
-        "【大纲深度要求】\n"
-        "大纲不能只写\"前期/中期/高潮\"等阶段标签，必须写出：\n"
-        "- 阶段冲突（谁和谁因什么发生冲突）\n"
-        "- 转折（什么事件打破了原有平衡）\n"
-        "- 阶段结果（这一阶段结束时主角和局势发生了什么变化）\n\n"
-        "重要规则：\n"
-        "1. 输出必须是纯 JSON，不要添加任何注释、解释或 Markdown 标记\n"
-        "2. 不要在 JSON 中使用尾逗号\n"
-        "3. 所有字符串值必须使用双引号\n"
-        "4. 数值字段（planted_chapter, planned_resolve_chapter, chapter_number, word_target, sequence）必须是整数，不要用引号包裹\n"
-        "5. 世界观、角色、大纲和章节指令必须严格兑现【书名契约】，不得生成与书名无关的通用故事模板\n"
+        f"{title_contract}\n"
     )
 
+
+def _build_genesis_segment_prompt(
+    body: GenesisGenerateRequest,
+    *,
+    segment: str,
+    draft_json: str | None = None,
+    chapter_start: int | None = None,
+    chapter_end: int | None = None,
+) -> str:
+    """Build a short, focused Genesis prompt for one segment."""
+    context = _build_genesis_common_context(body)
+    draft_block = ""
+    if draft_json:
+        draft_block = f"【已有草案 JSON】\n{draft_json}\n\n"
+
+    if segment == "foundation":
+        return (
+            "【生成段落】foundation\n"
+            f"{context}\n"
+            "请只返回严格 JSON 对象，且只包含以下字段:\n"
+            "- project_updates: {\"description\": \"项目描述\"}\n"
+            "- world_settings: [{\"title\": \"\", \"category\": \"\", \"content\": \"\"}]\n\n"
+            "要求：\n"
+            "1. 只生成世界观底座、时代背景、能力规则、冲突结构，不要返回角色、势力、大纲、伏笔或章节指令。\n"
+            "2. project_updates 的 description 要用一句话概括项目核心卖点。\n"
+            "3. world_settings 至少 3 项，避免空泛和重复。\n"
+            "4. 输出必须是纯 JSON，不要 Markdown、解释或尾逗号。"
+        )
+
+    if segment == "cast":
+        return (
+            "【生成段落】cast\n"
+            f"{context}\n"
+            f"{draft_block}"
+            "请只返回严格 JSON 对象，且只包含以下字段:\n"
+            "- characters: [{\"name\": \"\", \"role\": \"protagonist|antagonist|supporting\", \"description\": \"\", \"traits\": \"\"}]\n"
+            "- factions: [{\"name\": \"\", \"type\": \"\", \"description\": \"\", \"relationship_with_protagonist\": \"\"}]\n\n"
+            "要求：\n"
+            "1. 角色必须包含主角、核心盟友或重要配角、主要反派或对立人物。\n"
+            "2. 每个角色必须写清目标、矛盾或秘密、与主角的利益关系。\n"
+            "3. 势力必须写清资源/手段、当前阶段行动、对主角态度。\n"
+            "4. 不要返回 project_updates、world_settings、outlines、plot_holes 或 instructions。\n"
+            "5. 输出必须是纯 JSON，不要 Markdown、解释或尾逗号。"
+        )
+
+    if segment == "plot":
+        return (
+            "【生成段落】plot\n"
+            f"{context}\n"
+            f"{draft_block}"
+            "请只返回严格 JSON 对象，且只包含以下字段:\n"
+            "- outlines: [{\"chapters_range\": \"1-3\", \"title\": \"\", \"content\": \"\", \"level\": \"arc\", \"sequence\": 1}]\n"
+            "- plot_holes: [{\"code\": \"PH-001\", \"type\": \"\", \"title\": \"\", \"description\": \"\", \"planted_chapter\": 1, \"planned_resolve_chapter\": 10, \"status\": \"planted\"}]\n\n"
+            "要求：\n"
+            "1. 大纲必须写出阶段冲突、转折、阶段结果。\n"
+            "2. 伏笔必须写出触发场景、读者看到的表象、真相方向、预计兑现章节。\n"
+            "3. 不要返回 project_updates、world_settings、characters、factions 或 instructions。\n"
+            "4. 输出必须是纯 JSON，不要 Markdown、解释或尾逗号。"
+        )
+
+    if segment == "instructions":
+        if chapter_start is None or chapter_end is None:
+            raise ValueError("instructions segment requires chapter range")
+        return (
+            f"【生成段落】instructions:{chapter_start}-{chapter_end}\n"
+            f"{context}\n"
+            f"{draft_block}"
+            f"请只返回第 {chapter_start}-{chapter_end} 章的章节指令，且只包含以下字段:\n"
+            "- instructions: [{\"chapter_number\": 1, \"objective\": \"\", \"key_events\": \"\", \"emotion_tone\": \"\", \"ending_hook\": \"\", \"continuity_seed\": \"\", \"word_target\": 3000}]\n\n"
+            "要求：\n"
+            "1. 只生成当前章段，不要补写其他章。\n"
+            "2. 每章必须明确主角目标、阻力、结果变化、结尾钩子和下一章承接点。\n"
+            "3. key_events 至少写 3 个具体事件，不能只写抽象总结。\n"
+            "4. 不要返回 project_updates、world_settings、characters、factions、outlines 或 plot_holes。\n"
+            "5. 输出必须是纯 JSON，不要 Markdown、解释或尾逗号。"
+        )
+
+    raise ValueError(f"Unknown genesis segment: {segment}")
+
+
+async def _invoke_genesis_segment(
+    llm,
+    *,
+    prompt: str,
+    max_tokens: int,
+) -> dict:
+    """Invoke one Genesis segment with a bounded response budget."""
     return await asyncio.to_thread(
         llm.invoke_json,
         [
@@ -1328,9 +1371,67 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
             },
             {"role": "user", "content": prompt},
         ],
-        max_tokens=7000,
+        max_tokens=max_tokens,
         max_retries=2,
     )
+
+
+async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
+    """Generate a genesis draft using real LLM."""
+    llm = _build_genesis_llm(settings)
+    foundation_prompt = _build_genesis_segment_prompt(body, segment="foundation")
+    foundation = await _invoke_genesis_segment(
+        llm,
+        prompt=foundation_prompt,
+        max_tokens=GENESIS_SEGMENT_MAX_TOKENS["foundation"],
+    )
+
+    merged = _merge_genesis_drafts(None, foundation)
+
+    cast_prompt = _build_genesis_segment_prompt(
+        body,
+        segment="cast",
+        draft_json=json.dumps(merged, ensure_ascii=False)[:10000],
+    )
+    cast = await _invoke_genesis_segment(
+        llm,
+        prompt=cast_prompt,
+        max_tokens=GENESIS_SEGMENT_MAX_TOKENS["cast"],
+    )
+    merged = _merge_genesis_drafts(merged, cast)
+
+    plot_prompt = _build_genesis_segment_prompt(
+        body,
+        segment="plot",
+        draft_json=json.dumps(merged, ensure_ascii=False)[:10000],
+    )
+    plot = await _invoke_genesis_segment(
+        llm,
+        prompt=plot_prompt,
+        max_tokens=GENESIS_SEGMENT_MAX_TOKENS["plot"],
+    )
+    merged = _merge_genesis_drafts(merged, plot)
+
+    chapter_count = max(1, int(body.target_chapters or 1))
+    chunk_size = max(1, GENESIS_INSTRUCTION_CHUNK_SIZE)
+    instruction_max_tokens = min(4500, 1800 + chunk_size * 420)
+    for chapter_start in range(1, chapter_count + 1, chunk_size):
+        chapter_end = min(chapter_count, chapter_start + chunk_size - 1)
+        instruction_prompt = _build_genesis_segment_prompt(
+            body,
+            segment="instructions",
+            draft_json=json.dumps(merged, ensure_ascii=False)[:12000],
+            chapter_start=chapter_start,
+            chapter_end=chapter_end,
+        )
+        instruction_patch = await _invoke_genesis_segment(
+            llm,
+            prompt=instruction_prompt,
+            max_tokens=instruction_max_tokens,
+        )
+        merged = _merge_genesis_drafts(merged, instruction_patch)
+
+    return _dedupe_genesis_draft(_normalize_genesis_draft(merged)) or merged
 
 
 def _build_genesis_llm(settings):
@@ -1470,8 +1571,6 @@ def _mark_genesis_local_recovery(
         "source": "local_recovery",
         "quality_status": "recovered_from_invalid_json"
         if reason == "invalid_json"
-        else "recovered_from_provider_error"
-        if reason == "provider_error"
         else "recovered_from_incomplete_json",
         "generation_fallback": True,
         "fallback_reason": reason,
@@ -1507,13 +1606,8 @@ async def _generate_real_draft_with_scaffold_fallback(
     body: GenesisGenerateRequest,
     settings,
 ) -> dict:
-    """Generate Genesis with real LLM, falling back for recoverable provider failures."""
-    from ...llm.openai_compatible import (
-        LLMConnectionError,
-        LLMTimeoutError,
-        OutputValidationError,
-        RateLimitError,
-    )
+    """Generate Genesis with real LLM, falling back only for invalid JSON output."""
+    from ...llm.openai_compatible import OutputValidationError
 
     try:
         draft = await _generate_real_draft(body, settings)
@@ -1528,18 +1622,6 @@ async def _generate_real_draft_with_scaffold_fallback(
         return _build_genesis_recovery_draft(
             body,
             reason="invalid_json",
-            error_message=str(exc),
-        )
-    except (LLMConnectionError, LLMTimeoutError, RateLimitError) as exc:
-        logger.warning(
-            "Genesis real LLM provider failed; using local recovery title=%s genre=%s",
-            body.title,
-            body.genre,
-            exc_info=True,
-        )
-        return _build_genesis_recovery_draft(
-            body,
-            reason="provider_error",
             error_message=str(exc),
         )
 

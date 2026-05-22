@@ -457,8 +457,8 @@ def test_real_genesis_api_invalid_json_returns_usable_recovery_draft(monkeypatch
     )
 
 
-def test_real_genesis_api_connection_error_returns_recovery_draft(monkeypatch, tmp_path):
-    """Transient provider failures should not leave Genesis blocked as failed."""
+def test_real_genesis_api_connection_error_reports_failure_without_template_recovery(monkeypatch, tmp_path):
+    """Provider connectivity failures should not masquerade as generated Genesis."""
     from novel_factory.api_app import create_api_app
     from novel_factory.db.connection import init_db
     from novel_factory.llm.openai_compatible import LLMConnectionError
@@ -498,19 +498,17 @@ def test_real_genesis_api_connection_error_returns_recovery_draft(monkeypatch, t
             "target_chapters": 3,
             "target_words": 9000,
         })
+        latest = client.get("/api/projects/connection-error-genesis/genesis/latest")
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["ok"] is True
-    assert body["data"]["status"] == "generated"
-    assert body["data"]["error_message"] in (None, "")
-    draft = json.loads(body["data"]["draft_json"])
-    assert draft["_meta"]["source"] == "local_recovery"
-    assert draft["_meta"]["quality_status"] == "recovered_from_provider_error"
-    assert draft["_meta"]["generation_fallback"] is True
-    assert draft["_meta"]["fallback_reason"] == "provider_error"
-    assert "Connection error" in draft["_meta"]["original_error"]
-    assert body["data"]["quality_report"]["passed"] is True
+    assert body["ok"] is False
+    assert body["error"]["code"] == "GENESIS_FAILED"
+    assert "Connection error" in body["error"]["message"]
+    latest_body = latest.json()
+    assert latest_body["ok"] is True
+    assert latest_body["data"]["status"] == "failed"
+    assert "Connection error" in latest_body["data"]["error_message"]
 
 
 def test_genesis_completion_merge_deduplicates_full_draft_patch():
@@ -620,17 +618,29 @@ async def test_real_genesis_generation_does_not_block_event_loop(monkeypatch):
 
     class BlockingProvider:
         def invoke_json(self, messages, max_tokens=None, max_retries=1):
-            assert max_tokens == 7000
+            assert max_tokens <= 4500
             time.sleep(0.2)
-            return {
-                "project_updates": {"description": "ok"},
-                "world_settings": [],
-                "characters": [],
-                "factions": [],
-                "outlines": [],
-                "plot_holes": [],
-                "instructions": [],
-            }
+            prompt = messages[-1]["content"]
+            if "【生成段落】foundation" in prompt:
+                return {
+                    "project_updates": {"description": "ok"},
+                    "world_settings": [{"title": "规则", "category": "世界观", "content": "ok"}],
+                }
+            if "【生成段落】cast" in prompt:
+                return {
+                    "characters": [{"name": "林澈", "role": "protagonist", "description": "ok"}],
+                    "factions": [{"name": "档案局", "type": "官方", "description": "ok"}],
+                }
+            if "【生成段落】plot" in prompt:
+                return {
+                    "outlines": [{"chapters_range": "1-1", "title": "开局", "content": "ok", "level": "arc", "sequence": 1}],
+                    "plot_holes": [{"code": "PH-001", "title": "谜团", "description": "ok", "status": "planted"}],
+                }
+            if "【生成段落】instructions" in prompt:
+                return {
+                    "instructions": [{"chapter_number": 1, "objective": "ok", "key_events": "ok", "emotion_tone": "ok"}],
+                }
+            raise AssertionError(f"Unexpected prompt: {prompt[:120]}")
 
     class Router:
         def for_agent(self, agent_name):
@@ -655,15 +665,8 @@ async def test_real_genesis_generation_does_not_block_event_loop(monkeypatch):
     elapsed = time.perf_counter() - started
 
     assert elapsed < 0.15
-    assert await task == {
-        "project_updates": {"description": "ok"},
-        "world_settings": [],
-        "characters": [],
-        "factions": [],
-        "outlines": [],
-        "plot_holes": [],
-        "instructions": [],
-    }
+    draft = await task
+    assert genesis_routes._missing_required_genesis_sections(draft) == []
 
 
 @pytest.mark.asyncio
@@ -722,10 +725,6 @@ async def test_real_genesis_completion_repairs_world_only_output(monkeypatch):
 
         def invoke_json(self, messages, max_tokens=None, max_retries=1):
             self.calls += 1
-            if self.calls == 1:
-                return [
-                    {"title": "现代都市修仙", "category": "世界观", "content": "都市暗藏修仙势力。"},
-                ]
             return {
                 "project_updates": {"description": "《仙帝归来》是一部都市修仙题材小说。"},
                 "characters": [
@@ -795,12 +794,16 @@ async def test_real_genesis_completion_repairs_world_only_output(monkeypatch):
         target_words=9000,
     )
 
-    first_draft = await genesis_routes._generate_real_draft(body, SimpleNamespace())
+    first_draft = {
+        "world_settings": [
+            {"title": "现代都市修仙", "category": "世界观", "content": "都市暗藏修仙势力。"},
+        ],
+    }
     completed = await genesis_routes._complete_real_genesis_draft(
         body, SimpleNamespace(), first_draft
     )
 
-    assert provider.calls == 2
+    assert provider.calls == 1
     assert genesis_routes._missing_required_genesis_sections(completed) == []
     assert len(completed["world_settings"]) == 1
     assert completed["characters"][0]["name"] == "叶无尘"
@@ -869,6 +872,93 @@ async def test_real_genesis_completion_falls_back_to_complete_local_scaffold(mon
 
 
 @pytest.mark.asyncio
+async def test_real_genesis_generates_with_bounded_segmented_llm_calls(monkeypatch):
+    """Genesis should avoid one oversized all-sections LLM request."""
+    from novel_factory.api.routes import genesis as genesis_routes
+
+    class SegmentedProvider:
+        def __init__(self):
+            self.config = SimpleNamespace(
+                request_timeout_seconds=45,
+                retry_attempts=1,
+            )
+            self.calls: list[dict[str, object]] = []
+
+        def invoke_json(self, messages, max_tokens=None, max_retries=1):
+            user_prompt = messages[-1]["content"]
+            self.calls.append({
+                "prompt": user_prompt,
+                "max_tokens": max_tokens,
+                "max_retries": max_retries,
+            })
+            if "【生成段落】foundation" in user_prompt:
+                return {
+                    "project_updates": {"description": "潮汐系统会通过城市水位操控记忆，记者追查父亲旧案。"},
+                    "world_settings": [
+                        {"title": "潮汐系统", "category": "核心规则", "content": "城市水位与记忆备份系统绑定。"},
+                    ],
+                }
+            if "【生成段落】cast" in user_prompt:
+                return {
+                    "characters": [
+                        {"name": "林潮", "role": "protagonist", "description": "记者，目标是查清父亲旧案，秘密是自己曾被潮汐系统备份。", "traits": "敏锐"},
+                        {"name": "沈澜", "role": "antagonist", "description": "系统维护者，目标是阻止真相外泄，秘密是参与过旧案。", "traits": "冷静"},
+                        {"name": "许闻", "role": "supporting", "description": "档案员，帮助主角读取被删记录。", "traits": "谨慎"},
+                    ],
+                    "factions": [
+                        {"name": "潮汐管理局", "type": "官方机构", "description": "掌握水位调度和记忆备份权限。资源/手段: 城市泵站、档案系统。当前阶段行动: 封锁旧案。", "relationship_with_protagonist": "压制调查"},
+                        {"name": "旧港互助会", "type": "民间组织", "description": "保存未清洗证词。资源/手段: 目击者网络。当前阶段行动: 暗中协助。", "relationship_with_protagonist": "潜在盟友"},
+                    ],
+                }
+            if "【生成段落】plot" in user_prompt:
+                return {
+                    "outlines": [
+                        {"chapters_range": "1-3", "title": "旧案重启", "content": "阶段冲突: 林潮调查父亲旧案并被管理局阻止。转折: 潮位记录证明父亲死亡当天系统被人工改写。阶段结果: 林潮取得第一份证据。", "level": "arc", "sequence": 1},
+                    ],
+                    "plot_holes": [
+                        {"code": "PH-001", "type": "主线谜团", "title": "父亲为何留下潮位表", "description": "触发场景: 林潮发现潮位表。读者表象: 普通遗物。真相方向: 潮位表是记忆备份索引。预计兑现: 第3章。", "planted_chapter": 1, "planned_resolve_chapter": 3, "status": "planted"},
+                    ],
+                }
+            if "【生成段落】instructions" in user_prompt:
+                return {
+                    "instructions": [
+                        {"chapter_number": 1, "objective": "林潮进入旧港泵站寻找父亲留下的潮位表。", "key_events": "林潮收到匿名潮位短信；他潜入泵站发现监控被删；沈澜派人封锁出口。", "emotion_tone": "悬疑紧张", "ending_hook": "潮位表上出现林潮自己的死亡时间。", "continuity_seed": "下一章追查死亡时间来源", "word_target": 3000},
+                        {"chapter_number": 2, "objective": "林潮追查死亡时间与记忆备份系统的关系。", "key_events": "林潮找到旧港互助会；许闻解释备份索引；管理局发布通缉。", "emotion_tone": "压迫", "ending_hook": "许闻说林潮曾经来过这里。", "continuity_seed": "下一章验证林潮被备份的过去", "word_target": 3000},
+                        {"chapter_number": 3, "objective": "林潮验证自己是否被潮汐系统备份。", "key_events": "林潮读取备份片段；发现父亲旧案当天自己在现场；沈澜承认系统需要活样本。", "emotion_tone": "震惊", "ending_hook": "备份片段里的父亲仍在求救。", "continuity_seed": "下一阶段进入父亲记忆备份", "word_target": 3000},
+                    ],
+                }
+            raise AssertionError(f"Unexpected prompt: {user_prompt[:120]}")
+
+    provider = SegmentedProvider()
+
+    class Router:
+        def for_agent(self, agent_name):
+            return provider
+
+    monkeypatch.setattr(
+        "novel_factory.workflow.runner._build_llm_router",
+        lambda settings, llm_mode: Router(),
+    )
+
+    body = genesis_routes.GenesisGenerateRequest(
+        title="潮汐档案",
+        genre="悬疑科幻",
+        premise="记者调查父亲旧案时发现潮汐系统隐藏着城市级实验。",
+        target_chapters=3,
+        target_words=9000,
+    )
+
+    draft = await genesis_routes._generate_real_draft(body, SimpleNamespace())
+
+    assert len(provider.calls) == 4
+    assert all(call["max_tokens"] <= 4500 for call in provider.calls)
+    assert all(call["max_retries"] == 2 for call in provider.calls)
+    assert genesis_routes._missing_required_genesis_sections(draft) == []
+    assert "local_recovery" not in json.dumps(draft, ensure_ascii=False)
+    assert len(draft["instructions"]) == 3
+
+
+@pytest.mark.asyncio
 async def test_real_genesis_uses_dedicated_llm_profile_and_runtime_budget(monkeypatch):
     """Genesis should not share planner's short chapter-planning runtime budget."""
     from novel_factory.api.routes import genesis as genesis_routes
@@ -885,7 +975,7 @@ async def test_real_genesis_uses_dedicated_llm_profile_and_runtime_budget(monkey
         def invoke_json(self, messages, max_tokens=None, max_retries=1):
             captured["timeout"] = self.config.request_timeout_seconds
             captured["retry_attempts"] = self.config.retry_attempts
-            captured["max_tokens"] = max_tokens
+            captured.setdefault("max_tokens", []).append(max_tokens)
             return {
                 "project_updates": {"description": "ok"},
                 "world_settings": [],
@@ -922,4 +1012,4 @@ async def test_real_genesis_uses_dedicated_llm_profile_and_runtime_budget(monkey
     assert captured["agent_name"] == "genesis"
     assert captured["timeout"] == 180
     assert captured["retry_attempts"] == 2
-    assert captured["max_tokens"] == 7000
+    assert captured["max_tokens"] == [2400, 3000, 3200, 3900, 3900]
