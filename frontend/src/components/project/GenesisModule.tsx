@@ -126,8 +126,8 @@ export default function GenesisModule({ projectId, project }: Props) {
   const projectTitle = (project?.name || form.title).trim()
   const projectGenre = (project?.genre || form.genre).trim()
 
-  const loadGenesis = useCallback(async () => {
-    setLoading(true)
+  const loadGenesis = useCallback(async (showSpinner = true) => {
+    if (showSpinner) setLoading(true)
     const res = await get(`/projects/${projectId}/genesis/latest`)
     if (res.ok && res.data) {
       setGenesis(res.data as GenesisRun)
@@ -138,6 +138,14 @@ export default function GenesisModule({ projectId, project }: Props) {
   }, [projectId])
 
   useEffect(() => { loadGenesis() }, [loadGenesis])
+
+  useEffect(() => {
+    if (genesis?.status !== 'running') return undefined
+    const timer = window.setInterval(() => {
+      void loadGenesis(false)
+    }, 5000)
+    return () => window.clearInterval(timer)
+  }, [genesis?.status, loadGenesis])
 
   useEffect(() => {
     if (!project) return

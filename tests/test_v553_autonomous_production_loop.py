@@ -1015,6 +1015,8 @@ class TestFrontendCopy:
         assert "missingRequiredSections" in source
         assert "required" in source
         assert "已继承项目基础信息" in source
+        assert "genesis?.status !== 'running'" in source
+        assert "loadGenesis(false)" in source
 
     def test_recovery_action_normalizes_api_prefix(self):
         """Recovery action strips /api prefix from action_url to avoid /api/api double prefix."""
