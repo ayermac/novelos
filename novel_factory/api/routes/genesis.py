@@ -6,6 +6,7 @@ import json
 import asyncio
 import logging
 import re
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -17,6 +18,9 @@ from ...quality.genesis_quality_gate import evaluate_genesis_draft
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+
+GENESIS_RUNNING_TIMEOUT_MINUTES = 30
 
 
 GENESIS_REQUIRED_SECTIONS = {
@@ -72,6 +76,67 @@ class GenesisForceApplyBody(BaseModel):
 
     force_apply: bool = False
     confirm_quality_risk: bool = False
+
+
+def _parse_genesis_timestamp(value) -> datetime | None:
+    """Parse genesis timestamps stored as SQLite datetime strings."""
+    if not value:
+        return None
+    text = str(value).strip().replace("T", " ")
+    if text.endswith("Z"):
+        text = text[:-1]
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            return datetime.strptime(text[:26], fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _genesis_timeout_minutes(settings=None) -> int:
+    """Return the stale-running timeout for genesis runs."""
+    workflow = getattr(settings, "workflow", None)
+    configured = getattr(workflow, "task_timeout_minutes", GENESIS_RUNNING_TIMEOUT_MINUTES)
+    try:
+        timeout = int(configured)
+    except (TypeError, ValueError):
+        timeout = GENESIS_RUNNING_TIMEOUT_MINUTES
+    return max(10, timeout)
+
+
+def _recover_stale_running_genesis(repo, genesis: dict | None, timeout_minutes: int | None = None) -> dict | None:
+    """Mark an abandoned running genesis as failed so the UI can retry.
+
+    A genesis request writes the run row before calling the LLM. If the desktop
+    sidecar is restarted, killed, or disconnected mid-request, the normal
+    exception handler never gets a chance to flip the row out of ``running``.
+    """
+    if not genesis or genesis.get("status") != "running":
+        return genesis
+
+    timeout = timeout_minutes or GENESIS_RUNNING_TIMEOUT_MINUTES
+    timestamp = _parse_genesis_timestamp(genesis.get("updated_at") or genesis.get("created_at"))
+    if timestamp is None:
+        return genesis
+
+    now_local = datetime.utcnow() + timedelta(hours=8)
+    elapsed_minutes = (now_local - timestamp).total_seconds() / 60
+    if elapsed_minutes < timeout:
+        return genesis
+
+    message = (
+        f"创世任务超过 {timeout} 分钟未更新，已自动标记失败。"
+        "可能是本地服务重启、请求断开或 LLM 超时导致，请重新生成。"
+    )
+    updated = repo.update_genesis_run(genesis["id"], {
+        "status": "failed",
+        "error_message": message,
+    })
+    return updated or {**genesis, "status": "failed", "error_message": message}
 
 
 def _quality_report_payload(quality_report) -> dict:
@@ -1668,6 +1733,11 @@ async def generate_genesis(
 
         # Check for running genesis
         latest = repo.get_latest_genesis_run(project_id)
+        latest = _recover_stale_running_genesis(
+            repo,
+            latest,
+            _genesis_timeout_minutes(settings),
+        )
         if latest and latest["status"] == "running":
             return error_response(
                 "GENESIS_IN_PROGRESS",
@@ -1724,7 +1794,7 @@ async def generate_genesis(
 @router.get("/projects/{project_id}/genesis/latest")
 async def get_latest_genesis(request: Request, project_id: str) -> EnvelopeResponse:
     """Get the latest genesis run for a project."""
-    from ..deps import get_repo
+    from ..deps import get_repo, get_settings
 
     try:
         repo = get_repo(request)
@@ -1736,6 +1806,11 @@ async def get_latest_genesis(request: Request, project_id: str) -> EnvelopeRespo
         genesis = repo.get_latest_genesis_run(project_id)
         if not genesis:
             return envelope_response(None)
+        genesis = _recover_stale_running_genesis(
+            repo,
+            genesis,
+            _genesis_timeout_minutes(get_settings(request)),
+        )
 
         response_data = dict(genesis)
         quality_report = _quality_report_for_genesis(genesis, project)
@@ -1915,6 +1990,11 @@ async def generate_genesis_canonical(
             return error_response(*validation_error)
 
         latest = repo.get_latest_genesis_run(project_id)
+        latest = _recover_stale_running_genesis(
+            repo,
+            latest,
+            _genesis_timeout_minutes(settings),
+        )
         if latest and latest["status"] == "running":
             return error_response("GENESIS_IN_PROGRESS", "已有正在运行的创世任务，请等待完成")
 

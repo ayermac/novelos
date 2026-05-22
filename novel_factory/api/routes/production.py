@@ -48,15 +48,23 @@ def _has_approved_genesis(repo, project_id: str) -> bool:
     return any(run.get("status") == "approved" for run in repo.list_genesis_runs(project_id))
 
 
-def _has_pending_genesis(repo, project_id: str) -> bool:
-    """Check if project has a pending/generated genesis draft awaiting review."""
+def _latest_non_stale_genesis(repo, project_id: str, timeout_minutes: int = 30) -> dict | None:
+    """Return latest genesis after recovering abandoned running rows."""
+    from .genesis import _recover_stale_running_genesis
+
     latest = repo.get_latest_genesis_run(project_id)
+    return _recover_stale_running_genesis(repo, latest, timeout_minutes)
+
+
+def _has_pending_genesis(repo, project_id: str, timeout_minutes: int = 30) -> bool:
+    """Check if project has a pending/generated genesis draft awaiting review."""
+    latest = _latest_non_stale_genesis(repo, project_id, timeout_minutes)
     return latest is not None and latest.get("status") == "generated"
 
 
-def _has_running_genesis(repo, project_id: str) -> bool:
+def _has_running_genesis(repo, project_id: str, timeout_minutes: int = 30) -> bool:
     """Check if project has a running genesis."""
-    latest = repo.get_latest_genesis_run(project_id)
+    latest = _latest_non_stale_genesis(repo, project_id, timeout_minutes)
     return latest is not None and latest.get("status") == "running"
 
 
@@ -464,7 +472,7 @@ def _build_health(repo, project_id: str, current_chapter: int) -> dict:
     characters = repo.list_characters(project_id, include_inactive=True)
     outlines = repo.list_outlines(project_id)
     instruction = repo.get_instruction_by_chapter(project_id, current_chapter)
-    latest_genesis = repo.get_latest_genesis_run(project_id)
+    latest_genesis = _latest_non_stale_genesis(repo, project_id)
     context_items: list[str] = []
     context_items.extend(f"{w.get('title', '')} {w.get('content', '')}" for w in world_settings)
     context_items.extend(f"{c.get('name', '')} {c.get('description', '')} {c.get('traits', '')}" for c in characters)
@@ -676,7 +684,7 @@ def _determine_next_action(
     health["manual_context_ready"] = manual_context_ready
 
     if not health["has_approved_genesis"] and not manual_context_ready:
-        if _has_running_genesis(repo, project_id):
+        if _has_running_genesis(repo, project_id, timeout_minutes):
             return {
                 "key": "wait_genesis",
                 "label": "等待创世完成",
@@ -686,7 +694,7 @@ def _determine_next_action(
                 "method": "GET",
                 "requires_confirmation": False,
             }
-        if _has_pending_genesis(repo, project_id):
+        if _has_pending_genesis(repo, project_id, timeout_minutes):
             return {
                 "key": "review_genesis",
                 "label": "审核创世草案",
