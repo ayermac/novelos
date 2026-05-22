@@ -1,0 +1,234 @@
+.agentops-panel {
+  padding: 1rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.agentops-header {
+  margin-bottom: 1.5rem;
+}
+
+.agentops-header h2 {
+  margin: 0 0 0.25rem;
+}
+
+.agentops-header p {
+  color: #666;
+  margin: 0;
+}
+
+.agentops-role-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+  margin-top: 0.75rem;
+}
+
+.agent-role-card {
+  border: 1px solid #e0e0e0;
+  border-radius: 8px;
+  padding: 1rem;
+  cursor: pointer;
+  transition: box-shadow 0.15s, border-color 0.15s;
+  background: #fff;
+  color: inherit;
+  text-align: left;
+  width: 100%;
+}
+
+.agent-role-card:hover {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+.agent-role-card:focus-visible {
+  outline: 2px solid #1976d2;
+  outline-offset: 2px;
+}
+
+.agent-role-card.selected {
+  border-color: #1976d2;
+  box-shadow: 0 0 0 2px rgba(25, 118, 210, 0.15);
+}
+
+.role-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 0.5rem;
+}
+
+.role-card-header h4 {
+  margin: 0;
+}
+
+.role-id {
+  font-size: 0.75rem;
+  color: #888;
+  background: #f5f5f5;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.role-mission {
+  font-size: 0.9rem;
+  color: #444;
+  margin: 0 0 0.75rem;
+}
+
+.role-packs,
+.role-dims {
+  font-size: 0.8rem;
+  color: #555;
+  margin-bottom: 0.25rem;
+}
+
+.agentops-traces,
+.agentops-memory,
+.agentops-eval {
+  margin-top: 1.5rem;
+  padding: 1rem;
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.agentops-traces h3,
+.agentops-memory h3,
+.agentops-eval h3 {
+  margin: 0 0 0.75rem;
+}
+
+.trace-item {
+  border-bottom: 1px solid #eee;
+  padding: 0.5rem 0;
+}
+
+.trace-summary {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  padding: 0.5rem 0;
+  display: flex;
+  gap: 1rem;
+  cursor: pointer;
+  align-items: center;
+  color: inherit;
+  text-align: left;
+}
+
+.trace-summary:focus-visible {
+  outline: 2px solid #1976d2;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.trace-stage {
+  font-weight: 600;
+  min-width: 80px;
+}
+
+.trace-decision {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #e3f2fd;
+  font-size: 0.8rem;
+}
+
+.trace-time {
+  margin-left: auto;
+  font-size: 0.75rem;
+  color: #888;
+}
+
+.trace-detail {
+  margin-top: 0.5rem;
+  padding-left: 1rem;
+  font-size: 0.85rem;
+  color: #444;
+}
+
+.memory-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.memory-item {
+  border: 1px solid #e0e0e0;
+  border-radius: 6px;
+  padding: 0.75rem;
+  margin-bottom: 0.5rem;
+  background: #fff;
+}
+
+.memory-item.disabled {
+  opacity: 0.6;
+}
+
+.memory-meta {
+  display: flex;
+  gap: 0.75rem;
+  font-size: 0.8rem;
+  margin-bottom: 0.25rem;
+}
+
+.memory-type {
+  background: #e8f5e9;
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.memory-actions {
+  margin-top: 0.5rem;
+}
+
+.memory-actions button {
+  margin-right: 0.5rem;
+  font-size: 0.8rem;
+}
+
+.eval-summary {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.eval-passed {
+  color: #2e7d32;
+  font-weight: 600;
+}
+
+.eval-failed {
+  color: #c62828;
+  font-weight: 600;
+}
+
+.eval-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.eval-list li {
+  padding: 0.25rem 0;
+  font-size: 0.85rem;
+}
+
+.eval-list li.pass {
+  color: #2e7d32;
+}
+
+.eval-list li.fail {
+  color: #c62828;
+}
+
+.empty {
+  color: #888;
+  font-size: 0.9rem;
+}
+
+.agentops-loading {
+  padding: 2rem;
+  text-align: center;
+  color: #666;
+}

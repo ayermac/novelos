@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { Link } from 'react-router-dom'
 import { BookOpen, Trash2, Plus } from 'lucide-react'
 import { useApiQuery, useApiMutation } from '../hooks/useApiQuery'
@@ -6,6 +7,7 @@ import EmptyState from '../components/EmptyState'
 import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
 import { useAppDialog } from '../components/AppDialogContext'
+import { Spinner } from '../components/ui'
 
 interface Project {
   project_id: string
@@ -16,11 +18,20 @@ interface Project {
   created_at: string
 }
 
-function ProjectCard({ project, onDelete }: { project: Project; onDelete: (id: string) => void }) {
+function ProjectCard({
+  project,
+  onDelete,
+  isDeleting,
+}: {
+  project: Project
+  onDelete: (id: string) => void
+  isDeleting?: boolean
+}) {
   const dialog = useAppDialog()
   const handleDelete = async (e: React.MouseEvent) => {
     e.preventDefault()
     e.stopPropagation()
+    if (isDeleting) return
     const ok = await dialog.confirm({
       title: '删除项目',
       message: `确定要删除项目「${project.name || project.project_id}」吗？此操作不可撤销。`,
@@ -76,11 +87,13 @@ function ProjectCard({ project, onDelete }: { project: Project; onDelete: (id: s
             )}
             <button
               onClick={handleDelete}
+              disabled={isDeleting}
+              aria-label={`删除项目 ${project.name || project.project_id}`}
               style={{
                 padding: 'var(--space-1) var(--space-2)',
                 background: 'transparent',
                 border: 'none',
-                cursor: 'pointer',
+                cursor: isDeleting ? 'not-allowed' : 'pointer',
                 color: 'var(--text-gray)',
                 display: 'flex',
                 alignItems: 'center',
@@ -88,18 +101,21 @@ function ProjectCard({ project, onDelete }: { project: Project; onDelete: (id: s
                 fontSize: 'var(--text-xs)',
                 borderRadius: 'var(--radius-sm)',
                 transition: 'all var(--duration-fast) var(--ease-out)',
+                opacity: isDeleting ? 0.68 : 1,
               }}
               onMouseEnter={(e) => {
+                if (isDeleting) return
                 e.currentTarget.style.background = 'var(--paper-hover)'
                 e.currentTarget.style.color = 'var(--status-danger)'
               }}
               onMouseLeave={(e) => {
+                if (isDeleting) return
                 e.currentTarget.style.background = 'transparent'
                 e.currentTarget.style.color = 'var(--text-gray)'
               }}
-              title="删除项目"
+              title={isDeleting ? '正在删除项目' : '删除项目'}
             >
-              <Trash2 size={14} />
+              {isDeleting ? <Spinner size="sm" label="删除中" /> : <Trash2 size={14} />}
             </button>
           </div>
         </div>
@@ -121,15 +137,30 @@ function ProjectCard({ project, onDelete }: { project: Project; onDelete: (id: s
 }
 
 export default function Projects() {
+  const dialog = useAppDialog()
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null)
   const { data: projects, isLoading, error, refetch } = useApiQuery<Project[]>(['projects'], '/projects')
 
   const deleteMutation = useApiMutation<unknown, string>(
     (id) => `/projects/${id}`,
-    { method: 'del', invalidateKeys: [['projects']] },
+    {
+      method: 'del',
+      invalidateKeys: [['projects']],
+      onError: (deleteError) => {
+        void dialog.alert({
+          title: '删除失败',
+          message: deleteError.message,
+          tone: 'danger',
+        })
+      },
+    },
   )
 
   const handleDelete = (projectId: string) => {
-    deleteMutation.mutate(projectId)
+    setDeletingProjectId(projectId)
+    deleteMutation.mutate(projectId, {
+      onSettled: () => setDeletingProjectId(null),
+    })
   }
 
   if (isLoading) {
@@ -221,7 +252,12 @@ export default function Projects() {
           }}
         >
           {list.map((project) => (
-            <ProjectCard key={project.project_id} project={project} onDelete={handleDelete} />
+            <ProjectCard
+              key={project.project_id}
+              project={project}
+              onDelete={handleDelete}
+              isDeleting={deletingProjectId === project.project_id}
+            />
           ))}
         </div>
       ) : (

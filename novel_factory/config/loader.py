@@ -29,6 +29,14 @@ from .settings import Settings, LLMConfig, QualityGateConfig, WorkflowConfig
 from .env_loader import load_dotenv
 
 
+def _path_exists(path: str | Path) -> bool:
+    """Return whether a path exists without leaking cwd-related OS errors."""
+    try:
+        return Path(path).exists()
+    except OSError:
+        return False
+
+
 def _load_package_yaml(name: str) -> dict[str, Any]:
     """Load YAML from package data."""
     try:
@@ -96,7 +104,7 @@ def load_settings_with_cli(
     data = load_default_config()
 
     # Override with --config YAML
-    if config_path and Path(config_path).exists():
+    if config_path and _path_exists(config_path):
         with open(config_path, "r", encoding="utf-8") as f:
             config_data = yaml.safe_load(f) or {}
             # Deep merge (simplified)

@@ -1,24 +1,50 @@
 # Codex 文档入口
 
-本目录维护 Novelos 的规划、审查、验收和下一阶段方向文档。根目录只保留本入口页；具体文档按语义分目录，避免把历史规格、完成报告和未来草案混在一起。
+本目录维护 Novelos 的规划、规格、审查、验收和下一阶段方向文档。仓库级入口见 `../README.md`；本页是项目当前状态和关键文档的主要入口。
 
 ## 目录约定
 
 | 目录 | 内容 | 使用场景 |
 | --- | --- | --- |
-| `planning/` | 架构、路线图、历史版本规格、API 规范 | 做版本排期、开发实现、追溯历史决策 |
+| `planning/` | 历史路线图、旧版规格、架构/API 规范 | 追溯历史决策；新 v6.6+ 版本不优先放这里 |
+| `specs/` | 已批准的 v6.6+ 版本规格 | 当前或即将执行的锁定范围 |
 | `reports/` | 完成报告、真实项目验收、阶段总结 | 判断某个版本是否闭环、查看验收事实 |
 | `reviews/` | Review 检查项、发现的问题、修复验证 | 代码/产品审查与回归验证 |
 | `next/` | 下一阶段方向、候选路线、未锁定规划 | 讨论未来方向，不作为当前执行规格 |
+| `release/` | 桌面发布、版本策略、打包检查清单 | 发布准备和版本治理 |
 
 ## 当前进度
 
 - **生产稳定基线**: v5.5.15 Production Readiness Closure
 - **当前 WebUI 基线**: v5.6.1 Workbench Stabilization
 - **当前创作者闭环基线**: v5.7 Daily Writing Editing and Versioning
-- **当前稳定版本**: v5.8 Workflow Observability and Recovery
-- **状态**: v5.9.2 UI Controls Standardization completed；下一阶段候选为 v5.9 Writing Skills and Prompt Template System
-- **测试基线**: pytest 1892/1892 passed；v5.9.2 smoke passed；vitest 146/146 passed；frontend typecheck/lint/build passed
+- **当前 Agent 可审计基线**: v6.1 Agent Work Process Streaming & Auditable Execution Evidence
+- **当前桌面客户端基线**: v6.2.5 Desktop Release Readiness Checklist
+- **当前创作者闭环基线**: v6.3.2 Creator Onboarding Closure
+- **当前章节质量基线**: v6.4.6 Chapter Generation Quality Closure
+- **当前交互体验基线**: v6.5.7 Visual Polish Pass
+- **当前创世质量基线**: v6.6.4 Genesis Initialization Depth & Specificity Closure
+- **当前运行时卫生基线**: v6.6.5 Runtime Hygiene & Observability Closure
+- **当前工作流恢复基线**: v6.6.6 Workflow Recovery & State Integrity Closure
+- **当前记忆可靠性基线**: v6.6.7 Memory Curator Reliability Closure
+- **当前审核语义基线**: v6.6.8 Editor Refactor & Review Semantics Closure
+- **当前迁移完整性基线**: v6.6.9 Database Migration & Persistence Integrity Closure
+- **当前 API 契约基线**: v6.6.10 API Contract & Frontend State Semantics Closure
+- **当前工作流时间线基线**: v6.6.11 Workflow Timeline & Node Semantics Closure
+- **当前章节生产契约基线**: v6.6.12 Chapter Production Result Contract Closure
+- **当前前端契约采用基线**: v6.6.13 Frontend Contract Adoption Closure
+- **当前连续性与记忆执行基线**: v6.6.14 Continuity & Memory Enforcement Closure
+- **当前发布准备基线**: v6.6.15 Release Readiness & Desktop Packaging Closure
+- **当前真实项目 burn-in 基线**: v6.6.16 Real Project Burn-in & Regression Closure
+- **当前运行时修复基线**: v6.6.17 Runtime and LLM Settings Updates
+- **当前下一步候选**: v6.6.18 Segmented Agent Payloads & Real LLM Reliability
+- **状态**: v6.6.17 已完成 LLM 设置改造、隐藏未使用预置 Key、Genesis stale/running run 恢复、真实 Provider 连接失败显式失败、Genesis 分段生成以降低大请求失败风险。v6.6.18 候选计划聚焦把同样的分段策略推广到 Author、Polisher、MemoryCurator 等长输入/长输出 Agent。
+- **版本规划索引**: [planning/novel-factory-version-planning-index.md](planning/novel-factory-version-planning-index.md)
+- **v6.6.17 规格**: [specs/novel-factory-v6.6.17-runtime-llm-settings-genesis-reliability-spec.md](specs/novel-factory-v6.6.17-runtime-llm-settings-genesis-reliability-spec.md)
+- **v6.6.17 完成报告**: [reports/novel-factory-v6.6.17-completion-report.md](reports/novel-factory-v6.6.17-completion-report.md)
+- **v6.4 规格**: [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md) — 解决生成章节"AI 味重"问题，聚焦 prompt 增强、deterministic validator 补充和 skill 升级。
+- **v6.5 规格**: [planning/novel-factory-v6.5-interaction-excellence-spec.md](planning/novel-factory-v6.5-interaction-excellence-spec.md) — 解决桌面客户端"后台感"问题，先建立 toast/loading/skeleton 等交互基础设施，再逐页升级工作台体验。
+- **测试基线**: v6.6.16 稳定基线为 backend full suite **2616 passed, 0 failed**；v6.6.17 Genesis/secure-key/desktop targeted suites 已通过。声明新稳定基线前应重新跑分层或全量验证。
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
@@ -33,16 +59,46 @@
 - **v5.8 完成报告**: [reports/novel-factory-v5.8-completion-report.md](reports/novel-factory-v5.8-completion-report.md)
 - **v5.8 Review 记录**: [reviews/novel-factory-v5.8-review.md](reviews/novel-factory-v5.8-review.md)
 - **v5.8.1 真实 LLM 验收**: [reports/novel-factory-v5.8.1-real-llm-acceptance-report.md](reports/novel-factory-v5.8.1-real-llm-acceptance-report.md)
-- **Pi 启发的 Agent 工程路线**: [next/pi-inspired-agent-engineering-roadmap.md](next/pi-inspired-agent-engineering-roadmap.md)
 - **v5.9.2 完成报告**: [reports/novel-factory-v5.9.2-completion-report.md](reports/novel-factory-v5.9.2-completion-report.md)
 - **v5.9.2 Review 记录**: [reviews/novel-factory-v5.9.2-review.md](reviews/novel-factory-v5.9.2-review.md)
+- **v5.9.3 Agent Skill Expansion 规格**: [planning/novel-factory-v5.9.3-agent-skill-expansion-spec.md](planning/novel-factory-v5.9.3-agent-skill-expansion-spec.md)
+- **v5.9.3 完成报告**: [reports/novel-factory-v5.9.3-completion-report.md](reports/novel-factory-v5.9.3-completion-report.md)
+- **v5.9.3 Review 记录**: [reviews/novel-factory-v5.9.3-review.md](reviews/novel-factory-v5.9.3-review.md)
+- **v6.0 Agent Role Capability System 规格**: [planning/novel-factory-v6.0-agent-role-capability-system-spec.md](planning/novel-factory-v6.0-agent-role-capability-system-spec.md)
+- **v6.0 完成报告**: [reports/novel-factory-v6.0-completion-report.md](reports/novel-factory-v6.0-completion-report.md)
+- **v6.0 Review 记录**: [reviews/novel-factory-v6.0-review.md](reviews/novel-factory-v6.0-review.md)
+- **v6.0 真实 LLM 验收**: [reports/novel-factory-v6.0-real-llm-acceptance-report.md](reports/novel-factory-v6.0-real-llm-acceptance-report.md)
+- **v6.1 Agent Work Process Streaming 规格**: [planning/novel-factory-v6.1-agent-work-process-streaming-spec.md](planning/novel-factory-v6.1-agent-work-process-streaming-spec.md)
+- **v6.1 完成报告**: [reports/novel-factory-v6.1-completion-report.md](reports/novel-factory-v6.1-completion-report.md)
+- **v6.1 Review 记录**: [reviews/novel-factory-v6.1-review.md](reviews/novel-factory-v6.1-review.md)
+- **桌面客户端规划**: [planning/novel-factory-cross-platform-desktop-client-plan.md](planning/novel-factory-cross-platform-desktop-client-plan.md)
+- **v6.2 Desktop Client 完成报告**: [reports/novel-factory-v6.2-desktop-client-completion-report.md](reports/novel-factory-v6.2-desktop-client-completion-report.md)
+- **v6.2 Desktop Client Review 记录**: [reviews/novel-factory-v6.2-desktop-client-review.md](reviews/novel-factory-v6.2-desktop-client-review.md)
+- **v6.4 Chapter Quality 完成报告**: [reports/novel-factory-v6.4.6-chapter-quality-closure-report.md](reports/novel-factory-v6.4.6-chapter-quality-closure-report.md)
+- **v6.4 Chapter Quality Review 记录**: [reviews/novel-factory-v6.4.6-chapter-quality-closure-review.md](reviews/novel-factory-v6.4.6-chapter-quality-closure-review.md)
+- **v6.5.1 Interaction Primitives 完成报告**: [reports/novel-factory-v6.5.1-interaction-primitives-report.md](reports/novel-factory-v6.5.1-interaction-primitives-report.md)
+- **v6.5.1 Interaction Primitives Review 记录**: [reviews/novel-factory-v6.5.1-interaction-primitives-review.md](reviews/novel-factory-v6.5.1-interaction-primitives-review.md)
+- **v6.5.6 Interaction Excellence 完成报告**: [reports/novel-factory-v6.5.6-interaction-excellence-closure-report.md](reports/novel-factory-v6.5.6-interaction-excellence-closure-report.md)
+- **v6.5.6 Interaction Excellence Review 记录**: [reviews/novel-factory-v6.5.6-interaction-excellence-closure-review.md](reviews/novel-factory-v6.5.6-interaction-excellence-closure-review.md)
+- **v6.5.7 Visual Polish Pass 完成报告**: [reports/novel-factory-v6.5.7-visual-polish-pass-report.md](reports/novel-factory-v6.5.7-visual-polish-pass-report.md)
+- **v6.5.7 Visual Polish Pass Review 记录**: [reviews/novel-factory-v6.5.7-visual-polish-pass-review.md](reviews/novel-factory-v6.5.7-visual-polish-pass-review.md)
+- **v6.6.4 Genesis Depth & Specificity 规格**: [planning/novel-factory-v6.6.4-genesis-depth-specificity-closure-spec.md](planning/novel-factory-v6.6.4-genesis-depth-specificity-closure-spec.md)
+- **v6.6.4 完成报告**: [reports/novel-factory-v6.6.4-completion-report.md](reports/novel-factory-v6.6.4-completion-report.md)
+- **v6.6.4 Review 记录**: [reviews/novel-factory-v6.6.4-review.md](reviews/novel-factory-v6.6.4-review.md)
+- **v6.6.5 Runtime Hygiene & Observability 规格**: [planning/novel-factory-v6.6.5-runtime-hygiene-observability-closure-spec.md](planning/novel-factory-v6.6.5-runtime-hygiene-observability-closure-spec.md)
+- **v6.6.5 完成报告**: [reports/novel-factory-v6.6.5-completion-report.md](reports/novel-factory-v6.6.5-completion-report.md)
+- **v6.6.5 Review 记录**: [reviews/novel-factory-v6.6.5-review.md](reviews/novel-factory-v6.6.5-review.md)
+- **v6.6.18 候选计划**: [next/novel-factory-v6.6.18-segmented-agent-payloads-plan.md](next/novel-factory-v6.6.18-segmented-agent-payloads-plan.md)
 
 ## 当前执行规则
 
-1. 当前执行真相源仍以 `planning/` 中被明确选定的版本规格为准。
+1. 当前执行真相源以被明确选定的 `specs/` 版本规格为准；历史版本可能仍位于 `planning/`，但新 v6.6+ 工作优先进入 `specs/`。
 2. `reports/` 和 `reviews/` 记录已经发生的事实，不再承载未来需求。
 3. `next/` 只用于方向收口和候选路线，不应被开发 Agent 当作已锁定规格。
 4. 历史规格不做大规模改写；如需改变方向，应新增下一阶段文档或新版本规格。
+5. 旧 `novel_factory/web` Jinja/静态页面路线已退役。当前 UI 只走 `frontend/` 的 React/Vite，后端只提供 FastAPI API；历史文档中出现的 `web/templates`、`web/static` 或 `web/design` 仅作为旧版本记录，不应作为新开发入口。
+6. Agent 角色实现只放在 `novel_factory/agents/`；共享运行底座放在 `novel_factory/agent_runtime/`。`scout`、`architect`、`secretary` 旧旁路 Agent 已退役，后续如确需恢复应重新按当前 Agent Runtime 规范规划。
+7. `docs/superpowers/` 是本地 Agent 草稿目录，不进入 git。项目相关计划应沉淀到 `next/` 或 `specs/`。
 
 ## 关键文档
 
@@ -56,6 +112,9 @@
 - v5.7.1 内部构建完整与稳定规格: [planning/novel-factory-v5.7.1-internal-hardening-spec.md](planning/novel-factory-v5.7.1-internal-hardening-spec.md)
 - v5.8 工作流可观测与恢复增强规格: [planning/novel-factory-v5.8-workflow-observability-recovery-spec.md](planning/novel-factory-v5.8-workflow-observability-recovery-spec.md)
 - v5.9.2 UI 控件统一规格: [planning/novel-factory-v5.9.2-ui-controls-standardization-spec.md](planning/novel-factory-v5.9.2-ui-controls-standardization-spec.md)
+- v5.9.3 Agent Skill Expansion 规格: [planning/novel-factory-v5.9.3-agent-skill-expansion-spec.md](planning/novel-factory-v5.9.3-agent-skill-expansion-spec.md)
+- v6.0 Agent Role Capability System 规格: [planning/novel-factory-v6.0-agent-role-capability-system-spec.md](planning/novel-factory-v6.0-agent-role-capability-system-spec.md)
+- 桌面客户端规划: [planning/novel-factory-cross-platform-desktop-client-plan.md](planning/novel-factory-cross-platform-desktop-client-plan.md)
 - v5.6 完成报告: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
 - v5.6 Review: [reviews/novel-factory-v5.6-author-workbench-review.md](reviews/novel-factory-v5.6-author-workbench-review.md)
 - 下一阶段方向: [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)
@@ -70,13 +129,12 @@ v5.5.15 和 v5.6 Phase 1 完成后，下一阶段不优先展开多租户、企�
 
 近期优先级：
 
-1. v5.9 写作 Skills 与 Prompt Template 系统：把伏笔检查、人物口吻、局部润色、爽点增强等能力做成可插拔创作技能。
-2. v6.0 长篇 Context Engineering 与记忆治理：上下文清单、压缩策略、记忆审核、token 预算和注入可解释性。
-3. 创作者资料库 / RAG。
-4. 导出与发布流水线。
+1. v6.2.5 桌面发布准备：release checklist、version policy、release manifest、安装/升级/卸载说明。
+2. v6.3 从 0 到 1 创作体验闭环：创建小说后进入创世设定、世界观、角色、大纲、章节规划，而不是直接跳章节。
+3. v6.5 Interaction Excellence：先把客户端操作反馈、等待状态、错误恢复、页面节奏做到顺滑。
+4. v6.6+ Agent 执行证据 UX / 结构化记忆与事实证据链：把 Agent 输入、输出、工具调用、Skill、Memory、diff、审核依据做成用户能看懂的过程直播，并把角色、世界观、伏笔、时间线做准；向量/RAG 后续只用于风格和参考作品检索。
 
 详细方向见 [next/personal-author-workbench-direction.md](next/personal-author-workbench-direction.md)。
-Pi 启发的 Agent 工程路线见 [next/pi-inspired-agent-engineering-roadmap.md](next/pi-inspired-agent-engineering-roadmap.md)。
 
 ## 本地启动与验收
 

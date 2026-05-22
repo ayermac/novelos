@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { get, post } from '../../lib/api'
+import { normalizeOperationResult, isBusinessSuccess } from '../../lib/statusSemantics'
 import { CheckCircle2, AlertTriangle, Clock } from 'lucide-react'
 
 interface Chapter {
@@ -32,14 +33,14 @@ export default function ReviewModule({ projectId }: Props) {
   const [workspace, setWorkspace] = useState<Workspace | null>(null)
   const [loading, setLoading] = useState(true)
   const [publishingChapter, setPublishingChapter] = useState<number | null>(null)
-  const [error, setError] = useState('')
+  const [notice, setNotice] = useState<{ variant: 'error' | 'warning'; text: string } | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
-    setError('')
+    setNotice(null)
     const res = await get<Workspace>(`/projects/${projectId}/workspace`)
     if (res.ok && res.data) setWorkspace(res.data)
-    else setError(res.error?.message || '获取审核数据失败')
+    else setNotice({ variant: 'error', text: res.error?.message || '获取审核数据失败' })
     setLoading(false)
   }, [projectId])
 
@@ -47,12 +48,19 @@ export default function ReviewModule({ projectId }: Props) {
 
   const handlePublish = async (chapterNumber: number) => {
     setPublishingChapter(chapterNumber)
-    setError('')
-    const res = await post('/publish/chapter', { project_id: projectId, chapter: chapterNumber })
+    setNotice(null)
+    const res = await post<Record<string, unknown>>('/publish/chapter', { project_id: projectId, chapter: chapterNumber })
     if (res.ok) {
+      const domainResult = normalizeOperationResult(res.data ?? {})
+      if (!isBusinessSuccess(domainResult) && domainResult.domain_status !== 'pending') {
+        setNotice({
+          variant: domainResult.severity === 'error' ? 'error' : 'warning',
+          text: domainResult.user_message || domainResult.message || '发布完成但请确认状态',
+        })
+      }
       load()
     } else {
-      setError(res.error?.message || '发布失败')
+      setNotice({ variant: 'error', text: res.error?.message || '发布失败' })
     }
     setPublishingChapter(null)
   }
@@ -90,7 +98,14 @@ export default function ReviewModule({ projectId }: Props) {
         <h3><CheckCircle2 size={18} /> 审核中心</h3>
       </div>
 
-      {error && <div className="alert alert-error" style={{ marginBottom: 12 }}>{error}</div>}
+      {notice && (
+        <div
+          className={`alert ${notice.variant === 'warning' ? 'alert-warning' : 'alert-error'}`}
+          style={{ marginBottom: 12 }}
+        >
+          {notice.text}
+        </div>
+      )}
 
       {/* Summary stats */}
       <div style={{ display: 'flex', gap: 12, marginBottom: 20, flexWrap: 'wrap' }}>
@@ -108,18 +123,18 @@ export default function ReviewModule({ projectId }: Props) {
       {/* Blocking chapters */}
       {blockingChapters.length > 0 && (
         <div style={{ marginBottom: 20 }}>
-          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#dc2626', display: 'flex', alignItems: 'center', gap: 6 }}>
+          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: 'var(--danger)', display: 'flex', alignItems: 'center', gap: 6 }}>
             <AlertTriangle size={16} /> 已阻塞章节
           </h4>
           {blockingChapters.map((ch) => (
-            <div key={ch.chapter_number} className="data-card" style={{ marginBottom: 8, borderLeft: '3px solid #dc2626' }}>
+            <div key={ch.chapter_number} className="data-card" style={{ marginBottom: 8, borderLeft: '3px solid var(--danger)' }}>
               <div className="data-card-header">
-                <span className="data-card-category" style={{ background: '#fee2e2', color: '#dc2626' }}>阻塞</span>
+                <span className="data-card-category" style={{ background: 'color-mix(in srgb, var(--danger) 14%, transparent)', color: 'var(--danger)' }}>阻塞</span>
                 <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>第 {ch.chapter_number} 章</span>
               </div>
               <div className="data-card-title">{ch.title || `第 ${ch.chapter_number} 章`}</div>
               {blockingErrors[ch.chapter_number] && (
-                <div style={{ marginTop: 6, padding: '6px 8px', background: '#fef2f2', borderRadius: '4px', fontSize: 12, color: '#dc2626' }}>
+                <div style={{ marginTop: 6, padding: '6px 8px', background: 'color-mix(in srgb, var(--danger) 12%, var(--bg-primary))', borderRadius: '4px', fontSize: 12, color: 'var(--danger)' }}>
                   {blockingErrors[ch.chapter_number]}
                 </div>
               )}
@@ -140,7 +155,7 @@ export default function ReviewModule({ projectId }: Props) {
                   onClick={async () => {
                     const res = await post(`/projects/${projectId}/chapters/${ch.chapter_number}/reset`)
                     if (res.ok) load()
-                    else setError(res.error?.message || '重置失败')
+                    else setNotice({ variant: 'error', text: res.error?.message || '重置失败' })
                   }}
                 >
                   重置章节
@@ -182,13 +197,13 @@ export default function ReviewModule({ projectId }: Props) {
       {/* Revision chapters */}
       {revisionChapters.length > 0 && (
         <div style={{ marginBottom: 20 }}>
-          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: '#d97706' }}>
+          <h4 style={{ fontSize: 14, fontWeight: 600, marginBottom: 8, color: 'var(--warning)' }}>
             返修中章节
           </h4>
           {revisionChapters.map((ch) => (
-            <div key={ch.chapter_number} className="data-card" style={{ marginBottom: 8, borderLeft: '3px solid #d97706' }}>
+            <div key={ch.chapter_number} className="data-card" style={{ marginBottom: 8, borderLeft: '3px solid var(--warning)' }}>
               <div className="data-card-header">
-                <span className="data-card-category" style={{ background: '#fef3c7', color: '#92400e' }}>返修</span>
+                <span className="data-card-category" style={{ background: 'color-mix(in srgb, var(--warning) 14%, transparent)', color: 'var(--warning)' }}>返修</span>
                 <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>第 {ch.chapter_number} 章</span>
               </div>
               <div className="data-card-title">{ch.title || `第 ${ch.chapter_number} 章`}</div>

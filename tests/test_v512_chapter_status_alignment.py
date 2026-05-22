@@ -17,6 +17,7 @@ Tests for:
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 from pathlib import Path
@@ -270,13 +271,13 @@ class TestFrontendRunPage:
         )
         assert "chapter_count||0)+1" not in content.replace(" ", "")
 
-    def test_run_chapter_selector_is_select(self):
-        """Run.tsx chapter selector should be a <select> element."""
+    def test_run_chapter_selector_uses_standard_select_control(self):
+        """Run.tsx chapter selector should use the shared Select control."""
         frontend_src = Path(__file__).parent.parent / "frontend" / "src"
         run_file = frontend_src / "pages" / "Run.tsx"
         content = run_file.read_text()
 
-        assert "<select" in content, "Run.tsx should use <select> for chapter selection"
+        assert "<Select" in content, "Run.tsx should use shared Select for chapter selection"
         assert "isRunnable" in content or "RUNNABLE_STATUSES" in content, (
             "Run.tsx should filter runnable chapters"
         )
@@ -367,13 +368,19 @@ class TestLayoutVersion:
 
     def test_sidebar_version_is_current(self):
         """Sidebar version should display the current production baseline."""
-        frontend_src = Path(__file__).parent.parent / "frontend" / "src"
+        frontend_root = Path(__file__).parent.parent / "frontend"
+        frontend_src = frontend_root / "src"
         layout_file = frontend_src / "components" / "Layout.tsx"
+        package_file = frontend_root / "package.json"
         assert layout_file.exists()
+        assert package_file.exists()
         content = layout_file.read_text()
+        package_version = json.loads(package_file.read_text())["version"]
 
         assert "墨流工厂" in content
-        assert "v5.5.9" in content
+        assert "packageInfo.version" in content
+        assert f'"version": "{package_version}"' in package_file.read_text()
+        assert "v5.5.9" not in content
 
 
 class TestFrontendDashboard:

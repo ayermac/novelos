@@ -35,6 +35,8 @@ from .repositories.genesis import GenesisRepositoryMixin
 from .repositories.memory_update import MemoryUpdateRepositoryMixin
 from .repositories.story_fact import StoryFactRepositoryMixin
 from .repositories.auto_run import AutoRunRepositoryMixin
+from .repositories.agent_memory_mixin import AgentMemoryRepositoryMixin
+from .repositories.execution_event import ExecutionEventRepositoryMixin
 
 # Backward-compatible re-exports
 from ..validators.chapter_checker import count_words  # noqa: F401
@@ -51,6 +53,7 @@ class Repository(
     ProjectSkillOverrideRepositoryMixin,
     ChapterRepositoryMixin,
     WorkflowRepositoryMixin,
+    ExecutionEventRepositoryMixin,
     ArtifactRepositoryMixin,
     QualityRepositoryMixin,
     SidecarRepositoryMixin,
@@ -67,6 +70,7 @@ class Repository(
     MemoryUpdateRepositoryMixin,
     StoryFactRepositoryMixin,
     AutoRunRepositoryMixin,
+    AgentMemoryRepositoryMixin,
     BaseRepository,
 ):
     """Backward-compatible repository facade combining all domain mixins."""

@@ -72,6 +72,50 @@ class TestSkillRegistry:
         assert "data" in result
         if result["ok"]:
             assert "scores" in result["data"]
+
+    def test_run_new_agent_validator_skills(self):
+        """New v5.9.3 Agent validators are deterministic and runnable."""
+        registry = SkillRegistry()
+
+        planner = registry.run_skill(
+            "chapter-objective-checker",
+            {"objective": "林默Lv1，本章要夺回账册并立下新冲突", "required_events": ["夺回账册"], "constraints": ["不改数值"]},
+            agent="planner",
+            stage="after_llm",
+        )
+        assert planner["ok"] is True
+
+        screenwriter = registry.run_skill(
+            "scene-conflict-checker",
+            {"scene_beats": [{"sequence": 1, "scene_goal": "夺回账册", "conflict": "守卫阻拦", "turn": "盟友背叛", "hook": "账册缺页"}]},
+            agent="screenwriter",
+            stage="after_llm",
+        )
+        assert screenwriter["ok"] is True
+
+        author = registry.run_skill(
+            "event-coverage-checker",
+            {"content": "林默夺回账册。", "required_events": ["夺回账册"], "implemented_events": ["夺回账册"]},
+            agent="author",
+            stage="after_llm",
+        )
+        assert author["ok"] is True
+
+        memory = registry.run_skill(
+            "memory-patch-validator",
+            {
+                "patches": [{
+                    "target_table": "story_facts",
+                    "operation": "create",
+                    "data": {"fact_key": "linmo.asset.ledger"},
+                    "confidence": 0.9,
+                    "evidence_text": "林默夺回账册",
+                }]
+            },
+            agent="memory_curator",
+            stage="after_extract",
+        )
+        assert memory["ok"] is True
     
     def test_run_unknown_skill_fails(self):
         """Test running unknown skill fails clearly."""

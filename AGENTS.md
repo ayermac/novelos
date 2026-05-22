@@ -6,18 +6,21 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 Novelos is an AI-powered novel production workbench for long-form fiction projects. It combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v5.5.15 Production Readiness Closure**, with **1844/1844 pytest passing**, frontend typecheck/lint/build/vitest passing.
+Current baseline: **v6.6.16 Real Project Burn-in & Regression Closure**, with **2616/2616 pytest passing**, frontend typecheck/lint/build/vitest passing.
+
+Runtime version source: `novel_factory/version.py` (`__version__ = "6.6.16"`).
 
 ## Architecture
 
 ```text
 frontend/              React + Vite author workspace
 novel_factory/api/     FastAPI app, route dependencies, API models
-novel_factory/db/      SQLite schema, migrations, repositories
+novel_factory/db/      SQLite schema, migrations, migration registry, repositories
 novel_factory/workflow LangGraph chapter workflow and checkpointing
 novel_factory/llm/     Stub and OpenAI-compatible LLM providers
 novel_factory/cli_app/ CLI command implementation
-novel_factory/agents/  AI agents (planner, screenwriter, author, polisher, editor, etc.)
+novel_factory/agents/  AI agent role implementations (planner, screenwriter, author, polisher, editor, memory_curator)
+novel_factory/agent_runtime/ Shared agent runtime infrastructure (BaseAgent, role profiles, contracts, self-check, skill hooks)
 novel_factory/models/  Pydantic models and state definitions
 novel_factory/config/  Configuration loading and validation
 tests/                 Python regression and version acceptance tests
@@ -141,9 +144,10 @@ DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
 - **author.py**: Transforms outlines into full text
 - **polisher.py**: Refines and polishes prose
 - **editor.py**: Five-layer review + red-line scanning
-- **scout.py**: Market analysis and topic recommendations
 - **continuity_checker.py**: Checks continuity across chapters
-- **architect.py**: System diagnostics and optimization
+ 
+Retired sidecar roles:
+- `scout`, `architect`, and `secretary` are no longer active runtime agents. Reintroduce them only through a fresh plan aligned with `novel_factory/agent_runtime/`.
 
 ### Workflow (`novel_factory/workflow/`)
 - **graph.py**: LangGraph StateGraph construction and compilation
@@ -186,9 +190,10 @@ Key configuration files:
 ### Python Tests
 - Test location: `tests/`
 - Framework: pytest
-- Current baseline: 1844/1844 passing
-- Run full suite: `python3 -m pytest -q`
+- Current baseline: 2616/2616 passing
+- Run full suite: `python3 -m pytest -q` (2616 passed)
 - Run specific test: `python3 -m pytest tests/test_file.py::test_name -q`
+- Run v6.6.5 hygiene tests: `python3 -m pytest tests/test_v665_runtime_hygiene.py -q`
 
 ### Frontend Tests
 - Framework: vitest
@@ -216,4 +221,4 @@ Start with:
 - `uv` recommended for reproducible Python dependency management via `uv.lock`
 - SQLite databases, WAL files, build output, Python caches, and frontend dependencies are gitignored
 - `uv.lock` is committed for reproducibility
-- `openclaw-agents/` is treated as a local-only legacy workspace and is ignored by Git
+- `openclaw-agents/` legacy workspace has been removed from the repository; OpenClaw/Codex skill import remains optional through configured external roots

@@ -5,6 +5,7 @@ import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
 import {
   ConfigDraftSection,
+  DesktopRuntimeSection,
   LlmSettingsSection,
   SettingsOverviewSection,
   SkillsSettingsSection,
@@ -91,6 +92,7 @@ const SETTINGS_SECTIONS = [
   { key: 'health', label: '运行健康', hint: '卡住运行与恢复运营' },
   { key: 'llm', label: 'LLM 配置', hint: '档案与 Agent 路由' },
   { key: 'skills', label: 'Skill 管理', hint: '挂载、测试与试运行' },
+  { key: 'desktop', label: '本地服务', hint: '数据目录、日志与诊断' },
   { key: 'draft', label: '配置草案', hint: '生成本地配置草案' },
 ] as const
 
@@ -264,6 +266,7 @@ export default function Settings() {
       {activeSection === 'health' && <RunHealthPanel />}
       {activeSection === 'llm' && <LlmSettingsSection data={data} />}
       {activeSection === 'skills' && <SkillsSettingsSection />}
+      {activeSection === 'desktop' && <DesktopRuntimeSection />}
       {activeSection === 'draft' && (
         <ConfigDraftSection
           draft={draft}

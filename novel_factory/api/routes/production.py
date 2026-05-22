@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ..contracts import success, partial_success, failed, blocked as blocked_result, needs_human
 
 router = APIRouter()
 
@@ -44,31 +45,38 @@ class ArcPlanRequest(BaseModel):
 
 def _has_approved_genesis(repo, project_id: str) -> bool:
     """Check if project has an approved genesis run."""
+    return any(run.get("status") == "approved" for run in repo.list_genesis_runs(project_id))
+
+
+def _latest_non_stale_genesis(repo, project_id: str, timeout_minutes: int = 30) -> dict | None:
+    """Return latest genesis after recovering abandoned running rows."""
+    from .genesis import _recover_stale_running_genesis
+
     latest = repo.get_latest_genesis_run(project_id)
-    return latest is not None and latest.get("status") == "approved"
+    return _recover_stale_running_genesis(repo, latest, timeout_minutes)
 
 
-def _has_pending_genesis(repo, project_id: str) -> bool:
+def _has_pending_genesis(repo, project_id: str, timeout_minutes: int = 30) -> bool:
     """Check if project has a pending/generated genesis draft awaiting review."""
-    latest = repo.get_latest_genesis_run(project_id)
+    latest = _latest_non_stale_genesis(repo, project_id, timeout_minutes)
     return latest is not None and latest.get("status") == "generated"
 
 
-def _has_running_genesis(repo, project_id: str) -> bool:
+def _has_running_genesis(repo, project_id: str, timeout_minutes: int = 30) -> bool:
     """Check if project has a running genesis."""
-    latest = repo.get_latest_genesis_run(project_id)
+    latest = _latest_non_stale_genesis(repo, project_id, timeout_minutes)
     return latest is not None and latest.get("status") == "running"
 
 
 def _has_manual_context_ready(health: dict) -> bool:
-    """Return true when manually entered project context is enough to write."""
-    return (
-        health.get("has_world_settings")
-        and health.get("has_characters")
-        and health.get("has_outlines")
-        and health.get("has_instructions_for_current_chapter")
-        and health.get("title_contract_aligned", True)
-    )
+    """Return true when project context is complete enough for chapter generation.
+
+    v6.3.1: Unified with run guard — requires approved genesis + world + characters
+    + outlines + instructions (same as ready_for_chapter_1). This prevents the
+    mismatch where production-next recommends generate_chapter but the run guard
+    blocks with CONTEXT_INCOMPLETE.
+    """
+    return health.get("ready_for_chapter_1", False)
 
 
 def _get_blocking_chapter(repo, project_id: str) -> dict | None:
@@ -101,13 +109,26 @@ def _get_stuck_run(repo, project_id: str, current_chapter: int) -> dict | None:
 
 def _has_pending_memory_updates(repo, project_id: str) -> bool:
     """Check for pending or partial memory update batches."""
-    batches = repo.list_memory_batches(project_id)
-    for b in batches:
-        if b.get("status") in ("pending", "partial"):
-            return True
-    # Also check for items with pending status
-    items = repo.list_memory_items_by_project(project_id, status="pending")
-    return len(items) > 0
+    pending_items, actionable_batches = _list_actionable_memory_updates(repo, project_id)
+    return bool(pending_items or actionable_batches)
+
+
+def _list_actionable_memory_updates(repo, project_id: str) -> tuple[list[dict], list[dict]]:
+    """Return pending memory items whose parent batches are still actionable."""
+    actionable_batches = [
+        batch for batch in repo.list_memory_batches(project_id)
+        if batch.get("status") in ("pending", "partial")
+    ]
+    actionable_batch_ids = {batch.get("id") for batch in actionable_batches}
+    pending_items = [
+        item for item in repo.list_memory_items_by_project(project_id, status="pending")
+        if item.get("batch_id") in actionable_batch_ids
+    ]
+    return pending_items, actionable_batches
+
+
+def _is_chapter_production_run(run: dict) -> bool:
+    return (run.get("graph_name") or "chapter_production") == "chapter_production"
 
 
 def _has_running_chapter_workflow(repo, project_id: str, chapter_number: int) -> bool:
@@ -118,7 +139,7 @@ def _has_running_chapter_workflow(repo, project_id: str, chapter_number: int) ->
             chapter_number=chapter_number,
         )
     runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=5)
-    return any(r.get("status") == "running" for r in runs)
+    return any(r.get("status") == "running" and _is_chapter_production_run(r) for r in runs)
 
 
 def _get_running_chapter_workflow(repo, project_id: str, chapter_number: int) -> dict | None:
@@ -130,7 +151,18 @@ def _get_running_chapter_workflow(repo, project_id: str, chapter_number: int) ->
         )
     runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=5)
     for run in runs:
-        if run.get("status") == "running":
+        if run.get("status") == "running" and _is_chapter_production_run(run):
+            return run
+    return None
+
+
+def _get_running_project_chapter_workflow(repo, project_id: str) -> dict | None:
+    """Return the latest running chapter workflow anywhere in the project."""
+    if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
+        repo.reconcile_terminal_chapter_running_workflows(project_id=project_id)
+    runs = repo.get_workflow_runs_for_project(project_id, limit=100)
+    for run in runs:
+        if run.get("status") == "running" and _is_chapter_production_run(run):
             return run
     return None
 
@@ -243,9 +275,28 @@ def _get_planned_chapter_with_content(repo, project_id: str) -> dict | None:
             continue
         content = (chapter.get("content") or "").strip()
         word_count = chapter.get("word_count") or 0
-        if content or word_count > 0:
+        if (content or word_count > 0) and not _has_explicit_reset_recovery(
+            repo, project_id, chapter.get("chapter_number")
+        ):
             return chapter
     return None
+
+
+def _has_explicit_reset_recovery(repo, project_id: str, chapter_number: int | None) -> bool:
+    if chapter_number is None:
+        return False
+    try:
+        runs = repo.get_workflow_runs_for_project(
+            project_id,
+            chapter_number=chapter_number,
+            limit=5,
+        )
+    except Exception:
+        return False
+    return any(
+        run.get("status") == "completed" and run.get("current_node") == "reset_recovery"
+        for run in runs
+    )
 
 
 def _detect_chapter_workflow_contradictions(repo, project_id: str) -> list[dict]:
@@ -274,7 +325,10 @@ def _detect_chapter_workflow_contradictions(repo, project_id: str) -> list[dict]
         if not runs:
             continue
 
-        running_runs = [r for r in runs if r.get("status") == "running"]
+        running_runs = [
+            r for r in runs
+            if r.get("status") == "running" and _is_chapter_production_run(r)
+        ]
         latest_run = runs[0]  # Most recent first
 
         # Contradiction 1: Chapter in terminal state but workflow is still "running"
@@ -319,11 +373,7 @@ def _build_project_health_summary(repo, project_id: str, timeout_minutes: int) -
     next_action = _determine_next_action(repo, project_id, health, current_chapter, timeout_minutes)
 
     stale_runs = _list_stale_running_workflows(repo, project_id, timeout_minutes)
-    pending_memory_items = repo.list_memory_items_by_project(project_id, status="pending")
-    pending_memory_batches = [
-        b for b in repo.list_memory_batches(project_id)
-        if b.get("status") in ("pending", "partial")
-    ]
+    pending_memory_items, pending_memory_batches = _list_actionable_memory_updates(repo, project_id)
 
     active_session = repo.get_active_auto_run_session(project_id)
     obsolete_session = None
@@ -415,14 +465,14 @@ def _build_project_health_summary(repo, project_id: str, timeout_minutes: int) -
 
 def _build_health(repo, project_id: str, current_chapter: int) -> dict:
     """Build health snapshot for a project."""
-    from ...agents.title_contract import evaluate_title_alignment
+    from ...agent_runtime.title_contract import evaluate_title_alignment
 
     project = repo.get_project(project_id)
     world_settings = repo.list_world_settings(project_id)
     characters = repo.list_characters(project_id, include_inactive=True)
     outlines = repo.list_outlines(project_id)
     instruction = repo.get_instruction_by_chapter(project_id, current_chapter)
-    latest_genesis = repo.get_latest_genesis_run(project_id)
+    latest_genesis = _latest_non_stale_genesis(repo, project_id)
     context_items: list[str] = []
     context_items.extend(f"{w.get('title', '')} {w.get('content', '')}" for w in world_settings)
     context_items.extend(f"{c.get('name', '')} {c.get('description', '')} {c.get('traits', '')}" for c in characters)
@@ -434,21 +484,38 @@ def _build_health(repo, project_id: str, current_chapter: int) -> dict:
         )
     title_alignment = evaluate_title_alignment(project, context_items)
 
+    has_approved_genesis = _has_approved_genesis(repo, project_id)
+    has_world = len(world_settings) > 0
+    has_chars = len(characters) > 0
+    has_outlines_ok = len(outlines) > 0
+    has_instruction = instruction is not None and bool(instruction.get("objective"))
+
+    # v6.3: ready_for_chapter_1 is the single source of truth for whether
+    # chapter generation can proceed without hitting run guards.
+    ready_for_chapter_1 = (
+        has_approved_genesis
+        and has_world
+        and has_chars
+        and has_outlines_ok
+        and has_instruction
+    )
+
     return {
         "has_project": project is not None,
         "has_genesis": latest_genesis is not None,
-        "has_approved_genesis": latest_genesis is not None and latest_genesis.get("status") == "approved",
-        "has_world_settings": len(world_settings) > 0,
-        "has_characters": len(characters) > 0,
-        "has_outlines": len(outlines) > 0,
-        "has_instructions_for_current_chapter": instruction is not None and bool(instruction.get("objective")),
+        "has_approved_genesis": has_approved_genesis,
+        "has_world_settings": has_world,
+        "has_characters": has_chars,
+        "has_outlines": has_outlines_ok,
+        "has_instructions_for_current_chapter": has_instruction,
+        "ready_for_chapter_1": ready_for_chapter_1,
         "has_pending_memory_updates": _has_pending_memory_updates(repo, project_id),
         "has_blocking_chapter": _get_blocking_chapter(repo, project_id) is not None,
         "has_stuck_run": _get_stuck_run(repo, project_id, current_chapter) is not None,
         "has_running_chapter_workflow": _has_running_chapter_workflow(repo, project_id, current_chapter),
         "title_contract": title_alignment,
         "title_contract_aligned": title_alignment["aligned"],
-        "manual_context_ready": False,
+        "manual_context_ready": ready_for_chapter_1,
     }
 
 
@@ -581,6 +648,11 @@ def _determine_next_action(
     if running_current:
         return _view_running_workflow_action(project_id, current_chapter, running_current)
 
+    running_any = _get_running_project_chapter_workflow(repo, project_id)
+    if running_any:
+        ch_num = running_any.get("chapter_number", current_chapter)
+        return _view_running_workflow_action(project_id, ch_num, running_any)
+
     if planned_with_content:
         ch_num = planned_with_content.get("chapter_number", current_chapter)
         return {
@@ -612,7 +684,7 @@ def _determine_next_action(
     health["manual_context_ready"] = manual_context_ready
 
     if not health["has_approved_genesis"] and not manual_context_ready:
-        if _has_running_genesis(repo, project_id):
+        if _has_running_genesis(repo, project_id, timeout_minutes):
             return {
                 "key": "wait_genesis",
                 "label": "等待创世完成",
@@ -622,7 +694,7 @@ def _determine_next_action(
                 "method": "GET",
                 "requires_confirmation": False,
             }
-        if _has_pending_genesis(repo, project_id):
+        if _has_pending_genesis(repo, project_id, timeout_minutes):
             return {
                 "key": "review_genesis",
                 "label": "审核创世草案",
@@ -778,6 +850,9 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
+        if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
+            repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
+
         current_chapter = project.get("current_chapter", 1)
 
         health = _build_health(repo, project_id, current_chapter)
@@ -806,6 +881,9 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
                 "method": "POST",
             })
 
+        # v6.6.12: Build domain_result for production-next
+        domain_result = _build_production_next_domain_result(health, next_action, missing)
+
         return envelope_response({
             "project_id": project_id,
             "current_chapter": current_chapter,
@@ -813,6 +891,7 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
             "health": health,
             "missing": missing,
             "actions": actions,
+            "domain_result": domain_result,
         })
 
     except Exception as e:
@@ -1862,12 +1941,28 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
         error_events = [e for e in events if e["event"] == "auto_run_error"]
         if error_events:
             err_data = error_events[0]["data"]
-            return error_response(err_data["error"], err_data["message"])
+            domain_result = failed(
+                err_data["message"],
+                user_message=err_data["message"],
+                retryable=True,
+                next_action="retry_auto_run",
+                action_label="重试自动生产",
+                details={
+                    "project_id": project_id,
+                    "error_code": err_data["error"],
+                },
+                flags={"auto_run_failed": True},
+            ).to_dict()
+            return error_response(
+                err_data["error"],
+                err_data["message"],
+                details={"domain_result": domain_result},
+            )
 
         # Check for step failure
         failed_events = [e for e in events if e["event"] == "step_failed"]
         if failed_events:
-            failed = failed_events[0]["data"]
+            failed_data = failed_events[0]["data"]
             all_steps = [
                 {
                     "step": e["data"]["step"],
@@ -1881,22 +1976,43 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
                 for e in events
                 if e["event"] in ("step_completed", "step_failed")
             ]
+            domain_result = failed(
+                f"第 {failed_data['step']} 步执行失败",
+                user_message=(
+                    f"第 {failed_data['step']} 步执行失败："
+                    f"{failed_data.get('error', '未知错误')}"
+                ),
+                retryable=True,
+                next_action="retry_auto_run_step",
+                action_label="重试失败步骤",
+                details={
+                    "step": failed_data["step"],
+                    "action": failed_data["action"],
+                    "stop_reason": STOP_REASON_FAILED,
+                    "steps_executed": failed_data["steps_executed"],
+                },
+                flags={"auto_run_step_failed": True},
+            ).to_dict()
             return error_response(
                 "AUTO_RUN_STEP_FAILED",
-                f"第 {failed['step']} 步执行失败: {failed.get('error', '未知错误')}",
+                f"第 {failed_data['step']} 步执行失败: {failed_data.get('error', '未知错误')}",
                 details={
-                    "step": failed["step"],
-                    "action": failed["action"],
+                    "step": failed_data["step"],
+                    "action": failed_data["action"],
                     "steps": all_steps,
-                    "chapters_touched": failed.get("chapters_touched", []),
+                    "chapters_touched": failed_data.get("chapters_touched", []),
                     "stop_reason": STOP_REASON_FAILED,
-                    "steps_executed": failed["steps_executed"],
+                    "steps_executed": failed_data["steps_executed"],
+                    "domain_result": domain_result,
                 },
             )
 
         # Find final event
         final_event = events[-1]
         data = final_event["data"]
+
+        # v6.6.12: Build domain_result for run-auto
+        domain_result = _build_run_auto_domain_result(data)
 
         return envelope_response({
             "status": data["status"],
@@ -1907,10 +2023,24 @@ async def run_auto_production(request: Request, project_id: str, body: RunAutoRe
             "steps_executed": data["steps_executed"],
             "session_tokens_used": data.get("session_tokens_used", 0),
             "max_session_tokens": data.get("max_session_tokens"),
+            "domain_result": domain_result,
         })
 
     except Exception as e:
-        return error_response("INTERNAL_ERROR", f"自动生产运行失败: {str(e)}")
+        message = f"自动生产运行失败: {str(e)}"
+        domain_result = failed(
+            message,
+            user_message="自动生产运行失败，请检查日志后重试",
+            retryable=True,
+            next_action="retry_auto_run",
+            action_label="重试自动生产",
+            flags={"auto_run_failed": True},
+        ).to_dict()
+        return error_response(
+            "INTERNAL_ERROR",
+            message,
+            details={"domain_result": domain_result},
+        )
 
 
 @router.get("/projects/{project_id}/production/run-auto/stream")
@@ -2167,11 +2297,14 @@ async def _execute_auto_step(
                 result["error"] = "重置章节失败"
                 return result
 
-            repo.invalidate_running_workflow_runs_for_chapter(
-                project_id,
-                chapter_num,
-                "章节已重置，旧运行已作废，请重新开始新的工作流。",
-            )
+            if hasattr(repo, "recover_active_workflow_runs_for_chapter"):
+                repo.recover_active_workflow_runs_for_chapter(project_id, chapter_num)
+            else:
+                repo.invalidate_running_workflow_runs_for_chapter(
+                    project_id,
+                    chapter_num,
+                    "章节已重置，旧运行已作废，请重新开始新的工作流。",
+                )
 
             # Clear checkpoint
             from ...workflow.checkpoint import delete_checkpoint_thread
@@ -2603,3 +2736,163 @@ async def cleanup_auto_run_sessions(
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"清理会话失败: {str(e)}")
+
+
+# ---------------------------------------------------------------------------
+# v6.6.12: Domain result helpers for production endpoints
+# ---------------------------------------------------------------------------
+
+
+def _build_production_next_domain_result(
+    health: dict,
+    next_action: dict,
+    missing: list[dict],
+) -> dict:
+    """Build domain_result for production-next endpoint.
+
+    Maps project health state to domain-level semantics:
+    - Blocking issues → blocked/needs_human
+    - Missing context → blocked
+    - Running workflow → pending
+    - Ready to generate → success
+    """
+    # Check for blocking issues
+    if health.get("has_blocking_chapter") or health.get("has_stuck_run"):
+        return needs_human(
+            "项目存在阻塞章节或卡住运行",
+            user_message="需要先处理阻塞/卡住的章节才能继续生产",
+            next_action=next_action.get("key", "recover_blocked_run"),
+            action_label=next_action.get("label", "处理阻塞"),
+            details={
+                "next_action_key": next_action.get("key"),
+                "has_blocking_chapter": health.get("has_blocking_chapter", False),
+                "has_stuck_run": health.get("has_stuck_run", False),
+            },
+            flags={"production_blocked": True},
+        ).to_dict()
+
+    # Check for missing context
+    blocking_missing = [m for m in missing if m.get("severity") == "blocking"]
+    if blocking_missing:
+        return blocked_result(
+            "项目资料不完整，无法生成章节",
+            user_message="需要补齐项目基础资料后才能开始章节生成",
+            next_action=next_action.get("key", "generate_genesis"),
+            action_label=next_action.get("label", "生成项目设定"),
+            details={
+                "next_action_key": next_action.get("key"),
+                "missing_count": len(blocking_missing),
+                "missing_keys": [m.get("key") for m in blocking_missing],
+            },
+            flags={"context_incomplete": True},
+        ).to_dict()
+
+    # Check for running workflow
+    if health.get("has_running_chapter_workflow"):
+        from ..contracts import OperationResult
+        return OperationResult(
+            ok=True,
+            domain_status="pending",
+            message="章节工作流运行中",
+            user_message="当前章节正在生成中，请等待完成",
+            severity="info",
+            details={
+                "next_action_key": next_action.get("key"),
+            },
+            flags={"workflow_running": True},
+        ).to_dict()
+
+    # Ready to generate
+    return success(
+        "项目已就绪，可开始章节生成",
+        user_message=next_action.get("description", "项目已就绪"),
+        details={
+            "next_action_key": next_action.get("key"),
+            "next_action_label": next_action.get("label"),
+            "current_chapter": health.get("current_chapter"),
+        },
+        flags={"production_ready": True},
+    ).to_dict()
+
+
+def _build_run_auto_domain_result(data: dict) -> dict:
+    """Build domain_result for run-auto endpoint.
+
+    Maps auto-run outcome to domain-level semantics:
+    - stop_reason=failed → failed
+    - stop_reason=review_needed → needs_human
+    - stop_reason=blocked → blocked
+    - stop_reason=completed with chapters → success
+    - stop_reason=completed without chapters → partial_success
+    """
+    stop_reason = data.get("stop_reason", "")
+    steps_executed = data.get("steps_executed", 0)
+    chapters_touched = data.get("chapters_touched", [])
+    status = data.get("status", "unknown")
+
+    if stop_reason == "failed" or status == "failed":
+        return failed(
+            "自动生产执行失败",
+            user_message="自动生产过程中发生错误，请检查后重试",
+            retryable=True,
+            next_action="retry_auto_run",
+            action_label="重试自动生产",
+            details={
+                "stop_reason": stop_reason,
+                "steps_executed": steps_executed,
+                "chapters_touched": chapters_touched,
+            },
+            flags={"auto_run_failed": True},
+        ).to_dict()
+
+    if stop_reason == "review_needed":
+        return needs_human(
+            "自动生产暂停：需要人工审核",
+            user_message="章节已到待发布状态，需要人工确认发布后继续",
+            next_action="publish_chapter",
+            action_label="确认发布",
+            details={
+                "stop_reason": stop_reason,
+                "steps_executed": steps_executed,
+                "chapters_touched": chapters_touched,
+            },
+            flags={"auto_run_review_needed": True},
+        ).to_dict()
+
+    if stop_reason == "blocked":
+        return blocked_result(
+            "自动生产被阻塞",
+            user_message="生产过程中遇到阻塞，需要处理后继续",
+            next_action="recover_blocked_run",
+            action_label="处理阻塞",
+            details={
+                "stop_reason": stop_reason,
+                "steps_executed": steps_executed,
+                "chapters_touched": chapters_touched,
+            },
+            flags={"auto_run_blocked": True},
+        ).to_dict()
+
+    if chapters_touched:
+        return success(
+            f"自动生产完成：已处理 {len(chapters_touched)} 章",
+            user_message=f"自动生产已完成，共处理 {len(chapters_touched)} 章",
+            details={
+                "stop_reason": stop_reason,
+                "steps_executed": steps_executed,
+                "chapters_touched": chapters_touched,
+            },
+            flags={"auto_run_completed": True},
+        ).to_dict()
+
+    return partial_success(
+        "自动生产完成，但未生成章节",
+        user_message="自动生产已完成，但未实际生成章节内容",
+        next_action="check_production_next",
+        action_label="查看下一步",
+        details={
+            "stop_reason": stop_reason,
+            "steps_executed": steps_executed,
+        },
+        flags={"auto_run_no_chapters": True},
+    ).to_dict()

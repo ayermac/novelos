@@ -93,6 +93,7 @@ def _build_dispatcher(repo, settings: Settings, llm_mode: str = "real"):
                 default_llm=settings.default_llm,
                 llm_profiles=settings.llm_profiles,
                 agent_llm=settings.agent_llm,
+                agent_llm_fallback=settings.agent_llm_fallback,
             )
 
             router = LLMRouter(config, stub_provider=stub_llm, llm_mode="stub")
@@ -117,6 +118,7 @@ def _build_dispatcher(repo, settings: Settings, llm_mode: str = "real"):
             default_llm=settings.default_llm,
             llm_profiles=settings.llm_profiles,
             agent_llm=settings.agent_llm,
+            agent_llm_fallback=settings.agent_llm_fallback,
         )
 
         # Create LLMRouter with custom env_getter — validation happens per-profile

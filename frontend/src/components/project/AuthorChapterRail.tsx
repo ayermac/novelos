@@ -104,6 +104,7 @@ function ChapterMenu({
   const isReviewedReal = status === 'reviewed' && llmMode === 'real'
   const isPublished = status === 'published'
   const isAwaiting = status === 'awaiting_publish'
+  const hasPreservedPlannedContent = status === 'planned' && chapter.word_count > 0
   const title = chapter.title || `第 ${chapter.chapter_number} 章`
 
   const handleViewContent = () => {
@@ -197,7 +198,13 @@ function ChapterMenu({
         </button>
       )}
 
-      {!isWorkflowRunning && !isTerminal && status !== 'blocking' && onGenerateChapter && (
+      {!isWorkflowRunning && hasPreservedPlannedContent && (
+        <button className="author-rail-dropdown-item" role="menuitem" onClick={handleViewContent}>
+          <FileText size={13} /> 查看正文后确认覆盖
+        </button>
+      )}
+
+      {!isWorkflowRunning && !hasPreservedPlannedContent && !isTerminal && status !== 'blocking' && onGenerateChapter && (
         <button className="author-rail-dropdown-item" role="menuitem" onClick={handleGenerate}>
           <Play size={13} /> {status === 'planned' ? '生成本章' : '继续生成'}
         </button>

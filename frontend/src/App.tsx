@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
+import { BrowserRouter, HashRouter, Routes, Route, Navigate } from 'react-router-dom'
 import Layout from './components/Layout'
 import Dashboard from './pages/Dashboard'
 import Projects from './pages/Projects'
@@ -9,7 +9,9 @@ import RunDetail from './pages/RunDetail'
 import Review from './pages/Review'
 import Style from './pages/Style'
 import Settings from './pages/Settings'
+import AgentOps from './pages/AgentOps'
 import { AppDialogProvider } from './components/AppDialog'
+import { ToastProvider } from './components/ui'
 
 function ChapterRedirect() {
   const path = window.location.pathname
@@ -33,24 +35,29 @@ function RunRedirect() {
 }
 
 function App() {
+  const Router = window.__NOVELOS_DESKTOP__ ? HashRouter : BrowserRouter
+
   return (
     <AppDialogProvider>
-      <BrowserRouter>
-        <Routes>
-          <Route path="/" element={<Layout />}>
-            <Route index element={<Dashboard />} />
-            <Route path="projects" element={<Projects />} />
-            <Route path="projects/:id" element={<ProjectDetail />} />
-            <Route path="projects/:projectId/chapters/:chapterNumber" element={<ChapterRedirect />} />
-            <Route path="onboarding" element={<Onboarding />} />
-            <Route path="run" element={<Run />} />
-            <Route path="runs/:runId" element={<RunRedirect />} />
-            <Route path="review" element={<Review />} />
-            <Route path="style" element={<Style />} />
-            <Route path="settings" element={<Settings />} />
-          </Route>
-        </Routes>
-      </BrowserRouter>
+      <ToastProvider>
+        <Router>
+          <Routes>
+            <Route path="/" element={<Layout />}>
+              <Route index element={<Dashboard />} />
+              <Route path="projects" element={<Projects />} />
+              <Route path="projects/:id" element={<ProjectDetail />} />
+              <Route path="projects/:projectId/chapters/:chapterNumber" element={<ChapterRedirect />} />
+              <Route path="onboarding" element={<Onboarding />} />
+              <Route path="run" element={<Run />} />
+              <Route path="runs/:runId" element={<RunRedirect />} />
+              <Route path="review" element={<Review />} />
+              <Route path="style" element={<Style />} />
+              <Route path="settings" element={<Settings />} />
+              <Route path="agent-ops" element={<AgentOps />} />
+            </Route>
+          </Routes>
+        </Router>
+      </ToastProvider>
     </AppDialogProvider>
   )
 }

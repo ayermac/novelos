@@ -11,6 +11,7 @@ from ..agents.screenwriter import ScreenwriterAgent
 from ..agents.author import AuthorAgent
 from ..agents.polisher import PolisherAgent
 from ..agents.editor import EditorAgent
+from ..agents.memory_curator import MemoryCuratorAgent
 from .base import LEGAL_RESUME_STATUSES
 
 logger = logging.getLogger(__name__)
@@ -243,6 +244,7 @@ class ChapterDispatchMixin:
             "author": AuthorAgent,
             "polisher": PolisherAgent,
             "editor": EditorAgent,
+            "memory_curator": MemoryCuratorAgent,
         }
 
         if agent_name == "publisher":
@@ -264,8 +266,8 @@ class ChapterDispatchMixin:
                 "requires_human": True,
             }
 
-        # Inject skill_registry for Polisher and Editor (v2.1)
-        if agent_name in ("polisher", "editor"):
+        # Inject skill_registry for runtime Skill-capable agents.
+        if agent_name in ("planner", "screenwriter", "author", "polisher", "editor", "memory_curator"):
             # Only pass skill_registry if it's not None
             agent = agent_cls(self.repo, llm, skill_registry=self.skill_registry if self.skill_registry is not None else None)
         else:

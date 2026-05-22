@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import re
 from enum import Enum
 from urllib.parse import quote
 
@@ -11,8 +12,120 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ...agent_runtime.chapter_text import is_chapter_heading
 
 router = APIRouter()
+
+
+class ChapterRegenerateResetRequest(BaseModel):
+    """Explicitly allow regenerating a planned chapter that already has text."""
+
+    confirm: bool = False
+
+
+class RestoreBestVersionRequest(BaseModel):
+    """Restore the best historical version after a workflow deadloop."""
+
+    confirm: bool = False
+
+
+def _chapter_quality_score(repo, project_id: str, chapter: dict) -> int | float | None:
+    """Return the user-facing quality score for a chapter.
+
+    `chapters` does not currently persist a quality_score column. The workbench
+    read model derives it from the latest editor review first, then falls back
+    to QualityHub reports.
+    """
+    chapter_number = chapter.get("chapter_number")
+    try:
+        chapter_id = chapter.get("id")
+        if chapter_id:
+            review = repo.get_latest_review(project_id, chapter_id)
+            if review and review.get("score") is not None:
+                return review.get("score")
+    except Exception:
+        pass
+
+    try:
+        for stage in ("final", "polished", "draft"):
+            report = repo.get_latest_quality_report(project_id, chapter_number, stage)
+            if report and report.get("overall_score") is not None:
+                score = report.get("overall_score")
+                return round(score, 1) if isinstance(score, float) else score
+    except Exception:
+        pass
+
+    return None
+
+
+def _is_bare_chapter_title(title: str | None, chapter_number: int) -> bool:
+    text = re.sub(r"\s+", "", str(title or "").strip())
+    if any(marker in text for marker in ("待命名", "未命名", "占位")):
+        return True
+    return text in {f"第{chapter_number}章", f"第{chapter_number}章节"} or bool(
+        re.fullmatch(r"第[一二三四五六七八九十百千零〇两]+章节?", text)
+    )
+
+
+def _clean_title_suffix(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = re.sub(r"^[\"'“”‘’《》【】\s]+|[\"'“”‘’《》【】\s]+$", "", text)
+    text = re.split(r"[。！？!?；;，,\n\r]", text, maxsplit=1)[0].strip()
+    text = re.sub(r"\s+", "", text)
+    if len(text) < 2:
+        return ""
+    return text[:14]
+
+
+def _chapter_display_title(chapter: dict) -> str:
+    """Return a readable chapter title for API consumers.
+
+    Older generated chapters may have stored only "第N章". For display, derive a
+    short suffix from the first prose line while leaving the stored record intact.
+    """
+    chapter_number = int(chapter.get("chapter_number") or 0)
+    title = str(chapter.get("title") or "").strip()
+    if not chapter_number or not _is_bare_chapter_title(title, chapter_number):
+        return title
+
+    lines = [line.strip() for line in str(chapter.get("content") or "").splitlines() if line.strip()]
+    for line in lines:
+        if is_chapter_heading(line, chapter_number):
+            continue
+        suffix = _clean_title_suffix(line)
+        if suffix:
+            return f"第{chapter_number}章 {suffix}"
+
+    return title or f"第{chapter_number}章"
+
+
+def _chapter_display_content(chapter: dict, display_title: str) -> str:
+    content = str(chapter.get("content") or "")
+    chapter_number = int(chapter.get("chapter_number") or 0)
+    stored_title = str(chapter.get("title") or "").strip()
+    if not content.strip() or display_title == stored_title:
+        return content
+
+    lines = content.splitlines()
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if is_chapter_heading(line.strip(), chapter_number):
+            body = lines[index + 1 :]
+            while body and not body[0].strip():
+                body.pop(0)
+            while body and (
+                is_chapter_heading(body[0].strip(), chapter_number)
+                or body[0].strip() == stored_title
+            ):
+                body.pop(0)
+                while body and not body[0].strip():
+                    body.pop(0)
+            return "\n".join([*lines[:index], display_title, "", *body])
+        return content
+    return content
 
 
 class CreateProjectRequest(BaseModel):
@@ -74,6 +187,9 @@ async def get_project(request: Request, project_id: str) -> EnvelopeResponse:
 
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
+            repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
 
         # Get chapters
         chapters = repo.list_chapters(project_id)
@@ -156,16 +272,18 @@ async def get_chapter_detail(
         if not chapter:
             return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
+        display_title = _chapter_display_title(chapter)
+
         # Return clean chapter data (no internal DB fields)
         return envelope_response({
             "project_id": project_id,
             "project_name": project.get("name", ""),
             "chapter_number": chapter.get("chapter_number", chapter_number),
-            "title": chapter.get("title", ""),
+            "title": display_title,
             "status": chapter.get("status", ""),
             "word_count": chapter.get("word_count", 0),
-            "quality_score": chapter.get("quality_score"),
-            "content": chapter.get("content", ""),
+            "quality_score": _chapter_quality_score(repo, project_id, chapter),
+            "content": _chapter_display_content(chapter, display_title),
             "created_at": chapter.get("created_at", ""),
             "updated_at": chapter.get("updated_at", ""),
         })
@@ -186,8 +304,19 @@ async def get_project_workspace(request: Request, project_id: str) -> EnvelopeRe
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
+        if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
+            repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
+
         # Get chapters
         chapters = repo.list_chapters(project_id)
+        chapters = [
+            {
+                **chapter,
+                "title": _chapter_display_title(chapter),
+                "quality_score": _chapter_quality_score(repo, project_id, chapter),
+            }
+            for chapter in chapters
+        ]
 
         # Get recent runs
         runs = repo.get_workflow_runs_for_project(project_id, limit=10)
@@ -229,6 +358,11 @@ async def delete_project(request: Request, project_id: str) -> EnvelopeResponse:
         return envelope_response({"deleted": True})
 
     except Exception as e:
+        if "database is locked" in str(e).lower():
+            return error_response(
+                "DATABASE_LOCKED",
+                "数据库正在被运行任务或后台服务占用，请稍后重试；如果仍失败，请先停止正在运行的工作流或重启本地 API 服务。",
+            )
         return error_response("INTERNAL_ERROR", f"删除项目失败: {str(e)}")
 
 
@@ -257,24 +391,39 @@ async def reset_chapter(
 
         # Check if reset is allowed
         current_status = chapter.get("status", "")
-        if current_status not in ("blocking", "revision"):
+        if current_status not in ("blocking", "revision", "planned"):
             return error_response(
                 "INVALID_STATUS",
-                f"章节状态为 '{current_status}'，仅 'blocking' 或 'revision' 状态可重置"
+                f"章节状态为 '{current_status}'，仅 'blocking'、'revision' 或 'planned' 状态可重置"
             )
 
         retry_count_before = repo.get_chapter_retry_count(project_id, chapter_number)
 
         # Reset the chapter and mark a new retry window.
-        reset = repo.reset_chapter(project_id, chapter_number)
-        if not reset:
-            return error_response("RESET_FAILED", "重置章节失败")
+        if current_status in ("blocking", "revision"):
+            reset = repo.reset_chapter(project_id, chapter_number)
+            if not reset:
+                return error_response("RESET_FAILED", "重置章节失败")
+        # For planned: no state reset needed, already at planned
 
-        invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
-            project_id,
-            chapter_number,
-            "章节已重置，旧运行已作废，请重新开始新的工作流。",
-        )
+        recovered_blocked_runs = 0
+        if hasattr(repo, "recover_active_workflow_runs_for_chapter"):
+            recovered_blocked_runs = repo.recover_active_workflow_runs_for_chapter(
+                project_id,
+                chapter_number,
+            )
+            invalidated_runs = recovered_blocked_runs
+        else:
+            if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
+                recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+                    project_id,
+                    chapter_number,
+                )
+            invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
+                project_id,
+                chapter_number,
+                "章节已重置，旧运行已作废，请重新开始新的工作流。",
+            )
 
         from ...workflow.checkpoint import delete_checkpoint_thread
         checkpoint_cleared = delete_checkpoint_thread(
@@ -289,12 +438,229 @@ async def reset_chapter(
             "retry_count_before": retry_count_before,
             "retry_count_after": retry_count_after,
             "retries_cleared": max(0, retry_count_before - retry_count_after),
+            "recovered_blocked_runs": recovered_blocked_runs,
             "invalidated_runs": invalidated_runs,
             "checkpoint_cleared": checkpoint_cleared,
         })
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"重置章节失败: {str(e)}")
+
+
+@router.post("/projects/{project_id}/chapters/{chapter_number}/restore-best-version")
+async def restore_chapter_best_version(
+    request: Request,
+    project_id: str,
+    chapter_number: int,
+    body: RestoreBestVersionRequest,
+) -> EnvelopeResponse:
+    """Restore a chapter to the best historical version after deadloop fuse."""
+    from ..deps import get_repo
+    from ...db.best_version_recovery import find_best_chapter_version, restore_best_version
+    from ...validators.chapter_checker import derive_word_target
+    from ...workflow.checkpoint import delete_checkpoint_thread
+
+    try:
+        if not body.confirm:
+            return error_response("CONFIRM_REQUIRED", "请确认恢复历史最佳版本")
+
+        repo = get_repo(request)
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+
+        current_status = chapter.get("status", "")
+        if current_status in ("published", "awaiting_publish"):
+            return error_response(
+                "PUBLISHED_PROTECTED",
+                "已发布或待发布章节不能直接恢复历史版本，请先创建修订版。",
+            )
+
+        instruction = repo.get_instruction_by_chapter(project_id, chapter_number)
+        word_target = derive_word_target(instruction, project)
+        best = find_best_chapter_version(repo, project_id, chapter_number, word_target)
+        if not best:
+            return error_response("NO_RESTORABLE_VERSION", "未找到可恢复的历史版本")
+
+        result = restore_best_version(repo, project_id, chapter_number, word_target)
+        if not result.get("success"):
+            return error_response("RESTORE_FAILED", result.get("error") or "恢复最佳版本失败")
+
+        created_by = best.get("created_by")
+        new_status = "polished" if created_by == "polisher" else "drafted"
+        repo.update_chapter_status(project_id, chapter_number, new_status)
+
+        run_id = repo.create_workflow_run(project_id, chapter_number)
+        repo.update_workflow_run(
+            run_id,
+            status="completed",
+            current_node="reset_recovery",
+            clear_error=True,
+        )
+
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "INSERT INTO task_status "
+                "(project_id, chapter_number, task_type, agent_id, status, "
+                "started_at, completed_at, error_message, workflow_run_id) "
+                "VALUES (?, ?, 'reset', 'human', 'completed', "
+                "datetime('now','+8 hours'), datetime('now','+8 hours'), ?, ?)",
+                (
+                    project_id,
+                    chapter_number,
+                    f"人工恢复历史最佳版本：{best.get('version') or best.get('id')}。",
+                    run_id,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        recovered_blocked_runs = 0
+        if hasattr(repo, "recover_active_workflow_runs_for_chapter"):
+            recovered_blocked_runs = repo.recover_active_workflow_runs_for_chapter(
+                project_id,
+                chapter_number,
+            )
+            invalidated_runs = recovered_blocked_runs
+        else:
+            if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
+                recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+                    project_id,
+                    chapter_number,
+                )
+            invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
+                project_id,
+                chapter_number,
+                "章节已恢复历史最佳版本，旧运行已作废，请重新开始新的工作流。",
+            )
+        checkpoint_cleared = delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
+
+        return envelope_response({
+            "restored": True,
+            "run_id": run_id,
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "previous_status": current_status,
+            "new_status": new_status,
+            "restored_version_id": result.get("restored_version_id"),
+            "word_count": result.get("word_count"),
+            "score": result.get("score"),
+            "recovered_blocked_runs": recovered_blocked_runs,
+            "invalidated_runs": invalidated_runs,
+            "checkpoint_cleared": checkpoint_cleared,
+            "message": "已恢复历史最佳版本，下一次运行将从当前正文继续，而不是继续死循环重写。",
+        })
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"恢复历史最佳版本失败: {str(e)}")
+
+
+@router.post("/projects/{project_id}/chapters/{chapter_number}/regenerate-reset")
+async def confirm_chapter_regeneration(
+    request: Request,
+    project_id: str,
+    chapter_number: int,
+    body: ChapterRegenerateResetRequest,
+) -> EnvelopeResponse:
+    """Mark a planned chapter with preserved text as explicitly regenerable.
+
+    This does not delete the existing text immediately. It records the user's
+    explicit confirmation so the run guard can allow the next generation to
+    overwrite the preserved draft intentionally.
+    """
+    from ..deps import get_repo
+    from ...workflow.checkpoint import delete_checkpoint_thread
+
+    try:
+        if not body.confirm:
+            return error_response("CONFIRM_REQUIRED", "请确认覆盖已有正文并重新生成")
+
+        repo = get_repo(request)
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+
+        current_status = chapter.get("status", "")
+        content = (chapter.get("content") or "").strip()
+        word_count = chapter.get("word_count") or 0
+        if current_status != "planned" or not (content or word_count > 0):
+            return error_response(
+                "INVALID_STATUS",
+                "仅 planned 且已有正文的章节需要确认覆盖重新生成",
+                details={"current_status": current_status, "word_count": word_count},
+            )
+
+        run_id = repo.create_workflow_run(project_id, chapter_number)
+        repo.update_workflow_run(
+            run_id,
+            status="completed",
+            current_node="reset_recovery",
+            clear_error=True,
+        )
+        recovered_blocked_runs = 0
+        if hasattr(repo, "recover_active_workflow_runs_for_chapter"):
+            recovered_blocked_runs = repo.recover_active_workflow_runs_for_chapter(
+                project_id,
+                chapter_number,
+            )
+            invalidated_runs = recovered_blocked_runs
+        else:
+            if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
+                recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+                    project_id,
+                    chapter_number,
+                )
+            invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
+                project_id,
+                chapter_number,
+                "用户已确认覆盖已有正文，旧运行已作废。",
+            )
+
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "INSERT INTO task_status "
+                "(project_id, chapter_number, task_type, agent_id, status, "
+                "started_at, completed_at, error_message, workflow_run_id) "
+                "VALUES (?, ?, 'reset', 'human', 'completed', "
+                "datetime('now','+8 hours'), datetime('now','+8 hours'), ?, ?)",
+                (
+                    project_id,
+                    chapter_number,
+                    "人工确认：已有正文可被下一次生成覆盖。",
+                    run_id,
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        checkpoint_cleared = delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
+
+        return envelope_response({
+            "reset": True,
+            "run_id": run_id,
+            "previous_status": current_status,
+            "new_status": "planned",
+            "word_count": word_count,
+            "recovered_blocked_runs": recovered_blocked_runs,
+            "invalidated_runs": invalidated_runs,
+            "checkpoint_cleared": checkpoint_cleared,
+            "message": "已确认覆盖已有正文，下一次生成将重新执行本章工作流。",
+        })
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"确认重新生成失败: {str(e)}")
 
 
 @router.delete("/projects/{project_id}/chapters/{chapter_number}")
@@ -405,13 +771,19 @@ async def export_project(
     if format == ExportFormat.markdown:
         buf.write(f"# {project_name}\n\n")
         for ch in chapters_with_content:
-            buf.write(f"## 第{ch['chapter_number']}章 {ch.get('title', '')}\n\n")
+            content = ch["content"].strip()
+            if not is_chapter_heading(content.splitlines()[0] if content else "", ch["chapter_number"]):
+                chapter_title = ch.get("title") or f"第{ch['chapter_number']}章"
+                buf.write(f"## {chapter_title}\n\n")
             buf.write(ch["content"])
             buf.write("\n\n---\n\n")
     else:
         buf.write(f"{project_name}\n{'=' * 40}\n\n")
         for ch in chapters_with_content:
-            buf.write(f"第{ch['chapter_number']}章 {ch.get('title', '')}\n{'-' * 40}\n\n")
+            content = ch["content"].strip()
+            if not is_chapter_heading(content.splitlines()[0] if content else "", ch["chapter_number"]):
+                chapter_title = ch.get("title") or f"第{ch['chapter_number']}章"
+                buf.write(f"{chapter_title}\n{'-' * 40}\n\n")
             buf.write(ch["content"])
             buf.write("\n\n")
 

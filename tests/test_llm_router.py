@@ -103,8 +103,8 @@ class TestLLMRouter:
         # They should be different providers (different profiles)
         assert author_llm is not editor_llm
 
-    def test_router_caches_providers(self):
-        """Router caches providers for the same profile."""
+    def test_router_caches_providers_per_agent_profile_route(self):
+        """Router caches per agent/profile so timeout floors do not bleed across agents."""
         config = LLMProfilesConfig(
             default_llm="default",
             llm_profiles={
@@ -126,13 +126,40 @@ class TestLLMRouter:
         
         router = LLMRouter(config, llm_mode="real", env_getter=mock_getenv)
         
-        # Multiple calls should return same cached provider
         llm1 = router.for_agent("author")
-        llm2 = router.for_agent("editor")
+        llm2 = router.for_agent("author")
         llm3 = router.for_agent("planner")
         
         assert llm1 is llm2
-        assert llm2 is llm3
+        assert llm1 is not llm3
+
+    def test_router_applies_agent_timeout_floor_when_using_default_profile(self):
+        """Desktop configs often route every agent to default; heavy agents still need safe timeouts."""
+        config = LLMProfilesConfig(
+            default_llm="default",
+            llm_profiles={
+                "default": LLMProfile(
+                    provider="openai_compatible",
+                    base_url_env="TEST_BASE_URL",
+                    api_key_env="TEST_API_KEY",
+                    model="gpt-4o-mini",
+                    request_timeout_seconds=60,
+                ),
+            },
+        )
+
+        def mock_getenv(name: str, default: Optional[str] = None) -> Optional[str]:
+            if name == "TEST_BASE_URL":
+                return "https://test.example.com/v1"
+            if name == "TEST_API_KEY":
+                return "sk-test-key"
+            return default
+
+        router = LLMRouter(config, llm_mode="real", env_getter=mock_getenv)
+
+        assert router.for_agent("memory_curator").config.request_timeout_seconds == 180
+        assert router.for_agent("author").config.request_timeout_seconds == 300
+        assert router.for_agent("planner").config.request_timeout_seconds == 60
 
     def test_router_real_mode_missing_profile(self):
         """Real mode with missing profile raises error."""

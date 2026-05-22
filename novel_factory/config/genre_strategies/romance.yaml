@@ -1,0 +1,24 @@
+genre: romance
+reader_promise: "情感细腻，人物关系推进自然"
+pacing_profile: moderate
+chapter_hook_style: emotional
+must_have_tropes:
+  - "情感拉扯"
+  - "误会与和解"
+  - "共同成长"
+avoid_patterns:
+  - "工业糖精"
+  - "降智误会"
+  - "渣贱人设"
+editor_rubric_weights:
+  setting: 15
+  logic: 20
+  poison: 20
+  text: 25
+  pacing: 20
+planner_bias:
+  prefer_character_moments: true
+  min_events_per_chapter: 2
+author_style_bias:
+  emotion_heavy: true
+  introspection_allowed: true

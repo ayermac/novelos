@@ -53,29 +53,11 @@ AGENT_PROFILES: dict[str, dict[str, Any]] = {
         "preferred_strengths": [],
         "default_quality_min": "standard",
     },
-    "scout": {
-        "description": "市场分析师 — 分析市场趋势和读者偏好",
-        "required_strengths": [Strength.SPEED],
-        "preferred_strengths": [Strength.REASONING],
-        "default_quality_min": "draft",
-    },
     "continuity_checker": {
         "description": "连续性检查员 — 跨章一致性检查",
         "required_strengths": [Strength.LONG_CONTEXT, Strength.REASONING, Strength.JSON],
         "preferred_strengths": [],
         "default_quality_min": "standard",
-    },
-    "architect": {
-        "description": "系统架构师 — 提出规则和 Prompt 改进建议",
-        "required_strengths": [Strength.REASONING, Strength.JSON],
-        "preferred_strengths": [Strength.PLANNING],
-        "default_quality_min": "standard",
-    },
-    "secretary": {
-        "description": "秘书 — 生成报告和导出",
-        "required_strengths": [],
-        "preferred_strengths": [Strength.SPEED],
-        "default_quality_min": "draft",
     },
 }
 

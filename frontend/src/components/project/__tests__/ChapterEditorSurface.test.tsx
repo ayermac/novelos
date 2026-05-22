@@ -157,6 +157,49 @@ describe('ChapterVersionPanel', () => {
     })
   })
 
+  it('expands version detail inline when view is clicked', async () => {
+    mockGet
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          project_id: 'test',
+          chapter_number: 1,
+          current_version_id: 1,
+          versions: mockEditorState.recent_versions,
+        },
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        data: {
+          version_id: 1,
+          version: 1,
+          content: '这是 V1 的完整版本正文。',
+          word_count: 200,
+          source: 'ai_generation',
+          source_label: 'AI 生成',
+          created_by: 'author',
+          base_version_id: null,
+          summary: 'AI 生成初稿',
+          metadata: {},
+          created_at: '2026-05-13 10:00:00',
+          is_current: true,
+        },
+      })
+
+    renderWithDialog(<ChapterVersionPanel projectId="test" chapterNumber={1} />)
+    await waitFor(() => {
+      expect(screen.getByText('版本历史')).toBeInTheDocument()
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: '查看' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('V1 版本内容')).toBeInTheDocument()
+      expect(screen.getByText('这是 V1 的完整版本正文。')).toBeInTheDocument()
+    })
+    expect(screen.getByRole('button', { name: '收起' })).toHaveAttribute('aria-expanded', 'true')
+  })
+
   it('shows empty state when no versions', async () => {
     mockGet.mockResolvedValue({
       ok: true,

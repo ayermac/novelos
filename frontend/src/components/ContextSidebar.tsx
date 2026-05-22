@@ -1,5 +1,6 @@
 import { tChapterStatusLabel, tWorkflowStatus } from '../lib/i18n'
 import { post } from '../lib/api'
+import { normalizeOperationResult, isBusinessSuccess } from '../lib/statusSemantics'
 import { useState } from 'react'
 import { useAppDialog } from './AppDialogContext'
 
@@ -58,20 +59,22 @@ export default function ContextSidebar({
   const isAwaitingPublish = isReviewed && !isStub  // v5.3.0: Real mode reviewed = awaiting publish
   const latestRun = recentRuns.length > 0 ? recentRuns[0] : null
   const latestRunFailed = latestRun !== null && (latestRun.status === 'failed' || latestRun.status === 'blocked')
+  const needsRecovery = currentChapter?.status === 'blocking' || currentChapter?.status === 'revision' || latestRun?.status === 'blocked'
+  const canGenerateBlankChapter = !hasContent && !isAwaitingPublish && !needsRecovery && !latestRunFailed
   const [publishing, setPublishing] = useState(false)
 
   let nextTitle = ''
   let nextHint = ''
   let nextAction: { label: string; onClick: () => void } | null = null
 
-  if (currentChapter?.status === 'blocking' || latestRun?.status === 'blocked') {
+  if (needsRecovery) {
     nextTitle = '章节已阻塞'
-    nextHint = '需要人工检查状态后重新运行。'
-    nextAction = { label: '重新生成本章', onClick: onGenerate }
+    nextHint = '需要先清除阻塞或查看工作流，再继续生成。'
+    nextAction = latestRun ? { label: '查看工作流', onClick: () => onViewWorkflow(latestRun.run_id) } : null
   } else if (latestRunFailed) {
     nextTitle = '最近运行失败'
-    nextHint = '建议检查后重试。'
-    nextAction = { label: '重新生成本章', onClick: onGenerate }
+    nextHint = '建议先查看失败节点和恢复建议。'
+    nextAction = latestRun ? { label: '查看工作流', onClick: () => onViewWorkflow(latestRun.run_id) } : null
   } else if (isAwaitingPublish) {
     nextTitle = '待人工发布'
     nextHint = 'AI 审核已通过，请确认发布。'
@@ -96,11 +99,19 @@ export default function ContextSidebar({
 
   const handlePublish = async () => {
     setPublishing(true)
-    const res = await post('/publish/chapter', {
+    const res = await post<Record<string, unknown>>('/publish/chapter', {
       project_id: projectId,
       chapter: chapterNumber,
     })
     if (res.ok) {
+      const domainResult = normalizeOperationResult(res.data ?? {})
+      if (!isBusinessSuccess(domainResult) && domainResult.domain_status !== 'pending') {
+        await dialog.alert({
+          title: '发布状态',
+          message: domainResult.user_message || domainResult.message || '发布完成但请确认状态',
+          tone: 'warning',
+        })
+      }
       onPublish()
     } else {
       await dialog.alert({
@@ -176,7 +187,7 @@ export default function ContextSidebar({
               {publishing ? '发布中...' : '确认发布'}
             </button>
           )}
-          {!hasContent && !isAwaitingPublish && (
+          {canGenerateBlankChapter && (
             <button className="btn btn-primary" style={{ width: '100%' }} onClick={onGenerate}>
               生成本章
             </button>

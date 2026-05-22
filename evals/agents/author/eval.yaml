@@ -1,0 +1,64 @@
+cases:
+  - id: author-event-coverage
+    agent_id: author
+    input_fixture:
+      content: "主角林动走进拍卖场，最终以高价夺得三品灵药。"
+      required_events:
+        - "林动参加拍卖会"
+        - "夺得灵药"
+      implemented_events:
+        - "林动参加拍卖会"
+        - "夺得灵药"
+    expected_behavior:
+      must_pass:
+        - type: skill_ok
+          skill_id: event-coverage-checker
+    rubric:
+      - 事件覆盖
+    regression_tags: ["v6.0", "author"]
+  - id: author-missing-event
+    agent_id: author
+    input_fixture:
+      content: "主角林动走进拍卖场。"
+      required_events:
+        - "林动参加拍卖会"
+        - "夺得灵药"
+      implemented_events:
+        - "林动参加拍卖会"
+    expected_behavior:
+      must_pass:
+        - type: skill_not_ok
+          skill_id: event-coverage-checker
+    rubric:
+      - 必须检测遗漏事件
+    regression_tags: ["v6.0", "author"]
+  - id: author-character-voice
+    agent_id: author
+    input_fixture:
+      content: '"哼，区区王家也敢嚣张？"林动冷笑一声，嘴角微扬。'
+      characters:
+        - name: "林动"
+          traits: "沉稳、低调"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 人物口吻一致
+    regression_tags: ["v6.0", "author"]
+  - id: author-show-dont-tell
+    agent_id: author
+    input_fixture:
+      content: "林动非常愤怒。他很生气地走进拍卖场。"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 动作化叙事
+    regression_tags: ["v6.0", "author"]
+  - id: author-ending-hook
+    agent_id: author
+    input_fixture:
+      content: "林动走出拍卖场，月光下，一个黑影缓缓抬起头。"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 章末钩子
+    regression_tags: ["v6.0", "author"]

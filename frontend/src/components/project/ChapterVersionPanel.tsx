@@ -14,6 +14,7 @@ export default function ChapterVersionPanel({ projectId, chapterNumber, onRestor
   const [versions, setVersions] = useState<VersionSummary[]>([])
   const [loading, setLoading] = useState(true)
   const [detailVersion, setDetailVersion] = useState<VersionDetail | null>(null)
+  const [viewingVersionId, setViewingVersionId] = useState<number | null>(null)
   const [restoring, setRestoring] = useState(false)
   const [error, setError] = useState('')
   const dialog = useAppDialog()
@@ -40,7 +41,13 @@ export default function ChapterVersionPanel({ projectId, chapterNumber, onRestor
   useEffect(() => { loadVersions() }, [loadVersions])
 
   const handleViewDetail = useCallback(async (versionId: number) => {
+    if (detailVersion?.version_id === versionId && viewingVersionId === null) {
+      setDetailVersion(null)
+      return
+    }
+
     setError('')
+    setViewingVersionId(versionId)
     try {
       const resp = await get<VersionDetail>(
         `/projects/${projectId}/chapters/${chapterNumber}/versions/${versionId}`,
@@ -49,11 +56,15 @@ export default function ChapterVersionPanel({ projectId, chapterNumber, onRestor
         setDetailVersion(resp.data)
       } else {
         setError(resp.error?.message || '加载版本详情失败')
+        setDetailVersion(null)
       }
     } catch {
       setError('网络异常，加载版本详情失败')
+      setDetailVersion(null)
+    } finally {
+      setViewingVersionId(null)
     }
-  }, [projectId, chapterNumber])
+  }, [projectId, chapterNumber, detailVersion?.version_id, viewingVersionId])
 
   const handleRestore = useCallback(async (versionId: number) => {
     if (restoring) return
@@ -104,86 +115,89 @@ export default function ChapterVersionPanel({ projectId, chapterNumber, onRestor
   }, [versions, onViewDiff])
 
   if (loading) {
-    return <div style={{ padding: 16, color: '#888' }}>加载版本列表…</div>
+    return <div className="chapter-version-loading">加载版本列表…</div>
   }
 
   return (
     <div className="chapter-version-panel">
-      <h4 style={{ margin: '0 0 12px 0' }}>版本历史</h4>
+      <h4 className="chapter-version-title">版本历史</h4>
 
       {error && (
-        <div style={{ padding: '8px 12px', background: '#fdecea', color: '#c62828', borderRadius: 4, marginBottom: 8, fontSize: 14 }}>
+        <div className="chapter-version-error">
           {error}
         </div>
       )}
 
       {versions.length === 0 ? (
-        <div style={{ color: '#aaa', fontSize: 14 }}>暂无版本记录</div>
+        <div className="chapter-version-empty">暂无版本记录</div>
       ) : (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        <div className="version-list">
           {versions.map(v => (
             <div
               key={v.version_id}
-              style={{
-                padding: '8px 12px',
-                border: `1px solid ${v.is_current ? '#1a73e8' : '#e0e0e0'}`,
-                borderRadius: 4,
-                background: v.is_current ? '#e8f0fe' : '#fff',
-              }}
+              className={`version-item ${v.is_current ? 'current' : ''} ${detailVersion?.version_id === v.version_id ? 'expanded' : ''}`}
             >
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div className="version-item-header">
                 <div>
-                  <span style={{ fontWeight: 600 }}>V{v.version}</span>
-                  <span style={{ marginLeft: 8, fontSize: 13, color: '#1a73e8' }}>{tVersionSource(v.source)}</span>
-                  {v.is_current && <span style={{ marginLeft: 8, fontSize: 12, color: '#1a73e8' }}>当前</span>}
+                  <span className="version-number">V{v.version}</span>
+                  <span className="version-source">{tVersionSource(v.source)}</span>
+                  {v.is_current && <span className="version-current-badge">当前</span>}
                 </div>
-                <span style={{ fontSize: 12, color: '#999' }}>{v.word_count} 字</span>
+                <span className="version-word-count">{v.word_count} 字</span>
               </div>
-              {v.summary && <div style={{ fontSize: 13, color: '#666', marginTop: 4 }}>{v.summary}</div>}
-              <div style={{ fontSize: 12, color: '#999', marginTop: 4 }}>{v.created_at}</div>
-              <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+              {v.summary && <div className="version-summary">{v.summary}</div>}
+              <div className="version-time">{v.created_at}</div>
+              <div className="version-actions">
                 <button
+                  type="button"
+                  className="btn btn-sm btn-secondary"
+                  disabled={viewingVersionId === v.version_id}
+                  aria-expanded={detailVersion?.version_id === v.version_id}
+                  aria-controls={`version-detail-${v.version_id}`}
                   onClick={() => handleViewDetail(v.version_id)}
-                  style={{ padding: '2px 8px', fontSize: 12, border: '1px solid #ddd', borderRadius: 3, background: '#fff', cursor: 'pointer' }}
                 >
-                  查看
+                  {viewingVersionId === v.version_id
+                    ? '加载中…'
+                    : detailVersion?.version_id === v.version_id
+                      ? '收起'
+                      : '查看'}
                 </button>
                 {!v.is_current && (
                   <>
                     <button
+                      type="button"
+                      className="btn btn-sm btn-secondary"
                       onClick={() => handleDiffWithCurrent(v.version_id)}
-                      style={{ padding: '2px 8px', fontSize: 12, border: '1px solid #ddd', borderRadius: 3, background: '#fff', cursor: 'pointer' }}
                     >
                       对比
                     </button>
                     <button
+                      type="button"
+                      className="btn btn-sm btn-danger"
                       onClick={() => handleRestore(v.version_id)}
                       disabled={restoring}
-                      style={{ padding: '2px 8px', fontSize: 12, border: '1px solid #e65100', borderRadius: 3, background: '#fff', color: '#e65100', cursor: restoring ? 'wait' : 'pointer' }}
                     >
                       {restoring ? '回滚中…' : '回滚'}
                     </button>
                   </>
                 )}
               </div>
+              {detailVersion?.version_id === v.version_id && (
+                <div id={`version-detail-${v.version_id}`} className="version-detail-inline">
+                  <div className="version-detail-header">
+                    <span>V{detailVersion.version} 版本内容</span>
+                    <button type="button" className="version-detail-close" onClick={() => setDetailVersion(null)}>关闭</button>
+                  </div>
+                  <div className="version-detail-meta">
+                    {tVersionSource(detailVersion.source)} · {detailVersion.word_count} 字 · {detailVersion.created_at}
+                  </div>
+                  <div className="version-detail-content">
+                    {detailVersion.content}
+                  </div>
+                </div>
+              )}
             </div>
           ))}
-        </div>
-      )}
-
-      {/* Version detail modal/panel */}
-      {detailVersion && (
-        <div style={{ marginTop: 16, padding: 12, background: '#f5f5f5', borderRadius: 4, border: '1px solid #e0e0e0' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-            <span style={{ fontWeight: 600 }}>版本 #{detailVersion.version_id} 详情</span>
-            <button onClick={() => setDetailVersion(null)} style={{ border: 'none', background: 'none', cursor: 'pointer', fontSize: 16 }}>✕</button>
-          </div>
-          <div style={{ fontSize: 13, color: '#666', marginBottom: 8 }}>
-            {tVersionSource(detailVersion.source)} · {detailVersion.word_count} 字 · {detailVersion.created_at}
-          </div>
-          <div style={{ whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.8, maxHeight: 400, overflow: 'auto', background: '#fff', padding: 8, borderRadius: 4 }}>
-            {detailVersion.content}
-          </div>
         </div>
       )}
     </div>

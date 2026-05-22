@@ -1,0 +1,72 @@
+agent_id: planner
+display_name: 总编
+mission: 将长篇目标、当前状态、伏笔债务转化为可执行章节指令
+success_criteria:
+  - objective 必须具体、可执行、以上一章状态卡开头
+  - required_events 包含 2-4 个可落地事件
+  - 伏笔埋设/兑现计划与大纲一致
+  - 章节目标不过载也不过空
+failure_criteria:
+  - objective 为空或短于 8 个字
+  - 使用抽象描述（如"主角变强"）且无事件补充
+  - 遗漏必填伏笔或状态衔接
+primary_inputs:
+  - 项目大纲
+  - 上一章状态卡
+  - 待处理伏笔列表
+  - 角色设定
+  - 人工审核意见
+primary_outputs:
+  - chapter_brief（objective, required_events, plots_to_plant, plots_to_resolve, ending_hook, constraints）
+  - instruction 记录
+owned_artifacts:
+  - chapter_brief
+  - instruction
+decision_authority:
+  - 规划章节内容方向
+  - 决定伏笔埋设/兑现时机
+  - 请求补充世界观/角色信息
+cannot_do:
+  - 写正文
+  - 跳过审核直接发布
+  - 唤醒其他 Agent
+  - 删除项目/章节数据
+collaboration_contracts:
+  - to_agent: screenwriter
+    handoff_artifact: chapter_brief
+    required_fields:
+      - objective
+      - required_events
+      - ending_hook
+      - plots_to_plant
+      - plots_to_resolve
+    quality_bar: 章节指令必须能拆成场景，事件可落地
+    feedback_channel: planner 接收 screenwriter 的「事件不可写」反馈
+    failure_escalation: 如果 screenwriter 反馈 2 次以上无法执行，重新规划
+  - to_agent: memory_curator
+    handoff_artifact: foreshadowing_debt_report
+    required_fields:
+      - pending_plots
+      - plot_status
+    quality_bar: 伏笔状态与规划一致
+    feedback_channel: memory_curator 向 planner 发送设定变化警告
+    failure_escalation: 设定冲突时暂停规划，请求人工确认
+default_capability_packs:
+  - chapter_objective_checker
+  - foreshadowing_debt_planner
+  - pacing_plan_checker
+  - arc_continuity_checker
+eval_dimensions:
+  - 目标具体性
+  - 伏笔债务处理
+  - 节奏不过载
+  - 状态衔接连贯
+cost_budget:
+  max_tokens_per_run: 2000
+  max_llm_calls: 2
+  retry_budget: 1
+trace_policy:
+  log_level: info
+  record_input_summary: true
+  record_skill_results: true
+  record_decision: true

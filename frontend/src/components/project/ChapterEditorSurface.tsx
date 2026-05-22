@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, Edit3, Loader2, Maximize2, Minimize2, Save, Sparkles, X } from 'lucide-react'
 import { get, post, type EditorState, type LocalRevisionResult } from '../../lib/api'
 import { tVersionSource, tRevisionMode } from '../../lib/state-labels'
+import { normalizeOperationResult, type OperationResult } from '../../lib/statusSemantics'
 import { TextArea, TextInput } from '../ui'
 
 interface Props {
@@ -39,6 +40,8 @@ export default function ChapterEditorSurface({
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
   const [fullscreen, setFullscreen] = useState(false)
+  const [revisionDraftReady, setRevisionDraftReady] = useState(false)
+  const [localRevisionApplied, setLocalRevisionApplied] = useState(false)
 
   // Local revision state
   const [selectedText, setSelectedText] = useState('')
@@ -96,11 +99,15 @@ export default function ChapterEditorSurface({
     try {
       const resp = await post(`/projects/${projectId}/chapters/${chapterNumber}/content`, {
         content: editContent,
-        summary: '人工编辑保存',
+        summary: revisionDraftReady ? '人工修订保存' : '人工编辑保存',
         base_version_id: editorState.current_version_id,
+        confirm: revisionDraftReady,
+        is_local_edit: localRevisionApplied,
       })
       if (resp.ok) {
         setViewMode('read')
+        setRevisionDraftReady(false)
+        setLocalRevisionApplied(false)
         await loadEditor()
         onContentSaved?.()
       } else {
@@ -111,7 +118,7 @@ export default function ChapterEditorSurface({
     } finally {
       setSaving(false)
     }
-  }, [projectId, chapterNumber, editContent, editorState, saving, loadEditor, onContentSaved])
+  }, [projectId, chapterNumber, editContent, editorState, revisionDraftReady, localRevisionApplied, saving, loadEditor, onContentSaved])
 
   // Create revision draft for published chapters
   const handleCreateRevisionDraft = useCallback(async () => {
@@ -124,7 +131,8 @@ export default function ChapterEditorSurface({
       })
       if (resp.ok) {
         await loadEditor()
-        onContentSaved?.()
+        setRevisionDraftReady(true)
+        setViewMode('edit')
       } else {
         setError(resp.error?.message || '创建修订版失败')
       }
@@ -133,7 +141,7 @@ export default function ChapterEditorSurface({
     } finally {
       setSaving(false)
     }
-  }, [projectId, chapterNumber, saving, loadEditor, onContentSaved])
+  }, [projectId, chapterNumber, saving, loadEditor])
 
   // Handle text selection for local revision
   const handleTextSelect = useCallback(() => {
@@ -167,9 +175,16 @@ export default function ChapterEditorSurface({
         },
       )
       if (resp.ok && resp.data) {
-        setRevisionResult(resp.data)
+        const domainResult = normalizeOperationResult(resp.data as unknown as Record<string, unknown>)
+        if (domainResult.domain_status !== 'success') {
+          setError(domainResult.user_message || domainResult.message || '局部返修未成功')
+        } else {
+          setRevisionResult(resp.data)
+        }
       } else {
-        setError(resp.error?.message || '局部返修失败')
+        const details = resp.error?.details as { domain_result?: OperationResult } | undefined
+        const domainResult = details?.domain_result
+        setError(domainResult?.user_message || domainResult?.message || resp.error?.message || '局部返修失败')
       }
     } catch {
       setError('网络异常，局部返修失败')
@@ -184,6 +199,7 @@ export default function ChapterEditorSurface({
     const before = editContent.substring(0, revisionResult.selection_start)
     const after = editContent.substring(revisionResult.selection_end)
     setEditContent(before + revisionResult.replacement_text + after)
+    setLocalRevisionApplied(true)
     setRevisionResult(null)
     setSelectedText('')
     setRevisionInstruction('')
@@ -225,7 +241,7 @@ export default function ChapterEditorSurface({
     return <div className="chapter-editor-error">{error || '无法加载编辑器'}</div>
   }
 
-  const isPublished = editorState.status === 'published' || editorState.status === 'awaiting_publish'
+  const isPublished = (editorState.status === 'published' || editorState.status === 'awaiting_publish') && !revisionDraftReady
 
   return (
     <div className={`chapter-editor-surface${fullscreen ? ' chapter-editor-surface--fullscreen' : ''}`}>
@@ -261,7 +277,13 @@ export default function ChapterEditorSurface({
             </button>
             <button
               className="chapter-editor-action chapter-editor-action-secondary"
-              onClick={() => { setEditContent(editorState.content || ''); setViewMode('read'); setRevisionResult(null) }}
+              onClick={() => {
+                setEditContent(editorState.content || '')
+                setViewMode('read')
+                setRevisionResult(null)
+                setRevisionDraftReady(false)
+                setLocalRevisionApplied(false)
+              }}
               disabled={saving}
             >
               <X size={13} />
@@ -352,8 +374,8 @@ export default function ChapterEditorSurface({
           {revisionResult && (
             <div className="chapter-revision-result">
               <div className="chapter-revision-title">AI 返修结果（{tRevisionMode(revisionResult.mode)}）</div>
-              <div className="chapter-revision-copy">
-                {revisionResult.replacement_text}
+              <div className={`chapter-revision-copy${revisionResult.replacement_text ? '' : ' is-deletion'}`}>
+                {revisionResult.replacement_text || '将删除选中文本'}
               </div>
               {revisionResult.change_summary && (
                 <div className="chapter-revision-subtitle">{revisionResult.change_summary}</div>
@@ -366,7 +388,7 @@ export default function ChapterEditorSurface({
               <div className="chapter-revision-actions">
                 <button className="chapter-editor-action chapter-editor-action-primary" onClick={handleAcceptRevision}>
                   <Check size={13} />
-                  接受替换
+                  {revisionResult.replacement_text ? '接受替换' : '接受删除'}
                 </button>
                 <button className="chapter-editor-action chapter-editor-action-secondary" onClick={handleRejectRevision}>
                   <X size={13} />

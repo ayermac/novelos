@@ -1,0 +1,64 @@
+id: scene-conflict-checker
+name: Scene Conflict Checker
+version: "1.0.0"
+kind: validator
+type: validator
+class_name: SceneConflictCheckerSkill
+description: "检查 Screenwriter 的每个场景 beat 是否包含目标、冲突、转折和钩子。"
+enabled: true
+builtin: true
+allowed_agents:
+  - screenwriter
+  - manual
+allowed_stages:
+  - after_llm
+  - manual
+allowed_targets:
+  - agent: screenwriter
+    stage: after_llm
+permissions:
+  read_context: false
+  read_chapter: false
+  transform_text: false
+  validate_text: true
+  write_quality_report: false
+  write_skill_run: true
+  write_chapter_content: false
+  update_chapter_status: false
+  send_agent_message: false
+  call_llm: false
+  call_network: false
+input_schema:
+  type: object
+  required:
+    - scene_beats
+  properties:
+    scene_beats:
+      type: array
+      items:
+        type: object
+output_schema:
+  type: object
+  required:
+    - scene_count
+    - issues
+    - warnings
+    - blocking
+  properties:
+    scene_count:
+      type: integer
+    issues:
+      type: array
+      items:
+        type: object
+    warnings:
+      type: array
+      items:
+        type: string
+    blocking:
+      type: boolean
+failure_policy:
+  on_error: warn
+  max_retries: 0
+  timeout_seconds: null
+  blocking_threshold: null

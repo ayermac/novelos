@@ -1,11 +1,22 @@
 import { useEffect, useState } from 'react'
-import { useParams, Link } from 'react-router-dom'
+import { useParams, Link, useNavigate } from 'react-router-dom'
 import { get, post } from '../lib/api'
 import { tWorkflowStatus, tChapterStatus, tLlmMode } from '../lib/i18n'
 import WorkflowTimeline from '../components/WorkflowTimeline'
 import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
 import { useAppDialog } from '../components/AppDialogContext'
+import { ArrowLeft, DatabaseZap } from 'lucide-react'
+import {
+  getActionHint,
+  getMemoryStatusDisplay,
+  getStatusBadge,
+  isBusinessSuccess,
+  normalizeOperationResult,
+  severityBadgeClass,
+  type MemoryStatusCode,
+  type OperationResult,
+} from '../lib/statusSemantics'
 
 interface Step {
   key: string
@@ -38,6 +49,17 @@ interface RunDetail {
   completion_tokens?: number
   total_tokens?: number
   duration_ms?: number
+  // v6.6.7: Memory status
+  memory_status?: {
+    memory_status: string
+    memory_trusted: boolean
+    latest_memory_batch_id: string | null
+    batch_count: number
+    trusted_batch_count: number
+    fallback_batch_count: number
+  }
+  // v6.6.10: Unified domain result
+  domain_result?: OperationResult
 }
 
 interface RunRecovery {
@@ -99,8 +121,22 @@ interface RunRecoveryMarkStuckResult {
   recovery: RunRecovery
 }
 
+interface MemoryBackfillResult {
+  skipped: boolean
+  run_id?: string
+  memory_batch_id?: string
+  memory_items_count?: number
+  extraction_success?: boolean
+  fallback_created?: boolean
+  memory_curator_degraded?: boolean
+  memory_curator_fallback?: string | null
+  message?: string
+  domain_result?: OperationResult
+}
+
 export default function RunDetail() {
   const { runId } = useParams<{ runId: string }>()
+  const navigate = useNavigate()
   const dialog = useAppDialog()
   const [data, setData] = useState<RunDetail | null>(null)
   const [recovery, setRecovery] = useState<RunRecovery | null>(null)
@@ -110,6 +146,7 @@ export default function RunDetail() {
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null)
   const [recovering, setRecovering] = useState(false)
   const [markingStuck, setMarkingStuck] = useState(false)
+  const [memoryBackfilling, setMemoryBackfilling] = useState(false)
 
   const load = async () => {
     if (!runId) return
@@ -191,6 +228,46 @@ export default function RunDetail() {
     }
   }
 
+  const handleMemoryBackfill = async (force = false) => {
+    if (!runId || memoryBackfilling) return
+    const ok = await dialog.confirm({
+      title: force ? '强制重新提取记忆' : '补跑记忆提取',
+      message: force
+        ? '确认强制重新提取？这会忽略旧的低可信候选，重新调用 Memory Curator。'
+        : '确认为本章补跑 Memory Curator？如果已有可信记忆提取，系统会自动跳过。',
+      tone: 'warning',
+      confirmLabel: force ? '强制提取' : '补跑记忆',
+    })
+    if (!ok) return
+
+    setMemoryBackfilling(true)
+    setRecoveryError(null)
+    setRecoveryMessage(null)
+    const result = await post<MemoryBackfillResult>(`/runs/${runId}/memory/backfill`, { confirm: true, force })
+    setMemoryBackfilling(false)
+
+    if (result.ok && result.data) {
+      const domainResult = normalizeOperationResult(result.data as unknown as Record<string, unknown>)
+      if (!isBusinessSuccess(domainResult)) {
+        setRecoveryError(domainResult.user_message || domainResult.message || result.data.message || '补跑未生成可信记忆，请检查 MemoryCurator 配置后重试。')
+      } else {
+        setRecoveryMessage(domainResult.user_message || domainResult.message || result.data.message || (result.data.skipped ? '已有可信记忆批次，未重复补跑。' : '记忆提取补跑完成。'))
+      }
+      await load()
+    } else {
+      const details = result.error?.details
+      const domainResult = details?.domain_result && typeof details.domain_result === 'object'
+        ? details.domain_result as OperationResult
+        : null
+      const suffix = details?.memory_batch_id
+        ? `\n候选批次：${String(details.memory_batch_id)}`
+        : ''
+      const actionHint = domainResult ? getActionHint(domainResult) : ''
+      const actionSuffix = actionHint ? `\n建议操作：${actionHint}` : ''
+      setRecoveryError((domainResult?.user_message || domainResult?.message || result.error?.message || '补跑记忆提取失败') + suffix + actionSuffix)
+    }
+  }
+
   if (loading) return <div><PageHeader title="运行详情" /><div className="card"><div className="card-body module-loading">加载运行详情...</div></div></div>
   if (error && !data) return <div><PageHeader title="运行详情" /><ErrorState title="加载失败" message={error} onRetry={load} /></div>
   if (!data) return <div><PageHeader title="运行详情" /><ErrorState title="加载失败" message="无法获取运行详情" onRetry={load} /></div>
@@ -199,10 +276,21 @@ export default function RunDetail() {
   const workspaceHref = `/projects/${data.project_id}?chapter=${data.chapter_number}`
   const workflowHref = `/projects/${data.project_id}?module=chapters&chapter=${data.chapter_number}&view=workflow`
   const hasRunError = Boolean(data.error_message)
+  const domainResult = normalizeOperationResult(data as unknown as Record<string, unknown>)
+  const domainBadge = getStatusBadge(domainResult)
+  const memoryDisplay = data.memory_status
+    ? getMemoryStatusDisplay(data.memory_status.memory_status as MemoryStatusCode)
+    : null
 
   return (
     <div>
       <PageHeader title="运行详情" />
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+        <button className="btn btn-secondary" onClick={() => navigate(-1)}>
+          <ArrowLeft size={14} /> 返回上一级
+        </button>
+        <Link to={workflowHref} className="btn btn-secondary">返回本章工作流</Link>
+      </div>
       {isStub && (
         <div className="alert alert-warn" style={{ marginBottom: '16px' }}>
           <strong>演示模式</strong>
@@ -222,6 +310,18 @@ export default function RunDetail() {
           </div>
         </div>
       )}
+      <div className={`alert alert-${domainResult.severity === 'success' ? 'success' : domainResult.severity === 'error' ? 'error' : domainResult.severity === 'warning' ? 'warn' : 'info'}`} style={{ marginBottom: '16px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <strong>业务状态：</strong>
+          <span className={`badge ${severityBadgeClass(domainBadge.severity)}`}>{domainBadge.label}</span>
+          <span>{domainResult.user_message || domainResult.message}</span>
+        </div>
+        {domainResult.retryable && (
+          <div style={{ marginTop: 6, fontSize: 13 }}>
+            建议操作：{getActionHint(domainResult) || '重试'}
+          </div>
+        )}
+      </div>
       <div className="card" style={{ marginBottom: '16px' }}>
         <div className="card-header"><h3>基本信息</h3></div>
         <div className="card-body">
@@ -301,7 +401,48 @@ export default function RunDetail() {
                   {recoveryError}
                 </div>
               )}
+              {/* v6.6.10: Memory status display via unified semantics */}
+              {data.memory_status && memoryDisplay && data.chapter_status !== 'planned' && data.chapter_status !== 'drafted' && (
+                <div className={`alert alert-${memoryDisplay.severity === 'success' ? 'success' : memoryDisplay.severity === 'error' ? 'error' : 'warn'}`} style={{ marginBottom: '12px' }}>
+                  <strong>记忆状态：</strong>
+                  <span className={`badge ${severityBadgeClass(memoryDisplay.severity)}`} style={{ marginRight: 8 }}>{memoryDisplay.label}</span>
+                  {memoryDisplay.userMessage}
+                  {data.memory_status.memory_status === 'trusted' && `（${data.memory_status.trusted_batch_count} 批次）`}
+                  {data.memory_status.memory_status === 'fallback' && `（${data.memory_status.fallback_batch_count} 批次）`}
+                </div>
+              )}
               <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                {/* v6.6.7: Memory backfill button with state-aware labels */}
+                {(() => {
+                  const ms = data.memory_status
+                  const hasTrusted = ms?.memory_trusted
+                  const hasFallback = ms?.memory_status === 'fallback'
+                  const isTerminal = ['reviewed', 'awaiting_publish', 'published'].includes(data.chapter_status)
+                  if (!isTerminal) return null
+                  return (
+                    <>
+                      <button
+                        className={`btn ${hasTrusted ? 'btn-secondary' : 'btn-primary'}`}
+                        onClick={() => handleMemoryBackfill(hasFallback)}
+                        disabled={memoryBackfilling || hasTrusted}
+                        title={hasTrusted ? '已存在可信记忆批次' : hasFallback ? '重新提取可信记忆' : '补跑记忆提取'}
+                      >
+                        <DatabaseZap size={14} />
+                        {memoryBackfilling ? '补跑中...' : hasTrusted ? '已存在可信记忆' : hasFallback ? '重新提取可信记忆' : '补跑记忆提取'}
+                      </button>
+                      {hasTrusted && (
+                        <button
+                          className="btn btn-secondary"
+                          onClick={() => handleMemoryBackfill(true)}
+                          disabled={memoryBackfilling}
+                          title="强制重新提取（会忽略旧候选）"
+                        >
+                          <DatabaseZap size={14} /> 强制重跑
+                        </button>
+                      )}
+                    </>
+                  )
+                })()}
                 <button
                   className="btn btn-secondary"
                   onClick={handleMarkStuck}
@@ -327,7 +468,7 @@ export default function RunDetail() {
         </div>
       </div>
       {/* v5.2: Token usage statistics - only show for real LLM mode */}
-      {!isStub && (data.total_tokens || data.duration_ms) && (
+      {!isStub && Boolean(data.total_tokens || data.duration_ms) && (
         <div className="card" style={{ marginBottom: '16px' }}>
           <div className="card-header"><h3>Token 统计</h3></div>
           <div className="card-body">

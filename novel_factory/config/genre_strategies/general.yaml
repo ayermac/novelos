@@ -1,0 +1,14 @@
+genre: general
+reader_promise: "一段引人入胜的长篇故事"
+pacing_profile: moderate
+chapter_hook_style: suspense
+must_have_tropes: []
+avoid_patterns: []
+editor_rubric_weights:
+  setting: 25
+  logic: 25
+  poison: 20
+  text: 15
+  pacing: 15
+planner_bias: {}
+author_style_bias: {}

@@ -7,6 +7,7 @@ cross-process recovery of incomplete chapter generation.
 from __future__ import annotations
 
 import logging
+import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -70,8 +71,27 @@ def get_checkpoint_thread_id(project_id: str, chapter_number: int) -> str:
     return f"{project_id}-chapter-{chapter_number}"
 
 
+def _raw_checkpoint_thread_exists(checkpoint_db_path: Path, thread_id: str) -> bool:
+    """Return True when checkpoint rows exist, without deserializing payloads."""
+    try:
+        with sqlite3.connect(checkpoint_db_path) as conn:
+            row = conn.execute(
+                "SELECT 1 FROM checkpoints WHERE thread_id=? LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+            if row:
+                return True
+            row = conn.execute(
+                "SELECT 1 FROM writes WHERE thread_id=? LIMIT 1",
+                (thread_id,),
+            ).fetchone()
+            return row is not None
+    except Exception:
+        return False
+
+
 def get_checkpoint_config(
-    project_id: str, chapter_number: int, recursion_limit: int = 50
+    project_id: str, chapter_number: int, recursion_limit: int = 100
 ) -> dict:
     """Get checkpoint config for a chapter.
 
@@ -176,22 +196,40 @@ def inspect_checkpoint_thread(
             checkpoint = checkpoint_tuple.checkpoint if checkpoint_tuple else checkpointer.get(config)
             metadata = getattr(checkpoint_tuple, "metadata", None) if checkpoint_tuple else None
     except Exception as e:
+        raw_exists = _raw_checkpoint_thread_exists(checkpoint_db_path, thread_id)
         logger.warning(
             "Failed to summarize checkpoint thread %s from %s: %s",
             thread_id,
             checkpoint_db_path,
             e,
         )
+        if raw_exists:
+            summary.update({
+                "checkpoint_exists": True,
+                "checkpoint_corrupt": True,
+                "checkpoint_error": str(e),
+                "checkpoint_summary": "checkpoint payload unreadable",
+                "recovery_available": True,
+            })
         return summary
 
     if not checkpoint:
         return summary
 
     state_values: dict[str, Any] = {}
-    if isinstance(checkpoint, dict):
-        channel_values = checkpoint.get("channel_values")
-        if isinstance(channel_values, dict):
-            state_values = channel_values
+    if not isinstance(checkpoint, dict):
+        summary.update({
+            "checkpoint_exists": True,
+            "checkpoint_corrupt": True,
+            "checkpoint_error": f"Unexpected checkpoint payload type: {type(checkpoint).__name__}",
+            "checkpoint_summary": "checkpoint payload unreadable",
+            "recovery_available": True,
+        })
+        return summary
+
+    channel_values = checkpoint.get("channel_values")
+    if isinstance(channel_values, dict):
+        state_values = channel_values
 
     checkpoint_node = None
     if isinstance(metadata, dict):

@@ -23,6 +23,7 @@ from tenacity import (
 
 from ..config.settings import LLMConfig
 from .provider import LLMProvider
+from ..security.redaction import redact_sensitive_text
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,11 @@ class LLMTimeoutError(LLMError):
 
 class RateLimitError(LLMError):
     """API 请求频率超限."""
+    pass
+
+
+class LLMConnectionError(LLMError):
+    """LLM 网络连接暂时失败."""
     pass
 
 
@@ -82,6 +88,18 @@ class TokenUsage:
         }
 
 
+def _message_to_dict(message: Any) -> dict[str, Any]:
+    """Convert LangChain or plain message objects to loggable dicts."""
+    if isinstance(message, dict):
+        return {
+            "role": str(message.get("role", "user")),
+            "content": redact_sensitive_text(str(message.get("content", ""))),
+        }
+    role = getattr(message, "type", None) or getattr(message, "role", None) or message.__class__.__name__
+    content = getattr(message, "content", "")
+    return {"role": str(role), "content": redact_sensitive_text(str(content))}
+
+
 class OpenAICompatibleProvider(LLMProvider):
     """LLM provider using OpenAI-compatible API via LangChain."""
 
@@ -89,20 +107,29 @@ class OpenAICompatibleProvider(LLMProvider):
         self.config = config or LLMConfig()
         self._client: BaseChatModel | None = None
         self.last_token_usage: TokenUsage | None = None
+        self.last_call_trace: dict[str, Any] | None = None
+        self._last_call_started_at: float | None = None
 
     @property
     def client(self) -> BaseChatModel:
         """Lazy-init the LangChain ChatOpenAI client."""
         if self._client is None:
-            self._client = ChatOpenAI(
-                base_url=self.config.base_url,
-                api_key=self.config.api_key or "sk-placeholder",
-                model=self.config.model,
-                temperature=self.config.temperature,
-                max_tokens=self.config.max_tokens,
-                request_timeout=self.config.request_timeout_seconds,
-            )
+            self._client = self._build_client()
         return self._client
+
+    def _build_client(self, request_timeout_seconds: int | None = None) -> BaseChatModel:
+        """Build a ChatOpenAI client, optionally using a per-call timeout."""
+        return ChatOpenAI(
+            base_url=self.config.base_url,
+            api_key=self.config.api_key or "sk-placeholder",
+            model=self.config.model,
+            temperature=self.config.temperature,
+            max_tokens=self.config.max_tokens,
+            request_timeout=request_timeout_seconds or self.config.request_timeout_seconds,
+            # Keep retry policy centralized in _invoke_with_retry so provider
+            # behavior is predictable across OpenAI-compatible backends.
+            max_retries=0,
+        )
 
     def _to_lc_messages(self, messages: list[dict[str, str]]) -> list:
         """Convert dict messages to LangChain message objects."""
@@ -116,9 +143,14 @@ class OpenAICompatibleProvider(LLMProvider):
                 result.append(HumanMessage(content=content))
         return result
 
-    def _handle_api_error(self, error: Exception) -> None:
-        """Convert API errors to Chinese error messages."""
+    def _handle_api_error(self, error: Exception, timeout_seconds: int | None = None) -> None:
+        """Convert API errors to Chinese error messages.
+
+        Original error messages are redacted before inclusion in raised
+        exceptions to prevent API keys or tokens from leaking.
+        """
         error_str = str(error).lower()
+        safe_error = redact_sensitive_text(str(error))
 
         # Check for common error patterns
         if "invalid" in error_str and "api" in error_str:
@@ -130,20 +162,46 @@ class OpenAICompatibleProvider(LLMProvider):
         elif "rate" in error_str or "limit" in error_str or "429" in error_str:
             raise RateLimitError("API 请求频率超限，请稍后重试") from error
         elif "timeout" in error_str or "timed out" in error_str:
+            timeout = timeout_seconds or self.config.request_timeout_seconds
             raise LLMTimeoutError(
-                f"LLM 响应超时（>{self.config.request_timeout_seconds}秒），请稍后重试"
+                f"LLM 响应超时（>{timeout}秒），请稍后重试"
             ) from error
+        elif any(
+            marker in error_str
+            for marker in (
+                "connection",
+                "connect",
+                "network",
+                "temporarily",
+                "reset by peer",
+                "remote protocol",
+                "decompress",
+                "incorrect header check",
+                "ssl",
+                "tls",
+                "read error",
+                "write error",
+            )
+        ):
+            raise LLMConnectionError(f"LLM 网络连接失败，请稍后重试: {safe_error}") from error
         else:
-            raise LLMError(f"LLM 调用失败: {error}") from error
+            raise LLMError(f"LLM 调用失败: {safe_error}") from error
 
     def _invoke_with_retry(
         self,
         lc_messages: list,
         max_retries: int | None = None,
+        request_timeout_seconds: int | None = None,
         **kwargs,
     ) -> Any:
         """Invoke with exponential backoff for transient provider failures."""
         attempts = max(1, max_retries if max_retries is not None else self.config.retry_attempts)
+        client = (
+            self.client
+            if request_timeout_seconds is None
+            or request_timeout_seconds == self.config.request_timeout_seconds
+            else self._build_client(request_timeout_seconds=request_timeout_seconds)
+        )
         retryer = Retrying(
             stop=stop_after_attempt(attempts),
             wait=wait_exponential(
@@ -151,21 +209,53 @@ class OpenAICompatibleProvider(LLMProvider):
                 min=self.config.retry_min_seconds,
                 max=self.config.retry_max_seconds,
             ),
-            retry=retry_if_exception_type((RateLimitError, LLMTimeoutError)),
+            retry=retry_if_exception_type((RateLimitError, LLMConnectionError)),
             before_sleep=before_sleep_log(logger, logging.WARNING),
             reraise=True,
         )
 
         for attempt in retryer:
             with attempt:
+                attempt_number = attempt.retry_state.attempt_number
+                request_payload = {
+                    "provider": self.config.provider,
+                    "base_url": redact_sensitive_text(self.config.base_url),
+                    "model": self.config.model,
+                    "temperature": kwargs.get("temperature", self.config.temperature),
+                    "max_tokens": kwargs.get("max_tokens", self.config.max_tokens),
+                    "request_timeout_seconds": request_timeout_seconds or self.config.request_timeout_seconds,
+                    "retry_attempts_configured": attempts,
+                    "attempt_number": attempt_number,
+                    "message_count": len(lc_messages),
+                    "messages": [_message_to_dict(msg) for msg in lc_messages],
+                    "kwargs": {
+                        key: redact_sensitive_text(str(value))
+                        for key, value in kwargs.items()
+                    },
+                }
+                self.last_call_trace = {
+                    "request": request_payload,
+                    "response": None,
+                    "error": None,
+                }
                 try:
+                    interval = max(0.0, float(getattr(self.config, "min_interval_seconds", 0.0) or 0.0))
+                    if interval > 0 and self._last_call_started_at is not None:
+                        elapsed = time.time() - self._last_call_started_at
+                        if elapsed < interval:
+                            time.sleep(interval - elapsed)
                     start_time = time.time()
-                    response = self.client.invoke(lc_messages, **kwargs)
+                    self._last_call_started_at = start_time
+                    response = client.invoke(lc_messages, **kwargs)
                     duration_ms = int((time.time() - start_time) * 1000)
-                except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
+                except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError) as e:
+                    if self.last_call_trace is not None:
+                        self.last_call_trace["error"] = redact_sensitive_text(str(e))
                     raise
                 except Exception as e:
-                    self._handle_api_error(e)
+                    if self.last_call_trace is not None:
+                        self.last_call_trace["error"] = redact_sensitive_text(str(e))
+                    self._handle_api_error(e, timeout_seconds=request_timeout_seconds)
 
                 # Extract token usage if available
                 prompt_tokens = 0
@@ -187,6 +277,34 @@ class OpenAICompatibleProvider(LLMProvider):
                     completion_tokens=completion_tokens,
                     total_tokens=total_tokens,
                     duration_ms=duration_ms,
+                )
+                response_text = redact_sensitive_text(str(getattr(response, "content", "")))
+                response_payload = {
+                    "content": response_text,
+                    "content_preview": response_text[:2000],
+                    "content_length": len(response_text),
+                    "usage": self.last_token_usage.to_dict(),
+                    "response_metadata": getattr(response, "response_metadata", None) or {},
+                    "finish_reason": (
+                        (getattr(response, "response_metadata", None) or {}).get("finish_reason")
+                        or (getattr(response, "response_metadata", None) or {}).get("stop_reason")
+                    ),
+                    "attempt_number": attempt_number,
+                    "duration_ms": duration_ms,
+                }
+                self.last_call_trace = {
+                    "request": request_payload,
+                    "response": response_payload,
+                    "error": None,
+                }
+                logger.info(
+                    "LLM call completed model=%s attempt=%s prompt_tokens=%s completion_tokens=%s total_tokens=%s duration_ms=%s",
+                    self.config.model,
+                    attempt_number,
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens,
+                    duration_ms,
                 )
 
                 return response
@@ -226,6 +344,14 @@ class OpenAICompatibleProvider(LLMProvider):
         for attempt in range(max_retries + 1):
             try:
                 response = self._invoke_with_retry(lc_messages, **kwargs)
+                if self.last_call_trace is not None:
+                    self.last_call_trace.setdefault("request", {})
+                    self.last_call_trace["request"].update({
+                        "call_type": "json",
+                        "schema": getattr(schema, "__name__", None) if schema else None,
+                        "json_parse_attempt": attempt + 1,
+                        "json_parse_max_attempts": max_retries + 1,
+                    })
                 text = response.content
                 json_str = self._extract_json(text)
                 return json.loads(json_str)
@@ -250,7 +376,7 @@ class OpenAICompatibleProvider(LLMProvider):
                         max_retries + 1, e, text[:800],
                     )
                     raise OutputValidationError(f"LLM 输出不是有效的 JSON 格式: {e}") from e
-            except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
+            except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
                 raise
             except LLMError:
                 raise
@@ -264,6 +390,8 @@ class OpenAICompatibleProvider(LLMProvider):
         messages: list[dict[str, str]],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        max_retries: int | None = None,
+        request_timeout_seconds: int | None = None,
     ) -> str:
         """Invoke LLM and return raw text."""
         lc_messages = self._to_lc_messages(messages)
@@ -275,14 +403,24 @@ class OpenAICompatibleProvider(LLMProvider):
             kwargs["max_tokens"] = max_tokens
 
         try:
-            response = self._invoke_with_retry(lc_messages, **kwargs)
+            response = self._invoke_with_retry(
+                lc_messages,
+                max_retries=max_retries,
+                request_timeout_seconds=request_timeout_seconds,
+                **kwargs,
+            )
+            if self.last_call_trace is not None:
+                self.last_call_trace.setdefault("request", {})
+                self.last_call_trace["request"].update({
+                    "call_type": "text",
+                })
             return response.content
-        except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError):
+        except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
             raise
         except LLMError:
             raise
         except Exception as e:
-            self._handle_api_error(e)
+            self._handle_api_error(e, timeout_seconds=request_timeout_seconds)
 
     @staticmethod
     def _extract_json(text: str) -> str:
@@ -292,11 +430,24 @@ class OpenAICompatibleProvider(LLMProvider):
         # Strip BOM and leading/trailing whitespace
         text = text.lstrip("\ufeff").strip()
 
-        # Try ```json ... ``` first
-        match = re.search(r"```(?:json)?\s*\n?(.*?)\n?\s*```", text, re.DOTALL)
+        # Try fenced blocks first. Models often return variants such as
+        # ```json, ``` json, ```JSON, or even an unclosed fence.
+        match = re.match(
+            r"^\s*(```|~~~)[^\r\n]*[\r\n]+(.*?)(?:[\r\n]+\1\s*)?\s*$",
+            text,
+            re.DOTALL,
+        )
         if match:
-            candidate = match.group(1).strip()
-            return OpenAICompatibleProvider._sanitize_json(candidate)
+            text = match.group(2).strip()
+
+        # If a fence appears later in explanatory text, prefer its body.
+        match = re.search(
+            r"(```|~~~)[^\r\n]*[\r\n]+(.*?)(?:[\r\n]+\1)",
+            text,
+            re.DOTALL,
+        )
+        if match:
+            text = match.group(2).strip()
 
         # Try finding the first { ... } or [ ... ], respecting strings
         for start_char, end_char in [("{", "}"), ("[", "]")]:

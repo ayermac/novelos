@@ -54,6 +54,11 @@ def cmd_run_chapter(args) -> dict:
 
     use_json = getattr(args, "json", False)
 
+    # v6.6.16: Build domain_result for CLI output (mirrors API run.py behavior)
+    domain_result = _build_cli_domain_result(result, repo, args.project_id, args.chapter)
+    result_with_domain = dict(result)
+    result_with_domain["domain_result"] = domain_result
+
     # v5.2 P1 fix: Distinguish between LLM config errors and business errors
     # - LLM config errors: exit(1), ok=false
     # - GraphRecursionError: exit(1), ok=false
@@ -70,25 +75,25 @@ def cmd_run_chapter(args) -> dict:
 
     if is_failure:
         if use_json:
-            envelope = {"ok": False, "error": error_msg or None, "data": result}
+            envelope = {"ok": False, "error": error_msg or None, "data": result_with_domain}
             print(json.dumps(envelope, ensure_ascii=False))
         else:
-            _print_output(result, use_json)
+            _print_output(result_with_domain, use_json)
         sys.exit(1)
     elif has_error and requires_human:
         # Business blocking with error - ok=false but exit(0) for recoverable blocks
         if use_json:
-            envelope = {"ok": False, "error": error_msg, "data": result}
+            envelope = {"ok": False, "error": error_msg, "data": result_with_domain}
             print(json.dumps(envelope, ensure_ascii=False))
         else:
-            _print_output(result, use_json)
+            _print_output(result_with_domain, use_json)
     else:
         # Normal result (success)
         if use_json:
-            envelope = {"ok": True, "error": None, "data": result}
+            envelope = {"ok": True, "error": None, "data": result_with_domain}
             print(json.dumps(envelope, ensure_ascii=False))
         else:
-            _print_output(result, use_json)
+            _print_output(result_with_domain, use_json)
 
     return result
 
@@ -204,3 +209,118 @@ def cmd_human_resume(args) -> None:
         sys.exit(1)
 
     _print_output(result, use_json)
+
+
+# ---------------------------------------------------------------------------
+# v6.6.16: CLI domain_result builder (mirrors api/routes/run.py helpers)
+# ---------------------------------------------------------------------------
+
+
+def _build_cli_domain_result(
+    result: dict,
+    repo,
+    project_id: str,
+    chapter_number: int,
+) -> dict:
+    """Build domain_result for CLI run-chapter output.
+
+    Mirrors the domain_result logic in api/routes/run.py's
+    _build_run_chapter_domain_result().
+    """
+    from novel_factory.api.routes._memory_curator_gate import has_trusted_memory_batch
+
+    chapter_status = result.get("chapter_status")
+    error = result.get("error")
+    requires_human = result.get("requires_human", False)
+    awaiting_publish = result.get("awaiting_publish", False)
+    run_id = result.get("run_id", "")
+    has_trusted_memory = has_trusted_memory_batch(repo, project_id, chapter_number)
+
+    if error:
+        from novel_factory.api.contracts import failed
+        return failed(
+            error,
+            user_message="章节生成失败，可重试或查看详情",
+            retryable=True,
+            next_action="retry_workflow",
+            action_label="重试工作流",
+            details={
+                "chapter_status": chapter_status,
+                "run_id": run_id,
+            },
+            flags={"workflow_failed": True},
+        ).to_dict()
+
+    if requires_human or chapter_status == "blocking":
+        if chapter_status == "revision":
+            from novel_factory.api.contracts import needs_human
+            return needs_human(
+                "章节需要返修",
+                user_message="审核未通过，需要返修处理",
+                next_action="retry_node",
+                action_label="重试失败节点",
+                details={
+                    "chapter_status": chapter_status,
+                    "run_id": run_id,
+                },
+                flags={"workflow_blocked": True, "revision_needed": True},
+            ).to_dict()
+        from novel_factory.api.contracts import blocked as _blocked
+        return _blocked(
+            "章节生成被阻塞",
+            user_message="章节生成被阻塞，需要人工处理",
+            next_action="reset_chapter",
+            action_label="重置章节",
+            details={
+                "chapter_status": chapter_status,
+                "run_id": run_id,
+            },
+            flags={"workflow_blocked": True},
+        ).to_dict()
+
+    # Completed / awaiting_publish / published
+    if awaiting_publish or chapter_status in ("reviewed", "published"):
+        if not has_trusted_memory:
+            from novel_factory.api.contracts import partial_success
+            return partial_success(
+                "章节已到待发布状态，但记忆提取未成功",
+                user_message="章节正文已通过审核，但记忆提取为降级/兜底状态，建议补跑记忆",
+                next_action="backfill_memory",
+                action_label="补跑记忆",
+                details={
+                    "chapter_status": chapter_status,
+                    "run_id": run_id,
+                },
+                flags={
+                    "workflow_completed": True,
+                    "awaiting_publish": awaiting_publish,
+                    "memory_degraded": True,
+                },
+            ).to_dict()
+
+        from novel_factory.api.contracts import success
+        return success(
+            "章节生成完成" if chapter_status == "published" else "AI 审核通过，等待人工确认发布",
+            user_message="章节生成完成",
+            details={
+                "chapter_status": chapter_status,
+                "run_id": run_id,
+            },
+            flags={
+                "workflow_completed": True,
+                "memory_trusted": True,
+            },
+        ).to_dict()
+
+    # Default: pending/unknown
+    from novel_factory.api.contracts import OperationResult
+    return OperationResult(
+        ok=True,
+        domain_status="pending",
+        message="工作流完成",
+        details={
+            "chapter_status": chapter_status,
+            "run_id": run_id,
+        },
+        flags={"workflow_completed": True},
+    ).to_dict()

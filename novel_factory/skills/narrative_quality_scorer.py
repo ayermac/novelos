@@ -33,6 +33,24 @@ class NarrativeQualityScorer(ValidatorSkill):
         "威胁", "危机", "危险", "挑战", "困境", "难题", "障碍",
         "争斗", "搏斗", "战斗", "打斗", "厮杀", "交锋",
         "反对", "抵抗", "反抗", "反击", "回击",
+        "追踪", "审计", "锁定", "冻结", "越权", "销毁", "警告",
+        "失踪", "怀疑", "疑虑", "屏蔽", "反向", "不可信", "躲",
+        "抹除", "抹掉", "清除", "清空", "代价", "违规", "偏离",
+        "失控", "扩散", "封锁", "隔离", "第七办公室", "绩效",
+        "失败名单", "调记录", "拦不住", "不放过",
+    ]
+
+    DIALOGUE_PATTERN = r'["“「『]([^"”」』]+)["”」』]'
+
+    CONFLICT_DIALOGUE_MARKERS = [
+        "你知道", "你清楚", "你自己", "你信", "对不对", "凭什么",
+        "出去之后", "去哪儿", "为什么", "怎么", "谁", "什么",
+        "别", "不要", "不许", "起来", "跟我走", "不会放过",
+    ]
+
+    CONFLICT_STRUCTURAL_MARKERS = [
+        "但是", "但", "却", "可是", "然而", "偏偏", "不能", "不要",
+        "没法", "不得不", "要么", "警告", "推荐方案", "代价",
     ]
     
     # 钩子相关模式
@@ -162,25 +180,36 @@ class NarrativeQualityScorer(ValidatorSkill):
         char_count = len(text)
         conflict_density = (conflict_count / max(char_count, 1)) * 1000
         
-        # 检测冲突场景（对话中的冲突）
-        dialogue_pattern = r'["「『]([^"」』]+)["」』]'
-        dialogues = re.findall(dialogue_pattern, text)
+        # 检测冲突场景（对话中的冲突）。中文网文里的冲突常表现为质问、
+        # 否定、命令和代价揭示，不一定直接写出“冲突/对抗”。
+        dialogues = self._extract_dialogues(text)
         
         conflict_dialogues = 0
         for dialogue in dialogues:
-            for keyword in self.CONFLICT_KEYWORDS:
-                if keyword in dialogue:
-                    conflict_dialogues += 1
-                    break
+            if self._is_conflict_dialogue(dialogue):
+                conflict_dialogues += 1
+
+        # 段落级冲突：系统警告、代价选择、威胁逼近等常在叙述段中完成。
+        paragraphs = [p.strip() for p in re.split(r"\n+", text) if p.strip()]
+        conflict_scenes = 0
+        for paragraph in paragraphs:
+            has_conflict_term = any(keyword in paragraph for keyword in self.CONFLICT_KEYWORDS)
+            has_structural_pressure = any(marker in paragraph for marker in self.CONFLICT_STRUCTURAL_MARKERS)
+            has_dialogue = bool(self._extract_dialogues(paragraph))
+            if has_conflict_term and (has_structural_pressure or has_dialogue or "【" in paragraph):
+                conflict_scenes += 1
         
         # 计算分数（0-100）
-        # 冲突密度得分（0-50分）
-        density_score = min(conflict_density * 5, 50)
+        # 冲突密度得分（0-35分）
+        density_score = min(conflict_density * 4, 35)
         
-        # 冲突对话得分（0-50分）
-        dialogue_score = min(conflict_dialogues * 10, 50)
+        # 冲突对话得分（0-40分）
+        dialogue_score = min(conflict_dialogues * 8, 40)
+
+        # 冲突场景得分（0-25分）
+        scene_score = min(conflict_scenes * 5, 25)
         
-        total_score = density_score + dialogue_score
+        total_score = density_score + dialogue_score + scene_score
         
         return round(total_score, 2)
     
@@ -189,16 +218,35 @@ class NarrativeQualityScorer(ValidatorSkill):
         
         检测章末是否有悬念、转折等钩子
         """
+        tail = text.strip()[-300:]
+
+        # 真实网文常用“反转事实/追问/警告”作为章末钩子，不一定以
+        # “然而/突然”这类模板收尾。先用原文尾部判断，避免切句时把
+        # 关键标点删除。
+        suspense_markers = [
+            "别相信", "不是", "而是", "确认", "警告", "查",
+            "谁", "什么", "为何", "为什么", "真相", "秘密", "钥匙",
+            "名单", "失败名单", "记录", "调记录", "第七办公室", "魏承霜",
+            "周", "抹掉", "清除", "隐藏", "同步至总部",
+        ]
+        hook_score = 0.0
+        if any(marker in tail for marker in suspense_markers):
+            hook_score += 45
+        if any(marker in tail for marker in ("失败名单", "第七办公室", "魏承霜", "调记录", "周")):
+            hook_score += 15
+        if re.search(r'[？?！!…]\s*[”"」』]?\s*$', tail):
+            hook_score += 30
+        if re.search(r'[“「『][^”」』]{1,60}[”」』]\s*[。！？!?…]?\s*$', tail):
+            hook_score += 20
+
         # 获取最后几句话
         sentences = re.split(r'[。！？\n]', text)
         last_sentences = [s.strip() for s in sentences[-5:] if s.strip()]
-        
+
         if not last_sentences:
-            return 0.0
-        
+            return round(min(hook_score, 100), 2)
+
         # 检测章末钩子模式
-        hook_score = 0.0
-        
         for sentence in last_sentences[-2:]:  # 检查最后两句话
             for pattern in self.HOOK_PATTERNS:
                 if re.search(pattern, sentence):
@@ -302,8 +350,7 @@ class NarrativeQualityScorer(ValidatorSkill):
         检测对话的比例和自然程度
         """
         # 提取对话
-        dialogue_pattern = r'["「『]([^"」』]+)["」』]'
-        dialogues = re.findall(dialogue_pattern, text)
+        dialogues = self._extract_dialogues(text)
         
         if not dialogues:
             return 30.0  # 没有对话，给低分
@@ -445,8 +492,7 @@ class NarrativeQualityScorer(ValidatorSkill):
             })
         
         # 检测对话不足
-        dialogue_pattern = r'["「『]([^"」』]+)["」』]'
-        dialogues = re.findall(dialogue_pattern, text)
+        dialogues = self._extract_dialogues(text)
         dialogue_ratio = sum(len(d) for d in dialogues) / max(len(text), 1)
         
         min_dialogue = config.get("min_dialogue_ratio", 0.1)
@@ -478,6 +524,23 @@ class NarrativeQualityScorer(ValidatorSkill):
             })
         
         return issues
+
+    def _extract_dialogues(self, text: str) -> list[str]:
+        """Extract quoted dialogue/content using common Chinese quote styles."""
+        return re.findall(self.DIALOGUE_PATTERN, text)
+
+    def _is_conflict_dialogue(self, dialogue: str) -> bool:
+        """Return True for confrontational or pressure-bearing dialogue."""
+        stripped = dialogue.strip()
+        if not stripped:
+            return False
+        if any(keyword in stripped for keyword in self.CONFLICT_KEYWORDS):
+            return True
+        if any(marker in stripped for marker in self.CONFLICT_DIALOGUE_MARKERS):
+            return True
+        if re.search(r"[？?！!]", stripped) and any(ch in stripped for ch in ("你", "我", "他", "它", "系统")):
+            return True
+        return False
     
     def _generate_suggestions(
         self, 

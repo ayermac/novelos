@@ -72,13 +72,7 @@ from .cli_app.commands.demo import (
     cmd_seed_demo,
     cmd_smoke_run,
 )
-from .cli_app.commands.sidecar import (
-    cmd_scout,
-    cmd_report_daily,
-    cmd_export_chapter,
-    cmd_continuity_check,
-    cmd_architect_suggest,
-)
+from .cli_app.commands.sidecar import cmd_continuity_check
 from .cli_app.commands.skills import (
     cmd_skill_list,
     cmd_skill_run,

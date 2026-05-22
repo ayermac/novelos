@@ -10,20 +10,130 @@ from __future__ import annotations
 import json
 import logging
 import time
+from datetime import datetime, timedelta
 from typing import Any, Generator
 
 from ..config.settings import Settings
+from ..models.state import ChapterStatus
 from ..db.repository import Repository
 from ..models.state import FactoryState
+from ..quality.deadloop_detector import DeadloopDetector
 from .graph import compile_graph
+from .conditions import hydrate_revision_state
 from .checkpoint import (
     delete_checkpoint_thread,
     derive_checkpoint_db_path,
     get_checkpoint_config,
     get_sqlite_checkpointer,
 )
+from ..security.redaction import redact_sensitive_text
 
 logger = logging.getLogger(__name__)
+
+STALE_RUNNING_RUN_SECONDS = 2 * 60 * 60
+STREAM_VISIBLE_NODES = frozenset(
+    {
+        "planner",
+        "screenwriter",
+        "author",
+        "polisher",
+        "editor",
+        "memory_curator",
+        "publisher",
+        "awaiting_publish",
+        "human_review",
+    }
+)
+GRAPH_SUCCESS_STATUSES = frozenset(
+    {
+        ChapterStatus.REVIEWED.value,
+        "awaiting_publish",
+        ChapterStatus.PUBLISHED.value,
+    }
+)
+
+
+def _run_current_node(repo: Repository, state: FactoryState, fallback: str | None = None) -> str:
+    """Resolve the best current node label for a run outcome message."""
+    run_id = state.get("workflow_run_id")
+    project_id = state.get("project_id")
+    chapter_number = state.get("chapter_number")
+    if run_id and project_id and chapter_number:
+        try:
+            runs = repo.get_workflow_runs_for_project(
+                str(project_id),
+                chapter_number=int(chapter_number),
+                limit=10,
+            )
+            for run in runs:
+                if (run.get("id") or run.get("run_id")) == run_id:
+                    return run.get("current_node") or fallback or "workflow_exit_guard"
+        except Exception:
+            logger.debug("Failed to resolve workflow current_node for %s", run_id, exc_info=True)
+    return fallback or "workflow_exit_guard"
+
+
+def _graph_exit_error_message(state: FactoryState, current_node: str) -> str:
+    """Explain a graph exit that did not reach a terminal workflow outcome."""
+    chapter_status = state.get("chapter_status") or "unknown"
+    return (
+        "WORKFLOW_INTERRUPTED_BEFORE_TERMINAL: "
+        f"workflow stopped at {current_node} while chapter_status={chapter_status}. "
+        "The run was not finalized by a terminal node."
+    )
+
+
+def _graph_exit_is_success(state: FactoryState) -> bool:
+    """Return True only when graph state represents a coherent successful exit."""
+    if state.get("error"):
+        return False
+    if state.get("requires_human") and not state.get("awaiting_publish"):
+        return False
+    chapter_status = state.get("chapter_status") or ""
+    if chapter_status == ChapterStatus.REVIEWED.value:
+        return bool(state.get("awaiting_publish"))
+    return chapter_status in GRAPH_SUCCESS_STATUSES
+
+
+def _block_incomplete_graph_exit(
+    repo: Repository,
+    state: FactoryState,
+    current_node: str | None = None,
+) -> str:
+    """Mark a run blocked when LangGraph exits before a terminal node."""
+    node = _run_current_node(repo, state, current_node)
+    message = _graph_exit_error_message(state, node)
+    run_id = state.get("workflow_run_id")
+    if run_id:
+        try:
+            repo.update_workflow_run(
+                run_id,
+                status="blocked",
+                current_node=node,
+                error_message=message,
+                prompt_tokens=state.get("prompt_tokens", 0),
+                completion_tokens=state.get("completion_tokens", 0),
+                total_tokens=state.get("total_tokens", 0),
+                duration_ms=state.get("duration_ms", 0),
+            )
+        except Exception:
+            logger.warning("Failed to block incomplete workflow run %s", run_id, exc_info=True)
+
+        try:
+            repo.create_workflow_node_event(
+                run_id=run_id,
+                project_id=str(state.get("project_id", "")),
+                chapter_number=int(state.get("chapter_number", 0)),
+                node_name=node,
+                event_type="workflow_interrupted",
+                status="blocked",
+                message=message,
+                error_code="WORKFLOW_INTERRUPTED_BEFORE_TERMINAL",
+                error_message=message,
+            )
+        except Exception:
+            logger.debug("Failed to log incomplete workflow exit for %s", run_id, exc_info=True)
+    return message
 
 
 def _mark_run_failed(repo: Repository, run_id: str | None, error: str) -> None:
@@ -34,6 +144,37 @@ def _mark_run_failed(repo: Repository, run_id: str | None, error: str) -> None:
         repo.update_workflow_run(run_id, status="failed", error_message=error)
     except Exception:
         logger.warning("Failed to mark workflow run %s as failed", run_id, exc_info=True)
+
+
+def _parse_workflow_timestamp(value: Any) -> datetime | None:
+    """Parse repository workflow timestamps stored as SQLite datetime strings."""
+    if not value:
+        return None
+    text = str(value).strip().replace("T", " ")
+    if text.endswith("Z"):
+        text = text[:-1]
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _running_run_is_recent(run: dict[str, Any], max_age_seconds: int = STALE_RUNNING_RUN_SECONDS) -> bool:
+    """Return True when a running workflow run still looks actively resumable."""
+    started_at = _parse_workflow_timestamp(run.get("started_at"))
+    if started_at is None:
+        return True
+    # workflow_runs.started_at is stored as local China time via SQLite
+    # datetime('now','+8 hours'), so compare against the same clock.
+    now_local = datetime.utcnow() + timedelta(hours=8)
+    age = now_local - started_at
+    return age.total_seconds() <= max_age_seconds
 
 
 def _clear_stale_checkpoint_for_new_run(
@@ -48,14 +189,87 @@ def _clear_stale_checkpoint_for_new_run(
     manual retry can resume from that stale node and fail an optimistic status
     transition such as planned->scripted. Keep checkpoints only while the latest
     run is still marked running; every other new run starts from DB truth.
+
+    v6.6.6: Enhanced with stale checkpoint detection and explanatory logging.
     """
+    from .state_integrity import _checkpoint_is_stale, STALE_CHECKPOINT_SECONDS
+    from .checkpoint import inspect_checkpoint_thread
+
     try:
         latest_runs = repo.get_workflow_runs_for_project(
             project_id, chapter_number=chapter_number, limit=1
         )
         latest_status = latest_runs[0].get("status") if latest_runs else None
-        if latest_status == "running":
+
+        # Check if checkpoint exists at all
+        checkpoint_info = None
+        try:
+            checkpoint_info = inspect_checkpoint_thread(repo.db_path, project_id, chapter_number)
+        except Exception:
+            pass
+
+        checkpoint_exists = bool(checkpoint_info and checkpoint_info.get("checkpoint_exists"))
+
+        if latest_status == "running" and _running_run_is_recent(latest_runs[0]):
+            # Healthy running run - do NOT clear checkpoint
+            logger.debug(
+                "Skipping checkpoint clear for %s/%s: healthy running run",
+                project_id, chapter_number,
+            )
             return
+
+        if latest_status == "running":
+            # Stale running run - mark as failed and clear checkpoint
+            run_id = latest_runs[0].get("id") or latest_runs[0].get("run_id")
+            _mark_run_failed(
+                repo,
+                run_id,
+                "Stale running workflow detected; clearing checkpoint before fresh run.",
+            )
+            logger.info(
+                "Marked stale running run %s as failed for %s/%s",
+                run_id, project_id, chapter_number,
+            )
+
+        # v6.6.6: Check if checkpoint is stale before clearing
+        if checkpoint_exists:
+            chapter = repo.get_chapter(project_id, chapter_number)
+            chapter_status = chapter.get("status", "planned") if chapter else "planned"
+            checkpoint_node = checkpoint_info.get("checkpoint_node")
+            checkpoint_chapter_status = None  # Not easily available from inspect
+            current_node = latest_runs[0].get("current_node") if latest_runs else None
+
+            is_stale, stale_reason = _checkpoint_is_stale(
+                run_status=latest_status,
+                checkpoint_exists=checkpoint_exists,
+                checkpoint_node=checkpoint_node,
+                checkpoint_chapter_status=checkpoint_chapter_status,
+                current_chapter_status=chapter_status,
+                current_node=current_node,
+                checkpoint_age_seconds=None,
+            )
+
+            if is_stale:
+                logger.info(
+                    "Clearing stale checkpoint for %s/%s: %s",
+                    project_id, chapter_number, stale_reason,
+                )
+                # Record explanatory event if possible
+                try:
+                    run_id = latest_runs[0].get("id") if latest_runs else None
+                    if run_id:
+                        repo.create_workflow_node_event(
+                            run_id=run_id,
+                            project_id=project_id,
+                            chapter_number=chapter_number,
+                            node_name="checkpoint_cleanup",
+                            event_type="stale_checkpoint_cleared",
+                            status="info",
+                            message=f"清理过期检查点: {stale_reason}",
+                        )
+                except Exception:
+                    pass  # Non-critical: logging is best-effort
+
         delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
     except Exception:
         logger.warning(
@@ -64,6 +278,49 @@ def _clear_stale_checkpoint_for_new_run(
             chapter_number,
             exc_info=True,
         )
+
+
+def _check_deadloop_for_run(
+    repo: Repository,
+    project_id: str,
+    chapter_number: int,
+    current_status: str,
+) -> dict[str, Any] | None:
+    """Stop repeated automatic runs when a chapter is already in a dead loop."""
+    deadloop = DeadloopDetector.check_deadloop(repo, project_id, chapter_number)
+    if not deadloop.get("triggered"):
+        return None
+    reason = deadloop.get("reason") or "章节生产疑似进入返修死循环"
+    action = deadloop.get("action") or "请人工检查并考虑恢复最佳历史版本"
+    return {
+        "run_id": "",
+        "chapter_status": current_status,
+        "steps": [],
+        "error": f"章节生产熔断：{reason}。{action}",
+        "requires_human": True,
+        "deadloop_detected": True,
+        "details": deadloop,
+        "actions": [
+            {
+                "key": "restore_best_version",
+                "label": "恢复历史最佳版本",
+                "description": "从已有版本中选择满足字数和评分较好的正文，恢复后再进入审核/润色路径。",
+                "action_url": f"/api/projects/{project_id}/chapters/{chapter_number}/restore-best-version",
+                "method": "POST",
+                "requires_confirmation": True,
+                "target_chapter": chapter_number,
+            },
+            {
+                "key": "reset_chapter",
+                "label": "人工确认重置后重跑",
+                "description": "保留现有正文和历史版本，只清理阻塞状态与本轮失败窗口。",
+                "action_url": f"/api/projects/{project_id}/chapters/{chapter_number}/reset",
+                "method": "POST",
+                "requires_confirmation": True,
+                "target_chapter": chapter_number,
+            },
+        ],
+    }
 
 
 def _build_llm_router(settings: Settings, llm_mode: str = "stub"):
@@ -89,6 +346,7 @@ def _build_llm_router(settings: Settings, llm_mode: str = "stub"):
                 default_llm=settings.default_llm,
                 llm_profiles=settings.llm_profiles,
                 agent_llm=settings.agent_llm,
+                agent_llm_fallback=settings.agent_llm_fallback,
             )
             return LLMRouter(config, stub_provider=stub, llm_mode="stub")
 
@@ -117,6 +375,7 @@ def _build_llm_router(settings: Settings, llm_mode: str = "stub"):
             default_llm=settings.default_llm,
             llm_profiles=settings.llm_profiles,
             agent_llm=settings.agent_llm,
+            agent_llm_fallback=settings.agent_llm_fallback,
         )
         return LLMRouter(config, llm_mode=llm_mode, env_getter=env_getter)
 
@@ -159,6 +418,7 @@ def _validate_llm_config(settings: Settings, llm_mode: str) -> None:
             default_llm=settings.default_llm,
             llm_profiles=settings.llm_profiles,
             agent_llm=settings.agent_llm,
+            agent_llm_fallback=settings.agent_llm_fallback,
         )
         router = LLMRouter(config, llm_mode=llm_mode, env_getter=env_getter)
         # Validate by attempting to get provider for default profile
@@ -241,7 +501,8 @@ def run_with_graph(
     settings: Settings,
     repo: Repository,
     llm_mode: str = "stub",
-    max_steps: int = 50,
+    max_steps: int = 100,
+    workflow_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Run chapter production via LangGraph.
 
@@ -254,7 +515,7 @@ def run_with_graph(
         settings: Application settings.
         repo: Repository instance for database access.
         llm_mode: "stub" for demo mode, "real" for actual LLM calls.
-        max_steps: Maximum graph recursion limit (steps). Defaults to 50.
+        max_steps: Maximum graph recursion limit (steps). Defaults to 100.
 
     Returns:
         Dict with the same shape as Dispatcher.run_chapter():
@@ -304,13 +565,36 @@ def run_with_graph(
             "awaiting_publish": _is_awaiting,
         }
 
-    _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
+    deadloop_error = _check_deadloop_for_run(repo, project_id, chapter_number, current_status)
+    if deadloop_error:
+        if workflow_run_id:
+            repo.update_workflow_run(
+                workflow_run_id,
+                status="blocked",
+                current_node="deadloop_guard",
+                error_message=deadloop_error.get("error"),
+            )
+            deadloop_error["run_id"] = workflow_run_id
+        return deadloop_error
+
+    if workflow_run_id:
+        delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
+    else:
+        _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
 
     # v5.3.0: Context Readiness Gate
     readiness_error = _check_context_readiness_for_run(
         repo, project_id, chapter_number, current_status
     )
     if readiness_error:
+        if workflow_run_id:
+            repo.update_workflow_run(
+                workflow_run_id,
+                status="blocked",
+                current_node="context_readiness",
+                error_message=readiness_error.get("error"),
+            )
+            readiness_error["run_id"] = workflow_run_id
         return readiness_error
 
     # Build initial state
@@ -327,6 +611,10 @@ def run_with_graph(
         **_runtime_budget_state(settings, repo, project_id),
     }
 
+    # v6.1.1+: Recover revision_target/review metadata from the latest review
+    # for fresh revision runs. Keep this shared with streaming execution.
+    state = hydrate_revision_state(state, repo)
+
     # Build LLMRouter
     llm_router = _build_llm_router(settings, llm_mode)
 
@@ -335,7 +623,7 @@ def run_with_graph(
 
     # Build initial state with workflow_run_id placeholder
     # (will be populated by health_check_node)
-    state["workflow_run_id"] = ""
+    state["workflow_run_id"] = workflow_run_id or ""
 
     # Derive checkpoint DB path from the main repository DB so checkpoints
     # always follow the data they belong to — never in the repo root.
@@ -353,18 +641,39 @@ def run_with_graph(
             )
             result_state = graph.invoke(state, config=config)
     except Exception as e:
-        logger.exception("LangGraph execution failed")
-        _mark_run_failed(repo, state.get("workflow_run_id"), str(e))
+        logger.exception("LangGraph execution failed for project=%s chapter=%s", project_id, chapter_number)
+        safe_error = redact_sensitive_text(str(e))
+        _mark_run_failed(repo, state.get("workflow_run_id"), safe_error)
         return {
             "run_id": state.get("workflow_run_id", ""),
             "chapter_status": current_status,
             "steps": state.get("steps", []),
-            "error": str(e),
+            "error": safe_error,
             "requires_human": True,
             "prompt_tokens": state.get("prompt_tokens", 0),
             "completion_tokens": state.get("completion_tokens", 0),
             "total_tokens": state.get("total_tokens", 0),
             "duration_ms": state.get("duration_ms", 0),
+        }
+
+    if not _graph_exit_is_success(result_state):
+        interrupted_error = result_state.get("error") or _block_incomplete_graph_exit(
+            repo,
+            result_state,
+            result_state.get("current_node"),
+        )
+        return {
+            "run_id": result_state.get("workflow_run_id", ""),
+            "chapter_status": result_state.get("chapter_status"),
+            "steps": result_state.get("steps", []),
+            "error": interrupted_error,
+            "requires_human": True,
+            "workflow_interrupted": True,
+            "awaiting_publish": False,
+            "prompt_tokens": result_state.get("prompt_tokens", 0),
+            "completion_tokens": result_state.get("completion_tokens", 0),
+            "total_tokens": result_state.get("total_tokens", 0),
+            "duration_ms": result_state.get("duration_ms", 0),
         }
 
     # Map to Dispatcher return shape
@@ -388,7 +697,7 @@ def run_with_graph_stream(
     settings: Settings,
     repo: Repository,
     llm_mode: str = "stub",
-    max_steps: int = 50,
+    max_steps: int = 100,
 ) -> Generator[dict[str, Any], None, None]:
     """Run chapter production with streaming events (v5.2 Phase C).
 
@@ -400,7 +709,7 @@ def run_with_graph_stream(
         settings: Application settings.
         repo: Repository instance for database access.
         llm_mode: "stub" for demo mode, "real" for actual LLM calls.
-        max_steps: Maximum graph recursion limit (steps). Defaults to 50.
+        max_steps: Maximum graph recursion limit (steps). Defaults to 100.
 
     Yields:
         Event dicts with format:
@@ -415,9 +724,11 @@ def run_with_graph_stream(
     try:
         _validate_llm_config(settings, llm_mode)
     except Exception as e:
+        safe_error = redact_sensitive_text(str(e))
+        logger.warning("LLM config validation failed: %s", safe_error)
         yield {
             "type": "run_error",
-            "error": str(e),
+            "error": safe_error,
             "chapter_status": None,
         }
         return
@@ -455,6 +766,18 @@ def run_with_graph_stream(
         }
         return
 
+    deadloop_error = _check_deadloop_for_run(repo, project_id, chapter_number, current_status)
+    if deadloop_error:
+        yield {
+            "type": "run_error",
+            "error": deadloop_error.get("error"),
+            "chapter_status": current_status,
+            "deadloop_detected": True,
+            "details": deadloop_error.get("details", {}),
+            "actions": deadloop_error.get("actions", []),
+        }
+        return
+
     _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
 
     # v5.3.0: Context Readiness Gate must match non-streaming execution.
@@ -488,13 +811,19 @@ def run_with_graph_stream(
         **_runtime_budget_state(settings, repo, project_id),
     }
 
+    # v6.1.1+: Recover revision_target/review metadata from the latest review
+    # for fresh revision runs. Keep this shared with non-streaming execution.
+    state = hydrate_revision_state(state, repo)
+
     # Build LLMRouter
     try:
         llm_router = _build_llm_router(settings, llm_mode)
     except Exception as e:
+        safe_error = redact_sensitive_text(str(e))
+        logger.warning("Failed to build LLM router: %s", safe_error)
         yield {
             "type": "run_error",
-            "error": str(e),
+            "error": safe_error,
             "chapter_status": current_status,
         }
         return
@@ -547,7 +876,7 @@ def run_with_graph_stream(
                             }
 
                         # Emit step_start for new agent
-                        if node_name in ("planner", "screenwriter", "author", "polisher", "editor", "publisher", "human_review"):
+                        if node_name in STREAM_VISIBLE_NODES:
                             current_agent = node_name
                             agent_start_times[node_name] = time.time()
                             yield {
@@ -569,7 +898,27 @@ def run_with_graph_stream(
                 "duration_ms": duration_ms,
             }
 
-        # Emit run_complete
+        if not _graph_exit_is_success(state):
+            interrupted_error = state.get("error") or _block_incomplete_graph_exit(
+                repo,
+                state,
+                current_agent,
+            )
+            yield {
+                "type": "run_error",
+                "run_id": state.get("workflow_run_id", ""),
+                "error": interrupted_error,
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": True,
+                "workflow_interrupted": True,
+                "prompt_tokens": state.get("prompt_tokens", 0),
+                "completion_tokens": state.get("completion_tokens", 0),
+                "total_tokens": state.get("total_tokens", 0),
+                "duration_ms": state.get("duration_ms", 0),
+            }
+            return
+
+        # Emit run_complete only after a coherent terminal graph outcome.
         yield {
             "type": "run_complete",
             "chapter_status": state.get("chapter_status"),
@@ -582,12 +931,13 @@ def run_with_graph_stream(
         }
 
     except Exception as e:
-        logger.exception("LangGraph streaming failed")
-        _mark_run_failed(repo, state.get("workflow_run_id"), str(e))
+        logger.exception("LangGraph streaming failed for project=%s chapter=%s", project_id, chapter_number)
+        safe_error = redact_sensitive_text(str(e))
+        _mark_run_failed(repo, state.get("workflow_run_id"), safe_error)
         yield {
             "type": "run_error",
             "run_id": state.get("workflow_run_id", ""),
-            "error": str(e),
+            "error": safe_error,
             "chapter_status": state.get("chapter_status", current_status),
             "prompt_tokens": state.get("prompt_tokens", 0),
             "completion_tokens": state.get("completion_tokens", 0),

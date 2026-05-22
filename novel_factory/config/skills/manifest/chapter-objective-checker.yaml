@@ -1,0 +1,69 @@
+id: chapter-objective-checker
+name: Chapter Objective Checker
+version: "1.0.0"
+kind: validator
+type: validator
+class_name: ChapterObjectiveCheckerSkill
+description: "检查 Planner 章节目标是否具体、非空，并包含可执行事件或约束。"
+enabled: true
+builtin: true
+allowed_agents:
+  - planner
+  - manual
+allowed_stages:
+  - after_llm
+  - manual
+allowed_targets:
+  - agent: planner
+    stage: after_llm
+permissions:
+  read_context: false
+  read_chapter: false
+  transform_text: false
+  validate_text: true
+  write_quality_report: false
+  write_skill_run: true
+  write_chapter_content: false
+  update_chapter_status: false
+  send_agent_message: false
+  call_llm: false
+  call_network: false
+input_schema:
+  type: object
+  required:
+    - objective
+  properties:
+    objective:
+      type: string
+    required_events:
+      type: array
+      items:
+        type: string
+    constraints:
+      type: array
+      items:
+        type: string
+output_schema:
+  type: object
+  required:
+    - issues
+    - warnings
+    - blocking
+  properties:
+    score:
+      type: number
+    issues:
+      type: array
+      items:
+        type: object
+    warnings:
+      type: array
+      items:
+        type: string
+    blocking:
+      type: boolean
+failure_policy:
+  on_error: warn
+  max_retries: 0
+  timeout_seconds: null
+  blocking_threshold: null

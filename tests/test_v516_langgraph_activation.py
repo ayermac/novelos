@@ -38,7 +38,8 @@ class TestLangGraphCompilation:
         assert hasattr(graph, "stream")
 
     def test_compile_graph_with_checkpointer(self):
-        """compile_graph() with checkpoint=True should include checkpointer."""
+        """compile_graph() with an explicit checkpointer should compile."""
+        from langgraph.checkpoint.memory import MemorySaver
         from novel_factory.workflow.graph import compile_graph
         from novel_factory.config.settings import load_settings
         from novel_factory.db.repository import Repository
@@ -46,10 +47,22 @@ class TestLangGraphCompilation:
         settings = load_settings()
         repo = Repository(settings.db_path)
 
-        graph = compile_graph(settings=settings, repo=repo, checkpoint=True)
+        graph = compile_graph(settings=settings, repo=repo, checkpointer=MemorySaver())
 
         # Should still have invoke method
         assert hasattr(graph, "invoke")
+
+    def test_compile_graph_rejects_implicit_memory_checkpoint(self):
+        """checkpoint=True without a durable checkpointer should fail loudly."""
+        from novel_factory.workflow.graph import compile_graph
+        from novel_factory.config.settings import load_settings
+        from novel_factory.db.repository import Repository
+
+        settings = load_settings()
+        repo = Repository(settings.db_path)
+
+        with pytest.raises(ValueError, match="requires an explicit durable checkpointer"):
+            compile_graph(settings=settings, repo=repo, checkpoint=True)
 
 
 class TestNodeRunners:
@@ -87,6 +100,61 @@ class TestNodeRunners:
         # Each runner should be callable
         assert callable(runners["planner"])
         assert callable(runners["author"])
+
+    def test_create_node_runners_default_skill_registry_executes_agent_skills(self, tmp_path):
+        """Router-mode node runners must execute default Agent Skill mounts."""
+        from novel_factory.workflow.nodes import create_node_runners
+        from novel_factory.config.settings import load_settings
+        from novel_factory.db.connection import init_db
+        from novel_factory.db.repository import Repository
+        from novel_factory.llm.provider import LLMProvider
+
+        class PlannerStub(LLMProvider):
+            def invoke_json(self, messages, schema=None, temperature=None):
+                return {
+                    "chapter_brief": {
+                        "objective": "林默Lv1，本章要夺回账册并发现追兵",
+                        "required_events": ["夺回账册"],
+                        "plots_to_plant": [],
+                        "plots_to_resolve": [],
+                        "ending_hook": "追兵现身",
+                        "constraints": ["不改变上一章数值"],
+                    }
+                }
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None):
+                return ""
+
+        class RouterStub:
+            def for_agent(self, agent_name):
+                return PlannerStub()
+
+        db_path = tmp_path / "router_skill.db"
+        init_db(db_path)
+        repo = Repository(str(db_path))
+        repo.create_project("router_skill_proj", "Router Skill Project")
+        repo.add_chapter("router_skill_proj", 1, title="第一章", status="planned")
+
+        runners = create_node_runners(load_settings(), repo, RouterStub())
+        result = runners["planner"]({
+            "project_id": "router_skill_proj",
+            "chapter_number": 1,
+            "chapter_status": "planned",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "steps": [],
+        })
+
+        assert result["chapter_status"] == "planned"
+        runs = repo.get_skill_runs(
+            "router_skill_proj",
+            skill_id="chapter-objective-checker",
+            agent_id="planner",
+            chapter_number=1,
+        )
+        assert runs
 
 
 class TestRoutingEquivalence:

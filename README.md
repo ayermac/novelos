@@ -2,216 +2,168 @@
 
 # Novelos
 
-**AI-Powered Novel Production Workbench**
+**A local-first AI workbench for long-form fiction**
 
 English | [中文](README.zh-CN.md)
 
 [![Python](https://img.shields.io/badge/Python-3.9+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.115+-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![React](https://img.shields.io/badge/React-18+-61DAFB?logo=react&logoColor=black)](https://react.dev/)
-[![Vite](https://img.shields.io/badge/Vite-5+-646CFF?logo=vite&logoColor=white)](https://vitejs.dev/)
+[![Electron](https://img.shields.io/badge/Electron-30+-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Workflow-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
-[![SQLite](https://img.shields.io/badge/SQLite-3-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
-[![TypeScript](https://img.shields.io/badge/TypeScript-5+-3178C6?logo=typescript&logoColor=white)](https://www.typescriptlang.org/)
-
-An end-to-end workbench for long-form fiction: plan arcs, generate chapters through a LangGraph pipeline, review and polish prose, and manage project context — from CLI and web workspace.
-
-[Features](#features) | [Architecture](#architecture) | [Quick Start](#quick-start) | [CLI Reference](#cli-reference) | [Configuration](#configuration) | [Testing](#testing) | [Documentation](#documentation)
+[![SQLite](https://img.shields.io/badge/SQLite-Local-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
 
 </div>
 
----
+Novelos helps writers build long-form fiction projects with a local desktop app, AI agents, structured project memory, and an auditable chapter production workflow.
 
-## Features
+It ships as an Electron desktop client with an embedded React workbench and a local FastAPI sidecar. Your project data lives locally in SQLite.
 
-- **Chapter Production Pipeline** — LangGraph workflow with planner, screenwriter, author, polisher, editor, and publisher nodes
-- **Project Context Management** — World settings, characters, factions, outlines, foreshadowing, and chapter instructions
-- **Dual LLM Modes** — Stub mode for local development and demos; real mode for OpenAI-compatible providers (OpenAI, OpenRouter, DeepSeek)
-- **Author Workspace** — React + Vite web UI for day-to-day writing, chapter browsing, and project context editing
-- **Autonomous Production Loop** — AI-driven batch chapter generation with step-by-step control, pause/resume, and budget guardrails
-- **Token Budget Guardrails** — Per-chapter, per-project, and per-session token limits with explicit shutdown on overage
-- **LLM Reliability** — Exponential backoff retry for rate limits and timeouts; configurable retry and timeout parameters
-- **Workflow Observability** — Run tracking, artifact logging, token usage, error state, and review status
-- **CLI Toolkit** — Automation, batch operations, review tools, style tools, config validation, and diagnostics
-- **One-Command Deploy** — Service script for starting/stopping API + WebUI together
+## Highlights
 
-## Architecture
+- **Desktop-first writing workbench** for planning, drafting, revising, reviewing, and publishing chapters.
+- **Agent chapter workflow** powered by LangGraph: planner, screenwriter, author, polisher, editor, memory curator, and publisher.
+- **Project memory system** for characters, world settings, factions, outlines, plot holes, instructions, and story facts.
+- **Genesis quality gate** with depth checks for character motivations, faction actions, plot hole design, and outline specificity to prevent shallow project initialization.
+- **Runtime hygiene and observability** with unified version source, sensitive information redaction in errors and logs, and structured health diagnostics.
+- **Quality diagnosis and revision support** for AI trace, pacing, dialogue, scene texture, info dumps, show-don't-tell, and editor gates.
+- **Run observability** with node events, artifacts, LLM latency/tokens, retry actions, recovery tools, and memory backfill.
+- **Agent-level LLM routing** so different agents can use different model profiles.
+- **Local-first runtime** with SQLite, desktop logs, local config, and Electron `safeStorage` for API keys.
 
-```
-                        ┌──────────────────────┐
-                        │   Author Workspace   │
-                        │   React + Vite SPA   │
-                        └──────────┬───────────┘
-                                   │ REST / SSE
-                        ┌──────────▼───────────┐
-                        │     FastAPI Server    │
-                        │   Routes / Services   │
-                        └───┬────────┬────┬─────┘
-                            │        │    │
-               ┌────────────┘        │    └────────────┐
-               ▼                     ▼                 ▼
-    ┌──────────────────┐  ┌──────────────────┐  ┌─────────────┐
-    │  LangGraph       │  │   LLM Providers  │  │    CLI      │
-    │  Chapter Workflow │  │  Stub / OpenAI   │  │   Toolkit   │
-    │  (StateGraph)    │  │  Compatible      │  │             │
-    └────────┬─────────┘  └──────────────────┘  └─────────────┘
-             │
-    ┌────────▼─────────┐
-    │   SQLite + WAL   │
-    │  Projects, Runs, │
-    │  Chapters, etc.  │
-    └──────────────────┘
+## Workspace Areas
+
+The desktop client includes:
+
+- project onboarding and context setup
+- chapter writing surface
+- workflow timeline and run details
+- memory inbox
+- quality diagnosis panel
+- LLM and local service settings
+- light and dark themes
+
+## How It Works
+
+```mermaid
+flowchart LR
+  A[Electron Desktop App] --> B[React Workbench]
+  B -->|REST / SSE| C[Local FastAPI Sidecar]
+  C --> D[LangGraph Workflow]
+  D --> E[AI Agents]
+  C --> F[(SQLite)]
+  E --> G[OpenAI-compatible LLMs]
 ```
 
-| Layer | Technology | Purpose |
-|-------|-----------|---------|
-| Frontend | React 18 + TypeScript + Vite | Author workspace SPA |
-| Backend | FastAPI (async) | REST API, SSE streaming, dependency injection |
-| Workflow | LangGraph StateGraph | Chapter production pipeline orchestration |
-| LLM | Stub / OpenAI-compatible | Pluggable LLM providers with retry and budget |
-| Database | SQLite + WAL | Project storage, workflow checkpoints |
-| CLI | Python entry point | Automation, batch ops, diagnostics |
+The desktop app starts a local sidecar on `127.0.0.1` with a random port. The sidecar serves the API, runs the chapter workflow, stores project data in SQLite, and calls configured LLM providers when running in real mode.
 
 ## Quick Start
 
-### Prerequisites
+### Requirements
 
+- macOS for the current packaged desktop build
 - Python 3.9+
 - Node.js 18+
 - npm
 
-Optional: [`uv`](https://github.com/astral-sh/uv) for reproducible Python dependency management via `uv.lock`.
-
-### Installation
+### Install
 
 ```bash
-# Clone the repository
-git clone https://github.com/<your-org>/novelos.git
-cd novelos
-
-# Install Python package
 python3 -m pip install -e .
 
-# Install frontend dependencies
-cd frontend && npm install && cd ..
+cd frontend
+npm install
+cd ..
 
-# Initialize a local database
-novelos init-db --db-path acceptance_novel_factory.db
+cd desktop
+npm install
+cd ..
 ```
 
-### Launch
+### Run the Desktop App in Development
 
 ```bash
-# Start API + WebUI together (recommended)
-scripts/novelos-service.sh start
+cd desktop
+npm run dev
 ```
 
-| Service | URL | Notes |
-|---------|-----|-------|
-| WebUI | http://127.0.0.1:5173 | Author workspace |
-| API Server | http://127.0.0.1:8765 | FastAPI backend |
-| API Docs | http://127.0.0.1:8765/docs | Swagger UI |
-
-Override defaults with environment variables:
-
-```bash
-LLM_MODE=stub scripts/novelos-service.sh restart api   # switch to stub mode
-WEB_PORT=5174 scripts/novelos-service.sh start web      # custom WebUI port
-```
-
-### Manual Launch
-
-Start the API server independently:
-
-```bash
-novelos api \
-  --host 127.0.0.1 \
-  --port 8765 \
-  --db-path acceptance_novel_factory.db \
-  --llm-mode stub
-```
-
-Start the frontend independently:
+For frontend hot reload, start Vite in another terminal:
 
 ```bash
 cd frontend
 npm run dev
 ```
 
-## CLI Reference
-
-Seed demo data:
+Then run the desktop app again:
 
 ```bash
-novelos --db-path acceptance_novel_factory.db seed-demo --project-id demo
+cd desktop
+npm run dev
 ```
 
-Generate a chapter (stub mode):
+### Build the macOS App
 
 ```bash
-novelos --db-path acceptance_novel_factory.db run-chapter \
-  --project-id demo \
-  --chapter 1 \
-  --llm-mode stub \
-  --json
+bash packaging/scripts/build-desktop-mac.sh --dir
 ```
 
-Check chapter status:
+Output:
+
+```text
+desktop/release/mac-arm64/Novelos.app
+```
+
+Build a DMG:
 
 ```bash
-novelos --db-path acceptance_novel_factory.db status \
-  --project-id demo \
-  --chapter 1 \
-  --json
+bash packaging/scripts/build-desktop-mac.sh --dmg
 ```
 
-List workflow runs:
+## Browser Development Mode
+
+The browser mode is useful for frontend/backend debugging, but it is not the primary user runtime.
+
+Start the API:
 
 ```bash
-novelos --db-path acceptance_novel_factory.db runs \
-  --project-id demo \
-  --json
+novelos api \
+  --host 127.0.0.1 \
+  --port 8765 \
+  --db-path acceptance_novel_factory.db \
+  --config config/local.yaml \
+  --llm-mode stub
 ```
 
-Validate configuration:
+Start the frontend:
 
 ```bash
-novelos --config config/local.yaml config validate --json
+cd frontend
+npm run dev
 ```
 
-## Configuration
+Open `http://127.0.0.1:5173`.
 
-### LLM Modes
+## LLM Configuration
 
-| Mode | Use Case | API Calls |
-|------|----------|-----------|
-| `stub` | Local demos, testing, development | None — deterministic output |
-| `real` | Production generation with real LLM | Paid — requires API key |
+Novelos supports two modes:
 
-### Environment Variables
+| Mode | Purpose |
+| --- | --- |
+| `stub` | Local demo and deterministic tests. No external API calls. |
+| `real` | Real LLM generation and review. Requires provider credentials. |
 
-Novelos reads secrets from OS environment variables or a project-root `.env` file (already gitignored).
+The desktop settings UI supports reusable LLM profiles and agent routing. For example:
 
-Priority: OS env > `.env` > YAML defaults.
+- `default` for general agents
+- `author` for long-form drafting
+- `editor` for review
+- `memory_curator` for memory extraction
 
-```bash
-# OpenAI
-OPENAI_API_KEY=your-api-key
-OPENAI_BASE_URL=https://api.openai.com/v1
+Agents without an explicit route fall back to `default`.
 
-# Alternatives
-OPENROUTER_API_KEY=your-key
-OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
-DEEPSEEK_API_KEY=your-key
-DEEPSEEK_BASE_URL=https://api.deepseek.com/v1
-```
-
-### YAML Config
-
-Create `config/local.yaml`:
+YAML configuration is also supported:
 
 ```yaml
-db_path: ./acceptance_real_novel_factory.db
 default_llm: default
 
 llm_profiles:
@@ -225,64 +177,128 @@ llm_profiles:
     base_url_env: OPENAI_BASE_URL
     api_key_env: OPENAI_API_KEY
     model: gpt-4o-mini
-  editor:
-    provider: openai_compatible
-    base_url_env: OPENAI_BASE_URL
-    api_key_env: OPENAI_API_KEY
-    model: gpt-4o-mini
 
 agent_llm:
   planner: default
   screenwriter: default
   author: author
   polisher: default
-  editor: editor
-  scout: default
-  continuity_checker: default
-  architect: default
+  editor: default
+  memory_curator: default
 ```
 
-Validate before running real generation:
+Validate configuration:
 
 ```bash
-novelos --config config/local.yaml --llm-mode real config validate --json
+novelos --config config/local.yaml --llm-mode real llm validate --json
 ```
 
-> **Warning:** Real mode makes paid API calls. Test with a small project first. Never commit real API keys.
+Inspect an agent route:
+
+```bash
+novelos --config config/local.yaml llm route --agent author --json
+```
+
+## Useful Commands
+
+```bash
+# Seed demo data
+novelos --db-path acceptance_novel_factory.db seed-demo --project-id demo
+
+# Generate a chapter in stub mode
+novelos --db-path acceptance_novel_factory.db run-chapter \
+  --project-id demo \
+  --chapter 1 \
+  --llm-mode stub \
+  --json
+
+# Check chapter status
+novelos --db-path acceptance_novel_factory.db status \
+  --project-id demo \
+  --chapter 1 \
+  --json
+
+# List workflow runs
+novelos --db-path acceptance_novel_factory.db runs \
+  --project-id demo \
+  --json
+```
+
+Backfill memory extraction for a completed chapter:
+
+```bash
+python3 scripts/backfill_chapter_memory.py \
+  --db-path acceptance_novel_factory.db \
+  --project-id demo \
+  --chapter 3 \
+  --llm-mode real \
+  --config config/local.yaml \
+  --json
+```
+
+## Project Structure
+
+```text
+desktop/              Electron desktop shell and packaging
+frontend/             React + Vite author workbench
+novel_factory/api/    FastAPI routes
+novel_factory/agents/ AI agent implementations
+novel_factory/workflow/ LangGraph workflow and recovery logic
+novel_factory/llm/    LLM providers and profile routing
+novel_factory/db/     SQLite repositories and migrations
+scripts/              Local operations and diagnostics
+packaging/            Sidecar and desktop build scripts
+tests/                Backend regression tests
+docs/codex/           Planning, reports, and reviews
+```
 
 ## Testing
 
-### Python Backend
+Backend:
 
 ```bash
 python3 -m pytest -q
+python3 scripts/verify.py smoke
 ```
 
-### Frontend
+Frontend:
 
 ```bash
 cd frontend
 npm run typecheck
 npm run lint
 npm run build
-npm run test
+npm run test -- --run
+```
+
+Desktop:
+
+```bash
+cd desktop
+npm run typecheck
+npm run build
+```
+
+Packaged app checks:
+
+```bash
+bash packaging/scripts/smoke-sidecar.sh
+bash packaging/scripts/verify-desktop-mac.sh
 ```
 
 ## Documentation
 
-Primary project planning and version documentation lives under `docs/codex/`.
+- [Documentation index](docs/codex/README.md)
+- [Desktop client plan](docs/codex/planning/novel-factory-cross-platform-desktop-client-plan.md)
+- [Interaction excellence spec](docs/codex/planning/novel-factory-v6.5-interaction-excellence-spec.md)
+- [Chapter quality closure spec](docs/codex/planning/novel-factory-v6.4-chapter-quality-closure-spec.md)
 
-Start with:
+## Notes
 
-- [`docs/codex/README.md`](docs/codex/README.md) — Documentation index
-- [`docs/codex/planning/novel-factory-roadmap.md`](docs/codex/planning/novel-factory-roadmap.md) — Product roadmap
-- [`docs/codex/next/personal-author-workbench-direction.md`](docs/codex/next/personal-author-workbench-direction.md) — Next product direction
-
-## Repository Notes
-
-- `openclaw-agents/` is a local-only legacy workspace, ignored by Git.
-- SQLite databases, WAL files, build output, Python caches, and `node_modules` are gitignored.
-- `uv.lock` is committed for reproducible dependency resolution.
+- The current UI is the React workbench under `frontend/`, embedded in Electron for the desktop product.
+- Historical Jinja/static WebUI paths are retired.
+- Desktop runtime data is stored under the OS app data directory, for example `~/Library/Application Support/novelos-desktop/` on macOS.
+- SQLite databases, WAL files, desktop release output, build output, Python caches, and `node_modules` are gitignored.
 
 ## License
 

@@ -1,0 +1,57 @@
+cases:
+  - id: editor-revision-attribution
+    agent_id: editor
+    input_fixture:
+      issues:
+        - "剧情逻辑矛盾：主角上一章还在山村，这一章突然出现在皇宫"
+        - "AI痕迹过重：嘴角微扬"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 问题归因到具体 Agent
+    regression_tags: ["v6.0", "editor"]
+  - id: editor-actionable-brief
+    agent_id: editor
+    input_fixture:
+      review:
+        pass_: false
+        score: 65
+        issues: ["事件遗漏", "节奏拖沓"]
+        suggestions: ["补充事件A", "删减回忆段落"]
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 可执行返修单
+    regression_tags: ["v6.0", "editor"]
+  - id: editor-logic-risk
+    agent_id: editor
+    input_fixture:
+      content: "主角练气三层直接突破到金丹期"
+      prev_state:
+        cultivation_level: "练气三层"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 逻辑风险检测
+    regression_tags: ["v6.0", "editor"]
+  - id: editor-dropoff-risk
+    agent_id: editor
+    input_fixture:
+      content: "大量环境描写，连续三章没有冲突"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 弃读点检测
+    regression_tags: ["v6.0", "editor"]
+  - id: editor-pass-gate
+    agent_id: editor
+    input_fixture:
+      review:
+        pass_: true
+        score: 92
+        issues: []
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 通过标准
+    regression_tags: ["v6.0", "editor"]

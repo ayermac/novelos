@@ -238,6 +238,24 @@ openclaw-agents/
 # Temporary frontend design preview
 frontend/design-preview.html
 
+# PyInstaller sidecar build artifacts
+build/novelos-sidecar/
+dist/novelos-sidecar/
+!packaging/
+!packaging/pyinstaller/
+!packaging/pyinstaller/*.spec
+!packaging/scripts/
+!packaging/scripts/*.sh
+
+# Frozen sidecar binaries (platform-specific, built on demand)
+desktop/resources/sidecar/*/
+
+# Electron Builder output
+!desktop/build/
+!desktop/build/entitlements.mac.plist
+desktop/release/*
+!desktop/release/.gitkeep
+
 # Local config and logs
 config/acceptance.yaml
 config/local.yaml
@@ -246,3 +264,4 @@ stderr.txt
 
 # GSD planning workflow
 .planning/
+docs/superpowers/

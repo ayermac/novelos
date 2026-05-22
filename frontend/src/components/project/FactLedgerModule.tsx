@@ -309,43 +309,43 @@ export default function FactLedgerModule({ projectId }: Props) {
 
       <style>{`
         .fact-msg { display: flex; align-items: center; gap: 8px; padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 16px; }
-        .fact-msg-success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #065f46; }
-        .fact-msg-error { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+        .fact-msg-success { background: color-mix(in srgb, var(--success) 12%, var(--bg-primary)); border: 1px solid color-mix(in srgb, var(--success) 28%, transparent); color: var(--success); }
+        .fact-msg-error { background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary)); border: 1px solid color-mix(in srgb, var(--danger) 28%, transparent); color: var(--danger); }
         .fact-filters { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; color: var(--text-muted, #9ca3af); }
-        .fact-filter-select { padding: 6px 10px; border: 1px solid var(--border, #d1d5db); border-radius: 6px; font-size: 13px; background: var(--bg-primary, #fff); color: var(--text-primary, #111827); }
+        .fact-filter-select { padding: 6px 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 13px; background: var(--bg-primary); color: var(--text-primary); }
         .fact-count { font-size: 13px; color: var(--text-muted, #9ca3af); margin-left: auto; }
         .fact-list { display: flex; flex-direction: column; gap: 8px; }
-        .fact-card { border: 1px solid var(--border, #e5e7eb); border-radius: 8px; overflow: hidden; }
-        .fact-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; cursor: pointer; background: var(--bg-primary, #fff); transition: background 0.15s; }
-        .fact-header:hover { background: var(--bg-hover, #f9fafb); }
+        .fact-card { border: 1px solid var(--border-color); border-radius: 8px; overflow: hidden; background: var(--bg-primary); }
+        .fact-header { display: flex; align-items: center; gap: 8px; padding: 10px 14px; cursor: pointer; background: var(--bg-primary); transition: background 0.15s; }
+        .fact-header:hover { background: var(--bg-tertiary); }
         .fact-toggle { color: var(--text-muted, #9ca3af); flex-shrink: 0; }
         .fact-key-info { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
-        .fact-key { font-weight: 600; font-size: 13px; color: var(--text-primary, #111827); }
-        .fact-type-badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #dbeafe; color: #1d4ed8; }
+        .fact-key { font-weight: 600; font-size: 13px; color: var(--text-primary); }
+        .fact-type-badge { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--primary); }
         .fact-sa { font-size: 13px; color: var(--text-secondary, #374151); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .fact-subject { font-weight: 500; }
         .fact-attr { color: var(--text-muted, #9ca3af); }
         .fact-status { font-size: 11px; padding: 2px 6px; border-radius: 4px; flex-shrink: 0; }
-        .fact-status-active { background: #d1fae5; color: #065f46; }
-        .fact-status-deprecated { background: #f3f4f6; color: #6b7280; }
-        .fact-status-corrected { background: #fef3c7; color: #92400e; }
+        .fact-status-active { background: color-mix(in srgb, var(--success) 16%, transparent); color: var(--success); }
+        .fact-status-deprecated { background: var(--bg-tertiary); color: var(--text-secondary); }
+        .fact-status-corrected { background: color-mix(in srgb, var(--warning) 16%, transparent); color: var(--warning); }
         .fact-source { font-size: 11px; color: var(--text-muted, #9ca3af); flex-shrink: 0; }
         .fact-value { padding: 8px 14px 10px 38px; font-size: 13px; color: var(--text-secondary, #374151); display: flex; align-items: baseline; gap: 8px; }
-        .fact-value code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; background: var(--bg-secondary, #f3f4f6); padding: 2px 6px; border-radius: 4px; max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .fact-value code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 12px; background: var(--bg-tertiary); padding: 2px 6px; border-radius: 4px; max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
         .fact-unit { font-size: 12px; color: var(--text-muted, #9ca3af); }
         .fact-confidence { font-size: 11px; color: var(--text-muted, #9ca3af); margin-left: auto; }
-        .fact-edit { padding: 12px 14px 12px 38px; background: var(--bg-secondary, #f9fafb); border-top: 1px solid var(--border, #e5e7eb); }
+        .fact-edit { padding: 12px 14px 12px 38px; background: var(--bg-secondary); border-top: 1px solid var(--border-color); }
         .fact-edit label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-secondary, #6b7280); margin-bottom: 10px; }
-        .fact-edit textarea, .fact-edit input { padding: 6px 8px; border: 1px solid var(--border, #d1d5db); border-radius: 4px; font-size: 13px; background: var(--bg-primary, #fff); font-family: inherit; }
+        .fact-edit textarea, .fact-edit input { padding: 6px 8px; border: 1px solid var(--border-color); border-radius: 4px; font-size: 13px; background: var(--bg-primary); color: var(--text-primary); font-family: inherit; }
         .fact-edit textarea { font-family: 'SF Mono', 'Fira Code', monospace; resize: vertical; }
         .fact-edit-actions { display: flex; gap: 6px; justify-content: flex-end; }
-        .fact-events { padding: 12px 14px 12px 38px; background: var(--bg-secondary, #f9fafb); border-top: 1px solid var(--border, #e5e7eb); }
+        .fact-events { padding: 12px 14px 12px 38px; background: var(--bg-secondary); border-top: 1px solid var(--border-color); }
         .fact-events h5 { font-size: 13px; font-weight: 600; margin: 0 0 10px; color: var(--text-secondary, #374151); }
         .fact-events-loading, .fact-events-empty { font-size: 12px; color: var(--text-muted, #9ca3af); padding: 8px 0; }
-        .event-item { padding: 8px 0; border-bottom: 1px solid var(--border-light, #f3f4f6); }
+        .event-item { padding: 8px 0; border-bottom: 1px solid var(--border-color); }
         .event-item:last-child { border-bottom: none; }
         .event-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
-        .event-type { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: #f3f4f6; color: #374151; }
+        .event-type { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-secondary); }
         .event-agent { font-size: 11px; color: var(--text-muted, #9ca3af); }
         .event-chapter { font-size: 11px; color: var(--text-muted, #9ca3af); }
         .event-time { font-size: 11px; color: var(--text-muted, #9ca3af); margin-left: auto; }

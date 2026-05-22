@@ -12,8 +12,34 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ..contracts import (
+    success,
+    partial_success,
+    failed,
+    blocked,
+    needs_human,
+    ignored,
+)
+from ._memory_curator_gate import (
+    has_trusted_memory_batch,
+    is_trusted_memory_batch,
+    memory_incomplete_details,
+    memory_incomplete_message,
+    memory_result_is_incomplete,
+)
 
 router = APIRouter()
+
+
+def _get_run_recovery_settings(request: Request):
+    """Load settings for recovery endpoints without blocking reset on cwd loss."""
+    from ..deps import get_settings
+    from ...config.settings import Settings
+
+    try:
+        return get_settings(request)
+    except FileNotFoundError:
+        return Settings()
 
 
 class RunRecoveryResetRequest(BaseModel):
@@ -26,6 +52,19 @@ class RunRecoveryMarkStuckRequest(BaseModel):
     """Mark a confirmed stuck run as blocked."""
 
     confirm: bool = False
+
+
+class RunRecoveryRetryNodeRequest(BaseModel):
+    """Retry the failed workflow node from its last safe chapter status."""
+
+    confirm: bool = False
+
+
+class RunMemoryBackfillRequest(BaseModel):
+    """Run MemoryCurator backfill from a run detail page."""
+
+    confirm: bool = False
+    force: bool = False
 
 
 class RunHealthMarkStuckRequest(BaseModel):
@@ -66,9 +105,6 @@ AGENT_DISPLAY_NAMES = {
     "human_review": "人工审核",
     "memory_curator": "记忆整理",
     "continuity_checker": "连续性检查",
-    "scout": "选题侦察",
-    "secretary": "资料整理",
-    "architect": "系统诊断",
     "system": "系统",
     "human": "人工处理",
 }
@@ -348,6 +384,62 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
         # Build steps timeline (with observability data from task_status and agent_artifacts)
         steps = _build_steps_timeline(run_data, chapter, llm_mode, repo=repo)
 
+        # v6.6.6: Build recovery state
+        from ..deps import get_settings
+        try:
+            settings = get_settings(request)
+            max_retries = settings.quality_gate.max_retries
+            timeout_minutes = settings.workflow.task_timeout_minutes
+        except Exception:
+            max_retries = 3
+            timeout_minutes = 30
+        recovery_state = _build_recovery_state(
+            repo,
+            run_data,
+            max_retries=max_retries,
+            timeout_minutes=timeout_minutes,
+        )
+
+        # v6.6.7: Memory status for reviewed/awaiting_publish/published chapters
+        memory_status: dict[str, Any] = {}
+        if chapter and chapter.get("status") in ("reviewed", "awaiting_publish", "published"):
+            try:
+                from ...api.routes._memory_curator_gate import get_memory_status_for_chapter
+
+                memory_status = get_memory_status_for_chapter(
+                    repo, run_data["project_id"], run_data["chapter_number"]
+                )
+            except Exception:
+                pass
+
+        # v6.6.10: Derive domain-level result for the entire workflow run
+        from ..contracts import workflow_run_to_domain_status
+        domain_result = workflow_run_to_domain_status(
+            run_data.get("status", "unknown"),
+            chapter.get("status", "unknown") if chapter else "unknown",
+            memory_status=memory_status if memory_status else None,
+        )
+
+        # v6.6.14: Fetch memory context audit from planner artifact
+        memory_context_audit: dict = {}
+        try:
+            _conn = repo._conn()
+            try:
+                _row = _conn.execute(
+                    "SELECT content_json FROM agent_artifacts "
+                    "WHERE workflow_run_id=? AND agent_id='planner' "
+                    "AND artifact_type='memory_context_audit' "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (run_id,),
+                ).fetchone()
+                if _row and _row["content_json"]:
+                    import json as _json
+                    memory_context_audit = _json.loads(_row["content_json"])
+            finally:
+                _conn.close()
+        except Exception:
+            pass
+
         return envelope_response({
             "run_id": run_id,
             "project_id": run_data["project_id"],
@@ -368,6 +460,14 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             "duration_ms": run_data.get("duration_ms", 0),
             "reconciled_terminal_run": bool(reconciliation.get("runs")),
             "reconciled_running_tasks": reconciliation.get("tasks", 0),
+            # v6.6.6: Recovery state
+            "recovery_state": recovery_state.get("recovery_state", recovery_state),
+            # v6.6.7: Memory status
+            "memory_status": memory_status,
+            # v6.6.10: Unified domain result
+            "domain_result": domain_result.to_dict(),
+            # v6.6.14: Memory context audit
+            "memory_context_audit": memory_context_audit,
         })
 
     except Exception as e:
@@ -381,7 +481,13 @@ async def get_run_recovery(request: Request, run_id: str) -> EnvelopeResponse:
 
     try:
         repo = get_repo(request)
-        settings = get_settings(request)
+        try:
+            settings = get_settings(request)
+            max_retries = settings.quality_gate.max_retries
+            timeout_minutes = settings.workflow.task_timeout_minutes
+        except Exception:
+            max_retries = 3
+            timeout_minutes = 30
         run_data = _get_run_by_id(repo, run_id)
         if not run_data:
             return error_response("RUN_NOT_FOUND", f"运行记录 '{run_id}' 不存在")
@@ -389,8 +495,8 @@ async def get_run_recovery(request: Request, run_id: str) -> EnvelopeResponse:
         return envelope_response(_build_recovery_state(
             repo,
             run_data,
-            max_retries=settings.quality_gate.max_retries,
-            timeout_minutes=settings.workflow.task_timeout_minutes,
+            max_retries=max_retries,
+            timeout_minutes=timeout_minutes,
         ))
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取运行恢复状态失败: {str(e)}")
@@ -408,7 +514,7 @@ async def reset_run_chapter(
     artifacts; it only moves the chapter back to planned, inserts an audit task,
     and clears stale LangGraph checkpoints.
     """
-    from ..deps import get_repo, get_settings
+    from ..deps import get_repo
     from ...workflow.checkpoint import delete_checkpoint_thread
 
     try:
@@ -416,7 +522,7 @@ async def reset_run_chapter(
             return error_response("CONFIRM_REQUIRED", "请确认恢复操作")
 
         repo = get_repo(request)
-        settings = get_settings(request)
+        settings = _get_run_recovery_settings(request)
         run_data = _get_run_by_id(repo, run_id)
         if not run_data:
             return error_response("RUN_NOT_FOUND", f"运行记录 '{run_id}' 不存在")
@@ -432,25 +538,42 @@ async def reset_run_chapter(
             return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
         current_status = chapter.get("status", "")
-        if current_status not in ("blocking", "revision"):
+        if current_status not in ("blocking", "revision", "planned"):
             return error_response(
                 "INVALID_STATUS",
-                f"章节状态为 '{current_status}'，仅 'blocking' 或 'revision' 状态可恢复",
+                f"章节状态为 '{current_status}'，仅 'blocking'、'revision' 或 'planned' 状态可恢复",
                 details={"current_status": current_status},
             )
 
         retry_count_before = repo.get_chapter_retry_count(project_id, chapter_number)
         checkpoint_before = _checkpoint_exists(repo, project_id, chapter_number)
 
-        reset = repo.reset_chapter(project_id, chapter_number, workflow_run_id=run_id)
-        if not reset:
-            return error_response("RESET_FAILED", "恢复章节失败")
+        if current_status in ("blocking", "revision"):
+            reset = repo.reset_chapter(project_id, chapter_number, workflow_run_id=run_id)
+            if not reset:
+                return error_response("RESET_FAILED", "恢复章节失败")
+        # For planned: no state reset needed, already at planned
 
-        invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
-            project_id,
-            chapter_number,
-            "章节已恢复重置，旧运行已作废，请重新开始新的工作流。",
-        )
+        recovered_blocked_runs = 0
+        if hasattr(repo, "recover_active_workflow_runs_for_chapter"):
+            recovered_blocked_runs = repo.recover_active_workflow_runs_for_chapter(
+                project_id,
+                chapter_number,
+                run_id=run_id,
+            )
+            invalidated_runs = recovered_blocked_runs
+        else:
+            if hasattr(repo, "mark_blocked_workflow_runs_recovered_for_chapter"):
+                recovered_blocked_runs = repo.mark_blocked_workflow_runs_recovered_for_chapter(
+                    project_id,
+                    chapter_number,
+                    run_id=run_id,
+                )
+            invalidated_runs = repo.invalidate_running_workflow_runs_for_chapter(
+                project_id,
+                chapter_number,
+                "章节已恢复重置，旧运行已作废，请重新开始新的工作流。",
+            )
 
         checkpoint_cleared = delete_checkpoint_thread(repo.db_path, project_id, chapter_number)
         retry_count_after = repo.get_chapter_retry_count(project_id, chapter_number)
@@ -460,6 +583,20 @@ async def reset_run_chapter(
             max_retries=settings.quality_gate.max_retries,
             timeout_minutes=settings.workflow.task_timeout_minutes,
         )
+
+        # v6.6.12: Build domain_result for recovery reset
+        domain_result = success(
+            f"章节已恢复重置：{current_status} → planned",
+            user_message=f"第 {chapter_number} 章已恢复到 planned 状态，可重新开始生成",
+            details={
+                "previous_status": current_status,
+                "new_status": "planned",
+                "retries_cleared": max(0, retry_count_before - retry_count_after),
+                "next_action": "start_workflow",
+                "action_label": "开始生成",
+            },
+            flags={"recovery_reset": True},
+        ).to_dict()
 
         return envelope_response({
             "recovered": True,
@@ -471,10 +608,12 @@ async def reset_run_chapter(
             "retry_count_before": retry_count_before,
             "retry_count_after": retry_count_after,
             "retries_cleared": max(0, retry_count_before - retry_count_after),
+            "recovered_blocked_runs": recovered_blocked_runs,
             "invalidated_runs": invalidated_runs,
             "checkpoint_before": checkpoint_before,
             "checkpoint_cleared": checkpoint_cleared,
             "recovery": recovery,
+            "domain_result": domain_result,
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"恢复运行失败: {str(e)}")
@@ -507,9 +646,467 @@ async def mark_stuck_run(
                 result["message"],
                 details=result.get("details"),
             )
-        return envelope_response(result["data"])
+
+        # v6.6.12: Build domain_result for mark-stuck
+        domain_result = blocked(
+            "运行已标记为卡住",
+            user_message="运行已标记为卡住，需要恢复重置后重新开始",
+            next_action="reset_chapter",
+            action_label="恢复重置",
+            details={
+                "run_id": run_id,
+                "marked_stuck": True,
+            },
+            flags={"workflow_stuck": True},
+        ).to_dict()
+
+        return envelope_response({
+            **result["data"],
+            "domain_result": domain_result,
+        })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"标记卡住运行失败: {str(e)}")
+
+
+@router.post("/runs/{run_id}/recovery/retry-node")
+async def retry_run_node(
+    request: Request,
+    run_id: str,
+    body: RunRecoveryRetryNodeRequest,
+) -> EnvelopeResponse:
+    """Recover a blocked node to the last safe status instead of planned.
+
+    For example, an Author timeout should preserve screenwriter output and move
+    the chapter back to ``scripted`` so the next run starts at Author directly.
+    """
+    from ..deps import get_repo, get_settings
+
+    try:
+        if not body.confirm:
+            return error_response("CONFIRM_REQUIRED", "请确认节点重试操作")
+
+        repo = get_repo(request)
+        settings = get_settings(request)
+        run_data = _get_run_by_id(repo, run_id)
+        if not run_data:
+            return error_response("RUN_NOT_FOUND", f"运行记录 '{run_id}' 不存在")
+
+        target = _node_retry_target(run_data.get("current_node"))
+        if not target:
+            return error_response(
+                "NODE_RETRY_UNSUPPORTED",
+                "当前节点不支持定点重试，请使用完整恢复重置。",
+                details={"current_node": run_data.get("current_node")},
+            )
+
+        project_id = run_data["project_id"]
+        chapter_number = run_data["chapter_number"]
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+
+        current_status = chapter.get("status", "")
+        if current_status not in ("blocking", "revision"):
+            return error_response(
+                "INVALID_STATUS",
+                f"章节状态为 '{current_status}'，仅阻塞/返修状态可定点重试",
+                details={"current_status": current_status},
+            )
+
+        previous_status = current_status
+        next_status = target["status"]
+        message = (
+            f"人工恢复：保留已有产物，从{target['label']}重新继续。"
+            f" {previous_status} → {next_status}"
+        )
+        _set_chapter_status_unchecked(repo, project_id, chapter_number, next_status)
+        repo.update_workflow_run(
+            run_id,
+            status="completed",
+            current_node=f"{target['node']}_retry_recovery",
+            clear_error=True,
+        )
+        _insert_recovery_audit(
+            repo,
+            project_id,
+            chapter_number,
+            workflow_run_id=run_id,
+            message=message,
+            task_type="recover",
+            agent_id="human",
+        )
+
+        refreshed = _get_run_by_id(repo, run_id) or run_data
+
+        # v6.6.12: Build domain_result for node retry
+        domain_result = success(
+            f"节点重试恢复成功：{previous_status} → {next_status}",
+            user_message=f"已保留已有产物，可从 {target['label']} 重新继续",
+            details={
+                "previous_status": previous_status,
+                "new_status": next_status,
+                "retry_node": target["node"],
+                "retry_label": target["label"],
+                "next_action": "start_workflow",
+                "action_label": "继续生成",
+            },
+            flags={"node_retry_recovery": True},
+        ).to_dict()
+
+        return envelope_response({
+            "recovered": True,
+            "run_id": run_id,
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "previous_status": previous_status,
+            "new_status": next_status,
+            "retry_node": target["node"],
+            "retry_label": target["label"],
+            "message": message,
+            "recovery": _build_recovery_state(
+                repo,
+                refreshed,
+                max_retries=settings.quality_gate.max_retries,
+                timeout_minutes=settings.workflow.task_timeout_minutes,
+            ),
+            "domain_result": domain_result,
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"定点重试恢复失败: {str(e)}")
+
+
+@router.post("/runs/{run_id}/memory/backfill")
+async def backfill_run_memory(
+    request: Request,
+    run_id: str,
+    body: RunMemoryBackfillRequest,
+) -> EnvelopeResponse:
+    """Backfill MemoryCurator for a reviewed/awaiting/published chapter.
+
+    v6.6.7:
+    - force=true ignores old fallback/untrusted batches and re-runs extraction.
+    - Only skips when a trusted batch exists AND force=false.
+    - Returns clear semantics: trusted vs fallback vs failed.
+
+    v6.6.10:
+    - Response now includes domain_result with unified domain_status.
+    """
+    from ..deps import get_repo, get_llm_provider_for_agent, get_llm_mode, LLMConfigMissingError
+    from ...agents.memory_curator import MemoryCuratorAgent
+    from ...skills.registry import SkillRegistry
+
+    try:
+        if not body.confirm:
+            message = "请确认补跑记忆提取"
+            return error_response(
+                "CONFIRM_REQUIRED",
+                message,
+                details={
+                    "domain_result": blocked(
+                        message,
+                        user_message=message,
+                        next_action="confirm_memory_backfill",
+                        action_label="确认补跑",
+                        details={"run_id": run_id, "error_code": "CONFIRM_REQUIRED"},
+                        flags={"memory_backfill_blocked": True},
+                    ).to_dict()
+                },
+            )
+
+        repo = get_repo(request)
+        run_data = _get_run_by_id(repo, run_id)
+        if not run_data:
+            message = f"运行记录 '{run_id}' 不存在"
+            return error_response(
+                "RUN_NOT_FOUND",
+                message,
+                details={
+                    "domain_result": failed(
+                        message,
+                        user_message="运行记录不存在，无法补跑记忆",
+                        retryable=False,
+                        details={"run_id": run_id, "error_code": "RUN_NOT_FOUND"},
+                        flags={"memory_backfill_failed": True},
+                    ).to_dict()
+                },
+            )
+
+        project_id = run_data["project_id"]
+        chapter_number = int(run_data["chapter_number"])
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            message = f"章节 {chapter_number} 不存在"
+            return error_response(
+                "CHAPTER_NOT_FOUND",
+                message,
+                details={
+                    "domain_result": failed(
+                        message,
+                        user_message="章节不存在，无法补跑记忆",
+                        retryable=False,
+                        details={
+                            "run_id": run_id,
+                            "project_id": project_id,
+                            "chapter_number": chapter_number,
+                            "error_code": "CHAPTER_NOT_FOUND",
+                        },
+                        flags={"memory_backfill_failed": True},
+                    ).to_dict()
+                },
+            )
+
+        current_status = chapter.get("status", "")
+        if current_status not in ("reviewed", "awaiting_publish", "published") and not body.force:
+            message = (
+                f"章节状态为 '{current_status}'，仅 reviewed / awaiting_publish / published 可补跑记忆提取"
+            )
+            return error_response(
+                "INVALID_STATUS",
+                message,
+                details={
+                    "current_status": current_status,
+                    "domain_result": blocked(
+                        message,
+                        user_message="当前章节状态不允许补跑记忆",
+                        next_action="run_chapter",
+                        action_label="继续生成章节",
+                        details={
+                            "run_id": run_id,
+                            "project_id": project_id,
+                            "chapter_number": chapter_number,
+                            "current_status": current_status,
+                            "error_code": "INVALID_STATUS",
+                        },
+                        flags={"memory_backfill_blocked": True},
+                    ).to_dict(),
+                },
+            )
+
+        # v6.6.7: Only skip if trusted batch exists AND force=false
+        if has_trusted_memory_batch(repo, project_id, chapter_number) and not body.force:
+            from ..contracts import success as domain_success
+            return envelope_response({
+                "skipped": True,
+                "project_id": project_id,
+                "chapter": chapter_number,
+                "chapter_status": current_status,
+                "message": "该章节已有可信记忆收件箱批次，未重复补跑。",
+                "domain_result": domain_success(
+                    "记忆提取已存在可信结果，无需重复补跑",
+                    flags={"memory_trusted": True, "skipped": True},
+                ).to_dict(),
+            })
+
+        # v6.6.7: If force=true, mark old fallback batches as ignored before re-running
+        if body.force:
+            try:
+                from ...api.routes._memory_curator_gate import ignore_state_card_fallback_batches_for_chapter
+
+                ignored = ignore_state_card_fallback_batches_for_chapter(repo, project_id, chapter_number)
+                if ignored:
+                    logger.info("backfill force=true: ignored %d old fallback batches", ignored)
+            except Exception:
+                pass
+
+        backfill_run_id = repo.create_workflow_run(
+            project_id,
+            chapter_number,
+            graph_name="memory_backfill",
+        )
+        repo.update_workflow_run(backfill_run_id, status="running", current_node="memory_curator")
+        repo.create_workflow_node_event(
+            run_id=backfill_run_id,
+            project_id=project_id,
+            chapter_number=chapter_number,
+            node_name="memory_curator",
+            event_type="started",
+            status="running",
+            message="运行详情页手动补跑记忆提取",
+        )
+
+        try:
+            llm = get_llm_provider_for_agent(request, "memory_curator")
+        except LLMConfigMissingError as exc:
+            error = str(exc)
+            repo.create_workflow_node_event(
+                run_id=backfill_run_id,
+                project_id=project_id,
+                chapter_number=chapter_number,
+                node_name="memory_curator",
+                event_type="failed",
+                status="failed",
+                error_message=error,
+            )
+            repo.update_workflow_run(backfill_run_id, status="failed", current_node="memory_curator", error_message=error)
+            details = {
+                "run_id": backfill_run_id,
+                "domain_result": failed(
+                    error,
+                    user_message="补跑记忆提取失败：LLM 配置缺失",
+                    retryable=True,
+                    next_action="configure_llm",
+                    action_label="配置 LLM",
+                    details={"run_id": backfill_run_id, "error_code": "LLM_CONFIG_MISSING"},
+                    flags={"memory_backfill_failed": True, "llm_config_missing": True},
+                ).to_dict(),
+            }
+            return error_response("LLM_CONFIG_MISSING", error, details=details)
+
+        agent = MemoryCuratorAgent(repo, llm, skill_registry=SkillRegistry())
+        result = await asyncio.to_thread(
+            agent.run,
+            {
+                "project_id": project_id,
+                "chapter_number": chapter_number,
+                "chapter_status": current_status,
+                "workflow_run_id": backfill_run_id,
+                "llm_mode": get_llm_mode(request),
+            },
+        )
+
+        if result.get("error"):
+            error = str(result["error"])
+            repo.create_workflow_node_event(
+                run_id=backfill_run_id,
+                project_id=project_id,
+                chapter_number=chapter_number,
+                node_name="memory_curator",
+                event_type="failed",
+                status="failed",
+                error_message=error,
+            )
+            repo.update_workflow_run(backfill_run_id, status="failed", current_node="memory_curator", error_message=error)
+            details = {
+                "run_id": backfill_run_id,
+                "domain_result": failed(
+                    error,
+                    user_message="补跑记忆提取失败，可尝试重新补跑",
+                    retryable=True,
+                    next_action="backfill_memory",
+                    action_label="重新补跑记忆",
+                    details={"run_id": backfill_run_id, "error_code": "MEMORY_CURATOR_FAILED"},
+                    flags={"memory_backfill_failed": True},
+                ).to_dict(),
+            }
+            return error_response("MEMORY_CURATOR_FAILED", error, details=details)
+
+        extraction_success = result.get("extraction_success", True)
+        incomplete = memory_result_is_incomplete(repo, project_id, chapter_number, result)
+        repo.create_workflow_node_event(
+            run_id=backfill_run_id,
+            project_id=project_id,
+            chapter_number=chapter_number,
+            node_name="memory_curator",
+            event_type="completed",
+            status="warning" if incomplete else "completed",
+            message="运行详情页手动补跑记忆提取完成" if not incomplete else "运行详情页手动补跑未成功，未生成可信记忆批次",
+            output_summary=f"{result.get('memory_items_count', 0)} 条候选记忆",
+        )
+        if incomplete:
+            message = memory_incomplete_message(result)
+            repo.update_workflow_run(
+                backfill_run_id,
+                status="failed",
+                current_node="memory_curator",
+                error_message=message,
+            )
+            # v6.6.10: Determine domain result for incomplete extraction
+            from ..contracts import fallback as domain_fallback, failed as domain_failed, degraded as domain_degraded
+            incomplete_details = memory_incomplete_details(
+                result,
+                project_id=project_id,
+                chapter_number=chapter_number,
+                run_id=backfill_run_id,
+            )
+            if result.get("fallback_created") or result.get("memory_curator_fallback"):
+                domain_result = domain_fallback(
+                    message,
+                    user_message="补跑记忆提取仅产生低可信候选，不可作为后续章节可信记忆",
+                    next_action="backfill_memory",
+                    action_label="重新补跑记忆",
+                    details=incomplete_details,
+                )
+            elif result.get("memory_curator_degraded"):
+                domain_result = domain_degraded(
+                    message,
+                    user_message="MemoryCurator 降级，未生成可信记忆",
+                    next_action="backfill_memory",
+                    action_label="重新补跑记忆",
+                    details=incomplete_details,
+                )
+            else:
+                domain_result = domain_failed(
+                    message,
+                    user_message="补跑记忆提取失败，可尝试重新补跑",
+                    next_action="backfill_memory",
+                    action_label="重新补跑记忆",
+                    details=incomplete_details,
+                )
+            incomplete_details["domain_result"] = domain_result.to_dict()
+            return error_response(
+                "MEMORY_CURATOR_INCOMPLETE",
+                message,
+                details=incomplete_details,
+            )
+
+        repo.update_workflow_run(backfill_run_id, status="completed", current_node="memory_curator", clear_error=True)
+
+        # v6.6.10: Domain result for successful extraction
+        from ..contracts import success as domain_success, fallback as domain_fallback
+        if extraction_success and not result.get("fallback_created", False):
+            domain_result = domain_success(
+                f"记忆提取补跑完成：{result.get('memory_items_count', 0)} 条可信候选",
+                flags={"memory_trusted": True},
+            )
+        else:
+            domain_result = domain_fallback(
+                f"记忆提取补跑产生低可信候选：{result.get('memory_items_count', 0)} 条",
+                user_message="补跑仅产生低可信候选，不可作为后续章节可信记忆",
+                next_action="backfill_memory",
+                action_label="重新补跑记忆",
+                flags={"memory_trusted": False, "memory_fallback": True},
+            )
+
+        return envelope_response({
+            "skipped": False,
+            "run_id": backfill_run_id,
+            "source_run_id": run_id,
+            "project_id": project_id,
+            "chapter": chapter_number,
+            "chapter_status": current_status,
+            "memory_batch_id": result.get("memory_batch_id"),
+            "memory_items_count": result.get("memory_items_count", 0),
+            # v6.6.7: Clear three-category semantics
+            "extraction_success": extraction_success,
+            "fallback_created": result.get("fallback_created", False),
+            "trusted": extraction_success and not result.get("fallback_created", False),
+            "memory_curator_degraded": result.get("memory_curator_degraded", False),
+            "memory_curator_fallback": result.get("memory_curator_fallback"),
+            "message": (
+                f"记忆提取补跑完成：{result.get('memory_items_count', 0)} 条可信候选"
+                if extraction_success
+                else f"记忆提取失败，仅生成低可信候选：{result.get('memory_items_count', 0)} 条"
+            ),
+            # v6.6.10: Unified domain result
+            "domain_result": domain_result.to_dict(),
+        })
+    except Exception as e:
+        message = f"补跑记忆提取失败: {str(e)}"
+        return error_response(
+            "INTERNAL_ERROR",
+            message,
+            details={
+                "domain_result": failed(
+                    message,
+                    user_message="补跑记忆提取失败，可稍后重试",
+                    retryable=True,
+                    next_action="backfill_memory",
+                    action_label="重新补跑记忆",
+                    details={"run_id": run_id, "error_code": "INTERNAL_ERROR"},
+                    flags={"memory_backfill_failed": True},
+                ).to_dict()
+            },
+        )
 
 
 def _get_run_by_id(repo, run_id: str) -> dict | None:
@@ -538,6 +1135,21 @@ def _get_run_by_id(repo, run_id: str) -> dict | None:
         if reconciliation.get("runs"):
             return _get_run_by_id(repo, run_id)
     return run_data
+
+
+def _has_memory_curator_evidence(repo, project_id: str, chapter_number: int) -> bool:
+    """Return True when a trusted user-visible memory batch exists."""
+    return _has_memory_batch_for_chapter(repo, project_id, chapter_number)
+
+
+def _has_memory_batch_for_chapter(repo, project_id: str, chapter_number: int) -> bool:
+    """Return True only when the chapter has a trusted memory inbox batch."""
+    return has_trusted_memory_batch(repo, project_id, chapter_number)
+
+
+def _is_trusted_memory_batch(repo, batch: dict) -> bool:
+    """Exclude ignored batches and state-card fallback hints from memory evidence."""
+    return is_trusted_memory_batch(repo, batch)
 
 
 def _checkpoint_exists(repo, project_id: str, chapter_number: int) -> bool:
@@ -718,7 +1330,14 @@ def _build_recovery_state(
     max_retries: int = 3,
     timeout_minutes: int = 30,
 ) -> dict:
-    """Build user-facing recovery state for a run."""
+    """Build user-facing recovery state for a run.
+
+    v6.6.6: Uses derive_workflow_recovery_state() for canonical recovery state,
+    then merges with existing fields for backward compatibility.
+    """
+    from ...workflow.state_integrity import derive_workflow_recovery_state
+    from ...workflow.checkpoint import inspect_checkpoint_thread
+
     project_id = run_data["project_id"]
     chapter_number = run_data["chapter_number"]
     chapter = repo.get_chapter(project_id, chapter_number)
@@ -730,15 +1349,36 @@ def _build_recovery_state(
         "published",
         "unknown",
     )
-    can_reset = chapter_status in ("blocking", "revision")
+    can_reset = chapter_status in ("blocking", "revision", "planned")
+    retry_target = _node_retry_target(run_data.get("current_node"))
+    can_retry_node = bool(retry_target and chapter_status in ("blocking", "revision"))
     reason = None
     if not chapter:
         reason = "章节不存在"
+    elif chapter_status == "planned":
+        reason = "章节已为 planned，可清除旧运行和 checkpoint 后重新开始工作流。"
     elif can_reset:
         reason = "可清除阻塞/返修状态并回到 planned，重新开始工作流。"
     else:
         reason = f"章节状态为 '{chapter_status}'，无需或不可执行恢复。"
 
+    # v6.6.6: Get checkpoint info for recovery state derivation
+    checkpoint_info = None
+    try:
+        checkpoint_info = inspect_checkpoint_thread(repo.db_path, project_id, chapter_number)
+    except Exception:
+        checkpoint_info = {"checkpoint_exists": False}
+
+    # v6.6.6: Derive canonical recovery state
+    has_existing_content = bool(chapter and chapter.get("content"))
+    recovery_state = derive_workflow_recovery_state(
+        chapter=chapter,
+        latest_run=run_data,
+        checkpoint_info=checkpoint_info,
+        has_existing_content=has_existing_content,
+    )
+
+    # Merge canonical state with legacy fields for backward compatibility
     return {
         "run_id": run_data.get("id"),
         "project_id": project_id,
@@ -770,8 +1410,33 @@ def _build_recovery_state(
                     else "运行未达到卡住阈值或章节状态不可标记。"
                 ),
             },
+            "retry_current_node": {
+                "enabled": can_retry_node,
+                "label": f"重试{retry_target['label']}" if retry_target else "定点重试",
+                "reason": (
+                    f"保留已有产物，将章节恢复到 {retry_target['status']}，"
+                    f"下次生成直接从{retry_target['label']}继续。"
+                    if retry_target
+                    else "当前节点不支持定点重试。"
+                ),
+                "target_status": retry_target["status"] if retry_target else None,
+                "target_node": retry_target["node"] if retry_target else None,
+            },
         },
+        # v6.6.6: Canonical recovery state
+        "recovery_state": recovery_state,
     }
+
+
+def _node_retry_target(current_node: str | None) -> dict | None:
+    """Return the last safe DB status for retrying a failed node."""
+    node = (current_node or "").strip()
+    mapping = {
+        "author": {"node": "author", "label": "执笔", "status": "scripted"},
+        "polisher": {"node": "polisher", "label": "润色", "status": "drafted"},
+        "editor": {"node": "editor", "label": "审核", "status": "polished"},
+    }
+    return mapping.get(node)
 
 
 def _parse_db_datetime(value: str | None) -> datetime | None:
@@ -981,10 +1646,57 @@ def _build_steps_timeline(
     error_message = run_data.get("error_message")
     chapter_number = run_data.get("chapter_number", 1)
     project_id = run_data.get("project_id", "")
+    graph_name = run_data.get("graph_name", "chapter_production")
+
+    if graph_name in {"memory_backfill", "manual_publish_memory"}:
+        logs: list[dict] = []
+        if repo and run_data.get("id"):
+            try:
+                events = repo.get_workflow_node_events(run_data["id"])
+            except Exception:
+                events = []
+            for event in events:
+                if event.get("node_name") != "memory_curator":
+                    continue
+                level = "info"
+                if event.get("status") in {"failed", "error"} or event.get("event_type") == "failed":
+                    level = "error"
+                elif event.get("status") in {"completed", "success"} or event.get("event_type") == "completed":
+                    level = "success"
+                elif event.get("status") == "warning":
+                    level = "warning"
+                logs.append({
+                    "timestamp": event.get("created_at") or event.get("timestamp"),
+                    "level": level,
+                    "message": event.get("message") or event.get("error_message") or "记忆整理事件",
+                })
+        step_status = "pending"
+        if workflow_status == "running":
+            step_status = "running"
+        elif workflow_status == "completed":
+            step_status = "completed"
+        elif workflow_status == "failed":
+            step_status = "failed"
+        elif workflow_status == "blocked":
+            step_status = "blocked"
+        return [{
+            "key": "memory_curator",
+            "label": "记忆整理",
+            "description": "补跑章节记忆提取",
+            "status": step_status,
+            "agent_id": "memory_curator",
+            "artifacts": None,
+            "logs": logs,
+            "error_message": error_message if workflow_status == "failed" else None,
+        }]
 
     # Determine final chapter status
     final_status = chapter.get("status", "planned") if chapter else "planned"
-    if workflow_status == "running" and final_status in ("reviewed", "awaiting_publish", "published"):
+    if (
+        graph_name == "chapter_production"
+        and workflow_status == "running"
+        and final_status in ("reviewed", "awaiting_publish", "published")
+    ):
         workflow_status = "completed"
         current_node = "publish" if final_status == "published" else "awaiting_publish"
         error_message = None
@@ -1036,19 +1748,31 @@ def _build_steps_timeline(
                 for r in lifecycle_rows:
                     agent_id = r["agent_id"]
                     task_label = _task_type_display_name(r["task_type"])
+                    task_type = r["task_type"]
+                    agent_label = _agent_display_name(agent_id)
                     if agent_id not in task_logs:
                         task_logs[agent_id] = []
                     if r["started_at"]:
+                        started_message = (
+                            f"返修已派发给{agent_label}。"
+                            if task_type == "revise"
+                            else f"{task_label}已开始处理。"
+                        )
                         task_logs[agent_id].append({
                             "timestamp": r["started_at"],
                             "level": "info",
-                            "message": f"{task_label}已开始处理。",
+                            "message": started_message,
                         })
                     if r["status"] == "completed" and r["completed_at"]:
+                        completed_message = (
+                            f"返修派发已确认，等待{agent_label}节点执行。"
+                            if task_type == "revise"
+                            else f"{task_label}已完成。"
+                        )
                         task_logs[agent_id].append({
                             "timestamp": r["completed_at"],
                             "level": "success",
-                            "message": f"{task_label}已完成。",
+                            "message": completed_message,
                         })
                     elif r["status"] == "failed":
                         task_logs[agent_id].append({

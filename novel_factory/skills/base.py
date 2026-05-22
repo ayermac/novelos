@@ -17,6 +17,14 @@ BUILTIN_SKILLS = {
     "NarrativeQualityScorer": None,
     "ImportedInstructionSkill": None,  # v3.8: imported skill handler
     "StyleBibleCheckerSkill": None,  # v4.0: style bible checker
+    "ChapterObjectiveCheckerSkill": None,
+    "SceneConflictCheckerSkill": None,
+    "EventCoverageCheckerSkill": None,
+    "MemoryPatchValidatorSkill": None,
+    "ShowDontTellValidator": None,  # v6.4.3
+    "InfoDumpDetector": None,  # v6.4.3
+    "SceneTextureChecker": None,  # v6.4.3
+    "DialogueNaturalnessChecker": None,  # v6.4.3
 }
 
 
@@ -41,7 +49,31 @@ def _get_skill_class(class_name: str):
     elif class_name == "StyleBibleCheckerSkill":
         from .style_bible_checker import StyleBibleCheckerSkill
         return StyleBibleCheckerSkill
-    
+    elif class_name == "ChapterObjectiveCheckerSkill":
+        from .agent_validators import ChapterObjectiveCheckerSkill
+        return ChapterObjectiveCheckerSkill
+    elif class_name == "SceneConflictCheckerSkill":
+        from .agent_validators import SceneConflictCheckerSkill
+        return SceneConflictCheckerSkill
+    elif class_name == "EventCoverageCheckerSkill":
+        from .agent_validators import EventCoverageCheckerSkill
+        return EventCoverageCheckerSkill
+    elif class_name == "MemoryPatchValidatorSkill":
+        from .agent_validators import MemoryPatchValidatorSkill
+        return MemoryPatchValidatorSkill
+    elif class_name == "ShowDontTellValidator":
+        from .show_dont_tell_validator import ShowDontTellValidator
+        return ShowDontTellValidator
+    elif class_name == "InfoDumpDetector":
+        from .info_dump_detector import InfoDumpDetector
+        return InfoDumpDetector
+    elif class_name == "SceneTextureChecker":
+        from .scene_texture_checker import SceneTextureChecker
+        return SceneTextureChecker
+    elif class_name == "DialogueNaturalnessChecker":
+        from .dialogue_naturalness_checker import DialogueNaturalnessChecker
+        return DialogueNaturalnessChecker
+
     return None
 
 

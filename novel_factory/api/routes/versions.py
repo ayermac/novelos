@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ..contracts import success, failed
 
 router = APIRouter()
 
@@ -24,7 +25,7 @@ SOURCE_LABELS = {
 }
 
 # Chapters that allow direct editing
-EDITABLE_STATUSES = {"drafted", "polished", "revision", "scripted"}
+EDITABLE_STATUSES = {"drafted", "polished", "revision", "scripted", "blocking"}
 # Chapters that are read-only and need revision-draft first
 PUBLISHED_STATUSES = {"published", "awaiting_publish"}
 
@@ -43,6 +44,7 @@ class SaveContentRequest(BaseModel):
     summary: str | None = None
     base_version_id: int | None = None
     confirm: bool = False
+    is_local_edit: bool = False  # v6.6.6: Flag for local edit context
 
 
 class LocalRevisionMode(str, Enum):
@@ -74,6 +76,33 @@ class RevisionDraftRequest(BaseModel):
     """Create a revision draft for a published chapter."""
 
     confirm: bool = False
+
+
+def _is_deletion_revision_request(instruction: str | None) -> bool:
+    """Return true when an empty local-revision replacement is intentional."""
+    text = (instruction or "").strip().lower()
+    if not text:
+        return False
+    deletion_markers = (
+        "去掉",
+        "删掉",
+        "删除",
+        "删去",
+        "移除",
+        "去除",
+        "拿掉",
+        "裁掉",
+        "这一段不要",
+        "这段不要",
+        "不要这段",
+        "remove",
+        "delete",
+        "omit",
+        "drop",
+        "cut this",
+        "cut it",
+    )
+    return any(marker in text for marker in deletion_markers)
 
 
 # ── 1. Editor state ────────────────────────────────────────
@@ -176,11 +205,12 @@ async def save_chapter_content(
 
         status = chapter.get("status", "")
 
-        # Guard: published chapters must use revision-draft
-        if status in PUBLISHED_STATUSES:
+        # Guard: protected chapters require explicit confirmation before they are
+        # converted back into an editable, review-required draft.
+        if status in PUBLISHED_STATUSES and not body.confirm:
             return error_response(
                 "PUBLISHED_PROTECTED",
-                "已发布章节不能直接保存，请先创建修订版",
+                "已发布或待发布章节不能直接保存，请先创建修订版",
             )
 
         # Validate content
@@ -214,13 +244,50 @@ async def save_chapter_content(
             summary=body.summary or "人工编辑保存",
         )
 
-        # Status transition: reviewed → polished (needs re-review)
+        # Status transition: human edits after review/blocking/revision need re-review.
+        # v6.6.6: Local edit protection - don't pollute main workflow blocking state
         new_status = status
         status_changed = False
-        if status == "reviewed":
+        from ...workflow.state_integrity import should_protect_from_blocking
+
+        # Check if this is a protected local edit
+        is_protected_local_edit = should_protect_from_blocking(status, body.is_local_edit)
+
+        if status in PUBLISHED_STATUSES:
+            if is_protected_local_edit:
+                # v6.6.6: Local edit on published/awaiting_publish - don't change status
+                # Just save the content and version, keep terminal status
+                new_status = status
+                status_changed = False
+            else:
+                # Explicit edit with confirmation - transition to polished for re-review
+                new_status = "polished"
+                repo.update_chapter_status(project_id, chapter_number, "polished")
+                status_changed = True
+        elif status in {"reviewed", "awaiting_publish"}:
+            if is_protected_local_edit:
+                # v6.6.6: Local edit on reviewed/awaiting_publish - don't enter main workflow
+                new_status = status
+                status_changed = False
+            else:
+                new_status = "polished"
+                repo.update_chapter_status(project_id, chapter_number, "polished")
+                status_changed = True
+        elif status in {"blocking", "revision"}:
             new_status = "polished"
             repo.update_chapter_status(project_id, chapter_number, "polished")
             status_changed = True
+            reset_task_id = repo.start_task(
+                project_id,
+                chapter_number,
+                "reset",
+                "human",
+            )
+            repo.complete_task(
+                reset_task_id,
+                success=True,
+                error="人工编辑保存：清空本轮自动返修计数。",
+            )
 
         return envelope_response({
             "saved": True,
@@ -468,13 +535,11 @@ async def create_revision_draft(
             summary=f"发布快照（修订前保存）",
         )
 
-        # Move chapter to revision status
-        repo.update_chapter_status(project_id, chapter_number, "revision")
-
         return envelope_response({
             "revision_draft_created": True,
             "previous_status": status,
-            "new_status": "revision",
+            "new_status": status,
+            "status_changed": False,
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"创建修订版失败: {str(e)}")
@@ -491,7 +556,8 @@ async def local_revision(
     body: LocalRevisionRequest,
 ) -> EnvelopeResponse:
     """AI local revision: returns candidate replacement without overwriting content."""
-    from ..deps import get_repo, get_llm_mode, get_llm_provider
+    from ..deps import get_repo, get_llm_mode, get_settings
+    from ...workflow.runner import _build_llm_router
 
     try:
         repo = get_repo(request)
@@ -554,11 +620,36 @@ async def local_revision(
             },
         ]
 
-        provider = get_llm_provider(request)
+        settings = get_settings(request)
+        llm_mode = get_llm_mode(request)
+        provider = _build_llm_router(settings, llm_mode).for_agent("author")
         result = provider.invoke_json(messages, schema=LocalRevisionOutput)
+        deletion_requested = _is_deletion_revision_request(body.instruction)
+        replacement_text = ""
+        if result and result.get("replacement_text") is not None:
+            replacement_text = str(result.get("replacement_text", ""))
 
-        if not result or not result.get("replacement_text"):
-            return error_response("REVISION_FAILED", "AI 返修返回为空，请重试")
+        if not result or (not replacement_text.strip() and not deletion_requested):
+            return error_response(
+                "REVISION_FAILED",
+                "AI 返修返回为空，请重试",
+                details={
+                    "domain_result": failed(
+                        "AI 返修返回为空",
+                        user_message="AI 返修返回为空，请重试",
+                        retryable=True,
+                        next_action="retry_local_revision",
+                        action_label="重试局部返修",
+                        details={
+                            "mode": body.mode.value,
+                            "selection_length": len(body.selected_text),
+                        },
+                        flags={"local_revision_failed": True},
+                    ).to_dict(),
+                },
+            )
+        if deletion_requested and not replacement_text.strip():
+            replacement_text = ""
 
         # Normalize output: ensure risk_notes is always a list of strings
         raw_notes = result.get("risk_notes", [])
@@ -567,12 +658,24 @@ async def local_revision(
         normalized_notes = [str(n) for n in raw_notes]
 
         return envelope_response({
-            "replacement_text": str(result.get("replacement_text", "")),
-            "change_summary": str(result.get("change_summary", "")),
+            "replacement_text": replacement_text,
+            "change_summary": str(result.get("change_summary", "")) or (
+                "按指令删除选中文本" if deletion_requested and not replacement_text else ""
+            ),
             "risk_notes": normalized_notes,
             "selection_start": body.selection_start,
             "selection_end": body.selection_end,
             "mode": body.mode.value,
+            "domain_result": success(
+                "局部返修候选已生成",
+                user_message="局部返修候选已生成，请确认是否应用",
+                details={
+                    "mode": body.mode.value,
+                    "selection_length": len(body.selected_text),
+                    "replacement_length": len(replacement_text),
+                },
+                flags={"local_revision_candidate": True},
+            ).to_dict(),
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"局部返修失败: {str(e)}")

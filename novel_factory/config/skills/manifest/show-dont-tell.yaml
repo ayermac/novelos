@@ -1,0 +1,72 @@
+id: show-dont-tell
+name: Show Don't Tell Validator
+version: "1.0.0"
+kind: validator
+class_name: ShowDontTellValidator
+description: "检测叙述者直白情绪/心理解释（排除对白）"
+enabled: true
+builtin: true
+allowed_agents:
+  - editor
+  - qualityhub
+  - manual
+allowed_stages:
+  - before_review
+  - final_gate
+  - manual
+permissions:
+  read_context: false
+  read_chapter: false
+  transform_text: false
+  validate_text: true
+  write_quality_report: false
+  write_skill_run: true
+  write_chapter_content: false
+  update_chapter_status: false
+  send_agent_message: false
+  call_llm: false
+  call_network: false
+input_schema:
+  type: object
+  required:
+    - text
+  properties:
+    text:
+      type: string
+      description: "要检测的文本内容"
+    content:
+      type: string
+      description: "备用文本字段（兼容）"
+output_schema:
+  type: object
+  required:
+    - score
+    - findings
+  properties:
+    score:
+      type: number
+      minimum: 0
+      maximum: 100
+      description: "展示化评分，100 表示没有检测到直白叙述问题"
+    straight_emotion_count:
+      type: integer
+      minimum: 0
+    summary_count:
+      type: integer
+      minimum: 0
+    per_1000_chars:
+      type: number
+      minimum: 0
+    findings:
+      type: array
+      items:
+        type: object
+config_schema:
+  type: object
+  properties: {}
+default_config: {}
+failure_policy:
+  on_error: warn
+  max_retries: 0
+  timeout_seconds: null
+  blocking_threshold: null

@@ -35,7 +35,8 @@ class LLMConfig(BaseModel):
     request_timeout_seconds: int = 60
     retry_attempts: int = 3
     retry_min_seconds: float = 1.0
-    retry_max_seconds: float = 8.0
+    retry_max_seconds: float = 30.0
+    min_interval_seconds: float = 0.0
 
 
 class QualityGateConfig(BaseModel):
@@ -83,6 +84,7 @@ class Settings(BaseModel):
     default_llm: str = "default"
     llm_profiles: dict[str, LLMProfile] = Field(default_factory=dict)
     agent_llm: dict[str, str] = Field(default_factory=dict)
+    agent_llm_fallback: dict[str, str] = Field(default_factory=dict)
 
 
 # ── Loaders ────────────────────────────────────────────────────
@@ -91,7 +93,14 @@ def load_settings(config_path: str | Path | None = None) -> Settings:
     """Load settings from YAML + env overrides."""
     data: dict[str, Any] = {}
 
-    if config_path and Path(config_path).exists():
+    config_exists = False
+    if config_path:
+        try:
+            config_exists = Path(config_path).exists()
+        except OSError:
+            config_exists = False
+
+    if config_path and config_exists:
         with open(config_path, "r", encoding="utf-8") as f:
             data = yaml.safe_load(f) or {}
 

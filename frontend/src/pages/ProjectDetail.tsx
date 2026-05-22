@@ -4,11 +4,11 @@ import { get, post } from '../lib/api'
 import { useApiQuery } from '../hooks/useApiQuery'
 import ErrorState from '../components/ErrorState'
 import { useSSEStream, SSEEvent, StepStatus } from '../hooks/useSSEStream'
-import { buildProjectModuleSearchParams, ensureChapterSearchParams } from '../lib/project-routing'
+import { buildProjectModuleSearchParams, ensureChapterSearchParams, resolveProjectModule } from '../lib/project-routing'
 import type { ProjectModule } from '../components/project/ProjectModuleNav'
 import ProjectShell from '../components/project/ProjectShell'
 import AuthorWorkbench from '../components/project/AuthorWorkbench'
-import type { SurfaceTabKey } from '../components/project/AuthorWritingSurface'
+import type { GenerationErrorDetails, SurfaceTabKey } from '../components/project/AuthorWritingSurface'
 import WorldSettingsModule from '../components/project/WorldSettingsModule'
 import CharactersModule from '../components/project/CharactersModule'
 import FactionsModule from '../components/project/FactionsModule'
@@ -129,18 +129,20 @@ export default function ProjectDetail() {
   const [generating, setGenerating] = useState(false)
   const [generatingChapter, setGeneratingChapter] = useState<number | null>(null)
   const [genError, setGenError] = useState('')
-  const [genErrorDetails, setGenErrorDetails] = useState<{ missing?: string[]; actions?: string[] } | null>(null)
+  const [genErrorDetails, setGenErrorDetails] = useState<GenerationErrorDetails | null>(null)
   const [sseSteps, setSseSteps] = useState<Record<string, StepStatus>>({})
   const [publishPending, setPublishPending] = useState(false)
   const [markStuckPending, setMarkStuckPending] = useState(false)
   const [resetRecoveryPending, setResetRecoveryPending] = useState(false)
+  const [regeneratePending, setRegeneratePending] = useState(false)
   const currentChapterRef = useRef<number>(1)
   const streamingChapterRef = useRef<number | null>(null)
 
   const currentChapter = parseInt(searchParams.get('chapter') || '1', 10)
-  const activeModule: ProjectModule = (searchParams.get('module') as ProjectModule) || 'chapters'
+  const activeModule: ProjectModule = resolveProjectModule(searchParams)
   const requestedView = searchParams.get('view') as TabKey | null
-  const requestedAutoGenerate = searchParams.get('auto_generate') === '1'
+  // v6.3: auto_generate URL param is no longer auto-triggered.
+  // Chapter generation must be explicitly initiated by the user after reviewing context readiness.
 
   const error = wsError?.message || ''
 
@@ -150,22 +152,22 @@ export default function ProjectDetail() {
 
   useEffect(() => {
     if (activeModule !== 'chapters') return
-    if (requestedView && ['content', 'workflow', 'artifacts', 'history', 'versions'].includes(requestedView)) {
+    if (requestedView && ['content', 'workflow', 'artifacts', 'history', 'logs', 'versions'].includes(requestedView)) {
       setActiveTab(requestedView)
     } else if (!requestedView) {
       setActiveTab('content')
     }
   }, [activeModule, requestedView])
 
-  // Set initial chapter (default to workbench / chapters module)
+  // Set initial chapter only after the user explicitly enters chapter writing.
   useEffect(() => {
-    if (workspace && !searchParams.get('chapter') && workspace.chapters.length > 0) {
+    if (activeModule === 'chapters' && workspace && !searchParams.get('chapter') && workspace.chapters.length > 0) {
       setSearchParams(
         ensureChapterSearchParams(searchParams, workspace.chapters[0].chapter_number),
         { replace: true }
       )
     }
-  }, [workspace]) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeModule, workspace]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load chapter detail when chapter changes (for workbench and chapters module)
   useEffect(() => {
@@ -217,7 +219,7 @@ export default function ProjectDetail() {
   }, [])
 
   useEffect(() => {
-    if (activeTab !== 'workflow' && activeTab !== 'artifacts') return
+    if (activeTab !== 'workflow' && activeTab !== 'artifacts' && activeTab !== 'logs') return
 
     const runsForCurrentChapter = (workspace?.recent_runs || [])
       .filter((r) => r.chapter_number === currentChapter)
@@ -225,15 +227,15 @@ export default function ProjectDetail() {
     if (latestRun) loadRunDetail(latestRun.run_id)
     else setRunDetail(null)
 
-    // v5.8: Load timeline for workflow/artifacts tabs
-    if (activeTab === 'workflow' && id) {
+    // v5.8: Load timeline for workflow/artifacts/logs tabs
+    if ((activeTab === 'workflow' || activeTab === 'artifacts' || activeTab === 'logs') && id) {
       loadTimeline(id, currentChapter)
     }
   }, [activeTab, currentChapter, workspace?.recent_runs, loadRunDetail, loadTimeline, id])
 
   // v5.8: Auto-refresh timeline when in workflow view
   useEffect(() => {
-    if ((activeModule !== 'chapters' && activeModule !== 'overview') || activeTab !== 'workflow') return
+    if ((activeModule !== 'chapters' && activeModule !== 'overview') || (activeTab !== 'workflow' && activeTab !== 'logs')) return
     if (!id) return
 
     const shouldPoll = timeline?.run_status === 'running' || runDetail?.workflow_status === 'running'
@@ -241,7 +243,7 @@ export default function ProjectDetail() {
 
     const timer = window.setInterval(() => {
       loadTimeline(id, currentChapter, { silent: true })
-    }, 5000)
+    }, 2000)
 
     return () => window.clearInterval(timer)
   }, [
@@ -256,7 +258,7 @@ export default function ProjectDetail() {
 
   // Legacy run detail polling (keep for backward compatibility)
   useEffect(() => {
-    if ((activeModule !== 'chapters' && activeModule !== 'overview') || activeTab !== 'workflow') return
+    if ((activeModule !== 'chapters' && activeModule !== 'overview') || (activeTab !== 'workflow' && activeTab !== 'logs')) return
     const runsForCurrentChapter = (workspace?.recent_runs || [])
       .filter((r) => r.chapter_number === currentChapter)
     const latestRun = runsForCurrentChapter.length > 0 ? runsForCurrentChapter[0] : null
@@ -267,7 +269,7 @@ export default function ProjectDetail() {
     const timer = window.setInterval(() => {
       loadRunDetail(pollingRunId, { silent: true })
       refetchWorkspace()
-    }, 5000)
+    }, 2000)
 
     return () => window.clearInterval(timer)
   }, [
@@ -294,6 +296,7 @@ export default function ProjectDetail() {
     }
     refetchWorkspace()
     if (completedChapter === visibleChapter) {
+      if (id) loadTimeline(id, visibleChapter, { silent: true })
       get<ChapterDetail>(`/projects/${id}/chapters/${visibleChapter}`)
         .then((r) => {
           if (r.ok && r.data) setChapterDetail(r.data)
@@ -301,7 +304,7 @@ export default function ProjectDetail() {
         })
         .catch(() => setGenError('获取章节详情失败'))
     }
-  }, [id, loadRunDetail, refetchWorkspace])
+  }, [id, loadRunDetail, loadTimeline, refetchWorkspace])
 
   const handleSSEError = useCallback((error: string, event?: SSEEvent) => {
     const failedChapter = streamingChapterRef.current
@@ -311,21 +314,41 @@ export default function ProjectDetail() {
     streamingChapterRef.current = null
     refetchWorkspace()
     if (failedChapter === visibleChapter) {
+      if (event?.run_id) loadRunDetail(event.run_id, { silent: true })
+      if (id) loadTimeline(id, visibleChapter, { silent: true })
       setGenError(error)
       if (event?.context_incomplete) {
         setGenErrorDetails({
           missing: event.missing || [],
           actions: event.actions || [],
         })
+      } else if (event?.details && Object.keys(event.details).length > 0) {
+        setGenErrorDetails(event.details as GenerationErrorDetails)
+        if (event.details.hint === 'review_existing_content') {
+          setActiveTab('content')
+          setSearchParams({ chapter: String(visibleChapter) }, { replace: true })
+        }
       } else {
         setGenErrorDetails(null)
       }
     }
-  }, [refetchWorkspace])
+  }, [id, loadRunDetail, loadTimeline, refetchWorkspace, setSearchParams])
+
+  const handleSSELaunch = useCallback((event: { run_id: string; project_id: string; chapter: number }) => {
+    const visibleChapter = currentChapterRef.current
+    if (event.chapter !== visibleChapter) return
+    setRunDetail(null)
+    setTimeline(null)
+    setTimelineError('')
+    loadRunDetail(event.run_id, { silent: true })
+    loadTimeline(event.project_id, event.chapter, { silent: true })
+    refetchWorkspace()
+  }, [loadRunDetail, loadTimeline, refetchWorkspace])
 
   const { isStreaming, steps: sseHookSteps, startStream } = useSSEStream(
     handleSSEComplete,
-    handleSSEError
+    handleSSEError,
+    handleSSELaunch,
   )
 
   // Sync SSE steps to local state for rendering
@@ -344,13 +367,13 @@ export default function ProjectDetail() {
       chapter: String(chapterNumber),
       ...(tab === 'content' ? {} : { view: tab }),
     }, { replace: true })
-    if (tab === 'workflow' || tab === 'artifacts') {
+    if (tab === 'workflow' || tab === 'artifacts' || tab === 'logs') {
       const runsForChapter = (workspace?.recent_runs || [])
         .filter((r) => r.chapter_number === chapterNumber)
       const latestRun = runsForChapter.length > 0 ? runsForChapter[0] : null
       if (latestRun) loadRunDetail(latestRun.run_id)
       else setRunDetail(null)
-      if (tab === 'workflow' && id) {
+      if ((tab === 'workflow' || tab === 'artifacts' || tab === 'logs') && id) {
         loadTimeline(id, chapterNumber)
       }
     }
@@ -375,6 +398,9 @@ export default function ProjectDetail() {
     setGenError('')
     setGenErrorDetails(null)
     setSseSteps({})
+    setRunDetail(null)
+    setTimeline(null)
+    setTimelineError('')
     setActiveTab('workflow')
     setSearchParams({
       chapter: String(chapterNumber),
@@ -387,6 +413,41 @@ export default function ProjectDetail() {
     handleGenerateChapter(currentChapter)
   }, [currentChapter, handleGenerateChapter])
 
+  const handleConfirmRegenerate = useCallback(async () => {
+    if (!id || regeneratePending) return
+    const ok = await dialog.confirm({
+      title: '覆盖已有正文并重新生成',
+      message: `第 ${currentChapter} 章已经有正文。确认后会保留版本记录，但下一次生成会覆盖当前正文。`,
+      tone: 'warning',
+      confirmLabel: '确认覆盖并重新生成',
+    })
+    if (!ok) return
+    setRegeneratePending(true)
+    try {
+      const res = await post(`/projects/${id}/chapters/${currentChapter}/regenerate-reset`, { confirm: true })
+      if (res.ok) {
+        setGenError('')
+        setGenErrorDetails(null)
+        await refetchWorkspace()
+        handleGenerateChapter(currentChapter)
+      } else {
+        await dialog.alert({
+          title: '确认重新生成失败',
+          message: res.error?.message || '确认重新生成失败',
+          tone: 'danger',
+        })
+      }
+    } catch (err: unknown) {
+      await dialog.alert({
+        title: '确认重新生成失败',
+        message: err instanceof Error ? err.message : '确认重新生成失败',
+        tone: 'danger',
+      })
+    } finally {
+      setRegeneratePending(false)
+    }
+  }, [currentChapter, dialog, handleGenerateChapter, id, refetchWorkspace, regeneratePending])
+
   const handleViewWorkflow = (runId: string) => {
     loadRunDetail(runId)
     setActiveTab('workflow')
@@ -396,20 +457,25 @@ export default function ProjectDetail() {
     }, { replace: true })
   }
 
+  const handleWorkflowDone = useCallback((runId: string) => {
+    loadRunDetail(runId, { silent: true })
+    if (!id) return
+    loadTimeline(id, currentChapterRef.current, { silent: true })
+    refetchWorkspace()
+    get<ChapterDetail>(`/projects/${id}/chapters/${currentChapterRef.current}`)
+      .then((r) => { if (r.ok && r.data) setChapterDetail(r.data) })
+      .catch(() => {})
+  }, [id, loadRunDetail, loadTimeline, refetchWorkspace])
+
   const handleViewContent = useCallback(() => {
     handleOpenChapterView(currentChapter, 'content')
   }, [currentChapter, handleOpenChapterView])
 
-  useEffect(() => {
-    if (requestedView !== 'workflow' || !requestedAutoGenerate) return
-    if (!id || !workspace || generating || isStreaming) return
-    // Guard: don't auto-generate if chapter already has a running workflow
-    const hasRunningRun = workspace.recent_runs?.some(
-      (r) => r.chapter_number === currentChapter && r.status === 'running'
-    )
-    if (hasRunningRun) return
-    handleGenerate()
-  }, [requestedView, requestedAutoGenerate, id, generating, isStreaming, handleGenerate, workspace, currentChapter])
+  // v6.3: Removed auto_generate effect. Auto-triggering chapter generation on page load
+  // is dangerous because the user may not have reviewed context readiness.
+  // The primary action in ProjectOverviewModule now navigates to the chapter page
+  // without auto_generate, and the user explicitly clicks "生成" after review.
+  // Backend run guards (CONTEXT_INCOMPLETE) provide the final safety net.
 
   const handlePublishChapter = useCallback(async (chapterNumber: number) => {
     if (!id || publishPending) return
@@ -443,7 +509,9 @@ export default function ProjectDetail() {
   const handleGenerateNextFromChapter = useCallback((chapterNumber: number) => {
     if (!id) return
     const nextCh = chapterNumber + 1
-    setSearchParams({ chapter: String(nextCh), view: 'workflow', auto_generate: '1' }, { replace: true })
+    // v6.3.1: Removed auto_generate parameter. Navigation must not auto-trigger
+    // chapter generation; the user explicitly clicks "生成" after review.
+    setSearchParams({ chapter: String(nextCh) }, { replace: true })
   }, [id, setSearchParams])
 
   const handleGenerateNext = useCallback(() => {
@@ -465,7 +533,7 @@ export default function ProjectDetail() {
       if (res.ok) {
         setGenError('')
         await refetchWorkspace()
-        loadRunDetail(runId)
+        setRunDetail(null)
       } else {
         await dialog.alert({
           title: '标记卡住运行失败',
@@ -482,7 +550,7 @@ export default function ProjectDetail() {
     } finally {
       setMarkStuckPending(false)
     }
-  }, [dialog, loadRunDetail, markStuckPending, refetchWorkspace])
+  }, [dialog, markStuckPending, refetchWorkspace])
 
   const handleResetRunRecovery = useCallback(async (runId: string) => {
     if (resetRecoveryPending) return
@@ -499,7 +567,7 @@ export default function ProjectDetail() {
       if (res.ok) {
         setGenError('')
         await refetchWorkspace()
-        loadRunDetail(runId)
+        setRunDetail(null)
       } else {
         await dialog.alert({
           title: '恢复运行失败',
@@ -516,7 +584,41 @@ export default function ProjectDetail() {
     } finally {
       setResetRecoveryPending(false)
     }
-  }, [dialog, loadRunDetail, refetchWorkspace, resetRecoveryPending])
+  }, [dialog, refetchWorkspace, resetRecoveryPending])
+
+  const handleRetryRunNode = useCallback(async (runId: string) => {
+    if (resetRecoveryPending) return
+    const ok = await dialog.confirm({
+      title: '重试当前节点',
+      message: '确认保留已完成的上游产物，只从失败节点继续？例如执笔超时会保留编剧大纲，下一次生成直接重试执笔。',
+      tone: 'warning',
+      confirmLabel: '重试当前节点',
+    })
+    if (!ok) return
+    setResetRecoveryPending(true)
+    try {
+      const res = await post(`/runs/${runId}/recovery/retry-node`, { confirm: true })
+      if (res.ok) {
+        setGenError('')
+        await refetchWorkspace()
+        setRunDetail(null)
+      } else {
+        await dialog.alert({
+          title: '定点重试失败',
+          message: res.error?.message || '定点重试失败',
+          tone: 'danger',
+        })
+      }
+    } catch (err: unknown) {
+      await dialog.alert({
+        title: '定点重试失败',
+        message: err instanceof Error ? err.message : '定点重试失败',
+        tone: 'danger',
+      })
+    } finally {
+      setResetRecoveryPending(false)
+    }
+  }, [dialog, refetchWorkspace, resetRecoveryPending])
 
   const handleResetRunRecoveryForChapter = useCallback(async (chapterNumber: number) => {
     if (!id || resetRecoveryPending) return
@@ -604,14 +706,18 @@ export default function ProjectDetail() {
           timeline={timeline}
           timelineError={timelineError}
           onGenerate={handleGenerate}
+          onConfirmRegenerate={handleConfirmRegenerate}
           onGenerateNext={handleGenerateNext}
           onMarkRunStuck={handleMarkRunStuck}
           onPublish={handlePublish}
           onResetRunRecovery={handleResetRunRecovery}
+          onRetryRunNode={handleRetryRunNode}
+          onWorkflowDone={handleWorkflowDone}
           onResetRunRecoveryForChapter={handleResetRunRecoveryForChapter}
           publishPending={publishPending}
           markStuckPending={markStuckPending}
           resetRecoveryPending={resetRecoveryPending}
+          regeneratePending={regeneratePending}
           onGenerateChapter={handleGenerateChapter}
           onGenerateNextFromChapter={handleGenerateNextFromChapter}
           onPublishChapter={handlePublishChapter}
@@ -667,7 +773,7 @@ function ModuleRouter({
     case 'overview':
       return <ProjectOverviewModule project={project} stats={stats} chapterNumber={currentChapter} />
     case 'genesis':
-      return <GenesisModule projectId={projectId} />
+      return <GenesisModule projectId={projectId} project={project} />
     case 'worldview':
       return <WorldSettingsModule projectId={projectId} />
     case 'characters':
@@ -718,7 +824,7 @@ function WorkspaceStyles() {
       .project-shell-main { flex: 1; min-width: 0; width: 100%; overflow: hidden; }
       .workspace-layout { display: flex; flex-direction: column; height: 100%; overflow-x: hidden; width: 100%; box-sizing: border-box; }
       .ws-body { display: flex; flex: 1; overflow: hidden; min-width: 0; }
-      .ws-module-content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 24px 28px; max-width: 100%; min-width: 0; background: #f4f4f3; }
+      .ws-module-content { flex: 1; overflow-y: auto; overflow-x: hidden; padding: 24px 28px; max-width: 100%; min-width: 0; background: var(--bg-secondary); }
       @media (min-width: 1440px) {
         .project-shell .chapter-content-body { max-width: 860px; font-size: 17px; line-height: 2; }
       }
@@ -754,10 +860,10 @@ function WorkspaceStyles() {
       .chapter-content-title { font-size: 22px; font-weight: 600; margin-bottom: 24px; text-align: center; }
       .chapter-content-body { max-width: 720px; margin: 0 auto; font-size: 16px; line-height: 1.9; color: var(--text-primary); white-space: pre-wrap; word-break: break-word; }
       .gen-step { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-radius: 6px; background: var(--bg-secondary); margin-bottom: 6px; }
-      .gen-step-icon { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; background: #e5e7eb; color: #6b7280; }
-      .gen-step-active .gen-step-icon { background: #e7f2f4; color: var(--status-info); animation: gen-pulse 1.5s infinite; }
-      .gen-step-complete .gen-step-icon { background: #dcfce7; color: var(--status-success); }
-      .gen-step-failed .gen-step-icon { background: #fee2e2; color: var(--status-danger); }
+      .gen-step-icon { width: 26px; height: 26px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 600; background: var(--bg-tertiary); color: var(--text-secondary); }
+      .gen-step-active .gen-step-icon { background: var(--accent-soft); color: var(--status-info); animation: gen-pulse 1.5s infinite; }
+      .gen-step-complete .gen-step-icon { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--status-success); }
+      .gen-step-failed .gen-step-icon { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--status-danger); }
       .gen-step-label { font-size: 14px; color: var(--text-secondary); }
       .gen-step-complete .gen-step-label { color: var(--text-primary); }
       .gen-step-failed .gen-step-label { color: var(--status-danger); }
@@ -767,55 +873,55 @@ function WorkspaceStyles() {
       .artifacts-empty-title { font-size: 16px; font-weight: 500; margin-bottom: 8px; }
       .artifacts-empty-desc { font-size: 14px; color: var(--text-muted); max-width: 480px; margin: 0 auto; line-height: 1.7; }
       .artifacts-grid { display: flex; flex-direction: column; gap: 12px; }
-      .artifact-card { padding: 16px; border-radius: 6px; background: #fffefc; border: 1px solid #dedbd4; }
+      .artifact-card { padding: 16px; border-radius: 6px; background: var(--bg-primary); border: 1px solid var(--border-color); }
       .artifact-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
       .artifact-icon { display: inline-flex; align-items: center; justify-content: center; width: 22px; height: 22px; border-radius: 50%; background: var(--bg-tertiary); color: var(--primary); font-size: 12px; font-weight: 600; }
       .artifact-label { font-weight: 500; font-size: 14px; flex: 1; }
       .artifact-status { color: var(--status-success); font-size: 14px; }
-      .artifact-summary { font-size: 13px; color: var(--text-primary); line-height: 1.6; padding: 10px 12px; background: #f0fdf4; border-radius: 4px; }
+      .artifact-summary { font-size: 13px; color: var(--text-primary); line-height: 1.6; padding: 10px 12px; background: color-mix(in srgb, var(--success) 10%, var(--bg-primary)); border-radius: 4px; }
       .artifact-preview-section { margin-top: 10px; }
       .preview-toggle { padding: 4px 12px; font-size: 12px; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; transition: all 0.15s; }
       .preview-toggle:hover { background: var(--bg-tertiary); color: var(--primary); }
       .artifact-preview-expanded { background: var(--bg-tertiary); border-radius: 4px; padding: 10px 12px; }
       .artifact-preview-expanded .preview-content { font-size: 12px; color: var(--text-secondary); white-space: pre-wrap; line-height: 1.6; }
       .artifact-preview-expanded .preview-toggle { margin-top: 8px; }
-      .history-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 6px; background: #fffefc; border: 1px solid #dedbd4; margin-bottom: 6px; }
+      .history-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 6px; background: var(--bg-primary); border: 1px solid var(--border-color); margin-bottom: 6px; }
       .history-item-left { display: flex; align-items: center; gap: 12px; }
       .history-item-time { font-size: 12px; color: var(--text-muted); }
       .project-module { max-width: 1040px; width: 100%; box-sizing: border-box; margin-left: auto; margin-right: auto; }
       .module-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 20px; }
-      .module-header h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-family: Georgia, 'Times New Roman', 'Songti SC', serif; font-size: 22px; font-weight: 500; color: #191715; }
+      .module-header h3 { display: flex; align-items: center; gap: 8px; margin: 0; font-family: Georgia, 'Times New Roman', 'Songti SC', serif; font-size: 22px; font-weight: 500; color: var(--text-primary); }
       .module-loading { padding: 40px; text-align: center; color: var(--text-muted); }
       .data-empty { text-align: center; padding: 40px 20px; }
-      .data-empty-icon { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: #f7f4ef; color: #8b837b; margin-bottom: 16px; }
+      .data-empty-icon { display: inline-flex; align-items: center; justify-content: center; width: 48px; height: 48px; border-radius: 50%; background: var(--bg-tertiary); color: var(--text-muted); margin-bottom: 16px; }
       .data-empty-title { font-size: 16px; font-weight: 500; margin-bottom: 8px; }
       .data-empty-desc { font-size: 14px; color: var(--text-muted); }
       .data-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(280px, 100%), 1fr)); gap: 12px; }
-      .data-card { padding: 16px; border-radius: 6px; background: #fffefc; border: 1px solid #dedbd4; box-shadow: 0 1px 2px rgba(31,27,25,0.03); }
+      .data-card { padding: 16px; border-radius: 8px; background: var(--bg-primary); border: 1px solid var(--border-color); box-shadow: var(--shadow-sm); }
       .data-card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
-      .data-card-category { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: #f7f4ef; color: #554f49; }
-      .data-card-badge { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: #f3e8eb; color: #761a34; }
+      .data-card-category { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: var(--bg-tertiary); color: var(--text-secondary); }
+      .data-card-badge { font-size: 12px; padding: 2px 8px; border-radius: 4px; background: var(--accent-soft); color: var(--primary); }
       .data-card-range { font-size: 12px; color: var(--text-muted); }
       .data-card-actions { margin-left: auto; display: flex; gap: 4px; }
-      .data-card-title { font-weight: 650; font-size: 15px; margin-bottom: 6px; color: #191715; }
+      .data-card-title { font-weight: 650; font-size: 15px; margin-bottom: 6px; color: var(--text-primary); }
       .data-card-content { font-size: 13px; color: var(--text-secondary); line-height: 1.6; margin-bottom: 6px; }
       .data-card-traits { font-size: 12px; color: var(--text-muted); }
       .btn-icon { display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: none; background: none; cursor: pointer; border-radius: 4px; color: var(--text-secondary); transition: all 0.15s; }
-      .btn-icon:hover { background: #f6f2f0; color: #761a34; }
-      .btn-icon-danger:hover { background: #fee2e2; color: #dc2626; }
+      .btn-icon:hover { background: var(--bg-tertiary); color: var(--primary); }
+      .btn-icon-danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); color: var(--danger); }
       .modal-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000; }
-      .modal { background: #fffefc; border: 1px solid #dedbd4; border-radius: 8px; width: 90%; max-width: 520px; max-height: 80vh; overflow-y: auto; padding: 24px; }
+      .modal { background: var(--bg-primary); border: 1px solid var(--border-color); border-radius: 8px; width: 90%; max-width: 520px; max-height: 80vh; overflow-y: auto; padding: 24px; color: var(--text-primary); }
       .modal h3 { margin: 0 0 20px; font-size: 16px; }
       .form-group { margin-bottom: 14px; }
       .form-group label { display: block; font-size: 13px; font-weight: 500; margin-bottom: 6px; color: var(--text-secondary); }
-      .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 8px 10px; border: 1px solid #dedbd4; border-radius: 6px; font-size: 14px; background: #fffefc; color: #191715; box-sizing: border-box; }
+      .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 8px 10px; border: 1px solid var(--border-color); border-radius: 6px; font-size: 14px; background: var(--bg-primary); color: var(--text-primary); box-sizing: border-box; }
       .form-group input:focus, .form-group textarea:focus, .form-group select:focus { outline: none; border-color: rgba(118, 26, 52, 0.42); box-shadow: 0 0 0 3px rgba(118,26,52,0.08); }
       .form-group input:disabled { opacity: 0.6; cursor: not-allowed; }
       .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
       .form-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; }
       .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; font-weight: 500; }
-      .status-stub { background: #f8eee0; color: #8b4b0f; }
-      .status-real { background: #e9f4ed; color: #166e40; }
+      .status-stub { background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--warning); }
+      .status-real { background: color-mix(in srgb, var(--success) 14%, transparent); color: var(--success); }
     `}</style>
   )
 }

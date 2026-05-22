@@ -179,8 +179,18 @@ const CAPABILITY_FILTERS: { key: CapabilityFilter; label: string }[] = [
 const AGENT_GROUPS = [
   { key: 'creative', label: 'Creative Agents', agents: ['planner', 'screenwriter', 'author', 'polisher', 'editor'] },
   { key: 'support', label: 'Support Agents', agents: ['memory_curator', 'continuity_checker', 'publisher', 'archive'] },
-  { key: 'diagnostic', label: 'Diagnostic/Research Agents', agents: ['scout', 'architect', 'secretary'] },
 ]
+
+const CORE_AGENT_IDS = ['planner', 'screenwriter', 'author', 'polisher', 'editor', 'memory_curator']
+
+const STAGE_EXPLANATIONS: Record<string, string> = {
+  before_llm: '生成前上下文增强',
+  after_llm: '生成后校验/改写',
+  before_save: '入库前最终闸门',
+  before_extract: '记忆抽取前准备',
+  after_extract: '记忆抽取后校验',
+  before_review: '审稿前质量检查',
+}
 
 const sectionTitleStyle: CSSProperties = {
   fontSize: 'var(--text-sm)',
@@ -590,6 +600,13 @@ export default function SkillVisibilityPanel() {
   const mountedDisabled = allCapabilityIds
     .map((id) => ({ id, runtime: skillMountById.get(id), config: configSkillById.get(id) }))
     .filter(({ runtime, config, id }) => mountedIds.has(id) && (runtime?.enabled === false || config?.enabled === false))
+  const coreAgentCoverage = CORE_AGENT_IDS.map((agent) => {
+    const stages = skillConfig?.agent_skills[agent] || {}
+    const mounted = Object.values(stages).flat().filter(Boolean)
+    return { agent, mounted }
+  })
+  const coveredCoreAgents = coreAgentCoverage.filter((entry) => entry.mounted.length > 0)
+  const uncoveredCoreAgents = coreAgentCoverage.filter((entry) => entry.mounted.length === 0)
   const matrixStats = agentMatrix
     ? {
         agents: agentMatrix.agents.length,
@@ -863,28 +880,50 @@ export default function SkillVisibilityPanel() {
       )}
 
           {activeView === 'overview' && (
-            <div className="skill-overview-grid">
-              {overviewIssues.map((issue) => (
-                <button
-                  key={issue.key}
-                  type="button"
-                  className={`skill-overview-card issue-${issue.tone}`}
-                  onClick={() => setActiveView(issue.target)}
-                >
-                  <div className="overview-card-title">{issue.icon} {issue.title}</div>
-                  <div className="overview-card-number">{issue.count}</div>
-                  <p>{issue.detail}</p>
-                </button>
-              ))}
-              <div className="skill-overview-card primary">
-                <div className="overview-card-title"><ListChecks size={16} /> 下一步建议</div>
-                <div className="overview-card-number">{warningCount > 0 ? '需处理' : '健康'}</div>
-                <p>{warningCount > 0 ? '优先处理红色和黄色 issue，再进入 Agent 编排或 Review/Test。' : '当前没有明显阻塞项，可以继续扩展能力库或运行 fixtures。'}</p>
-                <button onClick={handleValidate} className="btn btn-secondary" disabled={validating}>
-                  {validating ? '验证中...' : '重新验证'}
-                </button>
+            <>
+              <div className="core-agent-coverage">
+                <div>
+                  <span className="coverage-label">Core Agent coverage</span>
+                  <strong>{coveredCoreAgents.length}/{CORE_AGENT_IDS.length}</strong>
+                  <p>{uncoveredCoreAgents.length > 0 ? `未接入运行时 Skill: ${uncoveredCoreAgents.map((entry) => entry.agent).join(', ')}` : 'planner、screenwriter、author、polisher、editor、memory_curator 均已有运行时挂载。'}</p>
+                </div>
+                <div className="coverage-chip-row">
+                  {coreAgentCoverage.map((entry) => (
+                    <button
+                      key={entry.agent}
+                      type="button"
+                      className={`coverage-chip ${entry.mounted.length > 0 ? 'covered' : 'missing'}`}
+                      onClick={() => setActiveView('mounts')}
+                    >
+                      <span>{entry.agent}</span>
+                      <small>{entry.mounted.length > 0 ? `${entry.mounted.length} mounted` : 'no mount'}</small>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
+              <div className="skill-overview-grid">
+                {overviewIssues.map((issue) => (
+                  <button
+                    key={issue.key}
+                    type="button"
+                    className={`skill-overview-card issue-${issue.tone}`}
+                    onClick={() => setActiveView(issue.target)}
+                  >
+                    <div className="overview-card-title">{issue.icon} {issue.title}</div>
+                    <div className="overview-card-number">{issue.count}</div>
+                    <p>{issue.detail}</p>
+                  </button>
+                ))}
+                <div className="skill-overview-card primary">
+                  <div className="overview-card-title"><ListChecks size={16} /> 下一步建议</div>
+                  <div className="overview-card-number">{warningCount > 0 ? '需处理' : '健康'}</div>
+                  <p>{warningCount > 0 ? '优先处理红色和黄色 issue，再进入 Agent 编排或 Review/Test。' : '当前没有明显阻塞项，可以继续扩展能力库或运行 fixtures。'}</p>
+                  <button onClick={handleValidate} className="btn btn-secondary" disabled={validating}>
+                    {validating ? '验证中...' : '重新验证'}
+                  </button>
+                </div>
+              </div>
+            </>
           )}
 
           {activeView === 'enable' && (
@@ -992,6 +1031,14 @@ export default function SkillVisibilityPanel() {
                 {matrixStats.missing > 0 && <span className="danger">{matrixStats.missing} missing</span>}
               </div>
             )}
+          </div>
+          <div className="stage-explanation-grid" aria-label="Stage explanation">
+            {Object.entries(STAGE_EXPLANATIONS).map(([stage, explanation]) => (
+              <div key={stage} className="stage-explanation">
+                <code>{stage}</code>
+                <span>{explanation}</span>
+              </div>
+            ))}
           </div>
 
           {mountError && (

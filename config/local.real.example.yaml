@@ -1,0 +1,105 @@
+db_path: ./acceptance_novel_factory.db
+default_llm: default
+
+llm_profiles:
+  default:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: DeepSeek-V3.2
+    max_tokens: 4096
+    request_timeout_seconds: 120
+    retry_attempts: 3
+    retry_max_seconds: 30
+    min_interval_seconds: 0.5
+
+  author:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: DeepSeek-V3.2
+    max_tokens: 4096
+    request_timeout_seconds: 300
+    retry_attempts: 3
+    retry_max_seconds: 30
+    min_interval_seconds: 0.5
+
+  genesis:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: DeepSeek-V3.2
+    max_tokens: 8192
+    request_timeout_seconds: 240
+    retry_attempts: 3
+    retry_max_seconds: 30
+    min_interval_seconds: 0.5
+
+  polisher:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: DeepSeek-V3.2
+    max_tokens: 4096
+    request_timeout_seconds: 300
+    retry_attempts: 3
+    retry_max_seconds: 30
+    min_interval_seconds: 0.5
+
+  editor:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: Kimi-K2.6
+    max_tokens: 4096
+    request_timeout_seconds: 180
+    retry_attempts: 3
+    retry_max_seconds: 30
+    min_interval_seconds: 0.5
+
+  memory_curator:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: DeepSeek-V3.2
+    max_tokens: 4096
+    request_timeout_seconds: 180
+    retry_attempts: 3
+    retry_max_seconds: 30
+    min_interval_seconds: 0.5
+
+  memory_curator_fast:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: DeepSeek-V3
+    max_tokens: 2048
+    request_timeout_seconds: 90
+    retry_attempts: 1
+    retry_max_seconds: 10
+    min_interval_seconds: 0.5
+
+  continuity_checker:
+    provider: openai_compatible
+    base_url_env: OPENAI_BASE_URL
+    api_key_env: OPENAI_API_KEY
+    model: DeepSeek-V3.2
+    request_timeout_seconds: 60
+    retry_attempts: 2
+    retry_max_seconds: 20
+    min_interval_seconds: 0.5
+
+agent_llm:
+  genesis: genesis
+  planner: default
+  screenwriter: default
+  author: author
+  polisher: polisher
+  editor: editor
+  memory_curator: memory_curator
+  scout: default
+  continuity_checker: continuity_checker
+  architect: default
+
+agent_llm_fallback:
+  memory_curator: memory_curator_fast

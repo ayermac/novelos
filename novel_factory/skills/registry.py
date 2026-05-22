@@ -628,6 +628,8 @@ class SkillRegistry:
                     "description": manifest.description,
                     "allowed_agents": manifest.allowed_agents,
                     "allowed_stages": manifest.allowed_stages,
+                    "has_manifest": True,
+                    "manifest": config.get("manifest"),
                 }
                 
                 # Add package info if available
@@ -652,6 +654,8 @@ class SkillRegistry:
                     "class": config.get("class"),
                     "class_name": config.get("class"),  # v2.2 compatibility
                     "description": config.get("description", ""),
+                    "has_manifest": False,
+                    "manifest": config.get("manifest"),
                 }
                 
                 # Add package info if available

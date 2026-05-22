@@ -55,8 +55,88 @@ skills:
     config:
       blocking_threshold: 50
 
+  chapter-objective-checker:
+    enabled: true
+    package: skill_packages/chapter_objective_checker
+    manifest: config/skills/manifest/chapter-objective-checker.yaml
+    type: validator
+    class: ChapterObjectiveCheckerSkill
+    description: "检查 Planner 章节目标是否具体、可执行"
+    config: {}
+
+  scene-conflict-checker:
+    enabled: true
+    package: skill_packages/scene_conflict_checker
+    manifest: config/skills/manifest/scene-conflict-checker.yaml
+    type: validator
+    class: SceneConflictCheckerSkill
+    description: "检查 Screenwriter 场景 beat 是否具备目标、冲突、转折和钩子"
+    config: {}
+
+  event-coverage-checker:
+    enabled: true
+    package: skill_packages/event_coverage_checker
+    manifest: config/skills/manifest/event-coverage-checker.yaml
+    type: validator
+    class: EventCoverageCheckerSkill
+    description: "检查 Author 正文是否覆盖写作指令中的必需事件"
+    config: {}
+
+  memory-patch-validator:
+    enabled: true
+    package: skill_packages/memory_patch_validator
+    manifest: config/skills/manifest/memory-patch-validator.yaml
+    type: validator
+    class: MemoryPatchValidatorSkill
+    description: "检查 Memory Curator 抽取的记忆 patch 是否结构完整"
+    config: {}
+
+  show-dont-tell:
+    enabled: true
+    manifest: config/skills/manifest/show-dont-tell.yaml
+    type: validator
+    class: ShowDontTellValidator
+    description: "检测叙述者直白情绪/心理解释（排除对白）"
+    config: {}
+
+  info-dump-detector:
+    enabled: true
+    manifest: config/skills/manifest/info-dump-detector.yaml
+    type: validator
+    class: InfoDumpDetector
+    description: "检测设定灌输、连续解释、说明腔段落"
+    config: {}
+
+  scene-texture:
+    enabled: true
+    manifest: config/skills/manifest/scene-texture.yaml
+    type: validator
+    class: SceneTextureChecker
+    description: "检测动作/环境/感官线索不足"
+    config: {}
+
+  dialogue-naturalness:
+    enabled: true
+    manifest: config/skills/manifest/dialogue-naturalness.yaml
+    type: validator
+    class: DialogueNaturalnessChecker
+    description: "检测功能化对白、对白占比异常、缺少摩擦/潜台词"
+    config: {}
+
 # Agent挂载配置
 agent_skills:
+  planner:
+    after_llm:
+      - chapter-objective-checker
+
+  screenwriter:
+    after_llm:
+      - scene-conflict-checker
+
+  author:
+    after_llm:
+      - event-coverage-checker
+
   polisher:
     after_llm:
       - humanizer-zh
@@ -68,3 +148,11 @@ agent_skills:
       - ai-style-detector
       - narrative-quality
       - style-bible-checker
+      - show-dont-tell
+      - info-dump-detector
+      - scene-texture
+      - dialogue-naturalness
+
+  memory_curator:
+    after_extract:
+      - memory-patch-validator

@@ -8,7 +8,10 @@ Covers:
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+
+from novel_factory.version import get_version
 
 
 class TestFrontendStructure:
@@ -125,10 +128,10 @@ class TestFrontendBuildConfig:
         assert '"name": "novel-factory-frontend"' in content
 
     def test_package_json_has_correct_version(self):
-        """package.json has v5.3.0 version."""
+        """package.json uses the unified runtime version."""
         package_json = Path(__file__).parent.parent / "frontend" / "package.json"
-        content = package_json.read_text()
-        assert '"version": "5.3.0"' in content
+        data = json.loads(package_json.read_text())
+        assert data["version"] == get_version()
 
     def test_package_json_has_react_dependencies(self):
         """package.json has React dependencies."""

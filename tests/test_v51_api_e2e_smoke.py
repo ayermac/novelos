@@ -355,7 +355,7 @@ class TestAPIE2ESmoke:
             json={
                 "project_id": "test_project",
                 "model_preferences": {
-                    "architect": "gpt-4",
+                    "planner": "gpt-4",
                     "writer": "gpt-3.5-turbo",
                 },
             },

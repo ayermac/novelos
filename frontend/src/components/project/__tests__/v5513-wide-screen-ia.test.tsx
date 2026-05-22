@@ -241,6 +241,13 @@ describe('v5.5.13 wide-screen grid structure', () => {
     expect(content).toMatch(/disabled=\{[^}]*hasRunningWorkflow/)
   })
 
+  it('ProjectOverviewModule keeps view-running-workflow CTA clickable while a workflow is running', () => {
+    const content = readFileSync(overviewPath, 'utf-8')
+    expect(content).toContain("action.key === 'view_running_workflow'")
+    expect(content).toContain("nextActionKey === 'view_running_workflow'")
+    expect(content).toContain('hasRunningWorkflow && !isPrimaryNavigationAction')
+  })
+
   it('ChapterWorkspace RunDetailSidebar uses translated chapter status', () => {
     const wsContent = readFileSync(resolve(__dirname, '../ChapterWorkspace.tsx'), 'utf-8')
     expect(wsContent).toContain('tChapterStatus(runDetail.chapter_status)')

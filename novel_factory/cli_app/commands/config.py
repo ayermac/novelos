@@ -108,6 +108,7 @@ def cmd_llm_profiles(args) -> None:
         default_llm=settings.default_llm,
         llm_profiles=settings.llm_profiles,
         agent_llm=settings.agent_llm,
+        agent_llm_fallback=settings.agent_llm_fallback,
     )
 
     # Create router (stub mode doesn't need real keys)
@@ -151,6 +152,7 @@ def cmd_llm_route(args) -> None:
         default_llm=settings.default_llm,
         llm_profiles=settings.llm_profiles,
         agent_llm=settings.agent_llm,
+        agent_llm_fallback=settings.agent_llm_fallback,
     )
 
     # Create router (stub mode doesn't need real keys)
@@ -198,6 +200,7 @@ def cmd_llm_validate(args) -> None:
         default_llm=settings.default_llm,
         llm_profiles=settings.llm_profiles,
         agent_llm=settings.agent_llm,
+        agent_llm_fallback=settings.agent_llm_fallback,
     )
 
     # Create router (stub mode doesn't need real keys)
@@ -257,6 +260,7 @@ def _build_llm_smoke_router(settings, llm_mode: str):
         default_llm=settings.default_llm,
         llm_profiles=settings.llm_profiles,
         agent_llm=settings.agent_llm,
+        agent_llm_fallback=settings.agent_llm_fallback,
     )
     stub_llm = _StubLLM() if llm_mode == "stub" else None
     return LLMRouter(config, stub_provider=stub_llm, llm_mode=llm_mode, env_getter=env_getter)

@@ -96,9 +96,9 @@ def _make_state(**overrides) -> FactoryState:
 
 
 # Helper: long enough content to pass word count validation
-# v5.3.0: Author/Polisher need 85% of word_target, Editor needs 90%
+# v6.6.0: Author/Polisher/Editor share 85% hard gate; 90% is warning band.
 # With Planner preserving word_target from seed (2500), thresholds are:
-# Author needs 2500*0.85=2125, Editor needs 2500*0.9=2250
+# hard gate needs 2500*0.85=2125
 # Base content is 44 chars, 59x for 2596 (>2125), 62x for 2728 (>2250)
 _BASE_CONTENT = "这是一段验收测试用的正文内容，用于模拟 Agent 的输出。每次都需要确保内容充实完整。"
 _LONG_CONTENT = _BASE_CONTENT * 59   # 2596 chars

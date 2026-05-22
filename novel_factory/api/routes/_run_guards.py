@@ -7,9 +7,8 @@ preconditions before starting a workflow.
 This module provides a single check_chapter_run_guard() function that:
 1. Rejects chapters that already have a running workflow_run
 2. Rejects chapters in a terminal status (reviewed / awaiting_publish / published)
-3. Rejects planned chapters that already contain content, which usually means a
-   recovery reset preserved author-visible content and direct generation would
-   risk overwriting it.
+3. Rejects planned chapters that already contain content unless the latest
+   recovery action explicitly reset that chapter for regeneration.
 
 Callers should use this instead of ad-hoc inline checks.
 """
@@ -41,11 +40,22 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
 
     Guard 1: WORKFLOW_ALREADY_RUNNING — a running workflow_run already exists.
     Guard 2: CHAPTER_ALREADY_COMPLETED — the chapter is in a terminal status.
+    Guard 3: CHAPTER_HAS_EXISTING_CONTENT — planned chapter already has content.
+    Guard 4: CONTEXT_INCOMPLETE — project context missing (genesis/world/characters/outlines/instructions).
     """
     # Guard 1: Terminal status check. Terminal chapter state wins over stale
     # running workflow rows; reconcile first so UI/health endpoints stop
     # showing phantom work.
     chapter = repo.get_chapter(project_id, chapter_number)
+    if chapter and chapter.get("status") == "revision":
+        from ...workflow.reconciliation import reconcile_revision_running_workflows
+
+        reconcile_revision_running_workflows(repo, project_id, chapter_number)
+    elif chapter and chapter.get("status") in {"scripted", "drafted", "polished", "review"}:
+        from ...workflow.reconciliation import reconcile_interrupted_running_workflows
+
+        reconcile_interrupted_running_workflows(repo, project_id, chapter_number)
+
     if chapter and chapter.get("status") in TERMINAL_STATUSES:
         if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
             repo.reconcile_terminal_chapter_running_workflows(
@@ -61,6 +71,19 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
             },
         )
 
+    # Guard 2: Blocked/revision chapters must be recovered explicitly before
+    # starting a fresh production run. Letting "生成本章" run from these states
+    # enters the graph with stale state and usually fails later inside an agent.
+    if chapter and chapter.get("status") in {"blocking", "revision"}:
+        return RunGuardError(
+            "CHAPTER_NEEDS_RECOVERY",
+            f"第 {chapter_number} 章处于 {chapter.get('status')} 状态，请先清除阻塞/返修状态后再重新生成。",
+            details={
+                "chapter_status": chapter.get("status"),
+                "hint": "reset_chapter",
+            },
+        )
+
     # Guard 2: A planned chapter with content is not an empty generation slot.
     # This can happen after recovery reset: reset only clears workflow state and
     # preserves the author's current text. Starting generation directly would
@@ -68,7 +91,9 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
     if chapter and chapter.get("status") == "planned":
         content = (chapter.get("content") or "").strip()
         word_count = chapter.get("word_count") or 0
-        if content or word_count > 0:
+        if (content or word_count > 0) and not _has_explicit_reset_recovery(
+            repo, project_id, chapter_number
+        ):
             return RunGuardError(
                 "CHAPTER_HAS_EXISTING_CONTENT",
                 f"第 {chapter_number} 章已有正文内容，不能按空白 planned 章节直接生成。请先查看正文并决定编辑、回滚或显式重置。",
@@ -96,4 +121,74 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
             },
         )
 
+    # Guard 4: Context completeness check
+    # Projects must have approved genesis + world settings + characters + outlines + instructions
+    # before any chapter workflow can start. This prevents users from accidentally generating
+    # chapters without proper creative context.
+    has_approved_genesis = any(
+        run.get("status") == "approved" for run in repo.list_genesis_runs(project_id)
+    )
+    has_world = len(repo.list_world_settings(project_id)) > 0
+    has_chars = len(repo.list_characters(project_id, include_inactive=True)) > 0
+    has_outlines = len(repo.list_outlines(project_id)) > 0
+    instruction = repo.get_instruction_by_chapter(project_id, chapter_number)
+    has_instruction = instruction is not None and bool(instruction.get("objective"))
+
+    if not has_approved_genesis:
+        return RunGuardError(
+            "CONTEXT_INCOMPLETE",
+            "项目创世设定尚未批准。请先完成并批准创世设定，再补齐项目资料后生成章节。",
+            details={
+                "missing": ["genesis"],
+                "hint": "generate_genesis",
+            },
+        )
+
+    missing_context = []
+    if not has_world:
+        missing_context.append("世界观")
+    if not has_chars:
+        missing_context.append("角色")
+    if not has_outlines:
+        missing_context.append("大纲")
+    if not has_instruction:
+        missing_context.append(f"第{chapter_number}章写作指令")
+
+    if missing_context:
+        return RunGuardError(
+            "CONTEXT_INCOMPLETE",
+            f"项目资料不完整，缺少：{', '.join(missing_context)}。请先补齐资料后再生成章节。",
+            details={
+                "missing": missing_context,
+                "hint": "generate_missing_context",
+            },
+        )
+
     return None
+
+
+def _has_explicit_reset_recovery(repo, project_id: str, chapter_number: int) -> bool:
+    """Return True when the latest recovery explicitly reset this chapter.
+
+    A reset recovery is the user's explicit confirmation that preserved chapter
+    text may be superseded by a new workflow attempt. Without this marker,
+    planned+content is treated as suspicious preserved work and stays blocked.
+    """
+    try:
+        if hasattr(repo, "get_latest_chapter_reset_marker"):
+            return repo.get_latest_chapter_reset_marker(project_id, chapter_number) is not None
+    except Exception:
+        pass
+
+    try:
+        runs = repo.get_workflow_runs_for_project(
+            project_id,
+            chapter_number=chapter_number,
+            limit=5,
+        )
+    except Exception:
+        return False
+    return any(
+        run.get("status") == "completed" and run.get("current_node") == "reset_recovery"
+        for run in runs
+    )

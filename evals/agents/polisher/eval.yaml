@@ -1,0 +1,52 @@
+cases:
+  - id: polisher-fact-lock
+    agent_id: polisher
+    input_fixture:
+      original: "林动是林家子弟"
+      polished: "林动是王家子弟"
+      fact_lock:
+        key_events: ["林动是林家子弟"]
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 不改事实
+    regression_tags: ["v6.0", "polisher"]
+  - id: polisher-ai-style
+    agent_id: polisher
+    input_fixture:
+      text: "林动冷笑一声，嘴角微扬，眼中闪过一丝寒芒。"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 去 AI 味
+    regression_tags: ["v6.0", "polisher"]
+  - id: polisher-style-preservation
+    agent_id: polisher
+    input_fixture:
+      text: "方言台词测试"
+      style_bible:
+        dialect: "川渝方言"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 风格一致
+    regression_tags: ["v6.0", "polisher"]
+  - id: polisher-over-polish-guard
+    agent_id: polisher
+    input_fixture:
+      text: "简短有力的句子"
+      change_ratio: 0.5
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 过度润色保护
+    regression_tags: ["v6.0", "polisher"]
+  - id: polisher-rhythm
+    agent_id: polisher
+    input_fixture:
+      text: "长句堆砌，节奏拖沓，需要调整。"
+    expected_behavior:
+      must_pass: []
+    rubric:
+      - 节奏优化
+    regression_tags: ["v6.0", "polisher"]

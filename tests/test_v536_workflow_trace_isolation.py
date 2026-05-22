@@ -202,6 +202,24 @@ class TestTimelineRunIsolation:
         assert author_step is not None
         assert any(log["level"] == "error" for log in author_step["logs"])
 
+    def test_revision_dispatch_task_logs_do_not_claim_agent_work_completed(self, client, project_id):
+        from novel_factory.db.repository import Repository
+        from novel_factory.api.routes.runs import _build_steps_timeline
+
+        repo = Repository(client.app.state.db_path)
+        run1 = self._create_run(repo, project_id, 1, status="running", current_node="author")
+
+        task = repo.start_task(project_id, 1, "revise", "author", workflow_run_id=run1)
+        repo.complete_task(task, success=True)
+
+        run_data = self._get_run_data(repo, run1)
+        steps = _build_steps_timeline(run_data, None, "stub", repo=repo)
+        author_step = next((s for s in steps if s["key"] == "author"), None)
+        assert author_step is not None
+        messages = [log["message"] for log in author_step.get("logs", [])]
+        assert "返修任务已完成。" not in messages
+        assert any("返修已派发给执笔" in msg for msg in messages)
+
 
 class TestRunDetailAPI:
     """v5.3.6: Run detail API should expose legacy/fallback flags."""

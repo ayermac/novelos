@@ -140,6 +140,31 @@ class TestContextReadinessGate:
         assert result.ready is False
         assert "主角角色" in result.missing
 
+    def test_chinese_protagonist_role_is_ready(self):
+        """Localized protagonist labels should satisfy readiness."""
+        project = {
+            "description": "一部玄幻小说",
+            "target_words": 1500000,
+            "total_chapters_planned": 500,
+        }
+        world_settings = [{"category": "world", "title": "世界观", "content": "修仙世界"}]
+        characters = [{"name": "张三", "role": "主角", "description": "主角"}]
+        outlines = [{"level": "chapter", "chapters_range": "1-10", "title": "第一卷"}]
+        instruction = {"objective": "测试指令", "word_target": 3000}
+
+        result = check_context_readiness(
+            project=project,
+            world_settings=world_settings,
+            characters=characters,
+            outlines=outlines,
+            instruction=instruction,
+            chapter_number=1,
+            chapter_status="planned",
+        )
+
+        assert result.ready is True
+        assert result.details["protagonist_count"] == 1
+
     def test_missing_outline_coverage_fails(self):
         """Missing outline coverage for chapter should fail readiness check."""
         project = {
@@ -228,7 +253,7 @@ class TestContextReadinessGate:
         error = format_readiness_error(result)
 
         assert error["error_code"] == "PROJECT_CONTEXT_INCOMPLETE"
-        assert error["message"] == "项目资料不完整，无法生成章节"
+        assert error["message"] == "项目资料不完整，缺少：项目简介, 主角角色，无法生成章节"
         assert "项目简介" in error["missing"]
         assert "主角角色" in error["missing"]
 
@@ -331,16 +356,16 @@ class TestWordCountQualityGate:
         passed, message = check_word_count_quality_gate(content, word_target, "author")
         assert passed is True
 
-    def test_editor_stricter_threshold(self):
-        """Editor has stricter 90% threshold."""
+    def test_editor_warning_band_no_longer_hard_fails(self):
+        """v6.6: Editor shares the 85% hard gate; 85%-90% is advisory."""
         content = "x" * 2600  # 2600 words
         word_target = 3000
-        # 90% of 3000 = 2700, 2600 < 2700, should fail for editor
         passed, message = check_word_count_quality_gate(content, word_target, "editor")
-        assert passed is False
+        assert passed is True
+        assert "偏低" in message
 
-    def test_editor_passes_stricter_threshold(self):
-        """Editor output meeting 90% threshold should pass."""
+    def test_editor_passes_warning_threshold(self):
+        """Editor output meeting 90% threshold should pass cleanly."""
         content = "x" * 2750  # 2750 words
         word_target = 3000
         # 90% of 3000 = 2700, 2750 > 2700, should pass

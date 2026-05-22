@@ -9,6 +9,7 @@ from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ..contracts import success, partial_success, failed, blocked as blocked_result, ignored
 
 router = APIRouter()
 
@@ -27,6 +28,7 @@ class MemoryApplyRequest(BaseModel):
 
     project_id: str
     batch_id: str
+    allow_fallback: bool = False
 
 
 class MemoryIgnoreRequest(BaseModel):
@@ -108,6 +110,101 @@ def _infer_faction_name(repo, project_id: str, item: dict, after_data: dict) -> 
     return ""
 
 
+def _coerce_int(value, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _find_outline_for_memory_update(repo, project_id: str, after_data: dict) -> dict | None:
+    """Find an outline target for update patches that omitted target_id."""
+    title = str(after_data.get("title") or "").strip()
+    chapters_range = str(after_data.get("chapters_range") or "").strip()
+    level = str(after_data.get("level") or "").strip()
+    outlines = repo.list_outlines(project_id)
+
+    if title:
+        exact_title = next((outline for outline in outlines if str(outline.get("title") or "").strip() == title), None)
+        if exact_title:
+            return exact_title
+
+    if chapters_range:
+        same_range = [
+            outline
+            for outline in outlines
+            if str(outline.get("chapters_range") or "").strip() == chapters_range
+        ]
+        if level:
+            same_level_range = [
+                outline
+                for outline in same_range
+                if str(outline.get("level") or "").strip() == level
+            ]
+            if same_level_range:
+                return same_level_range[0]
+        if same_range:
+            return same_range[0]
+
+    return None
+
+
+def _find_world_setting_for_memory_update(repo, project_id: str, item: dict, after_data: dict) -> dict | None:
+    """Find a world setting target for update patches that omitted target_id."""
+    before_data = _parse_json_object(item.get("before_json"))
+    titles = [
+        str(candidate or "").strip()
+        for candidate in (after_data.get("title"), before_data.get("title"))
+        if str(candidate or "").strip()
+    ]
+    categories = {
+        str(candidate or "").strip()
+        for candidate in (after_data.get("category"), before_data.get("category"))
+        if str(candidate or "").strip()
+    }
+    settings = repo.list_world_settings(project_id)
+
+    for title in titles:
+        title_matches = [
+            setting
+            for setting in settings
+            if str(setting.get("title") or "").strip() == title
+        ]
+        if categories:
+            category_match = next(
+                (
+                    setting
+                    for setting in title_matches
+                    if str(setting.get("category") or "").strip() in categories
+                ),
+                None,
+            )
+            if category_match:
+                return category_match
+        if len(title_matches) == 1:
+            return title_matches[0]
+
+    if categories:
+        category_matches = [
+            setting
+            for setting in settings
+            if str(setting.get("category") or "").strip() in categories
+        ]
+        if len(category_matches) == 1:
+            return category_matches[0]
+
+    return None
+
+
+def _next_outline_sequence(repo, project_id: str, level: str) -> int:
+    sequences = [
+        _coerce_int(outline.get("sequence"), 0)
+        for outline in repo.list_outlines(project_id)
+        if str(outline.get("level") or "") == level
+    ]
+    return max(sequences, default=0) + 1
+
+
 def _apply_memory_item(
     repo,
     project_id: str,
@@ -142,9 +239,32 @@ def _apply_memory_item(
                 )
                 result["success"] = True
                 result["created_id"] = ws["id"] if ws else None
-            elif operation == "update" and target_id:
-                repo.update_world_setting(project_id, target_id, after_data)
-                result["success"] = True
+            elif operation == "update":
+                setting = repo.get_world_setting(project_id, _coerce_int(target_id)) if target_id else None
+                if not setting:
+                    setting = _find_world_setting_for_memory_update(repo, project_id, item, after_data)
+
+                if setting:
+                    updated = repo.update_world_setting(project_id, setting["id"], after_data)
+                    result["success"] = updated is not None
+                    result["created_id"] = setting["id"]
+                    if not updated:
+                        result["error"] = f"世界观设定 {setting['id']} 不存在，无法更新"
+                else:
+                    title = str(after_data.get("title") or "").strip()
+                    content = str(after_data.get("content") or "").strip()
+                    if not title and not content:
+                        result["error"] = "世界观更新缺少 target_id，且没有可创建的标题或内容"
+                    else:
+                        ws = repo.create_world_setting(
+                            project_id,
+                            category=str(after_data.get("category") or "未分类"),
+                            title=title or f"第{chapter_number}章世界观补充",
+                            content=content,
+                        )
+                        result["operation"] = "create"
+                        result["success"] = True
+                        result["created_id"] = ws["id"] if ws else None
 
         elif target_table == "characters":
             character_data = _normalize_text_fields(
@@ -221,16 +341,46 @@ def _apply_memory_item(
                 o = repo.create_outline(
                     project_id,
                     level=after_data.get("level", "arc"),
-                    sequence=after_data.get("sequence", 1),
+                    sequence=_coerce_int(after_data.get("sequence"), 1),
                     title=after_data.get("title", ""),
                     content=after_data.get("content", ""),
                     chapters_range=after_data.get("chapters_range", ""),
                 )
                 result["success"] = True
                 result["created_id"] = o["id"] if o else None
-            elif operation == "update" and target_id:
-                repo.update_outline(project_id, target_id, after_data)
-                result["success"] = True
+            elif operation == "update":
+                outline = repo.get_outline(project_id, _coerce_int(target_id)) if target_id else None
+                if not outline:
+                    outline = _find_outline_for_memory_update(repo, project_id, after_data)
+
+                if outline:
+                    updated = repo.update_outline(project_id, outline["id"], after_data)
+                    result["success"] = updated is not None
+                    result["created_id"] = outline["id"]
+                    if not updated:
+                        result["error"] = f"大纲 {outline['id']} 不存在，无法更新"
+                else:
+                    title = str(after_data.get("title") or "").strip()
+                    content = str(after_data.get("content") or "").strip()
+                    if not title and not content:
+                        result["error"] = "大纲更新缺少 target_id，且没有可创建的大纲标题或内容"
+                    else:
+                        level = str(after_data.get("level") or "arc").strip() or "arc"
+                        sequence = _coerce_int(
+                            after_data.get("sequence"),
+                            _next_outline_sequence(repo, project_id, level),
+                        )
+                        created = repo.create_outline(
+                            project_id,
+                            level=level,
+                            sequence=sequence,
+                            title=title or f"第{chapter_number}章记忆大纲",
+                            content=content,
+                            chapters_range=str(after_data.get("chapters_range") or ""),
+                        )
+                        result["operation"] = "create"
+                        result["success"] = True
+                        result["created_id"] = created["id"] if created else None
 
         elif target_table == "plot_holes":
             if operation == "create":
@@ -388,6 +538,106 @@ def _compute_batch_status(batch_id: str, repo) -> str:
     return "mixed"
 
 
+def _is_state_card_fallback_batch(batch: dict, items: list[dict]) -> bool:
+    """Return True when a batch is a low-confidence state-card fallback.
+
+    These batches are created only after MemoryCurator's real extraction fails.
+    They are useful as hints, but applying them directly pollutes project memory
+    because they have not been classified or verified by the memory extractor.
+    """
+    summary = str(batch.get("summary") or "")
+    if "状态卡兜底" in summary:
+        return True
+    for item in items:
+        rationale = str(item.get("rationale") or "")
+        confidence = float(item.get("confidence") or 0)
+        if "状态卡兜底候选" in rationale or (
+            confidence <= 0.45 and "MemoryCurator LLM 复核" in rationale
+        ):
+            return True
+    return False
+
+
+def _fallback_apply_error() -> EnvelopeResponse:
+    return error_response(
+        "FALLBACK_MEMORY_REQUIRES_REEXTRACTION",
+        "该批次是状态卡兜底候选，不是 MemoryCurator 真实提取结果。请重新补跑记忆提取，或逐条人工复核后再应用。",
+        details={
+            "domain_result": blocked_result(
+                "状态卡兜底记忆不能直接应用",
+                user_message="这批记忆来自状态卡兜底，不是可信提取结果。请先补跑记忆提取。",
+                next_action="backfill_memory",
+                action_label="补跑记忆提取",
+                flags={"fallback_memory_blocked": True},
+            ).to_dict(),
+        },
+    )
+
+
+def _build_memory_apply_domain_result(
+    batch_id: str,
+    new_status: str,
+    results: list[dict],
+) -> dict:
+    """Build v6.6.12 domain_result for memory batch apply routes."""
+    failed_count = sum(1 for r in results if not r.get("success"))
+    success_count = len(results) - failed_count
+    if new_status == "applied":
+        return success(
+            f"记忆批次应用成功：{success_count} 条已应用",
+            user_message="记忆更新已成功应用到项目",
+            details={
+                "batch_id": batch_id,
+                "items_processed": len(results),
+                "success_count": success_count,
+            },
+            flags={"memory_applied": True},
+        ).to_dict()
+    if new_status == "partial":
+        return partial_success(
+            f"记忆批次部分应用：{success_count} 成功，{failed_count} 失败",
+            user_message="部分记忆项应用失败，可重试失败项",
+            next_action="retry_failed_memory",
+            action_label="重试失败项",
+            details={
+                "batch_id": batch_id,
+                "items_processed": len(results),
+                "success_count": success_count,
+                "failed_count": failed_count,
+            },
+            flags={"memory_partial": True},
+        ).to_dict()
+    if new_status == "mixed":
+        return success(
+            f"记忆批次应用完成：{success_count} 成功，部分已忽略",
+            user_message="记忆更新已应用，部分项被忽略",
+            details={
+                "batch_id": batch_id,
+                "items_processed": len(results),
+                "success_count": success_count,
+            },
+            flags={"memory_mixed": True},
+        ).to_dict()
+    if new_status == "ignored":
+        return ignored(
+            "记忆批次已全部忽略",
+            user_message="所有记忆项已被忽略，未应用到项目",
+            details={
+                "batch_id": batch_id,
+                "items_processed": len(results),
+            },
+            flags={"memory_ignored": True},
+        ).to_dict()
+    return success(
+        f"记忆批次处理完成：{new_status}",
+        details={
+            "batch_id": batch_id,
+            "status": new_status,
+            "items_processed": len(results),
+        },
+    ).to_dict()
+
+
 @router.get("/projects/{project_id}/memory-batches")
 async def list_memory_batches(
     request: Request, project_id: str, status: str | None = None
@@ -401,6 +651,27 @@ async def list_memory_batches(
         project = repo.get_project(project_id)
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        try:
+            from ._memory_curator_gate import (
+                has_trusted_memory_batch,
+                ignore_duplicate_state_card_fallback_batches,
+                ignore_state_card_fallback_batches_for_chapter,
+            )
+
+            ignore_duplicate_state_card_fallback_batches(repo, project_id)
+            for batch in repo.list_memory_batches(project_id):
+                chapter_number = batch.get("chapter_number")
+                if chapter_number is None:
+                    continue
+                if has_trusted_memory_batch(repo, project_id, int(chapter_number)):
+                    ignore_state_card_fallback_batches_for_chapter(
+                        repo,
+                        project_id,
+                        int(chapter_number),
+                    )
+        except Exception:
+            pass
 
         batches = repo.list_memory_batches(project_id, status=status)
         return envelope_response(batches)
@@ -467,6 +738,8 @@ async def apply_memory_batch(
                 "NO_PENDING_MEMORY_ITEMS",
                 "该批次没有待应用的记忆项，请刷新后查看最新状态",
             )
+        if _is_state_card_fallback_batch(batch, items):
+            return _fallback_apply_error()
         results = []
 
         for item in items:
@@ -484,12 +757,14 @@ async def apply_memory_batch(
         # Recalculate batch status from all items
         new_status = _compute_batch_status(batch_id, repo)
         repo.update_memory_batch(batch_id, {"status": new_status})
+        domain_result = _build_memory_apply_domain_result(batch_id, new_status, results)
 
         return envelope_response({
             "batch_id": batch_id,
             "status": new_status,
             "items_processed": len(results),
             "results": results,
+            "domain_result": domain_result,
         })
 
     except Exception as e:
@@ -601,6 +876,8 @@ async def apply_memory_batch_canonical(
                 "NO_PENDING_MEMORY_ITEMS",
                 "该批次没有待应用的记忆项，请刷新后查看最新状态",
             )
+        if _is_state_card_fallback_batch(batch, items) and not body.allow_fallback:
+            return _fallback_apply_error()
         results = []
 
         for item in items:
@@ -618,11 +895,14 @@ async def apply_memory_batch_canonical(
         new_status = _compute_batch_status(body.batch_id, repo)
         repo.update_memory_batch(body.batch_id, {"status": new_status})
 
+        domain_result = _build_memory_apply_domain_result(body.batch_id, new_status, results)
+
         return envelope_response({
             "batch_id": body.batch_id,
             "status": new_status,
             "items_processed": len(results),
             "results": results,
+            "domain_result": domain_result,
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"应用批次失败: {str(e)}")

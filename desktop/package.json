@@ -1,0 +1,22 @@
+{
+  "name": "novelos-desktop",
+  "version": "6.6.18",
+  "description": "Novelos Desktop Client — v6.6.18 Segmented Agent Payloads & Genesis Quality Gate Semantic Alignment",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "npm run build && electron .",
+    "typecheck": "tsc --noEmit",
+    "lint": "echo 'No linter configured for M0'",
+    "pack:mac": "npm run build && electron-builder --mac --dir",
+    "dist:mac": "npm run build && electron-builder --mac",
+    "pack:mac:full": "bash ../packaging/scripts/build-desktop-mac.sh --dir",
+    "dist:mac:full": "bash ../packaging/scripts/build-desktop-mac.sh --dmg"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "electron": "^30.0.0",
+    "electron-builder": "^24.13.0",
+    "typescript": "^5.4.0"
+  }
+}

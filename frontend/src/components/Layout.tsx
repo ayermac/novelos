@@ -8,14 +8,18 @@ import {
   LayoutDashboard,
   FolderOpen,
   LucideIcon,
-  Feather,
   Menu,
   X,
   Activity,
   PanelLeftClose,
   PanelLeftOpen,
+  Moon,
+  Sun,
 } from 'lucide-react'
 import { get } from '../lib/api'
+import DesktopRuntimeBanner from './DesktopRuntimeBanner'
+import DesktopFirstRunSetup from './desktop/DesktopFirstRunSetup'
+import packageInfo from '../../package.json'
 
 interface NavItem {
   to: string
@@ -36,10 +40,25 @@ const navItems: NavItem[] = [
 ]
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'novelos.mainSidebar.collapsed'
+const THEME_STORAGE_KEY = 'novelos.theme'
+const APP_VERSION = packageInfo.version
+type ThemeMode = 'light' | 'dark'
+
+function getInitialTheme(): ThemeMode {
+  try {
+    const stored = window.localStorage.getItem(THEME_STORAGE_KEY)
+    if (stored === 'light' || stored === 'dark') return stored
+    if (window.matchMedia?.('(prefers-color-scheme: dark)').matches) return 'dark'
+  } catch {
+    // Ignore storage/media failures and fall back to the calmer daytime theme.
+  }
+  return 'light'
+}
 
 export default function Layout() {
   const [llmMode, setLlmMode] = useState<string>('stub')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [theme, setTheme] = useState<ThemeMode>(getInitialTheme)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     try {
       return window.localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY) === '1'
@@ -61,6 +80,7 @@ export default function Layout() {
 
   const isStub = llmMode === 'stub'
   const isProjectWorkspace = /^\/projects\/[^/]+/.test(location.pathname)
+  const logoSrc = window.__NOVELOS_DESKTOP__ ? './logo.png' : '/logo.png'
 
   useEffect(() => {
     setSidebarOpen(false)
@@ -74,8 +94,23 @@ export default function Layout() {
     }
   }, [sidebarCollapsed])
 
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme
+    document.documentElement.style.colorScheme = theme
+    try {
+      window.localStorage.setItem(THEME_STORAGE_KEY, theme)
+    } catch {
+      // Theme still applies for this session.
+    }
+  }, [theme])
+
+  const nextTheme = theme === 'dark' ? 'light' : 'dark'
+  const themeLabel = theme === 'dark' ? '切换到日间模式' : '切换到夜间模式'
+
   return (
     <div className="app-layout">
+      <DesktopRuntimeBanner />
+      <DesktopFirstRunSetup />
       {/* Mobile Toggle */}
       <button
         className="mobile-toggle"
@@ -93,23 +128,36 @@ export default function Layout() {
       >
         <div className="sidebar-brand">
           <div className="brand-icon">
-            <Feather size={22} />
+            <img src={logoSrc} alt="" aria-hidden="true" />
           </div>
           <div className="brand-text">
             <span className="brand-name">墨流工厂</span>
             <span className="brand-tagline">长篇小说生产系统</span>
           </div>
-          <span className="version">v5.5.9</span>
-          <button
-            type="button"
-            className="sidebar-collapse-toggle"
-            onClick={() => setSidebarCollapsed((value) => !value)}
-            aria-label={sidebarCollapsed ? '展开主菜单' : '收起主菜单'}
-            aria-expanded={!sidebarCollapsed}
-            title={sidebarCollapsed ? '展开主菜单' : '收起主菜单'}
-          >
-            {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
-          </button>
+          <div className="brand-meta-row">
+            <span className="version">v{APP_VERSION}</span>
+            <div className="sidebar-brand-actions">
+              <button
+                type="button"
+                className="sidebar-icon-toggle"
+                onClick={() => setTheme(nextTheme)}
+                aria-label={themeLabel}
+                title={themeLabel}
+              >
+                {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+              </button>
+              <button
+                type="button"
+                className="sidebar-icon-toggle"
+                onClick={() => setSidebarCollapsed((value) => !value)}
+                aria-label={sidebarCollapsed ? '展开主菜单' : '收起主菜单'}
+                aria-expanded={!sidebarCollapsed}
+                title={sidebarCollapsed ? '展开主菜单' : '收起主菜单'}
+              >
+                {sidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
+              </button>
+            </div>
+          </div>
         </div>
 
         <nav className="sidebar-nav">
@@ -191,13 +239,14 @@ export default function Layout() {
         .app-layout {
           display: flex;
           min-height: 100vh;
-          background: #f4f4f3;
+          background: var(--app-bg);
+          color: var(--text-primary);
         }
 
         .sidebar {
           width: var(--sidebar-width);
-          background: #fbfbfa;
-          border-right: 1px solid #dedbd4;
+          background: var(--sidebar-bg);
+          border-right: 1px solid var(--border-color);
           display: flex;
           flex-direction: column;
           position: fixed;
@@ -219,14 +268,14 @@ export default function Layout() {
         .sidebar-brand {
           padding: 22px 16px 18px;
           display: grid;
-          grid-template-columns: 42px minmax(0, 1fr) 34px;
+          grid-template-columns: 52px minmax(0, 1fr);
           grid-template-areas:
-            "icon text toggle"
-            "icon version toggle";
+            "icon text"
+            "meta meta";
           align-items: center;
-          column-gap: var(--space-3);
-          row-gap: var(--space-2);
-          border-bottom: 1px solid #dedbd4;
+          column-gap: 14px;
+          row-gap: 12px;
+          border-bottom: 1px solid var(--border-color);
         }
 
         .sidebar.collapsed .sidebar-brand {
@@ -239,15 +288,74 @@ export default function Layout() {
 
         .brand-icon {
           grid-area: icon;
-          width: 42px;
-          height: 42px;
+          width: 52px;
+          height: 52px;
           display: flex;
           align-items: center;
           justify-content: center;
-          background: #102338;
-          border-radius: 8px;
-          color: #fffefc;
+          background: transparent;
+          border-radius: 10px;
           flex: 0 0 auto;
+          overflow: hidden;
+          box-shadow: 0 10px 22px rgba(17, 24, 39, 0.16);
+        }
+
+        .brand-icon img {
+          width: 100%;
+          height: 100%;
+          display: block;
+          object-fit: cover;
+        }
+
+        .sidebar-brand-actions {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+        }
+
+        .sidebar-icon-toggle {
+          width: 32px;
+          height: 32px;
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          border: 1px solid var(--border-color);
+          border-radius: 8px;
+          background: var(--bg-primary);
+          color: var(--text-secondary);
+          cursor: pointer;
+          transition:
+            background var(--duration-fast) var(--ease-out),
+            color var(--duration-fast) var(--ease-out),
+            border-color var(--duration-fast) var(--ease-out),
+            transform var(--duration-fast) var(--ease-out);
+        }
+
+        .sidebar-icon-toggle:hover,
+        .sidebar-icon-toggle:focus-visible {
+          background: var(--bg-tertiary);
+          color: var(--primary);
+          border-color: var(--border-strong);
+          outline: none;
+        }
+
+        .sidebar-icon-toggle:active {
+          transform: translateY(1px);
+        }
+
+        .sidebar.collapsed .sidebar-brand-actions {
+          align-self: center;
+          flex-direction: column;
+        }
+
+        .brand-meta-row {
+          grid-area: meta;
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 10px;
+          min-width: 0;
+          padding-left: 66px;
         }
 
         .brand-text {
@@ -263,7 +371,7 @@ export default function Layout() {
           font-family: Georgia, 'Times New Roman', 'Songti SC', serif;
           font-size: 20px;
           font-weight: 600;
-          color: #191715;
+          color: var(--text-primary);
           letter-spacing: 0;
           white-space: nowrap;
           overflow: hidden;
@@ -272,7 +380,7 @@ export default function Layout() {
 
         .brand-tagline {
           font-size: 12px;
-          color: #68615b;
+          color: var(--text-secondary);
           margin-top: 2px;
           white-space: nowrap;
           overflow: hidden;
@@ -280,52 +388,29 @@ export default function Layout() {
         }
 
         .version {
-          grid-area: version;
-          justify-self: start;
-          align-self: start;
           font-size: 11px;
-          color: #761a34;
-          background: #f5eef1;
-          border: 1px solid rgba(118, 26, 52, 0.18);
+          color: var(--primary);
+          background: var(--accent-soft);
+          border: 1px solid var(--accent-border);
           padding: 3px 8px;
           border-radius: 4px;
           font-weight: 650;
           white-space: nowrap;
         }
 
-        .sidebar-collapse-toggle {
-          grid-area: toggle;
-          width: 34px;
-          height: 34px;
-          display: inline-flex;
-          align-items: center;
+        .sidebar.collapsed .brand-text {
+          display: none;
+        }
+
+        .sidebar.collapsed .brand-meta-row {
+          display: flex;
           justify-content: center;
-          border: 1px solid #dedbd4;
-          border-radius: 6px;
-          background: #fffefc;
-          color: #554f49;
-          cursor: pointer;
-          flex: 0 0 auto;
-          align-self: center;
-          transition:
-            background var(--duration-fast) var(--ease-out),
-            color var(--duration-fast) var(--ease-out),
-            border-color var(--duration-fast) var(--ease-out);
+          padding-left: 0;
+          width: 100%;
         }
 
-        .sidebar-collapse-toggle:hover {
-          background: #f6f2f0;
-          color: #761a34;
-          border-color: rgba(118, 26, 52, 0.26);
-        }
-
-        .sidebar-collapse-toggle:focus-visible {
-          outline: 2px solid rgba(118, 26, 52, 0.24);
-          outline-offset: 2px;
-        }
-
-        .sidebar.collapsed .brand-text,
-        .sidebar.collapsed .version {
+        .sidebar.collapsed .version,
+        .sidebar.collapsed .sidebar-brand-actions .sidebar-icon-toggle:first-child {
           display: none;
         }
 
@@ -350,6 +435,7 @@ export default function Layout() {
           margin-top: 18px;
           margin-bottom: 8px;
           padding: 0 12px;
+          color: var(--text-muted);
         }
 
         .nav-section:first-child {
@@ -360,7 +446,7 @@ export default function Layout() {
           height: 1px;
           margin: 12px 8px;
           padding: 0;
-          background: #dedbd4;
+          background: var(--border-color);
           color: transparent;
           overflow: hidden;
         }
@@ -375,7 +461,7 @@ export default function Layout() {
           gap: 10px;
           min-height: 38px;
           padding: 0 12px;
-          color: #554f49;
+          color: var(--text-secondary);
           text-decoration: none;
           border-radius: 6px;
           transition: all var(--duration-fast) var(--ease-out);
@@ -399,11 +485,11 @@ export default function Layout() {
           min-width: max-content;
           max-width: 180px;
           padding: 6px 9px;
-          border: 1px solid rgba(34, 28, 24, 0.1);
+          border: 1px solid var(--border-color);
           border-radius: 4px;
-          background: #191715;
-          color: #fffefc;
-          box-shadow: 0 12px 28px rgba(31, 27, 25, 0.18);
+          background: var(--tooltip-bg);
+          color: var(--tooltip-text);
+          box-shadow: var(--shadow-md);
           font-size: 12px;
           font-weight: 620;
           line-height: 1;
@@ -424,13 +510,13 @@ export default function Layout() {
         }
 
         .nav-link:hover {
-          background: #f6f2f0;
-          color: #191715;
+          background: var(--bg-tertiary);
+          color: var(--text-primary);
         }
 
         .nav-link.active {
-          background: #f3e8eb;
-          color: #761a34;
+          background: var(--accent-soft);
+          color: var(--primary);
           font-weight: 650;
         }
 
@@ -442,7 +528,7 @@ export default function Layout() {
           transform: translateY(-50%);
           width: 3px;
           height: 20px;
-          background: #761a34;
+          background: var(--primary);
           border-radius: 0 999px 999px 0;
         }
 
@@ -453,13 +539,13 @@ export default function Layout() {
           transform: translateY(-50%);
           width: 3px;
           height: 20px;
-          background: #761a34;
+          background: var(--primary);
           border-radius: 0 999px 999px 0;
         }
 
         .sidebar-footer {
           padding: 14px 18px;
-          border-top: 1px solid #dedbd4;
+          border-top: 1px solid var(--border-color);
         }
 
         .sidebar.collapsed .sidebar-footer {
@@ -473,7 +559,7 @@ export default function Layout() {
           align-items: center;
           gap: var(--space-2);
           font-size: 12px;
-          color: #554f49;
+          color: var(--text-secondary);
         }
 
         .sidebar.collapsed .status-indicator span {
@@ -488,11 +574,11 @@ export default function Layout() {
         }
 
         .mode-dot.stub {
-          background: #b46b18;
+          background: var(--warning);
         }
 
         .mode-dot.real {
-          background: #1d7b46;
+          background: var(--success);
         }
 
         .mode-dot.real::after {
@@ -500,18 +586,18 @@ export default function Layout() {
           position: absolute;
           inset: -4px;
           border-radius: 50%;
-          border: 1px solid #1d7b46;
+          border: 1px solid var(--success);
           animation: pulse-ring 2s ease-out infinite;
         }
 
         .topbar {
           height: var(--topbar-height);
-          background: rgba(252, 252, 250, 0.96);
+          background: var(--topbar-bg);
           backdrop-filter: blur(14px);
           position: relative;
           display: flex;
           align-items: center;
-          border-bottom: 1px solid #dedbd4;
+          border-bottom: 1px solid var(--border-color);
         }
 
         .topbar-gradient {
@@ -520,7 +606,7 @@ export default function Layout() {
           left: 0;
           right: 0;
           height: 3px;
-          background: linear-gradient(90deg, #102338 0%, #761a34 58%, #118384 100%);
+          background: var(--gradient-ink);
         }
 
         .topbar-content {
@@ -542,15 +628,15 @@ export default function Layout() {
           font-family: Georgia, 'Times New Roman', 'Songti SC', serif;
           font-size: 18px;
           font-weight: 600;
-          color: #191715;
+          color: var(--text-primary);
         }
 
         .topbar-subtitle {
           font-size: 12px;
-          color: #6f6862;
+          color: var(--text-secondary);
           padding: 3px 8px;
-          border: 1px solid #dedbd4;
-          background: #f7f4ef;
+          border: 1px solid var(--border-color);
+          background: var(--bg-tertiary);
           border-radius: 6px;
         }
 
@@ -647,24 +733,25 @@ export default function Layout() {
 
           .sidebar.collapsed .sidebar-brand {
             display: grid;
-            grid-template-columns: 42px minmax(0, 1fr);
+            grid-template-columns: 52px minmax(0, 1fr);
             grid-template-areas:
               "icon text"
-              "icon version";
+              "meta meta";
             justify-content: flex-start;
-            column-gap: var(--space-3);
-            row-gap: var(--space-2);
+            column-gap: 14px;
+            row-gap: 12px;
             padding: var(--space-5) var(--space-5) var(--space-4);
           }
 
           .sidebar.collapsed .brand-text,
-          .sidebar.collapsed .version,
+          .sidebar.collapsed .brand-meta-row,
           .sidebar.collapsed .nav-link span,
           .sidebar.collapsed .status-indicator span {
             display: flex;
           }
 
-          .sidebar.collapsed .version {
+          .sidebar.collapsed .version,
+          .sidebar.collapsed .sidebar-brand-actions .sidebar-icon-toggle:first-child {
             display: inline-flex;
           }
 
@@ -684,8 +771,8 @@ export default function Layout() {
             padding: var(--space-3) var(--space-4);
           }
 
-          .sidebar-collapse-toggle {
-            display: none;
+          .sidebar.collapsed .sidebar-brand-actions {
+            flex-direction: row;
           }
 
           .main-area {

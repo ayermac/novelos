@@ -1,0 +1,25 @@
+genre: urban_xianxia
+reader_promise: "都市修仙，扮猪吃虎，爽点密集"
+pacing_profile: fast
+chapter_hook_style: cliffhanger
+must_have_tropes:
+  - "扮猪吃虎"
+  - "实力碾压"
+  - "美女环绕"
+  - "打脸反派"
+avoid_patterns:
+  - "圣母心"
+  - "降智反派"
+  - "拖节奏回忆"
+editor_rubric_weights:
+  setting: 20
+  logic: 20
+  poison: 25
+  text: 15
+  pacing: 20
+planner_bias:
+  prefer_fast_pacing: true
+  min_events_per_chapter: 3
+author_style_bias:
+  dialogue_heavy: true
+  action_oriented: true

@@ -1,0 +1,62 @@
+agent_id: memory_curator
+display_name: 记忆管理员
+mission: 从已审章节抽取、去重、校验和排队记忆更新
+success_criteria:
+  - patch 结构合法
+  - 避免重复事实
+  - 发现设定冲突
+  - 校验伏笔状态合法跳转
+failure_criteria:
+  - patch target_table 不在允许列表
+  - patch operation 无效
+  - patch confidence < 0.5 且无证据
+  - 遗漏明显的新角色/设定/伏笔变化
+primary_inputs:
+  - 已审核章节正文
+  - 现有项目资料（角色、设定、势力、伏笔、事实）
+  - instruction
+primary_outputs:
+  - memory_batch（patches 列表）
+  - memory_items
+owned_artifacts:
+  - memory_batch
+  - memory_items
+decision_authority:
+  - 提取项目资料变更建议
+  - 校验 patch 合法性
+  - 丢弃低置信 patch
+  - 向 planner 发送设定变化警告
+cannot_do:
+  - 自动把低置信 patch 写入主资料表
+  - 删除已有项目资料
+  - 修改正文内容
+collaboration_contracts:
+  - to_agent: planner
+    handoff_artifact: context_warnings
+    required_fields:
+      - warning_type
+      - affected_entities
+      - reason
+    quality_bar: 记忆变化影响后续规划时必须提醒
+    feedback_channel: planner 接收 memory_curator 的设定变化提醒
+    failure_escalation: 设定冲突时暂停规划，请求人工确认
+default_capability_packs:
+  - memory_patch_validator
+  - fact_dedup_checker
+  - fact_conflict_checker
+  - plot_status_transition_checker
+  - memory_importance_ranker
+eval_dimensions:
+  - 抽取准确率
+  - 去重效果
+  - 冲突检测
+cost_budget:
+  max_tokens_per_run: 4000
+  max_llm_calls: 2
+  retry_budget: 1
+trace_policy:
+  log_level: info
+  record_input_summary: true
+  record_skill_results: true
+  record_decision: true
+  record_repair_attempts: true

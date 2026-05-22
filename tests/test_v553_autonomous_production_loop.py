@@ -101,7 +101,10 @@ class TestProductionNextAPI:
         assert gen_resp.status_code == 200
         genesis_id = gen_resp.json()["data"]["id"]
 
-        app_resp = client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve")
+        app_resp = client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         assert app_resp.status_code == 200
         assert app_resp.json()["ok"] is True
 
@@ -140,7 +143,10 @@ class TestProductionNextAPI:
         })
         assert gen_resp.status_code == 200
         genesis_id = gen_resp.json()["data"]["id"]
-        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve")
+        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
 
         # Ensure chapter 1 exists in planned status
         from novel_factory.db.repository import Repository
@@ -158,8 +164,8 @@ class TestProductionNextAPI:
         # With approved genesis and instructions present, next action must be generate_chapter
         assert data["next_action"]["key"] == "generate_chapter"
 
-    def test_manual_context_ready_does_not_require_genesis(self, client):
-        """Manual world/character/outline/instruction context should allow writing."""
+    def test_manual_context_ready_requires_genesis(self, client):
+        """v6.3.2: Manual context alone is not enough; approved genesis is required."""
         resp = client.post("/api/onboarding/projects", json={
             "project_id": "manual-ready-test",
             "name": "雾城回声",
@@ -186,9 +192,9 @@ class TestProductionNextAPI:
         assert body["ok"] is True
         data = body["data"]
         assert data["health"]["has_approved_genesis"] is False
-        assert data["health"]["manual_context_ready"] is True
-        assert data["next_action"]["key"] == "generate_chapter"
-        assert all(item["key"] != "genesis" for item in data["missing"])
+        assert data["health"]["manual_context_ready"] is False
+        assert data["next_action"]["key"] == "generate_genesis"
+        assert any(item["key"] == "genesis" for item in data["missing"])
 
     def test_failed_run_on_planned_chapter_does_not_block_retry(self, client):
         """A stale failed run should not block a planned chapter from retrying."""
@@ -219,6 +225,8 @@ class TestProductionNextAPI:
             "word_target": 3000,
         })
         repo = Repository(db_path)
+        # v6.3.2: approved genesis is required for generate_chapter
+        repo.create_genesis_run("planned-retry-test", input_json='{"title":"test"}', status="approved")
         run_id = repo.create_workflow_run("planned-retry-test", 1)
         repo.update_workflow_run(run_id, status="failed", current_node="screenwriter", error_message="bad json")
 
@@ -248,7 +256,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/block-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/block-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/block-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/block-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -282,7 +293,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/mem-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/mem-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/mem-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/mem-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -324,7 +338,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/prio-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/prio-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/prio-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/prio-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -370,7 +387,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/stale-prio-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/stale-prio-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/stale-prio-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/stale-prio-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -408,6 +428,56 @@ class TestProductionNextAPI:
         assert data["next_action"]["run_id"] == run_id
         os.unlink(db_path)
 
+    def test_running_any_chapter_takes_priority_over_pending_memory(self, client, project_id):
+        """A healthy running workflow on another chapter must outrank memory updates."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "running-any-test", "name": "Running Any Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 10, "target_words": 30000,
+        })
+        tc.post("/api/projects/running-any-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
+        })
+        gid = tc.get("/api/projects/running-any-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/running-any-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
+        tc.post("/api/projects/running-any-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        repo.update_project("running-any-test", current_chapter=1)
+        run_id = repo.create_workflow_run("running-any-test", 2)
+        repo.update_workflow_run(run_id, status="running", current_node="screenwriter")
+        batch = repo.create_memory_batch("running-any-test", chapter_number=1, summary="test batch")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id="running-any-test",
+            target_table="characters",
+            operation="update",
+            after_json='{"name":"Test"}',
+            target_id="1",
+        )
+
+        resp = tc.get("/api/projects/running-any-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["health"]["has_pending_memory_updates"] is True
+        assert data["next_action"]["key"] == "view_running_workflow"
+        assert data["next_action"]["target_chapter"] == 2
+        assert data["next_action"]["run_id"] == run_id
+        os.unlink(db_path)
+
     def test_planned_chapter_with_content_suggests_review_existing_content(self, client, project_id):
         """Planned chapters with preserved content should not suggest generation."""
         from novel_factory.api_app import create_api_app
@@ -427,7 +497,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/existing-content-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/existing-content-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/existing-content-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/existing-content-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -468,7 +541,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/old-fail-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/old-fail-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/old-fail-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/old-fail-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -508,7 +584,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/pub-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/pub-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/pub-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/pub-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -548,7 +627,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 20, "target_words": 60000,
         })
         gid = tc.get("/api/projects/next-inst-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/next-inst-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/next-inst-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/next-inst-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -604,7 +686,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/target-run-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/target-run-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/target-run-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/target-run-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -649,7 +734,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 20, "target_words": 60000,
         })
         gid = tc.get("/api/projects/non-curr-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/non-curr-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/non-curr-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/non-curr-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -690,7 +778,10 @@ class TestProductionNextAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/same-sec-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/same-sec-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/same-sec-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         tc.post("/api/projects/same-sec-test/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -744,7 +835,10 @@ class TestAutoFillAPI:
             "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
         })
         gid = tc.get("/api/projects/af-test/genesis/latest").json()["data"]["id"]
-        tc.post(f"/api/projects/af-test/genesis/{gid}/approve")
+        tc.post(f"/api/projects/af-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
 
         # Delete all created context to simulate gaps
         repo = Repository(db_path)
@@ -783,7 +877,10 @@ class TestAutoFillAPI:
             "target_chapters": 10, "target_words": 30000,
         })
         genesis_id = gen_resp.json()["data"]["id"]
-        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve")
+        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
 
         # Manually create a world setting before auto-fill
         client.post(f"/api/projects/{project_id}/world-settings", json={
@@ -817,7 +914,10 @@ class TestArcPlanAPI:
             "target_chapters": 20, "target_words": 60000,
         })
         genesis_id = gen_resp.json()["data"]["id"]
-        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve")
+        client.post(f"/api/projects/{project_id}/genesis/{genesis_id}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
         client.post(f"/api/projects/{project_id}/production/auto-fill", json={
             "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
         })
@@ -879,23 +979,24 @@ class TestFrontendCopy:
             source = f.read()
         assert "生成章节计划" in source or "generate_arc_plan" in source
 
-    def test_project_overview_generate_chapter_opens_workflow_stream(self):
-        """Generate chapter from overview should open the chapter workflow and auto-start generation."""
+    def test_project_overview_generate_chapter_opens_chapter_page(self):
+        """v6.3.2: Generate chapter from overview navigates to chapter page without auto_generate."""
         path = os.path.join(os.path.dirname(__file__), "../frontend/src/components/project/ProjectOverviewModule.tsx")
         path = os.path.abspath(path)
         with open(path, "r", encoding="utf-8") as f:
             source = f.read()
-        assert "view=workflow&auto_generate=1" in source
-        assert "generate_chapter" in source
+        assert "auto_generate=1" not in source
+        assert "module=chapters" in source
+        assert "continue_next_chapter" in source
 
-    def test_project_detail_autogenerate_query_triggers_workflow(self):
-        """ProjectDetail should auto-start chapter generation when auto_generate=1 is present."""
+    def test_project_detail_no_autogenerate_query(self):
+        """v6.3.2: ProjectDetail should not use auto_generate=1 or auto-trigger workflow."""
         path = os.path.join(os.path.dirname(__file__), "../frontend/src/pages/ProjectDetail.tsx")
         path = os.path.abspath(path)
         with open(path, "r", encoding="utf-8") as f:
             source = f.read()
-        assert "auto_generate" in source
-        assert "handleGenerate()" in source
+        assert "auto_generate=1" not in source
+        assert "setSearchParams({ chapter: String(nextCh) }" in source or 'setSearchParams({ chapter: String(nextCh) }, { replace: true })' in source
 
     def test_genesis_module_reframed_as_init(self):
         """GenesisModule reframes genesis as one-time initialization."""
@@ -905,6 +1006,17 @@ class TestFrontendCopy:
             source = f.read()
         assert "项目初始化" in source
         assert "创世只需一次" in source or "只需一次" in source
+        assert "首批规划章数" in source
+        assert "首批规划字数" in source
+        assert "不代表整本书总章数" in source
+        assert "目标章数" not in source
+        assert "请先补齐创世设定的必要信息" in source
+        assert "创世草案不完整，不能应用" in source
+        assert "missingRequiredSections" in source
+        assert "required" in source
+        assert "已继承项目基础信息" in source
+        assert "genesis?.status !== 'running'" in source
+        assert "loadGenesis(false)" in source
 
     def test_recovery_action_normalizes_api_prefix(self):
         """Recovery action strips /api prefix from action_url to avoid /api/api double prefix."""

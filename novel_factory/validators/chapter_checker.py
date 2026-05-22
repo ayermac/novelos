@@ -6,7 +6,9 @@ v1 implements:
 - Non-empty content check
 
 v5.3.0 adds:
-- Quality gate word count enforcement (Author/Polisher < 0.85 = fail, Editor < 0.9 = no pass)
+- Quality gate word count enforcement.
+v6.6.0 routes all agent word-count checks through WordCountPolicy so
+  85%-90% is an advisory warning instead of an Editor-only hard failure.
 - word_target derivation from instruction or project settings
 """
 
@@ -20,8 +22,8 @@ DEFAULT_MIN_WORDS = 500
 DEFAULT_MAX_WORDS = 8000
 
 # v5.3.0: Quality gate thresholds
-QUALITY_GATE_AUTHOR_THRESHOLD = 0.85  # Author/Polisher: content < word_target * 0.85 = fail
-QUALITY_GATE_EDITOR_THRESHOLD = 0.90  # Editor: content < word_target * 0.9 = no pass
+QUALITY_GATE_AUTHOR_THRESHOLD = 0.85
+QUALITY_GATE_EDITOR_THRESHOLD = 0.85
 
 
 def _coerce_positive_int(value, default: int = 0) -> int:
@@ -112,28 +114,48 @@ def check_word_count_quality_gate(
         - passed: True if word count meets threshold.
         - message: Description of the result.
     """
+    from .word_count_policy import DEFAULT_POLICY
+
     word_count = count_words(content)
     word_target = _coerce_positive_int(word_target, 2500)
 
     if word_count == 0:
         return False, "内容为空"
 
-    # Determine threshold based on agent type
-    if agent_type in ("author", "polisher"):
-        threshold = QUALITY_GATE_AUTHOR_THRESHOLD
-    elif agent_type == "editor":
-        threshold = QUALITY_GATE_EDITOR_THRESHOLD
-    else:
-        # Unknown agent type, use strict threshold
-        threshold = QUALITY_GATE_EDITOR_THRESHOLD
-
-    minimum_required = int(word_target * threshold)
-
-    if word_count < minimum_required:
+    passed, level, message = DEFAULT_POLICY.evaluate(word_count, word_target, agent_type)
+    if not passed:
+        minimum_required = int(word_target * DEFAULT_POLICY.hard_fail_ratio)
         shortfall = minimum_required - word_count
-        return False, f"字数未达标: {word_count} < {minimum_required} (目标 {word_target} × {threshold:.0%})，差 {shortfall} 字"
+        return False, (
+            f"字数未达标: {word_count} < {minimum_required} "
+            f"(目标 {word_target} × {DEFAULT_POLICY.hard_fail_ratio:.0%})，差 {shortfall} 字"
+        )
+    if level == "warning":
+        return True, f"字数偏低但未触发硬门: {message}"
+    return True, message
 
-    return True, f"字数达标: {word_count} >= {minimum_required}"
+
+def check_word_count_upper_gate(
+    content: str,
+    word_target: int,
+    agent_type: str,
+    *,
+    upper_buffer: int = 1200,
+    upper_ratio: float = 1.6,
+) -> tuple[bool, str]:
+    """Reject outputs that ignore the chapter's explicit upper length guard."""
+    word_count = count_words(content)
+    word_target = _coerce_positive_int(word_target, 2500)
+    if word_count == 0 or word_target <= 0:
+        return True, "无可检查的字数上限"
+
+    maximum_allowed = max(word_target + upper_buffer, int(word_target * upper_ratio))
+    if word_count > maximum_allowed:
+        return False, (
+            f"字数超标: {word_count} > {maximum_allowed} "
+            f"(目标 {word_target}，上限缓冲 {upper_buffer})"
+        )
+    return True, f"字数未超上限（{word_count}/{maximum_allowed}）"
 
 
 def derive_word_target(

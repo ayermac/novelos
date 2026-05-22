@@ -31,14 +31,14 @@ export default function ChapterDiffViewer({ projectId, chapterNumber, leftVersio
   useEffect(() => { loadDiff() }, [loadDiff])
 
   if (loading) {
-    return <div style={{ padding: 16, color: '#888' }}>加载版本对比…</div>
+    return <div className="chapter-diff-state">加载版本对比…</div>
   }
 
   if (error) {
     return (
-      <div style={{ padding: 16 }}>
-        <div style={{ color: '#c62828', marginBottom: 8 }}>{error}</div>
-        {onClose && <button onClick={onClose}>关闭</button>}
+      <div className="chapter-diff-state">
+        <div className="chapter-diff-error">{error}</div>
+        {onClose && <button className="chapter-diff-close" onClick={onClose}>关闭</button>}
       </div>
     )
   }
@@ -46,17 +46,17 @@ export default function ChapterDiffViewer({ projectId, chapterNumber, leftVersio
   if (!diff) return null
 
   return (
-    <div className="chapter-diff-viewer" style={{ padding: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-        <h4 style={{ margin: 0 }}>
+    <div className="chapter-diff-viewer">
+      <div className="chapter-diff-header">
+        <h4>
           版本对比：#{leftVersionId} → #{rightVersionId}
         </h4>
-        <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-          <span style={{ fontSize: 13, color: diff.word_count_delta >= 0 ? '#2e7d32' : '#c62828' }}>
+        <div className="chapter-diff-actions">
+          <span className={diff.word_count_delta >= 0 ? 'chapter-diff-delta positive' : 'chapter-diff-delta negative'}>
             {diff.word_count_delta >= 0 ? '+' : ''}{diff.word_count_delta} 字
           </span>
           {onClose && (
-            <button onClick={onClose} style={{ border: 'none', background: '#f5f5f5', borderRadius: 4, padding: '4px 10px', cursor: 'pointer' }}>
+            <button onClick={onClose} className="chapter-diff-close">
               关闭
             </button>
           )}
@@ -64,31 +64,31 @@ export default function ChapterDiffViewer({ projectId, chapterNumber, leftVersio
       </div>
 
       {/* Changed blocks */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+      <div className="chapter-diff-blocks">
         {diff.changed_blocks.length === 0 ? (
-          <div style={{ color: '#aaa', fontSize: 14 }}>两个版本内容完全相同</div>
+          <div className="chapter-diff-empty">两个版本内容完全相同</div>
         ) : (
           diff.changed_blocks.map((block, idx) => (
-            <div key={idx} style={{ borderRadius: 4, overflow: 'hidden' }}>
+            <div key={idx} className="chapter-diff-block">
               {block.type === 'removed' && block.lines && (
-                <div style={{ background: '#fdecea', padding: '4px 8px', whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.6 }}>
+                <div className="chapter-diff-line removed">
                   {block.lines.join('')}
                 </div>
               )}
               {block.type === 'added' && block.lines && (
-                <div style={{ background: '#e8f5e9', padding: '4px 8px', whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.6 }}>
+                <div className="chapter-diff-line added">
                   {block.lines.join('')}
                 </div>
               )}
               {block.type === 'changed' && (
                 <>
                   {block.removed_lines && (
-                    <div style={{ background: '#fdecea', padding: '4px 8px', whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.6, textDecoration: 'line-through', opacity: 0.7 }}>
+                    <div className="chapter-diff-line removed changed">
                       {block.removed_lines.join('')}
                     </div>
                   )}
                   {block.added_lines && (
-                    <div style={{ background: '#e8f5e9', padding: '4px 8px', whiteSpace: 'pre-wrap', fontSize: 14, lineHeight: 1.6 }}>
+                    <div className="chapter-diff-line added">
                       {block.added_lines.join('')}
                     </div>
                   )}

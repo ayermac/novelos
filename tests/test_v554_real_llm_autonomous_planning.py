@@ -47,7 +47,10 @@ def initialized_db():
         "target_chapters": 20, "target_words": 60000,
     })
     gid = tc.get("/api/projects/v554-test/genesis/latest").json()["data"]["id"]
-    tc.post(f"/api/projects/v554-test/genesis/{gid}/approve")
+    tc.post(f"/api/projects/v554-test/genesis/{gid}/approve", json={
+        "force_apply": True,
+        "confirm_quality_risk": True,
+    })
 
     tc.post("/api/projects/v554-test/production/auto-fill", json={
         "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
@@ -276,6 +279,58 @@ class TestAutoFillEmptyOutput:
         assert body["error"]["code"] == "NO_CONTENT_CREATED"
         # Verify no new world_settings were created (fixture creates 2 initially)
         assert len(repo.list_world_settings("v554-test")) == 2
+
+    def test_autofill_coerces_list_fields_from_real_llm(self, real_client_mock, initialized_db):
+        """Real providers often return list traits/key_events; auto-fill should salvage them."""
+        from novel_factory.db.repository import Repository
+        repo = Repository(initialized_db)
+        for inst in repo.list_instructions("v554-test"):
+            repo.delete_instruction("v554-test", inst["id"])
+        for ch in repo.list_characters("v554-test", include_inactive=True):
+            repo.delete_character("v554-test", ch["id"])
+
+        mock_llm = MagicMock()
+        mock_llm.invoke_json.return_value = {
+            "world_settings": [],
+            "characters": [
+                {
+                    "name": "叶辰",
+                    "role": "protagonist",
+                    "description": "仙帝重生到都市的主角。",
+                    "traits": ["冷静果决", "仙帝记忆"],
+                }
+            ],
+            "outlines": [],
+            "plot_holes": [],
+            "instructions": [
+                {
+                    "chapter_number": 1,
+                    "objective": "叶辰回归都市，建立重生处境。",
+                    "key_events": ["醒来", "发现灵气稀薄"],
+                    "plots_to_plant": "仙帝陨落真相",
+                    "plots_to_resolve": [],
+                    "emotion_tone": "压抑后反击",
+                    "ending_hook": "叶家来人逼迫。",
+                    "word_target": 3000,
+                }
+            ],
+        }
+
+        from novel_factory.api import deps
+        with patch.object(deps, "get_llm_provider", return_value=mock_llm):
+            resp = real_client_mock.post("/api/projects/v554-test/production/auto-fill", json={
+                "scope": "missing_context", "chapter_start": 1, "chapter_end": 1, "confirm": True,
+            })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["created"]["characters"] == 1
+        assert body["data"]["created"]["instructions"] == 1
+        character = repo.list_characters("v554-test", include_inactive=True)[0]
+        assert "冷静果决" in character["traits"]
+        instruction = repo.get_instruction_by_chapter("v554-test", 1)
+        assert "醒来" in instruction["key_events"]
 
 
 class TestArcPlanEmptyOutput:

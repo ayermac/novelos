@@ -2,7 +2,102 @@
 
 from __future__ import annotations
 
+import logging
+from typing import Any
+
 from ..models.state import ChapterStatus, FactoryState
+
+logger = logging.getLogger(__name__)
+
+VALID_REVISION_TARGETS = frozenset({"author", "polisher", "planner"})
+
+
+def normalize_revision_target(value: Any) -> str:
+    """Return a safe workflow revision target.
+
+    Editor outputs and historical review rows may be missing, empty, or contain
+    non-routable values. Revision is safest when it degrades to Author because
+    Author can regenerate the chapter from the existing screenplay.
+    """
+    return value if value in VALID_REVISION_TARGETS else "author"
+
+
+def revision_target_from_state(state: FactoryState) -> str:
+    """Read revision_target from workflow state with a safe default."""
+    gate = state.get("quality_gate", {}) or {}
+    return normalize_revision_target(gate.get("revision_target"))
+
+
+def resolve_revision_target(repo: Any, project_id: str, chapter_number: int) -> str:
+    """Recover revision_target from the latest review when state.quality_gate is missing.
+
+    When a workflow starts fresh for a revision chapter, quality_gate may not be
+    in state. This helper loads the latest review to determine which Agent should
+    handle the revision. Falls back to "author" if no review exists.
+    """
+    try:
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return "author"
+        review = repo.get_latest_review(project_id, chapter["id"])
+        if review:
+            return normalize_revision_target(review.get("revision_target"))
+    except Exception:
+        logger.debug("resolve_revision_target failed for %s/%s", project_id, chapter_number)
+    return "author"
+
+
+def get_latest_review_data(repo: Any, project_id: str, chapter_number: int) -> dict | None:
+    """Load the latest review record for a chapter. Returns None on failure."""
+    try:
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return None
+        return repo.get_latest_review(project_id, chapter["id"])
+    except Exception:
+        return None
+
+
+def hydrate_revision_state(state: FactoryState, repo: Any) -> FactoryState:
+    """Populate revision routing metadata for a fresh revision run.
+
+    Fresh graph runs are built from DB chapter status and may not have the
+    editor's quality_gate in memory. This helper restores the latest review's
+    revision_target and compact review metadata in one place so streaming and
+    non-streaming runners cannot drift.
+    """
+    if state.get("chapter_status") != ChapterStatus.REVISION.value:
+        return state
+
+    project_id = state.get("project_id")
+    chapter_number = state.get("chapter_number")
+    if not project_id or chapter_number is None:
+        return state
+
+    hydrated: FactoryState = dict(state)
+    resolved_target = resolve_revision_target(repo, project_id, int(chapter_number))
+    if not hydrated.get("quality_gate"):
+        hydrated["quality_gate"] = {
+            "pass": False,
+            "revision_target": resolved_target,
+        }
+    elif not (hydrated.get("quality_gate") or {}).get("revision_target"):
+        hydrated["quality_gate"] = {
+            **(hydrated.get("quality_gate") or {}),
+            "revision_target": resolved_target,
+        }
+
+    review = get_latest_review_data(repo, project_id, int(chapter_number))
+    if review and not hydrated.get("_revision_review"):
+        hydrated["_revision_review"] = {
+            "review_id": review.get("id"),
+            "score": review.get("score"),
+            "revision_target": normalize_revision_target(review.get("revision_target")),
+            "issues": review.get("issues"),
+            "suggestions": review.get("suggestions"),
+        }
+
+    return hydrated
 
 
 def route_by_chapter_status(state: FactoryState) -> str:
@@ -43,8 +138,7 @@ def route_by_chapter_status(state: FactoryState) -> str:
 
     # For revision, check quality_gate to determine target
     if status == ChapterStatus.REVISION.value:
-        gate = state.get("quality_gate", {})
-        target = gate.get("revision_target", "author")
+        target = revision_target_from_state(state)
         if target == "polisher":
             return "polisher"
         elif target == "planner":
@@ -93,7 +187,12 @@ def route_after_agent(state: FactoryState) -> str:
     # the gate is stale from a previous failed attempt that was retried.
     if (
         gate.get("pass") is False
-        and (gate.get("word_count_fail") or gate.get("death_penalty_fail"))
+        and (
+            gate.get("word_count_fail")
+            or gate.get("death_penalty_fail")
+            or gate.get("scene_beat_coverage_fail")
+            or gate.get("version_regression")
+        )
         and current_status not in (
             ChapterStatus.DRAFTED.value,
             ChapterStatus.POLISHED.value,
@@ -107,14 +206,20 @@ def route_after_agent(state: FactoryState) -> str:
 def route_after_memory_curator(state: FactoryState) -> str:
     """Route after memory curator: publish (stub) or awaiting_publish (real).
 
-    v5.3.2 closure: In real mode, memory curator failure blocks publish.
+    v6.2: Memory curator failures still route to human_review by default
+    to maintain safety. Future versions may support configurable degradation.
     """
-    # If memory curator failed in real mode, route to human_review
     if state.get("requires_human") or state.get("error"):
         return "human_review"
 
     llm_mode = state.get("llm_mode", "stub")
     if llm_mode == "real":
+        if (
+            state.get("memory_curator_degraded")
+            or state.get("fallback_created")
+            or state.get("extraction_success") is False
+        ):
+            return "human_review"
         return "awaiting_publish"
     return "publish"
 
@@ -137,8 +242,7 @@ def route_by_revision_type(state: FactoryState) -> str:
         }
         return routing_by_status.get(status, "human_review")
 
-    gate = state.get("quality_gate", {})
-    target = gate.get("revision_target", "author")
+    target = revision_target_from_state(state)
 
     routing = {
         "author": "author",
@@ -146,3 +250,28 @@ def route_by_revision_type(state: FactoryState) -> str:
         "planner": "planner",
     }
     return routing.get(target, "author")
+
+
+def prepare_resume_after_human_review(state: FactoryState, repo: Any) -> dict:
+    """Prepare state for resuming after human review intervention.
+
+    This helper clears stale checkpoints and resets key flags so the
+    workflow can be safely re-triggered after manual fixes.
+    """
+    project_id = state.get("project_id")
+    chapter_number = state.get("chapter_number")
+
+    result = {
+        "requires_human": False,
+        "error": None,
+        "current_stage": "resumed",
+    }
+
+    if project_id and chapter_number:
+        try:
+            from .checkpoint import delete_checkpoint_thread
+            delete_checkpoint_thread(repo.db_path, project_id, int(chapter_number))
+        except Exception:
+            pass
+
+    return result

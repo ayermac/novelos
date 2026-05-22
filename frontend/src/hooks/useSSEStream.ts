@@ -5,6 +5,7 @@
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { apiUrl } from '../lib/api';
 
 export interface SSEEvent {
   type: 'step_start' | 'step_complete' | 'step_log' | 'run_complete' | 'run_error';
@@ -21,6 +22,27 @@ export interface SSEEvent {
   missing?: string[];
   actions?: string[];
   details?: Record<string, unknown>;
+}
+
+interface WorkflowStreamEvent {
+  id?: number;
+  run_id?: string;
+  node_name?: string;
+  agent_id?: string;
+  event_type?: string;
+  status?: string;
+  message?: string;
+  payload?: Record<string, unknown>;
+  token_count?: number | null;
+  latency_ms?: number | null;
+  created_at?: string;
+}
+
+interface LaunchResponse {
+  run_id: string;
+  workflow_status: string;
+  chapter: number;
+  project_id: string;
 }
 
 export interface StepStatus {
@@ -68,12 +90,26 @@ function appendStepLog(
   ];
 }
 
+function workflowEventLevel(event: WorkflowStreamEvent): WorkflowNodeLog['level'] {
+  if (event.status === 'failed' || event.event_type === 'llm_failed') return 'error';
+  if (event.status === 'warning') return 'warning';
+  if (event.status === 'pass' || event.event_type === 'evidence_verified') return 'success';
+  return 'info';
+}
+
+function workflowEventStepStatus(event: WorkflowStreamEvent): StepStatus['status'] {
+  if (event.status === 'failed' || event.event_type === 'llm_failed') return 'failed';
+  if (event.event_type === 'evidence_verified') return 'completed';
+  return 'running';
+}
+
 /**
  * Hook for SSE streaming of chapter generation progress.
  */
 export function useSSEStream(
   onComplete?: (event: SSEEvent) => void,
-  onError?: (error: string, event?: SSEEvent) => void
+  onError?: (error: string, event?: SSEEvent) => void,
+  onLaunch?: (event: LaunchResponse) => void
 ): UseSSEStreamResult {
   const [isConnected, setIsConnected] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
@@ -104,13 +140,38 @@ export function useSSEStream(
       return;
     }
 
-    const url = `/api/run/chapter/stream?project_id=${encodeURIComponent(projectId)}&chapter=${chapter}`;
-    const eventSource = new EventSource(url);
-    eventSourceRef.current = eventSource;
+    const launchAndObserve = async () => {
+      const response = await fetch(apiUrl('/run/chapter/start'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project_id: projectId, chapter }),
+      });
+      const launch = await response.json();
+      if (!launch.ok || !launch.data?.run_id) {
+        const event: SSEEvent = {
+          type: 'run_error',
+          error: launch.error?.message || '启动章节生成失败',
+          context_incomplete: Boolean(launch.error?.details?.missing),
+          missing: launch.error?.details?.missing || [],
+          actions: launch.error?.details?.actions || [],
+          details: launch.error?.details || {},
+        };
+        setError(event.error || '启动章节生成失败');
+        setIsStreaming(false);
+        onError?.(event.error || '启动章节生成失败', event);
+        return;
+      }
 
-    eventSource.onopen = () => setIsConnected(true);
+      const data = launch.data as LaunchResponse;
+      const runId = data.run_id;
+      onLaunch?.(data);
+      const url = apiUrl(`/projects/${encodeURIComponent(projectId)}/chapters/${chapter}/workflow-stream?run_id=${encodeURIComponent(runId)}`);
+      const eventSource = new EventSource(url);
+      eventSourceRef.current = eventSource;
 
-    eventSource.onmessage = (e) => {
+      eventSource.onopen = () => setIsConnected(true);
+
+      const handleLegacyMessage = (e: MessageEvent<string>) => {
       try {
         const event: SSEEvent = JSON.parse(e.data);
         setEvents((prev) => [...prev, event]);
@@ -215,17 +276,72 @@ export function useSSEStream(
       } catch (err) {
         console.error('Failed to parse SSE event:', err);
       }
+      };
+
+      eventSource.onmessage = handleLegacyMessage;
+
+      eventSource.addEventListener('workflow_event', (e) => {
+        try {
+          const event = JSON.parse((e as MessageEvent<string>).data) as WorkflowStreamEvent;
+          const agentKey = normalizeAgentKey(event.node_name || event.agent_id);
+          if (!agentKey) return;
+          setSteps((prev) => ({
+            ...prev,
+            [agentKey]: {
+              ...prev[agentKey],
+              status: workflowEventStepStatus(event),
+              started_at: prev[agentKey]?.started_at || event.created_at || new Date().toISOString(),
+              completed_at: event.event_type === 'evidence_verified'
+                ? event.created_at || new Date().toISOString()
+                : prev[agentKey]?.completed_at,
+              duration_ms: event.latency_ms ?? prev[agentKey]?.duration_ms,
+              logs: appendStepLog(prev[agentKey], {
+                timestamp: event.created_at || new Date().toISOString(),
+                level: workflowEventLevel(event),
+                message: event.message || '节点运行中。',
+              }),
+            },
+          }));
+        } catch (err) {
+          console.error('Failed to parse workflow event:', err);
+        }
+      });
+
+      eventSource.addEventListener('workflow_done', (e) => {
+        let status = 'completed';
+        try {
+          const done = JSON.parse((e as MessageEvent<string>).data) as { status?: string; run_id?: string };
+          status = done.status || status;
+        } catch {
+          // Ignore malformed done event and still close the observer.
+        }
+        setIsStreaming(false);
+        setIsConnected(false);
+        eventSource.close();
+        if (status === 'failed' || status === 'blocked') {
+          const message = status === 'blocked' ? '章节生成被阻塞，需要人工处理' : '章节生成失败';
+          onError?.(message, { type: 'run_error', error: message, run_id: runId });
+          return;
+        }
+        onComplete?.({ type: 'run_complete', run_id: runId });
+      });
+
+      eventSource.onerror = () => {
+        const message = '直播连接断开，工作流仍在后台运行，可刷新查看进度';
+        setError(message);
+        setIsConnected(false);
+        setIsStreaming(false);
+        eventSource.close();
+      };
     };
 
-    eventSource.onerror = () => {
-      const message = 'SSE 连接断开';
+    launchAndObserve().catch((err) => {
+      const message = err instanceof Error ? err.message : '启动章节生成失败';
       setError(message);
-      setIsConnected(false);
       setIsStreaming(false);
-      eventSource.close();
       onError?.(message);
-    };
-  }, [onComplete, onError]);
+    });
+  }, [onComplete, onError, onLaunch]);
 
   useEffect(() => {
     return () => {

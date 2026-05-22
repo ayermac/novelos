@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildProjectModuleSearchParams, ensureChapterSearchParams } from '../project-routing'
+import { buildProjectModuleSearchParams, ensureChapterSearchParams, resolveProjectModule } from '../project-routing'
 
 describe('project routing helpers', () => {
   it('keeps current chapter when switching to the workbench menu item', () => {
@@ -44,5 +44,17 @@ describe('project routing helpers', () => {
 
     expect(next.get('module')).toBe('overview')
     expect(next.get('chapter')).toBe('3')
+  })
+
+  it('defaults project root to overview instead of chapter writing', () => {
+    expect(resolveProjectModule(new URLSearchParams(''))).toBe('overview')
+  })
+
+  it('keeps legacy chapter links in chapter writing mode', () => {
+    expect(resolveProjectModule(new URLSearchParams('chapter=1'))).toBe('chapters')
+  })
+
+  it('honors explicit modules even when chapter context exists', () => {
+    expect(resolveProjectModule(new URLSearchParams('module=genesis&chapter=1'))).toBe('genesis')
   })
 })

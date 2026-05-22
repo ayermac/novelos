@@ -44,6 +44,10 @@
   transition: border-color 150ms ease, box-shadow 150ms ease, background 150ms ease;
 }
 
+.ui-control:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
 .ui-text-area {
   min-height: 104px;
   resize: vertical;
@@ -230,10 +234,15 @@
   font-size: 13px;
   font-weight: 650;
   cursor: pointer;
+  transition: background 150ms ease, border-color 150ms ease, color 150ms ease, transform 150ms ease;
 }
 
 .ui-segmented-option:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.72);
+  background: color-mix(in srgb, var(--bg-primary) 72%, transparent);
+}
+
+.ui-segmented-option:active:not(:disabled) {
+  transform: translateY(1px);
 }
 
 .ui-segmented-option.is-active {
@@ -284,7 +293,7 @@
 }
 
 .ui-data-table tbody tr:hover {
-  background: rgba(247, 244, 239, 0.72);
+  background: color-mix(in srgb, var(--bg-tertiary) 72%, transparent);
 }
 
 .ui-data-table tbody tr:last-child td {
@@ -383,8 +392,194 @@
   height: 14px;
 }
 
+.ui-loading-button {
+  min-height: 44px;
+}
+
+.ui-loading-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.68;
+}
+
+.ui-loading-button.is-loading {
+  cursor: progress;
+  opacity: 0.9;
+}
+
+.ui-loading-button-spinner {
+  color: currentColor;
+}
+
+.ui-loading-button-spinner .ui-spinner {
+  border-color: rgba(255, 255, 255, 0.35);
+  border-top-color: currentColor;
+}
+
+.btn-secondary .ui-loading-button-spinner .ui-spinner,
+.ui-btn-ghost .ui-loading-button-spinner .ui-spinner {
+  border-color: rgba(100, 116, 139, 0.22);
+  border-top-color: currentColor;
+}
+
+.ui-btn-ghost {
+  background: transparent;
+}
+
+.ui-skeleton {
+  position: relative;
+  min-height: 12px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--border-color) 70%, transparent), color-mix(in srgb, var(--bg-tertiary) 92%, transparent), color-mix(in srgb, var(--border-color) 70%, transparent));
+  background-size: 220% 100%;
+  animation: skeleton-shimmer 1.2s ease-in-out infinite;
+}
+
+.ui-skeleton-stack {
+  display: grid;
+  gap: 10px;
+  padding: 4px 0;
+}
+
+.ui-toast-region {
+  position: fixed;
+  right: 18px;
+  bottom: 18px;
+  z-index: var(--z-tooltip, 400);
+  display: grid;
+  width: min(380px, calc(100vw - 32px));
+  gap: 10px;
+  pointer-events: none;
+}
+
+.ui-toast {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 12px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-md);
+  pointer-events: auto;
+  animation: toast-enter 180ms var(--ease-out, ease-out);
+}
+
+.ui-toast strong {
+  display: block;
+  margin-bottom: 2px;
+  color: var(--text-primary);
+  font-size: 13px;
+}
+
+.ui-toast-copy {
+  min-width: 0;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.ui-toast-success {
+  border-color: rgba(29, 123, 70, 0.22);
+}
+
+.ui-toast-success > svg {
+  color: var(--success);
+}
+
+.ui-toast-info {
+  border-color: rgba(17, 131, 132, 0.2);
+}
+
+.ui-toast-info > svg {
+  color: var(--primary);
+}
+
+.ui-toast-warning {
+  border-color: rgba(180, 107, 24, 0.28);
+}
+
+.ui-toast-warning > svg {
+  color: var(--warning);
+}
+
+.ui-toast-danger {
+  border-color: rgba(163, 49, 56, 0.26);
+}
+
+.ui-toast-danger > svg {
+  color: var(--danger);
+}
+
+.ui-toast-close {
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.ui-toast-close:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.ui-toast-close:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(17, 131, 132, 0.16);
+}
+
+.onboarding-error-message {
+  margin-bottom: var(--space-4);
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 160% 0;
+  }
+  100% {
+    background-position: -60% 0;
+  }
+}
+
+@keyframes toast-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
+  .ui-control,
+  .ui-check-box,
+  .ui-switch-track,
+  .ui-switch-thumb,
+  .ui-segmented-option,
+  .ui-toast {
+    transition: none;
+    animation: none;
+  }
+
+  .ui-control:active:not(:disabled),
+  .ui-segmented-option:active:not(:disabled) {
+    transform: none;
+  }
+
   .ui-spinner {
+    animation: none;
+  }
+
+  .ui-skeleton {
     animation: none;
   }
 }

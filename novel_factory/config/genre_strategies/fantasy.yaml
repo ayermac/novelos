@@ -1,0 +1,23 @@
+genre: fantasy
+reader_promise: "宏大世界观，冒险与成长"
+pacing_profile: moderate
+chapter_hook_style: adventure
+must_have_tropes:
+  - "世界观探索"
+  - "能力成长"
+  - "伙伴羁绊"
+avoid_patterns:
+  - "设定堆砌"
+  - "无意义战斗"
+editor_rubric_weights:
+  setting: 30
+  logic: 20
+  poison: 15
+  text: 15
+  pacing: 20
+planner_bias:
+  prefer_world_building: true
+  min_events_per_chapter: 2
+author_style_bias:
+  world_detail_heavy: true
+  action_oriented: true

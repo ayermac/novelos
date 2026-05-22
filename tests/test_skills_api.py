@@ -76,13 +76,23 @@ class TestListSkills:
         assert "data" in data
         assert "skills" in data["data"]
 
-    def test_returns_four_skills(self, test_client):
+    def test_returns_core_agent_skill_set(self, test_client):
         resp = test_client.get("/api/skills")
         data = resp.json()
         skills = data["data"]["skills"]
         skill_ids = {s["id"] for s in skills}
-        expected = {"humanizer-zh", "ai-style-detector", "narrative-quality", "style-bible-checker"}
-        assert skill_ids == expected
+        expected = {
+            "humanizer-zh",
+            "ai-style-detector",
+            "narrative-quality",
+            "style-bible-checker",
+            "chapter-objective-checker",
+            "scene-conflict-checker",
+            "event-coverage-checker",
+            "memory-patch-validator",
+        }
+        assert expected.issubset(skill_ids)
+        assert len(skill_ids) >= 8
 
     def test_each_skill_has_required_fields(self, test_client):
         resp = test_client.get("/api/skills")
@@ -139,7 +149,37 @@ class TestGetSkillConfig:
         resp = test_client.get("/api/skills/config")
         data = resp.json()["data"]
         available_ids = {s["id"] for s in data["available_skills"]}
-        assert available_ids == {"humanizer-zh", "ai-style-detector", "narrative-quality", "style-bible-checker"}
+        assert {
+            "humanizer-zh",
+            "ai-style-detector",
+            "narrative-quality",
+            "style-bible-checker",
+            "chapter-objective-checker",
+            "scene-conflict-checker",
+            "event-coverage-checker",
+            "memory-patch-validator",
+        }.issubset(available_ids)
+
+    def test_core_agent_default_mounts_are_present(self, test_client):
+        resp = test_client.get("/api/skills/config")
+        data = resp.json()["data"]
+        agent_skills = data["agent_skills"]
+        assert agent_skills["planner"]["after_llm"] == ["chapter-objective-checker"]
+        assert agent_skills["screenwriter"]["after_llm"] == ["scene-conflict-checker"]
+        assert agent_skills["author"]["after_llm"] == ["event-coverage-checker"]
+        assert agent_skills["memory_curator"]["after_extract"] == ["memory-patch-validator"]
+
+    def test_new_agent_skills_have_manifest_and_are_not_legacy(self, test_client):
+        resp = test_client.get("/api/skills/config")
+        data = resp.json()["data"]
+        by_id = {skill["id"]: skill for skill in data["available_skills"]}
+        for skill_id in (
+            "chapter-objective-checker",
+            "scene-conflict-checker",
+            "event-coverage-checker",
+            "memory-patch-validator",
+        ):
+            assert by_id[skill_id]["legacy"] is False
 
     def test_config_path_is_skills_yaml(self, test_client):
         resp = test_client.get("/api/skills/config")
@@ -155,7 +195,7 @@ class TestOpenClawReadiness:
             root = Path(tmpdir) / "openclaw-agents"
             _write_openclaw_skill(root, "planner", "worldbuilding", "Instruction-only skill.")
             _write_openclaw_skill(root, "author", "novel-writing", "Run python3 tools/db.py build_context")
-            _write_openclaw_skill(root, "secretary", "daily-report", "Daily reporting helper.")
+            _write_openclaw_skill(root, "researcher", "daily-report", "Daily reporting helper.")
 
             db_path = Path(tmpdir) / "test.db"
             init_db(str(db_path))
@@ -212,7 +252,7 @@ class TestOpenClawReadiness:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir) / "openclaw-agents"
             _write_openclaw_skill(root, "planner", "worldbuilding", "Instruction-only skill.")
-            _write_openclaw_skill(root, "secretary", "daily-report", "Daily reporting helper.")
+            _write_openclaw_skill(root, "researcher", "daily-report", "Daily reporting helper.")
 
             db_path = Path(tmpdir) / "test.db"
             init_db(str(db_path))
@@ -680,13 +720,27 @@ class TestReorderSkills:
         resp = test_client.post("/api/skills/reorder", json={
             "agent": "editor",
             "stage": "before_review",
-            "skill_ids": ["style-bible-checker", "narrative-quality", "ai-style-detector"],
+            "skill_ids": [
+                "style-bible-checker",
+                "narrative-quality",
+                "ai-style-detector",
+                "show-dont-tell",
+                "info-dump-detector",
+                "scene-texture",
+                "dialogue-naturalness",
+            ],
         })
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
         assert data["data"]["skill_ids"] == [
-            "style-bible-checker", "narrative-quality", "ai-style-detector"
+            "style-bible-checker",
+            "narrative-quality",
+            "ai-style-detector",
+            "show-dont-tell",
+            "info-dump-detector",
+            "scene-texture",
+            "dialogue-naturalness",
         ]
 
     def test_reorder_rejects_missing_or_extra_ids(self, test_client):
@@ -843,15 +897,74 @@ class TestGetAgentSkillMatrix:
         assert "ai-style-detector" in skill_ids
         assert "narrative-quality" in skill_ids
         assert "style-bible-checker" in skill_ids
+        assert "show-dont-tell" in skill_ids
+        assert "info-dump-detector" in skill_ids
+        assert "scene-texture" in skill_ids
+        assert "dialogue-naturalness" in skill_ids
 
-    def test_style_bible_checker_marked_legacy(self, test_client):
+    def test_antiai_skills_are_mounted_without_unmounted_warning(self, test_client):
+        resp = test_client.get("/api/skills/agent-matrix")
+        matrix = resp.json()["data"]
+        unmounted_ids = {s["id"] for s in matrix["unmounted_enabled_skills"]}
+        warning_ids = {
+            w.get("skill_id")
+            for w in matrix["warnings"]
+            if w.get("code") == "ENABLED_UNMOUNTED_SKILL"
+        }
+
+        for skill_id in (
+            "show-dont-tell",
+            "info-dump-detector",
+            "scene-texture",
+            "dialogue-naturalness",
+        ):
+            assert skill_id not in unmounted_ids
+            assert skill_id not in warning_ids
+
+    def test_editor_quality_manifest_skills_are_not_legacy(self, test_client):
         resp = test_client.get("/api/skills/agent-matrix")
         matrix = resp.json()["data"]
         editor = next(a for a in matrix["agents"] if a["agent"] == "editor")
         before_review = next(s for s in editor["stages"] if s["stage"] == "before_review")
-        style_bible = next(s for s in before_review["skills"] if s["id"] == "style-bible-checker")
-        assert style_bible["legacy"] is True
-        assert style_bible["package"] is None
+        by_id = {s["id"]: s for s in before_review["skills"]}
+
+        for skill_id in (
+            "style-bible-checker",
+            "show-dont-tell",
+            "info-dump-detector",
+            "scene-texture",
+            "dialogue-naturalness",
+        ):
+            assert by_id[skill_id]["legacy"] is False
+            assert by_id[skill_id]["package"] is None
+
+    def test_validate_has_no_antiai_missing_manifest_warnings(self, test_client):
+        resp = test_client.post("/api/skills/validate")
+        data = resp.json()["data"]
+
+        assert data["ok"] is True
+        warnings = "\n".join(data["warnings"])
+        for skill_id in (
+            "show-dont-tell",
+            "info-dump-detector",
+            "scene-texture",
+            "dialogue-naturalness",
+        ):
+            assert f"Skill '{skill_id}' has no manifest" not in warnings
+
+    def test_core_agent_mounts_appear_in_matrix(self, test_client):
+        resp = test_client.get("/api/skills/agent-matrix")
+        matrix = resp.json()["data"]
+        agents = {agent["agent"]: agent for agent in matrix["agents"]}
+        expectations = {
+            ("planner", "after_llm"): "chapter-objective-checker",
+            ("screenwriter", "after_llm"): "scene-conflict-checker",
+            ("author", "after_llm"): "event-coverage-checker",
+            ("memory_curator", "after_extract"): "memory-patch-validator",
+        }
+        for (agent_id, stage), skill_id in expectations.items():
+            stage_row = next(s for s in agents[agent_id]["stages"] if s["stage"] == stage)
+            assert skill_id in [s["id"] for s in stage_row["skills"]]
 
 
 class TestValidateSkills:

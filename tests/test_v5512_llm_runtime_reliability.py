@@ -72,6 +72,170 @@ def test_llm_provider_retries_rate_limit_with_exponential_backoff():
     assert client.calls == 2
     assert provider.last_token_usage is not None
     assert provider.last_token_usage.total_tokens == 15
+    assert provider.last_call_trace is not None
+    assert provider.last_call_trace["request"]["messages"][0]["content"] == "return json"
+    assert provider.last_call_trace["response"]["usage"]["total_tokens"] == 15
+
+
+def test_llm_provider_call_trace_redacts_sensitive_request_and_response():
+    class _SensitiveResponse:
+        content = '{"echo": "sk-response-secret"}'
+        usage_metadata = {"input_tokens": 3, "output_tokens": 4}
+        response_metadata = {"finish_reason": "stop"}
+
+    class _Client:
+        def invoke(self, _messages, **_kwargs):
+            return _SensitiveResponse()
+
+    config = LLMConfig(
+        api_key="sk-real-secret",
+        base_url="https://user:pass@example.test/v1?api_key=sk-url-secret",
+        model="trace-model",
+        retry_attempts=1,
+    )
+    provider = OpenAICompatibleProvider(config)
+    provider._client = _Client()  # type: ignore[assignment]
+
+    result = provider.invoke_json([
+        {"role": "system", "content": "secret sk-system-secret"},
+        {"role": "user", "content": "return json with token=abc123456789"},
+    ])
+
+    assert result == {"echo": "sk-response-secret"}
+    trace = provider.last_call_trace
+    assert trace is not None
+    raw_trace = json.dumps(trace, ensure_ascii=False)
+    assert "sk-real-secret" not in raw_trace
+    assert "sk-url-secret" not in raw_trace
+    assert "sk-system-secret" not in raw_trace
+    assert "abc123456789" not in raw_trace
+    assert trace["request"]["model"] == "trace-model"
+    assert trace["request"]["message_count"] >= 2
+    assert trace["response"]["content_length"] > 0
+
+
+def test_llm_provider_retries_transient_connection_errors():
+    class _ConnectionClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, _messages, **_kwargs):
+            self.calls += 1
+            if self.calls == 1:
+                raise Exception("connection reset by peer")
+            return _FakeResponse()
+
+    config = LLMConfig(
+        api_key="test-key",
+        retry_attempts=2,
+        retry_min_seconds=0,
+        retry_max_seconds=0,
+    )
+    provider = OpenAICompatibleProvider(config)
+    client = _ConnectionClient()
+    provider._client = client  # type: ignore[assignment]
+
+    result = provider.invoke_json([{"role": "user", "content": "return json"}])
+
+    assert result == {"ok": True}
+    assert client.calls == 2
+
+
+def test_llm_provider_does_not_retry_request_timeout():
+    class _TimeoutClient:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, _messages, **_kwargs):
+            self.calls += 1
+            raise Exception("request timed out")
+
+    config = LLMConfig(
+        api_key="test-key",
+        request_timeout_seconds=60,
+        retry_attempts=3,
+        retry_min_seconds=0,
+        retry_max_seconds=0,
+    )
+    provider = OpenAICompatibleProvider(config)
+    client = _TimeoutClient()
+    provider._client = client  # type: ignore[assignment]
+
+    with pytest.raises(Exception, match="超时"):
+        provider.invoke_json([{"role": "user", "content": "return json"}])
+
+    assert client.calls == 1
+
+
+def test_llm_provider_text_call_can_override_timeout_without_mutating_config():
+    class _TextResponse:
+        content = "ok"
+        usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+
+    class _Client:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def invoke(self, _messages, **_kwargs):
+            self.calls += 1
+            return _TextResponse()
+
+    class _CapturingProvider(OpenAICompatibleProvider):
+        def __init__(self, config):
+            super().__init__(config)
+            self.built_timeouts = []
+            self.client_instances = []
+
+        def _build_client(self, request_timeout_seconds=None):
+            self.built_timeouts.append(request_timeout_seconds or self.config.request_timeout_seconds)
+            client = _Client()
+            self.client_instances.append(client)
+            return client
+
+    config = LLMConfig(api_key="test-key", request_timeout_seconds=60)
+    provider = _CapturingProvider(config)
+
+    text = provider.invoke_text(
+        [{"role": "user", "content": "write"}],
+        request_timeout_seconds=300,
+        max_retries=1,
+    )
+
+    assert text == "ok"
+    assert provider.built_timeouts == [300]
+    assert provider.client_instances[-1].calls == 1
+    assert provider.config.request_timeout_seconds == 60
+
+
+def test_llm_provider_respects_configured_min_interval(monkeypatch):
+    class _TextResponse:
+        content = "ok"
+        usage_metadata = {"input_tokens": 1, "output_tokens": 1}
+
+    class _Client:
+        def invoke(self, _messages, **_kwargs):
+            return _TextResponse()
+
+    clock = {"now": 100.0, "slept": []}
+
+    def fake_time():
+        return clock["now"]
+
+    def fake_sleep(seconds):
+        clock["slept"].append(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr("novel_factory.llm.openai_compatible.time.time", fake_time)
+    monkeypatch.setattr("novel_factory.llm.openai_compatible.time.sleep", fake_sleep)
+
+    config = LLMConfig(api_key="test-key", min_interval_seconds=0.5)
+    provider = OpenAICompatibleProvider(config)
+    provider._client = _Client()  # type: ignore[assignment]
+
+    assert provider.invoke_text([{"role": "user", "content": "one"}]) == "ok"
+    assert provider.invoke_text([{"role": "user", "content": "two"}]) == "ok"
+
+    assert clock["slept"] == [0.5]
 
 
 def test_llm_json_sanitizer_quotes_unquoted_prose_values():
@@ -91,6 +255,28 @@ def test_llm_json_sanitizer_quotes_unquoted_prose_values():
 
     assert '"turn": "林澈在广播中听见失踪者声音"' in sanitized
     assert json.loads(sanitized)["scene_beats"][0]["turn"] == "林澈在广播中听见失踪者声音"
+
+
+def test_llm_json_extractor_accepts_markdown_fenced_json_variants():
+    fenced = '''``` json
+    {
+      "patches": [
+        {"target_table": "characters", "operation": "create"}
+      ]
+    }
+    ```'''
+    unclosed = '''```JSON
+    {
+      "patches": [
+        {"target_table": "story_facts", "operation": "create"}
+      ]
+    }'''
+
+    fenced_data = json.loads(OpenAICompatibleProvider._extract_json(fenced))
+    unclosed_data = json.loads(OpenAICompatibleProvider._extract_json(unclosed))
+
+    assert fenced_data["patches"][0]["target_table"] == "characters"
+    assert unclosed_data["patches"][0]["target_table"] == "story_facts"
 
 
 def test_chapter_token_budget_failure_finalizes_workflow_run(tmp_path):
@@ -177,7 +363,10 @@ def client_with_project():
     })
     assert gen_resp.status_code == 200
     genesis_id = gen_resp.json()["data"]["id"]
-    approve_resp = client.post(f"/api/projects/budget-auto/genesis/{genesis_id}/approve")
+    approve_resp = client.post(f"/api/projects/budget-auto/genesis/{genesis_id}/approve", json={
+        "force_apply": True,
+        "confirm_quality_risk": True,
+    })
     assert approve_resp.status_code == 200
 
     fill_resp = client.post("/api/projects/budget-auto/production/auto-fill", json={

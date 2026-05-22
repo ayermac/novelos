@@ -37,6 +37,8 @@ class LLMProvider(ABC):
         messages: list[dict[str, str]],
         temperature: float | None = None,
         max_tokens: int | None = None,
+        max_retries: int | None = None,
+        request_timeout_seconds: int | None = None,
     ) -> str:
         """Invoke the LLM and return raw text output.
 
@@ -44,6 +46,8 @@ class LLMProvider(ABC):
             messages: Chat messages.
             temperature: Override default temperature.
             max_tokens: Override default max tokens.
+            max_retries: Override provider retry attempts for this call.
+            request_timeout_seconds: Override request timeout for this call.
 
         Returns:
             Raw text response.

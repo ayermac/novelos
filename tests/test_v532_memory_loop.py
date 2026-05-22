@@ -116,6 +116,79 @@ class TestMemoryBatchList:
         body = resp.json()
         assert body["ok"] is False
 
+    def test_list_deduplicates_state_card_fallback_batches(self, client, project_id):
+        """Repeated fallback retries should not leave multiple pending fallback batches."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        first = repo.create_memory_batch(
+            project_id,
+            chapter_number=2,
+            summary="第2章记忆提取 - 状态卡兜底 (11项)",
+        )
+        second = repo.create_memory_batch(
+            project_id,
+            chapter_number=2,
+            summary="第2章记忆提取 - 状态卡兜底 (11项)",
+        )
+        third = repo.create_memory_batch(
+            project_id,
+            chapter_number=2,
+            summary="第2章记忆提取 - 状态卡兜底 (11项)",
+        )
+
+        resp = client.get(f"/api/projects/{project_id}/memory-batches")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        pending_fallbacks = [
+            batch for batch in body["data"]
+            if batch["status"] == "pending" and "状态卡兜底" in batch["summary"]
+        ]
+        assert len(pending_fallbacks) == 1
+        statuses = [
+            repo.get_memory_batch(first["id"])["status"],
+            repo.get_memory_batch(second["id"])["status"],
+            repo.get_memory_batch(third["id"])["status"],
+        ]
+        assert statuses.count("pending") == 1
+        assert statuses.count("ignored") == 2
+
+    def test_list_ignores_state_card_fallback_when_trusted_batch_exists(self, client, project_id):
+        """A trusted extraction supersedes stale fallback batches for the same chapter."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        fallback = repo.create_memory_batch(
+            project_id,
+            chapter_number=2,
+            summary="第2章记忆提取 - 状态卡兜底 (11项)",
+        )
+        trusted = repo.create_memory_batch(
+            project_id,
+            chapter_number=2,
+            summary="第2章记忆提取 (13项)",
+        )
+        repo.create_memory_item(
+            batch_id=trusted["id"],
+            project_id=project_id,
+            target_table="story_facts",
+            operation="create",
+            after_json=json.dumps({"fact_key": "chapter_2.real", "value": "真实提取"}, ensure_ascii=False),
+            confidence=0.92,
+            evidence_text="真实正文证据",
+            rationale="MemoryCurator LLM 正文复核提取",
+        )
+
+        resp = client.get(f"/api/projects/{project_id}/memory-batches")
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert repo.get_memory_batch(fallback["id"])["status"] == "ignored"
+        assert repo.get_memory_batch(trusted["id"])["status"] == "pending"
+
 
 class TestMemoryApplyCanonical:
     """v5.3.2: Memory apply uses canonical body-style route."""
@@ -147,6 +220,45 @@ class TestMemoryApplyCanonical:
         assert body["ok"] is True
         names = [c["name"] for c in body["data"]]
         assert "新角色" in names
+
+    def test_apply_rejects_state_card_fallback_batch_by_default(self, client, project_id):
+        """State-card fallback hints must not be bulk-applied as trusted memory."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=4,
+            summary="第4章记忆提取 - 状态卡兜底 (1项)",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="story_facts",
+            operation="create",
+            after_json=json.dumps({
+                "fact_key": "chapter_4.fallback.fact",
+                "fact_type": "narrative_event",
+                "subject": "第4章",
+                "attribute": "新增事实",
+                "value": {"text": "状态卡摘要"},
+            }, ensure_ascii=False),
+            confidence=0.45,
+            evidence_text="状态卡摘要",
+            rationale="状态卡兜底候选：来自 Editor 章节状态卡中的 new_facts，未经过 MemoryCurator LLM 复核，请人工确认后应用。",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["error"]["code"] == "FALLBACK_MEMORY_REQUIRES_REEXTRACTION"
+        assert repo.get_memory_batch(batch["id"])["status"] == "pending"
+        assert repo.get_story_fact_by_key(project_id, "chapter_4.fallback.fact") is None
 
     def test_apply_story_fact_creates_traceable_event(self, client, project_id, batch_with_items):
         """Applying a story_facts patch should create fact history event."""
@@ -784,6 +896,90 @@ class TestMemoryStructuredFieldNormalization:
         qin = next((f for f in factions if f["name"] == "秦家"), None)
         assert qin is not None
         assert "敌对" in qin["relationship_with_protagonist"]
+
+    def test_apply_outline_update_without_target_id_creates_new_outline(self, client, project_id):
+        """Outline update patches without target_id should upsert instead of failing as unsupported."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="Outline upsert")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="outlines",
+            operation="update",
+            target_id=None,
+            after_json=json.dumps({
+                "chapters_range": "1-∞",
+                "title": "林泽的观察名单之路",
+                "content": "林泽因选择个体判断优先而被列入观察名单。",
+                "level": "主线",
+                "sequence": 1,
+            }, ensure_ascii=False),
+            confidence=0.9,
+            evidence_text="报告的结论是：修正员林泽在本次任务中表现出明显的个体判断优先倾向。",
+            rationale="大纲偏移：林泽正式进入被监控状态",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+        assert body["data"]["results"][0]["operation"] == "create"
+
+        outlines = repo.list_outlines(project_id)
+        created = next((outline for outline in outlines if outline["title"] == "林泽的观察名单之路"), None)
+        assert created is not None
+        assert created["level"] == "主线"
+
+    def test_apply_world_settings_update_without_target_id_matches_title(self, client, project_id):
+        """World setting update patches without target_id should match by title."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        existing = repo.create_world_setting(
+            project_id,
+            category="城市环境",
+            title="下城区环境",
+            content="下城区空气潮湿。",
+        )
+        batch = repo.create_memory_batch(project_id, chapter_number=2, summary="World setting update")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="world_settings",
+            operation="update",
+            target_id=None,
+            after_json=json.dumps({
+                "category": "城市环境",
+                "title": "下城区环境",
+                "content": "下城区空气带着咸腥、铁锈和机油味，暗示其与海洋/潮汐系统存在深层联系。",
+            }, ensure_ascii=False),
+            confidence=0.95,
+            evidence_text="下城区的空气里总带着股咸腥味，不只是海，还有锈、机油、某种说不清的潮湿。",
+            rationale="补充下城区环境感官细节",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+
+        settings = repo.list_world_settings(project_id)
+        assert len(settings) == 1
+        updated = repo.get_world_setting(project_id, existing["id"])
+        assert updated is not None
+        assert "海洋/潮汐系统" in updated["content"]
 
 
 class TestMemoryCuratorRouting:

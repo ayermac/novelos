@@ -135,7 +135,7 @@ class TestLLMRecommendCLI:
         result = _parse_json(stdout)
         agents = {r["agent_id"] for r in result["data"]["recommendations"]}
         expected = {"planner", "screenwriter", "author", "polisher",
-                    "editor", "scout", "continuity_checker", "architect", "secretary"}
+                    "editor", "continuity_checker"}
         assert agents == expected
 
     def test_recommend_cost_tier_constraint(self):

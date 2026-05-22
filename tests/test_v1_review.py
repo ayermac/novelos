@@ -98,7 +98,7 @@ def _make_state(**overrides) -> FactoryState:
 class TestR1SingleRunMethod:
     def test_base_agent_has_single_run_method(self):
         """BaseAgent must have exactly one 'run' method definition."""
-        from novel_factory.agents.base import BaseAgent
+        from novel_factory.agent_runtime.base import BaseAgent
         run_methods = [
             name for name, _ in inspect.getmembers(BaseAgent, predicate=inspect.isfunction)
             if name == "run"
@@ -125,6 +125,30 @@ class TestR2TaskDiscoveryDBStatus:
         result = task_discovery_node(state, repo)
 
         assert result["chapter_status"] == "scripted"
+
+    def test_task_discovery_hydrates_revision_state(self, repo):
+        """Revision discovery should restore latest review metadata before routing."""
+        from novel_factory.workflow.nodes import task_discovery_node
+
+        _seed_project_chapter(repo, status=ChapterStatus.REVISION.value)
+        chapter = repo.get_chapter("rev_proj", 1)
+        review_id = repo.save_review(
+            "rev_proj",
+            chapter["id"],
+            passed=False,
+            score=45,
+            issues=["正文截断，缺失任务结算界面"],
+            suggestions=["补齐结尾钩子"],
+            revision_target="author",
+        )
+
+        state = _make_state(chapter_status="planned")
+        result = task_discovery_node(state, repo)
+
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"] == {"pass": False, "revision_target": "author"}
+        assert result["_revision_review"]["review_id"] == review_id
+        assert result["_revision_review"]["revision_target"] == "author"
 
     def test_task_discovery_missing_chapter_requires_human(self, repo):
         """When chapter does not exist in DB, return error and requires_human."""

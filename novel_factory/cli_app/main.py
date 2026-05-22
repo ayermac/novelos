@@ -32,13 +32,7 @@ from .commands.demo import (
     cmd_seed_demo,
     cmd_smoke_run,
 )
-from .commands.sidecar import (
-    cmd_scout,
-    cmd_report_daily,
-    cmd_export_chapter,
-    cmd_continuity_check,
-    cmd_architect_suggest,
-)
+from .commands.sidecar import cmd_continuity_check
 from .commands.skills import (
     cmd_skill_list,
     cmd_skill_run,
@@ -144,11 +138,13 @@ class JSONArgumentParser(argparse.ArgumentParser):
 
 
 def _get_version() -> str:
-    """Get package version from importlib.metadata, with fallback for source mode."""
-    try:
-        return importlib.metadata.version("novel-factory")
-    except importlib.metadata.PackageNotFoundError:
-        return "dev"
+    """Get runtime version from unified source.
+
+    CLI shows the same version as /api/health and FastAPI metadata.
+    Package metadata version is shown separately when available.
+    """
+    from ..version import get_version
+    return get_version()
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -288,38 +284,6 @@ def build_parser() -> argparse.ArgumentParser:
     doctor_parser.add_argument("--json", action="store_true", help="Output in JSON format")
     doctor_parser.set_defaults(func=cmd_doctor)
 
-    # scout
-    scout_parser = subparsers.add_parser("scout", help="Generate market report")
-    scout_parser.add_argument("--project-id", required=True, help="Project ID")
-    scout_parser.add_argument("--topic", help="Topic to analyze")
-    scout_parser.add_argument("--genre", help="Target genre")
-    scout_parser.add_argument("--platform", help="Target platform")
-    scout_parser.add_argument("--audience", help="Target audience")
-    scout_parser.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: real)")
-    scout_parser.add_argument("--json", action="store_true", help="Output in JSON format")
-    scout_parser.set_defaults(func=cmd_scout)
-
-    # report
-    report_parser = subparsers.add_parser("report", help="Generate reports")
-    report_subparsers = report_parser.add_subparsers(dest="report_command", help="Report subcommands")
-
-    report_daily = report_subparsers.add_parser("daily", help="Generate daily report")
-    report_daily.add_argument("--project-id", required=True, help="Project ID")
-    report_daily.add_argument("--date", help="Report date (YYYY-MM-DD, default: today)")
-    report_daily.add_argument("--json", action="store_true", help="Output in JSON format")
-    report_daily.set_defaults(func=cmd_report_daily)
-
-    # export
-    export_parser = subparsers.add_parser("export", help="Export data")
-    export_subparsers = export_parser.add_subparsers(dest="export_command", help="Export subcommands")
-
-    export_chapter = export_subparsers.add_parser("chapter", help="Export chapter")
-    export_chapter.add_argument("--project-id", required=True, help="Project ID")
-    export_chapter.add_argument("--chapter", type=int, required=True, help="Chapter number")
-    export_chapter.add_argument("--format", choices=["json", "markdown"], default="markdown", help="Export format (default: markdown)")
-    export_chapter.add_argument("--json", action="store_true", help="Output in JSON format")
-    export_chapter.set_defaults(func=cmd_export_chapter)
-
     # continuity-check
     continuity_parser = subparsers.add_parser("continuity-check", help="Check cross-chapter continuity")
     continuity_parser.add_argument("--project-id", required=True, help="Project ID")
@@ -328,17 +292,6 @@ def build_parser() -> argparse.ArgumentParser:
     continuity_parser.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: real)")
     continuity_parser.add_argument("--json", action="store_true", help="Output in JSON format")
     continuity_parser.set_defaults(func=cmd_continuity_check)
-
-    # architect
-    architect_parser = subparsers.add_parser("architect", help="Generate architecture proposals")
-    architect_subparsers = architect_parser.add_subparsers(dest="architect_command", help="Architect subcommands")
-
-    architect_suggest = architect_subparsers.add_parser("suggest", help="Generate improvement proposals")
-    architect_suggest.add_argument("--project-id", required=True, help="Project ID")
-    architect_suggest.add_argument("--scope", choices=["quality", "workflow", "agent", "system"], default="quality", help="Analysis scope (default: quality)")
-    architect_suggest.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode: stub for demo, real for actual LLM (default: real)")
-    architect_suggest.add_argument("--json", action="store_true", help="Output in JSON format")
-    architect_suggest.set_defaults(func=cmd_architect_suggest)
 
     # skills (plural, matching spec)
     skills_parser = subparsers.add_parser("skills", help="Manage and run skills")

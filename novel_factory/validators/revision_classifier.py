@@ -59,12 +59,68 @@ _CATEGORY_TARGET: dict[IssueCategory, str] = {
     IssueCategory.POISON: "author",  # poison can be both; default to author
 }
 
+_AUTHOR_STRUCTURAL_KEYWORDS = (
+    "[CRITICAL]",
+    "[DIALOGUE]",
+    "[HOOK]",
+    "LOW_DIALOGUE_RATIO",
+    "对白占比",
+    "对白仅占",
+    "对白过低",
+    "缺少角色言行",
+    "角色对话",
+    "动作场景呈现",
+    "增加对话",
+    "新增对话",
+    "补充对话",
+    "有分歧的对话",
+    "面对面的张力",
+    "冲突强度",
+    "缺乏冲突",
+    "章节在核心冲突",
+    "断裂",
+    "没有后续动作",
+    "没有后续决定",
+    "没有后续动作/决定/结果",
+    "无法得知",
+    "严重破坏阅读完整性",
+    "章末钩子缺失",
+    "钩子缺失",
+    "缺失章末钩子",
+    "缺失结尾钩子",
+    "缺失撤离过程",
+    "缺失任务结算",
+    "缺失结算界面",
+    "缺失场景",
+    "缺失结尾",
+    "被截断",
+    "截断",
+    "戛然而止",
+    "未实现",
+    "伏笔债务",
+    "任务结算",
+    "失败名单",
+    "未完成场景覆盖",
+    "未覆盖完整场景",
+    "正文未写到章末",
+    "人物动机",
+    "动机表达",
+    "目标、阻力",
+)
+
 
 def classify_issue(issue: str) -> ClassifiedIssue:
     """Classify a single issue string into a category and target.
 
     Uses keyword matching. Falls back to 'logic' if no keywords match.
     """
+    if any(keyword in issue for keyword in _AUTHOR_STRUCTURAL_KEYWORDS):
+        return ClassifiedIssue(
+            issue=issue,
+            category=IssueCategory.PLOT,
+            revision_target="author",
+        )
+
     best_category = IssueCategory.LOGIC  # default
     best_score = 0
 

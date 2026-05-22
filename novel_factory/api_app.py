@@ -17,6 +17,8 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
 from .api.envelope import error_response, EnvelopeResponse
+from .version import get_version
+from .security.redaction import redact_sensitive_text
 
 
 def create_api_app(
@@ -38,10 +40,11 @@ def create_api_app(
     Returns:
         Configured FastAPI application
     """
+    version = get_version()
     app = FastAPI(
         title="小说工厂 API",
-        description="Novel Factory API v5.3",
-        version="5.3.0",
+        description=f"Novel Factory API v{version}",
+        version=version,
         default_response_class=JSONResponse,
     )
 
@@ -97,6 +100,10 @@ def create_api_app(
         production_router,
         versions_router,
         workflow_timeline_router,
+        agent_memory_router,
+        agent_ops_router,
+        desktop_router,
+        quality_diagnosis_router,
     )
 
     app.include_router(health_router, prefix="/api", tags=["health"])
@@ -125,13 +132,17 @@ def create_api_app(
     app.include_router(production_router, prefix="/api", tags=["production"])
     app.include_router(versions_router, prefix="/api", tags=["versions"])
     app.include_router(workflow_timeline_router, prefix="/api", tags=["workflow-timeline"])
+    app.include_router(agent_memory_router, prefix="/api", tags=["agent-memory"])
+    app.include_router(agent_ops_router, prefix="/api", tags=["agent-ops"])
+    app.include_router(desktop_router, prefix="/api", tags=["desktop"])
+    app.include_router(quality_diagnosis_router, prefix="/api", tags=["quality-diagnosis"])
 
-    # Exception handler - never exposes traceback
+    # Exception handler - never exposes traceback or secrets
     @app.exception_handler(Exception)
     async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         """Global exception handler - returns JSON error envelope."""
-        # Safe error message without traceback
-        msg = str(exc)
+        # Safe error message without traceback or secrets
+        msg = redact_sensitive_text(str(exc))
         if len(msg) > 200:
             msg = msg[:200] + "..."
 
