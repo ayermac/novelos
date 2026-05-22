@@ -11,6 +11,8 @@ allowed_agents:
   - qualityhub
   - manual
 allowed_stages:
+  - diagnose
+  - advisory
   - before_review
   - final_gate
   - manual

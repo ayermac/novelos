@@ -56,6 +56,9 @@ class AgentMemoryRepositoryMixin:
     def delete_agent_memory(self, memory_id: int) -> bool:
         return self._agent_memory_repo().delete(memory_id)
 
+    def delete_agent_memories_by_project(self, project_id: str) -> int:
+        return self._agent_memory_repo().delete_by_project(project_id)
+
     def save_agent_decision_trace(
         self,
         run_id: str,

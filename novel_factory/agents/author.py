@@ -859,7 +859,7 @@ class AuthorAgent(BaseAgent):
             f"- {issue.get('message', '')}" for issue in coverage_issues
         )
         prose_max_tokens = max(2048, min(6144, int(word_target * 2.0)))
-        per_call_retries = 1 if is_configured_live_provider(self.llm) else None
+        per_call_retries = None
 
         messages = [
             {
@@ -963,7 +963,7 @@ class AuthorAgent(BaseAgent):
         )
         compact_context = self._build_plain_text_context(state, fallback_context)
         prose_max_tokens = max(4096, min(8192, int(current_len * 1.6)))
-        per_call_retries = 1 if is_configured_live_provider(self.llm) else None
+        per_call_retries = None
 
         messages = [
             {
@@ -1090,7 +1090,7 @@ class AuthorAgent(BaseAgent):
                 )
         prose_max_tokens = max(1024, min(6144, int(effective_target * 1.5)))
         compact_context = self._build_plain_text_context(state, context)
-        per_call_retries = 1 if is_configured_live_provider(self.llm) else None
+        per_call_retries = None
 
         messages = [
             {
@@ -1181,7 +1181,7 @@ class AuthorAgent(BaseAgent):
         beats = self._get_scene_beats(state)
         chunks = list(chunk_items(beats, size=3))
         total_chunks = len(chunks)
-        per_call_retries = 1 if is_configured_live_provider(self.llm) else None
+        per_call_retries = None
 
         compact_context = self._build_plain_text_context(state, context)
 

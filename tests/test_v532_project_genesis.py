@@ -202,6 +202,109 @@ class TestGenesisCanonicalRoutes:
             if os.path.exists(db_path):
                 os.unlink(db_path)
 
+    def test_approve_replacement_genesis_clears_old_context_and_memory(self):
+        """Approving a new genesis should replace project bible context, not merge old story worlds."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.connection import init_db
+        from novel_factory.db.repository import Repository
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        try:
+            init_db(db_path)
+            repo = Repository(db_path)
+            test_client = TestClient(create_api_app(db_path=db_path, llm_mode="stub"))
+            project_id = "genesis-replacement-test"
+            test_client.post("/api/onboarding/projects", json={
+                "project_id": project_id,
+                "name": "替换创世测试",
+                "genre": "科幻",
+                "description": "验证重新创世不会污染后续章节",
+                "total_chapters_planned": 3,
+                "target_words": 9000,
+            })
+
+            repo.create_world_setting(project_id, "旧世界", "旧城市", "旧内容")
+            repo.create_character(project_id, "旧主角", role="protagonist", description="旧主角描述")
+            repo.create_faction(project_id, "旧组织", type="官方", description="旧组织描述")
+            repo.create_outline(project_id, "arc", 1, "旧大纲", "旧大纲内容", "1-3")
+            repo.create_plot_hole(project_id, "OLD-001", title="旧伏笔", description="旧伏笔内容")
+            repo.create_instruction(project_id, 1, "旧目标", "旧事件")
+            repo.create_story_fact(project_id, "old.fact", "event", '"旧事实"', subject="旧主角", attribute="过去")
+            batch = repo.create_memory_batch(project_id, chapter_number=1, summary="旧记忆")
+            repo.create_memory_item(
+                batch_id=batch["id"],
+                project_id=project_id,
+                target_table="characters",
+                operation="create",
+                after_json='{"name":"旧主角"}',
+                confidence=0.95,
+                evidence_text="旧证据",
+                rationale="旧记忆",
+            )
+            repo.create_agent_memory(
+                project_id,
+                "author",
+                "user_feedback",
+                "old-style",
+                {"note": "旧记忆"},
+            )
+            repo.save_chapter(project_id, 1, "旧第一章", "旧正文林深仍在调查档案馆。" * 20, 240, "published")
+            repo.save_chapter_state(project_id, 1, {"新增事实": ["旧状态卡"]}, "旧状态卡")
+
+            draft = {
+                "project_updates": {"description": "新创世描述"},
+                "world_settings": [{"title": "新城市", "category": "新世界", "content": "新内容"}],
+                "characters": [{"name": "新主角", "role": "protagonist", "description": "新主角描述"}],
+                "factions": [{"name": "新组织", "type": "民间", "description": "新组织描述"}],
+                "outlines": [{"level": "arc", "sequence": 1, "title": "新大纲", "content": "新大纲内容", "chapters_range": "1-3"}],
+                "plot_holes": [{"code": "NEW-001", "title": "新伏笔", "description": "新伏笔内容"}],
+                "instructions": [{"chapter_number": 1, "objective": "新目标", "key_events": "新事件"}],
+            }
+            genesis = repo.create_genesis_run(
+                project_id,
+                input_json=json.dumps({
+                    "title": "替换创世测试",
+                    "genre": "科幻",
+                    "premise": "验证重新创世不会污染后续章节",
+                    "target_chapters": 3,
+                }, ensure_ascii=False),
+                status="generated",
+            )
+            repo.update_genesis_run(
+                genesis["id"],
+                {"draft_json": json.dumps(draft, ensure_ascii=False)},
+            )
+
+            approve_resp = test_client.post("/api/genesis/approve", json={
+                "project_id": project_id,
+                "genesis_id": genesis["id"],
+                "force_apply": True,
+                "confirm_quality_risk": True,
+            })
+            body = approve_resp.json()
+
+            assert body["ok"] is True
+            assert body["data"]["applied"]["context_replaced"] is True
+            assert [c["name"] for c in repo.list_characters(project_id, include_inactive=True)] == ["新主角"]
+            assert [w["title"] for w in repo.list_world_settings(project_id)] == ["新城市"]
+            assert [o["title"] for o in repo.list_outlines(project_id)] == ["新大纲"]
+            assert [p["code"] for p in repo.list_plot_holes(project_id)] == ["NEW-001"]
+            assert repo.get_instruction_by_chapter(project_id, 1)["objective"] == "新目标"
+            assert repo.list_story_facts(project_id) == []
+            assert repo.list_memory_batches(project_id) == []
+            assert repo.list_agent_memories(project_id, enabled_only=False) == []
+            assert repo.get_chapter_state(project_id, 1) is None
+
+            from novel_factory.agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
+
+            bundle = AgentContextBuilder(repo).build_for_author(project_id, 2, {"chapter_status": "planned"})
+            prompt_context = format_context_bundle_for_prompt(bundle, "author")
+            assert "旧正文林深仍在调查档案馆" not in prompt_context
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
     def test_approve_rejects_non_object_draft_without_partial_apply(self):
         """Bad generated draft_json should fail cleanly, not raise str.get or write partial context."""
         from novel_factory.api_app import create_api_app
