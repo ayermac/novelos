@@ -122,6 +122,9 @@ class TestFreshRunCheckpointCleanup:
         def get_workflow_runs_for_project(self, project_id, chapter_number=None, limit=20):
             return self.runs
 
+        def get_chapter(self, project_id, chapter_number):
+            return {"status": "polished"}
+
         def update_workflow_run(self, run_id, status=None, error_message=None, **_kwargs):
             self.failed_runs.append({
                 "run_id": run_id,
@@ -156,6 +159,37 @@ class TestFreshRunCheckpointCleanup:
         delete.assert_called_once_with("test.db", "demo", 1)
         assert repo.failed_runs[0]["run_id"] == "run-old"
         assert repo.failed_runs[0]["status"] == "failed"
+
+    def test_clears_checkpoint_for_completed_non_terminal_run(self):
+        repo = self.FakeRepo([
+            {"id": "run-done", "status": "completed", "current_node": "editor"}
+        ])
+
+        with patch("novel_factory.workflow.checkpoint.inspect_checkpoint_thread") as inspect:
+            inspect.return_value = {
+                "checkpoint_exists": True,
+                "checkpoint_node": "loop",
+            }
+            with patch("novel_factory.workflow.runner.delete_checkpoint_thread") as delete:
+                _clear_stale_checkpoint_for_new_run(repo, "demo", 1)
+
+        delete.assert_called_once_with("test.db", "demo", 1)
+
+    def test_clears_checkpoint_when_inspection_reports_corruption(self):
+        repo = self.FakeRepo([
+            {"id": "run-done", "status": "blocked", "current_node": "human_review"}
+        ])
+
+        with patch("novel_factory.workflow.checkpoint.inspect_checkpoint_thread") as inspect:
+            inspect.return_value = {
+                "checkpoint_exists": True,
+                "checkpoint_corrupt": True,
+                "checkpoint_error": "Error -3 while decompressing data: incorrect header check",
+            }
+            with patch("novel_factory.workflow.runner.delete_checkpoint_thread") as delete:
+                _clear_stale_checkpoint_for_new_run(repo, "demo", 1)
+
+        delete.assert_called_once_with("test.db", "demo", 1)
 
 
 class TestGraphExitGuard:
@@ -629,6 +663,76 @@ class TestWorkflowNodeRevisionHardening:
         assert updated["retryable_quality_gate"] is True
         assert "error" not in updated
         assert repo.started_tasks[0]["agent_id"] == "author"
+
+    def test_retryable_quality_gate_logs_retrying_node_event_not_completed(
+        self, tmp_path, monkeypatch
+    ):
+        from novel_factory.db.connection import init_db
+        from novel_factory.db.repository import Repository
+        from novel_factory.llm.provider import LLMProvider
+        import novel_factory.workflow.nodes as nodes
+
+        class DummyLLM(LLMProvider):
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None):
+                return {}
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ):
+                return ""
+
+        class RetryableGateAuthor:
+            def __init__(self, *args, **kwargs):
+                pass
+
+            def run(self, state):
+                return {
+                    "error": "字数质量门未通过",
+                    "chapter_status": ChapterStatus.SCRIPTED.value,
+                    "quality_gate": {
+                        "pass": False,
+                        "word_count_fail": True,
+                        "revision_target": "author",
+                        "message": "字数超标: 6355 > 4050 (目标 3000，上限缓冲 500)",
+                    },
+                }
+
+        db_path = tmp_path / "retrying-node-event.db"
+        init_db(db_path)
+        repo = Repository(str(db_path))
+        repo.create_project(project_id="demo", name="Demo", genre="fantasy")
+        repo.add_chapter("demo", 2, title="第2章", status=ChapterStatus.SCRIPTED.value)
+        run_id = repo.create_workflow_run("demo", 2)
+        repo.update_workflow_run(run_id, status="running", current_node="author")
+
+        monkeypatch.setattr(nodes, "AuthorAgent", RetryableGateAuthor)
+
+        result = nodes.author_node(
+            {
+                "project_id": "demo",
+                "chapter_number": 2,
+                "workflow_run_id": run_id,
+                "chapter_status": ChapterStatus.SCRIPTED.value,
+                "max_retries": 3,
+            },
+            repo,
+            DummyLLM(),
+        )
+
+        events = repo.get_workflow_node_events(run_id, node_name="author")
+        event_types = [event["event_type"] for event in events]
+        messages = [event["message"] for event in events]
+
+        assert result["retryable_quality_gate"] is True
+        assert event_types == ["started", "retrying"]
+        assert events[-1]["status"] == "warning"
+        assert "字数超标" in events[-1]["message"]
+        assert "已生成章节初稿" not in messages
 
     def test_revision_router_node_returns_hydrated_updates_for_langgraph_merge(self):
         from novel_factory.workflow.nodes import revision_router_node

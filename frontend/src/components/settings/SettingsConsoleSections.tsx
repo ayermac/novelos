@@ -3,10 +3,11 @@ import React, { useEffect, useState } from 'react'
 import EmptyState from '../EmptyState'
 import SkillVisibilityPanel from './SkillVisibilityPanel'
 import { tLlmMode } from '../../lib/i18n'
-import { FormField, Select, TextInput, LoadingButton, InlineMessage, SkeletonStack, useToast } from '../ui'
+import { FormField, Select, TextInput, NumberInput, LoadingButton, InlineMessage, SkeletonStack, useToast } from '../ui'
 import { get, post, put } from '../../lib/api'
 import { useAppDialog } from '../AppDialogContext'
 import { CheckCircle2, KeyRound, Plus, RefreshCw, Router, Server, Trash2, Wifi } from 'lucide-react'
+import './SettingsConsoleSections.css'
 
 interface LlmProfile {
   name: string
@@ -20,7 +21,6 @@ interface LlmProfile {
   base_url_source?: string
   api_key_source?: string
   temperature?: number
-  max_tokens?: number
 }
 
 interface AgentRoute {
@@ -62,7 +62,7 @@ interface DesktopProfile {
   api_key_source: string
   temperature?: number
   timeout?: number
-  max_tokens?: number
+  request_timeout_seconds?: number
 }
 
 interface DesktopConfig {
@@ -73,16 +73,18 @@ interface DesktopConfig {
   default_llm: string | null
   profiles: Record<string, DesktopProfile>
   agent_llm?: Record<string, string>
+  agent_llm_fallback?: Record<string, string>
 }
 
 interface LlmTemplateForm {
+  id: string
   name: string
   provider: string
   base_url: string
   model: string
   api_key_env: string
   temperature: number
-  timeout: number
+  request_timeout_seconds: number
 }
 
 interface WizardForm {
@@ -105,6 +107,13 @@ interface Option {
   value: string
   label: string
 }
+
+type ApiKeySecretStatus = {
+  configured: boolean
+  storage?: string
+}
+
+type ApiKeySource = 'desktop_secure_storage' | 'environment' | 'missing'
 
 const AGENT_OPTIONS = [
   { id: 'genesis', label: '创世设定', hint: '项目底盘、世界观、角色原型' },
@@ -136,6 +145,51 @@ const PROVIDER_PRESETS: Record<string, Pick<LlmTemplateForm, 'provider' | 'base_
     model: 'gpt-4o',
     api_key_env: 'OPENAI_API_KEY',
   },
+}
+
+const COMMON_API_KEY_ENVS = [
+  'OPENAI_API_KEY',
+  'FREEMODEL_API_KEY',
+  'OPENROUTER_API_KEY',
+  'DEEPSEEK_API_KEY',
+  'MOONSHOT_API_KEY',
+] as const
+
+let templateIdCounter = 0
+
+function createTemplateId(seed = 'template'): string {
+  templateIdCounter += 1
+  const safeSeed = seed.replace(/[^A-Za-z0-9_-]/g, '') || 'template'
+  return `${safeSeed}-${templateIdCounter}`
+}
+
+function normalizePositiveInt(value: number, fallback: number): number {
+  if (!Number.isFinite(value)) return fallback
+  return Math.max(1, Math.round(value))
+}
+
+function isLocalSecureSecret(status?: ApiKeySecretStatus): boolean {
+  if (!status?.configured) return false
+  return !status.storage || ['desktop_secure_storage', 'electron_safe_storage'].includes(status.storage)
+}
+
+function getApiKeySourceForEnv(
+  envName: string,
+  desktopConfig: DesktopConfig | null,
+  secretStatuses: Record<string, ApiKeySecretStatus>,
+): ApiKeySource {
+  if (isLocalSecureSecret(secretStatuses[envName])) {
+    return 'desktop_secure_storage'
+  }
+
+  const profileSources = Object.values(desktopConfig?.profiles || {})
+    .filter((profile) => profile.api_key_env === envName)
+    .map((profile) => profile.api_key_source)
+
+  if (profileSources.includes('environment')) {
+    return 'environment'
+  }
+  return 'missing'
 }
 
 function SectionCard({ title, subtitle, action, children }: {
@@ -328,7 +382,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
   const dialog = useAppDialog()
   const { showToast } = useToast()
   const [desktopConfig, setDesktopConfig] = useState<DesktopConfig | null>(null)
-  const [secretStatuses, setSecretStatuses] = useState<Record<string, { configured: boolean; storage?: string }>>({})
+  const [secretStatuses, setSecretStatuses] = useState<Record<string, ApiKeySecretStatus>>({})
   const [loading, setLoading] = useState(isDesktop)
   const [saving, setSaving] = useState(false)
   const [savingKeyFor, setSavingKeyFor] = useState<string | null>(null)
@@ -339,7 +393,10 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
   const [templates, setTemplates] = useState<LlmTemplateForm[]>([])
   const [defaultTemplate, setDefaultTemplate] = useState(data.default_llm || 'default')
   const [agentRoutes, setAgentRoutes] = useState<Record<string, string>>({})
+  const [agentFallbackRoutes, setAgentFallbackRoutes] = useState<Record<string, string>>({})
   const [apiKeyDrafts, setApiKeyDrafts] = useState<Record<string, string>>({})
+  const [customApiKeyEnvs, setCustomApiKeyEnvs] = useState<string[]>([])
+  const [newApiKeyEnv, setNewApiKeyEnv] = useState('')
 
   const loadDesktopConfig = React.useCallback(async () => {
     if (!isDesktop) {
@@ -354,19 +411,21 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
       const profiles = Object.entries(cfg.profiles || {})
       const nextTemplates = profiles.length > 0
         ? profiles.map(([name, profile]) => ({
+            id: createTemplateId(name),
             name,
             provider: profile.provider || 'openai_compatible',
             base_url: profile.base_url || '',
             model: profile.model || '',
             api_key_env: profile.api_key_env || 'OPENAI_API_KEY',
             temperature: profile.temperature ?? 0.7,
-            timeout: profile.timeout ?? 60,
+            request_timeout_seconds: profile.request_timeout_seconds ?? profile.timeout ?? 60,
           }))
         : [{
+            id: createTemplateId('default'),
             name: 'default',
             ...PROVIDER_PRESETS.default,
             temperature: 0.7,
-            timeout: 300,
+            request_timeout_seconds: 300,
           }]
       const defaultName = cfg.default_llm || nextTemplates[0]?.name || 'default'
       setTemplates(nextTemplates)
@@ -374,6 +433,10 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
       setAgentRoutes(Object.fromEntries(AGENT_OPTIONS.map((agent) => [
         agent.id,
         cfg.agent_llm?.[agent.id] || defaultName,
+      ])))
+      setAgentFallbackRoutes(Object.fromEntries(AGENT_OPTIONS.map((agent) => [
+        agent.id,
+        cfg.agent_llm_fallback?.[agent.id] || '',
       ])))
     } else {
       setInlineMsg({ variant: 'danger', text: res.error?.message || '读取桌面 LLM 配置失败' })
@@ -391,20 +454,22 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
     loadDesktopConfig()
   }, [loadDesktopConfig])
 
-  const updateTemplate = (name: string, patch: Partial<LlmTemplateForm>) => {
+  const updateTemplate = (id: string, patch: Partial<LlmTemplateForm>) => {
     setTemplates((prev) => prev.map((template) => (
-      template.name === name ? { ...template, ...patch } : template
+      template.id === id ? { ...template, ...patch } : template
     )))
   }
 
-  const renameTemplate = (oldName: string, nextName: string) => {
-    const cleanName = nextName.trim()
-    updateTemplate(oldName, { name: cleanName })
+  const renameTemplate = (id: string, oldName: string, nextName: string) => {
+    updateTemplate(id, { name: nextName })
     if (defaultTemplate === oldName) {
-      setDefaultTemplate(cleanName)
+      setDefaultTemplate(nextName)
     }
     setAgentRoutes((prev) => Object.fromEntries(
-      Object.entries(prev).map(([agent, route]) => [agent, route === oldName ? cleanName : route]),
+      Object.entries(prev).map(([agent, route]) => [agent, route === oldName ? nextName : route]),
+    ))
+    setAgentFallbackRoutes((prev) => Object.fromEntries(
+      Object.entries(prev).map(([agent, route]) => [agent, route === oldName ? nextName : route]),
     ))
   }
 
@@ -419,10 +484,11 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
     setTemplates((prev) => [
       ...prev,
       {
+        id: createTemplateId(name),
         name,
         ...(PROVIDER_PRESETS[name] || PROVIDER_PRESETS.default),
         temperature: 0.7,
-        timeout: name === 'author' ? 300 : 180,
+        request_timeout_seconds: name === 'author' ? 300 : 180,
       },
     ])
   }
@@ -444,6 +510,9 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
     setAgentRoutes((prev) => Object.fromEntries(
       Object.entries(prev).map(([agent, route]) => [agent, route === name ? fallback : route]),
     ))
+    setAgentFallbackRoutes((prev) => Object.fromEntries(
+      Object.entries(prev).map(([agent, route]) => [agent, route === name ? '' : route]),
+    ))
   }
 
   const handleSaveConfig = async () => {
@@ -460,16 +529,24 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
         base_url: template.base_url.trim(),
         api_key_env: template.api_key_env.trim(),
         temperature: template.temperature,
-        timeout: template.timeout,
+        request_timeout_seconds: normalizePositiveInt(Number(template.request_timeout_seconds), 300),
       },
     ]))
     setSaving(true)
     setInlineMsg(null)
+    const fallbackRoutesToSave: Record<string, string> = {}
+    Object.entries(agentFallbackRoutes).forEach(([agent, profile]) => {
+      if (profile && profile !== '') {
+        fallbackRoutesToSave[agent] = profile
+      }
+    })
+
     const res = await put('/desktop/config', {
       llm_mode: 'real',
       default_llm: defaultTemplate,
       llm_profiles: profiles,
       agent_llm: agentRoutes,
+      agent_llm_fallback: fallbackRoutesToSave,
     })
     setSaving(false)
     if (res.ok && res.data) {
@@ -485,18 +562,18 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
     }
   }
 
-  const handleSaveKey = async (template: LlmTemplateForm) => {
-    const value = apiKeyDrafts[template.name]?.trim()
+  const handleSaveKey = async (envName: string) => {
+    const value = apiKeyDrafts[envName]?.trim()
     if (!value) return
-    setSavingKeyFor(template.name)
+    setSavingKeyFor(envName)
     setInlineMsg(null)
     try {
-      await window.__NOVELOS_DESKTOP__?.setApiKey?.(template.api_key_env, value)
-      setApiKeyDrafts((prev) => ({ ...prev, [template.name]: '' }))
+      await window.__NOVELOS_DESKTOP__?.setApiKey?.(envName, value)
+      setApiKeyDrafts((prev) => ({ ...prev, [envName]: '' }))
       const statuses = await window.__NOVELOS_DESKTOP__?.secretStatus?.()
       setSecretStatuses(statuses || {})
       setRestartRequired(true)
-      const msg = `${template.name} 的 API Key 已保存到本机安全存储，重启本地服务后可测试连接。`
+      const msg = `${envName} 的 API Key 已保存到本机安全存储，重启本地服务后可测试连接。`
       setInlineMsg({ variant: 'success', text: msg })
       showToast({ tone: 'success', title: 'API Key 已保存', message: msg })
     } catch (err) {
@@ -507,22 +584,22 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
     setSavingKeyFor(null)
   }
 
-  const handleDeleteKey = async (template: LlmTemplateForm) => {
+  const handleDeleteKey = async (envName: string) => {
     const ok = await dialog.confirm({
       title: '删除本机 API Key',
-      message: `确定删除 ${template.api_key_env} 的本机安全存储？配置文件会保留模板，但重启后该模板将无法调用真实 LLM。`,
+      message: `确定删除 ${envName} 的本机安全存储？使用它的模板重启后将无法调用真实 LLM。`,
       tone: 'danger',
       confirmLabel: '删除',
     })
     if (!ok) return
-    setSavingKeyFor(template.name)
+    setSavingKeyFor(envName)
     setInlineMsg(null)
     try {
-      await window.__NOVELOS_DESKTOP__?.deleteApiKey?.(template.api_key_env)
+      await window.__NOVELOS_DESKTOP__?.deleteApiKey?.(envName)
       const statuses = await window.__NOVELOS_DESKTOP__?.secretStatus?.()
       setSecretStatuses(statuses || {})
       setRestartRequired(true)
-      const msg = `${template.name} 的 API Key 已删除，重启本地服务后生效。`
+      const msg = `${envName} 的 API Key 已删除，重启本地服务后生效。`
       setInlineMsg({ variant: 'success', text: msg })
       showToast({ tone: 'success', title: 'API Key 已删除', message: msg })
     } catch (err) {
@@ -531,6 +608,17 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
       showToast({ tone: 'danger', title: '删除失败', message: msg })
     }
     setSavingKeyFor(null)
+  }
+
+  const handleAddApiKeyEnv = () => {
+    const envName = newApiKeyEnv.trim().toUpperCase()
+    if (!envName) return
+    if (!/^[A-Z0-9_]+$/.test(envName) || !envName.endsWith("_API_KEY")) {
+      setInlineMsg({ variant: 'danger', text: 'API Key 环境变量名必须为大写字母、数字或下划线，并以 _API_KEY 结尾' })
+      return
+    }
+    setCustomApiKeyEnvs((prev) => prev.includes(envName) ? prev : [...prev, envName])
+    setNewApiKeyEnv('')
   }
 
   const handleTest = async (template: LlmTemplateForm) => {
@@ -623,6 +711,12 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
   const runtimeMode = desktopConfig?.runtime_llm_mode || desktopConfig?.llm_mode || data.llm_mode
   const configuredMode = desktopConfig?.configured_llm_mode || desktopConfig?.llm_mode || runtimeMode
   const profileNames = templates.map((template) => template.name)
+  const apiKeyEnvOptions = Array.from(new Set([
+    ...COMMON_API_KEY_ENVS,
+    ...Object.keys(secretStatuses),
+    ...customApiKeyEnvs,
+    ...templates.map((template) => template.api_key_env).filter(Boolean),
+  ]))
 
   return (
     <>
@@ -655,6 +749,115 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
           )}
 
           <div style={{
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-primary)',
+            padding: 16,
+            marginBottom: 18,
+          }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+              <div>
+                <h4 style={{ margin: 0, fontSize: 16 }}>API Key 安全存储</h4>
+                <div style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 3 }}>
+                  API Key 按环境变量名单独保存；模板只选择要引用的环境变量名。
+                </div>
+              </div>
+            </div>
+            <div className="settings-api-key-grid">
+              <div className="settings-api-key-header" aria-hidden="true">
+                <span>环境变量名</span>
+                <span>API Key</span>
+                <span>保存</span>
+                <span>删除</span>
+              </div>
+              {apiKeyEnvOptions.map((envName) => {
+                const apiKeySource = getApiKeySourceForEnv(envName, desktopConfig, secretStatuses)
+                const canDelete = apiKeySource === 'desktop_secure_storage'
+                const statusText = apiKeySource === 'desktop_secure_storage'
+                  ? `${envName} 已保存到本机安全存储`
+                  : apiKeySource === 'environment'
+                    ? `${envName} 来自系统环境变量，不能在这里删除`
+                    : `${envName} 尚未保存`
+                const deleteTitle = canDelete
+                  ? `删除 ${envName} 的本机安全存储`
+                  : apiKeySource === 'environment'
+                    ? `${envName} 来自系统环境变量，请在系统环境中删除或修改`
+                    : `${envName} 尚未保存本机 API Key`
+                return (
+                  <div
+                    key={envName}
+                    className="settings-api-key-row"
+                  >
+                    <FormField label="环境变量名">
+                      <TextInput value={envName} readOnly />
+                    </FormField>
+                    <FormField
+                      label="API Key"
+                      helper={statusText}
+                    >
+                      <TextInput
+                        aria-label={`${envName} API Key`}
+                        type="password"
+                        value={apiKeyDrafts[envName] || ''}
+                        onChange={(e) => setApiKeyDrafts((prev) => ({ ...prev, [envName]: e.target.value }))}
+                        placeholder="输入 API Key"
+                      />
+                    </FormField>
+                    <div className="settings-api-key-action">
+                      <LoadingButton
+                        className="btn btn-secondary"
+                        variant="secondary"
+                        aria-label={`保存 ${envName}`}
+                        loading={savingKeyFor === envName}
+                        loadingText="保存中..."
+                        onClick={() => handleSaveKey(envName)}
+                        disabled={!apiKeyDrafts[envName]?.trim()}
+                      >
+                        <KeyRound size={14} />
+                        保存 Key
+                      </LoadingButton>
+                    </div>
+                    <div className="settings-api-key-action">
+                      <LoadingButton
+                        className="btn btn-secondary"
+                        variant="secondary"
+                        aria-label={`删除 ${envName}`}
+                        title={deleteTitle}
+                        loading={savingKeyFor === envName}
+                        loadingText="删除中..."
+                        onClick={() => handleDeleteKey(envName)}
+                        disabled={!canDelete}
+                      >
+                        删除
+                      </LoadingButton>
+                    </div>
+                  </div>
+                )
+              })}
+              <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'minmax(180px, 0.35fr) auto',
+                  gap: 10,
+                  alignItems: 'end',
+                  paddingTop: 2,
+                }}
+              >
+                <FormField label="新增环境变量名">
+                  <TextInput
+                    value={newApiKeyEnv}
+                    onChange={(e) => setNewApiKeyEnv(e.target.value.toUpperCase())}
+                    placeholder="CUSTOM_API_KEY"
+                  />
+                </FormField>
+                <button className="btn btn-secondary" type="button" onClick={handleAddApiKeyEnv}>
+                  添加 Key 名称
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div style={{
             display: 'grid',
             gridTemplateColumns: 'minmax(0, 1.2fr) minmax(280px, 0.8fr)',
             gap: 18,
@@ -683,7 +886,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
                   const canTest = runtimeMode === 'real' && !restartRequired && activeKey
                   return (
                     <div
-                      key={template.name}
+                      key={template.id}
                       style={{
                         border: isDefault ? '1px solid rgba(118, 26, 52, 0.36)' : '1px solid var(--border-color)',
                         borderRadius: 'var(--radius-md)',
@@ -697,7 +900,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
                           <TextInput
                             aria-label={`${template.name} 模板名称`}
                             value={template.name}
-                            onChange={(e) => renameTemplate(template.name, e.target.value)}
+                            onChange={(e) => renameTemplate(template.id, template.name, e.target.value)}
                             style={{ width: 150, fontWeight: 700 }}
                           />
                           {isDefault && (
@@ -746,7 +949,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
 
                       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 12 }}>
                         <FormField label="服务商">
-                          <Select value={template.provider} onChange={(e) => updateTemplate(template.name, { provider: e.target.value })}>
+                          <Select value={template.provider} onChange={(e) => updateTemplate(template.id, { provider: e.target.value })}>
                             {TEMPLATE_PROVIDER_OPTIONS.map((option) => (
                               <option key={option.value} value={option.value}>{option.label}</option>
                             ))}
@@ -755,52 +958,42 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
                         <FormField label="模型 ID">
                           <TextInput
                             value={template.model}
-                            onChange={(e) => updateTemplate(template.name, { model: e.target.value })}
+                            onChange={(e) => updateTemplate(template.id, { model: e.target.value })}
                             placeholder="gpt-4o-mini / kimi-k2 / deepseek-chat"
                           />
                         </FormField>
                         <FormField label="Base URL">
                           <TextInput
                             value={template.base_url}
-                            onChange={(e) => updateTemplate(template.name, { base_url: e.target.value })}
+                            onChange={(e) => updateTemplate(template.id, { base_url: e.target.value })}
                             placeholder="https://api.example.com/v1"
                           />
                         </FormField>
                         <FormField label="API Key 环境变量名">
-                          <TextInput
+                          <Select
+                            aria-label={`${template.name} API Key 环境变量名`}
                             value={template.api_key_env}
-                            onChange={(e) => updateTemplate(template.name, { api_key_env: e.target.value.toUpperCase() })}
-                            placeholder="OPENAI_API_KEY"
+                            onChange={(e) => updateTemplate(template.id, { api_key_env: e.target.value })}
+                          >
+                            {apiKeyEnvOptions.map((envName) => (
+                              <option key={envName} value={envName}>{envName}</option>
+                            ))}
+                          </Select>
+                        </FormField>
+                        <FormField label="request_timeout_seconds">
+                          <NumberInput
+                            aria-label={`${template.name} request_timeout_seconds`}
+                            min="1"
+                            step="1"
+                            value={template.request_timeout_seconds}
+                            onChange={(e) => updateTemplate(template.id, {
+                              request_timeout_seconds: normalizePositiveInt(Number(e.target.value), template.request_timeout_seconds),
+                            })}
                           />
                         </FormField>
                       </div>
 
-                      <div style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'minmax(0, 1fr) auto auto auto',
-                        gap: 10,
-                        alignItems: 'end',
-                        marginTop: 12,
-                      }}>
-                        <FormField label="API Key" helper="只保存到本机安全存储，不写入配置文件。">
-                          <TextInput
-                            type="password"
-                            value={apiKeyDrafts[template.name] || ''}
-                            onChange={(e) => setApiKeyDrafts((prev) => ({ ...prev, [template.name]: e.target.value }))}
-                            placeholder={`输入 ${template.api_key_env} 的 Key`}
-                          />
-                        </FormField>
-                        <LoadingButton
-                          className="btn btn-secondary"
-                          variant="secondary"
-                          loading={savingKeyFor === template.name}
-                          loadingText="保存中..."
-                          onClick={() => handleSaveKey(template)}
-                          disabled={!apiKeyDrafts[template.name]?.trim()}
-                        >
-                          <KeyRound size={14} style={{ marginRight: 4 }} />
-                          保存 Key
-                        </LoadingButton>
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
                         <LoadingButton
                           className="btn btn-secondary"
                           variant="secondary"
@@ -810,16 +1003,6 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
                           disabled={!canTest}
                         >
                           测试连接
-                        </LoadingButton>
-                        <LoadingButton
-                          className="btn btn-secondary"
-                          variant="secondary"
-                          loading={savingKeyFor === template.name}
-                          loadingText="删除中..."
-                          onClick={() => handleDeleteKey(template)}
-                          disabled={!activeKey}
-                        >
-                          删除 Key
                         </LoadingButton>
                       </div>
                     </div>
@@ -855,7 +1038,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
                       gap: 10,
                       alignItems: 'center',
                       padding: '10px 0',
-                      borderBottom: '1px solid rgba(30, 58, 95, 0.06)',
+                      borderBottom: '1px solid var(--border-color)',
                     }}
                   >
                     <div>
@@ -867,6 +1050,40 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
                       value={agentRoutes[agent.id] || defaultTemplate}
                       onChange={(e) => setAgentRoutes((prev) => ({ ...prev, [agent.id]: e.target.value }))}
                     >
+                      {profileNames.map((name) => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </Select>
+                  </div>
+                ))}
+              </div>
+              <div style={{ marginTop: 14, paddingTop: 12, borderTop: '1px solid var(--border-color)' }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8, color: 'var(--text-secondary)' }}>
+                  备用模板（仅记忆整理）
+                </div>
+                {AGENT_OPTIONS.filter((a) => a.id === 'memory_curator').map((agent) => (
+                  <div
+                    key={`${agent.id}-fallback`}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'minmax(0, 1fr) 150px',
+                      gap: 10,
+                      alignItems: 'center',
+                      padding: '8px 0',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 700 }}>记忆整理备用模板</div>
+                      <div style={{ color: 'var(--text-secondary)', fontSize: 11, marginTop: 2 }}>
+                        主模型超时后自动切换
+                      </div>
+                    </div>
+                    <Select
+                      aria-label={`${agent.id} 备用 LLM 模板`}
+                      value={agentFallbackRoutes[agent.id] || ''}
+                      onChange={(e) => setAgentFallbackRoutes((prev) => ({ ...prev, [agent.id]: e.target.value }))}
+                    >
+                      <option value=''>不启用</option>
                       {profileNames.map((name) => (
                         <option key={name} value={name}>{name}</option>
                       ))}

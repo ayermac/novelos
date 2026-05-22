@@ -693,6 +693,40 @@ class TestAuthorAgent:
         assert chapter["content"] is not None
         assert chapter["content"].startswith("第一章 测试\n\n")
 
+    def test_author_rejects_overlong_draft_before_save(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        overlong_content = "这是一段明显超出章节目标的正文。" * 260
+        stub = StubLLMProvider([{
+            "title": "第一章 测试",
+            "content": overlong_content,
+            "word_count": len(overlong_content),
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == "scripted"
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert "字数超标" in result["quality_gate"]["message"]
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert not chapter.get("content")
+
     def test_author_does_not_use_objective_excerpt_as_chapter_title(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
 
@@ -1060,7 +1094,7 @@ class TestAuthorAgent:
                 self.text_calls += 1
                 if self.text_calls == 1:
                     return "   "
-                return "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 180
+                return "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 90
 
         llm = EmptyThenTextLLM()
         agent = AuthorAgent(seeded_repo, llm)
@@ -1169,6 +1203,28 @@ class TestPolisherAgent:
         assert llm.json_calls == 0
         assert llm.text_calls == 1
         assert llm.last_timeout == 300
+
+    def test_polisher_v6_context_preserves_complete_current_draft_when_aux_context_is_large(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        draft = "DRAFT_BEGIN_UNIQUE_6617\n" + ("林逸确认通讯器仍在闪烁。" * 180) + "\nDRAFT_END_UNIQUE_6617"
+        seeded_repo.save_chapter_content("test_proj", 1, draft, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+
+        agent = PolisherAgent(seeded_repo, StubLLMProvider())
+        agent._get_title_contract_context = lambda _project_id: "TITLE_CONTEXT_" + ("设定" * 7000)
+        agent._get_style_bible_context = lambda _project_id, _agent_id: "STYLE_CONTEXT_" + ("风格" * 7000)
+        agent._build_quality_feedback = lambda _state: "QUALITY_CONTEXT_" + ("反馈" * 7000)
+
+        context = agent._build_v6_context({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+        })
+
+        assert "DRAFT_BEGIN_UNIQUE_6617" in context
+        assert "DRAFT_END_UNIQUE_6617" in context
+        assert context.index("DRAFT_BEGIN_UNIQUE_6617") < context.index("DRAFT_END_UNIQUE_6617")
 
     def test_polisher_real_mode_preserves_draft_when_llm_fails(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent

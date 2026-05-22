@@ -237,6 +237,7 @@ def _clear_stale_checkpoint_for_new_run(
             chapter_status = chapter.get("status", "planned") if chapter else "planned"
             checkpoint_node = checkpoint_info.get("checkpoint_node")
             checkpoint_chapter_status = None  # Not easily available from inspect
+            current_node = latest_runs[0].get("current_node") if latest_runs else None
 
             is_stale, stale_reason = _checkpoint_is_stale(
                 run_status=latest_status,
@@ -244,6 +245,7 @@ def _clear_stale_checkpoint_for_new_run(
                 checkpoint_node=checkpoint_node,
                 checkpoint_chapter_status=checkpoint_chapter_status,
                 current_chapter_status=chapter_status,
+                current_node=current_node,
                 checkpoint_age_seconds=None,
             )
 
@@ -344,6 +346,7 @@ def _build_llm_router(settings: Settings, llm_mode: str = "stub"):
                 default_llm=settings.default_llm,
                 llm_profiles=settings.llm_profiles,
                 agent_llm=settings.agent_llm,
+                agent_llm_fallback=settings.agent_llm_fallback,
             )
             return LLMRouter(config, stub_provider=stub, llm_mode="stub")
 
@@ -372,6 +375,7 @@ def _build_llm_router(settings: Settings, llm_mode: str = "stub"):
             default_llm=settings.default_llm,
             llm_profiles=settings.llm_profiles,
             agent_llm=settings.agent_llm,
+            agent_llm_fallback=settings.agent_llm_fallback,
         )
         return LLMRouter(config, llm_mode=llm_mode, env_getter=env_getter)
 
@@ -414,6 +418,7 @@ def _validate_llm_config(settings: Settings, llm_mode: str) -> None:
             default_llm=settings.default_llm,
             llm_profiles=settings.llm_profiles,
             agent_llm=settings.agent_llm,
+            agent_llm_fallback=settings.agent_llm_fallback,
         )
         router = LLMRouter(config, llm_mode=llm_mode, env_getter=env_getter)
         # Validate by attempting to get provider for default profile

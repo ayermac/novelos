@@ -29,7 +29,7 @@ interface SetupForm {
   agentModels: string
   llmMode: 'stub' | 'real'
   temperature: number
-  timeout: number
+  requestTimeoutSeconds: number
 }
 
 interface DesktopConfig {
@@ -47,7 +47,8 @@ interface DesktopConfig {
     api_key_configured: boolean
     api_key_source: string
     temperature: number
-    max_tokens: number
+    timeout?: number
+    request_timeout_seconds?: number
   }>
 }
 
@@ -133,7 +134,7 @@ function getInitialForm(config: DesktopConfig | null): SetupForm {
     agentModels: formatAgentModelOverrides(config, defaultProfileName),
     llmMode: TARGET_LLM_MODE,
     temperature: profile?.temperature ?? 0.7,
-    timeout: 60,
+    requestTimeoutSeconds: profile?.request_timeout_seconds ?? profile?.timeout ?? 300,
   }
 }
 
@@ -242,7 +243,7 @@ export default function DesktopFirstRunSetup({
       base_url: form.baseUrl,
       model: form.model,
       temperature: form.temperature,
-      timeout: form.timeout,
+      request_timeout_seconds: form.requestTimeoutSeconds,
       api_key_env: form.apiKeyEnv,
       agent_llm: parseAgentRoutes(form.agentRoutes),
       agent_models: parseAgentModels(form.agentModels),
@@ -773,13 +774,12 @@ export default function DesktopFirstRunSetup({
                 disabled={isBusy}
               />
             </FormField>
-            <FormField label="Timeout (秒)">
+            <FormField label="request_timeout_seconds">
               <NumberInput
                 min="1"
-                max="300"
                 step="1"
-                value={form.timeout}
-                onChange={(e) => setForm((prev) => ({ ...prev, timeout: parseInt(e.target.value, 10) }))}
+                value={form.requestTimeoutSeconds}
+                onChange={(e) => setForm((prev) => ({ ...prev, requestTimeoutSeconds: Math.max(1, parseInt(e.target.value, 10) || prev.requestTimeoutSeconds) }))}
                 disabled={isBusy}
               />
             </FormField>

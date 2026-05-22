@@ -149,6 +149,53 @@ def _find_outline_for_memory_update(repo, project_id: str, after_data: dict) -> 
     return None
 
 
+def _find_world_setting_for_memory_update(repo, project_id: str, item: dict, after_data: dict) -> dict | None:
+    """Find a world setting target for update patches that omitted target_id."""
+    before_data = _parse_json_object(item.get("before_json"))
+    titles = [
+        str(candidate or "").strip()
+        for candidate in (after_data.get("title"), before_data.get("title"))
+        if str(candidate or "").strip()
+    ]
+    categories = {
+        str(candidate or "").strip()
+        for candidate in (after_data.get("category"), before_data.get("category"))
+        if str(candidate or "").strip()
+    }
+    settings = repo.list_world_settings(project_id)
+
+    for title in titles:
+        title_matches = [
+            setting
+            for setting in settings
+            if str(setting.get("title") or "").strip() == title
+        ]
+        if categories:
+            category_match = next(
+                (
+                    setting
+                    for setting in title_matches
+                    if str(setting.get("category") or "").strip() in categories
+                ),
+                None,
+            )
+            if category_match:
+                return category_match
+        if len(title_matches) == 1:
+            return title_matches[0]
+
+    if categories:
+        category_matches = [
+            setting
+            for setting in settings
+            if str(setting.get("category") or "").strip() in categories
+        ]
+        if len(category_matches) == 1:
+            return category_matches[0]
+
+    return None
+
+
 def _next_outline_sequence(repo, project_id: str, level: str) -> int:
     sequences = [
         _coerce_int(outline.get("sequence"), 0)
@@ -192,9 +239,32 @@ def _apply_memory_item(
                 )
                 result["success"] = True
                 result["created_id"] = ws["id"] if ws else None
-            elif operation == "update" and target_id:
-                repo.update_world_setting(project_id, target_id, after_data)
-                result["success"] = True
+            elif operation == "update":
+                setting = repo.get_world_setting(project_id, _coerce_int(target_id)) if target_id else None
+                if not setting:
+                    setting = _find_world_setting_for_memory_update(repo, project_id, item, after_data)
+
+                if setting:
+                    updated = repo.update_world_setting(project_id, setting["id"], after_data)
+                    result["success"] = updated is not None
+                    result["created_id"] = setting["id"]
+                    if not updated:
+                        result["error"] = f"世界观设定 {setting['id']} 不存在，无法更新"
+                else:
+                    title = str(after_data.get("title") or "").strip()
+                    content = str(after_data.get("content") or "").strip()
+                    if not title and not content:
+                        result["error"] = "世界观更新缺少 target_id，且没有可创建的标题或内容"
+                    else:
+                        ws = repo.create_world_setting(
+                            project_id,
+                            category=str(after_data.get("category") or "未分类"),
+                            title=title or f"第{chapter_number}章世界观补充",
+                            content=content,
+                        )
+                        result["operation"] = "create"
+                        result["success"] = True
+                        result["created_id"] = ws["id"] if ws else None
 
         elif target_table == "characters":
             character_data = _normalize_text_fields(

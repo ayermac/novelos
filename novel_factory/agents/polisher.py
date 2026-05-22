@@ -27,6 +27,8 @@ from ..quality.feedback_bridge import build_compact_feedback, format_polisher_co
 logger = logging.getLogger(__name__)
 
 POLISHER_LONG_FORM_TIMEOUT_SECONDS = 300
+POLISHER_CONTEXT_CHAR_LIMIT = 18000
+POLISHER_DRAFT_CHAR_LIMIT = 12000
 
 POLISHER_SYSTEM_PROMPT = """你是网文工厂的润色编辑（Polisher），负责将草稿改写成"像人写过"的小说段落。
 
@@ -65,6 +67,7 @@ class PolisherAgent(BaseAgent):
     """Polisher: polishes chapter content without changing facts."""
 
     agent_id = "polisher"
+    context_char_limit = POLISHER_CONTEXT_CHAR_LIMIT
 
     def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, **kwargs):
         """Initialize Polisher agent.
@@ -100,7 +103,55 @@ class PolisherAgent(BaseAgent):
             logger.warning("Polisher: failed to load revision review fallback", exc_info=True)
             return None
 
-    def build_context(self, state: FactoryState) -> str:
+    def _current_draft_block(self, state: FactoryState) -> str:
+        chapter = self._get_chapter_info(state)
+        content = (chapter or {}).get("content") or ""
+        if not content:
+            return ""
+        draft = content[:POLISHER_DRAFT_CHAR_LIMIT]
+        if len(content) > POLISHER_DRAFT_CHAR_LIMIT:
+            draft += "\n\n【草稿已截断】当前草稿过长，仅保留前半部分供润色。"
+        return f"【当前草稿】\n{draft}"
+
+    def _build_v6_context(self, state: FactoryState) -> str:
+        """Build Polisher context while protecting the draft from middle truncation."""
+        parts = []
+        role_ctx = self._get_role_profile_context()
+        if role_ctx:
+            parts.append(role_ctx)
+        mem_ctx = self._get_agent_memory_context(state.get("project_id", ""))
+        if mem_ctx:
+            parts.append(mem_ctx)
+
+        base_ctx = self.build_context(state, include_current_draft=False)
+        if base_ctx:
+            parts.append(base_ctx)
+
+        draft_block = self._current_draft_block(state)
+        if not draft_block:
+            return self._limit_context_size(
+                "\n\n".join(parts),
+                self.context_char_limit,
+                agent_id=self.agent_id,
+            )
+
+        draft_reserved = len(draft_block) + 2
+        aux_limit = max(0, self.context_char_limit - draft_reserved)
+        aux_context = "\n\n".join(parts)
+        if aux_limit > 0:
+            aux_context = self._limit_context_size(
+                aux_context,
+                aux_limit,
+                agent_id=self.agent_id,
+            )
+        else:
+            aux_context = ""
+
+        if aux_context:
+            return f"{aux_context}\n\n{draft_block}"
+        return draft_block
+
+    def build_context(self, state: FactoryState, *, include_current_draft: bool = True) -> str:
         """Build context using AgentContextBuilder.
 
         v6.6.2: Uses unified context builder for inheritance and fact consistency.
@@ -133,8 +184,10 @@ class PolisherAgent(BaseAgent):
                 parts.append(feedback)
 
         # Original draft (Polisher needs the actual text to work on)
-        if chapter and chapter.get("content"):
-            parts.append(f"【当前草稿】\n{chapter['content'][:8000]}")
+        if include_current_draft:
+            draft_block = self._current_draft_block(state)
+            if draft_block:
+                parts.append(draft_block)
 
         # v6.4.2: Inject quality-diagnosis-derived writing reminders
         parts.append(

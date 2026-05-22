@@ -7,7 +7,11 @@ than the run row says.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
 from typing import Any
+
+
+ACTIVE_RUN_RECONCILE_GRACE_SECONDS = 120
 
 
 def reconcile_revision_running_workflows(
@@ -15,6 +19,7 @@ def reconcile_revision_running_workflows(
     project_id: str,
     chapter_number: int,
     run_id: str | None = None,
+    min_quiet_seconds: int = ACTIVE_RUN_RECONCILE_GRACE_SECONDS,
 ) -> dict[str, Any]:
     """Close orphaned running/editor runs whose editor already returned revision.
 
@@ -39,6 +44,8 @@ def reconcile_revision_running_workflows(
             continue
         if not _has_editor_completion_evidence(repo, rid):
             continue
+        if not _run_has_quiet_period(repo, run, min_quiet_seconds):
+            continue
 
         repo.update_workflow_run(
             rid,
@@ -62,6 +69,7 @@ def reconcile_interrupted_running_workflows(
     project_id: str,
     chapter_number: int,
     run_id: str | None = None,
+    min_quiet_seconds: int = ACTIVE_RUN_RECONCILE_GRACE_SECONDS,
 ) -> dict[str, Any]:
     """Close interrupted partial runs after a completed stage boundary.
 
@@ -95,6 +103,8 @@ def reconcile_interrupted_running_workflows(
             continue
         if not _has_node_completion_evidence(repo, rid, expected_node):
             continue
+        if not _run_has_quiet_period(repo, run, min_quiet_seconds):
+            continue
         if _has_later_node_started(repo, rid, expected_node):
             continue
 
@@ -112,6 +122,58 @@ def reconcile_interrupted_running_workflows(
         })
 
     return {"reconciled": len(reconciled), "runs": reconciled}
+
+
+def _parse_workflow_timestamp(value: Any) -> datetime | None:
+    if not value:
+        return None
+    text = str(value).strip().replace("T", " ")
+    if text.endswith("Z"):
+        text = text[:-1]
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        pass
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M:%S.%f"):
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def _run_has_quiet_period(repo: Any, run: dict[str, Any], min_quiet_seconds: int) -> bool:
+    """Return True only after a running row has been inactive long enough.
+
+    Timeline/run-guard reconciliation is allowed to close genuinely orphaned
+    runs, but must not race an active background workflow between a completed
+    node and the next LangGraph node start.
+    """
+    run_id = run.get("id") or run.get("run_id")
+    latest_at = _parse_workflow_timestamp(run.get("started_at"))
+    if run_id:
+        for event in _run_activity_events(repo, str(run_id)):
+            event_at = _parse_workflow_timestamp(event.get("created_at"))
+            if event_at and (latest_at is None or event_at > latest_at):
+                latest_at = event_at
+    if latest_at is None:
+        return False
+
+    now_local = datetime.utcnow() + timedelta(hours=8)
+    return (now_local - latest_at).total_seconds() >= min_quiet_seconds
+
+
+def _run_activity_events(repo: Any, run_id: str) -> list[dict[str, Any]]:
+    events: list[dict[str, Any]] = []
+    try:
+        events.extend(repo.get_workflow_node_events(run_id))
+    except Exception:
+        pass
+    try:
+        events.extend(repo.get_workflow_execution_events(run_id))
+    except Exception:
+        pass
+    return events
 
 
 def _candidate_runs(

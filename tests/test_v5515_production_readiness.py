@@ -333,6 +333,43 @@ def test_pending_memory_updates_surface_in_health_summary():
             os.unlink(db_path)
 
 
+def test_ignored_memory_batch_items_do_not_surface_in_health_summary():
+    """Items left pending inside ignored batches are historical, not actionable."""
+    client, repo, db_path = _client_with_repo()
+    try:
+        project_id = "ignored-memory"
+        repo.create_project(
+            project_id=project_id,
+            name="Ignored Memory",
+            genre="fantasy",
+            description="test",
+            target_words=30000,
+            total_chapters_planned=10,
+        )
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="old fallback")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="story_facts",
+            operation="create",
+            after_json='{"fact_key":"old","value":"ignored"}',
+        )
+        repo.update_memory_batch(batch["id"], {"status": "ignored"})
+
+        resp = client.get(f"/api/projects/{project_id}/production/health-summary")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["summary"]["pending_memory_items"] == 0
+        assert all(item["key"] != "pending_memory_updates" for item in data["items"])
+
+        next_resp = client.get(f"/api/projects/{project_id}/production-next")
+        assert next_resp.status_code == 200
+        assert next_resp.json()["data"]["health"]["has_pending_memory_updates"] is False
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
 def test_obsolete_session_action_points_to_cleanup():
     """When a paused+disconnected session is obsolete and NOT yet detected
     by the active-session endpoint, the health-summary must report it

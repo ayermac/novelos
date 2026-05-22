@@ -1,4 +1,4 @@
-"""v6.6.16: Real project burn-in fixture — 异常修正员.
+"""v6.6.17: Real project burn-in fixture — 异常修正员.
 
 Not a generic placeholder. Concretely depicts:
 - Modern urban supernatural organization + system + real-world conflict

@@ -308,16 +308,28 @@ def _get_stub_chapter_content(messages: list | None = None) -> dict:
         template = {"title": title, "content": content}
 
     # v5.3.0: Ensure content meets minimum length for quality gates.
-    # Editor gate requires >= word_target * 0.9 (default 3000 * 0.9 = 2700).
-    # Pad content by repeating with a separator if below threshold.
-    MIN_STUB_LENGTH = 2800  # margin above 2700
+    # Editor gate requires >= word_target * 0.85; burn-in fixtures use a 3500 target.
+    MIN_STUB_LENGTH = 3050
+    MAX_STUB_LENGTH = 3600
     content = template["content"]
     if len(content) < MIN_STUB_LENGTH:
-        separator = "\n\n——时间的河流缓缓流淌，带走了尘世的喧嚣，只留下满街零落的枯叶。——\n\n"
+        filler = (
+            "他把手中的线索重新核对了一遍，将尚未解开的疑问逐条记下。"
+            "风声掠过门缝，纸页轻轻翻动，那些零散的名字、符号和旧事在眼前慢慢连成一线。"
+            "他没有急着下结论，只把所有证据收好，提醒自己在真正答案出现前不能放松警惕。"
+        )
+        separator = "\n\n"
         padded = content
         while len(padded) < MIN_STUB_LENGTH:
-            padded = padded + separator + content
+            addition = separator + filler
+            if len(padded) + len(addition) > MAX_STUB_LENGTH:
+                addition = addition[: MAX_STUB_LENGTH - len(padded)]
+            if not addition:
+                break
+            padded = padded + addition
         content = padded
+    if len(content) > MAX_STUB_LENGTH:
+        content = content[:MAX_STUB_LENGTH].rstrip()
 
     word_count = len(content)
     return {

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta
+
 from fastapi.testclient import TestClient
 
 from novel_factory.api_app import create_api_app
@@ -14,6 +16,20 @@ def _make_client(tmp_path):
     init_db(db_path)
     app = create_api_app(db_path=db_path, llm_mode="stub")
     return TestClient(app), Repository(db_path)
+
+
+def _backdate_run_activity(repo: Repository, run_id: str, minutes_old: int = 5) -> None:
+    timestamp = (
+        datetime.utcnow() + timedelta(hours=8) - timedelta(minutes=minutes_old)
+    ).strftime("%Y-%m-%d %H:%M:%S")
+    conn = repo._conn()
+    try:
+        conn.execute("UPDATE workflow_runs SET started_at=? WHERE id=?", (timestamp, run_id))
+        conn.execute("UPDATE workflow_node_events SET created_at=? WHERE run_id=?", (timestamp, run_id))
+        conn.execute("UPDATE workflow_execution_events SET created_at=? WHERE run_id=?", (timestamp, run_id))
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def test_chapter_detail_and_workspace_derive_quality_score_from_review(tmp_path):
@@ -144,6 +160,7 @@ def test_timeline_reconciles_editor_completed_revision_running_row(tmp_path):
         status="pass",
         message="完成证据校验通过",
     )
+    _backdate_run_activity(repo, run_id)
 
     resp = client.get("/api/projects/revision-orphan-proj/chapters/1/workflow-timeline")
     assert resp.status_code == 200
@@ -195,6 +212,7 @@ def test_timeline_reconciles_author_completed_drafted_running_row(tmp_path):
         status="pass",
         message="完成证据校验通过",
     )
+    _backdate_run_activity(repo, run_id)
 
     resp = client.get("/api/projects/drafted-orphan-proj/chapters/1/workflow-timeline")
     assert resp.status_code == 200
@@ -205,3 +223,96 @@ def test_timeline_reconciles_author_completed_drafted_running_row(tmp_path):
     run = repo.get_workflow_runs_for_project("drafted-orphan-proj", chapter_number=1, limit=1)[0]
     assert run["status"] == "completed"
     assert run["current_node"] == "author"
+
+
+def test_timeline_does_not_reconcile_fresh_polisher_completed_running_row(tmp_path):
+    client, repo = _make_client(tmp_path)
+    repo.create_project(project_id="fresh-polisher-proj", name="活跃润色运行", genre="urban")
+    repo.add_chapter("fresh-polisher-proj", 1, "第1章", status="polished")
+    run_id = repo.create_workflow_run("fresh-polisher-proj", 1)
+    repo.update_workflow_run(run_id, current_node="polisher")
+    repo.create_workflow_node_event(
+        run_id,
+        "fresh-polisher-proj",
+        1,
+        "polisher",
+        "started",
+        status="running",
+        message="开始润色",
+    )
+    repo.create_workflow_node_event(
+        run_id,
+        "fresh-polisher-proj",
+        1,
+        "polisher",
+        "completed",
+        status="completed",
+        message="润色完成",
+    )
+    repo.create_workflow_execution_event(
+        run_id=run_id,
+        project_id="fresh-polisher-proj",
+        chapter_number=1,
+        node_name="polisher",
+        event_type="artifact_saved",
+        status="info",
+        message="保存产物：润色稿",
+    )
+
+    resp = client.get("/api/projects/fresh-polisher-proj/chapters/1/workflow-timeline")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["run_status"] == "running"
+    assert data["current_node"] == "polisher"
+
+    run = repo.get_workflow_runs_for_project("fresh-polisher-proj", chapter_number=1, limit=1)[0]
+    assert run["status"] == "running"
+    assert run["current_node"] == "polisher"
+
+
+def test_timeline_does_not_reconcile_fresh_editor_revision_running_row(tmp_path):
+    client, repo = _make_client(tmp_path)
+    repo.create_project(project_id="fresh-revision-proj", name="活跃返修运行", genre="urban")
+    repo.add_chapter("fresh-revision-proj", 1, "第1章", status="revision")
+    run_id = repo.create_workflow_run("fresh-revision-proj", 1)
+    repo.update_workflow_run(run_id, current_node="editor")
+    repo.create_workflow_execution_event(
+        run_id=run_id,
+        project_id="fresh-revision-proj",
+        chapter_number=1,
+        node_name="editor",
+        event_type="evidence_verified",
+        status="pass",
+        message="完成证据校验通过",
+    )
+
+    resp = client.get("/api/projects/fresh-revision-proj/chapters/1/workflow-timeline")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["run_status"] == "running"
+    assert data["current_node"] == "editor"
+
+    run = repo.get_workflow_runs_for_project("fresh-revision-proj", chapter_number=1, limit=1)[0]
+    assert run["status"] == "running"
+    assert run["current_node"] == "editor"
+
+
+def test_timeline_completed_non_terminal_run_offers_continue_generate(tmp_path):
+    client, repo = _make_client(tmp_path)
+    repo.create_project(project_id="completed-polished-proj", name="提前结束运行", genre="urban")
+    repo.add_chapter("completed-polished-proj", 1, "第1章", status="polished")
+    run_id = repo.create_workflow_run("completed-polished-proj", 1)
+    repo.update_workflow_run(run_id, status="completed", current_node="editor")
+
+    resp = client.get("/api/projects/completed-polished-proj/chapters/1/workflow-timeline")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["run_status"] == "completed"
+    assert data["chapter_status"] == "polished"
+    assert data["recovery"]["recommended_action"] == "generate"
+    assert {action["key"] for action in data["recovery"]["safe_actions"]} >= {
+        "view_content",
+        "generate",
+    }
+    generate = next(action for action in data["recovery"]["safe_actions"] if action["key"] == "generate")
+    assert generate["label"] == "继续生成"

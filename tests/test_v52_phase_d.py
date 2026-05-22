@@ -2,6 +2,7 @@
 
 import pytest
 import tempfile
+import sqlite3
 from pathlib import Path
 
 from novel_factory.workflow.checkpoint import (
@@ -10,6 +11,7 @@ from novel_factory.workflow.checkpoint import (
     get_checkpoint_config,
     resume_from_checkpoint,
     derive_checkpoint_db_path,
+    inspect_checkpoint_thread,
 )
 
 
@@ -164,6 +166,35 @@ class TestCheckpointPersistence:
         assert config1["configurable"]["thread_id"] != config2["configurable"]["thread_id"]
         assert config1["configurable"]["thread_id"] != config3["configurable"]["thread_id"]
         assert config2["configurable"]["thread_id"] != config3["configurable"]["thread_id"]
+
+    def test_inspect_checkpoint_reports_corrupt_thread(self):
+        """Corrupt checkpoint payloads should be visible to recovery UI."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            repo_db_path = Path(tmpdir) / "main.db"
+            checkpoint_path = derive_checkpoint_db_path(repo_db_path)
+            thread_id = get_checkpoint_thread_id("bad-cp", 1)
+
+            with get_sqlite_checkpointer(checkpoint_path) as checkpointer:
+                checkpointer.put(
+                    {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}},
+                    {"id": "bad-cp-1", "chapter_status": "drafted"},
+                    {},
+                    {},
+                )
+
+            with sqlite3.connect(checkpoint_path) as conn:
+                conn.execute(
+                    "UPDATE checkpoints SET checkpoint=? WHERE thread_id=?",
+                    (b"not-a-valid-checkpoint-payload", thread_id),
+                )
+                conn.commit()
+
+            summary = inspect_checkpoint_thread(repo_db_path, "bad-cp", 1)
+
+            assert summary["checkpoint_exists"] is True
+            assert summary["checkpoint_corrupt"] is True
+            assert "checkpoint_error" in summary
+            assert summary["recovery_available"] is True
 
 
 class TestCheckpointIntegration:

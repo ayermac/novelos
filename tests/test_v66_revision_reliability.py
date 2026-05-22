@@ -8,7 +8,7 @@ from novel_factory.quality.deadloop_detector import DeadloopDetector
 from novel_factory.validators.word_count_policy import WordCountPolicy, DEFAULT_POLICY
 from novel_factory.quality.editor_strategy import classify_editor_result, post_process_llm_decision
 from novel_factory.db.best_version_recovery import find_best_chapter_version
-from novel_factory.validators.chapter_checker import check_word_count_quality_gate
+from novel_factory.validators.chapter_checker import check_word_count_quality_gate, check_word_count_upper_gate
 
 
 def test_version_regression_guard():
@@ -44,6 +44,12 @@ def test_canonical_word_count_gate_uses_policy_warning_band():
     passed, message = check_word_count_quality_gate("x" * 3300, 4000, "editor")
     assert passed is False
     assert "字数未达标" in message
+
+
+def test_word_count_upper_gate_rejects_extreme_overlength():
+    passed, message = check_word_count_upper_gate("x" * 4926, 3000, "author")
+    assert passed is False
+    assert "字数超标" in message
 
 
 def test_author_plain_text_context_contains_revision_feedback(monkeypatch):

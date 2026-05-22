@@ -1748,19 +1748,31 @@ def _build_steps_timeline(
                 for r in lifecycle_rows:
                     agent_id = r["agent_id"]
                     task_label = _task_type_display_name(r["task_type"])
+                    task_type = r["task_type"]
+                    agent_label = _agent_display_name(agent_id)
                     if agent_id not in task_logs:
                         task_logs[agent_id] = []
                     if r["started_at"]:
+                        started_message = (
+                            f"返修已派发给{agent_label}。"
+                            if task_type == "revise"
+                            else f"{task_label}已开始处理。"
+                        )
                         task_logs[agent_id].append({
                             "timestamp": r["started_at"],
                             "level": "info",
-                            "message": f"{task_label}已开始处理。",
+                            "message": started_message,
                         })
                     if r["status"] == "completed" and r["completed_at"]:
+                        completed_message = (
+                            f"返修派发已确认，等待{agent_label}节点执行。"
+                            if task_type == "revise"
+                            else f"{task_label}已完成。"
+                        )
                         task_logs[agent_id].append({
                             "timestamp": r["completed_at"],
                             "level": "success",
-                            "message": f"{task_label}已完成。",
+                            "message": completed_message,
                         })
                     elif r["status"] == "failed":
                         task_logs[agent_id].append({

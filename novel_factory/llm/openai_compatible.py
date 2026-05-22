@@ -175,6 +175,8 @@ class OpenAICompatibleProvider(LLMProvider):
                 "temporarily",
                 "reset by peer",
                 "remote protocol",
+                "decompress",
+                "incorrect header check",
                 "ssl",
                 "tls",
                 "read error",

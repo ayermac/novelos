@@ -56,11 +56,11 @@ logger = logging.getLogger(__name__)
 _NODE_MESSAGES: dict[str, dict[str, str]] = {
     "health_check": {"started": "开始工作流预检", "completed": "预检通过"},
     "task_discovery": {"started": "识别章节任务状态", "completed": "任务状态识别完成"},
-    "planner": {"started": "开始章节规划", "completed": "已生成章节规划", "failed": "章节规划失败"},
-    "screenwriter": {"started": "开始编剧", "completed": "已生成章节场景规划", "failed": "编剧失败"},
-    "author": {"started": "开始执笔撰写", "completed": "已生成章节初稿", "failed": "执笔撰写失败"},
-    "polisher": {"started": "开始润色", "completed": "润色完成", "failed": "润色失败"},
-    "editor": {"started": "开始审核", "completed": "审核完成", "failed": "审核失败"},
+    "planner": {"started": "开始章节规划", "completed": "已生成章节规划", "failed": "章节规划失败", "retrying": "规划质量门未通过，准备重试"},
+    "screenwriter": {"started": "开始编剧", "completed": "已生成章节场景规划", "failed": "编剧失败", "retrying": "编剧质量门未通过，准备重试"},
+    "author": {"started": "开始执笔撰写", "completed": "已生成章节初稿", "failed": "执笔撰写失败", "retrying": "执笔质量门未通过，准备重试"},
+    "polisher": {"started": "开始润色", "completed": "润色完成", "failed": "润色失败", "retrying": "润色质量门未通过，准备重试"},
+    "editor": {"started": "开始审核", "completed": "审核完成", "failed": "审核失败", "retrying": "审核质量门未通过，准备重试"},
     "memory_curator": {"started": "开始记忆整理", "completed": "记忆更新完成", "failed": "记忆整理失败"},
     "publisher": {"started": "开始发布", "completed": "章节已发布", "failed": "发布失败"},
     "awaiting_publish": {"started": "等待人工发布", "completed": "已到达等待发布状态"},
@@ -176,6 +176,58 @@ def _log_node_event(
             project_id, chapter_number, node_name, event_type,
             exc_info=True,
         )
+
+
+def _retryable_quality_gate_message(result: dict[str, Any]) -> str:
+    """Return the user-facing reason for a retryable quality-gate loop."""
+    gate = result.get("quality_gate") or {}
+    return gate.get("message") or "质量门未通过，已进入返修重试"
+
+
+def _log_agent_node_outcome(
+    state: FactoryState,
+    repo: Repository,
+    agent_name: str,
+    result: dict[str, Any],
+    *,
+    latency_ms: int | None = None,
+) -> None:
+    """Log node lifecycle outcome without claiming completion during retries."""
+    if "error" in result:
+        _log_node_event(
+            state,
+            repo,
+            agent_name,
+            "failed",
+            status="failed",
+            error_message=result["error"],
+            token_count=result.get("total_tokens"),
+            latency_ms=latency_ms,
+        )
+        return
+
+    if result.get("retryable_quality_gate"):
+        _log_node_event(
+            state,
+            repo,
+            agent_name,
+            "retrying",
+            status="warning",
+            error_message=_retryable_quality_gate_message(result),
+            token_count=result.get("total_tokens"),
+            latency_ms=latency_ms,
+        )
+        return
+
+    _log_node_event(
+        state,
+        repo,
+        agent_name,
+        "completed",
+        status="completed",
+        token_count=result.get("total_tokens"),
+        latency_ms=latency_ms,
+    )
 
 
 def _update_run_node(state: FactoryState, repo: Repository, node_name: str) -> None:
@@ -617,13 +669,17 @@ def create_node_runners(
             }
 
         # v6.0: Inject skill_registry, tool_registry, and trace_store for all core agents.
+        # v6.6.17: Inject fallback_llm for memory_curator
         if agent_name in ("planner", "screenwriter", "author", "polisher", "editor", "memory_curator"):
-            agent = agent_cls(
-                repo, llm,
-                skill_registry=effective_skill_registry,
-                tool_registry=effective_tool_registry,
-                trace_store=effective_trace_store,
-            )
+            agent_kwargs: dict[str, Any] = {
+                "skill_registry": effective_skill_registry,
+                "tool_registry": effective_tool_registry,
+                "trace_store": effective_trace_store,
+            }
+            if agent_name == "memory_curator":
+                fallback_llm = llm_router.for_agent_fallback(agent_name)
+                agent_kwargs["fallback_llm"] = fallback_llm
+            agent = agent_cls(repo, llm, **agent_kwargs)
         else:
             agent = agent_cls(repo, llm)
 
@@ -780,30 +836,13 @@ def create_node_runners(
 
         # Handle error - set requires_human to stop downstream execution
         if "error" in result:
-            _log_node_event(
-                state,
-                repo,
-                agent_name,
-                "failed",
-                status="failed",
-                error_message=result["error"],
-                token_count=result.get("total_tokens"),
-                latency_ms=agent_latency_ms,
-            )
+            _log_agent_node_outcome(state, repo, agent_name, result, latency_ms=agent_latency_ms)
             _finalize_run(state, repo, "failed", result["error"])
             # P1 fix: Ensure requires_human is set so route_by_chapter_status
             # safety gate catches this and routes to human_review
             result["requires_human"] = True
         else:
-            _log_node_event(
-                state,
-                repo,
-                agent_name,
-                "completed",
-                status="completed",
-                token_count=result.get("total_tokens"),
-                latency_ms=agent_latency_ms,
-            )
+            _log_agent_node_outcome(state, repo, agent_name, result, latency_ms=agent_latency_ms)
 
         # Record step after running
         step_info = {
@@ -941,11 +980,11 @@ def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_
         if budget_error:
             result = budget_error
     if "error" in result:
-        _log_node_event(state, repo, "planner", "failed", status="failed", error_message=result["error"])
+        _log_agent_node_outcome(state, repo, "planner", result)
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
     else:
-        _log_node_event(state, repo, "planner", "completed", status="completed")
+        _log_agent_node_outcome(state, repo, "planner", result)
     return result
 
 
@@ -970,11 +1009,11 @@ def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider, s
         if budget_error:
             result = budget_error
     if "error" in result:
-        _log_node_event(state, repo, "screenwriter", "failed", status="failed", error_message=result["error"])
+        _log_agent_node_outcome(state, repo, "screenwriter", result)
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
     else:
-        _log_node_event(state, repo, "screenwriter", "completed", status="completed")
+        _log_agent_node_outcome(state, repo, "screenwriter", result)
     return result
 
 
@@ -992,11 +1031,11 @@ def author_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
         if budget_error:
             result = budget_error
     if "error" in result:
-        _log_node_event(state, repo, "author", "failed", status="failed", error_message=result["error"])
+        _log_agent_node_outcome(state, repo, "author", result)
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
     else:
-        _log_node_event(state, repo, "author", "completed", status="completed")
+        _log_agent_node_outcome(state, repo, "author", result)
     return result
 
 
@@ -1014,11 +1053,11 @@ def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill
         if budget_error:
             result = budget_error
     if "error" in result:
-        _log_node_event(state, repo, "polisher", "failed", status="failed", error_message=result["error"])
+        _log_agent_node_outcome(state, repo, "polisher", result)
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
     else:
-        _log_node_event(state, repo, "polisher", "completed", status="completed")
+        _log_agent_node_outcome(state, repo, "polisher", result)
     return result
 
 
@@ -1036,11 +1075,11 @@ def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
         if budget_error:
             result = budget_error
     if "error" in result:
-        _log_node_event(state, repo, "editor", "failed", status="failed", error_message=result["error"])
+        _log_agent_node_outcome(state, repo, "editor", result)
         _finalize_run(state, repo, "failed", result["error"])
         result["requires_human"] = True  # P1 fix
     else:
-        _log_node_event(state, repo, "editor", "completed", status="completed")
+        _log_agent_node_outcome(state, repo, "editor", result)
     return result
 
 

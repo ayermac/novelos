@@ -184,6 +184,42 @@ def test_desktop_config_put_rejects_token_field(tmp_path: Path, monkeypatch):
     assert body["error"]["code"] == "SECURITY_REJECTED"
 
 
+def test_desktop_config_put_allows_safe_token_limit_fields(tmp_path: Path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    config_path = config_dir / "local.yaml"
+    config_path.write_text("llm_mode: stub\n", encoding="utf-8")
+    db_path = tmp_path / "test.db"
+    init_db(str(db_path))
+
+    monkeypatch.setenv("NOVELOS_DESKTOP", "1")
+    monkeypatch.setenv("NOVELOS_CONFIG_DIR", str(config_dir))
+
+    client = TestClient(create_api_app(db_path=str(db_path), config_path=str(config_path), llm_mode="stub"))
+
+    response = client.put("/api/desktop/config", json={
+        "llm_mode": "real",
+        "default_llm": "freemodel",
+        "llm_profiles": {
+            "freemodel": {
+                "provider": "openai_compatible",
+                "model": "gpt-5.5",
+                "base_url": "https://api.freemodel.dev",
+                "api_key_env": "FREEMODEL_API_KEY",
+                "max_tokens": 8192,
+                "request_timeout_seconds": 360,
+            },
+        },
+    })
+    body = response.json()
+
+    assert body["ok"] is True
+    saved = config_path.read_text(encoding="utf-8")
+    assert "max_tokens: 8192" in saved
+    assert "request_timeout_seconds: 360" in saved
+    assert "配置写入拒绝包含敏感字段" not in response.text
+
+
 def test_desktop_config_put_rejects_nested_secret_field(tmp_path: Path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()

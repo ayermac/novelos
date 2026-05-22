@@ -184,9 +184,17 @@ class MemoryCuratorAgent(BaseAgent):
     agent_id = "memory_curator"
     context_char_limit = 9000
 
-    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, **kwargs):
+    def __init__(
+        self,
+        repo,
+        llm,
+        skill_registry: SkillRegistry | None = None,
+        fallback_llm=None,
+        **kwargs,
+    ):
         super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
+        self.fallback_llm = fallback_llm
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
@@ -466,25 +474,8 @@ class MemoryCuratorAgent(BaseAgent):
 
         context = self._build_v6_context(state)
 
-        # v6.0: Self-check loop for patch extraction quality
+        # v6.6.17: Self-check loop for patch extraction quality with fallback support
         loop = SelfCheckLoop(agent_id=self.agent_id, max_repair_attempts=1)
-
-        def _fallback_after_extraction_failure(error: Exception) -> dict[str, Any]:
-            fallback_patches = self._patches_from_chapter_state_card(project_id, chapter_number)
-            if fallback_patches:
-                logger.warning(
-                    "MemoryCurator: LLM extraction failed, using chapter_state fallback for project=%s chapter=%s: %s",
-                    project_id,
-                    chapter_number,
-                    error,
-                )
-                return {
-                    "output": fallback_patches,
-                    "fallback_source": "chapter_state_after_llm_extraction_failure",
-                    "warning": str(error),
-                }
-            logger.warning("MemoryCurator: degraded to no-op after LLM extraction failure: %s", error)
-            return {"output": [], "degraded": True, "warning": str(error)}
 
         def _generate_wrap() -> dict[str, Any]:
             messages = [
@@ -496,8 +487,25 @@ class MemoryCuratorAgent(BaseAgent):
             ]
             try:
                 raw = self.llm.invoke_json(messages)
+                exec_events.append({
+                    "event_type": "llm_extraction_success",
+                    "message": "记忆提取主模型返回可解析结果",
+                    "payload": {
+                        "primary_profile": getattr(getattr(self.llm, "config", None), "model", "unknown"),
+                    },
+                })
             except LLMTimeoutError as e:
-                return _fallback_after_extraction_failure(e)
+                primary_profile = getattr(getattr(self.llm, "config", None), "model", "unknown")
+                primary_timeout = getattr(getattr(self.llm, "config", None), "request_timeout_seconds", "unknown")
+                exec_events.append({
+                    "event_type": "llm_extraction_timeout",
+                    "message": "记忆提取主模型超时",
+                    "payload": {
+                        "primary_profile": primary_profile,
+                        "primary_timeout_seconds": primary_timeout,
+                    },
+                })
+                return {"output": [], "primary_timeout": True, "warning": str(e)}
             except OutputValidationError as e:
                 return {"output": [], "json_error": str(e), "warning": str(e)}
             # v6.6.7: Use robust extraction with validation
@@ -507,10 +515,16 @@ class MemoryCuratorAgent(BaseAgent):
         def _self_check_wrap(data: dict[str, Any]) -> SelfCheckResult:
             patches = data.get("output", [])
             issues: list[dict[str, Any]] = []
+            if data.get("primary_timeout"):
+                issues.append({
+                    "type": "primary_timeout",
+                    "message": "主模型 LLM 提取超时，将尝试 fallback 或状态卡兜底",
+                })
             if (
                 state.get("llm_mode") == "real"
                 and not patches
                 and not data.get("fallback_source")
+                and not data.get("primary_timeout")
                 and self._should_repair_empty_extraction(project_id, chapter_number)
             ):
                 issues.append({
@@ -541,54 +555,137 @@ class MemoryCuratorAgent(BaseAgent):
                 passed=len(issues) == 0,
                 issues=issues,
                 repair_needed=len(issues) > 0,
-                repair_suggestion="要求 LLM 返回完整 patch 结构",
+                repair_suggestion="尝试 fallback provider 或状态卡兜底",
             )
 
         def _repair_wrap(data: dict[str, Any], check: SelfCheckResult) -> dict[str, Any] | None:
-            empty_extraction = any(issue.get("type") == "empty_extraction" for issue in check.issues)
+            primary_timeout = data.get("primary_timeout")
             json_parse_error = any(issue.get("type") == "json_parse" for issue in check.issues)
-            repair_instruction = (
-                "上一次返回了空 patches，但本章有较长正文或状态卡。请重新逐段提取本章新增/变化的角色、设定、势力、伏笔、下一章指令和事实账本；除非正文确实没有任何可沉淀信息，否则不要返回空 patches。"
-                if empty_extraction
-                else "请重新提取本章的项目资料变更建议，确保字段完整。"
-            )
-            if json_parse_error:
-                repair_instruction = (
-                    "上一次输出不是合法 JSON。请重新提取本章记忆，并严格返回一个 JSON 对象：{\"patches\": [...]}。"
-                    "不要使用 Markdown 代码块，不要输出解释文字。"
-                    "evidence_text 只能写 30 字以内摘要，不要复制带单双引号的对白原文，不要在 JSON 字符串里换行。"
-                    "所有字符串必须正确转义。"
-                )
+            empty_extraction = any(issue.get("type") == "empty_extraction" for issue in check.issues)
+
             messages = [
                 {"role": "system", "content": MEMORY_CURATOR_SYSTEM_PROMPT + "\n\n注意：每个 patch 必须包含 target_table, operation, target_name, data, confidence 字段。"},
                 {
                     "role": "user",
-                    "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n{repair_instruction}",
+                    "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请重新提取本章的项目资料变更建议，确保字段完整。",
                 },
             ]
-            try:
-                raw = self.llm.invoke_json(messages)
-                # v6.6.7: Use robust extraction with validation
-                patches, extract_warnings = _robust_extract_patches(raw)
-                return {"output": patches, "extract_warnings": extract_warnings}
-            except Exception:
-                fallback_patches = self._patches_from_chapter_state_card(project_id, chapter_number)
-                if fallback_patches:
-                    return {
-                        "output": fallback_patches,
-                        "fallback_source": (
-                            "chapter_state_after_llm_extraction_failure"
-                            if json_parse_error else "chapter_state_after_llm_repair_failure"
-                        ),
-                        "warning": data.get("warning"),
-                    }
-                return None
+
+            # v6.6.17: Primary timeout -> try fallback provider once
+            if primary_timeout and self.fallback_llm:
+                fallback_profile = getattr(
+                    self.fallback_llm,
+                    "profile_name",
+                    getattr(getattr(self.fallback_llm, "config", None), "model", "unknown"),
+                )
+                try:
+                    raw = self.fallback_llm.invoke_json(messages)
+                    patches, extract_warnings = _robust_extract_patches(raw)
+                    chapter = self.repo.get_chapter(project_id, chapter_number)
+                    chapter_content = str((chapter or {}).get("content") or "")
+                    valid_patches, validation_issues = _validate_patches(patches, chapter_content)
+                    if valid_patches:
+                        return {
+                            "output": valid_patches,
+                            "fallback_source": "fallback_model_after_primary_timeout",
+                            "fallback_model_profile": fallback_profile,
+                            "extract_warnings": extract_warnings,
+                            "partial_success": True,
+                        }
+                    exec_events.append({
+                        "event_type": "fallback_model_failed",
+                        "message": "备用模型 fallback 未生成有效记忆候选",
+                        "payload": {
+                            "fallback_model_profile": fallback_profile,
+                            "patch_count": len(patches),
+                            "validation_issues": validation_issues[:5],
+                        },
+                    })
+                except Exception as e:
+                    exec_events.append({
+                        "event_type": "fallback_model_failed",
+                        "message": f"备用模型 fallback 失败: {str(e)[:200]}",
+                        "payload": {"fallback_model_profile": fallback_profile, "error": str(e)[:500]},
+                    })
+
+            # Original repair path (for json_parse / empty_extraction without timeout)
+            if not primary_timeout:
+                repair_instruction = (
+                    "上一次返回了空 patches，但本章有较长正文或状态卡。请重新逐段提取本章新增/变化的角色、设定、势力、伏笔、下一章指令和事实账本；除非正文确实没有任何可沉淀信息，否则不要返回空 patches。"
+                    if empty_extraction
+                    else "请重新提取本章的项目资料变更建议，确保字段完整。"
+                )
+                if json_parse_error:
+                    repair_instruction = (
+                        "上一次输出不是合法 JSON。请重新提取本章记忆，并严格返回一个 JSON 对象：{\"patches\": [...]}。"
+                        "不要使用 Markdown 代码块，不要输出解释文字。"
+                        "evidence_text 只能写 30 字以内摘要，不要复制带单双引号的对白原文，不要在 JSON 字符串里换行。"
+                        "所有字符串必须正确转义。"
+                    )
+                messages = [
+                    {"role": "system", "content": MEMORY_CURATOR_SYSTEM_PROMPT + "\n\n注意：每个 patch 必须包含 target_table, operation, target_name, data, confidence 字段。"},
+                    {
+                        "role": "user",
+                        "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n{repair_instruction}",
+                    },
+                ]
+                try:
+                    raw = self.llm.invoke_json(messages)
+                    patches, extract_warnings = _robust_extract_patches(raw)
+                    return {"output": patches, "extract_warnings": extract_warnings}
+                except Exception:
+                    pass
+
+            # Final fallback: chapter state card
+            fallback_patches = self._patches_from_chapter_state_card(project_id, chapter_number)
+            if fallback_patches:
+                # v6.6.17: timeout uses extraction_failure label for backward compatibility
+                return {
+                    "output": fallback_patches,
+                    "fallback_source": (
+                        "chapter_state_after_llm_extraction_failure"
+                        if (primary_timeout or json_parse_error)
+                        else "chapter_state_after_llm_repair_failure"
+                    ),
+                    "warning": data.get("warning"),
+                    "partial_success": True,
+                }
+
+            # Degraded noop: no patches, no state card
+            exec_events.append({
+                "event_type": "degraded_noop",
+                "message": "记忆整理降级为空操作，未生成可信记忆批次",
+                "payload": {"memory_items_count": 0},
+            })
+            return {
+                "output": [],
+                "degraded": True,
+                "fallback_source": "none",
+                "warning": data.get("warning", "LLM 提取失败且状态卡为空"),
+            }
 
         loop_result = loop.run(_generate_wrap, _self_check_wrap, _repair_wrap)
         # v6.6.7: Prefer validated patches if available
         patches = loop_result.get("validated_patches") or loop_result.get("output", [])
         trace = loop_result.get("_trace", {})
         autonomy = loop_result.get("_autonomy", {})
+
+        # v6.6.17: Handle degraded noop (fallback_source="none")
+        if loop_result.get("degraded") and loop_result.get("fallback_source") == "none":
+            return {
+                "memory_curator_processed": True,
+                "memory_items_count": 0,
+                "extraction_success": False,
+                "fallback_created": False,
+                "memory_curator_degraded": True,
+                "partial_success": False,
+                "fallback_source": "none",
+                "memory_curator_warning": "记忆整理降级为空操作，未生成可信记忆批次",
+                "_trace": trace,
+                "_autonomy": autonomy,
+                "_exec_events": exec_events,
+            }
+
         if loop_result.get("degraded"):
             return {
                 "memory_curator_processed": True,
@@ -613,24 +710,16 @@ class MemoryCuratorAgent(BaseAgent):
             }
 
         fallback_source = loop_result.get("fallback_source")
+        fallback_model_profile = loop_result.get("fallback_model_profile")
         warning = loop_result.get("warning")
-        if fallback_source:
-            exec_events.append({
-                "event_type": "fallback_used",
-                "message": f"记忆提取失败，已使用章节状态卡兜底生成 {len(patches)} 条候选",
-                "payload": {
-                    "fallback_type": fallback_source,
-                    "patch_count": len(patches),
-                    "warning": warning,
-                },
-            })
+
         if not patches:
             fallback_patches = self._patches_from_chapter_state_card(project_id, chapter_number)
             if fallback_patches:
                 patches = fallback_patches
                 fallback_source = "chapter_state"
                 exec_events.append({
-                    "event_type": "fallback_used",
+                    "event_type": "fallback_memory_success",
                     "message": f"记忆提取为空，已使用章节状态卡兜底生成 {len(patches)} 条候选",
                     "payload": {"fallback_type": "chapter_state", "patch_count": len(patches)},
                 })
@@ -660,19 +749,19 @@ class MemoryCuratorAgent(BaseAgent):
                 chapter_number,
             )
             exec_events.append({
-                "event_type": "artifact_saved",
-                "message": "无可提取记忆，无状态卡可用",
-                "status": "info",
+                "event_type": "degraded_noop",
+                "message": "记忆整理降级为空操作，未生成可信记忆批次",
                 "payload": {"memory_items_count": 0},
             })
-            # v6.6.7: Empty extraction is always extraction_success=False
             return {
                 "memory_curator_processed": True,
                 "memory_items_count": 0,
                 "extraction_success": False,
                 "fallback_created": False,
                 "memory_curator_degraded": True,
-                "memory_curator_warning": "LLM 未提取出记忆候选，且无状态卡兜底",
+                "partial_success": False,
+                "fallback_source": "none",
+                "memory_curator_warning": "记忆整理降级为空操作，未生成可信记忆批次",
                 "_trace": trace,
                 "_autonomy": autonomy,
                 "_exec_events": exec_events,
@@ -698,7 +787,12 @@ class MemoryCuratorAgent(BaseAgent):
             run_id=state.get("workflow_run_id"),
             summary=(
                 f"第{chapter_number}章记忆提取 - 状态卡兜底 ({len(patches)}项)"
-                if fallback_source else f"第{chapter_number}章记忆提取 ({len(patches)}项)"
+                if fallback_source and fallback_source != "fallback_model_after_primary_timeout"
+                else (
+                    f"第{chapter_number}章记忆提取 - fallback模型 ({len(patches)}项)"
+                    if fallback_source == "fallback_model_after_primary_timeout"
+                    else f"第{chapter_number}章记忆提取 ({len(patches)}项)"
+                )
             ),
         )
 
@@ -767,25 +861,53 @@ class MemoryCuratorAgent(BaseAgent):
 
         exec_events.append({
             "event_type": "artifact_saved",
-            "message": f"创建记忆批次：{items_created} 条候选" + ("（状态卡兜底）" if fallback_source else ""),
+            "message": f"创建记忆批次：{items_created} 条候选" + (
+                "（备用模型）" if fallback_source == "fallback_model_after_primary_timeout"
+                else ("（状态卡兜底）" if fallback_source else "")
+            ),
             "payload": {"batch_id": batch["id"], "items_count": items_created, "fallback_source": fallback_source},
         })
 
-        # v6.6.7: Classify result into three categories
-        if fallback_source:
+        # v6.6.17: Classify result into categories
+        if fallback_source == "fallback_model_after_primary_timeout":
+            result_category = "fallback_candidate"
+        elif fallback_source:
             result_category = "fallback_candidate"
         else:
             result_category = "trusted_extraction"
+
+        if fallback_source == "fallback_model_after_primary_timeout":
+            exec_events.append({
+                "event_type": "fallback_model_success",
+                "message": "记忆整理降级完成（备用模型）",
+                "payload": {
+                    "fallback_type": fallback_source,
+                    "fallback_model_profile": fallback_model_profile,
+                    "patch_count": items_created,
+                },
+            })
+        elif fallback_source:
+            exec_events.append({
+                "event_type": "fallback_memory_success",
+                "message": "记忆整理降级完成（状态卡兜底）",
+                "payload": {
+                    "fallback_type": fallback_source,
+                    "patch_count": items_created,
+                    "warning": warning,
+                },
+            })
 
         return {
             "memory_curator_processed": True,
             "memory_batch_id": batch["id"],
             "memory_items_count": items_created,
-            # v6.6.7: Clear semantics for extraction vs fallback
             "extraction_success": fallback_source is None,
             "fallback_created": fallback_source is not None,
+            "partial_success": fallback_source is not None,
+            "fallback_source": fallback_source,
             "result_category": result_category,
             **({"memory_curator_fallback": fallback_source} if fallback_source else {}),
+            **({"fallback_model_profile": fallback_model_profile} if fallback_model_profile else {}),
             **({"memory_curator_warning": warning} if warning else {}),
             "_trace": trace,
             "_autonomy": autonomy,

@@ -398,6 +398,8 @@ def _is_explicit_appointment_location(
         return False
     if loc.startswith(("他", "她", "它", "我", "你", "众人", "两人", "三人")):
         return False
+    if any(marker in loc for marker in ("着", "在了", "正站", "消失")):
+        return False
 
     if not has_time_constraint:
         return False

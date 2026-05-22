@@ -101,13 +101,22 @@ def _get_stuck_run(repo, project_id: str, current_chapter: int) -> dict | None:
 
 def _has_pending_memory_updates(repo, project_id: str) -> bool:
     """Check for pending or partial memory update batches."""
-    batches = repo.list_memory_batches(project_id)
-    for b in batches:
-        if b.get("status") in ("pending", "partial"):
-            return True
-    # Also check for items with pending status
-    items = repo.list_memory_items_by_project(project_id, status="pending")
-    return len(items) > 0
+    pending_items, actionable_batches = _list_actionable_memory_updates(repo, project_id)
+    return bool(pending_items or actionable_batches)
+
+
+def _list_actionable_memory_updates(repo, project_id: str) -> tuple[list[dict], list[dict]]:
+    """Return pending memory items whose parent batches are still actionable."""
+    actionable_batches = [
+        batch for batch in repo.list_memory_batches(project_id)
+        if batch.get("status") in ("pending", "partial")
+    ]
+    actionable_batch_ids = {batch.get("id") for batch in actionable_batches}
+    pending_items = [
+        item for item in repo.list_memory_items_by_project(project_id, status="pending")
+        if item.get("batch_id") in actionable_batch_ids
+    ]
+    return pending_items, actionable_batches
 
 
 def _is_chapter_production_run(run: dict) -> bool:
@@ -133,6 +142,17 @@ def _get_running_chapter_workflow(repo, project_id: str, chapter_number: int) ->
             chapter_number=chapter_number,
         )
     runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=5)
+    for run in runs:
+        if run.get("status") == "running" and _is_chapter_production_run(run):
+            return run
+    return None
+
+
+def _get_running_project_chapter_workflow(repo, project_id: str) -> dict | None:
+    """Return the latest running chapter workflow anywhere in the project."""
+    if hasattr(repo, "reconcile_terminal_chapter_running_workflows"):
+        repo.reconcile_terminal_chapter_running_workflows(project_id=project_id)
+    runs = repo.get_workflow_runs_for_project(project_id, limit=100)
     for run in runs:
         if run.get("status") == "running" and _is_chapter_production_run(run):
             return run
@@ -345,11 +365,7 @@ def _build_project_health_summary(repo, project_id: str, timeout_minutes: int) -
     next_action = _determine_next_action(repo, project_id, health, current_chapter, timeout_minutes)
 
     stale_runs = _list_stale_running_workflows(repo, project_id, timeout_minutes)
-    pending_memory_items = repo.list_memory_items_by_project(project_id, status="pending")
-    pending_memory_batches = [
-        b for b in repo.list_memory_batches(project_id)
-        if b.get("status") in ("pending", "partial")
-    ]
+    pending_memory_items, pending_memory_batches = _list_actionable_memory_updates(repo, project_id)
 
     active_session = repo.get_active_auto_run_session(project_id)
     obsolete_session = None
@@ -623,6 +639,11 @@ def _determine_next_action(
     running_current = _get_running_chapter_workflow(repo, project_id, current_chapter)
     if running_current:
         return _view_running_workflow_action(project_id, current_chapter, running_current)
+
+    running_any = _get_running_project_chapter_workflow(repo, project_id)
+    if running_any:
+        ch_num = running_any.get("chapter_number", current_chapter)
+        return _view_running_workflow_action(project_id, ch_num, running_any)
 
     if planned_with_content:
         ch_num = planned_with_content.get("chapter_number", current_chapter)

@@ -207,7 +207,13 @@ describe('AuthorWorkbench', () => {
           started_at: '2026-05-13T10:00:00',
           elapsed_minutes: 8,
           is_stale: false,
-          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          recovery: {
+            recommended_action: 'generate',
+            reason: '章节状态为 polished，可继续生成。',
+            safe_actions: [
+              { key: 'generate', label: '继续生成', safe: true },
+            ],
+          },
           nodes: [],
         }}
       />
@@ -215,6 +221,8 @@ describe('AuthorWorkbench', () => {
 
     expect(screen.getByText('工作流提前结束')).toBeInTheDocument()
     expect(screen.getByText(/章节仍停在/)).toHaveTextContent('已润色')
+    expect(screen.getByRole('button', { name: '继续生成' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '覆盖重生成' })).not.toBeInTheDocument()
     expect(screen.queryByText('工作流已完成，可查看产物或继续下一章。')).not.toBeInTheDocument()
   })
 

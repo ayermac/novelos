@@ -135,6 +135,29 @@ def check_word_count_quality_gate(
     return True, message
 
 
+def check_word_count_upper_gate(
+    content: str,
+    word_target: int,
+    agent_type: str,
+    *,
+    upper_buffer: int = 1200,
+    upper_ratio: float = 1.6,
+) -> tuple[bool, str]:
+    """Reject outputs that ignore the chapter's explicit upper length guard."""
+    word_count = count_words(content)
+    word_target = _coerce_positive_int(word_target, 2500)
+    if word_count == 0 or word_target <= 0:
+        return True, "无可检查的字数上限"
+
+    maximum_allowed = max(word_target + upper_buffer, int(word_target * upper_ratio))
+    if word_count > maximum_allowed:
+        return False, (
+            f"字数超标: {word_count} > {maximum_allowed} "
+            f"(目标 {word_target}，上限缓冲 {upper_buffer})"
+        )
+    return True, f"字数未超上限（{word_count}/{maximum_allowed}）"
+
+
 def derive_word_target(
     instruction: dict | None,
     project: dict,

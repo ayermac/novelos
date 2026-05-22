@@ -29,10 +29,13 @@ class DesktopConfigPayload(BaseModel):
     model: str | None = None
     temperature: float | None = Field(default=None, ge=0.0, le=2.0)
     timeout: int | None = Field(default=None, ge=1, le=300)
+    max_tokens: int | None = Field(default=None, ge=1)
+    request_timeout_seconds: int | None = Field(default=None, ge=1, le=3600)
     api_key_env: str | None = Field(default=None, pattern="^[A-Z0-9_]+$")
     default_llm: str | None = None
     llm_profiles: dict[str, dict[str, Any]] | None = None
     agent_llm: dict[str, str] | None = None
+    agent_llm_fallback: dict[str, str] | None = None
     agent_models: dict[str, str] | None = None
 
 
@@ -110,17 +113,32 @@ def _api_key_configured(env_name: str | None) -> bool:
     return bool(os.environ.get(env_name))
 
 
+_NON_SECRET_TOKEN_FIELDS = {
+    "max_tokens",
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "token_usage",
+}
+
+
+def _is_sensitive_key_name(key: str) -> bool:
+    lower = key.lower()
+    if lower in _NON_SECRET_TOKEN_FIELDS:
+        return False
+    return (
+        ("api_key" in lower and not lower.endswith("_env"))
+        or "apikey" in lower
+        or "secret" in lower
+        or "token" in lower
+    )
+
+
 def _contains_sensitive_key(value: Any) -> str | None:
     """Return the first sensitive key name found in nested JSON-like data."""
     if isinstance(value, dict):
         for key, nested in value.items():
-            lower = str(key).lower()
-            if (
-                ("api_key" in lower and not lower.endswith("_env"))
-                or "apikey" in lower
-                or "secret" in lower
-                or "token" in lower
-            ):
+            if _is_sensitive_key_name(str(key)):
                 return str(key)
             found = _contains_sensitive_key(nested)
             if found:
@@ -195,6 +213,7 @@ async def get_desktop_config(request: Request) -> EnvelopeResponse:
                 "runtime_llm_mode": runtime_mode,
                 "profiles": {},
                 "agent_llm": {},
+                "agent_llm_fallback": {},
             })
 
         import yaml
@@ -219,6 +238,7 @@ async def get_desktop_config(request: Request) -> EnvelopeResponse:
                     "api_key_source": _api_key_source(api_key_env),
                     "temperature": profile.get("temperature", 0.7),
                     "timeout": profile.get("request_timeout_seconds", profile.get("timeout", 60)),
+                    "request_timeout_seconds": profile.get("request_timeout_seconds", profile.get("timeout", 60)),
                     "max_tokens": profile.get("max_tokens", 4096),
                 }
 
@@ -230,6 +250,7 @@ async def get_desktop_config(request: Request) -> EnvelopeResponse:
             "default_llm": raw.get("default_llm"),
             "profiles": safe_profiles,
             "agent_llm": raw.get("agent_llm", {}) if isinstance(raw.get("agent_llm", {}), dict) else {},
+            "agent_llm_fallback": raw.get("agent_llm_fallback", {}) if isinstance(raw.get("agent_llm_fallback", {}), dict) else {},
             "raw_preview": _redacted_yaml_preview(raw),
         })
     except Exception as e:
@@ -348,8 +369,12 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
                 if body.temperature is not None and profile.get("temperature") != body.temperature:
                     profile["temperature"] = body.temperature
                     restart_required = True
-                if body.timeout is not None and profile.get("timeout") != body.timeout:
-                    profile["request_timeout_seconds"] = body.timeout
+                if body.max_tokens is not None and profile.get("max_tokens") != body.max_tokens:
+                    profile["max_tokens"] = body.max_tokens
+                    restart_required = True
+                next_timeout = body.request_timeout_seconds if body.request_timeout_seconds is not None else body.timeout
+                if next_timeout is not None and profile.get("request_timeout_seconds") != next_timeout:
+                    profile["request_timeout_seconds"] = next_timeout
                     profile.pop("timeout", None)
                     restart_required = True
                 if body.api_key_env is not None and profile.get("api_key_env") != body.api_key_env:
@@ -370,8 +395,11 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
             }
             if body.temperature is not None:
                 raw["llm_profiles"][default_llm or "default"]["temperature"] = body.temperature
-            if body.timeout is not None:
-                raw["llm_profiles"][default_llm or "default"]["request_timeout_seconds"] = body.timeout
+            if body.max_tokens is not None:
+                raw["llm_profiles"][default_llm or "default"]["max_tokens"] = body.max_tokens
+            next_timeout = body.request_timeout_seconds if body.request_timeout_seconds is not None else body.timeout
+            if next_timeout is not None:
+                raw["llm_profiles"][default_llm or "default"]["request_timeout_seconds"] = next_timeout
             if default_llm:
                 raw["default_llm"] = default_llm
             else:
@@ -397,6 +425,32 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
                 raw["agent_llm"] = cleaned_routes
             else:
                 raw.pop("agent_llm", None)
+
+        if body.agent_llm_fallback is not None:
+            cleaned_fallback = {
+                str(agent).strip(): str(profile).strip()
+                for agent, profile in body.agent_llm_fallback.items()
+                if str(agent).strip() and str(profile).strip()
+            }
+            profiles = raw.get("llm_profiles", {})
+            if cleaned_fallback and (not isinstance(profiles, dict) or not profiles):
+                return error_response(
+                    "VALIDATION_ERROR",
+                    "Agent fallback 路由要求先配置至少一个 LLM 模板",
+                )
+            if isinstance(profiles, dict) and profiles:
+                missing_profiles = sorted({profile for profile in cleaned_fallback.values() if profile not in profiles})
+                if missing_profiles:
+                    return error_response(
+                        "VALIDATION_ERROR",
+                        f"Agent fallback 路由引用了不存在的模板: {', '.join(missing_profiles)}",
+                    )
+            if raw.get("agent_llm_fallback", {}) != cleaned_fallback:
+                restart_required = True
+            if cleaned_fallback:
+                raw["agent_llm_fallback"] = cleaned_fallback
+            else:
+                raw.pop("agent_llm_fallback", None)
 
         if body.agent_models is not None:
             cleaned_models = {
@@ -428,8 +482,11 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
                     next_profile.setdefault("api_key_env", body.api_key_env or "OPENAI_API_KEY")
                     if body.temperature is not None:
                         next_profile["temperature"] = body.temperature
-                    if body.timeout is not None:
-                        next_profile["request_timeout_seconds"] = body.timeout
+                    if body.max_tokens is not None:
+                        next_profile["max_tokens"] = body.max_tokens
+                    next_timeout = body.request_timeout_seconds if body.request_timeout_seconds is not None else body.timeout
+                    if next_timeout is not None:
+                        next_profile["request_timeout_seconds"] = next_timeout
                     next_profile["model"] = model
 
                     if profiles.get(profile_name) != next_profile or agent_routes.get(agent) != profile_name:
@@ -474,9 +531,7 @@ def _redact_dict(d: dict[str, Any]) -> None:
         val = d[key]
         lower_key = str(key).lower()
         if (
-            ("api_key" in lower_key and not lower_key.endswith("_env"))
-            or "secret" in lower_key
-            or "token" in lower_key
+            _is_sensitive_key_name(str(key))
             or "authorization" in lower_key
             or lower_key == "password"
         ):

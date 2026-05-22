@@ -84,6 +84,7 @@ class Settings(BaseModel):
     default_llm: str = "default"
     llm_profiles: dict[str, LLMProfile] = Field(default_factory=dict)
     agent_llm: dict[str, str] = Field(default_factory=dict)
+    agent_llm_fallback: dict[str, str] = Field(default_factory=dict)
 
 
 # ── Loaders ────────────────────────────────────────────────────

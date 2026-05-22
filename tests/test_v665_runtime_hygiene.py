@@ -208,6 +208,51 @@ class TestLLMErrorSafety:
         assert "user:pass" not in message
         assert "Connection failed" in message or "网络连接失败" in message
 
+    def test_openai_provider_decompression_error_is_connection_error(self):
+        from novel_factory.llm.openai_compatible import OpenAICompatibleProvider, LLMConnectionError
+        from novel_factory.config.settings import LLMConfig
+
+        provider = OpenAICompatibleProvider(
+            LLMConfig(base_url="https://api.example.com", api_key="sk-test123", model="gpt-4")
+        )
+        original_error = Exception("Error -3 while decompressing data: incorrect header check")
+
+        with pytest.raises(LLMConnectionError) as exc_info:
+            provider._handle_api_error(original_error)
+
+        assert "网络连接失败" in str(exc_info.value)
+        assert "incorrect header check" in str(exc_info.value)
+
+    def test_openai_provider_retries_decompression_errors(self):
+        from novel_factory.llm.openai_compatible import OpenAICompatibleProvider
+        from novel_factory.config.settings import LLMConfig
+
+        class RetryThenSuccessClient:
+            def __init__(self):
+                self.calls = 0
+
+            def invoke(self, messages, **kwargs):
+                self.calls += 1
+                if self.calls < 3:
+                    raise Exception("Error -3 while decompressing data: incorrect header check")
+
+                class Response:
+                    content = "ok"
+                    response_metadata = {"finish_reason": "stop", "token_usage": {}}
+
+                return Response()
+
+        provider = OpenAICompatibleProvider(
+            LLMConfig(retry_attempts=3, min_interval_seconds=0, request_timeout_seconds=1)
+        )
+        client = RetryThenSuccessClient()
+        provider._client = client
+
+        result = provider.invoke_text([{"role": "user", "content": "hi"}])
+
+        assert result == "ok"
+        assert client.calls == 3
+
     def test_openai_provider_general_error_redacts_secret(self):
         from novel_factory.llm.openai_compatible import OpenAICompatibleProvider, LLMError
         from novel_factory.config.settings import LLMConfig

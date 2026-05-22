@@ -1149,19 +1149,21 @@ function WorkflowBody({
               覆盖重生成
             </LoadingButton>
           ) : staticHint
-        case 'generate':
+        case 'generate': {
+          const generateIsContinue = incompleteCompletedRun
           return actionRow(
             <LoadingButton
-              className="btn btn-danger btn-sm"
-              variant="danger"
+              className={`btn ${generateIsContinue ? 'btn-primary' : 'btn-danger'} btn-sm`}
+              variant={generateIsContinue ? 'primary' : 'danger'}
               loading={!!regeneratePending}
               loadingText="确认中..."
               onClick={hasExplicitResetAction && onConfirmRegenerate ? onConfirmRegenerate : onGenerate}
             >
-              覆盖重生成
+              {generateIsContinue ? '继续生成' : '覆盖重生成'}
             </LoadingButton>,
-            '会覆盖当前正文并启动新一轮生成',
+            generateIsContinue ? '从当前章节状态继续，不覆盖已保存正文' : '会覆盖当前正文并启动新一轮生成',
           )
+        }
         default:
           return staticHint
       }

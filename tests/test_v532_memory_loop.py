@@ -937,6 +937,50 @@ class TestMemoryStructuredFieldNormalization:
         assert created is not None
         assert created["level"] == "主线"
 
+    def test_apply_world_settings_update_without_target_id_matches_title(self, client, project_id):
+        """World setting update patches without target_id should match by title."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        existing = repo.create_world_setting(
+            project_id,
+            category="城市环境",
+            title="下城区环境",
+            content="下城区空气潮湿。",
+        )
+        batch = repo.create_memory_batch(project_id, chapter_number=2, summary="World setting update")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="world_settings",
+            operation="update",
+            target_id=None,
+            after_json=json.dumps({
+                "category": "城市环境",
+                "title": "下城区环境",
+                "content": "下城区空气带着咸腥、铁锈和机油味，暗示其与海洋/潮汐系统存在深层联系。",
+            }, ensure_ascii=False),
+            confidence=0.95,
+            evidence_text="下城区的空气里总带着股咸腥味，不只是海，还有锈、机油、某种说不清的潮湿。",
+            rationale="补充下城区环境感官细节",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+
+        settings = repo.list_world_settings(project_id)
+        assert len(settings) == 1
+        updated = repo.get_world_setting(project_id, existing["id"])
+        assert updated is not None
+        assert "海洋/潮汐系统" in updated["content"]
+
 
 class TestMemoryCuratorRouting:
     """v5.3.2: Memory curator failure routing in workflow conditions."""

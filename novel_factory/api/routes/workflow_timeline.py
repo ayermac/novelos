@@ -351,6 +351,18 @@ def _build_recovery(
             "safe": True,
             "note": "回到 planned，完整重跑",
         })
+    elif run_data and run_data.get("status") == "completed" and chapter_status in ("drafted", "polished", "review"):
+        recommended_action = "generate"
+        reason = f"本次运行没有到达发布终态，章节仍停在 {chapter_status}，可从当前状态继续生成。"
+        safe_actions.extend([
+            {"key": "view_content", "label": "查看正文", "safe": True},
+            {
+                "key": "generate",
+                "label": "继续生成",
+                "safe": True,
+                "note": "从当前章节状态继续，不覆盖已保存正文",
+            },
+        ])
     else:
         # v6.6.6: Use canonical recovery_state for other statuses
         for action_key in recovery_state.get("safe_actions", []):

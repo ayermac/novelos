@@ -1,7 +1,7 @@
 {
   "name": "novelos-desktop",
-  "version": "6.6.16",
-  "description": "Novelos Desktop Client — v6.6.16 Real Project Burn-in",
+  "version": "6.6.17",
+  "description": "Novelos Desktop Client — v6.6.17 Memory Curator Fallback Model",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",

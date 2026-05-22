@@ -428,6 +428,56 @@ class TestProductionNextAPI:
         assert data["next_action"]["run_id"] == run_id
         os.unlink(db_path)
 
+    def test_running_any_chapter_takes_priority_over_pending_memory(self, client, project_id):
+        """A healthy running workflow on another chapter must outrank memory updates."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "running-any-test", "name": "Running Any Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 10, "target_words": 30000,
+        })
+        tc.post("/api/projects/running-any-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
+        })
+        gid = tc.get("/api/projects/running-any-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/running-any-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
+        tc.post("/api/projects/running-any-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        repo.update_project("running-any-test", current_chapter=1)
+        run_id = repo.create_workflow_run("running-any-test", 2)
+        repo.update_workflow_run(run_id, status="running", current_node="screenwriter")
+        batch = repo.create_memory_batch("running-any-test", chapter_number=1, summary="test batch")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id="running-any-test",
+            target_table="characters",
+            operation="update",
+            after_json='{"name":"Test"}',
+            target_id="1",
+        )
+
+        resp = tc.get("/api/projects/running-any-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["health"]["has_pending_memory_updates"] is True
+        assert data["next_action"]["key"] == "view_running_workflow"
+        assert data["next_action"]["target_chapter"] == 2
+        assert data["next_action"]["run_id"] == run_id
+        os.unlink(db_path)
+
     def test_planned_chapter_with_content_suggests_review_existing_content(self, client, project_id):
         """Planned chapters with preserved content should not suggest generation."""
         from novel_factory.api_app import create_api_app

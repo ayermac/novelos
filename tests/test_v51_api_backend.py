@@ -260,6 +260,7 @@ class TestConfigPlan:
                 "model": "gpt-4",
                 "api_key_env": "OPENAI_API_KEY",
                 "default_llm": "default",
+                "request_timeout_seconds": 360,
             },
         )
         assert response.status_code == 200
@@ -269,6 +270,8 @@ class TestConfigPlan:
         assert "llm_profiles:" in data["data"]["draft"]
         assert "api_key_env:" in data["data"]["draft"]
         assert "OPENAI_API_KEY" in data["data"]["draft"]
+        assert "max_tokens:" not in data["data"]["draft"]
+        assert "request_timeout_seconds: 360" in data["data"]["draft"]
 
     def test_config_plan_no_real_key(self, client):
         """Config plan does not include real API key."""

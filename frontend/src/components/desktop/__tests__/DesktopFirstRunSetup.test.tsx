@@ -245,6 +245,45 @@ describe('DesktopFirstRunSetup', () => {
     expect((putCall?.[1] as RequestInit).body).toEqual(expect.stringContaining('"editor":"Kimi-K2.6"'))
   })
 
+  it('saves request timeout settings from first-run setup without max token settings', async () => {
+    setupDesktop({ llm_mode: 'stub' })
+    render(
+      <Wrapper>
+        <DesktopFirstRunSetup />
+      </Wrapper>,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText(/欢迎使用 Novelos 桌面版/)).toBeInTheDocument()
+    })
+
+    await userEvent.click(screen.getByText('开始配置'))
+
+    await waitFor(() => {
+      expect(screen.getByText(/配置真实 LLM/)).toBeInTheDocument()
+    })
+
+    fireEvent.change(screen.getByLabelText('Base URL'), {
+      target: { value: 'https://vip-sg.freemodel.dev/v1' },
+    })
+    fireEvent.change(screen.getByLabelText('模型 ID'), {
+      target: { value: 'gpt-5.5' },
+    })
+    await userEvent.click(screen.getByText('高级设置'))
+    expect(screen.queryByLabelText('max_tokens')).not.toBeInTheDocument()
+    fireEvent.change(screen.getByLabelText('request_timeout_seconds'), {
+      target: { value: '360' },
+    })
+
+    await userEvent.click(screen.getByText('保存配置'))
+
+    await waitFor(() => {
+      const putCall = fetchMock.mock.calls.find(([, init]) => (init as RequestInit | undefined)?.method === 'PUT')
+      expect((putCall?.[1] as RequestInit).body).toEqual(expect.stringContaining('"request_timeout_seconds":360'))
+      expect((putCall?.[1] as RequestInit).body).not.toEqual(expect.stringContaining('"max_tokens"'))
+    })
+  })
+
   it('shows a single restart button after saving real config from stub runtime', async () => {
     setupDesktop({ llm_mode: 'stub' })
     fetchMock.mockImplementation((url: string, init?: RequestInit) => {

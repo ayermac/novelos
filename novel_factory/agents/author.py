@@ -12,6 +12,7 @@ from ..models.state import ChapterStatus, FactoryState
 from ..validators.chapter_checker import (
     validate_chapter_output,
     check_word_count_quality_gate,
+    check_word_count_upper_gate,
     derive_word_target,
     normalize_declared_word_count,
     count_words,
@@ -534,6 +535,30 @@ class AuthorAgent(BaseAgent):
                     "revision_target": "author",
                     "word_count_fail": True,
                     "message": word_gate_msg,
+                    "actual_word_count": actual_wc,
+                    "word_target": word_target,
+                    "agent": "author",
+                    "workflow_run_id": state.get("workflow_run_id"),
+                },
+                "_trace": trace,
+                "_autonomy": autonomy,
+            }
+
+        upper_gate_passed, upper_gate_msg = check_word_count_upper_gate(
+            body_content, word_target, "author"
+        )
+        if not upper_gate_passed:
+            logger.warning("Author: word count upper gate failed: %s", upper_gate_msg)
+            from ..validators.chapter_checker import count_words
+            actual_wc = count_words(body_content)
+            return {
+                "error": f"字数质量门未通过: {upper_gate_msg}",
+                "chapter_status": state.get("chapter_status"),
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": "author",
+                    "word_count_fail": True,
+                    "message": upper_gate_msg,
                     "actual_word_count": actual_wc,
                     "word_target": word_target,
                     "agent": "author",

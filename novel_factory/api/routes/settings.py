@@ -19,6 +19,7 @@ class ConfigPlanRequest(BaseModel):
     api_key_env: str = "OPENAI_API_KEY"
     default_llm: str = "default"
     agent_llm: str | None = None
+    request_timeout_seconds: int = 300
 
 
 def _get_generation_stats(request: Request) -> dict:
@@ -242,6 +243,7 @@ async def create_config_plan(request: Request, body: ConfigPlanRequest) -> Envel
             f"    model: {body.model}",
             f'    base_url: "{body.base_url}"',
             f'    api_key_env: "{body.api_key_env}"',
+            f"    request_timeout_seconds: {body.request_timeout_seconds}",
             "",
             f"default_llm: {body.default_llm}",
             "",
