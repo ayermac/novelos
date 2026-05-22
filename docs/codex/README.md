@@ -1,15 +1,17 @@
 # Codex 文档入口
 
-本目录维护 Novelos 的规划、审查、验收和下一阶段方向文档。根目录只保留本入口页；具体文档按语义分目录，避免把历史规格、完成报告和未来草案混在一起。
+本目录维护 Novelos 的规划、规格、审查、验收和下一阶段方向文档。仓库级入口见 `../README.md`；本页是项目当前状态和关键文档的主要入口。
 
 ## 目录约定
 
 | 目录 | 内容 | 使用场景 |
 | --- | --- | --- |
-| `planning/` | 架构、路线图、历史版本规格、API 规范 | 做版本排期、开发实现、追溯历史决策 |
+| `planning/` | 历史路线图、旧版规格、架构/API 规范 | 追溯历史决策；新 v6.6+ 版本不优先放这里 |
+| `specs/` | 已批准的 v6.6+ 版本规格 | 当前或即将执行的锁定范围 |
 | `reports/` | 完成报告、真实项目验收、阶段总结 | 判断某个版本是否闭环、查看验收事实 |
 | `reviews/` | Review 检查项、发现的问题、修复验证 | 代码/产品审查与回归验证 |
 | `next/` | 下一阶段方向、候选路线、未锁定规划 | 讨论未来方向，不作为当前执行规格 |
+| `release/` | 桌面发布、版本策略、打包检查清单 | 发布准备和版本治理 |
 
 ## 当前进度
 
@@ -34,11 +36,15 @@
 - **当前连续性与记忆执行基线**: v6.6.14 Continuity & Memory Enforcement Closure
 - **当前发布准备基线**: v6.6.15 Release Readiness & Desktop Packaging Closure
 - **当前真实项目 burn-in 基线**: v6.6.16 Real Project Burn-in & Regression Closure
-- **当前下一步**: v6.6.17 plot_holes compliance / post-burn-in deep review follow-up
-- **状态**: v6.6.16 已完成真实项目 burn-in、RC 深度审查与 post-RC 修复。核心交付：异常修正员 fixture、CLI/API domain_result 回归、手动 burn-in 脚本、预置指令跳过 Planner 时的 memory_context_audit 补写、Genesis local_recovery 恢复、世界观语义去重、运行中 checkpoint 误报修正、阻塞/返修章节恢复闭环、返修路由与审稿反馈传递修复、全量 2616 测试通过。
+- **当前运行时修复基线**: v6.6.17 Runtime and LLM Settings Updates
+- **当前下一步候选**: v6.6.18 Segmented Agent Payloads & Real LLM Reliability
+- **状态**: v6.6.17 已完成 LLM 设置改造、隐藏未使用预置 Key、Genesis stale/running run 恢复、真实 Provider 连接失败显式失败、Genesis 分段生成以降低大请求失败风险。v6.6.18 候选计划聚焦把同样的分段策略推广到 Author、Polisher、MemoryCurator 等长输入/长输出 Agent。
+- **版本规划索引**: [planning/novel-factory-version-planning-index.md](planning/novel-factory-version-planning-index.md)
+- **v6.6.17 规格**: [specs/novel-factory-v6.6.17-runtime-llm-settings-genesis-reliability-spec.md](specs/novel-factory-v6.6.17-runtime-llm-settings-genesis-reliability-spec.md)
+- **v6.6.17 完成报告**: [reports/novel-factory-v6.6.17-completion-report.md](reports/novel-factory-v6.6.17-completion-report.md)
 - **v6.4 规格**: [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md) — 解决生成章节"AI 味重"问题，聚焦 prompt 增强、deterministic validator 补充和 skill 升级。
 - **v6.5 规格**: [planning/novel-factory-v6.5-interaction-excellence-spec.md](planning/novel-factory-v6.5-interaction-excellence-spec.md) — 解决桌面客户端"后台感"问题，先建立 toast/loading/skeleton 等交互基础设施，再逐页升级工作台体验。
-- **测试基线**: backend full suite **2616 passed, 0 failed**；v6.6.16 burn-in tests **29 passed**；frontend typecheck/lint/build/vitest **285 passed**；`git diff --check` clean
+- **测试基线**: v6.6.16 稳定基线为 backend full suite **2616 passed, 0 failed**；v6.6.17 Genesis/secure-key/desktop targeted suites 已通过。声明新稳定基线前应重新跑分层或全量验证。
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
@@ -82,15 +88,17 @@
 - **v6.6.5 Runtime Hygiene & Observability 规格**: [planning/novel-factory-v6.6.5-runtime-hygiene-observability-closure-spec.md](planning/novel-factory-v6.6.5-runtime-hygiene-observability-closure-spec.md)
 - **v6.6.5 完成报告**: [reports/novel-factory-v6.6.5-completion-report.md](reports/novel-factory-v6.6.5-completion-report.md)
 - **v6.6.5 Review 记录**: [reviews/novel-factory-v6.6.5-review.md](reviews/novel-factory-v6.6.5-review.md)
+- **v6.6.18 候选计划**: [next/novel-factory-v6.6.18-segmented-agent-payloads-plan.md](next/novel-factory-v6.6.18-segmented-agent-payloads-plan.md)
 
 ## 当前执行规则
 
-1. 当前执行真相源仍以 `planning/` 中被明确选定的版本规格为准。
+1. 当前执行真相源以被明确选定的 `specs/` 版本规格为准；历史版本可能仍位于 `planning/`，但新 v6.6+ 工作优先进入 `specs/`。
 2. `reports/` 和 `reviews/` 记录已经发生的事实，不再承载未来需求。
 3. `next/` 只用于方向收口和候选路线，不应被开发 Agent 当作已锁定规格。
 4. 历史规格不做大规模改写；如需改变方向，应新增下一阶段文档或新版本规格。
 5. 旧 `novel_factory/web` Jinja/静态页面路线已退役。当前 UI 只走 `frontend/` 的 React/Vite，后端只提供 FastAPI API；历史文档中出现的 `web/templates`、`web/static` 或 `web/design` 仅作为旧版本记录，不应作为新开发入口。
 6. Agent 角色实现只放在 `novel_factory/agents/`；共享运行底座放在 `novel_factory/agent_runtime/`。`scout`、`architect`、`secretary` 旧旁路 Agent 已退役，后续如确需恢复应重新按当前 Agent Runtime 规范规划。
+7. `docs/superpowers/` 是本地 Agent 草稿目录，不进入 git。项目相关计划应沉淀到 `next/` 或 `specs/`。
 
 ## 关键文档
 
