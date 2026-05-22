@@ -227,11 +227,10 @@ describe('LlmSettingsSection', () => {
 
     expect(screen.getByText('OPENAI_API_KEY 已保存到本机安全存储')).toBeInTheDocument()
     expect(screen.getByText('OPENROUTER_API_KEY 来自系统环境变量，不能在这里删除')).toBeInTheDocument()
-    expect(screen.getByText('DEEPSEEK_API_KEY 尚未保存')).toBeInTheDocument()
+    expect(screen.queryByLabelText('DEEPSEEK_API_KEY API Key')).not.toBeInTheDocument()
 
     expect(screen.getByRole('button', { name: '删除 OPENAI_API_KEY' })).toBeEnabled()
     expect(screen.getByRole('button', { name: '删除 OPENROUTER_API_KEY' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '删除 DEEPSEEK_API_KEY' })).toBeDisabled()
   })
 
   it('uses selected api key env names when saving templates', async () => {

@@ -150,9 +150,6 @@ const PROVIDER_PRESETS: Record<string, Pick<LlmTemplateForm, 'provider' | 'base_
 const COMMON_API_KEY_ENVS = [
   'OPENAI_API_KEY',
   'FREEMODEL_API_KEY',
-  'OPENROUTER_API_KEY',
-  'DEEPSEEK_API_KEY',
-  'MOONSHOT_API_KEY',
 ] as const
 
 let templateIdCounter = 0
@@ -713,7 +710,9 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
   const profileNames = templates.map((template) => template.name)
   const apiKeyEnvOptions = Array.from(new Set([
     ...COMMON_API_KEY_ENVS,
-    ...Object.keys(secretStatuses),
+    ...Object.entries(secretStatuses)
+      .filter(([, status]) => status.configured)
+      .map(([envName]) => envName),
     ...customApiKeyEnvs,
     ...templates.map((template) => template.api_key_env).filter(Boolean),
   ]))
