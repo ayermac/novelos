@@ -93,6 +93,7 @@ skills:
 
   show-dont-tell:
     enabled: true
+    manifest: config/skills/manifest/show-dont-tell.yaml
     type: validator
     class: ShowDontTellValidator
     description: "检测叙述者直白情绪/心理解释（排除对白）"
@@ -100,6 +101,7 @@ skills:
 
   info-dump-detector:
     enabled: true
+    manifest: config/skills/manifest/info-dump-detector.yaml
     type: validator
     class: InfoDumpDetector
     description: "检测设定灌输、连续解释、说明腔段落"
@@ -107,6 +109,7 @@ skills:
 
   scene-texture:
     enabled: true
+    manifest: config/skills/manifest/scene-texture.yaml
     type: validator
     class: SceneTextureChecker
     description: "检测动作/环境/感官线索不足"
@@ -114,6 +117,7 @@ skills:
 
   dialogue-naturalness:
     enabled: true
+    manifest: config/skills/manifest/dialogue-naturalness.yaml
     type: validator
     class: DialogueNaturalnessChecker
     description: "检测功能化对白、对白占比异常、缺少摩擦/潜台词"

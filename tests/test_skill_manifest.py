@@ -163,6 +163,31 @@ class TestLoadManifest:
         assert "editor" in manifest.allowed_agents
         assert "qualityhub" in manifest.allowed_agents
 
+    @pytest.mark.parametrize(
+        ("manifest_path", "skill_id", "class_name"),
+        [
+            ("config/skills/manifest/show-dont-tell.yaml", "show-dont-tell", "ShowDontTellValidator"),
+            ("config/skills/manifest/info-dump-detector.yaml", "info-dump-detector", "InfoDumpDetector"),
+            ("config/skills/manifest/scene-texture.yaml", "scene-texture", "SceneTextureChecker"),
+            (
+                "config/skills/manifest/dialogue-naturalness.yaml",
+                "dialogue-naturalness",
+                "DialogueNaturalnessChecker",
+            ),
+        ],
+    )
+    def test_load_antiai_advisory_manifests(self, manifest_path, skill_id, class_name):
+        """Test loading advisory anti-AI quality manifests."""
+        manifest = load_manifest(manifest_path)
+
+        assert manifest.id == skill_id
+        assert manifest.kind == "validator"
+        assert manifest.class_name == class_name
+        assert "editor" in manifest.allowed_agents
+        assert "before_review" in manifest.allowed_stages
+        assert manifest.permissions.validate_text is True
+        assert manifest.failure_policy.on_error == "warn"
+
     def test_load_nonexistent_manifest(self):
         """Test loading nonexistent manifest raises error."""
         with pytest.raises(SkillManifestError) as exc_info:

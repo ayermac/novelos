@@ -921,14 +921,36 @@ class TestGetAgentSkillMatrix:
             assert skill_id not in unmounted_ids
             assert skill_id not in warning_ids
 
-    def test_style_bible_checker_manifest_skill_is_not_legacy(self, test_client):
+    def test_editor_quality_manifest_skills_are_not_legacy(self, test_client):
         resp = test_client.get("/api/skills/agent-matrix")
         matrix = resp.json()["data"]
         editor = next(a for a in matrix["agents"] if a["agent"] == "editor")
         before_review = next(s for s in editor["stages"] if s["stage"] == "before_review")
-        style_bible = next(s for s in before_review["skills"] if s["id"] == "style-bible-checker")
-        assert style_bible["legacy"] is False
-        assert style_bible["package"] is None
+        by_id = {s["id"]: s for s in before_review["skills"]}
+
+        for skill_id in (
+            "style-bible-checker",
+            "show-dont-tell",
+            "info-dump-detector",
+            "scene-texture",
+            "dialogue-naturalness",
+        ):
+            assert by_id[skill_id]["legacy"] is False
+            assert by_id[skill_id]["package"] is None
+
+    def test_validate_has_no_antiai_missing_manifest_warnings(self, test_client):
+        resp = test_client.post("/api/skills/validate")
+        data = resp.json()["data"]
+
+        assert data["ok"] is True
+        warnings = "\n".join(data["warnings"])
+        for skill_id in (
+            "show-dont-tell",
+            "info-dump-detector",
+            "scene-texture",
+            "dialogue-naturalness",
+        ):
+            assert f"Skill '{skill_id}' has no manifest" not in warnings
 
     def test_core_agent_mounts_appear_in_matrix(self, test_client):
         resp = test_client.get("/api/skills/agent-matrix")
