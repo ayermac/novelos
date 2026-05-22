@@ -225,9 +225,12 @@ def test_adjacent_synonymous_objectives_detected():
         "plot_holes": [{"code": "PH-001", "title": "身世", "description": "身世。触发场景：觉醒时。读者表象：普通人。真相方向：组织成员。预计推进/兑现章节：第10章。"}],
     }
     report = evaluate_genesis_draft(draft, title="测试", genre="都市", premise="测试", target_chapters=3)
-    # Should be blocked due to repetitive/abstract objectives
-    assert not report.passed
-    assert any(i.code in ("REPETITIVE_OBJECTIVE", "ABSTRACT_OBJECTIVE", "CONSECUTIVE_OBJECTIVE") for i in report.issues)
+    # v6.6.18 semantic alignment: Natural-language objectives with "发现" should not be falsely blocked
+    # CONSECUTIVE_OBJECTIVE is still detected as a warning, but no blocker
+    codes = {i.code for i in report.issues}
+    assert "CONSECUTIVE_OBJECTIVE" in codes  # Still detected
+    assert "SHALLOW_INSTRUCTION" not in codes  # No false positive after semantic alignment
+    assert report.passed  # Passes with warnings, not blocked
 
 
 # ---------------------------------------------------------------------------

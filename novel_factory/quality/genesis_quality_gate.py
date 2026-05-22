@@ -318,19 +318,19 @@ def _check_instruction_depth(instructions: list[dict]) -> list[GenesisQualityIss
         has_character = bool(re.search(r"[^\x00-\xff]{2,4}", combined))
         has_location = bool(
             re.search(
-                r"(地点|场所|场景|城市|学院|公司|宗门|家族|组织|基地|实验室|学校|街道|家中|办公室|战场|山谷|洞穴|塔|殿|阁|村|镇|城|医院|事务所|公寓|大楼|工厂|仓库|墓地|教堂|车站|码头|酒吧|餐厅|酒店|宫殿|密室|禁地|废墟|森林|沙漠|海岛|地下|天际|荒野)",
+                r"(地点|场所|场景|城市|学院|公司|宗门|家族|组织|基地|实验室|学校|街道|家中|办公室|战场|山谷|洞穴|塔|殿|阁|村|镇|城|医院|事务所|公寓|大楼|工厂|仓库|墓地|教堂|车站|码头|酒吧|餐厅|酒店|宫殿|密室|禁地|废墟|森林|沙漠|海岛|地下|天际|荒野|港|湾|堤|坝|站|所|区|域|界|层|网|节点|枢纽|入口)",
                 combined,
             )
         )
         has_action = bool(
             re.search(
-                r"(发现|找到|击败|逃离|潜入|揭露|保护|摧毁|夺取|谈判|背叛|拯救|追杀|埋伏|破解|触发|遭遇|拒绝|接受|质疑|展示|失控|击碎|试探|出手|相助|暗示|暴露|引发|遭到|监视|被迫|面对|挑战|测试|觉醒|制造|引起|使用|产生|碰撞|交锋|博弈|争夺|反击|投降|逃脱|追击|拦截|封锁|围困|逆转)",
+                r"(发现|找到|击败|逃离|潜入|揭露|保护|摧毁|夺取|谈判|背叛|拯救|追杀|埋伏|破解|触发|遭遇|拒绝|接受|质疑|展示|失控|击碎|试探|出手|相助|暗示|暴露|引发|遭到|监视|被迫|面对|挑战|测试|觉醒|制造|引起|使用|产生|碰撞|交锋|博弈|争夺|反击|投降|逃脱|追击|拦截|封锁|围困|逆转|寻找|进入|离开|取出|隐藏|追查|验证|确认|取得|得到|送出|收到|派出|接触|控制|关闭|打开|启动|停止|删除|复制|转移|改写|修复)",
                 combined,
             )
         )
         has_result = bool(
             re.search(
-                r"(导致|结果|因此|从而|使得|失去|获得|暴露|隐藏|改变|决定|意识到|明白|确认|否认|牺牲|代价)",
+                r"(导致|结果|因此|从而|使得|失去|获得|暴露|隐藏|改变|决定|意识到|明白|确认|否认|牺牲|代价|发现|遭到|面对|封锁|取得|得到|被删|被阻|被迫|被迫|陷入|陷入|曝光|泄露|外泄|逆转|反转|翻盘|落败|获胜|解决|未解|悬而未决)",
                 combined,
             )
         )
@@ -536,18 +536,48 @@ def _check_outline_quality(
             )
         )
 
-    # Check if outlines reflect title/premise
+    # v6.6.18: Check if outlines reflect title/premise using tokenized short keywords
     combined = f"{title} {premise}".lower()
     if combined and len(dict_outlines) > 0:
-        # Check if any outline content mentions key elements from title/premise
         outline_text = " ".join(
             o.get("content", "") + " " + o.get("title", "") for o in dict_outlines
         ).lower()
-        # Extract significant words from title/premise (Chinese characters, 2+ length)
-        key_words = re.findall(r"[^\x00-\xff]{2,}", combined)
-        key_words = [w for w in key_words if len(w) >= 2 and w not in ["故事", "小说", "主角"]]
+        generic_stopwords = {
+            "故事", "小说", "主角", "一个", "关于", "作品", "讲述", "围绕",
+            "展开", "发生", "背景", "世界", "时代", "题材", "类型", "风格",
+            "设定", "情节", "剧情", "文本", "作者", "读者", "本书", "本章",
+            "系列", "篇章", "内容", "主题", "核心", "主要", "重要", "基本",
+            "因此", "从而", "使得",
+        }
+        # Split by non-Chinese delimiters, then extract meaningful tokens
+        raw_phrases = re.split(r"[^\u4e00-\u9fff]+", combined)
+        key_words: list[str] = []
+        for phrase in raw_phrases:
+            if not phrase:
+                continue
+            if 2 <= len(phrase) <= 6 and phrase not in generic_stopwords:
+                key_words.append(phrase)
+            elif len(phrase) > 6:
+                # For long unbroken strings, extract 2-char windows with step 2
+                # from the head to capture core nouns/verbs without too much noise
+                for i in range(0, min(len(phrase) - 1, 12), 2):
+                    sub = phrase[i:i + 2]
+                    if sub not in generic_stopwords:
+                        key_words.append(sub)
+        # Alphanumeric tokens of 2+ chars (names, tech terms)
+        for token in re.findall(r"[a-z0-9]+", combined):
+            if len(token) >= 2:
+                key_words.append(token)
+        # Deduplicate while preserving order
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for w in key_words:
+            if w not in seen:
+                seen.add(w)
+                deduped.append(w)
+        key_words = deduped[:10]
         if key_words:
-            mentioned = sum(1 for w in key_words[:5] if w in outline_text)
+            mentioned = sum(1 for w in key_words[:6] if w in outline_text)
             if mentioned == 0 and len(key_words) >= 2:
                 issues.append(
                     GenesisQualityIssue(
@@ -658,6 +688,47 @@ def _check_plot_hole_quality(plot_holes: list[dict]) -> list[GenesisQualityIssue
     return issues
 
 
+# v6.6.18: Expanded semantic vocabularies for high-quality natural-language outputs
+_CHARACTER_GOAL_FIELDS = ("goal", "objective", "motivation", "current_goal", "desire")
+_CHARACTER_CONFLICT_FIELDS = ("conflict", "secret", "inner_conflict", "contradiction")
+_CHARACTER_INTEREST_FIELDS = (
+    "relationship_with_protagonist", "interest_relation", "alliance", "hostility"
+)
+_CHARACTER_RELATIONSHIP_WORDS = [
+    "协助", "保护", "牵制", "摇摆", "隐瞒", "补救", "利用价值", "镜像", "旧账",
+    "被卷入", "被处理对象", "表面配合", "真实摇摆", "关键证人", "线索提供者",
+    "合作", "敌对", "同盟", "依附", "背叛", "监视", "忌惮", "赏识", "排斥",
+    "利益", "关系", "利用",
+]
+
+
+def _character_has_structured_goal(char: dict) -> bool:
+    """Return True if character has a non-empty structured goal field."""
+    for field in _CHARACTER_GOAL_FIELDS:
+        value = str(char.get(field) or "").strip()
+        if value and len(value) >= 4:
+            return True
+    return False
+
+
+def _character_has_structured_conflict(char: dict) -> bool:
+    """Return True if character has a non-empty structured conflict/secret field."""
+    for field in _CHARACTER_CONFLICT_FIELDS:
+        value = str(char.get(field) or "").strip()
+        if value and len(value) >= 4:
+            return True
+    return False
+
+
+def _character_has_structured_interest(char: dict) -> bool:
+    """Return True if character has a non-empty structured relationship field."""
+    for field in _CHARACTER_INTEREST_FIELDS:
+        value = str(char.get(field) or "").strip()
+        if value and len(value) >= 4:
+            return True
+    return False
+
+
 def _check_character_quality(characters: list[dict]) -> list[GenesisQualityIssue]:
     """Check character quality."""
     issues: list[GenesisQualityIssue] = []
@@ -692,25 +763,29 @@ def _check_character_quality(characters: list[dict]) -> list[GenesisQualityIssue
                 )
                 break
 
-        # Check for missing motivation/conflict
-        has_motivation = bool(
-            re.search(
-                r"(动机|目的|目标|渴望|追求|想要|欲望|志向|执念|心愿|野心|理想)",
-                description,
+        # v6.6.18: Structured-field-first check
+        has_motivation = _character_has_structured_goal(char)
+        has_conflict = _character_has_structured_conflict(char)
+        has_interest = _character_has_structured_interest(char)
+
+        # Fallback to description keyword scan if structured fields are absent
+        if not has_motivation:
+            has_motivation = bool(
+                re.search(
+                    r"(动机|目的|目标|渴望|追求|想要|欲望|志向|执念|心愿|野心|理想)",
+                    description,
+                )
             )
-        )
-        has_conflict = bool(
-            re.search(
-                r"(矛盾|冲突|困境|压力|对立|敌对|秘密|心结|隐痛|挣扎|纠结|背叛|隐瞒|欺骗)",
-                description,
+        if not has_conflict:
+            has_conflict = bool(
+                re.search(
+                    r"(矛盾|冲突|困境|压力|对立|敌对|秘密|心结|隐痛|挣扎|纠结|背叛|隐瞒|欺骗)",
+                    description,
+                )
             )
-        )
-        has_interest = bool(
-            re.search(
-                r"(利益|关系|同盟|敌对|合作|利用|依附|背叛|保护|监视|忌惮|赏识|排斥)",
-                description,
-            )
-        )
+        if not has_interest:
+            interest_pattern = "|".join(re.escape(w) for w in _CHARACTER_RELATIONSHIP_WORDS)
+            has_interest = bool(re.search(interest_pattern, description))
 
         if not has_motivation and not has_conflict and len(description) < 50:
             issues.append(
@@ -724,8 +799,15 @@ def _check_character_quality(characters: list[dict]) -> list[GenesisQualityIssue
                 )
             )
 
-        # v6.6.4: SHALLOW_CHARACTER_MOTIVATION
-        if not (has_motivation and has_conflict and has_interest):
+        # v6.6.4 / v6.6.18: SHALLOW_CHARACTER_MOTIVATION
+        # Protagonist/antagonist require all three; supporting needs at least 2/3
+        role = _normalize_text(char.get("role", ""))
+        if role in ("protagonist", "antagonist"):
+            required = 3
+        else:
+            required = 2
+        score = sum([has_motivation, has_conflict, has_interest])
+        if score < required:
             shallow_motivation_count += 1
 
     if generic_name_count >= len(dict_characters) * 0.5 and len(dict_characters) > 0:
@@ -751,6 +833,54 @@ def _check_character_quality(characters: list[dict]) -> list[GenesisQualityIssue
         )
 
     return issues
+
+
+# v6.6.18: Expanded faction semantic vocabularies
+_FACTION_RESOURCES_FIELDS = ("resources", "means", "assets", "capabilities")
+_FACTION_ACTION_FIELDS = ("current_action", "stage_action", "action", "operations")
+_FACTION_ATTITUDE_FIELDS = (
+    "relationship_with_protagonist", "attitude_toward_protagonist", "attitude",
+)
+_FACTION_ACTION_WORDS = [
+    "压低", "掩盖", "修补", "收集", "调度", "授权", "接管", "限制", "防范",
+    "封锁", "外泄", "抹平", "追索", "传播", "监控", "协助调查", "悄悄修补",
+    "行动", "出击", "围剿", "拉拢", "监视", "渗透", "暗杀", "策反", "压制",
+    "扶植", "收购", "毁灭", "保护", "驱逐", "结盟", "背叛", "试探", "追捕",
+    "救援",
+]
+_FACTION_RESOURCES_WORDS = [
+    "权限", "接口", "记录库", "档案链", "安防网络", "调控接口", "验证协议",
+    "私人影像", "证词", "潮汐日志", "控制记录", "系统权限", "资源", "手段",
+    "武器", "资金", "技术", "人力", "情报", "网络", "势力", "地盘", "产业",
+    "传承", "秘术", "科技", "资本", "人脉", "丹药", "功法", "秘籍",
+]
+
+
+def _faction_has_structured_resources(fac: dict) -> bool:
+    """Return True if faction has a non-empty structured resources/means field."""
+    for field in _FACTION_RESOURCES_FIELDS:
+        value = str(fac.get(field) or "").strip()
+        if value and len(value) >= 4:
+            return True
+    return False
+
+
+def _faction_has_structured_action(fac: dict) -> bool:
+    """Return True if faction has a non-empty structured action field."""
+    for field in _FACTION_ACTION_FIELDS:
+        value = str(fac.get(field) or "").strip()
+        if value and len(value) >= 4:
+            return True
+    return False
+
+
+def _faction_has_structured_attitude(fac: dict) -> bool:
+    """Return True if faction has a non-empty structured relationship field."""
+    for field in _FACTION_ATTITUDE_FIELDS:
+        value = str(fac.get(field) or "").strip()
+        if value and len(value) >= 4:
+            return True
+    return False
 
 
 def _check_faction_quality(factions: list[dict]) -> list[GenesisQualityIssue]:
@@ -798,6 +928,9 @@ def _check_faction_quality(factions: list[dict]) -> list[GenesisQualityIssue]:
                 combined,
             )
         )
+        # v6.6.18: attitude from structured fields also counts
+        if not has_conflict:
+            has_conflict = _faction_has_structured_attitude(fac)
 
         if not has_conflict and len(description) < 30:
             issues.append(
@@ -811,19 +944,18 @@ def _check_faction_quality(factions: list[dict]) -> list[GenesisQualityIssue]:
                 )
             )
 
-        # v6.6.4: SHALLOW_FACTION_ACTION
-        has_resources = bool(
-            re.search(
-                r"(资源|手段|武器|资金|技术|人力|情报|网络|势力|地盘|产业|传承|秘术|科技|资本|人脉|丹药|功法|秘籍)",
-                combined,
-            )
-        )
-        has_action = bool(
-            re.search(
-                r"(行动|出击|围剿|拉拢|监视|渗透|暗杀|策反|封锁|压制|扶植|收购|毁灭|保护|驱逐|结盟|背叛|试探|追捕|救援)",
-                combined,
-            )
-        )
+        # v6.6.4 / v6.6.18: SHALLOW_FACTION_ACTION
+        has_resources = _faction_has_structured_resources(fac)
+        has_action = _faction_has_structured_action(fac)
+
+        # Fallback to description keyword scan
+        if not has_resources:
+            resources_pattern = "|".join(re.escape(w) for w in _FACTION_RESOURCES_WORDS)
+            has_resources = bool(re.search(resources_pattern, combined))
+        if not has_action:
+            action_pattern = "|".join(re.escape(w) for w in _FACTION_ACTION_WORDS)
+            has_action = bool(re.search(action_pattern, combined))
+
         if not (has_resources and has_action):
             shallow_action_count += 1
 

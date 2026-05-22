@@ -196,7 +196,12 @@ class MemoryCuratorAgent(BaseAgent):
         self.skill_registry = skill_registry
         self.fallback_llm = fallback_llm
 
-    def build_context(self, state: FactoryState) -> str:
+    def build_context(
+        self,
+        state: FactoryState,
+        *,
+        chapter_content_override: str | None = None,
+    ) -> str:
         parts = []
         project_id = state.get("project_id", "")
         chapter_number = int(state.get("chapter_number", 0) or 0)
@@ -219,7 +224,7 @@ class MemoryCuratorAgent(BaseAgent):
         # Chapter content
         chapter = self._get_chapter_info(state)
         if chapter and chapter.get("content"):
-            content = str(chapter["content"])
+            content = chapter_content_override if chapter_content_override is not None else str(chapter["content"])
             if state_card_data:
                 excerpt = content[:2500]
                 if len(content) > 3500:
@@ -443,6 +448,108 @@ class MemoryCuratorAgent(BaseAgent):
 
         return patches
 
+    def _try_segmented_extraction(
+        self,
+        state: FactoryState,
+        base_context: str,
+        chapter_content: str,
+        exec_events: list[dict] | None,
+    ) -> dict[str, Any]:
+        """Extract memory patches from long chapters by content chunks."""
+        from ..agent_runtime.segmented_generation import chunk_text_by_paragraphs
+        from ..workflow.execution_events import (
+            EVENT_SEGMENT_STARTED,
+            EVENT_SEGMENT_COMPLETED,
+            EVENT_SEGMENT_FAILED,
+        )
+
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+
+        chunks = list(chunk_text_by_paragraphs(chapter_content, soft_limit=1000))
+        total_chunks = len(chunks)
+
+        all_patches: list[dict[str, Any]] = []
+        all_warnings: list[str] = []
+
+        for idx, chunk in enumerate(chunks):
+            segment_num = idx + 1
+
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": EVENT_SEGMENT_STARTED,
+                    "message": f"MemoryCurator 开始提取第 {segment_num}/{total_chunks} 段",
+                    "status": "info",
+                    "payload": {
+                        "segment_index": segment_num,
+                        "total_segments": total_chunks,
+                    },
+                })
+
+            segment_context = self.build_context(state, chapter_content_override=chunk)
+
+            messages = [
+                {"role": "system", "content": MEMORY_CURATOR_SYSTEM_PROMPT},
+                {
+                    "role": "user",
+                    "content": (
+                        f"项目ID: {project_id}\n章节号: {chapter_number}\n\n"
+                        f"{segment_context}\n\n"
+                        f"【分段提取】本段为第{segment_num}/{total_chunks}段，"
+                        f"请从以上段落中提取项目资料变更建议。"
+                    ),
+                },
+            ]
+
+            try:
+                raw = self.llm.invoke_json(messages)
+            except LLMTimeoutError as e:
+                if exec_events is not None:
+                    exec_events.append({
+                        "event_type": EVENT_SEGMENT_FAILED,
+                        "message": f"MemoryCurator 第 {segment_num}/{total_chunks} 段提取超时",
+                        "status": "error",
+                        "payload": {
+                            "segment_index": segment_num,
+                            "error": str(e)[:200],
+                        },
+                    })
+                continue
+            except OutputValidationError as e:
+                if exec_events is not None:
+                    exec_events.append({
+                        "event_type": EVENT_SEGMENT_FAILED,
+                        "message": f"MemoryCurator 第 {segment_num}/{total_chunks} 段 JSON 解析失败",
+                        "status": "error",
+                        "payload": {
+                            "segment_index": segment_num,
+                            "error": str(e)[:200],
+                        },
+                    })
+                continue
+
+            patches, extract_warnings = _robust_extract_patches(raw)
+            all_patches.extend(patches)
+            all_warnings.extend(extract_warnings)
+
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": EVENT_SEGMENT_COMPLETED,
+                    "message": f"MemoryCurator 完成第 {segment_num}/{total_chunks} 段 ({len(patches)} patches)",
+                    "status": "info",
+                    "payload": {
+                        "segment_index": segment_num,
+                        "patch_count": len(patches),
+                    },
+                })
+
+        return {
+            "output": all_patches,
+            "extract_warnings": all_warnings,
+            "segmented": True,
+            "segment_count": total_chunks,
+        }
+
     def _should_repair_empty_extraction(self, project_id: str, chapter_number: int) -> bool:
         """Return True when an empty real-mode extraction is suspicious enough to retry."""
         try:
@@ -478,6 +585,10 @@ class MemoryCuratorAgent(BaseAgent):
         loop = SelfCheckLoop(agent_id=self.agent_id, max_repair_attempts=1)
 
         def _generate_wrap() -> dict[str, Any]:
+            chapter = self._get_chapter_info(state)
+            chapter_content = str((chapter or {}).get("content") or "")
+            if state.get("llm_mode") == "real" and len(chapter_content) > 1000:
+                return self._try_segmented_extraction(state, context, chapter_content, exec_events)
             messages = [
                 {"role": "system", "content": MEMORY_CURATOR_SYSTEM_PROMPT},
                 {

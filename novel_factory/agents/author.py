@@ -7,6 +7,12 @@ import logging
 import re
 from typing import Any
 
+from ..agent_runtime.segmented_generation import chunk_items
+from ..workflow.execution_events import (
+    EVENT_SEGMENT_STARTED,
+    EVENT_SEGMENT_COMPLETED,
+    EVENT_SEGMENT_FAILED,
+)
 from ..models.schemas import AuthorOutput
 from ..models.state import ChapterStatus, FactoryState
 from ..validators.chapter_checker import (
@@ -250,7 +256,7 @@ class AuthorAgent(BaseAgent):
         ]
 
         if self._should_use_plain_text_primary(state):
-            output = self._try_plain_text_draft(state, task_desc, context)
+            output = self._try_plain_text_draft(state, task_desc, context, exec_events=exec_events)
             exec_events.append({
                 "event_type": "long_form_generation",
                 "message": "使用长文直写模式生成，避免长章节 JSON 截断",
@@ -1031,6 +1037,7 @@ class AuthorAgent(BaseAgent):
         state: FactoryState,
         task_desc: str,
         context: str,
+        exec_events: list[dict] | None = None,
     ) -> AuthorOutput:
         """Generate prose directly when real models fail long-form JSON output.
 
@@ -1039,6 +1046,10 @@ class AuthorAgent(BaseAgent):
         production writing, preserve progress by generating plain chapter text
         and deriving the small metadata fields deterministically.
         """
+        beats = self._get_scene_beats(state)
+        if state.get("llm_mode") == "real" and len(beats) >= 4:
+            return self._try_segmented_plain_text_draft(state, task_desc, context, exec_events=exec_events)
+
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
         instruction = self._get_instruction(state) or {}
@@ -1149,6 +1160,194 @@ class AuthorAgent(BaseAgent):
             title=title,
             content=content,
             word_count=len(content),
+            implemented_events=self._instruction_items(instruction.get("key_events", "")),
+            used_plot_refs=self._instruction_items(instruction.get("plots_to_plant", "")),
+        )
+
+    def _try_segmented_plain_text_draft(
+        self,
+        state: FactoryState,
+        task_desc: str,
+        context: str,
+        exec_events: list[dict] | None = None,
+    ) -> AuthorOutput:
+        """Generate prose by scene-beat segments for long chapters in real mode."""
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+        instruction = self._get_instruction(state) or {}
+        word_target = self._get_word_target(state)
+        minimum_required = int(word_target * 0.85)
+        effective_target = word_target
+        beats = self._get_scene_beats(state)
+        chunks = list(chunk_items(beats, size=3))
+        total_chunks = len(chunks)
+        per_call_retries = 1 if is_configured_live_provider(self.llm) else None
+
+        compact_context = self._build_plain_text_context(state, context)
+
+        revision_source_section = ""
+        if task_desc == "返修":
+            existing_chapter = self._get_chapter_info(state) or {}
+            existing_body = strip_chapter_heading(
+                existing_chapter.get("content", "") or "",
+                chapter_number,
+                existing_chapter.get("title"),
+            )
+            if existing_body.strip():
+                revision_source_section = (
+                    "【当前保留稿 / 必须在此基础上返修】\n"
+                    "下面是当前已保存章节正文。请把它当作底稿进行定点修改："
+                    "保留未被 Editor 点名的问题段落、人物关系、已成立事件和整体篇幅，"
+                    "只重写或补足退回问题涉及的段落。禁止脱离该底稿另起炉灶重写短版。\n\n"
+                    f"{existing_body.strip()}\n"
+                )
+            revision_review = normalize_revision_review(state.get("_revision_review")) or {}
+            compress_requested = self._revision_requests_compression(revision_review)
+            existing_len = count_words(existing_body)
+            if existing_len > 0 and not compress_requested:
+                minimum_required = max(minimum_required, int(existing_len * 0.9))
+                effective_target = max(word_target, existing_len)
+
+        segment_outputs: list[str] = []
+
+        for idx, beat_chunk in enumerate(chunks):
+            segment_num = idx + 1
+            beat_lines = "\n".join(
+                f"  {b['sequence']}. 目标: {b.get('scene_goal', '')} | 冲突: {b.get('conflict', '')} "
+                f"| 转折: {b.get('turn', '')} | 钩子: {b.get('hook', '')}"
+                for b in beat_chunk
+            )
+
+            segment_note = (
+                f"【分段写作】本段为第{segment_num}/{total_chunks}段，"
+                f"请只覆盖以下 scene beat：\n{beat_lines}\n"
+            )
+            if idx > 0:
+                prev_tail = segment_outputs[-1][-300:] if len(segment_outputs[-1]) > 300 else segment_outputs[-1]
+                segment_note += (
+                    f"\n【承接上文】前一段结尾：\n...{prev_tail}\n"
+                    f"请自然承接，不要重复已写内容。"
+                )
+            if idx == total_chunks - 1:
+                segment_note += "\n这是最后一段，必须写到章末钩子，不要停在半途。"
+
+            prose_max_tokens = max(1024, min(4096, int(effective_target * 1.5) // total_chunks + 512))
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是网文工厂的执笔。现在只输出章节正文纯文本。"
+                        "禁止输出 JSON、Markdown 代码块、字段名、解释或清单。"
+                        "直接从正文第一句开始，到正文最后一句结束。"
+                        "禁止写成剧情摘要或设定说明；以场景为单位推进。"
+                        "情绪通过动作、神态、对话展现，禁止直白情绪词。"
+                        "对白要有冲突或潜台词，避免功能化问答。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"项目ID: {project_id}\n章节号: {chapter_number}\n任务: {task_desc}\n"
+                        f"正文至少 {minimum_required} 字符，建议接近 {effective_target} 字符。\n\n"
+                        f"{compact_context}\n\n"
+                        f"{segment_note}\n\n"
+                        f"{revision_source_section}\n"
+                        f"请直接写第{chapter_number}章本段正文。"
+                    ),
+                },
+            ]
+
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": EVENT_SEGMENT_STARTED,
+                    "message": f"Author 开始生成第 {segment_num}/{total_chunks} 段",
+                    "status": "info",
+                    "payload": {
+                        "segment_index": segment_num,
+                        "total_segments": total_chunks,
+                        "beats": [b.get("sequence") for b in beat_chunk],
+                    },
+                })
+
+            try:
+                content = self._invoke_text_for_author(
+                    messages,
+                    temperature=0.7,
+                    max_tokens=prose_max_tokens,
+                    max_retries=per_call_retries,
+                    request_timeout_seconds=(
+                        AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                        if is_configured_live_provider(self.llm)
+                        else None
+                    ),
+                ).strip()
+                content = self._coerce_plain_text_content(content)
+                if not content:
+                    retry_messages = [
+                        *messages,
+                        {
+                            "role": "user",
+                            "content": (
+                                "上一轮返回为空。请立刻重写本段正文纯文本，"
+                                "不要输出 JSON、字段名、解释或 Markdown。"
+                                "从第一句正文直接开始。"
+                            ),
+                        },
+                    ]
+                    content = self._invoke_text_for_author(
+                        retry_messages,
+                        temperature=0.75,
+                        max_tokens=prose_max_tokens,
+                        max_retries=per_call_retries,
+                        request_timeout_seconds=(
+                            AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                            if is_configured_live_provider(self.llm)
+                            else None
+                        ),
+                    ).strip()
+                    content = self._coerce_plain_text_content(content)
+            except Exception as e:
+                if exec_events is not None:
+                    exec_events.append({
+                        "event_type": EVENT_SEGMENT_FAILED,
+                        "message": f"Author 第 {segment_num}/{total_chunks} 段生成失败: {e}",
+                        "status": "error",
+                        "payload": {"segment_index": segment_num, "error": str(e)[:200]},
+                    })
+                raise
+
+            if not content:
+                if exec_events is not None:
+                    exec_events.append({
+                        "event_type": EVENT_SEGMENT_FAILED,
+                        "message": f"Author 第 {segment_num}/{total_chunks} 段生成空内容",
+                        "status": "error",
+                        "payload": {"segment_index": segment_num},
+                    })
+                raise OutputValidationError(
+                    f"Author 分段生成第 {segment_num} 段空内容（已重试）"
+                )
+
+            segment_outputs.append(content)
+
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": EVENT_SEGMENT_COMPLETED,
+                    "message": f"Author 完成第 {segment_num}/{total_chunks} 段 ({len(content)} 字)",
+                    "status": "info",
+                    "payload": {
+                        "segment_index": segment_num,
+                        "segment_length": len(content),
+                    },
+                })
+
+        merged_content = "\n\n".join(segment_outputs)
+        title = self._derive_title(state, instruction, merged_content)
+        return AuthorOutput(
+            title=title,
+            content=merged_content,
+            word_count=len(merged_content),
             implemented_events=self._instruction_items(instruction.get("key_events", "")),
             used_plot_refs=self._instruction_items(instruction.get("plots_to_plant", "")),
         )

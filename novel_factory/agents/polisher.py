@@ -9,6 +9,12 @@ import statistics
 import time
 from typing import Any
 
+from ..agent_runtime.segmented_generation import chunk_text_by_paragraphs
+from ..workflow.execution_events import (
+    EVENT_SEGMENT_STARTED,
+    EVENT_SEGMENT_COMPLETED,
+    EVENT_SEGMENT_FAILED,
+)
 from ..models.schemas import PolisherOutput
 from ..models.state import ChapterStatus, FactoryState
 from ..validators.chapter_checker import validate_chapter_output, check_word_count_quality_gate, derive_word_target
@@ -299,7 +305,7 @@ class PolisherAgent(BaseAgent):
         live_provider = state.get("llm_mode") == "real" and is_configured_live_provider(self.llm)
         try:
             if self._should_use_plain_text_primary(state):
-                output = self._try_plain_text_polish(state, context)
+                output = self._try_plain_text_polish(state, context, exec_events=exec_events)
             else:
                 raw = self.llm.invoke_json(messages, schema=PolisherOutput)
                 output = PolisherOutput(**raw)
@@ -677,9 +683,20 @@ class PolisherAgent(BaseAgent):
             "payload": {"fallback_type": "polisher_passthrough", "reason": reason_text},
         }
 
-    def _try_plain_text_polish(self, state: FactoryState, context: str) -> PolisherOutput:
+    def _try_plain_text_polish(
+        self,
+        state: FactoryState,
+        context: str,
+        exec_events: list[dict] | None = None,
+    ) -> PolisherOutput:
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+        chapter = self._get_chapter_info(state)
+        content = (chapter or {}).get("content") or ""
+
+        if state.get("llm_mode") == "real" and len(content) > 2800:
+            return self._try_segmented_plain_text_polish(state, context, exec_events=exec_events)
+
         messages = [
             {
                 "role": "system",
@@ -713,6 +730,160 @@ class PolisherAgent(BaseAgent):
             fact_change_risk="none",
             changed_scope=["sentence", "dialogue", "rhythm", "scene_texture"],
             summary="纯正文润色完成",
+            fixed_quality_findings=[],
+            deferred_quality_findings=[],
+            quality_risk_note=None,
+        )
+
+    def _try_segmented_plain_text_polish(
+        self,
+        state: FactoryState,
+        context: str,
+        exec_events: list[dict] | None = None,
+    ) -> PolisherOutput:
+        """Polish long chapters by paragraph chunks in real mode."""
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
+        chapter = self._get_chapter_info(state)
+        content = (chapter or {}).get("content") or ""
+
+        if not content.strip():
+            raise OutputValidationError("Polisher 分段润色：正文为空")
+
+        chunks = list(chunk_text_by_paragraphs(content, soft_limit=2800))
+        total_chunks = len(chunks)
+
+        # If only one chunk, process directly without recursion
+        if total_chunks <= 1:
+            chunk = chunks[0] if chunks else content
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
+                        "不要输出 JSON、字段名、Markdown、解释或摘要。"
+                        "必须保留剧情事实、关键事件、伏笔和角色动机。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n"
+                        "请润色以上草稿。只返回润色后的完整正文纯文本。"
+                    ),
+                },
+            ]
+            max_tokens = int(getattr(getattr(self.llm, "config", None), "max_tokens", 4096) or 4096)
+            polished = self._invoke_text_for_polisher(
+                messages,
+                temperature=0.65,
+                max_tokens=max_tokens,
+                max_retries=1,
+                request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
+            ).strip()
+            polished = self._coerce_plain_text_content(polished)
+            if not polished:
+                raise OutputValidationError("Polisher 纯正文润色生成空内容")
+            return PolisherOutput(
+                content=polished,
+                fact_change_risk="none",
+                changed_scope=["sentence", "dialogue", "rhythm", "scene_texture"],
+                summary="纯正文润色完成",
+                fixed_quality_findings=[],
+                deferred_quality_findings=[],
+                quality_risk_note=None,
+            )
+
+        segment_outputs: list[str] = []
+
+        for idx, chunk in enumerate(chunks):
+            segment_num = idx + 1
+            segment_instruction = (
+                f"【分段润色】本段为第{segment_num}/{total_chunks}段，"
+                f"请润色以下段落，保持剧情事实不变。"
+            )
+            if idx > 0:
+                segment_instruction += " 请确保与上文衔接自然。"
+            if idx == total_chunks - 1:
+                segment_instruction += " 这是最后一段。"
+
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
+                        "不要输出 JSON、字段名、Markdown、解释或摘要。"
+                        "必须保留剧情事实、关键事件、伏笔和角色动机。"
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": (
+                        f"项目ID: {project_id}\n章节号: {chapter_number}\n\n"
+                        f"{context}\n\n"
+                        f"{segment_instruction}\n\n"
+                        f"【待润色段落】\n{chunk}\n\n"
+                        f"请只返回润色后的本段正文纯文本。"
+                    ),
+                },
+            ]
+
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": EVENT_SEGMENT_STARTED,
+                    "message": f"Polisher 开始润色第 {segment_num}/{total_chunks} 段",
+                    "status": "info",
+                    "payload": {
+                        "segment_index": segment_num,
+                        "total_segments": total_chunks,
+                    },
+                })
+
+            try:
+                polished = self._invoke_text_for_polisher(
+                    messages,
+                    temperature=0.65,
+                    max_tokens=4096,
+                    max_retries=1,
+                    request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
+                ).strip()
+                polished = self._coerce_plain_text_content(polished)
+                if not polished:
+                    raise OutputValidationError(
+                        f"Polisher 分段润色第 {segment_num} 段返回空内容"
+                    )
+            except Exception as e:
+                if exec_events is not None:
+                    exec_events.append({
+                        "event_type": EVENT_SEGMENT_FAILED,
+                        "message": f"Polisher 第 {segment_num}/{total_chunks} 段润色失败: {e}",
+                        "status": "error",
+                        "payload": {
+                            "segment_index": segment_num,
+                            "error": str(e)[:200],
+                        },
+                    })
+                raise
+
+            segment_outputs.append(polished)
+
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": EVENT_SEGMENT_COMPLETED,
+                    "message": f"Polisher 完成第 {segment_num}/{total_chunks} 段 ({len(polished)} 字)",
+                    "status": "info",
+                    "payload": {
+                        "segment_index": segment_num,
+                        "segment_length": len(polished),
+                    },
+                })
+
+        merged_content = "\n\n".join(segment_outputs)
+        return PolisherOutput(
+            content=merged_content,
+            fact_change_risk="none",
+            changed_scope=["sentence", "dialogue", "rhythm", "scene_texture"],
+            summary=f"分段润色完成（共{total_chunks}段）",
             fixed_quality_findings=[],
             deferred_quality_findings=[],
             quality_risk_note=None,

@@ -623,8 +623,8 @@ class TestManualBurninScript:
 class TestVersionIsV6616:
     def test_version_py(self):
         from novel_factory.version import get_version
-        assert get_version() == "6.6.17"
+        assert get_version() == "6.6.18"
 
     def test_frontend_package_json(self):
         pkg = Path(__file__).parent.parent / "frontend" / "package.json"
-        assert json.loads(pkg.read_text())["version"] == "6.6.17"
+        assert json.loads(pkg.read_text())["version"] == "6.6.18"
