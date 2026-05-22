@@ -1470,6 +1470,8 @@ def _mark_genesis_local_recovery(
         "source": "local_recovery",
         "quality_status": "recovered_from_invalid_json"
         if reason == "invalid_json"
+        else "recovered_from_provider_error"
+        if reason == "provider_error"
         else "recovered_from_incomplete_json",
         "generation_fallback": True,
         "fallback_reason": reason,
@@ -1486,13 +1488,13 @@ def _build_genesis_recovery_draft(
     reason: str,
     error_message: str,
 ) -> dict:
-    """Build a usable local Genesis draft after provider JSON failure.
+    """Build a usable local Genesis draft after recoverable provider failure.
 
-    Invalid provider JSON is a transport/model formatting failure, not proof
-    that the user's project should degrade into an unapprovable template. This
-    recovery path uses the same deterministic section builder, but marks the
-    result as a reviewable local recovery draft so the normal quality gate can
-    judge the actual content instead of automatically blocking it as scaffold.
+    Invalid provider JSON and transient provider failures are not proof that the
+    user's project should degrade into an unapprovable template. This recovery
+    path uses the same deterministic section builder, but marks the result as a
+    reviewable local recovery draft so the normal quality gate can judge the
+    actual content instead of automatically blocking it as scaffold.
     """
     return _mark_genesis_local_recovery(
         _generate_genesis_scaffold(body),
@@ -1505,8 +1507,13 @@ async def _generate_real_draft_with_scaffold_fallback(
     body: GenesisGenerateRequest,
     settings,
 ) -> dict:
-    """Generate Genesis with real LLM, falling back only for invalid JSON output."""
-    from ...llm.openai_compatible import OutputValidationError
+    """Generate Genesis with real LLM, falling back for recoverable provider failures."""
+    from ...llm.openai_compatible import (
+        LLMConnectionError,
+        LLMTimeoutError,
+        OutputValidationError,
+        RateLimitError,
+    )
 
     try:
         draft = await _generate_real_draft(body, settings)
@@ -1521,6 +1528,18 @@ async def _generate_real_draft_with_scaffold_fallback(
         return _build_genesis_recovery_draft(
             body,
             reason="invalid_json",
+            error_message=str(exc),
+        )
+    except (LLMConnectionError, LLMTimeoutError, RateLimitError) as exc:
+        logger.warning(
+            "Genesis real LLM provider failed; using local recovery title=%s genre=%s",
+            body.title,
+            body.genre,
+            exc_info=True,
+        )
+        return _build_genesis_recovery_draft(
+            body,
+            reason="provider_error",
             error_message=str(exc),
         )
 

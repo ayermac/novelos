@@ -457,6 +457,62 @@ def test_real_genesis_api_invalid_json_returns_usable_recovery_draft(monkeypatch
     )
 
 
+def test_real_genesis_api_connection_error_returns_recovery_draft(monkeypatch, tmp_path):
+    """Transient provider failures should not leave Genesis blocked as failed."""
+    from novel_factory.api_app import create_api_app
+    from novel_factory.db.connection import init_db
+    from novel_factory.llm.openai_compatible import LLMConnectionError
+
+    class FailingProvider:
+        def invoke_json(self, messages, max_tokens=None, max_retries=1):
+            raise LLMConnectionError("LLM 网络连接失败，请稍后重试: Connection error.")
+
+    class Router:
+        def for_agent(self, agent_name):
+            return FailingProvider()
+
+    monkeypatch.setattr(
+        "novel_factory.workflow.runner._build_llm_router",
+        lambda settings, llm_mode: Router(),
+    )
+
+    db_path = str(tmp_path / "genesis-connection-error.db")
+    init_db(db_path)
+    app = create_api_app(db_path=db_path, llm_mode="real")
+    with TestClient(app) as client:
+        create_resp = client.post("/api/onboarding/projects", json={
+            "project_id": "connection-error-genesis",
+            "name": "潮汐档案",
+            "genre": "悬疑科幻",
+            "description": "记者调查父亲旧案时发现潮汐系统隐藏着城市级实验。",
+            "total_chapters_planned": 10,
+            "target_words": 30000,
+        })
+        assert create_resp.status_code == 200
+
+        resp = client.post("/api/genesis/generate", json={
+            "project_id": "connection-error-genesis",
+            "title": "潮汐档案",
+            "genre": "悬疑科幻",
+            "premise": "记者调查父亲旧案时发现潮汐系统隐藏着城市级实验。",
+            "target_chapters": 3,
+            "target_words": 9000,
+        })
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["data"]["status"] == "generated"
+    assert body["data"]["error_message"] in (None, "")
+    draft = json.loads(body["data"]["draft_json"])
+    assert draft["_meta"]["source"] == "local_recovery"
+    assert draft["_meta"]["quality_status"] == "recovered_from_provider_error"
+    assert draft["_meta"]["generation_fallback"] is True
+    assert draft["_meta"]["fallback_reason"] == "provider_error"
+    assert "Connection error" in draft["_meta"]["original_error"]
+    assert body["data"]["quality_report"]["passed"] is True
+
+
 def test_genesis_completion_merge_deduplicates_full_draft_patch():
     """Completion patches that repeat full sections must replace/merge, not append."""
     from novel_factory.api.routes import genesis as genesis_routes
