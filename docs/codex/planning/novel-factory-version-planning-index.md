@@ -14,6 +14,7 @@ This index maps shipped or reviewed versions to their planning/spec source, comp
 
 | Version | Planning/spec source | Report | Review | Coverage |
 | --- | --- | --- | --- | --- |
+| v6.6.18 | `../specs/novel-factory-v6.6.18-segmented-agent-payloads-spec.md` | `../reports/novel-factory-v6.6.18-completion-report.md` | none yet | standalone |
 | v6.6.17 | `../specs/novel-factory-v6.6.17-runtime-llm-settings-genesis-reliability-spec.md` | `../reports/novel-factory-v6.6.17-completion-report.md` | none yet | standalone |
 | v6.6.16 | `../specs/novel-factory-v6.6.16-real-project-burnin-spec.md` | `../reports/novel-factory-v6.6.16-completion-report.md` | `../reviews/novel-factory-v6.6.16-review.md` | standalone |
 | v6.6.15 | `../specs/novel-factory-v6.6.15-release-readiness-spec.md` | `../reports/novel-factory-v6.6.15-completion-report.md` | `../reviews/novel-factory-v6.6.15-review.md` | standalone |
