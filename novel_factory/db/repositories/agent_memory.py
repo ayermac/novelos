@@ -95,6 +95,13 @@ class AgentMemoryRepository:
         self.conn.commit()
         return cursor.rowcount > 0
 
+    def delete_by_project(self, project_id: str) -> int:
+        cursor = self.conn.execute(
+            "DELETE FROM agent_memories WHERE project_id = ?", (project_id,)
+        )
+        self.conn.commit()
+        return cursor.rowcount
+
     def _row_to_dict(self, row: Any) -> dict[str, Any]:
         value_json = row["value_json"] or "{}"
         try:

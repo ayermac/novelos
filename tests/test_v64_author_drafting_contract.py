@@ -703,9 +703,9 @@ class TestWorkflowNotModified:
 
 
 class TestAuthorLiveCallBudget:
-    """Live Author drafting should not turn one slow request into a long retry loop."""
+    """Live Author drafting should inherit provider retry configuration."""
 
-    def test_plain_text_draft_uses_single_attempt_without_mutating_provider_config(self, repo):
+    def test_plain_text_draft_inherits_provider_retries_without_mutating_config(self, repo):
         from novel_factory.agents.author import AuthorAgent
         from novel_factory.config.settings import LLMConfig
         from novel_factory.llm.provider import LLMProvider
@@ -758,7 +758,7 @@ class TestAuthorLiveCallBudget:
         )
 
         assert output.content
-        assert llm.calls[-1]["max_retries"] == 1
+        assert llm.calls[-1]["max_retries"] is None
         assert llm.calls[-1]["request_timeout_seconds"] == 300
         assert llm.calls[-1]["max_tokens"] <= 4096
         assert llm.config.request_timeout_seconds == 60

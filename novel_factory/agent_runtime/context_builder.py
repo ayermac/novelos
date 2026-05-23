@@ -321,6 +321,19 @@ class AgentContextBuilder:
     def __init__(self, repo: Any) -> None:
         self.repo = repo
 
+    def _latest_approved_genesis_at(self, project_id: str) -> str | None:
+        """Return the latest approved genesis timestamp, if any."""
+        try:
+            runs = self.repo.list_genesis_runs(project_id)
+        except Exception:
+            return None
+        approved = [
+            str(run.get("updated_at") or run.get("created_at") or "")
+            for run in runs
+            if str(run.get("status") or "") == "approved"
+        ]
+        return max(approved) if approved else None
+
     # ── Shared helpers ───────────────────────────────────────────
 
     def _project_context(self, project_id: str) -> list[ContextItem]:
@@ -386,9 +399,13 @@ class AgentContextBuilder:
         if chapter_number <= 1:
             return items
         prev_ch = chapter_number - 1
+        genesis_cutoff = self._latest_approved_genesis_at(project_id)
 
         # Previous state card
         prev_state = self.repo.get_chapter_state(project_id, prev_ch)
+        if prev_state:
+            if genesis_cutoff and str(prev_state.get("created_at") or "") <= genesis_cutoff:
+                prev_state = None
         if prev_state:
             state_data = prev_state.get("state_data")
             if isinstance(state_data, str):
@@ -411,6 +428,9 @@ class AgentContextBuilder:
 
         # Previous chapter ending
         prev_chapter = self.repo.get_chapter(project_id, prev_ch)
+        if prev_chapter and prev_chapter.get("content"):
+            if genesis_cutoff and str(prev_chapter.get("updated_at") or prev_chapter.get("created_at") or "") <= genesis_cutoff:
+                prev_chapter = None
         if prev_chapter and prev_chapter.get("content"):
             tail = str(prev_chapter["content"])[-700:]
             items.append(
@@ -610,8 +630,11 @@ class AgentContextBuilder:
                 )
             )
         # Previous chapter character status from state card
+        genesis_cutoff = self._latest_approved_genesis_at(project_id)
         if chapter_number > 1:
             prev_state = self.repo.get_chapter_state(project_id, chapter_number - 1)
+            if prev_state and genesis_cutoff and str(prev_state.get("created_at") or "") <= genesis_cutoff:
+                prev_state = None
             if prev_state:
                 state_data = prev_state.get("state_data")
                 if isinstance(state_data, str):

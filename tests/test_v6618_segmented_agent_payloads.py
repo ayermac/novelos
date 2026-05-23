@@ -344,7 +344,12 @@ def test_author_real_mode_generates_scene_beat_segments(monkeypatch, tmp_path):
         config = {"model": "fake"}
 
         def invoke_text(self, messages, temperature=0.7, max_tokens=4096, **kwargs):
-            calls.append({"type": "invoke_text", "messages": messages, "max_tokens": max_tokens})
+            calls.append({
+                "type": "invoke_text",
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "max_retries": kwargs.get("max_retries"),
+            })
             seg = len([c for c in calls if c["type"] == "invoke_text"])
             body = f"【正文分段】这是第{seg}段正文内容。" * 115
             body += " 目标4 冲突4 转折4 钩子4 目标5 冲突5 转折5 钩子5 目标6 冲突6 转折6 钩子6"
@@ -365,6 +370,7 @@ def test_author_real_mode_generates_scene_beat_segments(monkeypatch, tmp_path):
 
     text_calls = [c for c in calls if c["type"] == "invoke_text"]
     assert len(text_calls) >= 2, f"Expected >=2 text calls, got {len(text_calls)}"
+    assert all(c["max_retries"] is None for c in text_calls)
     assert any("【正文分段】" in str(c["messages"]) for c in text_calls)
     assert result.get("chapter_status") == "drafted"
 
@@ -419,7 +425,12 @@ def test_polisher_real_mode_polishes_long_text_in_chunks(monkeypatch, tmp_path):
         config = {"model": "fake"}
 
         def invoke_text(self, messages, temperature=0.65, max_tokens=4096, **kwargs):
-            calls.append({"type": "invoke_text", "messages": messages, "max_tokens": max_tokens})
+            calls.append({
+                "type": "invoke_text",
+                "messages": messages,
+                "max_tokens": max_tokens,
+                "max_retries": kwargs.get("max_retries"),
+            })
             seg = len([c for c in calls if c["type"] == "invoke_text"])
             return f"润色段{seg}：优化后的段落内容更加流畅自然。" * 300
 
@@ -438,6 +449,7 @@ def test_polisher_real_mode_polishes_long_text_in_chunks(monkeypatch, tmp_path):
 
     text_calls = [c for c in calls if c["type"] == "invoke_text"]
     assert len(text_calls) >= 2, f"Expected >=2 polish calls, got {len(text_calls)}"
+    assert all(c["max_retries"] is None for c in text_calls)
     assert result.get("chapter_status") == "polished"
 
 

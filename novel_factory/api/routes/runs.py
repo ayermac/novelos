@@ -1706,6 +1706,8 @@ def _build_steps_timeline(
     task_errors: dict[str, str] = {}
     task_errors_legacy: dict[str, str] = {}
     task_logs: dict[str, list[dict]] = {}
+    failed_event_node: str | None = None
+    failed_event_error: str | None = None
     if repo:
         try:
             conn = repo._conn()
@@ -1785,6 +1787,28 @@ def _build_steps_timeline(
         except Exception:
             pass  # Graceful degradation
 
+        if run_data.get("id"):
+            try:
+                failed_events = [
+                    ev for ev in repo.get_workflow_node_events(run_data["id"])
+                    if ev.get("node_name") in {step["key"] for step in AGENT_STEPS}
+                    and (
+                        ev.get("status") in {"failed", "error"}
+                        or ev.get("event_type") in {"failed", "node_failed"}
+                        or ev.get("error_message")
+                    )
+                ]
+                if failed_events:
+                    latest_failed = failed_events[-1]
+                    failed_event_node = latest_failed.get("node_name")
+                    failed_event_error = (
+                        latest_failed.get("error_message")
+                        or latest_failed.get("message")
+                        or error_message
+                    )
+            except Exception:
+                pass  # Graceful degradation
+
     # Fetch agent_artifacts for per-agent artifact summaries
     # P1 fix: Prefer run-level isolation; fallback to chapter-level for legacy data
     agent_artifacts: dict[str, list[dict]] = {}
@@ -1830,7 +1854,11 @@ def _build_steps_timeline(
 
     blocked_agent = current_node
     if workflow_status == "blocked" and current_node == "human_review":
-        if "editor" in agent_artifacts or final_status in ("blocking", "revision"):
+        if failed_event_node:
+            blocked_agent = failed_event_node
+            if failed_event_error:
+                task_errors.setdefault(failed_event_node, failed_event_error)
+        elif "editor" in agent_artifacts or final_status in ("blocking", "revision"):
             blocked_agent = "editor"
         elif "polisher" in agent_artifacts:
             blocked_agent = "polisher"
