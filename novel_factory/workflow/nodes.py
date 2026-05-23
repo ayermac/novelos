@@ -442,6 +442,8 @@ def _memory_curator_real_mode_error(state: FactoryState, result: dict[str, Any])
     """Return a blocking error when real-mode memory extraction did not truly succeed."""
     if state.get("llm_mode", "stub") != "real":
         return None
+    if result.get("memory_curator_locked"):
+        return None
     if result.get("memory_curator_degraded"):
         return (
             result.get("memory_curator_warning")

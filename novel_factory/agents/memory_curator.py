@@ -14,7 +14,7 @@ import logging
 from typing import Any
 
 from ..models.state import ChapterStatus, FactoryState
-from ..llm.openai_compatible import LLMTimeoutError, OutputValidationError
+from ..llm.openai_compatible import LLMConnectionError, LLMTimeoutError, OutputValidationError
 from ..skills.registry import SkillRegistry
 from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.skill_hooks import run_agent_skills
@@ -503,11 +503,13 @@ class MemoryCuratorAgent(BaseAgent):
 
             try:
                 raw = self.llm.invoke_json(messages)
-            except LLMTimeoutError as e:
+            except (LLMConnectionError, LLMTimeoutError) as e:
                 if exec_events is not None:
+                    event_type = EVENT_SEGMENT_FAILED
+                    failure_kind = "连接失败" if isinstance(e, LLMConnectionError) else "超时"
                     exec_events.append({
-                        "event_type": EVENT_SEGMENT_FAILED,
-                        "message": f"MemoryCurator 第 {segment_num}/{total_chunks} 段提取超时",
+                        "event_type": event_type,
+                        "message": f"MemoryCurator 第 {segment_num}/{total_chunks} 段提取{failure_kind}",
                         "status": "error",
                         "payload": {
                             "segment_index": segment_num,
@@ -577,6 +579,60 @@ class MemoryCuratorAgent(BaseAgent):
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+        run_id = state.get("workflow_run_id")
+
+        lock_result = self.repo.acquire_memory_curator_lock(
+            project_id,
+            chapter_number,
+            run_id=run_id,
+        )
+        if not lock_result.get("acquired"):
+            active_lock = lock_result.get("lock") or {}
+            active_run_id = active_lock.get("run_id")
+            message = (
+                f"第{chapter_number}章记忆正在提取，不能重复启动。"
+                + (f" 当前运行: {active_run_id}" if active_run_id else "")
+            )
+            return {
+                "memory_curator_processed": False,
+                "memory_curator_locked": True,
+                "memory_curator_warning": message,
+                "memory_curator_active_run_id": active_run_id,
+                "memory_items_count": 0,
+                "extraction_success": False,
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": False,
+                "_exec_events": [
+                    {
+                        "event_type": "memory_curator_locked",
+                        "message": message,
+                        "status": "warning",
+                        "payload": {"active_run_id": active_run_id},
+                    }
+                ],
+            }
+
+        try:
+            return self._execute_locked(state)
+        finally:
+            try:
+                self.repo.release_memory_curator_lock(
+                    project_id,
+                    chapter_number,
+                    run_id=run_id,
+                )
+            except Exception:
+                logger.warning(
+                    "MemoryCurator: failed to release lock for project=%s chapter=%s run=%s",
+                    project_id,
+                    chapter_number,
+                    run_id,
+                    exc_info=True,
+                )
+
+    def _execute_locked(self, state: FactoryState) -> dict[str, Any]:
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
         exec_events: list[dict] = []
 
         context = self._build_v6_context(state)
@@ -605,18 +661,25 @@ class MemoryCuratorAgent(BaseAgent):
                         "primary_profile": getattr(getattr(self.llm, "config", None), "model", "unknown"),
                     },
                 })
-            except LLMTimeoutError as e:
+            except (LLMConnectionError, LLMTimeoutError) as e:
                 primary_profile = getattr(getattr(self.llm, "config", None), "model", "unknown")
                 primary_timeout = getattr(getattr(self.llm, "config", None), "request_timeout_seconds", "unknown")
+                is_connection_error = isinstance(e, LLMConnectionError)
                 exec_events.append({
-                    "event_type": "llm_extraction_timeout",
-                    "message": "记忆提取主模型超时",
+                    "event_type": "llm_extraction_connection_error" if is_connection_error else "llm_extraction_timeout",
+                    "message": "记忆提取主模型连接失败" if is_connection_error else "记忆提取主模型超时",
                     "payload": {
                         "primary_profile": primary_profile,
                         "primary_timeout_seconds": primary_timeout,
+                        "error": str(e)[:200],
                     },
                 })
-                return {"output": [], "primary_timeout": True, "warning": str(e)}
+                return {
+                    "output": [],
+                    "primary_timeout": not is_connection_error,
+                    "primary_connection_error": is_connection_error,
+                    "warning": str(e),
+                }
             except OutputValidationError as e:
                 return {"output": [], "json_error": str(e), "warning": str(e)}
             # v6.6.7: Use robust extraction with validation
@@ -630,6 +693,11 @@ class MemoryCuratorAgent(BaseAgent):
                 issues.append({
                     "type": "primary_timeout",
                     "message": "主模型 LLM 提取超时，将尝试 fallback 或状态卡兜底",
+                })
+            if data.get("primary_connection_error"):
+                issues.append({
+                    "type": "primary_connection_error",
+                    "message": "主模型 LLM 连接失败，将尝试 fallback 或状态卡兜底",
                 })
             if (
                 state.get("llm_mode") == "real"
@@ -671,6 +739,7 @@ class MemoryCuratorAgent(BaseAgent):
 
         def _repair_wrap(data: dict[str, Any], check: SelfCheckResult) -> dict[str, Any] | None:
             primary_timeout = data.get("primary_timeout")
+            primary_connection_error = data.get("primary_connection_error")
             json_parse_error = any(issue.get("type") == "json_parse" for issue in check.issues)
             empty_extraction = any(issue.get("type") == "empty_extraction" for issue in check.issues)
 
@@ -682,8 +751,8 @@ class MemoryCuratorAgent(BaseAgent):
                 },
             ]
 
-            # v6.6.17: Primary timeout -> try fallback provider once
-            if primary_timeout and self.fallback_llm:
+            # v6.6.17: Transient primary failures -> try fallback provider once
+            if (primary_timeout or primary_connection_error) and self.fallback_llm:
                 fallback_profile = getattr(
                     self.fallback_llm,
                     "profile_name",
@@ -698,10 +767,9 @@ class MemoryCuratorAgent(BaseAgent):
                     if valid_patches:
                         return {
                             "output": valid_patches,
-                            "fallback_source": "fallback_model_after_primary_timeout",
+                            "fallback_model_used": True,
                             "fallback_model_profile": fallback_profile,
                             "extract_warnings": extract_warnings,
-                            "partial_success": True,
                         }
                     exec_events.append({
                         "event_type": "fallback_model_failed",
@@ -719,8 +787,8 @@ class MemoryCuratorAgent(BaseAgent):
                         "payload": {"fallback_model_profile": fallback_profile, "error": str(e)[:500]},
                     })
 
-            # Original repair path (for json_parse / empty_extraction without timeout)
-            if not primary_timeout:
+            # Original repair path (for json_parse / empty_extraction without transient failures)
+            if not primary_timeout and not primary_connection_error:
                 repair_instruction = (
                     "上一次返回了空 patches，但本章有较长正文或状态卡。请重新逐段提取本章新增/变化的角色、设定、势力、伏笔、下一章指令和事实账本；除非正文确实没有任何可沉淀信息，否则不要返回空 patches。"
                     if empty_extraction
@@ -755,7 +823,7 @@ class MemoryCuratorAgent(BaseAgent):
                     "output": fallback_patches,
                     "fallback_source": (
                         "chapter_state_after_llm_extraction_failure"
-                        if (primary_timeout or json_parse_error)
+                        if (primary_timeout or primary_connection_error or json_parse_error)
                         else "chapter_state_after_llm_repair_failure"
                     ),
                     "warning": data.get("warning"),
@@ -821,6 +889,7 @@ class MemoryCuratorAgent(BaseAgent):
             }
 
         fallback_source = loop_result.get("fallback_source")
+        fallback_model_used = bool(loop_result.get("fallback_model_used"))
         fallback_model_profile = loop_result.get("fallback_model_profile")
         warning = loop_result.get("warning")
 
@@ -898,10 +967,10 @@ class MemoryCuratorAgent(BaseAgent):
             run_id=state.get("workflow_run_id"),
             summary=(
                 f"第{chapter_number}章记忆提取 - 状态卡兜底 ({len(patches)}项)"
-                if fallback_source and fallback_source != "fallback_model_after_primary_timeout"
+                if fallback_source
                 else (
-                    f"第{chapter_number}章记忆提取 - fallback模型 ({len(patches)}项)"
-                    if fallback_source == "fallback_model_after_primary_timeout"
+                    f"第{chapter_number}章记忆提取 - 备用模型 ({len(patches)}项)"
+                    if fallback_model_used
                     else f"第{chapter_number}章记忆提取 ({len(patches)}项)"
                 )
             ),
@@ -973,26 +1042,29 @@ class MemoryCuratorAgent(BaseAgent):
         exec_events.append({
             "event_type": "artifact_saved",
             "message": f"创建记忆批次：{items_created} 条候选" + (
-                "（备用模型）" if fallback_source == "fallback_model_after_primary_timeout"
+                "（备用模型）" if fallback_model_used
                 else ("（状态卡兜底）" if fallback_source else "")
             ),
-            "payload": {"batch_id": batch["id"], "items_count": items_created, "fallback_source": fallback_source},
+            "payload": {
+                "batch_id": batch["id"],
+                "items_count": items_created,
+                "fallback_source": fallback_source,
+                "fallback_model_used": fallback_model_used,
+                "fallback_model_profile": fallback_model_profile,
+            },
         })
 
         # v6.6.17: Classify result into categories
-        if fallback_source == "fallback_model_after_primary_timeout":
-            result_category = "fallback_candidate"
-        elif fallback_source:
+        if fallback_source:
             result_category = "fallback_candidate"
         else:
             result_category = "trusted_extraction"
 
-        if fallback_source == "fallback_model_after_primary_timeout":
+        if fallback_model_used:
             exec_events.append({
                 "event_type": "fallback_model_success",
-                "message": "记忆整理降级完成（备用模型）",
+                "message": "记忆整理备用模型提取成功",
                 "payload": {
-                    "fallback_type": fallback_source,
                     "fallback_model_profile": fallback_model_profile,
                     "patch_count": items_created,
                 },
@@ -1017,6 +1089,7 @@ class MemoryCuratorAgent(BaseAgent):
             "partial_success": fallback_source is not None,
             "fallback_source": fallback_source,
             "result_category": result_category,
+            "fallback_model_used": fallback_model_used,
             **({"memory_curator_fallback": fallback_source} if fallback_source else {}),
             **({"fallback_model_profile": fallback_model_profile} if fallback_model_profile else {}),
             **({"memory_curator_warning": warning} if warning else {}),

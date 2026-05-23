@@ -375,6 +375,89 @@ def test_author_real_mode_generates_scene_beat_segments(monkeypatch, tmp_path):
     assert result.get("chapter_status") == "drafted"
 
 
+def test_author_segmented_prompts_use_per_segment_length_budget(tmp_path):
+    """Segmented author prompts must not repeat the full chapter target per segment."""
+    from novel_factory.db.connection import init_db
+    from novel_factory.db.repository import Repository
+    from novel_factory.agents.author import AuthorAgent
+
+    db_path = str(tmp_path / "author_segment_budget.db")
+    init_db(db_path)
+    repo = Repository(db_path)
+
+    repo.create_project(
+        project_id="seg-budget",
+        name="Segment Budget Test",
+        genre="科幻",
+        description="测试",
+        total_chapters_planned=10,
+        target_words=30000,
+    )
+    repo.save_chapter(
+        project_id="seg-budget",
+        chapter_number=1,
+        title="第一章",
+        content="",
+        word_count=0,
+        status="planned",
+    )
+    repo.create_instruction(
+        project_id="seg-budget",
+        chapter_number=1,
+        objective="测试分段预算",
+        key_events="事件1；事件2；事件3；事件4；事件5；事件6",
+        emotion_tone="紧张",
+        word_target=3000,
+    )
+    repo.save_scene_beats(
+        "seg-budget",
+        1,
+        [
+            {
+                "sequence": seq,
+                "scene_goal": f"目标{seq}",
+                "conflict": f"冲突{seq}",
+                "turn": f"转折{seq}",
+                "hook": f"钩子{seq}",
+            }
+            for seq in range(1, 7)
+        ],
+    )
+    repo.update_chapter_status("seg-budget", 1, "scripted")
+
+    prompts: list[str] = []
+
+    class BudgetLLM:
+        config = {"model": "fake"}
+
+        def invoke_text(self, messages, temperature=0.7, max_tokens=4096, **kwargs):
+            prompts.append(messages[-1]["content"])
+            seg = len(prompts)
+            return (
+                f"第{seg}段正文覆盖 目标{seg * 3 - 2} 冲突{seg * 3 - 2} "
+                f"转折{seg * 3 - 2} 钩子{seg * 3 - 2} "
+                f"目标{seg * 3 - 1} 冲突{seg * 3 - 1} 转折{seg * 3 - 1} 钩子{seg * 3 - 1} "
+                f"目标{seg * 3} 冲突{seg * 3} 转折{seg * 3} 钩子{seg * 3} "
+                + "正文内容" * 400
+            )
+
+        def invoke_json(self, messages, **kwargs):
+            raise RuntimeError("JSON not expected")
+
+    result = AuthorAgent(repo, BudgetLLM(), skill_registry=None).run({
+        "project_id": "seg-budget",
+        "chapter_number": 1,
+        "llm_mode": "real",
+        "workflow_run_id": "test-run",
+        "chapter_status": "scripted",
+    })
+
+    assert result.get("chapter_status") == "drafted"
+    assert len(prompts) == 2
+    assert all("正文至少 1275 字符，建议接近 1500 字符" in prompt for prompt in prompts)
+    assert all("正文至少 2550 字符，建议接近 3000 字符" not in prompt for prompt in prompts)
+
+
 # ---------------------------------------------------------------------------
 # Polisher Segmented Polishing
 # ---------------------------------------------------------------------------

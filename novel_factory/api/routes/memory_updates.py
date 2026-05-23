@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import hashlib
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -192,6 +193,193 @@ def _find_world_setting_for_memory_update(repo, project_id: str, item: dict, aft
         ]
         if len(category_matches) == 1:
             return category_matches[0]
+
+    return None
+
+
+def _compact_match_text(value) -> str:
+    """Normalize Chinese/English text for fuzzy memory target matching."""
+    return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", str(value or "")).lower()
+
+
+def _longest_common_substring_len(left: str, right: str) -> int:
+    """Return longest common substring length for short normalized labels."""
+    if not left or not right:
+        return 0
+    previous = [0] * (len(right) + 1)
+    best = 0
+    for left_char in left:
+        current = [0] * (len(right) + 1)
+        for index, right_char in enumerate(right, start=1):
+            if left_char == right_char:
+                current[index] = previous[index - 1] + 1
+                if current[index] > best:
+                    best = current[index]
+        previous = current
+    return best
+
+
+def _plot_update_anchors(item: dict, after_data: dict) -> list[str]:
+    """Extract short subject anchors from a plot-hole update patch."""
+    raw_parts = [
+        after_data.get("code"),
+        after_data.get("title"),
+        after_data.get("description"),
+        after_data.get("notes"),
+        item.get("rationale"),
+        item.get("evidence_text"),
+    ]
+    anchors: list[str] = []
+    for part in raw_parts:
+        text = str(part or "").strip()
+        if not text:
+            continue
+        for segment in re.split(r"[，。；;:：\n]|从|升级|需要|疑似|再次|仍|并", text):
+            compact = _compact_match_text(segment)
+            if len(compact) >= 4 and compact not in anchors:
+                anchors.append(compact[:18])
+                break
+    return anchors
+
+
+def _infer_plot_hole_title(item: dict, after_data: dict) -> str:
+    """Infer a concise plot-hole title from an update patch."""
+    for candidate in (after_data.get("title"), after_data.get("code")):
+        text = str(candidate or "").strip()
+        if text:
+            return text[:40]
+    anchors = _plot_update_anchors(item, after_data)
+    if anchors:
+        return anchors[0][:24]
+    for candidate in (after_data.get("description"), item.get("rationale"), item.get("evidence_text")):
+        text = str(candidate or "").strip()
+        if text:
+            return re.split(r"[，。；;:：\n]", text, maxsplit=1)[0][:24]
+    return "未命名伏笔"
+
+
+def _create_plot_hole_from_memory_update(repo, project_id: str, item: dict, after_data: dict, chapter_number: int) -> dict | None:
+    """Create a plot hole when an update patch describes a new/unmatched suspense thread."""
+    title = _infer_plot_hole_title(item, after_data)
+    description = str(
+        after_data.get("description")
+        or item.get("rationale")
+        or item.get("evidence_text")
+        or title
+    ).strip()
+    code = str(after_data.get("code") or "").strip()
+    if not code:
+        digest_source = f"{project_id}:{title}:{description}"
+        code = f"PH-MEM-{hashlib.sha1(digest_source.encode('utf-8')).hexdigest()[:8].upper()}"
+    return repo.create_plot_hole(
+        project_id,
+        code=code,
+        type=after_data.get("type") or "悬念",
+        title=title,
+        description=description,
+        planted_chapter=after_data.get("planted_chapter") or chapter_number or None,
+        planned_resolve_chapter=after_data.get("planned_resolve_chapter"),
+        status=after_data.get("status", "planted"),
+        notes=after_data.get("notes", ""),
+    )
+
+
+def _plot_hole_match_score(plot: dict, text_norm: str, anchors: list[str]) -> int:
+    """Score how likely a memory update refers to an existing plot hole."""
+    score = 0
+    fields = (
+        ("code", 110),
+        ("title", 80),
+        ("description", 62),
+        ("notes", 54),
+    )
+    for field, base_score in fields:
+        value_norm = _compact_match_text(plot.get(field))
+        if len(value_norm) < 4:
+            continue
+        if value_norm in text_norm:
+            score = max(score, base_score + min(len(value_norm), 20))
+        common_len = _longest_common_substring_len(value_norm, text_norm)
+        if common_len >= 4:
+            score = max(score, base_score - 24 + min(common_len * 3, 24))
+        for anchor in anchors:
+            if len(anchor) < 4:
+                continue
+            if anchor in value_norm or value_norm in anchor:
+                score = max(score, base_score + min(len(anchor), 16))
+                continue
+            anchor_common_len = _longest_common_substring_len(anchor, value_norm)
+            if anchor_common_len >= 4:
+                score = max(score, base_score - 18 + min(anchor_common_len * 4, 28))
+    return score
+
+
+def _find_plot_hole_for_memory_update(repo, project_id: str, item: dict, after_data: dict, target_id=None) -> dict | None:
+    """Resolve a plot_holes memory update to an existing伏笔 row."""
+    if target_id:
+        plot = repo.get_plot_hole(project_id, _coerce_int(target_id))
+        if plot:
+            return plot
+
+    before_data = _parse_json_object(item.get("before_json"))
+    plots = repo.list_plot_holes(project_id)
+
+    code_candidates = [
+        str(value).strip()
+        for value in (after_data.get("code"), before_data.get("code"))
+        if str(value or "").strip()
+    ]
+    title_candidates = [
+        str(value).strip()
+        for value in (after_data.get("title"), before_data.get("title"))
+        if str(value or "").strip()
+    ]
+
+    for code in code_candidates:
+        for plot in plots:
+            if str(plot.get("code") or "").strip() == code:
+                return plot
+
+    for title in title_candidates:
+        for plot in plots:
+            if str(plot.get("title") or "").strip() == title:
+                return plot
+
+    text = "\n".join(
+        str(part or "")
+        for part in (
+            item.get("rationale"),
+            item.get("evidence_text"),
+            json.dumps(after_data, ensure_ascii=False),
+        )
+    )
+
+    for plot in plots:
+        code = str(plot.get("code") or "").strip()
+        if code and code in text:
+            return plot
+
+    titled_plots = sorted(
+        (plot for plot in plots if str(plot.get("title") or "").strip()),
+        key=lambda plot: len(str(plot.get("title") or "")),
+        reverse=True,
+    )
+    for plot in titled_plots:
+        title = str(plot.get("title") or "").strip()
+        if len(title) >= 4 and title in text:
+            return plot
+
+    text_norm = _compact_match_text(text)
+    anchors = _plot_update_anchors(item, after_data)
+    scored = [
+        (_plot_hole_match_score(plot, text_norm, anchors), plot)
+        for plot in plots
+    ]
+    scored = [(score, plot) for score, plot in scored if score >= 58]
+    scored.sort(key=lambda entry: entry[0], reverse=True)
+    if scored:
+        if len(scored) == 1 or scored[0][0] >= scored[1][0] + 8:
+            return scored[0][1]
 
     return None
 
@@ -411,9 +599,40 @@ def _apply_memory_item(
                     )
                     result["success"] = True
                     result["created_id"] = ph["id"] if ph else None
-            elif operation == "update" and target_id:
-                repo.update_plot_hole(project_id, target_id, after_data)
-                result["success"] = True
+            elif operation in {"update", "resolve", "deprecate"}:
+                plot = _find_plot_hole_for_memory_update(
+                    repo,
+                    project_id,
+                    item,
+                    after_data,
+                    target_id=target_id,
+                )
+                if plot:
+                    plot_data = dict(after_data)
+                    if operation == "resolve":
+                        plot_data.setdefault("status", "resolved")
+                        plot_data.setdefault("resolved_chapter", chapter_number or None)
+                    elif operation == "deprecate":
+                        plot_data.setdefault("status", "abandoned")
+                    updated = repo.update_plot_hole(project_id, plot["id"], plot_data)
+                    result["success"] = updated is not None
+                    result["created_id"] = plot["id"]
+                    if not updated:
+                        result["error"] = f"伏笔 {plot['id']} 不存在，无法更新"
+                else:
+                    if operation == "update":
+                        created = _create_plot_hole_from_memory_update(
+                            repo,
+                            project_id,
+                            item,
+                            after_data,
+                            chapter_number,
+                        )
+                        result["operation"] = "create"
+                        result["success"] = created is not None
+                        result["created_id"] = created["id"] if created else None
+                    else:
+                        result["error"] = "伏笔更新缺少 target_id，且无法根据 code/title/证据匹配现有伏笔"
 
         elif target_table == "instructions":
             instruction_data = _normalize_text_fields(

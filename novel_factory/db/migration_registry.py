@@ -415,6 +415,14 @@ MIGRATION_REGISTRY: list[MigrationEntry] = [
         description="Execution events — workflow_execution_events table",
         requirements=(_T("workflow_execution_events"),),
     ),
+
+    # ── 033 ──
+    MigrationEntry(
+        migration_id="033_v6_6_19_memory_curator_locks",
+        sql_filename="033_v6_6_19_memory_curator_locks.sql",
+        description="MemoryCurator locks — one active extraction per project/chapter",
+        requirements=(_T("memory_curator_locks"),),
+    ),
 ]
 
 
@@ -494,6 +502,7 @@ CRITICAL_TABLE_COLUMNS: dict[str, list[str]] = {
     "workflow_runs": ["id", "project_id", "status"],
     "agent_artifacts": ["id", "project_id", "agent_id", "artifact_type"],
     "memory_update_batches": ["id", "project_id", "status"],
+    "memory_curator_locks": ["project_id", "chapter_number", "status"],
     "story_facts": ["id", "project_id", "fact_key", "fact_type"],
 }
 

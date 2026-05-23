@@ -399,16 +399,24 @@ class TestDeriveWordTarget:
         assert result == 3000
 
     def test_derive_from_project_settings(self):
-        """Should derive from project settings if no instruction word_target."""
-        instruction = {"objective": "test"}  # No word_target
+        """Should derive from project settings when no instruction exists yet."""
+        instruction = None
         project = {"target_words": 1500000, "total_chapters_planned": 500}
 
         result = derive_word_target(instruction, project)
         assert result == 3000  # 1500000 / 500 = 3000
 
+    def test_existing_instruction_without_word_target_uses_chapter_default(self):
+        """A planned chapter should not fall back to an oversized project average."""
+        instruction = {"objective": "test"}  # Existing instruction, missing word_target
+        project = {"target_words": 50000, "total_chapters_planned": 4}
+
+        result = derive_word_target(instruction, project)
+        assert result == 3000
+
     def test_project_word_settings_accept_numeric_strings(self):
         """Project settings from APIs should not crash when numeric fields are strings."""
-        instruction = {"objective": "test"}
+        instruction = None
         project = {"target_words": "1500000", "total_chapters_planned": "500"}
 
         result = derive_word_target(instruction, project)
@@ -424,7 +432,7 @@ class TestDeriveWordTarget:
 
     def test_project_derived_word_target_keeps_web_serial_minimum(self):
         """Project-derived targets still keep the web-serial minimum of 2000."""
-        instruction = {"objective": "test"}
+        instruction = None
         project = {"target_words": 1000, "total_chapters_planned": 10}
 
         result = derive_word_target(instruction, project)

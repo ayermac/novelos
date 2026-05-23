@@ -676,6 +676,23 @@ def test_genesis_completion_merge_deduplicates_full_draft_patch():
     assert merged["instructions"][0]["objective"] == "新目标"
 
 
+def test_genesis_instruction_without_word_target_defaults_to_3000():
+    """Loose Genesis instructions must not persist a null target and drift later."""
+    from novel_factory.api.routes import genesis as genesis_routes
+
+    inst = genesis_routes._coerce_instruction(
+        {
+            "chapter_number": 1,
+            "objective": "开篇",
+            "key_events": ["收到匿名短信", "发现旧档异常"],
+            "emotion_tone": "压迫",
+        },
+        1,
+    )
+
+    assert inst["word_target"] == 3000
+
+
 def test_genesis_world_settings_deduplicate_semantic_slots():
     """World settings should collapse near-duplicate LLM/local recovery concepts."""
     from novel_factory.api.routes import genesis as genesis_routes

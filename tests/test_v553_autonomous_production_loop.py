@@ -937,6 +937,37 @@ class TestArcPlanAPI:
         # Should create at least some instructions for 11-20
         assert data["created"]["instructions"] >= 10
 
+    def test_stub_arc_plan_uses_3000_word_target_not_project_batch_average(self, tmp_path):
+        """Fallback arc planning should not turn a short batch into 12500-word chapters."""
+        from novel_factory.api.routes.production import _stub_arc_plan
+        from novel_factory.db.connection import init_db
+        from novel_factory.db.repository import Repository
+
+        db_path = tmp_path / "arc-plan-word-target.db"
+        init_db(db_path)
+        repo = Repository(str(db_path))
+        repo.create_project(
+            project_id="word-target-project",
+            name="Word Target Project",
+            genre="sci-fi",
+            target_words=50000,
+            total_chapters_planned=4,
+        )
+
+        _stub_arc_plan(
+            repo,
+            repo.get_project("word-target-project"),
+            "word-target-project",
+            1,
+            4,
+        )
+
+        targets = [
+            inst["word_target"]
+            for inst in repo.list_instructions("word-target-project")
+        ]
+        assert targets == [3000, 3000, 3000, 3000]
+
     def test_arc_plan_requires_confirm(self, client, project_id):
         """Arc plan without confirm should return error."""
         resp = client.post(f"/api/projects/{project_id}/production/arc-plan", json={

@@ -20,6 +20,7 @@ from ..config.settings import Settings
 # Default thresholds (can be overridden via config)
 DEFAULT_MIN_WORDS = 500
 DEFAULT_MAX_WORDS = 8000
+DEFAULT_INSTRUCTION_WORD_TARGET = 3000
 
 # v5.3.0: Quality gate thresholds
 QUALITY_GATE_AUTHOR_THRESHOLD = 0.85
@@ -175,9 +176,19 @@ def derive_word_target(
         short-form projects; project-derived targets keep the web-serial
         minimum of 2000.
     """
-    # First check if instruction has explicit word_target
-    if instruction and instruction.get("word_target"):
-        return max(_coerce_positive_int(instruction.get("word_target"), 2500), 300)
+    # First check if instruction has explicit word_target. Once a chapter
+    # instruction exists, a missing target should not inherit project-level
+    # averages that may describe a batch or full-book scope.
+    if instruction:
+        if instruction.get("word_target"):
+            return max(
+                _coerce_positive_int(
+                    instruction.get("word_target"),
+                    DEFAULT_INSTRUCTION_WORD_TARGET,
+                ),
+                300,
+            )
+        return DEFAULT_INSTRUCTION_WORD_TARGET
 
     # Derive from project settings
     target_words = _coerce_positive_int(project.get("target_words"), 0)

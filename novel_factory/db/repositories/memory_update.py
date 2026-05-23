@@ -6,9 +6,133 @@ import uuid
 
 from ..connection import row_to_dict
 
+_MEMORY_CURATOR_LOCK_STALE_MINUTES = 120
+
 
 class MemoryUpdateRepositoryMixin:
     """Repository mixin for memory_update_batches/items CRUD operations."""
+
+    # --- MemoryCurator extraction locks ---
+
+    def _delete_stale_memory_curator_lock(
+        self,
+        conn,
+        project_id: str,
+        chapter_number: int,
+    ) -> int:
+        """Delete expired MemoryCurator locks for a project/chapter."""
+        cursor = conn.execute(
+            "DELETE FROM memory_curator_locks "
+            "WHERE project_id=? AND chapter_number=? "
+            "AND status='running' "
+            "AND locked_at <= datetime('now', '+8 hours', ?)",
+            (
+                project_id,
+                chapter_number,
+                f"-{_MEMORY_CURATOR_LOCK_STALE_MINUTES} minutes",
+            ),
+        )
+        return int(cursor.rowcount or 0)
+
+    def acquire_memory_curator_lock(
+        self,
+        project_id: str,
+        chapter_number: int,
+        run_id: str | None = None,
+    ) -> dict:
+        """Acquire the per-project/chapter MemoryCurator lock.
+
+        Returns {"acquired": True, "lock": row} when the caller owns the lock.
+        Returns {"acquired": False, "lock": existing_row} when another active
+        extraction already holds it.
+        """
+        conn = self._conn()
+        try:
+            try:
+                conn.execute(
+                    "INSERT INTO memory_curator_locks "
+                    "(project_id, chapter_number, run_id, status) "
+                    "VALUES (?, ?, ?, 'running')",
+                    (project_id, chapter_number, run_id),
+                )
+                conn.commit()
+                row = conn.execute(
+                    "SELECT * FROM memory_curator_locks "
+                    "WHERE project_id=? AND chapter_number=?",
+                    (project_id, chapter_number),
+                ).fetchone()
+                return {"acquired": True, "lock": row_to_dict(row)}
+            except Exception:
+                conn.rollback()
+                self._delete_stale_memory_curator_lock(conn, project_id, chapter_number)
+                conn.commit()
+                try:
+                    conn.execute(
+                        "INSERT INTO memory_curator_locks "
+                        "(project_id, chapter_number, run_id, status) "
+                        "VALUES (?, ?, ?, 'running')",
+                        (project_id, chapter_number, run_id),
+                    )
+                    conn.commit()
+                    row = conn.execute(
+                        "SELECT * FROM memory_curator_locks "
+                        "WHERE project_id=? AND chapter_number=?",
+                        (project_id, chapter_number),
+                    ).fetchone()
+                    return {"acquired": True, "lock": row_to_dict(row)}
+                except Exception:
+                    conn.rollback()
+                row = conn.execute(
+                    "SELECT * FROM memory_curator_locks "
+                    "WHERE project_id=? AND chapter_number=?",
+                    (project_id, chapter_number),
+                ).fetchone()
+                return {"acquired": False, "lock": row_to_dict(row)}
+        finally:
+            conn.close()
+
+    def get_memory_curator_lock(
+        self,
+        project_id: str,
+        chapter_number: int,
+    ) -> dict | None:
+        """Return the active MemoryCurator lock for a project/chapter, if any."""
+        conn = self._conn()
+        try:
+            deleted = self._delete_stale_memory_curator_lock(conn, project_id, chapter_number)
+            if deleted:
+                conn.commit()
+            row = conn.execute(
+                "SELECT * FROM memory_curator_locks "
+                "WHERE project_id=? AND chapter_number=?",
+                (project_id, chapter_number),
+            ).fetchone()
+            return row_to_dict(row)
+        finally:
+            conn.close()
+
+    def release_memory_curator_lock(
+        self,
+        project_id: str,
+        chapter_number: int,
+        run_id: str | None = None,
+    ) -> bool:
+        """Release the MemoryCurator lock held by run_id for this chapter."""
+        conn = self._conn()
+        try:
+            query = (
+                "DELETE FROM memory_curator_locks "
+                "WHERE project_id=? AND chapter_number=?"
+            )
+            params: list = [project_id, chapter_number]
+            if run_id is not None:
+                query += " AND (run_id=? OR run_id IS NULL)"
+                params.append(run_id)
+            cursor = conn.execute(query, params)
+            conn.commit()
+            return cursor.rowcount > 0
+        finally:
+            conn.close()
 
     # --- Batches ---
 

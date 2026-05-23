@@ -13,6 +13,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..validators.chapter_checker import derive_word_target
+
 logger = logging.getLogger(__name__)
 
 # ── Constants ────────────────────────────────────────────────────
@@ -357,7 +359,8 @@ class AgentContextBuilder:
         items: list[ContextItem] = []
         instruction = self.repo.get_instruction(project_id, chapter_number)
         if instruction:
-            word_target = instruction.get('word_target') or 2500
+            project = self.repo.get_project(project_id) or {}
+            word_target = derive_word_target(instruction, project)
             text = (
                 f"目标: {instruction.get('objective', '')}\n"
                 f"关键事件: {instruction.get('key_events', '')}\n"

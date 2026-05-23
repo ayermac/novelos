@@ -702,7 +702,7 @@ class AuthorAgent(BaseAgent):
         # Hard validation: schema, word_count match, death penalty.
         # Skip word-count range here — the retryable quality gate handles it
         # so short drafts route to revision instead of blocking.
-        violations = validate_chapter_output(output, check_min_words=False, check_max_words=True)
+        violations = validate_chapter_output(output, check_min_words=False, check_max_words=False)
         if violations:
             raise ValueError(f"Author 输出校验失败: {'; '.join(violations)}")
         # Q2: Enhanced death penalty with severity
@@ -1181,6 +1181,7 @@ class AuthorAgent(BaseAgent):
         beats = self._get_scene_beats(state)
         chunks = list(chunk_items(beats, size=3))
         total_chunks = len(chunks)
+        total_segment_beats = max(1, sum(len(chunk) for chunk in chunks))
         per_call_retries = None
 
         compact_context = self._build_plain_text_context(state, context)
@@ -1212,6 +1213,14 @@ class AuthorAgent(BaseAgent):
 
         for idx, beat_chunk in enumerate(chunks):
             segment_num = idx + 1
+            segment_weight = len(beat_chunk) / total_segment_beats
+            segment_target = max(1, int(round(effective_target * segment_weight)))
+            segment_minimum = max(1, int(round(minimum_required * segment_weight)))
+            segment_upper_bound = max(
+                segment_target + 250,
+                segment_minimum + 250,
+                int(segment_target * 1.6),
+            )
             beat_lines = "\n".join(
                 f"  {b['sequence']}. 目标: {b.get('scene_goal', '')} | 冲突: {b.get('conflict', '')} "
                 f"| 转折: {b.get('turn', '')} | 钩子: {b.get('hook', '')}"
@@ -1231,7 +1240,7 @@ class AuthorAgent(BaseAgent):
             if idx == total_chunks - 1:
                 segment_note += "\n这是最后一段，必须写到章末钩子，不要停在半途。"
 
-            prose_max_tokens = max(1024, min(4096, int(effective_target * 1.5) // total_chunks + 512))
+            prose_max_tokens = max(1024, min(4096, int(segment_target * 1.5) + 512))
 
             messages = [
                 {
@@ -1249,7 +1258,9 @@ class AuthorAgent(BaseAgent):
                     "role": "user",
                     "content": (
                         f"项目ID: {project_id}\n章节号: {chapter_number}\n任务: {task_desc}\n"
-                        f"正文至少 {minimum_required} 字符，建议接近 {effective_target} 字符。\n\n"
+                        f"本段正文至少 {segment_minimum} 字符，建议接近 {segment_target} 字符；"
+                        f"最多不要超过 {segment_upper_bound} 字符。"
+                        f"整章合并后目标约 {effective_target} 字符。\n\n"
                         f"{compact_context}\n\n"
                         f"{segment_note}\n\n"
                         f"{revision_source_section}\n"

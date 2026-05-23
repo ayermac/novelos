@@ -233,9 +233,20 @@ export default function ProjectDetail() {
     }
   }, [activeTab, currentChapter, workspace?.recent_runs, loadRunDetail, loadTimeline, id])
 
+  useEffect(() => {
+    if (activeModule !== 'chapters' || !id || !workspace) return
+    const chapter = workspace.chapters.find((c) => c.chapter_number === currentChapter)
+    const hasRunningRun = workspace.recent_runs.some(
+      (r) => r.chapter_number === currentChapter && r.status === 'running'
+    )
+    const shouldLoadTimeline = hasRunningRun || ['reviewed', 'awaiting_publish'].includes(chapter?.status || '')
+    if (!shouldLoadTimeline) return
+    loadTimeline(id, currentChapter, { silent: true })
+  }, [activeModule, currentChapter, id, loadTimeline, workspace])
+
   // v5.8: Auto-refresh timeline when in workflow view
   useEffect(() => {
-    if ((activeModule !== 'chapters' && activeModule !== 'overview') || (activeTab !== 'workflow' && activeTab !== 'logs')) return
+    if (activeModule !== 'chapters' && activeModule !== 'overview') return
     if (!id) return
 
     const shouldPoll = timeline?.run_status === 'running' || runDetail?.workflow_status === 'running'
@@ -243,15 +254,16 @@ export default function ProjectDetail() {
 
     const timer = window.setInterval(() => {
       loadTimeline(id, currentChapter, { silent: true })
+      refetchWorkspace()
     }, 2000)
 
     return () => window.clearInterval(timer)
   }, [
     activeModule,
-    activeTab,
     currentChapter,
     id,
     loadTimeline,
+    refetchWorkspace,
     timeline?.run_status,
     runDetail?.workflow_status,
   ])
@@ -485,10 +497,21 @@ export default function ProjectDetail() {
       if (res.ok) {
         await refetchWorkspace()
       } else {
+        const details = res.error?.details as Record<string, unknown> | undefined
+        const domainResult = details?.domain_result as
+          | { user_message?: string; flags?: Record<string, boolean> }
+          | undefined
+        const isMemoryCuratorRunning = res.error?.code === 'MEMORY_CURATOR_RUNNING' || Boolean(domainResult?.flags?.memory_curator_running)
+        if (isMemoryCuratorRunning) {
+          await refetchWorkspace()
+          await loadTimeline(id, chapterNumber, { silent: true })
+        }
         await dialog.alert({
-          title: '发布章节失败',
-          message: res.error?.message || '发布章节失败',
-          tone: 'danger',
+          title: isMemoryCuratorRunning ? '等待记忆提取' : '发布章节失败',
+          message: isMemoryCuratorRunning
+            ? (res.error?.message || domainResult?.user_message || '记忆提取正在进行中，请等待完成后再发布。')
+            : (res.error?.message || '发布章节失败'),
+          tone: isMemoryCuratorRunning ? 'warning' : 'danger',
         })
       }
     } catch (err: unknown) {
@@ -500,7 +523,7 @@ export default function ProjectDetail() {
     } finally {
       setPublishPending(false)
     }
-  }, [dialog, id, publishPending, refetchWorkspace])
+  }, [dialog, id, loadTimeline, publishPending, refetchWorkspace])
 
   const handlePublish = useCallback(async () => {
     await handlePublishChapter(currentChapter)
@@ -668,9 +691,11 @@ export default function ProjectDetail() {
   const isStub = llmMode === 'stub'
   const runsForChapter = workspace.recent_runs.filter((r) => r.chapter_number === currentChapter)
   const isCurrentChapterGenerating = (generating || isStreaming) && generatingChapter === currentChapter
-  const isCurrentChapterWorkflowRunning = runsForChapter.some((r) => r.status === 'running')
+  const isTimelineRunningForCurrentChapter = timeline?.chapter_number === currentChapter && timeline?.run_status === 'running'
+  const isCurrentChapterWorkflowRunning = runsForChapter.some((r) => r.status === 'running') || Boolean(isTimelineRunningForCurrentChapter)
   const isChapterWorkflowRunning = (chapterNumber: number) => {
-    return workspace.recent_runs.some((r) => r.chapter_number === chapterNumber && r.status === 'running')
+    return workspace.recent_runs.some((r) => r.chapter_number === chapterNumber && r.status === 'running') ||
+      (chapterNumber === currentChapter && Boolean(isTimelineRunningForCurrentChapter))
   }
   const currentChapterSseSteps = isCurrentChapterGenerating ? sseSteps : {}
 

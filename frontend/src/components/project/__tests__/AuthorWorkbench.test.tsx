@@ -119,6 +119,50 @@ describe('AuthorWorkbench', () => {
     expect(screen.getAllByRole('button', { name: /确认发布/ }).length).toBeGreaterThan(0)
   })
 
+  it('shows memory extraction wait state instead of publish-ready when MemoryCurator is running', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        currentChapter={2}
+        currentChapterRecord={baseProps.chapters[1]}
+        llmMode="real"
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 2,
+          run_id: 'memory-run',
+          run_status: 'running',
+          chapter_status: 'reviewed',
+          current_node: 'memory_curator',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 2,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          nodes: [
+            {
+              node_name: 'memory_curator',
+              label: '记忆整理',
+              node_group: 'support_agent',
+              node_type: 'support_agent',
+              status: 'running',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: null,
+              duration_ms: null,
+              messages: ['开始记忆整理'],
+              artifacts: [],
+            },
+          ],
+        }}
+      />
+    )
+
+    expect(screen.getByText('记忆提取中')).toBeInTheDocument()
+    expect(screen.getByText('记忆提取完成后才能确认发布。')).toBeInTheDocument()
+    for (const button of screen.getAllByRole('button', { name: /确认发布/ })) {
+      expect(button).toBeDisabled()
+    }
+    expect(screen.queryByText('本章已通过 AI 审核，点击确认发布。')).not.toBeInTheDocument()
+  })
+
   it('shows generate-next button for published chapter', () => {
     render(<AuthorWorkbench {...baseProps} currentChapter={1} currentChapterRecord={baseProps.chapters[0]} />)
     expect(screen.getAllByRole('button', { name: /生成下一章/ }).length).toBeGreaterThan(0)
