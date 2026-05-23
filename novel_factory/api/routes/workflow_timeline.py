@@ -114,7 +114,7 @@ def _derive_node_semantics(
                 event_st = "running"
             elif status == "skipped":
                 event_st = "skipped"
-            elif status == "completed":
+            elif status in {"completed", "warning"}:
                 event_st = "completed"
 
         result = memory_curator_node_result(
@@ -133,7 +133,7 @@ def _derive_node_semantics(
         return d
 
     # Generic node derivation
-    if status == "completed":
+    if status in {"completed", "warning"}:
         # Check if node events indicate warnings/degradation
         has_warnings = False
         warning_msg = ""
@@ -474,7 +474,7 @@ def _build_node_timeline(
         if last_ev and last_ev.get("event_type") == "failed":
             status = "failed"
         elif last_ev and last_ev.get("event_type") == "completed":
-            status = "completed"
+            status = "warning" if last_ev.get("status") == "warning" else "completed"
         elif last_ev and last_ev.get("event_type") == "started":
             status = "running"
         elif _is_before_current(node_name):
@@ -491,7 +491,7 @@ def _build_node_timeline(
 
         started_at = started_ev.get("created_at") if started_ev else None
         completed_at = None
-        if status == "completed" and completed_ev:
+        if status in {"completed", "warning"} and completed_ev:
             completed_at = completed_ev.get("created_at")
         elif status == "failed" and failed_ev:
             completed_at = failed_ev.get("created_at")

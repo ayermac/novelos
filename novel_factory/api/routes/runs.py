@@ -30,6 +30,8 @@ from ._memory_curator_gate import (
 
 router = APIRouter()
 
+PUBLISH_READY_CHAPTER_STATUSES = frozenset({"reviewed", "awaiting_publish", "published"})
+
 
 def _get_run_recovery_settings(request: Request):
     """Load settings for recovery endpoints without blocking reset on cwd loss."""
@@ -815,7 +817,13 @@ async def backfill_run_memory(
     v6.6.10:
     - Response now includes domain_result with unified domain_status.
     """
-    from ..deps import get_repo, get_llm_provider_for_agent, get_llm_mode, LLMConfigMissingError
+    from ..deps import (
+        get_repo,
+        get_llm_fallback_provider_for_agent,
+        get_llm_provider_for_agent,
+        get_llm_mode,
+        LLMConfigMissingError,
+    )
     from ...agents.memory_curator import MemoryCuratorAgent
     from ...skills.registry import SkillRegistry
 
@@ -973,6 +981,7 @@ async def backfill_run_memory(
 
         try:
             llm = get_llm_provider_for_agent(request, "memory_curator")
+            fallback_llm = get_llm_fallback_provider_for_agent(request, "memory_curator")
         except LLMConfigMissingError as exc:
             error = str(exc)
             repo.create_workflow_node_event(
@@ -999,7 +1008,7 @@ async def backfill_run_memory(
             }
             return error_response("LLM_CONFIG_MISSING", error, details=details)
 
-        agent = MemoryCuratorAgent(repo, llm, skill_registry=SkillRegistry())
+        agent = MemoryCuratorAgent(repo, llm, skill_registry=SkillRegistry(), fallback_llm=fallback_llm)
         result = await asyncio.to_thread(
             agent.run,
             {
@@ -1240,11 +1249,7 @@ def _build_run_health_item(repo, run_data: dict, timeout_minutes: int) -> dict:
     """Build a single run health row."""
     stuck_info = _detect_stuck_run(repo, run_data, timeout_minutes)
     chapter_status = run_data.get("chapter_status") or "unknown"
-    can_mark_stuck = bool(stuck_info.get("stuck")) and chapter_status not in (
-        "reviewed",
-        "published",
-        "unknown",
-    )
+    can_mark_stuck = bool(stuck_info.get("stuck")) and chapter_status != "unknown"
     return {
         "run_id": run_data.get("id"),
         "project_id": run_data.get("project_id"),
@@ -1315,14 +1320,8 @@ def _mark_stuck_run_for_recovery(repo, settings, run_id: str) -> dict:
         }
 
     current_status = chapter.get("status", "")
-    if current_status in ("reviewed", "published"):
-        return {
-            "ok": False,
-            "run_id": run_id,
-            "error_code": "INVALID_STATUS",
-            "message": f"章节状态为 '{current_status}'，不能从卡住运行标记为阻塞",
-            "details": {"current_status": current_status},
-        }
+    preserve_chapter_status = current_status in PUBLISH_READY_CHAPTER_STATUSES
+    new_chapter_status = current_status if preserve_chapter_status else "blocking"
 
     message = (
         f"运行疑似卡住：超过 {timeout_minutes} 分钟仍为 running。"
@@ -1336,7 +1335,13 @@ def _mark_stuck_run_for_recovery(repo, settings, run_id: str) -> dict:
         workflow_run_id=run_id,
         message=message,
     )
-    _set_chapter_status_unchecked(repo, project_id, chapter_number, "blocking")
+    released_memory_lock = False
+    if hasattr(repo, "release_memory_curator_lock"):
+        released_memory_lock = bool(
+            repo.release_memory_curator_lock(project_id, chapter_number, run_id=run_id)
+        )
+    if not preserve_chapter_status:
+        _set_chapter_status_unchecked(repo, project_id, chapter_number, "blocking")
     _insert_recovery_audit(
         repo,
         project_id,
@@ -1357,10 +1362,11 @@ def _mark_stuck_run_for_recovery(repo, settings, run_id: str) -> dict:
             "project_id": project_id,
             "chapter_number": chapter_number,
             "previous_chapter_status": current_status,
-            "new_chapter_status": "blocking",
+            "new_chapter_status": new_chapter_status,
             "workflow_status": "blocked",
             "message": message,
             "closed_running_tasks": closed_running_tasks,
+            "released_memory_lock": released_memory_lock,
             "recovery": _build_recovery_state(
                 repo,
                 refreshed,
@@ -1391,11 +1397,7 @@ def _build_recovery_state(
     chapter_status = chapter.get("status", "unknown") if chapter else "unknown"
     retry_count = repo.get_chapter_retry_count(project_id, chapter_number)
     stuck_info = _detect_stuck_run(repo, run_data, timeout_minutes)
-    can_mark_stuck = bool(stuck_info.get("stuck", False)) and chapter_status not in (
-        "reviewed",
-        "published",
-        "unknown",
-    )
+    can_mark_stuck = bool(stuck_info.get("stuck", False)) and chapter_status != "unknown"
     can_reset = chapter_status in ("blocking", "revision", "planned")
     retry_target = _node_retry_target(run_data.get("current_node"))
     can_retry_node = bool(retry_target and chapter_status in ("blocking", "revision"))
@@ -1708,10 +1710,10 @@ def _build_steps_timeline(
                 level = "info"
                 if event.get("status") in {"failed", "error"} or event.get("event_type") == "failed":
                     level = "error"
-                elif event.get("status") in {"completed", "success"} or event.get("event_type") == "completed":
-                    level = "success"
                 elif event.get("status") == "warning":
                     level = "warning"
+                elif event.get("status") in {"completed", "success"} or event.get("event_type") == "completed":
+                    level = "success"
                 logs.append({
                     "timestamp": event.get("created_at") or event.get("timestamp"),
                     "level": level,

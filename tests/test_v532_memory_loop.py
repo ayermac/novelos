@@ -437,6 +437,102 @@ class TestMemoryApplyCanonical:
         assert updated_instruction["id"] != existing_instruction_id
         assert updated_instruction["objective"] == "更新后的目标"
 
+    def test_apply_updates_plot_hole_without_target_id_by_matching_existing_title(self, client, project_id):
+        """plot_holes.update should resolve missing target_id from existing code/title context."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        existing_plot = repo.create_plot_hole(
+            project_id,
+            code="PH-SMS",
+            type="悬念",
+            title="匿名短信来源异常",
+            description="未知发送者绕过常规通信记录，质疑陆澈记忆完整性。",
+            planted_chapter=4,
+            planned_resolve_chapter=8,
+            status="planted",
+        )
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=5,
+            summary="伏笔更新测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="plot_holes",
+            operation="update",
+            after_json=json.dumps({
+                "description": "匿名短信机制从来源规避升级为疑似实时监控陆澈行动，需要作为悬念继续追踪。",
+                "status": "planted",
+            }, ensure_ascii=False),
+            confidence=0.73,
+            evidence_text="匿名短信无号码、无署名，并在陆澈记录关键线索后再次异常置顶。",
+            rationale="匿名短信机制需要作为悬念继续追踪。",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+        assert body["data"]["results"][0]["success"] is True
+        updated_plot = repo.get_plot_hole(project_id, existing_plot["id"])
+        assert "实时监控陆澈行动" in updated_plot["description"]
+
+    def test_apply_creates_plot_hole_when_update_has_no_match(self, client, project_id):
+        """An unmatched plot_holes.update should create a suspense thread instead of failing."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        repo.create_plot_hole(
+            project_id,
+            code="PH-OTHER",
+            type="悬念",
+            title="潮汐档案馆三楼",
+            description="档案馆三楼周三开放但入口被盯防。",
+            planted_chapter=4,
+            planned_resolve_chapter=8,
+            status="planted",
+        )
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=5,
+            summary="伏笔新建兜底测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="plot_holes",
+            operation="update",
+            after_json=json.dumps({
+                "description": "匿名短信机制从来源规避升级为疑似实时监控陆澈行动，需要作为悬念继续追踪。",
+                "status": "planted",
+            }, ensure_ascii=False),
+            confidence=0.73,
+            evidence_text="匿名短信无号码、无署名、无归属地，底层接收节点仍存在不足一秒断层。",
+            rationale="匿名短信机制需要作为悬念继续追踪。",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+        assert body["data"]["results"][0]["operation"] == "create"
+        plots = repo.list_plot_holes(project_id)
+        created = next(plot for plot in plots if plot["code"].startswith("PH-MEM-"))
+        assert "匿名短信机制" in created["title"]
+        assert "实时监控陆澈行动" in created["description"]
+
     def test_apply_structured_character_traits_and_instruction_events(self, client, project_id):
         """Structured LLM memory fields should be serialized for text DB columns."""
         from novel_factory.db.repository import Repository

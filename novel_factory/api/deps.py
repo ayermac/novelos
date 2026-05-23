@@ -112,3 +112,16 @@ def get_llm_provider_for_agent(request: Request, agent_id: str) -> "LLMProvider"
         return router.for_agent(agent_id)
     except ValueError as exc:
         raise LLMConfigMissingError(str(exc)) from exc
+
+
+def get_llm_fallback_provider_for_agent(request: Request, agent_id: str) -> "LLMProvider | None":
+    """Create an optional fallback LLM provider for an ad-hoc agent run."""
+    from ..workflow.runner import _build_llm_router
+
+    settings = get_settings(request)
+    llm_mode = get_llm_mode(request)
+    router = _build_llm_router(settings, llm_mode)
+    try:
+        return router.for_agent_fallback(agent_id)
+    except ValueError as exc:
+        raise LLMConfigMissingError(str(exc)) from exc

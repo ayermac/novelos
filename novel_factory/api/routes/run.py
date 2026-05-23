@@ -414,7 +414,12 @@ async def _ensure_memory_curated_before_publish(request: Request, repo, project_
     if _has_memory_curator_evidence(repo, project_id, chapter_number):
         return {"memory_curator_processed": False, "memory_curator_skipped": True}
 
-    from ..deps import get_llm_provider_for_agent, LLMConfigMissingError, get_llm_mode
+    from ..deps import (
+        get_llm_fallback_provider_for_agent,
+        get_llm_provider_for_agent,
+        LLMConfigMissingError,
+        get_llm_mode,
+    )
     from ...agents.memory_curator import MemoryCuratorAgent
     from ...skills.registry import SkillRegistry
 
@@ -436,6 +441,7 @@ async def _ensure_memory_curated_before_publish(request: Request, repo, project_
 
     try:
         llm = get_llm_provider_for_agent(request, "memory_curator")
+        fallback_llm = get_llm_fallback_provider_for_agent(request, "memory_curator")
     except LLMConfigMissingError as exc:
         repo.create_workflow_node_event(
             run_id=run_id,
@@ -449,7 +455,7 @@ async def _ensure_memory_curated_before_publish(request: Request, repo, project_
         repo.update_workflow_run(run_id, status="failed", current_node="memory_curator", error_message=str(exc))
         return {"error": str(exc), "run_id": run_id}
 
-    agent = MemoryCuratorAgent(repo, llm, skill_registry=SkillRegistry())
+    agent = MemoryCuratorAgent(repo, llm, skill_registry=SkillRegistry(), fallback_llm=fallback_llm)
     result = await asyncio.to_thread(
         agent.run,
         {

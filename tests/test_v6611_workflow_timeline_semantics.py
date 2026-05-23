@@ -501,6 +501,7 @@ class TestWorkflowTimelineMemoryRunIsolation:
         assert old_resp.status_code == 200
         old_nodes = old_resp.json()["data"]["nodes"]
         old_memory = next(n for n in old_nodes if n["node_name"] == "memory_curator")
+        assert old_memory["status"] == "warning"
         assert old_memory["node_status"] == "warning"
         assert old_memory["domain_status"] == "fallback"
         assert old_memory["severity"] == "warning"
