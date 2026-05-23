@@ -577,6 +577,60 @@ class MemoryCuratorAgent(BaseAgent):
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+        run_id = state.get("workflow_run_id")
+
+        lock_result = self.repo.acquire_memory_curator_lock(
+            project_id,
+            chapter_number,
+            run_id=run_id,
+        )
+        if not lock_result.get("acquired"):
+            active_lock = lock_result.get("lock") or {}
+            active_run_id = active_lock.get("run_id")
+            message = (
+                f"第{chapter_number}章记忆正在提取，不能重复启动。"
+                + (f" 当前运行: {active_run_id}" if active_run_id else "")
+            )
+            return {
+                "memory_curator_processed": False,
+                "memory_curator_locked": True,
+                "memory_curator_warning": message,
+                "memory_curator_active_run_id": active_run_id,
+                "memory_items_count": 0,
+                "extraction_success": False,
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": False,
+                "_exec_events": [
+                    {
+                        "event_type": "memory_curator_locked",
+                        "message": message,
+                        "status": "warning",
+                        "payload": {"active_run_id": active_run_id},
+                    }
+                ],
+            }
+
+        try:
+            return self._execute_locked(state)
+        finally:
+            try:
+                self.repo.release_memory_curator_lock(
+                    project_id,
+                    chapter_number,
+                    run_id=run_id,
+                )
+            except Exception:
+                logger.warning(
+                    "MemoryCurator: failed to release lock for project=%s chapter=%s run=%s",
+                    project_id,
+                    chapter_number,
+                    run_id,
+                    exc_info=True,
+                )
+
+    def _execute_locked(self, state: FactoryState) -> dict[str, Any]:
+        project_id = state["project_id"]
+        chapter_number = state["chapter_number"]
         exec_events: list[dict] = []
 
         context = self._build_v6_context(state)

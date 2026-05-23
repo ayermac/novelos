@@ -339,16 +339,78 @@ class PublishChapterRequest(BaseModel):
 
 
 def _has_memory_curator_evidence(repo, project_id: str, chapter_number: int) -> bool:
-    """Return True when a trusted user-visible memory batch exists.
+    """Return True when a user-visible memory batch already exists.
 
-    Node events are not enough: a run can log that memory_curator executed while
-    the inbox has no batch, or only has a low-confidence state-card fallback.
+    Manual publish only needs to avoid re-running MemoryCurator once the chapter
+    already has a durable batch. Trust is reported separately in the publish
+    domain_result; the manual backfill endpoint keeps the stricter trusted-only
+    skip rule.
     """
-    return has_trusted_memory_batch(repo, project_id, chapter_number)
+    try:
+        for batch in repo.list_memory_batches(project_id):
+            if int(batch.get("chapter_number") or 0) != int(chapter_number):
+                continue
+            if str(batch.get("status") or "") == "ignored":
+                continue
+            try:
+                if repo.list_memory_items(batch["id"]):
+                    return True
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return False
+
+
+def _memory_curator_running_domain_result(project_id: str, chapter_number: int, lock: dict | None) -> dict:
+    """Build a blocked domain result for an active MemoryCurator lock."""
+    active_run_id = (lock or {}).get("run_id")
+    message = f"第 {chapter_number} 章记忆提取正在进行中，请等待完成后再发布。"
+    technical_message = f"第 {chapter_number} 章记忆正在提取，不能重复启动。"
+    if active_run_id:
+        technical_message = f"{technical_message} 当前运行: {active_run_id}"
+    return blocked(
+        message,
+        user_message="记忆提取正在进行中，请等待完成后再发布。",
+        next_action="view_workflow",
+        action_label="查看工作流",
+        details={
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "active_run_id": active_run_id,
+            "memory_lock": lock,
+            "error_code": "MEMORY_CURATOR_RUNNING",
+            "technical_message": technical_message,
+        },
+        flags={"memory_curator_running": True},
+    ).to_dict()
 
 
 async def _ensure_memory_curated_before_publish(request: Request, repo, project_id: str, chapter_number: int) -> dict:
     """Run MemoryCurator once before manual publish when evidence is missing."""
+    lock = None
+    if hasattr(repo, "get_memory_curator_lock"):
+        try:
+            lock = repo.get_memory_curator_lock(project_id, chapter_number)
+        except Exception:
+            lock = None
+    if lock and str(lock.get("status") or "") == "running":
+        active_run_id = lock.get("run_id")
+        message = f"第 {chapter_number} 章记忆提取正在进行中，请等待完成后再发布。"
+        technical_message = f"第 {chapter_number} 章记忆正在提取，不能重复启动。"
+        if active_run_id:
+            technical_message = f"{technical_message} 当前运行: {active_run_id}"
+        return {
+            "error": message,
+            "memory_curator_locked": True,
+            "memory_curator_processed": False,
+            "memory_curator_warning": message,
+            "memory_curator_technical_warning": technical_message,
+            "memory_run_id": active_run_id,
+            "active_run_id": active_run_id,
+            "domain_result": _memory_curator_running_domain_result(project_id, chapter_number, lock),
+        }
+
     if _has_memory_curator_evidence(repo, project_id, chapter_number):
         return {"memory_curator_processed": False, "memory_curator_skipped": True}
 
@@ -508,6 +570,17 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
             body.project_id,
             body.chapter,
         )
+        if memory_result.get("memory_curator_locked"):
+            message = memory_result.get("memory_curator_warning") or memory_result.get("error") or "记忆正在提取，不能重复启动。"
+            details = {
+                "project_id": body.project_id,
+                "chapter_number": body.chapter,
+                "active_run_id": memory_result.get("active_run_id") or memory_result.get("memory_run_id"),
+                "technical_message": memory_result.get("memory_curator_technical_warning"),
+                "domain_result": memory_result.get("domain_result"),
+            }
+            return error_response("MEMORY_CURATOR_RUNNING", message, details=details)
+
         memory_incomplete = bool(memory_result.get("memory_incomplete"))
         if memory_result.get("error") and not memory_incomplete:
             code = "MEMORY_CURATOR_INCOMPLETE" if memory_result.get("memory_incomplete") else "MEMORY_CURATOR_FAILED"

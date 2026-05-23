@@ -267,6 +267,17 @@ class WorkflowRepositoryMixin:
                 "WHERE wr.status='running' "
                 "AND wr.graph_name='chapter_production' "
                 "AND c.status IN (?, ?, ?)"
+                " AND NOT ("
+                "  wr.current_node='memory_curator' "
+                "  AND EXISTS ("
+                "    SELECT 1 FROM memory_curator_locks ml "
+                "    WHERE ml.project_id=wr.project_id "
+                "    AND ml.chapter_number=wr.chapter_number "
+                "    AND ml.status='running' "
+                "    AND (ml.run_id=wr.id OR ml.run_id IS NULL) "
+                "    AND ml.locked_at > datetime('now', '+8 hours', '-120 minutes')"
+                "  )"
+                ")"
             )
             params: list[Any] = list(terminal_statuses)
             if project_id is not None:

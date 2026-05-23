@@ -334,6 +334,7 @@ class ProjectRepositoryMixin:
             # Delete every project-scoped table dynamically.  This keeps project
             # deletion resilient as new modules add tables with project_id.
             preferred_order = [
+                "memory_curator_locks",
                 "memory_update_items",
                 "memory_update_batches",
                 "story_fact_events",

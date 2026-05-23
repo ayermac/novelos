@@ -289,6 +289,61 @@ class TestReviewModule:
         assert data["data"]["domain_result"]["flags"]["memory_trusted"] is False
         assert repo.get_chapter(project_id, 1)["status"] == "published"
 
+    def test_publish_endpoint_skips_existing_memory_batch_without_reextracting(self, test_client, monkeypatch):
+        """Manual publish should not rerun MemoryCurator when a memory batch already exists."""
+        client, db_path = test_client
+        repo = Repository(db_path)
+
+        resp = client.post("/api/onboarding/projects", json={
+            "project_id": "test-publish-existing-memory-batch",
+            "name": "Test Existing Memory Batch Publish",
+            "genre": "fantasy",
+            "target_words": 100000,
+            "total_chapters_planned": 50,
+        })
+        assert resp.status_code == 200
+        project_id = resp.json()["data"]["project"]["project_id"]
+
+        repo.save_chapter_content(project_id, 1, "林默发现铜钥匙。", "第一章")
+        repo.save_chapter_state(project_id, 1, {"new_facts": ["林默发现铜钥匙"]}, "第1章状态卡")
+        repo.update_chapter_status(project_id, 1, "reviewed")
+
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=1,
+            run_id="existing-memory-run",
+            summary="第1章记忆提取 - 状态卡兜底 (1项)",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="story_facts",
+            operation="create",
+            after_json='{"fact_key":"chapter_1.key","value":"林默发现铜钥匙"}',
+            confidence=0.45,
+            evidence_text="林默发现铜钥匙。",
+            rationale="状态卡兜底候选：未经过 MemoryCurator LLM 复核，请人工确认后应用",
+        )
+
+        def fail_if_called(self, state):
+            raise AssertionError("publish should not rerun MemoryCurator when a memory batch already exists")
+
+        monkeypatch.setattr("novel_factory.agents.memory_curator.MemoryCuratorAgent.run", fail_if_called)
+
+        resp = client.post("/api/publish/chapter", json={
+            "project_id": project_id,
+            "chapter": 1,
+        })
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["chapter_status"] == "published"
+        assert data["data"]["memory_curator_processed"] is False
+        assert data["data"]["memory_curator_skipped"] is True
+        assert data["data"]["domain_result"]["domain_status"] == "partial_success"
+        assert data["data"]["domain_result"]["flags"]["memory_trusted"] is False
+        assert len(repo.list_memory_batches(project_id)) == 1
+
     def test_run_detail_memory_backfill_endpoint(self, test_client):
         """Run detail page can backfill MemoryCurator for an already published chapter."""
         client, db_path = test_client

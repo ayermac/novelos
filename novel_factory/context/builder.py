@@ -15,6 +15,7 @@ from typing import Any
 
 from ..db.repository import Repository
 from ..validators.death_penalty import format_death_penalty_for_prompt
+from ..validators.chapter_checker import derive_word_target
 
 logger = logging.getLogger(__name__)
 
@@ -80,13 +81,16 @@ class ContextBuilder:
         if not instruction:
             return ContextFragment("instruction", "", 1, mandatory=True)
 
+        project = self.repo.get_project(project_id) or {}
+        word_target = derive_word_target(instruction, project)
+
         content = (
             f"【写作指令】\n"
             f"目标: {instruction.get('objective', '')}\n"
             f"关键事件: {instruction.get('key_events', '')}\n"
             f"情绪基调: {instruction.get('emotion_tone', '')}\n"
             f"章末钩子: {instruction.get('ending_hook', '')}\n"
-            f"字数目标: {instruction.get('word_target', 2500)}"
+            f"字数目标: {word_target}"
         )
         return ContextFragment("instruction", content, 1, mandatory=True)
 

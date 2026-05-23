@@ -127,10 +127,8 @@ class TestAuthorValidationFailure:
         assert result["quality_gate"]["word_count_fail"] is True
         assert result["quality_gate"]["actual_word_count"] == 400
 
-    def test_author_oversized_content_routes_to_human_review(self, settings, repo):
-        """Content exceeding DEFAULT_MAX_WORDS must trigger hard validation error, not quality gate."""
-        from novel_factory.validators.chapter_checker import DEFAULT_MAX_WORDS
-
+    def test_author_oversized_content_routes_to_revision(self, settings, repo):
+        """Content above the dynamic upper gate should be retryable, not hard-blocked."""
         project_id = "test_p1_author_oversized"
         repo.create_project(
             project_id=project_id,
@@ -151,12 +149,12 @@ class TestAuthorValidationFailure:
             "workflow_run_id": "",
         }
 
-        oversized_content = "长" * (DEFAULT_MAX_WORDS + 1)
+        oversized_content = "长" * 8001
         mock_llm = MagicMock()
         mock_llm.invoke_json.return_value = {
             "title": "Test Chapter",
             "content": oversized_content,
-            "word_count": DEFAULT_MAX_WORDS + 1,
+            "word_count": len(oversized_content),
             "implemented_events": [],
             "used_plot_refs": [],
         }
@@ -164,10 +162,11 @@ class TestAuthorValidationFailure:
 
         result = author_node(state, repo, mock_llm)
 
-        # Oversized content should be a hard validation error, not a retryable quality gate
-        assert result["requires_human"] is True
-        assert result["chapter_status"] == ChapterStatus.SCRIPTED.value
-        assert "字数超标" in result["error"]
+        assert result["requires_human"] is False
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert result["quality_gate"]["actual_word_count"] == len(oversized_content)
+        assert "字数超标" in result["quality_gate"]["message"]
 
     def test_author_death_penalty_routes_to_revision(self, settings, repo):
         """Author death-penalty red lines should be retryable, not immediate blocking."""

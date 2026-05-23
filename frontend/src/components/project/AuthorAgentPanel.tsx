@@ -138,10 +138,19 @@ export default function AuthorAgentPanel({
     ? timeline.elapsed_minutes
     : elapsedMinutesSince(runDetail?.started_at)
   const workflowStatus = runDetail?.workflow_status
-  const currentNode = runDetail?.current_node
+  const currentNode = timeline?.current_node || runDetail?.current_node
   const sseStepEntries = Object.entries(sseSteps)
   const isReviewedReal = status === 'reviewed' && llmMode === 'real'
   const elapsedMinutes = elapsedMinutesSince(runDetail?.started_at)
+  const memoryCuratorNode = timeline?.nodes?.find((node) => node.node_name === 'memory_curator')
+  const memoryCuratorRunning = Boolean(
+    timeline?.memory_curator_running ||
+    memoryCuratorNode?.status === 'running' ||
+    (
+      effectiveRunStatus === 'running' &&
+      (currentNode === 'memory_curator' || memoryCuratorNode?.flags?.memory_curator_running)
+    )
+  )
   const isStaleRunning = effectiveRunStatus === 'running' && effectiveElapsed !== null && effectiveElapsed >= STUCK_RUN_THRESHOLD_MINUTES
   const isWorkflowActive = isStreaming || isWorkflowRunning || effectiveRunStatus === 'running'
   const hasPreservedPlannedContent = status === 'planned' && hasContent
@@ -160,15 +169,17 @@ export default function AuthorAgentPanel({
         {/* Next recommended action */}
         {isReviewedReal && onPublish && (
           <div className="author-agent-next-action">
-            <div className="action-label">等待人工发布</div>
-            <div className="action-desc">本章已通过 AI 审核，点击确认发布。</div>
+            <div className="action-label">{memoryCuratorRunning ? '记忆提取中' : '等待人工发布'}</div>
+            <div className="action-desc">
+              {memoryCuratorRunning ? '记忆提取完成后才能确认发布。' : '本章已通过 AI 审核，点击确认发布。'}
+            </div>
             <LoadingButton
               className="btn btn-primary btn-sm"
               variant="primary"
               loading={!!publishPending}
               loadingText="发布中..."
               onClick={onPublish}
-              disabled={isStreaming || isWorkflowRunning}
+              disabled={isWorkflowActive || memoryCuratorRunning}
               style={{ marginTop: 8, width: '100%' }}
             >
               <CheckCircle2 size={12} /> 确认发布
@@ -260,8 +271,10 @@ export default function AuthorAgentPanel({
 
         {status === 'awaiting_publish' && (
           <div className="author-agent-next-action">
-            <div className="action-label">等待发布</div>
-            <div className="action-desc">本章已完成全部流程，等待最终发布。</div>
+            <div className="action-label">{memoryCuratorRunning ? '记忆提取中' : '等待发布'}</div>
+            <div className="action-desc">
+              {memoryCuratorRunning ? '记忆提取完成后才能发布。' : '本章已完成全部流程，等待最终发布。'}
+            </div>
           </div>
         )}
 

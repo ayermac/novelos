@@ -559,7 +559,16 @@ export default function AuthorWritingSurface({
   const persistedQualityScore = chapterDetail?.quality_score ?? currentChapterRecord?.quality_score ?? null
   const qualityScore = persistedQualityScore
   const statusLabel = tChapterStatus(status)
-  const isWorkflowActive = isStreaming || isWorkflowRunning || timeline?.run_status === 'running'
+  const memoryCuratorNode = timeline?.nodes?.find((node) => node.node_name === 'memory_curator')
+  const memoryCuratorRunning = Boolean(
+    timeline?.memory_curator_running ||
+    memoryCuratorNode?.status === 'running' ||
+    (
+      timeline?.run_status === 'running' &&
+      (timeline.current_node === 'memory_curator' || memoryCuratorNode?.flags?.memory_curator_running)
+    )
+  )
+  const isWorkflowActive = isStreaming || isWorkflowRunning || timeline?.run_status === 'running' || memoryCuratorRunning
   const showHeaderGenerationAction = activeTab !== 'workflow'
 
   const tabs: { key: SurfaceTabKey; label: string; disabled?: boolean }[] = [
@@ -603,7 +612,7 @@ export default function AuthorWritingSurface({
               loading={!!publishPending}
               loadingText="发布中..."
               onClick={onPublish}
-              disabled={isStreaming || isWorkflowRunning}
+              disabled={isWorkflowActive}
             >
               <CheckCircle2 size={12} /> 确认发布
             </LoadingButton>

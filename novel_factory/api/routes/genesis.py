@@ -15,6 +15,7 @@ from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ...agent_runtime.title_contract import build_title_contract
 from ...llm.provider import is_configured_live_provider
 from ...quality.genesis_quality_gate import evaluate_genesis_draft
+from ...validators.chapter_checker import DEFAULT_INSTRUCTION_WORD_TARGET
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -1189,6 +1190,12 @@ def _coerce_plot_hole(item, index: int) -> dict | None:
 def _coerce_instruction(item, index: int) -> dict | None:
     if isinstance(item, dict):
         chapter_number = _as_int(item.get("chapter_number"), index)
+        word_target = _as_int(
+            item.get("word_target"),
+            DEFAULT_INSTRUCTION_WORD_TARGET,
+        )
+        if word_target <= 0:
+            word_target = DEFAULT_INSTRUCTION_WORD_TARGET
         # v6.6.4: Normalize key_events array into structured text without losing info
         raw_key_events = item.get("key_events", "")
         if isinstance(raw_key_events, list):
@@ -1203,6 +1210,7 @@ def _coerce_instruction(item, index: int) -> dict | None:
             "emotion_tone": _as_text(item.get("emotion_tone", "")),
             "ending_hook": _as_text(item.get("ending_hook", "")),
             "continuity_seed": _as_text(item.get("continuity_seed", "")),
+            "word_target": word_target,
         }
     text = _as_text(item).strip()
     if not text:
@@ -1214,6 +1222,7 @@ def _coerce_instruction(item, index: int) -> dict | None:
         "emotion_tone": "",
         "ending_hook": "",
         "continuity_seed": "",
+        "word_target": DEFAULT_INSTRUCTION_WORD_TARGET,
     }
 
 

@@ -42,6 +42,30 @@ def _get_run_recovery_settings(request: Request):
         return Settings()
 
 
+def _memory_curator_running_domain_result(project_id: str, chapter_number: int, lock: dict | None) -> dict:
+    """Build a blocked domain result for an active MemoryCurator lock."""
+    active_run_id = (lock or {}).get("run_id")
+    message = f"第 {chapter_number} 章记忆提取正在进行中，请等待完成后再重试。"
+    technical_message = f"第 {chapter_number} 章记忆正在提取，不能重复启动。"
+    if active_run_id:
+        technical_message = f"{technical_message} 当前运行: {active_run_id}"
+    return blocked(
+        message,
+        user_message="记忆提取正在进行中，请等待完成后再重试。",
+        next_action="view_workflow",
+        action_label="查看工作流",
+        details={
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "active_run_id": active_run_id,
+            "memory_lock": lock,
+            "error_code": "MEMORY_CURATOR_RUNNING",
+            "technical_message": technical_message,
+        },
+        flags={"memory_curator_running": True},
+    ).to_dict()
+
+
 class RunRecoveryResetRequest(BaseModel):
     """Run recovery reset request."""
 
@@ -896,6 +920,29 @@ async def backfill_run_memory(
                     flags={"memory_trusted": True, "skipped": True},
                 ).to_dict(),
             })
+
+        lock = None
+        if hasattr(repo, "get_memory_curator_lock"):
+            try:
+                lock = repo.get_memory_curator_lock(project_id, chapter_number)
+            except Exception:
+                lock = None
+        if lock and str(lock.get("status") or "") == "running":
+            active_run_id = lock.get("run_id")
+            message = f"第 {chapter_number} 章记忆提取正在进行中，请等待完成后再重试。"
+            technical_message = f"第 {chapter_number} 章记忆正在提取，不能重复启动。"
+            if active_run_id:
+                technical_message = f"{technical_message} 当前运行: {active_run_id}"
+            details = {
+                "run_id": active_run_id,
+                "project_id": project_id,
+                "chapter_number": chapter_number,
+                "active_run_id": active_run_id,
+                "memory_lock": lock,
+                "technical_message": technical_message,
+                "domain_result": _memory_curator_running_domain_result(project_id, chapter_number, lock),
+            }
+            return error_response("MEMORY_CURATOR_RUNNING", message, details=details)
 
         # v6.6.7: If force=true, mark old fallback batches as ignored before re-running
         if body.force:

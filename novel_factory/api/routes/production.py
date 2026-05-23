@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ..contracts import success, partial_success, failed, blocked as blocked_result, needs_human
+from ...validators.chapter_checker import DEFAULT_INSTRUCTION_WORD_TARGET
 
 router = APIRouter()
 
@@ -1208,9 +1209,6 @@ def _stub_autofill(repo, project: dict, project_id: str, chapter_start: int, cha
     for ch_num in range(chapter_start, chapter_end + 1):
         existing_inst = repo.get_instruction_by_chapter(project_id, ch_num)
         if existing_inst is None:
-            word_target = 3000
-            if project.get("target_words") and project.get("total_chapters_planned"):
-                word_target = project["target_words"] // project["total_chapters_planned"]
             repo.create_instruction(
                 project_id,
                 chapter_number=ch_num,
@@ -1220,7 +1218,7 @@ def _stub_autofill(repo, project: dict, project_id: str, chapter_start: int, cha
                 plots_to_resolve="[]",
                 emotion_tone="神秘" if ch_num == 1 else "紧张",
                 ending_hook="",
-                word_target=word_target,
+                word_target=DEFAULT_INSTRUCTION_WORD_TARGET,
                 status="active",
             )
             created["instructions"] += 1
@@ -1280,10 +1278,6 @@ def _stub_arc_plan(repo, project: dict, project_id: str, chapter_start: int, cha
             created["outlines"] += 1
 
     # Generate chapter instructions
-    word_target = 3000
-    if project.get("target_words") and project.get("total_chapters_planned"):
-        word_target = project["target_words"] // project["total_chapters_planned"]
-
     for ch_num in range(chapter_start, chapter_end + 1):
         existing_inst = repo.get_instruction_by_chapter(project_id, ch_num)
         if existing_inst is None:
@@ -1296,7 +1290,7 @@ def _stub_arc_plan(repo, project: dict, project_id: str, chapter_start: int, cha
                 plots_to_resolve="[]",
                 emotion_tone="紧张",
                 ending_hook="",
-                word_target=word_target,
+                word_target=DEFAULT_INSTRUCTION_WORD_TARGET,
                 status="active",
             )
             created["instructions"] += 1

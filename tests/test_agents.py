@@ -727,6 +727,95 @@ class TestAuthorAgent:
         chapter = seeded_repo.get_chapter("test_proj", 1)
         assert not chapter.get("content")
 
+    def test_author_long_target_uses_quality_gate_instead_of_fixed_8000_cap(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET word_target=? WHERE project_id=? AND chapter_number=?",
+            (12500, "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        below_target_content = "长" * 10560
+        stub = StubLLMProvider([{
+            "title": "第一章 测试",
+            "content": below_target_content,
+            "word_count": len(below_target_content),
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == "scripted"
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert result["quality_gate"]["word_target"] == 12500
+        assert "字数未达标" in result["quality_gate"]["message"]
+        assert "8000" not in result.get("error", "")
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert not chapter.get("content")
+
+    def test_author_missing_instruction_word_target_defaults_to_3000(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE projects SET target_words=?, total_chapters_planned=? WHERE project_id=?",
+            (50000, 4, "test_proj"),
+        )
+        conn.execute(
+            "UPDATE instructions SET word_target=NULL WHERE project_id=? AND chapter_number=?",
+            ("test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        content = "这是一段按三千字章节目标生成的正文。" * 150
+        assert len(content) >= 2550
+        assert len(content) < 10625
+        stub = StubLLMProvider([{
+            "title": "第一章 测试",
+            "content": content,
+            "word_count": len(content),
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        assert "12500" not in result.get("error", "")
+
     def test_author_does_not_use_objective_excerpt_as_chapter_title(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
 

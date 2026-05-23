@@ -285,6 +285,8 @@ def has_trusted_memory_batch(repo: Any, project_id: str, chapter_number: int) ->
 
 def memory_result_is_incomplete(repo: Any, project_id: str, chapter_number: int, result: dict) -> bool:
     """Return True when a MemoryCurator run did not produce trusted memory."""
+    if result.get("memory_curator_locked"):
+        return False
     if result.get("error"):
         return True
     if (
