@@ -25,7 +25,7 @@ Key changes:
 - **Stability guardrails**: Added `test_version_alignment.py` covering runtime version (`novel_factory.version.__version__`), API health version (`/api/health`), frontend package version (`frontend/package.json`), and desktop package version (`desktop/package.json`).
 
 Verification:
-- Full test suite: **2725 passed, 0 failed**
+- Full test suite: **2728 passed, 0 failed**
 - Frontend typecheck/lint/build/vitest: passed
 - Desktop typecheck/build: passed
 - API health: `{"version": "6.6.19"}`
