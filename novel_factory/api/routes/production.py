@@ -18,6 +18,8 @@ from ...validators.chapter_checker import DEFAULT_INSTRUCTION_WORD_TARGET
 
 router = APIRouter()
 
+AUTO_RUN_HEARTBEAT_SECONDS = 10.0
+
 
 # ---------------------------------------------------------------------------
 # Request/Response Models
@@ -278,6 +280,40 @@ def _ensure_chapter_slot_for_run(repo, project_id: str, chapter_number: int) -> 
         chapter = repo.get_chapter(project_id, chapter_number)
 
     return chapter
+
+
+def _build_auto_run_heartbeat(
+    repo,
+    project_id: str,
+    step_number: int,
+    next_action: dict,
+    target_chapter: int | None,
+    step_count: int,
+    chapters_touched: set[int],
+    session_tokens_used: int,
+    session_token_limit: int | None,
+) -> dict:
+    running = (
+        _get_running_chapter_workflow(repo, project_id, target_chapter)
+        if target_chapter is not None
+        else None
+    )
+    return {
+        "event": "auto_run_heartbeat",
+        "data": {
+            "project_id": project_id,
+            "step": step_number,
+            "action": next_action["key"],
+            "label": next_action["label"],
+            "target_chapter": target_chapter,
+            "workflow_run_id": running.get("id") if running else None,
+            "workflow_current_node": running.get("current_node") if running else None,
+            "steps_executed": step_count,
+            "chapters_touched": sorted(list(chapters_touched)),
+            "session_tokens_used": session_tokens_used,
+            "max_session_tokens": session_token_limit,
+        },
+    }
 
 
 def _get_project_stale_running_workflow(repo, project_id: str, timeout_minutes: int) -> dict | None:
@@ -1736,10 +1772,35 @@ async def _auto_run_generator(
                     session_id, None, current_step=step_count, last_event="step_started"
                 )
 
-            # Execute the action
-            step_result = await _execute_auto_step(
+            # Execute the action while keeping the SSE stream alive during
+            # long chapter workflows. The chapter workflow itself runs
+            # server-side; these heartbeat events prevent idle stream timeouts
+            # while the auto-run step waits for that workflow to finish.
+            import asyncio
+
+            step_task = asyncio.create_task(_execute_auto_step(
                 request, repo, settings, llm_mode, project_id, next_action, ch_start, ch_end, active_chapter
-            )
+            ))
+            while not step_task.done():
+                try:
+                    await asyncio.wait_for(
+                        asyncio.shield(step_task),
+                        timeout=AUTO_RUN_HEARTBEAT_SECONDS,
+                    )
+                except asyncio.TimeoutError:
+                    yield _build_auto_run_heartbeat(
+                        repo=repo,
+                        project_id=project_id,
+                        step_number=step_count + 1,
+                        next_action=next_action,
+                        target_chapter=effective_target,
+                        step_count=step_count,
+                        chapters_touched=chapters_touched,
+                        session_tokens_used=session_tokens_used,
+                        session_token_limit=session_token_limit,
+                    )
+
+            step_result = await step_task
 
             step_count += 1  # Count attempted steps consistently
             step_tokens = int(step_result.get("total_tokens", 0) or 0)

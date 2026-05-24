@@ -318,3 +318,58 @@ class TestStreamEventDataFields:
         assert "data" in final_event
         assert "stop_reason" in final_event["data"]
         assert "steps_executed" in final_event["data"]
+
+
+class TestStreamHeartbeat:
+    """Test keepalive heartbeat during long-running auto-run steps."""
+
+    @pytest.mark.asyncio
+    async def test_auto_run_generator_emits_heartbeat_while_step_is_running(
+        self, client, project_with_context, monkeypatch
+    ):
+        """A long chapter step should keep the SSE stream alive with heartbeats."""
+        import asyncio
+        from types import SimpleNamespace
+
+        import novel_factory.api.routes.production as production
+
+        async def slow_step(*args, **kwargs):
+            await asyncio.sleep(0.03)
+            return {
+                "result": "success",
+                "target_chapter": 1,
+                "chapter_status": "awaiting_publish",
+                "requires_human": True,
+                "awaiting_publish": True,
+            }
+
+        monkeypatch.setattr(production, "AUTO_RUN_HEARTBEAT_SECONDS", 0.01)
+        monkeypatch.setattr(production, "_execute_auto_step", slow_step)
+
+        request = SimpleNamespace(
+            app=SimpleNamespace(
+                state=SimpleNamespace(db_path=client.app.state.db_path, llm_mode="stub")
+            )
+        )
+        body = production.RunAutoRequest(
+            confirm=True,
+            max_steps=1,
+            chapter_start=1,
+            chapter_end=1,
+            stop_on_review=True,
+        )
+
+        events = []
+        async for event in production._auto_run_generator(request, project_with_context, body):
+            events.append(event)
+
+        event_names = [event["event"] for event in events]
+        assert "step_started" in event_names
+        assert "auto_run_heartbeat" in event_names
+        assert "step_completed" in event_names
+
+        heartbeat = next(event for event in events if event["event"] == "auto_run_heartbeat")
+        assert heartbeat["data"]["project_id"] == project_with_context
+        assert heartbeat["data"]["step"] == 1
+        assert heartbeat["data"]["action"] == "generate_chapter"
+        assert heartbeat["data"]["target_chapter"] == 1
