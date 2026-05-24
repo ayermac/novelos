@@ -162,9 +162,19 @@ export default function ProjectDetail() {
 
   // Set initial chapter only after the user explicitly enters chapter writing.
   useEffect(() => {
-    if (activeModule === 'chapters' && workspace && !searchParams.get('chapter') && workspace.chapters.length > 0) {
+    if (activeModule === 'chapters' && workspace && workspace.chapters.length > 0) {
+      const requestedChapter = searchParams.get('chapter')
+      const chapterExists = requestedChapter
+        ? workspace.chapters.some((chapter) => chapter.chapter_number === Number(requestedChapter))
+        : false
+      if (requestedChapter && chapterExists) return
+
       const runningChapter = workspace.recent_runs.find((r) => r.status === 'running')?.chapter_number
-      const initialChapter = runningChapter || workspace.chapters[0].chapter_number
+      const latestExistingChapter = workspace.chapters.reduce(
+        (latest, chapter) => Math.max(latest, chapter.chapter_number),
+        workspace.chapters[0].chapter_number,
+      )
+      const initialChapter = runningChapter || latestExistingChapter
       setSearchParams(
         ensureChapterSearchParams(searchParams, initialChapter),
         { replace: true }

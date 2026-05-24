@@ -133,7 +133,7 @@ export default function Dashboard() {
   } else if (latestRun) {
     heroTitle = '继续创作'
     heroHint = `${latestRun.project_name} 第 ${latestRun.chapter} 章已完成，进入工作台继续创作`
-    heroAction = { label: '进入工作台', to: `/projects/${latestRun.project_id}?chapter=${latestRun.chapter + 1}` }
+    heroAction = { label: '进入工作台', to: `/projects/${latestRun.project_id}?module=chapters` }
   } else if (firstProject) {
     heroTitle = '继续创作'
     heroHint = `你有 ${data.project_count} 个项目，进入工作台继续创作`
