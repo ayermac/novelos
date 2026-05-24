@@ -67,6 +67,8 @@ interface AuthorAgentPanelProps {
   runsForChapter: Run[]
   isStreaming: boolean
   isWorkflowRunning?: boolean
+  isProjectWorkflowRunning?: boolean
+  runningWorkflowChapter?: number | null
   sseSteps: Record<string, StepStatus>
   genError: string
   timeline?: WorkflowTimelineData | null
@@ -112,12 +114,15 @@ function getAgentActionDesc(node: string | null | undefined): string {
 
 export default function AuthorAgentPanel({
   activeTab,
+  currentChapter,
   currentChapterRecord,
   llmMode,
   runDetail,
   runsForChapter,
   isStreaming,
   isWorkflowRunning,
+  isProjectWorkflowRunning,
+  runningWorkflowChapter,
   sseSteps,
   genError,
   timeline,
@@ -152,7 +157,10 @@ export default function AuthorAgentPanel({
     )
   )
   const isStaleRunning = effectiveRunStatus === 'running' && effectiveElapsed !== null && effectiveElapsed >= STUCK_RUN_THRESHOLD_MINUTES
-  const isWorkflowActive = isStreaming || isWorkflowRunning || effectiveRunStatus === 'running'
+  const isRunningAnotherChapter = Boolean(
+    isProjectWorkflowRunning && runningWorkflowChapter && runningWorkflowChapter !== currentChapter
+  )
+  const isWorkflowActive = isStreaming || isWorkflowRunning || effectiveRunStatus === 'running' || isRunningAnotherChapter
   const hasPreservedPlannedContent = status === 'planned' && hasContent
   const needsRecovery = status === 'blocking' || status === 'revision'
   const canShowPrimaryAction = activeTab !== 'workflow'
@@ -222,7 +230,9 @@ export default function AuthorAgentPanel({
               {isStaleRunning
                 ? `当前运行已超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未完成，建议进入运行恢复处理。`
                 : isWorkflowActive
-                  ? getAgentActionDesc(currentNode || timeline?.current_node)
+                  ? isRunningAnotherChapter && runningWorkflowChapter
+                    ? `第 ${runningWorkflowChapter} 章正在生成，完成前不能启动其它章节。`
+                    : getAgentActionDesc(currentNode || timeline?.current_node)
                   : hasPreservedPlannedContent
                     ? '本章保留了已有正文。请先查看正文，或明确确认覆盖后再重新生成。'
                     : needsRecovery

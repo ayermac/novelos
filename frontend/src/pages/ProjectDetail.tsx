@@ -45,6 +45,7 @@ interface Run {
   status: string
   created_at: string
   error_message?: string
+  current_node?: string | null
 }
 
 interface Workspace {
@@ -162,8 +163,10 @@ export default function ProjectDetail() {
   // Set initial chapter only after the user explicitly enters chapter writing.
   useEffect(() => {
     if (activeModule === 'chapters' && workspace && !searchParams.get('chapter') && workspace.chapters.length > 0) {
+      const runningChapter = workspace.recent_runs.find((r) => r.status === 'running')?.chapter_number
+      const initialChapter = runningChapter || workspace.chapters[0].chapter_number
       setSearchParams(
-        ensureChapterSearchParams(searchParams, workspace.chapters[0].chapter_number),
+        ensureChapterSearchParams(searchParams, initialChapter),
         { replace: true }
       )
     }
@@ -404,6 +407,15 @@ export default function ProjectDetail() {
       (r) => r.chapter_number === chapterNumber && r.status === 'running'
     )
     if (hasRunningRun) return
+    const runningProjectRun = workspace.recent_runs?.find((r) => r.status === 'running')
+    if (runningProjectRun) {
+      void dialog.alert({
+        title: '已有章节正在生成',
+        message: `第 ${runningProjectRun.chapter_number} 章工作流正在运行，请等待完成后再生成第 ${chapterNumber} 章。`,
+        tone: 'warning',
+      })
+      return
+    }
     setGenerating(true)
     setGeneratingChapter(chapterNumber)
     streamingChapterRef.current = chapterNumber
@@ -419,7 +431,7 @@ export default function ProjectDetail() {
       view: 'workflow',
     }, { replace: true })
     startStream(id, chapterNumber)
-  }, [id, setSearchParams, startStream, workspace])
+  }, [dialog, id, setSearchParams, startStream, workspace])
 
   const handleGenerate = useCallback(() => {
     handleGenerateChapter(currentChapter)
@@ -692,6 +704,11 @@ export default function ProjectDetail() {
   const runsForChapter = workspace.recent_runs.filter((r) => r.chapter_number === currentChapter)
   const isCurrentChapterGenerating = (generating || isStreaming) && generatingChapter === currentChapter
   const isTimelineRunningForCurrentChapter = timeline?.chapter_number === currentChapter && timeline?.run_status === 'running'
+  const runningProjectRun = workspace.recent_runs.find((r) => r.status === 'running') || null
+  const runningWorkflowChapter = runningProjectRun?.chapter_number ?? (
+    isTimelineRunningForCurrentChapter ? currentChapter : null
+  )
+  const isProjectWorkflowRunning = Boolean(runningWorkflowChapter)
   const isCurrentChapterWorkflowRunning = runsForChapter.some((r) => r.status === 'running') || Boolean(isTimelineRunningForCurrentChapter)
   const isChapterWorkflowRunning = (chapterNumber: number) => {
     return workspace.recent_runs.some((r) => r.chapter_number === chapterNumber && r.status === 'running') ||
@@ -723,6 +740,8 @@ export default function ProjectDetail() {
           isStreaming={isCurrentChapterGenerating}
           isWorkflowRunning={isCurrentChapterWorkflowRunning}
           isChapterWorkflowRunning={isChapterWorkflowRunning}
+          isProjectWorkflowRunning={isProjectWorkflowRunning}
+          runningWorkflowChapter={runningWorkflowChapter}
           llmMode={llmMode}
           projectId={id || ''}
           runDetail={runDetail}

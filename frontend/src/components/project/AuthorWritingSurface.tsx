@@ -44,6 +44,7 @@ interface Run {
   status: string
   created_at: string
   error_message?: string
+  current_node?: string | null
 }
 
 interface Step {
@@ -517,6 +518,8 @@ interface AuthorWritingSurfaceProps {
   isStub: boolean
   isStreaming: boolean
   isWorkflowRunning?: boolean
+  isProjectWorkflowRunning?: boolean
+  runningWorkflowChapter?: number | null
   llmMode: string
   projectId: string
   runDetail: RunDetailData | null
@@ -554,6 +557,8 @@ export default function AuthorWritingSurface({
   isStub,
   isStreaming,
   isWorkflowRunning,
+  isProjectWorkflowRunning,
+  runningWorkflowChapter,
   llmMode,
   projectId,
   runDetail,
@@ -594,7 +599,11 @@ export default function AuthorWritingSurface({
       (timeline.current_node === 'memory_curator' || memoryCuratorNode?.flags?.memory_curator_running)
     )
   )
-  const isWorkflowActive = isStreaming || isWorkflowRunning || timeline?.run_status === 'running' || memoryCuratorRunning
+  const isRunningAnotherChapter = Boolean(
+    isProjectWorkflowRunning && runningWorkflowChapter && runningWorkflowChapter !== currentChapter
+  )
+  const workflowBusy = isStreaming || isWorkflowRunning || timeline?.run_status === 'running' || memoryCuratorRunning
+  const isWorkflowActive = workflowBusy || isRunningAnotherChapter
   const showHeaderGenerationAction = activeTab !== 'workflow'
 
   const tabs: { key: SurfaceTabKey; label: string; disabled?: boolean }[] = [
@@ -658,7 +667,7 @@ export default function AuthorWritingSurface({
             <LoadingButton
               className="btn btn-primary btn-sm"
               variant="primary"
-              loading={isWorkflowActive}
+              loading={workflowBusy}
               loadingText="生成中..."
               onClick={onGenerate}
               disabled={isWorkflowActive}
@@ -722,7 +731,9 @@ export default function AuthorWritingSurface({
             hasContent={hasContent}
             isStub={isStub}
             isStreaming={isStreaming}
-            isWorkflowRunning={isWorkflowRunning}
+            isWorkflowRunning={workflowBusy}
+            isGenerationLocked={isRunningAnotherChapter}
+            runningWorkflowChapter={runningWorkflowChapter}
             projectId={projectId}
             onGenerate={onGenerate}
             onConfirmRegenerate={onConfirmRegenerate}
@@ -788,6 +799,8 @@ function ContentBody({
   isStub,
   isStreaming,
   isWorkflowRunning,
+  isGenerationLocked,
+  runningWorkflowChapter,
   projectId,
   onGenerate,
   onConfirmRegenerate,
@@ -804,6 +817,8 @@ function ContentBody({
   isStub: boolean
   isStreaming: boolean
   isWorkflowRunning?: boolean
+  isGenerationLocked?: boolean
+  runningWorkflowChapter?: number | null
   projectId: string
   onGenerate: () => void
   onConfirmRegenerate?: () => void
@@ -847,6 +862,7 @@ function ContentBody({
     onRefreshContent?.()
   }, [onRefreshContent])
   const hasExistingContentGuard = genErrorDetails?.hint === 'review_existing_content'
+  const generationDisabled = Boolean(isWorkflowRunning || isGenerationLocked)
 
   return (
     <div>
@@ -957,11 +973,16 @@ function ContentBody({
               loading={isWorkflowRunning}
               loadingText="生成中..."
               onClick={onGenerate}
-              disabled={isWorkflowRunning}
+              disabled={generationDisabled}
               style={{ marginTop: 20, minWidth: 160 }}
             >
               <PenLine size={14} /> 生成本章
             </LoadingButton>
+          )}
+          {isGenerationLocked && runningWorkflowChapter && (
+            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--wb-text-dark-muted)' }}>
+              第 {runningWorkflowChapter} 章工作流正在运行，完成后才能生成本章。
+            </div>
           )}
           <div style={{ marginTop: 14, fontSize: 12, color: 'var(--wb-text-dark-muted)' }}>
             预计字数: 2,000-4,000 &middot; 生成模式: {isStub ? '演示模式' : '真实 LLM'}
