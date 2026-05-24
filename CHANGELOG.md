@@ -12,6 +12,21 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.7.1 - Auto Arc Continuation
+
+Date: 2026-05-24
+
+Key changes:
+
+- **Auto arc continuation**: Chapter run entrypoints now create deterministic continuation planning when the requested chapter is outside the genesis-seeded outline range. A project with a `1-10` outline can continue into chapter 13 without manually creating a new outline first.
+- **Run guard alignment**: Shared continuation planning runs before `_run_guards` checks for missing chapter instructions, so `/api/run/chapter`, background starts, desktop runs, and workflow runner execution use the same recovery behavior.
+- **Coverage**: Added regression tests for runner-level readiness and API guard behavior when chapter 13 only has prior `1-10` outline coverage.
+- **Version alignment**: Runtime, frontend, desktop, and lockfiles updated to `6.7.1`.
+
+Verification:
+- Auto arc continuation tests: passing
+- Production readiness guard regression tests: passing
+
 ## v6.7.0 - Production Stability Gate
 
 Date: 2026-05-24

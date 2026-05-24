@@ -6,9 +6,9 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 Novelos is an AI-powered novel production workbench for long-form fiction projects. It combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v6.7.0 Production Stability Gate**, with **full pytest passing**, frontend typecheck/lint/build/vitest passing.
+Current baseline: **v6.7.1 Auto Arc Continuation**, with **full pytest passing**, frontend typecheck/lint/build/vitest passing.
 
-Runtime version source: `novel_factory/version.py` (`__version__ = "6.7.0"`).
+Runtime version source: `novel_factory/version.py` (`__version__ = "6.7.1"`).
 
 ## Architecture
 
