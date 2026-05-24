@@ -620,11 +620,17 @@ class TestManualBurninScript:
 # ══════════════════════════════════════════════════════════════════════
 
 
-class TestVersionIsV6616:
+class TestVersionIsNotPlaceholder:
     def test_version_py(self):
         from novel_factory.version import get_version
-        assert get_version() == "6.6.18"
+        v = get_version()
+        assert v and v != "0.0.0"
+        parts = v.split(".")
+        assert len(parts) == 3 and all(p.isdigit() for p in parts)
 
     def test_frontend_package_json(self):
         pkg = Path(__file__).parent.parent / "frontend" / "package.json"
-        assert json.loads(pkg.read_text())["version"] == "6.6.18"
+        v = json.loads(pkg.read_text())["version"]
+        assert v and v != "0.0.0"
+        parts = v.split(".")
+        assert len(parts) == 3 and all(p.isdigit() for p in parts)

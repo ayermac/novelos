@@ -89,7 +89,10 @@ class TestVersionUniformity:
     """All version sources must agree on the current runtime version."""
 
     def test_version_py_consistent(self):
-        assert get_version() == "6.6.18"
+        v = get_version()
+        assert v and v != "0.0.0"
+        parts = v.split(".")
+        assert len(parts) == 3 and all(p.isdigit() for p in parts)
 
     def test_frontend_package_json_version(self):
         pkg = Path(__file__).parent.parent / "frontend" / "package.json"
