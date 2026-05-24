@@ -1332,7 +1332,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
               {/* Secondary actions */}
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-                {!autoRunning && disconnected && hasRunningWorkflow && (
+                {!autoRunning && disconnected && hasRunningWorkflow && !isPrimaryNavigationAction && (
                   <Link
                     to={`?module=chapters&chapter=${targetCh}&view=workflow`}
                     className="btn btn-secondary"
