@@ -179,6 +179,8 @@ interface Props {
   chapterNumber?: number
 }
 
+const MAX_AUTO_RECONNECT_ATTEMPTS = 3
+
 /* ------------------------------------------------------------------ */
 /*  i18n helpers                                                       */
 /* ------------------------------------------------------------------ */
@@ -413,6 +415,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   /* Resilience state */
   const [disconnected, setDisconnected] = useState(false)
   const [recovering, setRecovering] = useState(false)
+  const reconnectTimerRef = useRef<number | null>(null)
+  const reconnectAttemptsRef = useRef(0)
+  const manualStreamStopRef = useRef(false)
 
   /* Reset auto-run state when project changes */
   useEffect(() => {
@@ -430,6 +435,12 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setHealthSummary(null)
     setShowHistory(false)
     setInlineMessage(null)
+    reconnectAttemptsRef.current = 0
+    manualStreamStopRef.current = false
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
       eventSourceRef.current = null
@@ -439,6 +450,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   /* Cleanup EventSource on unmount */
   useEffect(() => {
     return () => {
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
       if (eventSourceRef.current) {
         eventSourceRef.current.close()
         eventSourceRef.current = null
@@ -736,6 +751,29 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   /*  Auto production runner (SSE stream) with session                */
   /* ---------------------------------------------------------------- */
 
+  const scheduleAutoReconnect = (sessionId: string, dryRun: boolean, attempt: number) => {
+    if (manualStreamStopRef.current) return
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current)
+    }
+    if (attempt > MAX_AUTO_RECONNECT_ATTEMPTS) {
+      setDisconnected(true)
+      setStreamStatus('stopped')
+      setStreamError({ code: 'NETWORK_ERROR', message: '实时连接暂时不可用，已切换后台刷新' })
+      setAutoRunning(false)
+      setRecovering(false)
+      return
+    }
+    reconnectAttemptsRef.current = attempt
+    setRecovering(true)
+    setStreamStatus('running')
+    setStreamError(null)
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null
+      handleResumeSession(sessionId, dryRun, attempt)
+    }, Math.min(1000 * attempt, 3000))
+  }
+
   const handleRunAutoStream = async (dryRun: boolean = false) => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
@@ -753,6 +791,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setAutoResult(null)
     setAutoError(null)
     setAutoRunning(true)
+    setDisconnected(false)
+    setRecovering(false)
+    reconnectAttemptsRef.current = 0
+    manualStreamStopRef.current = false
 
     try {
       const startRes = await post<{
@@ -900,12 +942,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
       es.onerror = () => {
         if (eventSourceRef.current === es) {
-          setDisconnected(true)
-          setStreamStatus('stopped')
-          setStreamError({ code: 'NETWORK_ERROR', message: '实时进度连接断开，可重新接入' })
-          setAutoRunning(false)
           es.close()
           eventSourceRef.current = null
+          scheduleAutoReconnect(session_id, dryRun, reconnectAttemptsRef.current + 1)
         }
       }
     } catch (err) {
@@ -919,6 +958,11 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   }
 
   const handleStopListening = () => {
+    manualStreamStopRef.current = true
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
       eventSourceRef.current = null
@@ -992,6 +1036,11 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
   const handleCancelSession = async () => {
     if (!activeSessionId) return
+    manualStreamStopRef.current = true
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
     try {
       const res = await post<{ cancelled: boolean }>(
         `/projects/${project.project_id}/production/run-auto/sessions/${activeSessionId}/cancel`,
@@ -1027,8 +1076,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     }
   }
 
-  const handleResumeSession = async () => {
-    if (!activeSessionId) return
+  const handleResumeSession = async (sessionIdOverride?: string, dryRun: boolean = false, autoAttempt: number = 0) => {
+    const sessionId = sessionIdOverride || activeSessionId
+    if (!sessionId) return
+    manualStreamStopRef.current = false
     setAutoRunning(true)
     setStreamError(null)
     setStreamStatus('running')
@@ -1036,10 +1087,14 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setRecovering(true)
     try {
       const res = await post<{ resumed: boolean; stream_url: string }>(
-        `/projects/${project.project_id}/production/run-auto/sessions/${activeSessionId}/resume`,
+        `/projects/${project.project_id}/production/run-auto/sessions/${sessionId}/resume`,
         {}
       )
       if (!res.ok || !res.data?.resumed) {
+        if (autoAttempt > 0 && autoAttempt < MAX_AUTO_RECONNECT_ATTEMPTS) {
+          scheduleAutoReconnect(sessionId, dryRun, autoAttempt + 1)
+          return
+        }
         setAutoRunning(false)
         setRecovering(false)
         setDisconnected(true)
@@ -1050,6 +1105,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
         })
         return
       }
+      reconnectAttemptsRef.current = 0
       const es = new EventSource(apiUrl(res.data.stream_url.replace(/^\/api/, '')))
       eventSourceRef.current = es
 
@@ -1083,6 +1139,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
         setAutoResult({ status: data.status || 'stopped', steps: data.steps || [], stop_reason: data.stop_reason || '', chapters_touched: data.chapters_touched || [] })
         setAutoRunning(false)
         setRecovering(false)
+        setDisconnected(false)
         loadSessions()
         es.close()
         eventSourceRef.current = null
@@ -1093,6 +1150,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
         setAutoResult({ status: data.status || 'completed', steps: data.steps || [], stop_reason: data.stop_reason || '', chapters_touched: data.chapters_touched || [] })
         setAutoRunning(false)
         setRecovering(false)
+        setDisconnected(false)
         loadSessions()
         es.close()
         eventSourceRef.current = null
@@ -1109,16 +1167,16 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       })
       es.onerror = () => {
         if (eventSourceRef.current === es) {
-          setDisconnected(true)
-          setStreamStatus('stopped')
-          setStreamError({ code: 'NETWORK_ERROR', message: '实时进度连接断开，可重新接入' })
-          setAutoRunning(false)
-          setRecovering(false)
           es.close()
           eventSourceRef.current = null
+          scheduleAutoReconnect(sessionId, dryRun, reconnectAttemptsRef.current + 1)
         }
       }
     } catch {
+      if (autoAttempt > 0 && autoAttempt < MAX_AUTO_RECONNECT_ATTEMPTS) {
+        scheduleAutoReconnect(sessionId, dryRun, autoAttempt + 1)
+        return
+      }
       setAutoRunning(false)
       setRecovering(false)
       setDisconnected(true)
@@ -1354,7 +1412,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 {!autoRunning && disconnected && !hasRunningWorkflow && !isSessionObsolete && (
                   <button
                     className="btn btn-secondary"
-                    onClick={handleResumeSession}
+                    onClick={() => handleResumeSession()}
                     disabled={filling || recovering}
                     style={{ flex: '1 1 150px', minWidth: 0 }}
                   >
@@ -1376,7 +1434,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 {!autoRunning && !disconnected && streamStatus === 'stopped' && autoResult?.stop_reason === 'paused' && (
                   <button
                     className="btn btn-secondary"
-                    onClick={handleResumeSession}
+                    onClick={() => handleResumeSession()}
                     disabled={filling}
                     style={{ flex: '1 1 150px', minWidth: 0 }}
                   >
