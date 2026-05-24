@@ -12,6 +12,27 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.6.21 - LLM JSON Resilience Hotfix
+
+Date: 2026-05-24
+
+Key changes:
+
+- **JSON extraction/repair module**: 新增 `novel_factory/llm/json_resilience.py`，统一处理 markdown fence、前后夹文字、尾逗号、BOM、未加引号标量值等常见 LLM JSON 输出问题。所有 JSON agent 共享此修复层。
+- **3-tier retry 策略**: `invoke_json` 从 2 次重试升级为 3 次。第 1 次正常调用，第 2 次带错误信息重试，第 3 次只修复 JSON（temperature=0，不新增剧情内容）。
+- **Structured output 支持**: 有 schema 的 `call_type=json` 自动传 `response_format={"type":"json_object"}`，兼容不支持该参数的 provider。
+- **错误诊断增强**: JSON 解析失败信息现在包含 `agent_id`、`schema_name`、`attempt N/M`、error location 和 content preview。
+- **日志 level 修复**: `human_review` 节点进入人工审核时不再全部 error；质量门打满和已有阻塞场景使用 warning；`node_started` 不再因节点最终失败而显示为 error level。
+- **Timeline 排序稳定**: 后端 `_build_node_timeline` 和前段 `WorkflowTimeline` 对 null timestamp 稳定排在末尾而非顶部。
+- **前端白屏容错**: `RunDetail.tsx` 中对 `recovery.running_tasks`、`recovery.actions`、`memory_status` 空值添加安全访问；`WorkflowTimeline.tsx` 对 `payload` null 添加 `safePayload` 函数。
+
+Verification:
+- Full test suite: 2768 passed, 1 skipped, 0 failed
+- Frontend typecheck/lint/build/vitest: passed (300 passed)
+- Desktop typecheck/build: passed
+- Release smoke: all checks passed
+- Soak stub: ok, chapter_status=published
+
 ## v6.6.20 - Production Ops & Release Hardening
 
 Date: 2026-05-24

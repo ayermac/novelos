@@ -1969,6 +1969,12 @@ def _build_steps_timeline(
                     "message": f"{step_config['label']}节点已完成。",
                 })
             elif step_status in ("failed", "blocked"):
+                # v6.6.21: Always emit a started log so node_started is not conflated with failure
+                logs.append({
+                    "timestamp": run_data.get("started_at"),
+                    "level": "info",
+                    "message": f"{step_config['label']}节点已开始处理。",
+                })
                 logs.append({
                     "timestamp": run_data.get("completed_at") or run_data.get("started_at"),
                     "level": "error" if step_status == "failed" else "warning",

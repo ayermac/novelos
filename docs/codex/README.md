@@ -39,13 +39,14 @@
 - **当前运行时修复基线**: v6.6.17 Runtime and LLM Settings Updates
 - **当前分段 Agent 载荷基线**: v6.6.18 Segmented Agent Payloads & Genesis Quality Gate Semantic Alignment
 - **当前生产运维基线**: v6.6.20 Production Ops & Release Hardening
-- **状态**: v6.6.20 完成启动元数据诊断、release smoke 脚本、LLM soak 脚本、生产运维手册。v6.6.19 已完成运行时版本对齐。全量 pytest passing, 0 failed。
+- **当前 JSON 韧性基线**: v6.6.21 LLM JSON Resilience Hotfix
+- **状态**: v6.6.21 完成 JSON pase/extract/repair 增强、3-tier retry、response_format 支持、workflow 日志 level 修复、timeline 排序稳定、前端白屏容错。全量 pytest passing, 0 failed。
 - **版本规划索引**: [planning/novel-factory-version-planning-index.md](planning/novel-factory-version-planning-index.md)
 - **v6.6.17 规格**: [specs/novel-factory-v6.6.17-runtime-llm-settings-genesis-reliability-spec.md](specs/novel-factory-v6.6.17-runtime-llm-settings-genesis-reliability-spec.md)
 - **v6.6.17 完成报告**: [reports/novel-factory-v6.6.17-completion-report.md](reports/novel-factory-v6.6.17-completion-report.md)
 - **v6.4 规格**: [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md) — 解决生成章节"AI 味重"问题，聚焦 prompt 增强、deterministic validator 补充和 skill 升级。
 - **v6.5 规格**: [planning/novel-factory-v6.5-interaction-excellence-spec.md](planning/novel-factory-v6.5-interaction-excellence-spec.md) — 解决桌面客户端"后台感"问题，先建立 toast/loading/skeleton 等交互基础设施，再逐页升级工作台体验。
-- **测试基线**: v6.6.19 稳定基线为 backend full suite **2728 passed, 0 failed**；frontend vitest **300 passed**；desktop typecheck/build 通过。
+- **测试基线**: v6.6.21 稳定基线为 backend full suite **2768 passed, 0 failed**；frontend vitest **300 passed**；desktop typecheck/build 通过。
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)

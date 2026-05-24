@@ -17,6 +17,7 @@ class LLMProvider(ABC):
         schema: type | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
+        agent_id: str = "unknown",
     ) -> dict[str, Any]:
         """Invoke the LLM and return structured JSON output.
 
@@ -25,6 +26,7 @@ class LLMProvider(ABC):
             schema: Optional Pydantic model class for structured output validation.
             temperature: Override default temperature.
             max_tokens: Override default max tokens.
+            agent_id: Agent name for diagnostic messages and retry prompts.
 
         Returns:
             Parsed JSON dict.

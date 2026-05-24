@@ -278,7 +278,7 @@ export default function RunDetail() {
   const hasRunError = Boolean(data.error_message)
   const domainResult = normalizeOperationResult(data as unknown as Record<string, unknown>)
   const domainBadge = getStatusBadge(domainResult)
-  const memoryDisplay = data.memory_status
+  const memoryDisplay = data.memory_status?.memory_status
     ? getMemoryStatusDisplay(data.memory_status.memory_status as MemoryStatusCode)
     : null
 
@@ -378,7 +378,7 @@ export default function RunDetail() {
                   </div>
                 </div>
               )}
-              {recovery.running_tasks.length > 0 && (
+              {(recovery.running_tasks || []).length > 0 && (
                 <div style={{ marginBottom: '12px', fontSize: '13px', color: 'var(--text-secondary)' }}>
                   {recovery.running_tasks.map((task) => (
                     <div key={task.id}>
@@ -389,7 +389,7 @@ export default function RunDetail() {
                 </div>
               )}
               <div style={{ fontSize: '14px', color: 'var(--text-secondary)', marginBottom: '12px', whiteSpace: 'pre-wrap' }}>
-                {recovery.actions.reset_to_planned.reason}
+                {recovery.actions?.reset_to_planned?.reason || ''}
               </div>
               {recoveryMessage && (
                 <div className="alert alert-success" style={{ marginBottom: '12px' }}>
@@ -446,16 +446,16 @@ export default function RunDetail() {
                 <button
                   className="btn btn-secondary"
                   onClick={handleMarkStuck}
-                  disabled={!recovery.actions.mark_stuck_blocked.enabled || markingStuck}
+                  disabled={!(recovery.actions?.mark_stuck_blocked?.enabled) || markingStuck}
                 >
-                  {markingStuck ? '标记中...' : recovery.actions.mark_stuck_blocked.label}
+                  {markingStuck ? '标记中...' : recovery.actions?.mark_stuck_blocked?.label || '标记为阻塞'}
                 </button>
                 <button
                   className="btn btn-primary"
                   onClick={handleResetRecovery}
-                  disabled={!recovery.actions.reset_to_planned.enabled || recovering}
+                  disabled={!(recovery.actions?.reset_to_planned?.enabled) || recovering}
                 >
-                  {recovering ? '恢复中...' : recovery.actions.reset_to_planned.label}
+                  {recovering ? '恢复中...' : recovery.actions?.reset_to_planned?.label || '清除阻塞并重置'}
                 </button>
                 <Link to={workflowHref} className="btn btn-secondary">打开章节工作流</Link>
               </div>

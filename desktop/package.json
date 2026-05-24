@@ -1,7 +1,7 @@
 {
   "name": "novelos-desktop",
-  "version": "6.6.20",
-  "description": "Novelos Desktop Client — v6.6.20 Production Ops & Release Hardening",
+  "version": "6.6.21",
+  "description": "Novelos Desktop Client — v6.6.21 LLM JSON Resilience Hotfix",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",

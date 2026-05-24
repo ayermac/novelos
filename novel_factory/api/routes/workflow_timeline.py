@@ -461,8 +461,12 @@ def _build_node_timeline(
     def build_node(base: dict[str, Any]) -> dict[str, Any]:
         node_name = base["node_name"]
         evs = node_events.get(node_name, [])
-        # Sort by created_at
-        evs = sorted(evs, key=lambda e: e.get("created_at") or "")
+        # v6.6.21: Stable sort — null/empty timestamps last, then ascending.
+        # Events without timestamps (skip/resume messages) should not float to the top.
+        evs = sorted(
+            evs,
+            key=lambda e: (e.get("created_at") or "9999-12-31T23:59:59", e.get("id") or 0),
+        )
         started_events = [e for e in evs if e.get("event_type") == "started"]
         completed_events = [e for e in evs if e.get("event_type") == "completed"]
         failed_events = [e for e in evs if e.get("event_type") == "failed"]
