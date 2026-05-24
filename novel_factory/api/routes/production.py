@@ -261,6 +261,25 @@ def _list_stale_running_workflows(repo, project_id: str, timeout_minutes: int) -
     return stale
 
 
+def _ensure_chapter_slot_for_run(repo, project_id: str, chapter_number: int) -> dict | None:
+    """Ensure auto-run targets have the same chapter slot as /run/chapter."""
+    chapter = repo.get_chapter(project_id, chapter_number)
+    if not chapter:
+        repo.add_chapter(
+            project_id=project_id,
+            chapter_number=chapter_number,
+            title=f"第 {chapter_number} 章",
+            status="planned",
+        )
+        chapter = repo.get_chapter(project_id, chapter_number)
+
+    if chapter and chapter.get("status") == "pending":
+        repo.update_chapter_status(project_id, chapter_number, "planned")
+        chapter = repo.get_chapter(project_id, chapter_number)
+
+    return chapter
+
+
 def _get_project_stale_running_workflow(repo, project_id: str, timeout_minutes: int) -> dict | None:
     """Return the oldest stale running workflow for this project, if any."""
     stale = _list_stale_running_workflows(repo, project_id, timeout_minutes)
@@ -2224,6 +2243,8 @@ async def _execute_auto_step(
         if action_key in ("generate_chapter", "continue_next_chapter"):
             chapter_num = target_chapter or active_chapter
             result["target_chapter"] = chapter_num
+
+            _ensure_chapter_slot_for_run(repo, project_id, chapter_num)
 
             # v5.5.15: Unified run guard — same checks as POST /run/chapter
             from ._run_guards import check_chapter_run_guard

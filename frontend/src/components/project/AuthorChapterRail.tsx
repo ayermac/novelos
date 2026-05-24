@@ -288,7 +288,7 @@ export default function AuthorChapterRail({
                   {ch.word_count > 0 && (
                     <span className="author-rail-wordcount">{ch.word_count.toLocaleString()} 字</span>
                   )}
-                  <span className="author-rail-status">{statusLabel}</span>
+                  <span className={`author-rail-status status-${ch.status}`}>{statusLabel}</span>
                 </span>
               </span>
               <span className="author-rail-actions">

@@ -286,6 +286,75 @@ class TestRunAutoGenerateChapter:
             gen_step = next(s for s in data["steps"] if s["action"] == "generate_chapter")
             assert gen_step["result"] in ("success", "failed")
 
+    @pytest.mark.asyncio
+    async def test_continue_next_chapter_creates_missing_chapter_slot(self, client, project_with_context, monkeypatch):
+        """continue_next_chapter should not fail when only the next instruction exists."""
+        from novel_factory.api.routes.production import _execute_auto_step
+        from novel_factory.config.settings import load_settings
+        from novel_factory.db.repository import Repository
+        import novel_factory.workflow.runner as workflow_runner
+
+        db_path = client.app.state.db_path
+        repo = Repository(db_path)
+
+        repo.update_project(project_with_context, current_chapter=15)
+        repo.add_chapter(project_with_context, 15, "第 15 章", status="published")
+        repo.create_outline(
+            project_id=project_with_context,
+            level="chapter",
+            sequence=16,
+            title="第16章：继续追索",
+            content="主角继续追索新的线索。",
+            chapters_range="16",
+        )
+        repo.create_instruction(
+            project_id=project_with_context,
+            chapter_number=15,
+            objective="承接上一章。",
+            key_events="保持当前章节资料完整",
+        )
+        repo.create_instruction(
+            project_id=project_with_context,
+            chapter_number=16,
+            objective="继续生成下一章。",
+            key_events="推进下一章主线",
+        )
+
+        assert repo.get_chapter(project_with_context, 16) is None
+
+        def fake_run_with_graph(*, project_id, chapter_number, settings, repo, llm_mode):
+            assert chapter_number == 16
+            assert repo.get_chapter(project_id, chapter_number) is not None
+            return {
+                "chapter_status": "awaiting_publish",
+                "requires_human": True,
+                "awaiting_publish": True,
+            }
+
+        monkeypatch.setattr(workflow_runner, "run_with_graph", fake_run_with_graph)
+        settings = load_settings()
+        settings.db_path = db_path
+
+        result = await _execute_auto_step(
+            request=None,
+            repo=repo,
+            settings=settings,
+            llm_mode="stub",
+            project_id=project_with_context,
+            next_action={
+                "key": "continue_next_chapter",
+                "label": "继续生成第 16 章",
+                "target_chapter": 16,
+            },
+            ch_start=15,
+            ch_end=24,
+            active_chapter=15,
+        )
+
+        assert result["result"] == "success"
+        assert result["target_chapter"] == 16
+        assert repo.get_chapter(project_with_context, 16)["status"] == "planned"
+
 
 class TestRunAutoStopOnReview:
     """Test stop on review/publish actions."""

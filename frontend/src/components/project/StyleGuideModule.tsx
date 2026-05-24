@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { get, post } from '../../lib/api'
 import { Palette, Plus, Pencil, ExternalLink } from 'lucide-react'
 
@@ -19,6 +20,12 @@ interface StyleConsoleData {
 
 interface Props {
   projectId: string
+}
+
+function getStyleStatusLabel(status: string): string {
+  if (status === 'active') return '已启用'
+  if (status === 'unknown') return '待确认'
+  return status || '待确认'
 }
 
 export default function StyleGuideModule({ projectId }: Props) {
@@ -60,12 +67,12 @@ export default function StyleGuideModule({ projectId }: Props) {
     <div className="project-module">
       <div className="module-header">
         <h3><Palette size={18} /> 风格指南</h3>
-        <a
-          href="/style"
+        <Link
+          to="/style"
           style={{ fontSize: 13, color: 'var(--primary)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
         >
           全局风格管理 <ExternalLink size={14} />
-        </a>
+        </Link>
       </div>
 
       {error && <div className="alert alert-error" style={{ marginBottom: 12 }}>{error}</div>}
@@ -76,12 +83,12 @@ export default function StyleGuideModule({ projectId }: Props) {
             <span className="data-card-category">风格指南</span>
             <span className="data-card-badge">v{bible.version}</span>
           </div>
-          <div className="data-card-title">状态: {bible.status === 'active' ? '已启用' : bible.status}</div>
+          <div className="data-card-title">状态: {getStyleStatusLabel(bible.status)}</div>
           <div className="data-card-content">更新于: {bible.updated_at || '未知'}</div>
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-            <a href="/style" className="btn btn-secondary btn-sm" style={{ textDecoration: 'none' }}>
+            <Link to="/style" className="btn btn-secondary btn-sm" style={{ textDecoration: 'none' }}>
               <Pencil size={14} /> 编辑
-            </a>
+            </Link>
           </div>
         </div>
       ) : (
