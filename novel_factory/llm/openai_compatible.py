@@ -311,6 +311,27 @@ class OpenAICompatibleProvider(LLMProvider):
 
         raise LLMError("未知错误")
 
+    # Patterns that indicate a provider does not support response_format
+    _RESPONSE_FORMAT_UNSUPPORTED_PATTERNS: tuple[str, ...] = (
+        "unsupported parameter",
+        "unknown parameter",
+        "extra fields not permitted",
+        "response_format not supported",
+        "response_format is not supported",
+        "unrecognized arguments",
+        "got an unexpected keyword argument",
+        "unexpected keyword argument",
+    )
+
+    def _is_response_format_unsupported_error(self, error: Exception) -> bool:
+        """Check if an error indicates response_format is not supported by the provider.
+
+        Only matches explicit parameter-incompatibility errors — never matches
+        auth, balance, timeout, rate-limit, or network errors.
+        """
+        error_str = str(error).lower()
+        return any(pat in error_str for pat in self._RESPONSE_FORMAT_UNSUPPORTED_PATTERNS)
+
     def invoke_json(
         self,
         messages: list[dict[str, str]],
@@ -326,6 +347,11 @@ class OpenAICompatibleProvider(LLMProvider):
         - Attempt 1: Normal JSON output with optional response_format hint.
         - Attempt 2: Append error details and ask model to re-emit full valid JSON.
         - Attempt 3: Provide raw previous output + schema, ask to repair JSON only.
+
+        v6.6.21-review: response_format fallback — if a provider rejects
+        response_format as an unsupported parameter, the error is caught and
+        the call is retried without response_format. This fallback does NOT
+        consume a JSON parse retry slot.
 
         Args:
             messages: Chat messages.
@@ -349,13 +375,7 @@ class OpenAICompatibleProvider(LLMProvider):
 
         # Attempt 1: Use structured output hint if supported
         if schema:
-            # Prefer response_format when available (OpenAI-compatible)
-            try:
-                # Only pass response_format if the client supports it
-                # ChatOpenAI accepts it via model_kwargs or direct kwarg in newer versions
-                kwargs["response_format"] = {"type": "json_object"}
-            except Exception:
-                pass
+            kwargs["response_format"] = {"type": "json_object"}
             lc_messages.append(
                 HumanMessage(
                     content="请严格按照 JSON 格式输出，不要包含任何其他文字。"
@@ -428,9 +448,41 @@ class OpenAICompatibleProvider(LLMProvider):
                     ) from e
             except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
                 raise
-            except LLMError:
+            except LLMError as e:
+                # v6.6.21-review: response_format fallback
+                # If provider rejects response_format as an unsupported parameter,
+                # remove it and retry the SAME attempt (not consuming a JSON parse slot).
+                if (
+                    "response_format" in kwargs
+                    and self._is_response_format_unsupported_error(e)
+                ):
+                    logger.warning(
+                        "Provider does not support response_format, falling back to plain JSON call agent=%s: %s",
+                        agent_id, e,
+                    )
+                    kwargs.pop("response_format")
+                    if self.last_call_trace is not None:
+                        self.last_call_trace.setdefault("request", {})
+                        self.last_call_trace["request"]["response_format_fallback"] = True
+                    # Retry same attempt without response_format — do NOT increment attempt
+                    continue
                 raise
             except Exception as e:
+                # v6.6.21-review: Also check raw exceptions for response_format incompatibility
+                # before routing through _handle_api_error which would wrap them as generic LLMError
+                if (
+                    "response_format" in kwargs
+                    and self._is_response_format_unsupported_error(e)
+                ):
+                    logger.warning(
+                        "Provider does not support response_format (raw exception), falling back agent=%s: %s",
+                        agent_id, e,
+                    )
+                    kwargs.pop("response_format")
+                    if self.last_call_trace is not None:
+                        self.last_call_trace.setdefault("request", {})
+                        self.last_call_trace["request"]["response_format_fallback"] = True
+                    continue
                 self._handle_api_error(e)
 
         raise OutputValidationError(

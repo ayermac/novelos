@@ -465,7 +465,7 @@ class EditorAgent(BaseAgent):
 
         try:
             invoke_kwargs = {"max_tokens": 700} if use_compact_review else {}
-            raw = self.llm.invoke_json(
+            raw = self._invoke_json(
                 messages,
                 schema=EditorOutput,
                 **invoke_kwargs,
@@ -1309,7 +1309,7 @@ class EditorAgent(BaseAgent):
         )
 
         try:
-            raw = self.llm.invoke_json(
+            raw = self._invoke_json(
                 [
                     {"role": "system", "content": system_msg},
                     {"role": "user", "content": user_msg},

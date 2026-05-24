@@ -1244,14 +1244,23 @@ def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
 
     _finalize_run(state, repo, "blocked", error=error)
     # v6.6.21: human_review severity mapping
-    # - quality gate maxed / pre-existing block -> warning (expected, needs human)
-    # - unexpected system error -> error
-    hr_status = "failed" if error and not is_quality_gate_maxed and not is_preexisting_block else "warning"
-    _log_node_event(state, repo, "human_review", "completed", status=hr_status, error_message=error)
-    logger.warning(
-        "Human intervention required: project=%s chapter=%s",
-        project_id, chapter_number,
-    )
+    # - quality gate maxed / pre-existing block -> expected, needs human intervention
+    # - unexpected system error -> genuinely failed
+    is_unexpected_error = error and not is_quality_gate_maxed and not is_preexisting_block
+    if is_unexpected_error:
+        # Unexpected system error: genuinely failed
+        _log_node_event(state, repo, "human_review", "failed", status="failed", error_message=error)
+        logger.error(
+            "Human review triggered by unexpected error: project=%s chapter=%s error=%s",
+            project_id, chapter_number, error,
+        )
+    else:
+        # Expected human intervention (quality gate maxed / pre-existing block)
+        _log_node_event(state, repo, "human_review", "completed", status="warning", error_message=error)
+        logger.warning(
+            "Human intervention required: project=%s chapter=%s",
+            project_id, chapter_number,
+        )
     return {
         "requires_human": True,
         "chapter_status": ChapterStatus.BLOCKING.value,

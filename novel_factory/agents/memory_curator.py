@@ -502,7 +502,7 @@ class MemoryCuratorAgent(BaseAgent):
             ]
 
             try:
-                raw = self.llm.invoke_json(messages)
+                raw = self._invoke_json(messages)
             except (LLMConnectionError, LLMTimeoutError) as e:
                 if exec_events is not None:
                     event_type = EVENT_SEGMENT_FAILED
@@ -653,7 +653,7 @@ class MemoryCuratorAgent(BaseAgent):
                 },
             ]
             try:
-                raw = self.llm.invoke_json(messages)
+                raw = self._invoke_json(messages)
                 exec_events.append({
                     "event_type": "llm_extraction_success",
                     "message": "记忆提取主模型返回可解析结果",
@@ -759,7 +759,13 @@ class MemoryCuratorAgent(BaseAgent):
                     getattr(getattr(self.fallback_llm, "config", None), "model", "unknown"),
                 )
                 try:
-                    raw = self.fallback_llm.invoke_json(messages)
+                    try:
+                        raw = self.fallback_llm.invoke_json(messages, agent_id=self.agent_id)
+                    except TypeError as te:
+                        if "agent_id" in str(te):
+                            raw = self.fallback_llm.invoke_json(messages)
+                        else:
+                            raise
                     patches, extract_warnings = _robust_extract_patches(raw)
                     chapter = self.repo.get_chapter(project_id, chapter_number)
                     chapter_content = str((chapter or {}).get("content") or "")
@@ -809,7 +815,7 @@ class MemoryCuratorAgent(BaseAgent):
                     },
                 ]
                 try:
-                    raw = self.llm.invoke_json(messages)
+                    raw = self._invoke_json(messages)
                     patches, extract_warnings = _robust_extract_patches(raw)
                     return {"output": patches, "extract_warnings": extract_warnings}
                 except Exception:

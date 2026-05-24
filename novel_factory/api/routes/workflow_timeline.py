@@ -478,7 +478,16 @@ def _build_node_timeline(
         if last_ev and last_ev.get("event_type") == "failed":
             status = "failed"
         elif last_ev and last_ev.get("event_type") == "completed":
-            status = "warning" if last_ev.get("status") == "warning" else "completed"
+            ev_status = last_ev.get("status", "")
+            # v6.6.21-review: completed + failed/error status must show as failed,
+            # not success. This also handles legacy events where event_type was
+            # "completed" but the node actually failed.
+            if ev_status in ("failed", "error"):
+                status = "failed"
+            elif ev_status == "warning":
+                status = "warning"
+            else:
+                status = "completed"
         elif last_ev and last_ev.get("event_type") == "started":
             status = "running"
         elif _is_before_current(node_name):
