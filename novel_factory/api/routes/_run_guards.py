@@ -130,6 +130,12 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
     )
     has_world = len(repo.list_world_settings(project_id)) > 0
     has_chars = len(repo.list_characters(project_id, include_inactive=True)) > 0
+
+    if has_approved_genesis and has_world and has_chars:
+        from ...workflow.continuation_plan import ensure_continuation_plan_for_chapter
+
+        ensure_continuation_plan_for_chapter(repo, project_id, chapter_number)
+
     has_outlines = len(repo.list_outlines(project_id)) > 0
     instruction = repo.get_instruction_by_chapter(project_id, chapter_number)
     has_instruction = instruction is not None and bool(instruction.get("objective"))

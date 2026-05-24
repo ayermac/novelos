@@ -12,6 +12,38 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.7.1 - Auto Arc Continuation
+
+Date: 2026-05-24
+
+Key changes:
+
+- **Auto arc continuation**: Chapter run entrypoints now create deterministic continuation planning when the requested chapter is outside the genesis-seeded outline range. A project with a `1-10` outline can continue into chapter 13 without manually creating a new outline first.
+- **Run guard alignment**: Shared continuation planning runs before `_run_guards` checks for missing chapter instructions, so `/api/run/chapter`, background starts, desktop runs, and workflow runner execution use the same recovery behavior.
+- **Coverage**: Added regression tests for runner-level readiness and API guard behavior when chapter 13 only has prior `1-10` outline coverage.
+- **Version alignment**: Runtime, frontend, desktop, and lockfiles updated to `6.7.1`.
+
+Verification:
+- Auto arc continuation tests: passing
+- Production readiness guard regression tests: passing
+
+## v6.7.0 - Production Stability Gate
+
+Date: 2026-05-24
+
+Key changes:
+
+- **Production stability roadmap**: Added an umbrella plan for v6.6.22-v6.7.0 covering real-LLM soak acceptance, recovery drill diagnostics, long-form memory governance, explainable quality acceptance, and release-candidate gates.
+- **Quality acceptance ops**: Added deterministic chapter quality checks for terminal status, word count, scene beat completeness, per-beat content density, and ending hook observability.
+- **Memory governance ops**: Added project-level audit for duplicate characters/story facts, memory item pressure, and combined context pressure.
+- **Recovery drill ops**: Added chapter workflow recovery diagnostics for failed, blocked, stale-running, terminal, and healthy-running states.
+- **Production stability suite**: Added `scripts/production_stability_suite.py` to aggregate release smoke, soak, quality, recovery, and memory gates with JSON output. Real LLM soak remains explicit opt-in via `--real-soak`.
+- **Version alignment**: Runtime, frontend, desktop, and lockfiles updated to `6.7.0`.
+
+Verification:
+- Targeted production stability ops tests: passing
+- Full verification: see `docs/codex/reports/novel-factory-v6.7.0-completion-report.md`
+
 ## v6.6.21 - LLM JSON Resilience Hotfix
 
 Date: 2026-05-24

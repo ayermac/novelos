@@ -40,13 +40,15 @@
 - **当前分段 Agent 载荷基线**: v6.6.18 Segmented Agent Payloads & Genesis Quality Gate Semantic Alignment
 - **当前生产运维基线**: v6.6.20 Production Ops & Release Hardening
 - **当前 JSON 韧性基线**: v6.6.21 LLM JSON Resilience Hotfix
-- **状态**: v6.6.21 完成 JSON parse/extract/repair 增强、3-tier retry、response_format 支持、workflow 日志 level 修复、timeline 排序稳定、前端白屏容错。全量 pytest passing, 0 failed。
+- **当前生产稳定门禁基线**: v6.7.0 Production Stability Gate
+- **当前续规划基线**: v6.7.1 Auto Arc Continuation
+- **状态**: v6.7.1 修复创世仅覆盖 1-10 章时，生成第 11+ 章会因缺少当前章大纲/指令而卡在 context_readiness 的问题；生成入口会先自动创建下一段 arc 规划与章节指令，再继续 workflow。
 - **版本规划索引**: [planning/novel-factory-version-planning-index.md](planning/novel-factory-version-planning-index.md)
 - **v6.6.17 规格**: [specs/novel-factory-v6.6.17-runtime-llm-settings-genesis-reliability-spec.md](specs/novel-factory-v6.6.17-runtime-llm-settings-genesis-reliability-spec.md)
 - **v6.6.17 完成报告**: [reports/novel-factory-v6.6.17-completion-report.md](reports/novel-factory-v6.6.17-completion-report.md)
 - **v6.4 规格**: [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md) — 解决生成章节"AI 味重"问题，聚焦 prompt 增强、deterministic validator 补充和 skill 升级。
 - **v6.5 规格**: [planning/novel-factory-v6.5-interaction-excellence-spec.md](planning/novel-factory-v6.5-interaction-excellence-spec.md) — 解决桌面客户端"后台感"问题，先建立 toast/loading/skeleton 等交互基础设施，再逐页升级工作台体验。
-- **测试基线**: v6.6.21 稳定基线为 backend full suite **2788 passed, 0 failed**；frontend vitest **310 passed**；desktop typecheck/build 通过。
+- **测试基线**: v6.7.1 续规划修复新增 runner/API guard 回归测试；v6.7.0 稳定基线以最终完成报告为准。
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)

@@ -20,6 +20,7 @@ from ..models.state import FactoryState
 from ..quality.deadloop_detector import DeadloopDetector
 from .graph import compile_graph
 from .conditions import hydrate_revision_state
+from .continuation_plan import ensure_continuation_plan_for_chapter
 from .checkpoint import (
     delete_checkpoint_thread,
     derive_checkpoint_db_path,
@@ -582,6 +583,10 @@ def run_with_graph(
     else:
         _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
 
+    # v6.7.1: Extend arc planning before the readiness gate when generation
+    # reaches a chapter outside the genesis-seeded outline range.
+    ensure_continuation_plan_for_chapter(repo, project_id, chapter_number)
+
     # v5.3.0: Context Readiness Gate
     readiness_error = _check_context_readiness_for_run(
         repo, project_id, chapter_number, current_status
@@ -779,6 +784,9 @@ def run_with_graph_stream(
         return
 
     _clear_stale_checkpoint_for_new_run(repo, project_id, chapter_number)
+
+    # v6.7.1: Keep streaming and non-streaming run entrypoints aligned.
+    ensure_continuation_plan_for_chapter(repo, project_id, chapter_number)
 
     # v5.3.0: Context Readiness Gate must match non-streaming execution.
     readiness_error = _check_context_readiness_for_run(
