@@ -12,6 +12,25 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.6.20 - Production Ops & Release Hardening
+
+Date: 2026-05-24
+
+Key changes:
+
+- **启动时 live version mismatch 检测**: API `/api/health` 新增 `startup` 字段，包含 `started_at`, `python`, `source_root`, `cwd`。便于诊断进程是否跑的是旧源码。
+- **Release smoke 脚本**: 新增 `scripts/release_smoke.py`，一键验证 CLI version、API health version、frontend/desktop package version、desktop build。支持 `--json` 输出。
+- **真实 LLM soak 脚本**: 新增 `scripts/soak_real_llm_long_chapter.py`，验证长章节分段生成稳定性。支持 `--llm-mode stub/real` 和 `--dry-run`。
+- **生产运维手册**: 新增 `docs/codex/release/production-ops-runbook.md`，覆盖备份/恢复/故障诊断/发布检查清单。
+- **版本统一**: 全部升级到 `6.6.20`。
+
+Verification:
+- Full test suite: passing
+- Frontend typecheck/lint/build/vitest: passed (300 passed)
+- Desktop typecheck/build: passed
+- Release smoke: passed
+- Soak stub/dry-run: passed
+
 ## v6.6.19 - Stability Baseline & Runtime Alignment
 
 Date: 2026-05-24

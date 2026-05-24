@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__: str = "6.6.19"
+__version__: str = "6.6.20"
 
 
 def get_version() -> str:
