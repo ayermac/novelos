@@ -303,7 +303,8 @@ describe('ProjectOverviewModule v6.5.2', () => {
       expect(screen.getByText('工作流运行中')).toBeInTheDocument()
     })
 
-    expect(screen.getAllByText('监听连接断开，服务器仍在执行：执笔').length).toBeGreaterThan(0)
+    expect(screen.getAllByText('后台执行中：执笔').length).toBeGreaterThan(0)
+    expect(screen.queryByText(/监听连接断开/)).not.toBeInTheDocument()
     expect(screen.queryByText('已暂停')).not.toBeInTheDocument()
     expect(screen.queryByText(/查看第 16 章实时进度/)).not.toBeInTheDocument()
     expect(screen.getAllByRole('button', { name: /查看第 16 章运行进度/ })).toHaveLength(1)

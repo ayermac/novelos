@@ -1176,7 +1176,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     ? '工作流运行中'
     : tSessionStopLabel(streamStatus === 'running' ? 'running' : autoResult?.status || 'idle')
   const autoRunDetailLabel = disconnectedRunningWorkflow
-    ? `监听连接断开，服务器仍在执行${runningWorkflowNode ? `：${tWorkflowNodeLabel(runningWorkflowNode)}` : ''}`
+    ? `后台执行中${runningWorkflowNode ? `：${tWorkflowNodeLabel(runningWorkflowNode)}` : ''}`
     : (streamError ? streamError.message : tSessionStopLabel(autoResult?.status || 'stopped', autoResult?.stop_reason))
   const effectiveStreamRunning = streamStatus === 'running' || disconnectedRunningWorkflow
   const isPrimaryNavigationAction = nextActionKey === 'view_running_workflow'
@@ -1191,6 +1191,15 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const isBlockedState = autoResult?.stop_reason && ['blocked', 'repeated_failure', 'consecutive_no_progress', 'step_failed'].includes(autoResult.stop_reason)
   const hasCriticalError = streamError?.message?.includes('CRITICAL') || streamError?.message?.includes('死刑红线')
   const showPostmortem = isBlockedState || hasCriticalError
+
+  useEffect(() => {
+    if (!disconnectedRunningWorkflow) return
+    const timer = window.setInterval(() => {
+      load()
+      checkActiveSession()
+    }, 8000)
+    return () => window.clearInterval(timer)
+  }, [disconnectedRunningWorkflow, load, checkActiveSession])
 
   /* ---------------------------------------------------------------- */
   /*  Render                                                          */
@@ -1581,7 +1590,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   {(autoResult?.stop_reason || streamError) && (
                     <div>
                       <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>
-                        {disconnectedRunningWorkflow ? '监听状态' : '停止原因'}
+                        {disconnectedRunningWorkflow ? '后台状态' : '停止原因'}
                       </div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--warning)' }}>
                         {autoRunDetailLabel}
@@ -1617,8 +1626,8 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                       )}
                       {autoResult?.status === 'failed' && <XCircle size={14} color="var(--danger)" />}
                       {autoResult?.status === 'dry_run' && <Sparkles size={14} color="var(--primary)" />}
-                      {autoResult?.status === 'stopped' && <AlertCircle size={14} color="var(--warning)" />}
-                      {streamStatus === 'error' && <XCircle size={14} color="var(--danger)" />}
+                      {autoResult?.status === 'stopped' && !disconnectedRunningWorkflow && <AlertCircle size={14} color="var(--warning)" />}
+                      {streamStatus === 'error' && !disconnectedRunningWorkflow && <XCircle size={14} color="var(--danger)" />}
                       <span style={{ fontSize: 13, fontWeight: 500 }}>
                         {effectiveStreamRunning ? '工作流仍在运行'
                           : streamStatus === 'error' ? '出错了'
