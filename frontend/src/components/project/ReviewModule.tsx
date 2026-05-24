@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import { get, post } from '../../lib/api'
 import { normalizeOperationResult, isBusinessSuccess } from '../../lib/statusSemantics'
 import { CheckCircle2, AlertTriangle, Clock } from 'lucide-react'
@@ -142,13 +143,13 @@ export default function ReviewModule({ projectId }: Props) {
                 章节生成过程中遇到问题，需要人工处理。重置会解除阻塞、清空本轮返修计数，并允许重新执行工作流。
               </div>
               <div style={{ marginTop: 8, display: 'flex', gap: 8 }}>
-                <a
-                  href={`/projects/${projectId}?module=chapters&chapter=${ch.chapter_number}`}
+                <Link
+                  to={`/projects/${projectId}?module=chapters&chapter=${ch.chapter_number}&view=workflow`}
                   className="btn btn-secondary btn-sm"
                   style={{ textDecoration: 'none', fontSize: 12 }}
                 >
                   查看详情
-                </a>
+                </Link>
                 <button
                   className="btn btn-secondary btn-sm"
                   style={{ fontSize: 12 }}
