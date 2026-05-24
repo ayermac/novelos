@@ -103,18 +103,50 @@ def _seed_soak_project(db_path: str) -> None:
         description="神秘女子，知晓主角师父下落",
     )
 
-    # Insert chapter 1 with long outline
+    # Insert approved genesis run (required by run guards)
+    repo.create_genesis_run(
+        project_id=SOAK_PROJECT_ID,
+        input_json="{}",
+        status="approved",
+    )
+
+    # Insert outlines (required by run guards)
+    for i, beat in enumerate(LONG_SCENE_BEATS):
+        repo.create_outline(
+            project_id=SOAK_PROJECT_ID,
+            level="chapter",
+            sequence=i + 1,
+            title=f"场景 {i + 1}",
+            content=beat,
+            chapters_range="1",
+        )
+
+    # Insert scene beats for chapter 1
+    repo.save_scene_beats(
+        project_id=SOAK_PROJECT_ID,
+        chapter_number=1,
+        beats=[
+            {
+                "sequence": i + 1,
+                "scene_goal": beat,
+                "location": "",
+                "characters": [],
+                "conflict": "",
+                "turn": "",
+                "revealed_info": "",
+                "plot_refs": [],
+                "hook": "",
+            }
+            for i, beat in enumerate(LONG_SCENE_BEATS)
+        ],
+    )
+
+    # Insert chapter 1
     repo.add_chapter(
         project_id=SOAK_PROJECT_ID,
         chapter_number=1,
         title="第一章 天赋测试",
         status="planned",
-    )
-    repo.save_chapter_content(
-        project_id=SOAK_PROJECT_ID,
-        chapter_number=1,
-        content="\n".join(f"{i+1}. {beat}" for i, beat in enumerate(LONG_SCENE_BEATS)),
-        title="第一章 天赋测试",
     )
 
     # Set chapter instructions to trigger segmentation
@@ -133,15 +165,21 @@ def _seed_soak_project(db_path: str) -> None:
 def _check_api_key(config_path: str | None) -> bool:
     """Check if real LLM mode has a configured API key."""
     for key in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"):
-        if os.environ.get(key):
+        val = os.environ.get(key, "").strip()
+        if val and not val.lower().startswith("your_"):
             return True
-    # Try reading from .env
+    # Try reading from .env with proper parsing (skip comments, check non-empty values)
     env_path = REPO_ROOT / ".env"
     if env_path.exists():
-        content = env_path.read_text()
-        for key in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"):
-            if key in content:
-                return True
+        for line in env_path.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            for key in ("OPENAI_API_KEY", "OPENROUTER_API_KEY", "DEEPSEEK_API_KEY"):
+                if line.startswith(f"{key}="):
+                    val = line[len(key) + 1 :].strip().strip('"').strip("'")
+                    if val and not val.lower().startswith("your_"):
+                        return True
     return False
 
 
@@ -168,43 +206,71 @@ def _run_chapter(
             "message": "Dry run — project seeded, generation skipped",
         }
 
-    # Trigger chapter generation
+    # Trigger chapter generation via the canonical run endpoint
     start_time = time.time()
     resp = client.post(
-        f"/api/projects/{SOAK_PROJECT_ID}/chapters/1/generate",
+        "/api/run/chapter",
+        json={
+            "project_id": SOAK_PROJECT_ID,
+            "chapter": 1,
+            "llm_mode": llm_mode,
+        },
     )
     elapsed = time.time() - start_time
 
     body = resp.json()
+    data = body.get("data", {}) if body.get("ok") else {}
+    run_id = data.get("run_id", "")
 
-    # Fetch run events for segment analysis
-    events_resp = client.get(
-        f"/api/projects/{SOAK_PROJECT_ID}/chapters/1/events",
+    # Query execution events directly from the repo (no API endpoint for chapter events)
+    repo = Repository(db_path)
+    events = repo.get_workflow_execution_events_for_chapter(
+        project_id=SOAK_PROJECT_ID,
+        chapter_number=1,
+        run_id=run_id if run_id else None,
     )
-    events = events_resp.json().get("data", {}).get("events", [])
 
     segment_started = [e for e in events if e.get("event_type") == EVENT_SEGMENT_STARTED]
     segment_completed = [e for e in events if e.get("event_type") == EVENT_SEGMENT_COMPLETED]
     segment_failed = [e for e in events if e.get("event_type") == EVENT_SEGMENT_FAILED]
 
     # Fetch final chapter status
-    chapter_resp = client.get(
-        f"/api/projects/{SOAK_PROJECT_ID}/chapters/1",
-    )
-    chapter_data = chapter_resp.json().get("data", {})
+    chapter = repo.get_chapter(SOAK_PROJECT_ID, 1)
+    chapter_data = chapter or {}
+    chapter_status = chapter_data.get("status", "unknown")
+    word_count = 0
+    try:
+        from novel_factory.validators.chapter_checker import count_words
+        content = chapter_data.get("content", "")
+        if content:
+            word_count = count_words(content)
+    except Exception:
+        pass
+
+    # Strong success criteria
+    errors = []
+    if segment_failed:
+        errors.append(f"segment_failed={len(segment_failed)}")
+    terminal_ok = chapter_status in {"reviewed", "awaiting_publish", "published"}
+    if not terminal_ok and chapter_status not in {"drafted", "polished"}:
+        # Stub mode may stop at drafted/polished depending on config
+        if llm_mode == "real" and chapter_status not in {"reviewed", "awaiting_publish", "published"}:
+            errors.append(f"chapter_status={chapter_status} (expected reviewed/awaiting_publish/published)")
+    if llm_mode == "real" and word_count < 15000:
+        errors.append(f"word_count={word_count} (expected >= 15000)")
 
     return {
-        "status": "completed" if body.get("ok") else "failed",
+        "status": "completed" if (body.get("ok") and not errors) else "failed",
         "http_status": resp.status_code,
         "elapsed_seconds": round(elapsed, 2),
-        "chapter_status": chapter_data.get("status", "unknown"),
-        "word_count": chapter_data.get("word_count", 0),
+        "chapter_status": chapter_status,
+        "word_count": word_count,
         "segment_events": {
             "started": len(segment_started),
             "completed": len(segment_completed),
             "failed": len(segment_failed),
         },
-        "last_error": body.get("error"),
+        "last_error": body.get("error") or ("; ".join(errors) if errors else None),
     }
 
 

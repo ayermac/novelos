@@ -210,12 +210,115 @@ def check_desktop_smoke() -> dict:
         }
 
 
+def check_desktop_sidecar() -> dict:
+    """Start desktop sidecar, verify health version matches desktop package version."""
+    import os
+    import tempfile
+    import time
+    import signal
+
+    desktop_pkg = _load_json(REPO_ROOT / "desktop" / "package.json")
+    desktop_version = desktop_pkg.get("version", "")
+
+    # Find a free port
+    port = 0
+    try:
+        import socket
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("127.0.0.1", 0))
+            port = s.getsockname()[1]
+    except Exception as exc:
+        return {
+            "name": "desktop_sidecar",
+            "label": "Desktop sidecar health/version",
+            "passed": False,
+            "required": True,
+            "message": f"Could not find free port: {exc}",
+        }
+
+    db_path = tempfile.NamedTemporaryFile(delete=False, suffix="_smoke.db").name
+    try:
+        from novel_factory.db.connection import init_db
+        init_db(db_path)
+    except Exception as exc:
+        return {
+            "name": "desktop_sidecar",
+            "label": "Desktop sidecar health/version",
+            "passed": False,
+            "required": True,
+            "message": f"Could not init temp DB: {exc}",
+        }
+
+    proc = subprocess.Popen(
+        [
+            sys.executable, "-m", "novel_factory.desktop_sidecar",
+            "--host", "127.0.0.1",
+            "--port", str(port),
+            "--db-path", db_path,
+            "--llm-mode", "stub",
+        ],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        cwd=REPO_ROOT,
+    )
+
+    health_url = f"http://127.0.0.1:{port}/api/health"
+    health = None
+    deadline = time.time() + 30
+    try:
+        while time.time() < deadline:
+            try:
+                req = urllib.request.Request(health_url, method="GET")
+                req.add_header("Accept", "application/json")
+                with urllib.request.urlopen(req, timeout=2) as resp:
+                    health = json.loads(resp.read().decode("utf-8"))
+                    if health.get("ok") and health.get("data", {}).get("status") == "ok":
+                        break
+            except Exception:
+                pass
+            time.sleep(0.5)
+    finally:
+        try:
+            proc.send_signal(signal.SIGTERM)
+            proc.wait(timeout=5)
+        except Exception:
+            proc.kill()
+        try:
+            os.unlink(db_path)
+        except Exception:
+            pass
+
+    if not health:
+        return {
+            "name": "desktop_sidecar",
+            "label": "Desktop sidecar health/version",
+            "passed": False,
+            "required": True,
+            "message": "Sidecar did not become healthy within 30s",
+        }
+
+    api_version = health.get("data", {}).get("version", "")
+    version_match = api_version == desktop_version
+    return {
+        "name": "desktop_sidecar",
+        "label": "Desktop sidecar health/version",
+        "passed": version_match,
+        "required": True,
+        "message": (
+            f"sidecar version={api_version}, desktop package={desktop_version}"
+            if version_match
+            else f"VERSION MISMATCH: sidecar={api_version}, desktop={desktop_version}"
+        ),
+    }
+
+
 def run_checks(api_url: str | None) -> list[dict]:
     """Run all checks and return results."""
     results = [
         check_cli_version(),
         check_frontend_version(),
         check_desktop_version(),
+        check_desktop_sidecar(),
     ]
     if api_url:
         results.append(check_api_health(api_url))

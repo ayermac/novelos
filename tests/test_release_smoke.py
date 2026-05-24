@@ -47,6 +47,7 @@ class TestReleaseSmokeScript:
         assert "cli_version" in check_names
         assert "frontend_version" in check_names
         assert "desktop_version" in check_names
+        assert "desktop_sidecar" in check_names
 
     def test_smoke_cli_version_check_passes(self):
         """CLI version check should report the current version."""
@@ -71,6 +72,14 @@ class TestReleaseSmokeScript:
         de = next(c for c in data["checks"] if c["name"] == "desktop_version")
         assert de["passed"] is True
         assert de["message"] == __version__
+
+    def test_smoke_desktop_sidecar_version_matches(self):
+        """Desktop sidecar health version must match desktop package version."""
+        _, out, _ = self._run_smoke("--skip-api", "--json")
+        data = json.loads(out)
+        sidecar = next(c for c in data["checks"] if c["name"] == "desktop_sidecar")
+        assert sidecar["passed"] is True, f"desktop_sidecar failed: {sidecar['message']}"
+        assert __version__ in sidecar["message"]
 
     def test_smoke_api_health_with_running_api(self):
         """If API is running, health check should pass with matching version."""

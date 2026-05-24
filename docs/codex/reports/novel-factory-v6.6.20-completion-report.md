@@ -131,12 +131,14 @@ Covers:
 
 ### New Tests
 
-- `tests/test_release_smoke.py` (5 tests):
+- `tests/test_release_smoke.py` (9 tests, 1 skipped):
   - `test_smoke_skip_api_all_required_pass`
   - `test_smoke_json_output_structure`
   - `test_smoke_cli_version_check_passes`
   - `test_smoke_frontend_version_matches_runtime`
   - `test_smoke_desktop_version_matches_runtime`
+  - `test_smoke_desktop_sidecar_version_matches`
+  - `test_smoke_api_health_with_running_api` (skipped — requires running server)
   - `test_health_includes_startup_metadata`
   - `test_health_version_matches_runtime`
 
@@ -149,7 +151,7 @@ Covers:
 python3 -m pytest -q
 ```
 
-Result: **2740 passed, 1 skipped, 0 failed**
+Result: **2741 passed, 1 skipped, 0 failed**
 
 ```bash
 cd frontend && npm run typecheck && npm run lint && npm run build && npm test -- --run
@@ -183,7 +185,7 @@ Result: `{"ok": true, "version": "6.6.20", "dry_run": true, ...}`
 
 ### Real LLM Soak
 
-Not run — environment does not have API key configured. The soak script correctly exits with code 2 and clear message when `--llm-mode real` is passed without keys.
+Real LLM soak not run in this review to avoid live provider cost; stub non-dry-run passed; real run remains manual verification.
 
 ---
 
@@ -211,9 +213,8 @@ docs/codex/reports/novel-factory-v6.6.20-completion-report.md  (NEW)
 
 ## Known Follow-Up
 
-1. **Desktop sidecar version mismatch**: The desktop `main.ts` `checkHealth()` currently only checks HTTP reachability. Full version mismatch detection (comparing health version against desktop package version) should be added in a future desktop-focused release.
-2. **Real LLM soak**: Requires API key to validate. The script structure is tested in stub/dry-run mode.
-3. **Desktop release build**: `desktop/release/mac-arm64/` still contains v6.6.19 binary. Fresh packaging needed for release artifact.
+1. **Real LLM soak**: Requires API key to validate. The script structure is tested in stub/dry-run mode.
+2. **Desktop release build**: `desktop/release/mac-arm64/` still contains v6.6.19 binary. Fresh packaging needed for release artifact.
 
 ---
 
