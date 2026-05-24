@@ -110,6 +110,7 @@ interface WorkflowLogRow {
   payload?: Record<string, unknown> | null
   tokenCount?: number | null
   latencyMs?: number | null
+  sortIndex?: number
 }
 
 const STUCK_RUN_THRESHOLD_MINUTES = 30
@@ -270,12 +271,13 @@ function buildWorkflowLogRows(
 ): WorkflowLogRow[] {
   const rows: WorkflowLogRow[] = []
   const seen = new Set<string>()
+  let sortIndex = 0
 
   const pushRow = (row: WorkflowLogRow) => {
     const dedupe = `${row.timestamp || ''}:${row.node}:${row.eventType}:${row.message}:${row.tokenCount || ''}:${row.latencyMs || ''}`
     if (seen.has(dedupe)) return
     seen.add(dedupe)
-    rows.push(row)
+    rows.push({ ...row, sortIndex: sortIndex++ })
   }
 
   for (const node of timeline?.nodes || []) {
@@ -417,11 +419,35 @@ function buildWorkflowLogRows(
     }
   }
 
+  const nodeOrder = new Map<string, number>()
+  for (const [index, node] of (timeline?.nodes || []).entries()) {
+    nodeOrder.set(node.node_name, index)
+  }
+
+  const nodeRank = (node: string): number => {
+    const timelineRank = nodeOrder.get(node)
+    if (timelineRank !== undefined) return timelineRank
+    const canonicalRank = CANONICAL_GENERATING_STEPS.findIndex((step) => step.key === node)
+    return canonicalRank >= 0 ? 100 + canonicalRank : 1000
+  }
+
+  const sourceRank = (source: WorkflowLogRow['source']): number => {
+    if (source === 'timeline') return 0
+    if (source === 'live') return 1
+    return 2
+  }
+
   return rows.sort((a, b) => {
     const ta = a.timestamp ? new Date(a.timestamp.replace(' ', 'T')).getTime() : 0
     const tb = b.timestamp ? new Date(b.timestamp.replace(' ', 'T')).getTime() : 0
-    if (Number.isNaN(ta) || Number.isNaN(tb) || ta === tb) return a.id.localeCompare(b.id)
-    return ta - tb
+    if (!Number.isNaN(ta) && !Number.isNaN(tb) && ta !== tb) return ta - tb
+    const sourceDelta = sourceRank(a.source) - sourceRank(b.source)
+    if (sourceDelta !== 0) return sourceDelta
+    const nodeDelta = nodeRank(a.node) - nodeRank(b.node)
+    if (nodeDelta !== 0) return nodeDelta
+    const indexDelta = (a.sortIndex ?? 0) - (b.sortIndex ?? 0)
+    if (indexDelta !== 0) return indexDelta
+    return a.id.localeCompare(b.id)
   })
 }
 

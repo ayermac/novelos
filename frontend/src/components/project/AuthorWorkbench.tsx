@@ -42,6 +42,12 @@ interface Step {
   description: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
   error_message?: string
+  logs?: {
+    id?: string
+    timestamp?: string
+    level?: 'info' | 'success' | 'warning' | 'error'
+    message: string
+  }[]
   artifacts?: {
     summary: string
     output_preview?: string
