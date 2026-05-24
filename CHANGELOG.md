@@ -12,6 +12,46 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.6.21 - LLM JSON Resilience Hotfix
+
+Date: 2026-05-24
+
+Key changes:
+
+- **JSON extraction/repair module**: 新增 `novel_factory/llm/json_resilience.py`，统一处理 markdown fence、前后夹文字、尾逗号、BOM、未加引号标量值等常见 LLM JSON 输出问题。所有 JSON agent 共享此修复层。
+- **3-tier retry 策略**: `invoke_json` 从 2 次重试升级为 3 次。第 1 次正常调用，第 2 次带错误信息重试，第 3 次只修复 JSON（temperature=0，不新增剧情内容）。
+- **Structured output 支持**: 有 schema 的 `call_type=json` 自动传 `response_format={"type":"json_object"}`，兼容不支持该参数的 provider（自动 fallback，不消耗 JSON parse retry 次数）。
+- **错误诊断增强**: JSON 解析失败信息现在包含 `agent_id`、`schema_name`、`attempt N/M`、error location 和 content preview。所有 runtime agent 的 `invoke_json` 调用通过 `BaseAgent._invoke_json()` 自动传递 `agent_id`。
+- **日志 level 修复**: `human_review` 节点：质量门打满/已有阻塞 → `event_type="completed", status="warning"`；意外系统错误 → `event_type="failed", status="failed"`。`_build_node_timeline` 兜底识别 `completed + status in {failed, error}` 为 failed。`node_started` 不再因节点最终失败而显示为 error level。
+- **Timeline 排序稳定**: 后端 `_build_node_timeline` 和前段 `WorkflowTimeline` 对 null timestamp 稳定排在末尾而非顶部。
+- **前端白屏容错**: `RunDetail.tsx` 中对 `recovery.running_tasks`、`recovery.actions`、`memory_status` 空值添加安全访问；`WorkflowTimeline.tsx` 对 `payload` null 添加 `safePayload` 函数。
+
+Verification:
+- Full test suite: 2788 passed, 1 skipped, 0 failed
+- Frontend typecheck/lint/build/vitest: passed (310 passed)
+- Desktop typecheck/build: passed
+- Release smoke: all checks passed
+- Soak stub: ok, chapter_status=published
+
+## v6.6.20 - Production Ops & Release Hardening
+
+Date: 2026-05-24
+
+Key changes:
+
+- **启动时 live version mismatch 检测**: API `/api/health` 新增 `startup` 字段，包含 `started_at`, `python`, `source_root`, `cwd`。便于诊断进程是否跑的是旧源码。
+- **Release smoke 脚本**: 新增 `scripts/release_smoke.py`，一键验证 CLI version、API health version、frontend/desktop package version、desktop build。支持 `--json` 输出。
+- **真实 LLM soak 脚本**: 新增 `scripts/soak_real_llm_long_chapter.py`，验证长章节分段生成稳定性。支持 `--llm-mode stub/real` 和 `--dry-run`。
+- **生产运维手册**: 新增 `docs/codex/release/production-ops-runbook.md`，覆盖备份/恢复/故障诊断/发布检查清单。
+- **版本统一**: 全部升级到 `6.6.20`。
+
+Verification:
+- Full test suite: passing
+- Frontend typecheck/lint/build/vitest: passed (300 passed)
+- Desktop typecheck/build: passed
+- Release smoke: passed
+- Soak stub/dry-run: passed
+
 ## v6.6.19 - Stability Baseline & Runtime Alignment
 
 Date: 2026-05-24

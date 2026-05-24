@@ -265,7 +265,7 @@ class AuthorAgent(BaseAgent):
             })
         else:
             try:
-                raw = self.llm.invoke_json(messages, schema=AuthorOutput)
+                raw = self._invoke_json(messages, schema=AuthorOutput)
                 output = AuthorOutput(**normalize_declared_word_count(raw))
             except OutputValidationError:
                 if state.get("llm_mode") != "real":
@@ -753,7 +753,7 @@ class AuthorAgent(BaseAgent):
         ]
 
         try:
-            raw = self.llm.invoke_json(messages, schema=AuthorOutput)
+            raw = self._invoke_json(messages, schema=AuthorOutput)
             expanded = AuthorOutput(**normalize_declared_word_count(raw))
             expanded = self._sanitize_output(expanded, state)
             self.validate_output(expanded.model_dump())

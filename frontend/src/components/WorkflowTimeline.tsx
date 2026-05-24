@@ -68,6 +68,13 @@ function eventMessage(ev: WorkflowExecutionEvent): string {
   return ev.message || ''
 }
 
+function safePayload(ev: WorkflowExecutionEvent): Record<string, unknown> {
+  if (ev.payload && typeof ev.payload === 'object') {
+    return ev.payload as Record<string, unknown>
+  }
+  return {}
+}
+
 function stepStatusIcon(step: Step): string {
   const nodeStatus = normalizeNodeStatus(step)
   return getNodeStatusBadge(nodeStatus).icon
@@ -123,7 +130,15 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
               const isExpanded = expandedStep === step.key
               const hasArtifacts = step.status === 'completed' && step.artifacts
               const hasExecutionEvents = Boolean(step.events && step.events.length > 0)
-              const logs = step.logs || []
+              // v6.6.21: Stable sort — null timestamps last, then ascending
+              const logs = (step.logs || []).slice().sort((a, b) => {
+                const ta = a.timestamp || ''
+                const tb = b.timestamp || ''
+                if (!ta && !tb) return 0
+                if (!ta) return 1
+                if (!tb) return -1
+                return ta.localeCompare(tb)
+              })
 
               return (
                 <div key={step.key} className={`step-item ${stepStatusClass(step)}`}>
@@ -205,7 +220,8 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
                         )}
                       </div>
                       {step.events!.map((ev, idx) => {
-                        const isLowChange = ev.payload && (ev.payload as Record<string, unknown>).low_change_warning === true
+                        const payload = safePayload(ev)
+                        const isLowChange = payload.low_change_warning === true
                         const hasMeta = (ev.latency_ms != null && ev.latency_ms > 0) || (ev.token_count != null && ev.token_count > 0)
                         return (
                           <div key={ev.id || `ev-${idx}`} className={`exec-event exec-event-${ev.status || 'info'}${isLowChange ? ' exec-event-low-change' : ''}`}>

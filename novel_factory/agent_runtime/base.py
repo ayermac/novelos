@@ -59,6 +59,23 @@ class BaseAgent:
         except Exception:
             logger.debug("Role profile load failed for %s", self.agent_id, exc_info=True)
 
+    def _invoke_json(self, messages: list[dict[str, str]], **kwargs: Any) -> dict[str, Any]:
+        """Invoke LLM with JSON output, passing agent_id if the provider accepts it.
+
+        v6.6.21-review: Wrapper that gracefully handles providers (including
+        test fakes) that don't yet accept agent_id in invoke_json().
+        If the provider raises TypeError for agent_id, retries without it.
+        """
+        # Try with agent_id first
+        try:
+            return self.llm.invoke_json(messages, agent_id=self.agent_id, **kwargs)
+        except TypeError as e:
+            if "agent_id" in str(e):
+                # Provider doesn't accept agent_id (e.g. test fakes), retry without
+                kwargs.pop("agent_id", None)
+                return self.llm.invoke_json(messages, **kwargs)
+            raise
+
     def _get_role_profile_context(self) -> str:
         """v6.0: Return role profile mission/context for prompt injection."""
         if not self._role_profile:

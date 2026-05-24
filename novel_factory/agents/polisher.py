@@ -307,7 +307,7 @@ class PolisherAgent(BaseAgent):
             if self._should_use_plain_text_primary(state):
                 output = self._try_plain_text_polish(state, context, exec_events=exec_events)
             else:
-                raw = self.llm.invoke_json(messages, schema=PolisherOutput)
+                raw = self._invoke_json(messages, schema=PolisherOutput)
                 output = PolisherOutput(**raw)
         except Exception as e:
             if live_provider and not self._should_use_plain_text_primary(state):

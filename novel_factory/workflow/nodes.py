@@ -1210,9 +1210,13 @@ def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
     retry_count = state.get("retry_count", 0)
     max_retries = state.get("max_retries", 3)
     error = state.get("error")
+    # v6.6.21: Distinguish human_review severity by root cause
+    is_quality_gate_maxed = False
+    is_preexisting_block = False
     if not error and gate.get("pass") is False:
         score = gate.get("score")
         target = revision_target_from_state(state)
+        is_quality_gate_maxed = True
         # P1: Include quality gate details (word count, etc.) in blocking error
         error = (
             f"章节审核未通过，已达到最大返修次数 "
@@ -1230,6 +1234,7 @@ def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
             error += "，该次失败原因: 正文未覆盖完整场景 beat / 章末钩子"
 
     if not error and state.get("chapter_status") == ChapterStatus.BLOCKING.value:
+        is_preexisting_block = True
         error = "章节已处于阻塞状态，请先解除阻塞后再重新执行工作流。"
 
     if project_id and chapter_number:
@@ -1238,11 +1243,24 @@ def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
             repo.update_chapter_status(project_id, chapter_number, ChapterStatus.BLOCKING.value)
 
     _finalize_run(state, repo, "blocked", error=error)
-    _log_node_event(state, repo, "human_review", "failed", status="failed", error_message=error)
-    logger.warning(
-        "Human intervention required: project=%s chapter=%s",
-        project_id, chapter_number,
-    )
+    # v6.6.21: human_review severity mapping
+    # - quality gate maxed / pre-existing block -> expected, needs human intervention
+    # - unexpected system error -> genuinely failed
+    is_unexpected_error = error and not is_quality_gate_maxed and not is_preexisting_block
+    if is_unexpected_error:
+        # Unexpected system error: genuinely failed
+        _log_node_event(state, repo, "human_review", "failed", status="failed", error_message=error)
+        logger.error(
+            "Human review triggered by unexpected error: project=%s chapter=%s error=%s",
+            project_id, chapter_number, error,
+        )
+    else:
+        # Expected human intervention (quality gate maxed / pre-existing block)
+        _log_node_event(state, repo, "human_review", "completed", status="warning", error_message=error)
+        logger.warning(
+            "Human intervention required: project=%s chapter=%s",
+            project_id, chapter_number,
+        )
     return {
         "requires_human": True,
         "chapter_status": ChapterStatus.BLOCKING.value,

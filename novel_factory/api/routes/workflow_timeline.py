@@ -461,8 +461,12 @@ def _build_node_timeline(
     def build_node(base: dict[str, Any]) -> dict[str, Any]:
         node_name = base["node_name"]
         evs = node_events.get(node_name, [])
-        # Sort by created_at
-        evs = sorted(evs, key=lambda e: e.get("created_at") or "")
+        # v6.6.21: Stable sort — null/empty timestamps last, then ascending.
+        # Events without timestamps (skip/resume messages) should not float to the top.
+        evs = sorted(
+            evs,
+            key=lambda e: (e.get("created_at") or "9999-12-31T23:59:59", e.get("id") or 0),
+        )
         started_events = [e for e in evs if e.get("event_type") == "started"]
         completed_events = [e for e in evs if e.get("event_type") == "completed"]
         failed_events = [e for e in evs if e.get("event_type") == "failed"]
@@ -474,7 +478,16 @@ def _build_node_timeline(
         if last_ev and last_ev.get("event_type") == "failed":
             status = "failed"
         elif last_ev and last_ev.get("event_type") == "completed":
-            status = "warning" if last_ev.get("status") == "warning" else "completed"
+            ev_status = last_ev.get("status", "")
+            # v6.6.21-review: completed + failed/error status must show as failed,
+            # not success. This also handles legacy events where event_type was
+            # "completed" but the node actually failed.
+            if ev_status in ("failed", "error"):
+                status = "failed"
+            elif ev_status == "warning":
+                status = "warning"
+            else:
+                status = "completed"
         elif last_ev and last_ev.get("event_type") == "started":
             status = "running"
         elif _is_before_current(node_name):

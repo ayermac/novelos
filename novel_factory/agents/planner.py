@@ -136,7 +136,7 @@ class PlannerAgent(BaseAgent):
             {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请生成第{chapter_number}章的写作指令。"},
         ]
 
-        raw = self.llm.invoke_json(messages, schema=PlannerOutput)
+        raw = self._invoke_json(messages, schema=PlannerOutput)
         output = PlannerOutput(**raw)
 
         self.validate_output(output.model_dump())

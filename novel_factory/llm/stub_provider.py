@@ -417,7 +417,7 @@ class StubLLM(LLMProvider):
         self.last_token_usage: TokenUsage | None = None
         self.last_call_trace: dict | None = None
 
-    def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+    def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None, agent_id="unknown") -> dict:
         # Set mock token usage for tracking (v5.2)
         self.last_token_usage = TokenUsage(
             prompt_tokens=100,

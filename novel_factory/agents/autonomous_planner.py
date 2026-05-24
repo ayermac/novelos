@@ -180,7 +180,13 @@ def _invoke_structured(
     ]
 
     try:
-        raw = llm.invoke_json(messages, schema=schema, temperature=0.7)
+        raw = llm.invoke_json(messages, schema=schema, temperature=0.7, agent_id="autonomous_planner")
+    except TypeError as te:
+        # v6.6.21-review: Fallback for test fakes that don't accept agent_id
+        if "agent_id" in str(te):
+            raw = llm.invoke_json(messages, schema=schema, temperature=0.7)
+        else:
+            raise
     except Exception as e:
         logger.warning("LLM invocation failed: %s", e)
         raise LLMOutputInvalid(f"LLM 调用失败: {e}") from e
