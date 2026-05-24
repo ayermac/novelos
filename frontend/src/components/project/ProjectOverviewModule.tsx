@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import { get, post, apiUrl, getApiBase } from '../../lib/api'
 import { normalizeOperationResult, isBusinessSuccess } from '../../lib/statusSemantics'
-import { tSessionStopLabel, tActionKey, tStepResult } from '../../lib/state-labels'
+import { tSessionStopLabel, tActionKey, tStepResult, tWorkflowNodeLabel } from '../../lib/state-labels'
 import { Checkbox, InlineMessage, LoadingButton, NumberInput, SkeletonStack, useToast } from '../ui'
 
 /* ------------------------------------------------------------------ */
@@ -178,6 +178,8 @@ interface Props {
   stats: WorkspaceStats
   chapterNumber?: number
 }
+
+const MAX_AUTO_RECONNECT_ATTEMPTS = 3
 
 /* ------------------------------------------------------------------ */
 /*  i18n helpers                                                       */
@@ -413,6 +415,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   /* Resilience state */
   const [disconnected, setDisconnected] = useState(false)
   const [recovering, setRecovering] = useState(false)
+  const reconnectTimerRef = useRef<number | null>(null)
+  const reconnectAttemptsRef = useRef(0)
+  const manualStreamStopRef = useRef(false)
 
   /* Reset auto-run state when project changes */
   useEffect(() => {
@@ -430,6 +435,12 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setHealthSummary(null)
     setShowHistory(false)
     setInlineMessage(null)
+    reconnectAttemptsRef.current = 0
+    manualStreamStopRef.current = false
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
       eventSourceRef.current = null
@@ -439,6 +450,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   /* Cleanup EventSource on unmount */
   useEffect(() => {
     return () => {
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
       if (eventSourceRef.current) {
         eventSourceRef.current.close()
         eventSourceRef.current = null
@@ -455,8 +470,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     }
   }, [productionNext, project.project_id])
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true
+    if (!silent) setLoading(true)
     const chapterParam = chapterNumber && chapterNumber > 1 ? `?chapter=${chapterNumber}` : ''
     try {
       const [ctxRes, prodRes, healthRes] = await Promise.all([
@@ -482,7 +498,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     } catch (err) {
       showToast({ tone: 'danger', title: '网络错误', message: err instanceof Error ? err.message : '无法连接到后端服务' })
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [project.project_id, chapterNumber, showToast])
 
@@ -736,6 +752,29 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   /*  Auto production runner (SSE stream) with session                */
   /* ---------------------------------------------------------------- */
 
+  const scheduleAutoReconnect = (sessionId: string, dryRun: boolean, attempt: number) => {
+    if (manualStreamStopRef.current) return
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current)
+    }
+    if (attempt > MAX_AUTO_RECONNECT_ATTEMPTS) {
+      setDisconnected(true)
+      setStreamStatus('stopped')
+      setStreamError({ code: 'NETWORK_ERROR', message: '实时连接暂时不可用，已切换后台刷新' })
+      setAutoRunning(false)
+      setRecovering(false)
+      return
+    }
+    reconnectAttemptsRef.current = attempt
+    setRecovering(true)
+    setStreamStatus('running')
+    setStreamError(null)
+    reconnectTimerRef.current = window.setTimeout(() => {
+      reconnectTimerRef.current = null
+      handleResumeSession(sessionId, dryRun, attempt)
+    }, Math.min(1000 * attempt, 3000))
+  }
+
   const handleRunAutoStream = async (dryRun: boolean = false) => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
@@ -753,6 +792,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setAutoResult(null)
     setAutoError(null)
     setAutoRunning(true)
+    setDisconnected(false)
+    setRecovering(false)
+    reconnectAttemptsRef.current = 0
+    manualStreamStopRef.current = false
 
     try {
       const startRes = await post<{
@@ -900,12 +943,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
       es.onerror = () => {
         if (eventSourceRef.current === es) {
-          setDisconnected(true)
-          setStreamStatus('stopped')
-          setStreamError({ code: 'NETWORK_ERROR', message: '实时进度连接断开，可重新接入' })
-          setAutoRunning(false)
           es.close()
           eventSourceRef.current = null
+          scheduleAutoReconnect(session_id, dryRun, reconnectAttemptsRef.current + 1)
         }
       }
     } catch (err) {
@@ -919,6 +959,11 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   }
 
   const handleStopListening = () => {
+    manualStreamStopRef.current = true
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
       eventSourceRef.current = null
@@ -992,6 +1037,11 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
   const handleCancelSession = async () => {
     if (!activeSessionId) return
+    manualStreamStopRef.current = true
+    if (reconnectTimerRef.current) {
+      window.clearTimeout(reconnectTimerRef.current)
+      reconnectTimerRef.current = null
+    }
     try {
       const res = await post<{ cancelled: boolean }>(
         `/projects/${project.project_id}/production/run-auto/sessions/${activeSessionId}/cancel`,
@@ -1027,8 +1077,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     }
   }
 
-  const handleResumeSession = async () => {
-    if (!activeSessionId) return
+  const handleResumeSession = async (sessionIdOverride?: string, dryRun: boolean = false, autoAttempt: number = 0) => {
+    const sessionId = sessionIdOverride || activeSessionId
+    if (!sessionId) return
+    manualStreamStopRef.current = false
     setAutoRunning(true)
     setStreamError(null)
     setStreamStatus('running')
@@ -1036,10 +1088,14 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     setRecovering(true)
     try {
       const res = await post<{ resumed: boolean; stream_url: string }>(
-        `/projects/${project.project_id}/production/run-auto/sessions/${activeSessionId}/resume`,
+        `/projects/${project.project_id}/production/run-auto/sessions/${sessionId}/resume`,
         {}
       )
       if (!res.ok || !res.data?.resumed) {
+        if (autoAttempt > 0 && autoAttempt < MAX_AUTO_RECONNECT_ATTEMPTS) {
+          scheduleAutoReconnect(sessionId, dryRun, autoAttempt + 1)
+          return
+        }
         setAutoRunning(false)
         setRecovering(false)
         setDisconnected(true)
@@ -1050,6 +1106,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
         })
         return
       }
+      reconnectAttemptsRef.current = 0
       const es = new EventSource(apiUrl(res.data.stream_url.replace(/^\/api/, '')))
       eventSourceRef.current = es
 
@@ -1083,6 +1140,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
         setAutoResult({ status: data.status || 'stopped', steps: data.steps || [], stop_reason: data.stop_reason || '', chapters_touched: data.chapters_touched || [] })
         setAutoRunning(false)
         setRecovering(false)
+        setDisconnected(false)
         loadSessions()
         es.close()
         eventSourceRef.current = null
@@ -1093,6 +1151,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
         setAutoResult({ status: data.status || 'completed', steps: data.steps || [], stop_reason: data.stop_reason || '', chapters_touched: data.chapters_touched || [] })
         setAutoRunning(false)
         setRecovering(false)
+        setDisconnected(false)
         loadSessions()
         es.close()
         eventSourceRef.current = null
@@ -1109,16 +1168,16 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
       })
       es.onerror = () => {
         if (eventSourceRef.current === es) {
-          setDisconnected(true)
-          setStreamStatus('stopped')
-          setStreamError({ code: 'NETWORK_ERROR', message: '实时进度连接断开，可重新接入' })
-          setAutoRunning(false)
-          setRecovering(false)
           es.close()
           eventSourceRef.current = null
+          scheduleAutoReconnect(sessionId, dryRun, reconnectAttemptsRef.current + 1)
         }
       }
     } catch {
+      if (autoAttempt > 0 && autoAttempt < MAX_AUTO_RECONNECT_ATTEMPTS) {
+        scheduleAutoReconnect(sessionId, dryRun, autoAttempt + 1)
+        return
+      }
       setAutoRunning(false)
       setRecovering(false)
       setDisconnected(true)
@@ -1170,6 +1229,15 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     || productionNext?.health?.has_running_chapter_workflow
     || productionNext?.health?.has_running_target_workflow
     || false
+  const runningWorkflowNode = productionNext?.health?.target_workflow_current_node || null
+  const disconnectedRunningWorkflow = disconnected && hasRunningWorkflow
+  const autoRunStatusLabel = disconnectedRunningWorkflow
+    ? '工作流运行中'
+    : tSessionStopLabel(streamStatus === 'running' ? 'running' : autoResult?.status || 'idle')
+  const autoRunDetailLabel = disconnectedRunningWorkflow
+    ? `后台执行中${runningWorkflowNode ? `：${tWorkflowNodeLabel(runningWorkflowNode)}` : ''}`
+    : (streamError ? streamError.message : tSessionStopLabel(autoResult?.status || 'stopped', autoResult?.stop_reason))
+  const effectiveStreamRunning = streamStatus === 'running' || disconnectedRunningWorkflow
   const isPrimaryNavigationAction = nextActionKey === 'view_running_workflow'
 
   /* v5.5.15: Check if health-summary reports an obsolete session */
@@ -1182,6 +1250,15 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   const isBlockedState = autoResult?.stop_reason && ['blocked', 'repeated_failure', 'consecutive_no_progress', 'step_failed'].includes(autoResult.stop_reason)
   const hasCriticalError = streamError?.message?.includes('CRITICAL') || streamError?.message?.includes('死刑红线')
   const showPostmortem = isBlockedState || hasCriticalError
+
+  useEffect(() => {
+    if (!disconnectedRunningWorkflow) return
+    const timer = window.setInterval(() => {
+      load({ silent: true })
+      checkActiveSession()
+    }, 8000)
+    return () => window.clearInterval(timer)
+  }, [disconnectedRunningWorkflow, load, checkActiveSession])
 
   /* ---------------------------------------------------------------- */
   /*  Render                                                          */
@@ -1323,17 +1400,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
               {/* Secondary actions */}
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-                {!autoRunning && disconnected && hasRunningWorkflow && (
-                  <Link
-                    to={`?module=chapters&chapter=${targetCh}&view=workflow`}
-                    className="btn btn-secondary"
-                    style={{ flex: '1 1 180px', minWidth: 0, textDecoration: 'none' }}
-                  >
-                    <Zap size={14} /> {isTargetWorkflowStale ? `处理第 ${targetCh} 章卡住的运行` : `查看第 ${targetCh} 章实时进度`}
-                  </Link>
-                )}
-
-                {!autoRunning && disconnected && hasRunningWorkflow && (
+                {!autoRunning && disconnected && hasRunningWorkflow && !isPrimaryNavigationAction && (
                   <Link
                     to={`?module=chapters&chapter=${targetCh}&view=workflow`}
                     className="btn btn-secondary"
@@ -1346,7 +1413,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 {!autoRunning && disconnected && !hasRunningWorkflow && !isSessionObsolete && (
                   <button
                     className="btn btn-secondary"
-                    onClick={handleResumeSession}
+                    onClick={() => handleResumeSession()}
                     disabled={filling || recovering}
                     style={{ flex: '1 1 150px', minWidth: 0 }}
                   >
@@ -1368,7 +1435,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                 {!autoRunning && !disconnected && streamStatus === 'stopped' && autoResult?.stop_reason === 'paused' && (
                   <button
                     className="btn btn-secondary"
-                    onClick={handleResumeSession}
+                    onClick={() => handleResumeSession()}
                     disabled={filling}
                     style={{ flex: '1 1 150px', minWidth: 0 }}
                   >
@@ -1560,7 +1627,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                         style={{
                           height: '100%',
                           width: `${Math.min(100, ((streamSteps.length > 0 ? streamSteps.length : autoResult?.steps_executed || 0) / Math.max(1, autoConfig.maxSteps)) * 100)}%`,
-                          background: streamStatus === 'running' ? 'var(--primary)' : 'var(--success)',
+                          background: effectiveStreamRunning ? 'var(--primary)' : 'var(--success)',
                           borderRadius: 2,
                           transition: 'width 0.3s ease',
                         }}
@@ -1576,14 +1643,16 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   <div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>当前状态</div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
-                      {tSessionStopLabel(streamStatus === 'running' ? 'running' : autoResult?.status || 'idle')}
+                      {autoRunStatusLabel}
                     </div>
                   </div>
                   {(autoResult?.stop_reason || streamError) && (
                     <div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>停止原因</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>
+                        {disconnectedRunningWorkflow ? '后台状态' : '停止原因'}
+                      </div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--warning)' }}>
-                        {streamError ? streamError.message : tSessionStopLabel(autoResult?.status || 'stopped', autoResult?.stop_reason)}
+                        {autoRunDetailLabel}
                       </div>
                     </div>
                   )}
@@ -1608,7 +1677,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   {/* Status bar */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {streamStatus === 'running' && <Loader2 size={14} className="spin" color="var(--primary)" />}
+                      {effectiveStreamRunning && <Loader2 size={14} className="spin" color="var(--primary)" />}
                       {autoResult?.status === 'completed' && (
                         deriveAutoRunSeverity(autoResult, streamSteps) === 'warning'
                           ? <AlertCircle size={14} color="var(--warning)" />
@@ -1616,10 +1685,10 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                       )}
                       {autoResult?.status === 'failed' && <XCircle size={14} color="var(--danger)" />}
                       {autoResult?.status === 'dry_run' && <Sparkles size={14} color="var(--primary)" />}
-                      {autoResult?.status === 'stopped' && <AlertCircle size={14} color="var(--warning)" />}
-                      {streamStatus === 'error' && <XCircle size={14} color="var(--danger)" />}
+                      {autoResult?.status === 'stopped' && !disconnectedRunningWorkflow && <AlertCircle size={14} color="var(--warning)" />}
+                      {streamStatus === 'error' && !disconnectedRunningWorkflow && <XCircle size={14} color="var(--danger)" />}
                       <span style={{ fontSize: 13, fontWeight: 500 }}>
-                        {streamStatus === 'running' ? '生产中...'
+                        {effectiveStreamRunning ? '工作流仍在运行'
                           : streamStatus === 'error' ? '出错了'
                           : autoResult?.status === 'completed'
                             ? (deriveAutoRunSeverity(autoResult, streamSteps) === 'warning' ? '已完成（含警告）' : '已完成')
@@ -1629,7 +1698,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                       </span>
                     </div>
                     <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                      {streamError ? streamError.message : tSessionStopLabel(autoResult?.status || 'stopped', autoResult?.stop_reason)}
+                      {autoRunDetailLabel}
                     </span>
                   </div>
 

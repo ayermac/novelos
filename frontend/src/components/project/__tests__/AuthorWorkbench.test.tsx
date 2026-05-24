@@ -91,7 +91,7 @@ describe('AuthorWorkbench', () => {
 
     expect(within(rail).getByText('第一章')).toBeInTheDocument()
     expect(within(rail).getByText('5,000 字')).toBeInTheDocument()
-    expect(within(rail).getByText('已发布')).toBeInTheDocument()
+    expect(within(rail).getByText('已发布')).toHaveClass('status-published')
   })
 
   it('shows generate button for drafted chapter', () => {
