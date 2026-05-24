@@ -85,6 +85,15 @@ describe('AuthorWorkbench', () => {
     expect(screen.getByText('25%')).toBeInTheDocument()
   })
 
+  it('keeps chapter rail title, word count, and status readable', () => {
+    render(<AuthorWorkbench {...baseProps} />)
+    const rail = screen.getByLabelText('章节导航')
+
+    expect(within(rail).getByText('第一章')).toBeInTheDocument()
+    expect(within(rail).getByText('5,000 字')).toBeInTheDocument()
+    expect(within(rail).getByText('已发布')).toBeInTheDocument()
+  })
+
   it('shows generate button for drafted chapter', () => {
     render(<AuthorWorkbench {...baseProps} />)
     expect(screen.getAllByRole('button', { name: /生成本章/ }).length).toBeGreaterThan(0)

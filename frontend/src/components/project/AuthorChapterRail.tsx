@@ -278,16 +278,20 @@ export default function AuthorChapterRail({
               }}
               title={`${title} — ${statusLabel}`}
             >
-              <span className="author-rail-icon" style={{ color }}>{icon}</span>
-              <span className="author-rail-label">{title}</span>
-              <span className="author-rail-meta">
-                {isWorkflowRunning && isActive && (
-                  <span className="author-rail-running" />
-                )}
-                {ch.word_count > 0 && (
-                  <span className="author-rail-wordcount">{ch.word_count.toLocaleString()}</span>
-                )}
-                <span className="author-rail-status">{statusLabel}</span>
+              <span className="author-rail-icon" style={{ color }} aria-hidden="true">{icon}</span>
+              <span className="author-rail-content">
+                <span className="author-rail-label">{title}</span>
+                <span className="author-rail-meta">
+                  {isWorkflowRunning && isActive && (
+                    <span className="author-rail-running" aria-label="运行中" />
+                  )}
+                  {ch.word_count > 0 && (
+                    <span className="author-rail-wordcount">{ch.word_count.toLocaleString()} 字</span>
+                  )}
+                  <span className="author-rail-status">{statusLabel}</span>
+                </span>
+              </span>
+              <span className="author-rail-actions">
                 <button
                   className="author-rail-menu-btn"
                   type="button"
