@@ -1,5 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
-import { render } from '@testing-library/react'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, waitFor } from '@testing-library/react'
 import RunDetail from '../../pages/RunDetail'
 
 // Mock react-router-dom hooks
@@ -39,6 +39,10 @@ vi.mock('../../lib/api', () => ({
 }))
 
 describe('RunDetail null safety', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('renders without crash when recovery is null', async () => {
     // The component fetches recovery data, and if null, should show fallback text
     const { container, findByText } = render(<RunDetail />)
@@ -95,7 +99,10 @@ describe('RunDetail null safety', () => {
       })
     })
 
-    const { container } = render(<RunDetail />)
+    const { container, getByText } = render(<RunDetail />)
+    await waitFor(() => {
+      expect(getByText('Test Project')).toBeTruthy()
+    })
     expect(container).toBeTruthy()
   })
 
@@ -148,7 +155,10 @@ describe('RunDetail null safety', () => {
       })
     })
 
-    const { container } = render(<RunDetail />)
+    const { container, getByText } = render(<RunDetail />)
+    await waitFor(() => {
+      expect(getByText('Test Project')).toBeTruthy()
+    })
     expect(container).toBeTruthy()
   })
 
@@ -196,7 +206,10 @@ describe('RunDetail null safety', () => {
       })
     })
 
-    const { container } = render(<RunDetail />)
+    const { container, getByText } = render(<RunDetail />)
+    await waitFor(() => {
+      expect(getByText('Test Project')).toBeTruthy()
+    })
     expect(container).toBeTruthy()
   })
 })
