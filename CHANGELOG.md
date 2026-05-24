@@ -12,14 +12,60 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
-- Fixed the sidebar version badge so the client UI reads from `frontend/package.json` instead of a stale hardcoded `v5.5.9`.
-- Synchronized frontend and desktop package-lock root versions to `6.6.16`.
-- Hardened Genesis initialization fallback: completion patches now deduplicate repeatable sections instead of appending duplicates, scaffold instructions are chapter-specific, and scaffold previews are shown as recovery panels rather than normal drafts.
-- Fixed Genesis real-LLM failure recovery: invalid or incomplete JSON now produces a reviewable `local_recovery` draft based on the project premise instead of an automatically blocked scaffold template; true scaffold fallback reports now score `0`.
-- Fixed Genesis semantic worldbuilding dedupe so near-duplicate concepts such as anomaly definition/classification collapse into one setting slot.
-- Fixed active workflow recovery false positives: running LangGraph checkpoints at routing nodes no longer trigger stale "rerun" recommendations while the run is still progressing.
-- Fixed blocked/revision chapter recovery: direct generation is now guarded with `CHAPTER_NEEDS_RECOVERY`, reset recovery clears active run/task records to a completed `reset_recovery` marker, and legacy sidebar prompts no longer offer direct regeneration from blocked states.
-- Fixed revision routing and evidence continuity: structural chapter defects such as truncated endings, low dialogue, missing hooks, weak conflict, or unclear motivation now route back to Author instead of Polisher; revision feedback now survives state hydration and Author→Polisher handoff.
+## v6.6.19 - Stability Baseline & Runtime Alignment
+
+Date: 2026-05-24
+
+Key changes:
+
+- **Runtime version alignment**: Killed stale long-running API process (PID 80628, started 2026-05-15 with cached v5.3.0 modules) and restarted from current source. `GET /api/health` now returns `6.6.19`.
+- **Version unification**: Bumped `novel_factory/version.py`, `frontend/package.json`, and `desktop/package.json` from `6.6.18` to `6.6.19`.
+- **Document sync**: Updated `AGENTS.md` baseline to v6.6.19. Updated `docs/codex/README.md` to mark v6.6.18 as completed and v6.6.19 as current stable baseline.
+- **Migration ownership**: Confirmed `033_v6_6_19_memory_curator_locks.sql` is registered in `migration_registry.py` with requirements `(_T("memory_curator_locks"),)`.
+- **Stability guardrails**: Added `test_version_alignment.py` covering runtime version (`novel_factory.version.__version__`), API health version (`/api/health`), frontend package version (`frontend/package.json`), and desktop package version (`desktop/package.json`).
+
+Verification:
+- Full test suite: **2728 passed, 0 failed**
+- Frontend typecheck/lint/build/vitest: passed
+- Desktop typecheck/build: passed
+- API health: `{"version": "6.6.19"}`
+- CLI `--version`: `6.6.19`
+
+## v6.6.18 - Segmented Agent Payloads & Genesis Quality Gate Semantic Alignment
+
+Date: 2026-05-22
+
+Key changes:
+
+- **Genesis Quality Gate Semantic Alignment**: Fixed false positives for high-quality natural-language outputs. Added structured-field helpers, role-aware motivation thresholds, tokenized premise keyword extraction, expanded semantic word lists.
+- **Shared Segmentation Helper**: New `novel_factory/agent_runtime/segmented_generation.py` with `chunk_items()` and `chunk_text_by_paragraphs()`.
+- **Author Segmented Drafting**: Real-mode long chapters now draft by scene-beat segments (threshold: 4+ beats, chunk size: 3 beats).
+- **Polisher Segmented Polishing**: Real-mode long chapters now polish by paragraph chunks (threshold: >2800 chars, soft limit: 2800). Fixed infinite recursion bug.
+- **MemoryCurator Segmented Extraction**: Long chapters now extract memory patches by content chunks (threshold: >1000 chars, soft limit: 1000).
+- **Segment Observability**: Added `EVENT_SEGMENT_STARTED`, `EVENT_SEGMENT_COMPLETED`, `EVENT_SEGMENT_FAILED` event types.
+- **Version bump**: `6.6.18` across runtime, frontend, desktop.
+
+Verification:
+- `tests/test_v6618_segmented_agent_payloads.py`: 13 passed
+- Full suite: 2682 passed, 10 failed (pre-existing v6.4 quality diagnosis failures, same on v6.6.17 baseline)
+
+## v6.6.17 - Runtime and LLM Settings Updates
+
+Date: 2026-05-20
+
+Key changes:
+
+- **LLM Settings**: Added `request_timeout_seconds` support; removed user-facing template `max_tokens` editing; split API key value management from templates; hid unused provider key presets; fixed template-name editing focus loss.
+- **Runtime & Workflow Recovery**: Guarded direct generation from blocked/revision states; reset recovery clears active run/task records; healthy running workflows no longer misreported as stale; pre-instructed chapters receive `memory_context_audit`; structural defects route back to Author; revision feedback survives hydration.
+- **MemoryCurator Fallback**: Added fallback LLM routing for memory extraction; preserved old behavior when unconfigured; propagated fallback timeout metadata.
+- **Genesis Reliability**: Stale running Genesis runs marked failed; `production-next` recommends retry after stale recovery; Genesis UI polls running jobs; provider connection failures return explicit failure; invalid JSON recovers to reviewable local content; real Genesis uses bounded segments instead of oversized single request.
+- **Advisory Skills**: Added manifests for dialogue naturalness, scene texture, show-don't-tell, and info-dump advisory quality skills.
+- **Version bump**: `6.6.17` across runtime, frontend, desktop.
+
+Verification:
+- `tests/test_v532_project_genesis.py`: 22 passed
+- `tests/test_v532_project_genesis.py + test_v663_genesis_quality_gate.py + test_v65_desktop_runtime.py + test_v66_desktop_secure_keys.py`: 55 passed
+- Desktop sidecar live LLM smoke passed
 
 ## v6.6.16 - Real Project Burn-in & Regression Closure
 
