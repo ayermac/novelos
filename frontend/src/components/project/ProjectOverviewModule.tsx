@@ -470,8 +470,9 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     }
   }, [productionNext, project.project_id])
 
-  const load = useCallback(async () => {
-    setLoading(true)
+  const load = useCallback(async (options?: { silent?: boolean }) => {
+    const silent = options?.silent === true
+    if (!silent) setLoading(true)
     const chapterParam = chapterNumber && chapterNumber > 1 ? `?chapter=${chapterNumber}` : ''
     try {
       const [ctxRes, prodRes, healthRes] = await Promise.all([
@@ -497,7 +498,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     } catch (err) {
       showToast({ tone: 'danger', title: '网络错误', message: err instanceof Error ? err.message : '无法连接到后端服务' })
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [project.project_id, chapterNumber, showToast])
 
@@ -1253,7 +1254,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
   useEffect(() => {
     if (!disconnectedRunningWorkflow) return
     const timer = window.setInterval(() => {
-      load()
+      load({ silent: true })
       checkActiveSession()
     }, 8000)
     return () => window.clearInterval(timer)
