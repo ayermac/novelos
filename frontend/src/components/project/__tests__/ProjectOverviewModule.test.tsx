@@ -38,6 +38,7 @@ function mockLoadData(overrides?: {
   contextStatus?: object
   productionNext?: object
   healthSummary?: object
+  activeSession?: object
 }) {
   mockGet.mockImplementation((path: string) => {
     if (path.includes('/context-status')) {
@@ -99,7 +100,10 @@ function mockLoadData(overrides?: {
       })
     }
     if (path.includes('/active-session')) {
-      return Promise.resolve({ ok: true, data: { active: false } })
+      return Promise.resolve({
+        ok: true,
+        data: overrides?.activeSession ?? { active: false },
+      })
     }
     return Promise.resolve({ ok: true, data: null })
   })
@@ -227,5 +231,80 @@ describe('ProjectOverviewModule v6.5.2', () => {
 
     expect(screen.queryByText('资料缺口')).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: /生成章节/i })).toBeInTheDocument()
+  })
+
+  it('shows workflow still running when auto-run listener disconnected but target workflow is active', async () => {
+    mockLoadData({
+      contextStatus: { ready: true, score: 100, missing: [], actions: [] },
+      productionNext: {
+        project_id: 'test-proj',
+        current_chapter: 15,
+        next_action: {
+          key: 'view_running_workflow',
+          label: '查看第 16 章运行进度',
+          description: '第 16 章已有工作流正在运行，当前节点：author。请先查看进度，不要重复启动生成。',
+          primary: true,
+          action_url: '/projects/test-proj?module=chapters&chapter=16&view=workflow',
+          method: 'GET',
+          requires_confirmation: false,
+          target_chapter: 16,
+        },
+        health: {
+          has_project: true,
+          has_genesis: true,
+          has_approved_genesis: true,
+          has_world_settings: true,
+          has_characters: true,
+          has_outlines: true,
+          has_instructions_for_current_chapter: true,
+          has_pending_memory_updates: false,
+          has_blocking_chapter: false,
+          has_stuck_run: false,
+          has_running_chapter_workflow: false,
+          has_running_target_workflow: true,
+          target_chapter: 16,
+          target_workflow_current_node: 'author',
+        },
+        missing: [],
+        actions: [],
+      },
+      activeSession: {
+        active: true,
+        session: {
+          id: 'session-1',
+          project_id: 'test-proj',
+          status: 'paused',
+          stop_reason: 'client_disconnected',
+          current_step: 1,
+          chapter_start: 15,
+          chapter_end: 24,
+          max_steps: 5,
+          dry_run: 0,
+          last_event: 'client_disconnected',
+          created_at: '2026-05-24 18:00:00',
+          updated_at: '2026-05-24 18:01:00',
+        },
+        steps: [
+          {
+            step: 1,
+            action: 'continue_next_chapter',
+            label: '继续下一章',
+            target_chapter: 16,
+            result: 'running',
+            warnings: [],
+          },
+        ],
+      },
+    })
+
+    render(<ProjectOverviewModule project={baseProject} stats={baseStats} />)
+
+    await waitFor(() => {
+      expect(screen.getByText('工作流运行中')).toBeInTheDocument()
+    })
+
+    expect(screen.getAllByText('监听连接断开，服务器仍在执行：执笔').length).toBeGreaterThan(0)
+    expect(screen.queryByText('已暂停')).not.toBeInTheDocument()
+    expect(screen.getAllByText(/查看第 16 章实时进度/)).toHaveLength(1)
   })
 })

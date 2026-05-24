@@ -17,7 +17,7 @@ import {
 } from 'lucide-react'
 import { get, post, apiUrl, getApiBase } from '../../lib/api'
 import { normalizeOperationResult, isBusinessSuccess } from '../../lib/statusSemantics'
-import { tSessionStopLabel, tActionKey, tStepResult } from '../../lib/state-labels'
+import { tSessionStopLabel, tActionKey, tStepResult, tWorkflowNodeLabel } from '../../lib/state-labels'
 import { Checkbox, InlineMessage, LoadingButton, NumberInput, SkeletonStack, useToast } from '../ui'
 
 /* ------------------------------------------------------------------ */
@@ -1170,6 +1170,15 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
     || productionNext?.health?.has_running_chapter_workflow
     || productionNext?.health?.has_running_target_workflow
     || false
+  const runningWorkflowNode = productionNext?.health?.target_workflow_current_node || null
+  const disconnectedRunningWorkflow = disconnected && hasRunningWorkflow
+  const autoRunStatusLabel = disconnectedRunningWorkflow
+    ? '工作流运行中'
+    : tSessionStopLabel(streamStatus === 'running' ? 'running' : autoResult?.status || 'idle')
+  const autoRunDetailLabel = disconnectedRunningWorkflow
+    ? `监听连接断开，服务器仍在执行${runningWorkflowNode ? `：${tWorkflowNodeLabel(runningWorkflowNode)}` : ''}`
+    : (streamError ? streamError.message : tSessionStopLabel(autoResult?.status || 'stopped', autoResult?.stop_reason))
+  const effectiveStreamRunning = streamStatus === 'running' || disconnectedRunningWorkflow
   const isPrimaryNavigationAction = nextActionKey === 'view_running_workflow'
 
   /* v5.5.15: Check if health-summary reports an obsolete session */
@@ -1323,16 +1332,6 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
 
               {/* Secondary actions */}
               <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
-                {!autoRunning && disconnected && hasRunningWorkflow && (
-                  <Link
-                    to={`?module=chapters&chapter=${targetCh}&view=workflow`}
-                    className="btn btn-secondary"
-                    style={{ flex: '1 1 180px', minWidth: 0, textDecoration: 'none' }}
-                  >
-                    <Zap size={14} /> {isTargetWorkflowStale ? `处理第 ${targetCh} 章卡住的运行` : `查看第 ${targetCh} 章实时进度`}
-                  </Link>
-                )}
-
                 {!autoRunning && disconnected && hasRunningWorkflow && (
                   <Link
                     to={`?module=chapters&chapter=${targetCh}&view=workflow`}
@@ -1560,7 +1559,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                         style={{
                           height: '100%',
                           width: `${Math.min(100, ((streamSteps.length > 0 ? streamSteps.length : autoResult?.steps_executed || 0) / Math.max(1, autoConfig.maxSteps)) * 100)}%`,
-                          background: streamStatus === 'running' ? 'var(--primary)' : 'var(--success)',
+                          background: effectiveStreamRunning ? 'var(--primary)' : 'var(--success)',
                           borderRadius: 2,
                           transition: 'width 0.3s ease',
                         }}
@@ -1576,14 +1575,16 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   <div>
                     <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>当前状态</div>
                     <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
-                      {tSessionStopLabel(streamStatus === 'running' ? 'running' : autoResult?.status || 'idle')}
+                      {autoRunStatusLabel}
                     </div>
                   </div>
                   {(autoResult?.stop_reason || streamError) && (
                     <div>
-                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>停止原因</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 3 }}>
+                        {disconnectedRunningWorkflow ? '监听状态' : '停止原因'}
+                      </div>
                       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--warning)' }}>
-                        {streamError ? streamError.message : tSessionStopLabel(autoResult?.status || 'stopped', autoResult?.stop_reason)}
+                        {autoRunDetailLabel}
                       </div>
                     </div>
                   )}
@@ -1608,7 +1609,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   {/* Status bar */}
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 10 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      {streamStatus === 'running' && <Loader2 size={14} className="spin" color="var(--primary)" />}
+                      {effectiveStreamRunning && <Loader2 size={14} className="spin" color="var(--primary)" />}
                       {autoResult?.status === 'completed' && (
                         deriveAutoRunSeverity(autoResult, streamSteps) === 'warning'
                           ? <AlertCircle size={14} color="var(--warning)" />
@@ -1619,7 +1620,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                       {autoResult?.status === 'stopped' && <AlertCircle size={14} color="var(--warning)" />}
                       {streamStatus === 'error' && <XCircle size={14} color="var(--danger)" />}
                       <span style={{ fontSize: 13, fontWeight: 500 }}>
-                        {streamStatus === 'running' ? '生产中...'
+                        {effectiveStreamRunning ? '工作流仍在运行'
                           : streamStatus === 'error' ? '出错了'
                           : autoResult?.status === 'completed'
                             ? (deriveAutoRunSeverity(autoResult, streamSteps) === 'warning' ? '已完成（含警告）' : '已完成')
@@ -1629,7 +1630,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                       </span>
                     </div>
                     <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-                      {streamError ? streamError.message : tSessionStopLabel(autoResult?.status || 'stopped', autoResult?.stop_reason)}
+                      {autoRunDetailLabel}
                     </span>
                   </div>
 
