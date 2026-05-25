@@ -814,11 +814,11 @@ class AuthorAgent(BaseAgent):
 
         final_beat = beats[-1]
         sequence = final_beat.get("sequence", "?")
-        combined = " ".join(
-            str(final_beat.get(field) or "")
-            for field in ("scene_goal", "turn", "hook")
-        )
-        terms = self._scene_terms(combined)
+        terms: list[str] = []
+        for field in ("hook", "turn", "scene_goal"):
+            for term in self._scene_terms(final_beat.get(field)):
+                if term not in terms:
+                    terms.append(term)
         if terms and not any(term in tail for term in terms[:10]):
             issues.append({
                 "type": "scene_beat_coverage",
