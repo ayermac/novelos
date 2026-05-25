@@ -121,6 +121,28 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
             },
         )
 
+    project_runs = repo.get_workflow_runs_for_project(project_id, limit=50)
+    running_project_runs = [
+        r for r in project_runs
+        if r.get("status") == "running"
+        and r.get("chapter_number") != chapter_number
+        and (r.get("graph_name") or "chapter_production") == "chapter_production"
+    ]
+    if running_project_runs:
+        running_run = running_project_runs[0]
+        running_chapter = running_run.get("chapter_number")
+        return RunGuardError(
+            "PROJECT_WORKFLOW_ALREADY_RUNNING",
+            f"第 {running_chapter} 章已有正在运行的工作流，请等待完成后再生成第 {chapter_number} 章",
+            details={
+                "run_id": running_run.get("run_id") or running_run.get("id"),
+                "chapter_number": running_chapter,
+                "current_node": running_run.get("current_node"),
+                "started_at": running_run.get("started_at"),
+                "hint": "view_running_workflow",
+            },
+        )
+
     # Guard 4: Context completeness check
     # Projects must have approved genesis + world settings + characters + outlines + instructions
     # before any chapter workflow can start. This prevents users from accidentally generating

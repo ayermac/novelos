@@ -34,6 +34,7 @@ interface Run {
   status: string
   created_at: string
   error_message?: string
+  current_node?: string | null
 }
 
 interface Step {
@@ -85,6 +86,8 @@ interface AuthorWorkbenchProps {
   isStreaming: boolean
   isWorkflowRunning?: boolean
   isChapterWorkflowRunning?: (chapterNumber: number) => boolean
+  isProjectWorkflowRunning?: boolean
+  runningWorkflowChapter?: number | null
   llmMode: string
   projectId: string
   runDetail: RunDetailData | null
@@ -130,6 +133,8 @@ export default function AuthorWorkbench({
   isStreaming,
   isWorkflowRunning,
   isChapterWorkflowRunning,
+  isProjectWorkflowRunning,
+  runningWorkflowChapter,
   llmMode,
   projectId,
   runDetail,
@@ -167,6 +172,8 @@ export default function AuthorWorkbench({
         currentChapter={currentChapter}
         llmMode={llmMode}
         isChapterWorkflowRunning={isChapterWorkflowRunning}
+        isProjectWorkflowRunning={isProjectWorkflowRunning}
+        runningWorkflowChapter={runningWorkflowChapter}
         onSelectChapter={onSelectChapter}
         onGenerateChapter={onGenerateChapter}
         onGenerateNextFromChapter={onGenerateNextFromChapter}
@@ -186,6 +193,8 @@ export default function AuthorWorkbench({
         isStub={isStub}
         isStreaming={isStreaming}
         isWorkflowRunning={isWorkflowRunning}
+        isProjectWorkflowRunning={isProjectWorkflowRunning}
+        runningWorkflowChapter={runningWorkflowChapter}
         llmMode={llmMode}
         projectId={projectId}
         runDetail={runDetail}
@@ -219,6 +228,8 @@ export default function AuthorWorkbench({
         runsForChapter={runsForChapter}
         isStreaming={isStreaming}
         isWorkflowRunning={isWorkflowRunning}
+        isProjectWorkflowRunning={isProjectWorkflowRunning}
+        runningWorkflowChapter={runningWorkflowChapter}
         sseSteps={sseSteps}
         genError={genError}
         timeline={timeline}

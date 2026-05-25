@@ -35,6 +35,8 @@ const baseProps = {
   isStub: true,
   isStreaming: false,
   isWorkflowRunning: false,
+  isProjectWorkflowRunning: false,
+  runningWorkflowChapter: null,
   llmMode: 'stub',
   projectId: 'test-proj',
   runDetail: null,
@@ -792,6 +794,33 @@ describe('AuthorWorkbench', () => {
     fireEvent.click(screen.getByLabelText('第 4 章操作'))
     fireEvent.click(screen.getByLabelText('第 3 章操作'))
     expect(screen.queryByText(/已有运行中工作流/)).not.toBeInTheDocument()
+  })
+
+  it('project running workflow blocks generation on other chapter menu', () => {
+    baseProps.isChapterWorkflowRunning.mockImplementation((chapterNumber: number) => chapterNumber === 4)
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        isProjectWorkflowRunning
+        runningWorkflowChapter={4}
+      />
+    )
+    fireEvent.click(screen.getByLabelText('第 3 章操作'))
+    expect(screen.getByText(/第 4 章生成中/)).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /生成本章/ })).not.toBeInTheDocument()
+  })
+
+  it('project running workflow disables current chapter generate button when another chapter is running', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        isProjectWorkflowRunning
+        runningWorkflowChapter={4}
+      />
+    )
+    const generateButtons = screen.getAllByRole('button', { name: /生成本章/ })
+    expect(generateButtons.every((button) => button.hasAttribute('disabled'))).toBe(true)
+    expect(screen.getByText(/第 4 章工作流正在运行，完成后才能生成本章/)).toBeInTheDocument()
   })
 
   it('terminal chapters do not show generate chapter in menu', () => {

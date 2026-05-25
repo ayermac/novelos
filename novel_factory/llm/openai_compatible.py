@@ -88,6 +88,20 @@ class TokenUsage:
         }
 
 
+class _NormalizedChatResponse:
+    """Small response adapter matching the fields used by this provider."""
+
+    def __init__(
+        self,
+        content: str,
+        usage_metadata: dict[str, int] | None = None,
+        response_metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.content = content
+        self.usage_metadata = usage_metadata or {}
+        self.response_metadata = response_metadata or {}
+
+
 def _message_to_dict(message: Any) -> dict[str, Any]:
     """Convert LangChain or plain message objects to loggable dicts."""
     if isinstance(message, dict):
@@ -142,6 +156,161 @@ class OpenAICompatibleProvider(LLMProvider):
             else:
                 result.append(HumanMessage(content=content))
         return result
+
+    def _normalize_chat_response(self, response: Any) -> Any:
+        """Normalize raw string/dict responses into the minimal AIMessage shape.
+
+        Some OpenAI-compatible gateways work over direct HTTP but trip
+        LangChain/OpenAI SDK response parsing. Keep the rest of the provider on
+        one response contract: content + optional usage/metadata.
+        """
+        if hasattr(response, "content"):
+            return response
+        if isinstance(response, (str, dict)):
+            return self._response_from_http_payload(response)
+        return _NormalizedChatResponse(str(response))
+
+    @staticmethod
+    def _is_langchain_response_shape_error(error: Exception) -> bool:
+        """Return true for SDK/LangChain parser crashes on malformed choices."""
+        error_str = str(error).lower()
+        return any(
+            pattern in error_str
+            for pattern in (
+                "object has no attribute 'choices'",
+                'object has no attribute "choices"',
+                "object has no attribute 'model_dump'",
+                'object has no attribute "model_dump"',
+                "response missing `choices` key",
+            )
+        )
+
+    @staticmethod
+    def _lc_message_to_openai_payload(message: Any) -> dict[str, Any]:
+        if isinstance(message, dict):
+            role = str(message.get("role", "user"))
+            content = message.get("content", "")
+        else:
+            raw_role = getattr(message, "type", None) or getattr(message, "role", None) or "user"
+            role = str(raw_role)
+            content = getattr(message, "content", "")
+        role_map = {"human": "user", "ai": "assistant", "system": "system"}
+        return {"role": role_map.get(role, role), "content": content}
+
+    @staticmethod
+    def _content_to_text(content: Any) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("content")
+                    if text:
+                        parts.append(str(text))
+                elif item is not None:
+                    parts.append(str(item))
+            return "".join(parts)
+        if isinstance(content, dict):
+            text = content.get("text") or content.get("content")
+            if text is not None:
+                return str(text)
+            return json.dumps(content, ensure_ascii=False)
+        return str(content)
+
+    def _response_from_http_payload(self, payload: Any) -> _NormalizedChatResponse:
+        if isinstance(payload, str):
+            return _NormalizedChatResponse(payload)
+
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        first_choice = choices[0] if isinstance(choices, list) and choices else {}
+        message = first_choice.get("message", {}) if isinstance(first_choice, dict) else {}
+        content = self._content_to_text(
+            message.get("content") if isinstance(message, dict) else None
+        )
+        if not content and isinstance(first_choice, dict):
+            content = self._content_to_text(first_choice.get("text"))
+
+        usage = payload.get("usage") or {}
+        prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+        completion_tokens = int(
+            usage.get("completion_tokens") or usage.get("output_tokens") or 0
+        )
+        total_tokens = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
+        finish_reason = first_choice.get("finish_reason") if isinstance(first_choice, dict) else None
+
+        return _NormalizedChatResponse(
+            content=content,
+            usage_metadata={
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+            },
+            response_metadata={
+                "token_usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                },
+                "model_name": payload.get("model"),
+                "id": payload.get("id"),
+                "finish_reason": finish_reason,
+            },
+        )
+
+    def _invoke_http_chat_completion(
+        self,
+        lc_messages: list,
+        request_timeout_seconds: int | None = None,
+        **kwargs,
+    ) -> _NormalizedChatResponse:
+        """Direct HTTP fallback for OpenAI-compatible chat completions."""
+        import urllib.error
+        import urllib.request
+
+        base_url = self.config.base_url.rstrip("/")
+        url = (
+            base_url
+            if base_url.endswith("/chat/completions")
+            else f"{base_url}/chat/completions"
+        )
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": [self._lc_message_to_openai_payload(msg) for msg in lc_messages],
+            "temperature": kwargs.get("temperature", self.config.temperature),
+            "max_tokens": kwargs.get("max_tokens", self.config.max_tokens),
+        }
+        for key, value in kwargs.items():
+            if key not in {"temperature", "max_tokens"}:
+                payload[key] = value
+
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Authorization": f"Bearer {self.config.api_key or 'sk-placeholder'}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        timeout = request_timeout_seconds or self.config.request_timeout_seconds
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as error:
+            raw = error.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"HTTP {error.code}: {raw}") from error
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"connection error: {error.reason}") from error
+
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = raw
+        return self._response_from_http_payload(parsed)
 
     def _handle_api_error(self, error: Exception, timeout_seconds: int | None = None) -> None:
         """Convert API errors to Chinese error messages.
@@ -247,15 +416,43 @@ class OpenAICompatibleProvider(LLMProvider):
                     start_time = time.time()
                     self._last_call_started_at = start_time
                     response = client.invoke(lc_messages, **kwargs)
+                    response = self._normalize_chat_response(response)
                     duration_ms = int((time.time() - start_time) * 1000)
                 except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError) as e:
                     if self.last_call_trace is not None:
                         self.last_call_trace["error"] = redact_sensitive_text(str(e))
                     raise
                 except Exception as e:
-                    if self.last_call_trace is not None:
-                        self.last_call_trace["error"] = redact_sensitive_text(str(e))
-                    self._handle_api_error(e, timeout_seconds=request_timeout_seconds)
+                    if self._is_langchain_response_shape_error(e):
+                        safe_error = redact_sensitive_text(str(e))
+                        request_payload["transport_fallback"] = "http"
+                        request_payload["langchain_error"] = safe_error
+                        logger.warning(
+                            "LangChain response parser failed; retrying via direct HTTP fallback model=%s attempt=%s error=%s",
+                            self.config.model,
+                            attempt_number,
+                            safe_error,
+                        )
+                        try:
+                            response = self._invoke_http_chat_completion(
+                                lc_messages,
+                                request_timeout_seconds=request_timeout_seconds,
+                                **kwargs,
+                            )
+                            response = self._normalize_chat_response(response)
+                            duration_ms = int((time.time() - start_time) * 1000)
+                        except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError) as fallback_error:
+                            if self.last_call_trace is not None:
+                                self.last_call_trace["error"] = redact_sensitive_text(str(fallback_error))
+                            raise
+                        except Exception as fallback_error:
+                            if self.last_call_trace is not None:
+                                self.last_call_trace["error"] = redact_sensitive_text(str(fallback_error))
+                            self._handle_api_error(fallback_error, timeout_seconds=request_timeout_seconds)
+                    else:
+                        if self.last_call_trace is not None:
+                            self.last_call_trace["error"] = redact_sensitive_text(str(e))
+                        self._handle_api_error(e, timeout_seconds=request_timeout_seconds)
 
                 # Extract token usage if available
                 prompt_tokens = 0

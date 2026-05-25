@@ -172,6 +172,38 @@ def test_running_chapter_cannot_be_restarted():
             os.unlink(db_path)
 
 
+def test_running_project_workflow_blocks_other_chapter_generation():
+    """Only one chapter production workflow should run per project at a time."""
+    _, repo, db_path = _client_with_repo()
+    try:
+        project_id = "v6623-project-workflow-lock"
+        repo.create_project(
+            project_id=project_id,
+            name="Project Workflow Lock Test",
+            genre="fantasy",
+            description="test",
+            target_words=30000,
+            total_chapters_planned=20,
+        )
+        repo.add_chapter(project_id, 17, "第十七章", status="drafted")
+        repo.add_chapter(project_id, 18, "第十八章", status="planned")
+
+        run_id = repo.create_workflow_run(project_id, 17)
+        repo.update_workflow_run(run_id, status="running", current_node="author")
+
+        from novel_factory.api.routes._run_guards import check_chapter_run_guard
+
+        err = check_chapter_run_guard(repo, project_id, 18)
+        assert err is not None
+        assert err.code == "PROJECT_WORKFLOW_ALREADY_RUNNING"
+        assert err.details["chapter_number"] == 17
+        assert err.details["run_id"] == run_id
+        assert "第 17 章已有正在运行的工作流" in err.message
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
 def test_planned_chapter_with_existing_content_cannot_be_generated():
     """A recovered planned chapter with preserved content must not be treated
     as an empty chapter generation slot."""
