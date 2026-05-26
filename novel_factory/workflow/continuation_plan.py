@@ -60,14 +60,12 @@ def ensure_continuation_plan_for_chapter(
     target_words = project.get("target_words") or 0
     total_chapters = project.get("total_chapters_planned") or 0
     word_target = int(target_words // total_chapters) if target_words and total_chapters else 3000
-    for ch_num in range(arc_start, arc_end + 1):
-        existing = repo.get_instruction_by_chapter(project_id, ch_num)
-        if existing and existing.get("objective"):
-            continue
+    existing = repo.get_instruction_by_chapter(project_id, chapter_number)
+    if not (existing and existing.get("objective")):
         repo.create_instruction(
             project_id=project_id,
-            chapter_number=ch_num,
-            objective=f"承接上一章，推进第 {ch_num} 章的主线调查与阶段冲突。",
+            chapter_number=chapter_number,
+            objective=f"承接上一章，推进第 {chapter_number} 章的主线调查与阶段冲突。",
             key_events=(
                 "延续既有伏笔；推进当前阶段目标；制造新的场景阻力；"
                 "在章末留下可继续追踪的钩子。"

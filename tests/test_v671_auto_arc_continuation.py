@@ -117,7 +117,8 @@ def test_run_guard_auto_creates_continuation_instruction_for_next_arc():
 
         from novel_factory.api.routes._run_guards import check_chapter_run_guard
 
-        assert check_chapter_run_guard(repo, project_id, 13) is None
+        err, _preflight = check_chapter_run_guard(repo, project_id, 13)
+        assert err is None
         assert repo.get_instruction_by_chapter(project_id, 13) is not None
         assert any(o.get("chapters_range") == "11-20" for o in repo.list_outlines(project_id))
     finally:
@@ -168,10 +169,51 @@ def test_run_guard_auto_creates_missing_instruction_when_arc_outline_exists():
 
         from novel_factory.api.routes._run_guards import check_chapter_run_guard
 
-        assert check_chapter_run_guard(repo, project_id, 13) is None
+        err, _preflight = check_chapter_run_guard(repo, project_id, 13)
+        assert err is None
         instruction = repo.get_instruction_by_chapter(project_id, 13)
         assert instruction is not None
         assert instruction["objective"]
+    finally:
+        import os
+
+        os.unlink(db_path)
+
+
+def test_continuation_plan_only_creates_instruction_for_requested_chapter():
+    temp_file = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+    db_path = temp_file.name
+    temp_file.close()
+    try:
+        init_db(db_path)
+        repo = Repository(db_path)
+        project_id = "auto-instruction-current-only-test"
+        repo.create_project(
+            project_id=project_id,
+            name="潮汐档案",
+            genre="科幻悬疑",
+            description="近未来海洋城邦中的潮汐能源系统、失联案与记忆篡改谜团。",
+            target_words=60000,
+            total_chapters_planned=20,
+            current_chapter=13,
+        )
+        repo.create_outline(
+            project_id=project_id,
+            level="arc",
+            sequence=2,
+            title="第二阶段",
+            content="陆澈进入外环暂存点。",
+            chapters_range="11-20",
+        )
+
+        from novel_factory.workflow.continuation_plan import ensure_continuation_plan_for_chapter
+
+        result = ensure_continuation_plan_for_chapter(repo, project_id, 13)
+
+        assert result["created_instructions"] == 1
+        assert repo.get_instruction_by_chapter(project_id, 13) is not None
+        assert repo.get_instruction_by_chapter(project_id, 14) is None
+        assert repo.get_instruction_by_chapter(project_id, 20) is None
     finally:
         import os
 

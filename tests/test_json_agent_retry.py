@@ -283,6 +283,34 @@ class TestResponseFormatFallback:
         assert result == {"ok": True}
         assert call_count == 2
 
+    def test_fallback_on_json_object_not_supported_by_model(self):
+        """Provider errors saying json_object is unsupported should trigger fallback."""
+        provider = self._make_provider()
+        captured_kwargs_list: list[dict] = []
+
+        def _mock_invoke(*args, **kwargs):
+            captured_kwargs_list.append(dict(kwargs))
+            if "response_format" in kwargs:
+                raise LLMError(
+                    "Error code: 400 - {'error': {'code': 'InvalidParameter', "
+                    "'message': 'The parameter `response_format.type` specified in the request "
+                    "are not valid: `json_object` is not supported by this model.', "
+                    "'param': 'response_format.type', 'type': 'BadRequest'}}"
+                )
+            return _MockResponse('{"ok": true, "data": "fallback_success"}')
+
+        with patch.object(provider, "_invoke_with_retry", side_effect=_mock_invoke):
+            result = provider.invoke_json(
+                [{"role": "user", "content": "test"}],
+                schema=type("TestSchema", (), {}),
+                agent_id="test_glm_fallback",
+            )
+
+        assert result == {"ok": True, "data": "fallback_success"}
+        assert len(captured_kwargs_list) == 2
+        assert "response_format" in captured_kwargs_list[0]
+        assert "response_format" not in captured_kwargs_list[1]
+
     def test_no_fallback_on_auth_error(self):
         """Auth/balance/timeout/rate-limit errors must NOT be treated as response_format fallback."""
         provider = self._make_provider()

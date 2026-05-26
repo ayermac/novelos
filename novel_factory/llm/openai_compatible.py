@@ -515,6 +515,8 @@ class OpenAICompatibleProvider(LLMProvider):
         "extra fields not permitted",
         "response_format not supported",
         "response_format is not supported",
+        "json_object` is not supported by this model",
+        "json_object is not supported by this model",
         "unrecognized arguments",
         "got an unexpected keyword argument",
         "unexpected keyword argument",

@@ -193,7 +193,7 @@ def test_running_project_workflow_blocks_other_chapter_generation():
 
         from novel_factory.api.routes._run_guards import check_chapter_run_guard
 
-        err = check_chapter_run_guard(repo, project_id, 18)
+        err, _preflight = check_chapter_run_guard(repo, project_id, 18)
         assert err is not None
         assert err.code == "PROJECT_WORKFLOW_ALREADY_RUNNING"
         assert err.details["chapter_number"] == 17
@@ -265,7 +265,8 @@ def test_planned_chapter_with_existing_content_can_run_after_explicit_reset():
 
         from novel_factory.api.routes._run_guards import check_chapter_run_guard
 
-        assert check_chapter_run_guard(repo, project_id, 1) is None
+        err, _preflight = check_chapter_run_guard(repo, project_id, 1)
+        assert err is None
     finally:
         if os.path.exists(db_path):
             os.unlink(db_path)
@@ -307,7 +308,7 @@ def test_regenerate_reset_endpoint_confirms_planned_existing_content():
 
         from novel_factory.api.routes._run_guards import check_chapter_run_guard
 
-        before = check_chapter_run_guard(repo, project_id, 1)
+        before, _preflight = check_chapter_run_guard(repo, project_id, 1)
         assert before is not None
         assert before.code == "CHAPTER_HAS_EXISTING_CONTENT"
 
@@ -321,7 +322,8 @@ def test_regenerate_reset_endpoint_confirms_planned_existing_content():
         assert data["recovered_blocked_runs"] == 1
         assert data["new_status"] == "planned"
 
-        assert check_chapter_run_guard(repo, project_id, 1) is None
+        err, _preflight = check_chapter_run_guard(repo, project_id, 1)
+        assert err is None
     finally:
         if os.path.exists(db_path):
             os.unlink(db_path)

@@ -2047,11 +2047,14 @@ async def run_chapter_stream(
         # rather than HTTP error responses so the client can display them.
         from ._run_guards import check_chapter_run_guard
 
-        guard_error = check_chapter_run_guard(repo, project_id, chapter)
+        guard_error, preflight_warnings = check_chapter_run_guard(repo, project_id, chapter)
         if guard_error:
 
             async def guard_event():
-                yield f"data: {json.dumps({'type': 'run_error', 'error': guard_error.message, 'code': guard_error.code, 'details': guard_error.details}, ensure_ascii=False)}\n\n"
+                error_data = {'type': 'run_error', 'error': guard_error.message, 'code': guard_error.code, 'details': guard_error.details}
+                if preflight_warnings:
+                    error_data['preflight_warnings'] = preflight_warnings
+                yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
 
             return StreamingResponse(
                 guard_event(),
@@ -2066,6 +2069,10 @@ async def run_chapter_stream(
 
         async def event_generator():
             """Generate SSE events from runner stream."""
+            # v6.7.2: Emit preflight_warnings as initial event
+            if preflight_warnings:
+                yield f"data: {json.dumps({'type': 'preflight_warnings', 'warnings': preflight_warnings}, ensure_ascii=False)}\n\n"
+
             iterator = run_with_graph_stream(
                 project_id=project_id,
                 chapter_number=chapter,

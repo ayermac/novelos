@@ -14,6 +14,8 @@ This index maps shipped or reviewed versions to their planning/spec source, comp
 
 | Version | Planning/spec source | Report | Review | Coverage |
 | --- | --- | --- | --- | --- |
+| v6.7.3 | `../specs/novel-factory-v6.7.3-preflight-ux-regression-spec.md` | `../reports/novel-factory-v6.7.3-completion-report.md` | none yet | standalone |
+| v6.7.2 | `../specs/novel-factory-v6.7.2-memory-dedup-preflight-spec.md` | `../reports/novel-factory-v6.7.2-completion-report.md` | none yet | standalone |
 | v6.7.1 | CHANGELOG only (hotfix) | `../reports/novel-factory-v6.7.1-completion-report.md` | none yet | hotfix |
 | v6.7.0 | `novel-factory-v6.6.22-to-v6.7.0-production-stability-roadmap.md` | `../reports/novel-factory-v6.7.0-completion-report.md` | pending | umbrella |
 | v6.6.21 | CHANGELOG only (retrospective) | `../reports/novel-factory-v6.6.21-completion-report.md` | none yet | retrospective |

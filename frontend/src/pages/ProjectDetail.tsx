@@ -370,7 +370,7 @@ export default function ProjectDetail() {
     refetchWorkspace()
   }, [loadRunDetail, loadTimeline, refetchWorkspace])
 
-  const { isStreaming, steps: sseHookSteps, startStream } = useSSEStream(
+  const { isStreaming, steps: sseHookSteps, startStream, preflightWarnings: ssePreflightWarnings } = useSSEStream(
     handleSSEComplete,
     handleSSEError,
     handleSSELaunch,
@@ -759,6 +759,7 @@ export default function ProjectDetail() {
           sseSteps={currentChapterSseSteps}
           timeline={timeline}
           timelineError={timelineError}
+          preflightWarnings={ssePreflightWarnings}
           onGenerate={handleGenerate}
           onConfirmRegenerate={handleConfirmRegenerate}
           onGenerateNext={handleGenerateNext}

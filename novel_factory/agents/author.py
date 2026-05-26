@@ -814,11 +814,11 @@ class AuthorAgent(BaseAgent):
 
         final_beat = beats[-1]
         sequence = final_beat.get("sequence", "?")
-        combined = " ".join(
-            str(final_beat.get(field) or "")
-            for field in ("scene_goal", "turn", "hook")
-        )
-        terms = self._scene_terms(combined)
+        terms: list[str] = []
+        for field in ("hook", "turn", "scene_goal"):
+            for term in self._scene_terms(final_beat.get(field)):
+                if term not in terms:
+                    terms.append(term)
         if terms and not any(term in tail for term in terms[:10]):
             issues.append({
                 "type": "scene_beat_coverage",
@@ -1047,7 +1047,7 @@ class AuthorAgent(BaseAgent):
         and deriving the small metadata fields deterministically.
         """
         beats = self._get_scene_beats(state)
-        if state.get("llm_mode") == "real" and len(beats) >= 4:
+        if state.get("llm_mode") == "real" and task_desc != "返修" and len(beats) >= 4:
             return self._try_segmented_plain_text_draft(state, task_desc, context, exec_events=exec_events)
 
         project_id = state["project_id"]

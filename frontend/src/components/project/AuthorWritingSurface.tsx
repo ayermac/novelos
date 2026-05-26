@@ -8,7 +8,7 @@ import {
   FileText,
   PenLine,
 } from 'lucide-react'
-import { StepStatus } from '../../hooks/useSSEStream'
+import { StepStatus, PreflightWarning } from '../../hooks/useSSEStream'
 import { useWorkflowStream } from '../../hooks/useWorkflowStream'
 import { tWorkflowNodeLabel, tWorkflowNodeNarrative } from '../../lib/state-labels'
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
@@ -527,6 +527,7 @@ interface AuthorWritingSurfaceProps {
   sseSteps: Record<string, StepStatus>
   timeline?: WorkflowTimelineData | null
   timelineError?: string
+  preflightWarnings?: PreflightWarning[]
   onGenerate: () => void
   onConfirmRegenerate?: () => void
   onGenerateNext?: () => void
@@ -566,6 +567,7 @@ export default function AuthorWritingSurface({
   sseSteps,
   timeline,
   timelineError,
+  preflightWarnings,
   onGenerate,
   onConfirmRegenerate,
   onMarkRunStuck,
@@ -750,6 +752,7 @@ export default function AuthorWritingSurface({
             isLaunching={isLaunching}
             isStreaming={isStreaming}
             sseSteps={sseSteps}
+            preflightWarnings={preflightWarnings}
             onGenerate={onGenerate}
             onConfirmRegenerate={onConfirmRegenerate}
             onMarkRunStuck={onMarkRunStuck}
@@ -1024,6 +1027,7 @@ function WorkflowBody({
   isLaunching,
   isStreaming,
   sseSteps,
+  preflightWarnings,
   onGenerate,
   onConfirmRegenerate,
   onMarkRunStuck,
@@ -1043,6 +1047,7 @@ function WorkflowBody({
   isLaunching: boolean
   isStreaming: boolean
   sseSteps: Record<string, StepStatus>
+  preflightWarnings?: PreflightWarning[]
   onGenerate: () => void
   onConfirmRegenerate?: () => void
   onMarkRunStuck?: (runId: string) => Promise<void> | void
@@ -1335,7 +1340,7 @@ function WorkflowBody({
             </div>
           )}
         </div>
-        <WorkflowTimeline steps={timelineSteps} />
+        <WorkflowTimeline steps={timelineSteps} preflightWarnings={preflightWarnings} />
       </div>
     )
   }
@@ -1460,7 +1465,7 @@ function WorkflowBody({
             工作流时间线暂不可用，此视图可能缺少 memory_curator、awaiting_publish、archive 等 LangGraph 节点。
           </div>
         </div>
-        <WorkflowTimeline steps={runDetail.steps} />
+        <WorkflowTimeline steps={runDetail.steps} preflightWarnings={preflightWarnings} />
       </div>
     )
   }
@@ -1517,7 +1522,7 @@ function WorkflowBody({
             正在等待工作流时间线刷新，先按 canonical 节点骨架显示实时事件。
           </div>
         </div>
-        <WorkflowTimeline steps={steps} />
+        <WorkflowTimeline steps={steps} preflightWarnings={preflightWarnings} />
       </div>
     )
   }

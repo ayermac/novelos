@@ -2310,11 +2310,13 @@ async def _execute_auto_step(
             # v5.5.15: Unified run guard — same checks as POST /run/chapter
             from ._run_guards import check_chapter_run_guard
 
-            guard_error = check_chapter_run_guard(repo, project_id, chapter_num)
+            guard_error, preflight_warnings = check_chapter_run_guard(repo, project_id, chapter_num)
             if guard_error:
                 result["result"] = "skipped"
                 result["error"] = guard_error.message
+                result["preflight_warnings"] = preflight_warnings
                 return result
+            result["preflight_warnings"] = preflight_warnings
 
             # Use run_with_graph
             from ...workflow.runner import run_with_graph

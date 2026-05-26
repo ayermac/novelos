@@ -230,6 +230,18 @@ class ChapterDispatchMixin:
             current_node="human_resume",
             error_message=f"Human resume: {chapter['status']} → {status}",
         )
+        reset_task_id = self.repo.start_task(
+            project_id,
+            chapter_number,
+            "reset",
+            "human",
+            workflow_run_id=run_id,
+        )
+        self.repo.complete_task(
+            reset_task_id,
+            success=True,
+            error="人工恢复章节：解除阻塞并清空本轮返修计数。",
+        )
 
         return {"ok": True, "error": None, "data": {"new_status": status}}
 

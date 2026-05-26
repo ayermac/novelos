@@ -567,6 +567,49 @@ class TestAuthorAgent:
 
         assert issues == []
 
+    def test_author_scene_beat_coverage_accepts_paraphrased_final_hook_tail(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "进入旧库", "turn": "黄光逼近", "hook": "镜头锁定"},
+            {"sequence": 2, "scene_goal": "拖延通讯", "turn": "陈科追问", "hook": "旁路监听"},
+            {"sequence": 3, "scene_goal": "复核纸册暗记", "turn": "发现新盐痕", "hook": "投放者刚离开"},
+            {"sequence": 4, "scene_goal": "复核七分钟窗口", "turn": "底档同批次", "hook": "空白登记码"},
+            {"sequence": 5, "scene_goal": "处理外环临时潮汐授权", "turn": "确认堤坝外侧临时潮汐授权", "hook": "旧排潮井箭头"},
+            {"sequence": 6, "scene_goal": "沿离线物理痕迹绕向堤坝外侧", "turn": "发现外侧检潮孔", "hook": "新刮痕仍带潮热"},
+            {
+                "sequence": 7,
+                "scene_goal": "让陆澈以非联网方式脱离旧库封控范围，但保留系统追踪压迫，并抵达下一处与“外”级授权相关的门禁结构前",
+                "turn": "他利用旧排潮井的机械潮阀回落间隙，从无电子反馈的检潮孔爬向堤坝外侧；身后黄光无法穿透厚混凝土，却沿着旧库连廊转向，说明封控系统已把搜索口径从“人”改成“外级授权残页”",
+                "hook": "堤坝外侧检潮孔尽头嵌着一只旧门禁轮盘，轮盘中央刻着“外级临时授权”，签发人栏被一枚新压上的盐封盖住，而盐封边缘仍在发热",
+            },
+        ])
+
+        content = (
+            "陆澈在维护通道里完成前段核验。" + ("潮声压着墙体。" * 90) +
+            "\n\n他将纸册和暗记塞进内袋，双手扣住检潮孔边缘的旧格栅。"
+            "一阵低频震颤顺着混凝土传来，旧排潮井的机械潮阀正在回落。"
+            "陆澈借着这股回震的掩护，猛地推开格栅，侧身挤入狭窄的检潮孔。\n\n"
+            "身后，审计黄光扫过他刚才站立的位置，却无法穿透厚重的混凝土墙体。"
+            "光斑沿着旧库连廊急速转向——封控系统的搜索口径变了，它们不再找人，"
+            "而是在找那张“外级授权残页”。\n\n"
+            "陆澈在逼仄的孔道内匍匐，盐砂磨破手背，直到前方透进一丝湿冷的风。"
+            "堤坝外侧检潮孔的尽头，嵌着一只锈迹斑斑的旧门禁轮盘。\n\n"
+            "他伸手抹去轮盘中央的灰垢，“外级临时授权”几个字赫然入目。\n\n"
+            "视线下移，签发人栏的位置被一枚新压上的盐封死死盖住。\n\n"
+            "陆澈的指尖悬在盐封上方。盐封边缘的潮热还未散去，"
+            "像刚有人在这里按下了他的命运。悬念没有消失。"
+        )
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
+        issues = agent._scene_beat_coverage_issues({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+        }, content)
+
+        assert issues == []
+
     def test_author_context_is_capped_but_preserves_head_and_tail(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent, AUTHOR_CONTEXT_CHAR_LIMIT
 

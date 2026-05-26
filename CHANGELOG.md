@@ -12,6 +12,41 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.7.3 - Preflight UX & Regression Closure
+
+Date: 2026-05-26
+
+Key changes:
+
+- **API success path regression tests**: Added tests for background start, SSE stream, and production auto-run paths.
+- **Enhanced preflight warning details**: Warnings now include `groups` with database IDs and `recommended_actions` with structured suggestions.
+- **Frontend preflight warning display**: Non-blocking `PreflightWarningBanner` in `WorkflowTimeline` shows warnings with examples and action tags.
+- **SSE preflight event consumption**: `useSSEStream` hook handles `preflight_warnings` event and exposes warnings to components.
+- **GLM/Volcengine JSON fallback**: `response_format` fallback now recognizes `json_object is not supported by this model` errors and retries JSON calls without the unsupported hint.
+- **Version alignment**: Runtime, frontend, desktop, and lockfiles updated to `6.7.3`.
+
+Verification:
+- Preflight UX regression tests: 11 new tests passing
+- Response format fallback tests: passing
+- Frontend typecheck/lint/build: passing
+
+## v6.7.2 - Memory Dedup & Preflight Hardening
+
+Date: 2026-05-26
+
+Key changes:
+
+- **Preflight diagnostics**: New `novel_factory/ops/preflight.py` module exposing lightweight checks for duplicate characters, duplicate world_settings, story_facts pressure, memory_items pressure, and context character pressure before chapter generation.
+- **Run guard integration**: `check_chapter_run_guard()` now returns preflight warnings alongside guard errors, making issues visible at the exact moment a user tries to start chapter generation.
+- **Non-blocking warnings**: Unlike hard guards, preflight checks emit warnings without blocking the workflow.
+- **API response enhancement**: Preflight warnings included in both error and success responses (sync run, background start, SSE stream, auto-run) for full observability.
+- **Exception resilience**: Preflight failures logged with diagnostic warning instead of silently swallowed.
+- **Version alignment**: Runtime, frontend, desktop, and lockfiles updated to `6.7.2`.
+
+Verification:
+- Preflight diagnostics tests: 9 new tests passing
+- Full test suite: 2826 passed, 1 skipped
+
 ## v6.7.1 - Auto Arc Continuation
 
 Date: 2026-05-24

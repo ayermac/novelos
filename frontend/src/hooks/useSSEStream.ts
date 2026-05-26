@@ -7,8 +7,15 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { apiUrl } from '../lib/api';
 
+export interface PreflightWarning {
+  code: string;
+  message: string;
+  severity: 'warning' | 'info';
+  details?: Record<string, unknown>;
+}
+
 export interface SSEEvent {
-  type: 'step_start' | 'step_complete' | 'step_log' | 'run_complete' | 'run_error';
+  type: 'step_start' | 'step_complete' | 'step_log' | 'run_complete' | 'run_error' | 'preflight_warnings';
   agent?: string;
   timestamp?: string;
   duration_ms?: number;
@@ -22,6 +29,7 @@ export interface SSEEvent {
   missing?: string[];
   actions?: string[];
   details?: Record<string, unknown>;
+  warnings?: PreflightWarning[];
 }
 
 interface WorkflowStreamEvent {
@@ -65,6 +73,7 @@ export interface UseSSEStreamResult {
   isStreaming: boolean;
   steps: Record<string, StepStatus>;
   events: SSEEvent[];
+  preflightWarnings: PreflightWarning[];
   error: string | null;
   startStream: (projectId: string, chapter: number) => void;
   stopStream: () => void;
@@ -115,6 +124,7 @@ export function useSSEStream(
   const [isStreaming, setIsStreaming] = useState(false);
   const [steps, setSteps] = useState<Record<string, StepStatus>>({});
   const [events, setEvents] = useState<SSEEvent[]>([]);
+  const [preflightWarnings, setPreflightWarnings] = useState<PreflightWarning[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -131,6 +141,7 @@ export function useSSEStream(
   const startStream = useCallback((projectId: string, chapter: number) => {
     setSteps({});
     setEvents([]);
+    setPreflightWarnings([]);
     setError(null);
     setIsStreaming(true);
 
@@ -175,6 +186,12 @@ export function useSSEStream(
       try {
         const event: SSEEvent = JSON.parse(e.data);
         setEvents((prev) => [...prev, event]);
+
+        // v6.7.3: Handle preflight warnings from SSE stream
+        if (event.type === 'preflight_warnings' && event.warnings) {
+          setPreflightWarnings(event.warnings);
+          return;
+        }
 
         switch (event.type) {
           case 'step_start':
@@ -351,7 +368,7 @@ export function useSSEStream(
     };
   }, []);
 
-  return { isConnected, isStreaming, steps, events, error, startStream, stopStream };
+  return { isConnected, isStreaming, steps, events, preflightWarnings, error, startStream, stopStream };
 }
 
 export default useSSEStream;

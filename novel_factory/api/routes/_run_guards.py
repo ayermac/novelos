@@ -25,24 +25,64 @@ TERMINAL_STATUSES = frozenset({"reviewed", "awaiting_publish", "published"})
 class RunGuardError(Exception):
     """Raised when a chapter generation request is blocked by a guard."""
 
-    def __init__(self, code: str, message: str, details: dict[str, Any] | None = None):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+        preflight_warnings: list[dict[str, Any]] | None = None,
+    ):
         super().__init__(message)
         self.code = code
         self.message = message
         self.details = details or {}
+        self.preflight_warnings = preflight_warnings or []
 
 
-def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGuardError | None:
+def check_chapter_run_guard(
+    repo, project_id: str, chapter_number: int
+) -> tuple[RunGuardError | None, list[dict[str, Any]]]:
     """Check whether a chapter can safely start a new generation run.
 
-    Returns a RunGuardError if the chapter should NOT be generated,
-    or None if the chapter is safe to generate.
+    Returns a tuple of (RunGuardError | None, preflight_warnings).
+    - RunGuardError if the chapter should NOT be generated, None if safe.
+    - preflight_warnings: List of preflight diagnostic warnings (non-blocking).
 
     Guard 1: WORKFLOW_ALREADY_RUNNING — a running workflow_run already exists.
     Guard 2: CHAPTER_ALREADY_COMPLETED — the chapter is in a terminal status.
     Guard 3: CHAPTER_HAS_EXISTING_CONTENT — planned chapter already has content.
     Guard 4: CONTEXT_INCOMPLETE — project context missing (genesis/world/characters/outlines/instructions).
     """
+    # v6.7.2: Run preflight diagnostics first (non-blocking)
+    preflight_warnings: list[dict[str, Any]] = []
+    try:
+        from ...ops.preflight import check_preflight_diagnostics
+
+        preflight_result = check_preflight_diagnostics(repo, project_id)
+        preflight_warnings = [
+            {
+                "code": w.code,
+                "message": w.message,
+                "severity": w.severity,
+                "details": w.details,
+            }
+            for w in preflight_result.warnings
+        ]
+    except Exception as e:
+        # v6.7.2: Log but don't block - preflight failures should not prevent generation
+        import logging
+        logging.getLogger(__name__).warning(
+            f"Preflight diagnostics failed for project {project_id}: {e}",
+            exc_info=True,
+        )
+        # Add a diagnostic warning so users know preflight failed
+        preflight_warnings = [{
+            "code": "preflight_failed",
+            "message": f"预检诊断失败: {e}",
+            "severity": "info",
+            "details": {"error": str(e)},
+        }]
+
     # Guard 1: Terminal status check. Terminal chapter state wins over stale
     # running workflow rows; reconcile first so UI/health endpoints stop
     # showing phantom work.
@@ -62,26 +102,34 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
                 project_id=project_id,
                 chapter_number=chapter_number,
             )
-        return RunGuardError(
-            "CHAPTER_ALREADY_COMPLETED",
-            f"第 {chapter_number} 章已处于终态（{chapter.get('status')}），不能重复启动生成。如需重新生成，请先重置章节。",
-            details={
-                "chapter_status": chapter.get("status"),
-                "hint": "reset_chapter",
-            },
+        return (
+            RunGuardError(
+                "CHAPTER_ALREADY_COMPLETED",
+                f"第 {chapter_number} 章已处于终态（{chapter.get('status')}），不能重复启动生成。如需重新生成，请先重置章节。",
+                details={
+                    "chapter_status": chapter.get("status"),
+                    "hint": "reset_chapter",
+                },
+                preflight_warnings=preflight_warnings,
+            ),
+            preflight_warnings,
         )
 
     # Guard 2: Blocked/revision chapters must be recovered explicitly before
     # starting a fresh production run. Letting "生成本章" run from these states
     # enters the graph with stale state and usually fails later inside an agent.
     if chapter and chapter.get("status") in {"blocking", "revision"}:
-        return RunGuardError(
-            "CHAPTER_NEEDS_RECOVERY",
-            f"第 {chapter_number} 章处于 {chapter.get('status')} 状态，请先清除阻塞/返修状态后再重新生成。",
-            details={
-                "chapter_status": chapter.get("status"),
-                "hint": "reset_chapter",
-            },
+        return (
+            RunGuardError(
+                "CHAPTER_NEEDS_RECOVERY",
+                f"第 {chapter_number} 章处于 {chapter.get('status')} 状态，请先清除阻塞/返修状态后再重新生成。",
+                details={
+                    "chapter_status": chapter.get("status"),
+                    "hint": "reset_chapter",
+                },
+                preflight_warnings=preflight_warnings,
+            ),
+            preflight_warnings,
         )
 
     # Guard 2: A planned chapter with content is not an empty generation slot.
@@ -94,14 +142,18 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
         if (content or word_count > 0) and not _has_explicit_reset_recovery(
             repo, project_id, chapter_number
         ):
-            return RunGuardError(
-                "CHAPTER_HAS_EXISTING_CONTENT",
-                f"第 {chapter_number} 章已有正文内容，不能按空白 planned 章节直接生成。请先查看正文并决定编辑、回滚或显式重置。",
-                details={
-                    "chapter_status": chapter.get("status"),
-                    "word_count": word_count,
-                    "hint": "review_existing_content",
-                },
+            return (
+                RunGuardError(
+                    "CHAPTER_HAS_EXISTING_CONTENT",
+                    f"第 {chapter_number} 章已有正文内容，不能按空白 planned 章节直接生成。请先查看正文并决定编辑、回滚或显式重置。",
+                    details={
+                        "chapter_status": chapter.get("status"),
+                        "word_count": word_count,
+                        "hint": "review_existing_content",
+                    },
+                    preflight_warnings=preflight_warnings,
+                ),
+                preflight_warnings,
             )
 
     # Guard 3: Running workflow check
@@ -111,19 +163,24 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
     running_runs = [r for r in existing_runs if r.get("status") == "running"]
     if running_runs:
         running_run = running_runs[0]
-        return RunGuardError(
-            "WORKFLOW_ALREADY_RUNNING",
-            f"第 {chapter_number} 章已有正在运行的工作流，不能重复启动生成",
-            details={
-                "run_id": running_run.get("id"),
-                "current_node": running_run.get("current_node"),
-                "started_at": running_run.get("started_at"),
-            },
+        return (
+            RunGuardError(
+                "WORKFLOW_ALREADY_RUNNING",
+                f"第 {chapter_number} 章已有正在运行的工作流，不能重复启动生成",
+                details={
+                    "run_id": running_run.get("id"),
+                    "current_node": running_run.get("current_node"),
+                    "started_at": running_run.get("started_at"),
+                },
+                preflight_warnings=preflight_warnings,
+            ),
+            preflight_warnings,
         )
 
     project_runs = repo.get_workflow_runs_for_project(project_id, limit=50)
     running_project_runs = [
-        r for r in project_runs
+        r
+        for r in project_runs
         if r.get("status") == "running"
         and r.get("chapter_number") != chapter_number
         and (r.get("graph_name") or "chapter_production") == "chapter_production"
@@ -131,16 +188,20 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
     if running_project_runs:
         running_run = running_project_runs[0]
         running_chapter = running_run.get("chapter_number")
-        return RunGuardError(
-            "PROJECT_WORKFLOW_ALREADY_RUNNING",
-            f"第 {running_chapter} 章已有正在运行的工作流，请等待完成后再生成第 {chapter_number} 章",
-            details={
-                "run_id": running_run.get("run_id") or running_run.get("id"),
-                "chapter_number": running_chapter,
-                "current_node": running_run.get("current_node"),
-                "started_at": running_run.get("started_at"),
-                "hint": "view_running_workflow",
-            },
+        return (
+            RunGuardError(
+                "PROJECT_WORKFLOW_ALREADY_RUNNING",
+                f"第 {running_chapter} 章已有正在运行的工作流，请等待完成后再生成第 {chapter_number} 章",
+                details={
+                    "run_id": running_run.get("run_id") or running_run.get("id"),
+                    "chapter_number": running_chapter,
+                    "current_node": running_run.get("current_node"),
+                    "started_at": running_run.get("started_at"),
+                    "hint": "view_running_workflow",
+                },
+                preflight_warnings=preflight_warnings,
+            ),
+            preflight_warnings,
         )
 
     # Guard 4: Context completeness check
@@ -163,13 +224,17 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
     has_instruction = instruction is not None and bool(instruction.get("objective"))
 
     if not has_approved_genesis:
-        return RunGuardError(
-            "CONTEXT_INCOMPLETE",
-            "项目创世设定尚未批准。请先完成并批准创世设定，再补齐项目资料后生成章节。",
-            details={
-                "missing": ["genesis"],
-                "hint": "generate_genesis",
-            },
+        return (
+            RunGuardError(
+                "CONTEXT_INCOMPLETE",
+                "项目创世设定尚未批准。请先完成并批准创世设定，再补齐项目资料后生成章节。",
+                details={
+                    "missing": ["genesis"],
+                    "hint": "generate_genesis",
+                },
+                preflight_warnings=preflight_warnings,
+            ),
+            preflight_warnings,
         )
 
     missing_context = []
@@ -183,16 +248,20 @@ def check_chapter_run_guard(repo, project_id: str, chapter_number: int) -> RunGu
         missing_context.append(f"第{chapter_number}章写作指令")
 
     if missing_context:
-        return RunGuardError(
-            "CONTEXT_INCOMPLETE",
-            f"项目资料不完整，缺少：{', '.join(missing_context)}。请先补齐资料后再生成章节。",
-            details={
-                "missing": missing_context,
-                "hint": "generate_missing_context",
-            },
+        return (
+            RunGuardError(
+                "CONTEXT_INCOMPLETE",
+                f"项目资料不完整，缺少：{', '.join(missing_context)}。请先补齐资料后再生成章节。",
+                details={
+                    "missing": missing_context,
+                    "hint": "generate_missing_context",
+                },
+                preflight_warnings=preflight_warnings,
+            ),
+            preflight_warnings,
         )
 
-    return None
+    return None, preflight_warnings
 
 
 def _has_explicit_reset_recovery(repo, project_id: str, chapter_number: int) -> bool:
