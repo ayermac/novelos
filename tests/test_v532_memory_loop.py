@@ -651,6 +651,52 @@ class TestMemoryApplyCanonical:
         assert instruction["objective"] == "制造迫降与被捕的二选一张力"
         assert "燃料耗尽" in instruction["key_events"]
 
+    def test_apply_character_update_matches_existing_name_without_target_id(self, client, project_id):
+        """LLM character.update patches often omit target_id but include the character name."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        character = repo.create_character(
+            project_id,
+            name="外环值守",
+            role="supporting",
+            description="旧描述",
+            traits="值守",
+        )
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=23,
+            summary="角色名匹配更新测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="characters",
+            operation="update",
+            after_json=json.dumps({
+                "name": "外环值守",
+                "description": "追踪取得突破，正在物理拆除陆澈藏身处的外部遮蔽。",
+            }, ensure_ascii=False),
+            confidence=0.9,
+            evidence_text="就在这块牌子后面！",
+            rationale="角色状态更新",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        result = body["data"]["results"][0]
+        assert result["success"] is True
+        assert result["created_id"] == character["id"]
+
+        updated_character = repo.get_character(project_id, character["id"])
+        assert "物理拆除陆澈藏身处" in updated_character["description"]
+
     def test_apply_character_story_status_does_not_overwrite_lifecycle_status(self, client, project_id):
         """Character memory patches must not treat story-state prose as active/inactive status."""
         from novel_factory.db.repository import Repository

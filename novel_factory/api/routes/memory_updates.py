@@ -263,6 +263,31 @@ def _find_world_setting_for_memory_update(repo, project_id: str, item: dict, aft
     return None
 
 
+def _find_character_for_memory_update(repo, project_id: str, item: dict, after_data: dict) -> dict | None:
+    """Find a character target for update patches that omitted target_id."""
+    before_data = _parse_json_object(item.get("before_json"))
+    names = [
+        str(candidate or "").strip()
+        for candidate in (
+            after_data.get("name"),
+            item.get("target_name"),
+            before_data.get("name"),
+        )
+        if str(candidate or "").strip()
+    ]
+    if not names:
+        return None
+    characters = repo.list_characters(project_id, include_inactive=True)
+    return next(
+        (
+            character
+            for character in characters
+            if str(character.get("name") or "").strip() in names
+        ),
+        None,
+    )
+
+
 def _compact_match_text(value) -> str:
     """Normalize Chinese/English text for fuzzy memory target matching."""
     return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]+", "", str(value or "")).lower()
@@ -532,9 +557,26 @@ def _apply_memory_item(
                 )
                 result["success"] = True
                 result["created_id"] = ch["id"] if ch else None
-            elif operation == "update" and target_id:
-                repo.update_character(project_id, target_id, character_data)
-                result["success"] = True
+            elif operation == "update":
+                character = (
+                    repo.get_character(project_id, _coerce_int(target_id))
+                    if target_id
+                    else None
+                )
+                if not character:
+                    character = _find_character_for_memory_update(
+                        repo, project_id, item, after_data
+                    )
+                if character:
+                    updated = repo.update_character(
+                        project_id, character["id"], character_data
+                    )
+                    result["success"] = updated is not None
+                    result["created_id"] = character["id"]
+                    if not updated:
+                        result["error"] = f"角色 {character['id']} 不存在，无法更新"
+                else:
+                    result["error"] = "角色更新缺少 target_id，且无法根据角色名匹配现有角色"
 
         elif target_table == "factions":
             if operation == "create":
