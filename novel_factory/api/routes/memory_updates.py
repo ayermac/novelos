@@ -275,8 +275,6 @@ def _find_character_for_memory_update(repo, project_id: str, item: dict, after_d
         )
         if str(candidate or "").strip()
     ]
-    if not names:
-        names = []
     characters = repo.list_characters(project_id, include_inactive=True)
     exact = next(
         (
@@ -289,23 +287,79 @@ def _find_character_for_memory_update(repo, project_id: str, item: dict, after_d
     if exact:
         return exact
 
-    text = "\n".join(
-        str(part or "")
-        for part in (
-            json.dumps(after_data, ensure_ascii=False),
-            item.get("evidence_text"),
-            item.get("rationale"),
-        )
-    )
+    inferred_name = _infer_character_name_for_memory_update(item, after_data)
+    if not inferred_name:
+        return None
     return next(
         (
             character
             for character in characters
-            if str(character.get("name") or "").strip()
-            and str(character.get("name") or "").strip() in text
+            if str(character.get("name") or "").strip() == inferred_name
         ),
         None,
     )
+
+
+def _derive_story_fact_key(item: dict, after_data: dict) -> str:
+    """Derive a stable fact key when an LLM omits fact_key."""
+    subject = str(after_data.get("subject") or "").strip()
+    attribute = str(after_data.get("attribute") or "").strip()
+    if subject and attribute:
+        return f"{subject}.{attribute}"
+    for candidate in (after_data.get("fact_key"), after_data.get("code"), after_data.get("title")):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    anchor = str(after_data.get("value") or item.get("evidence_text") or item.get("rationale") or "").strip()
+    if anchor:
+        compact = _compact_match_text(anchor)
+        if compact:
+            fact_type = str(after_data.get("fact_type") or "fact").strip() or "fact"
+            return f"{fact_type}.{compact[:24]}"
+    return ""
+
+
+def _infer_character_name_for_memory_update(item: dict, after_data: dict) -> str:
+    """Infer a concise character/group name from prose-only character patches."""
+    before_data = _parse_json_object(item.get("before_json"))
+    for candidate in (
+        after_data.get("name"),
+        item.get("target_name"),
+        before_data.get("name"),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+
+    parts = [
+        str(part or "")
+        for part in (
+            item.get("rationale"),
+            item.get("evidence_text"),
+            json.dumps(after_data, ensure_ascii=False),
+        )
+    ]
+    patterns = (
+        r"^([\u4e00-\u9fffA-Za-z0-9]{2,12}?)(?:的|行动|追踪|忽然|提前|没继续|继续|已经|正在|用)",
+    )
+    ignored = {
+        "角色状态", "状态更新", "证据", "他们", "身后", "这里", "今天", "晨会",
+        "主角", "有人", "外部", "内部",
+    }
+    ignored_prefixes = ("因为", "以及", "但是", "如果", "这里", "今天", "上方", "身后")
+    for part in parts:
+        for segment in re.split(r"[，。；;:：\n\"'“”‘’——,]", part):
+            segment = segment.strip()
+            if not segment or segment.startswith(ignored_prefixes):
+                continue
+            for pattern in patterns:
+                match = re.search(pattern, segment)
+                if not match:
+                    continue
+                candidate = str(match.group(1) or "").strip("，。；：:、 　")
+                if candidate and candidate not in ignored:
+                    return candidate
+    return ""
 
 
 def _compact_match_text(value) -> str:
@@ -596,7 +650,24 @@ def _apply_memory_item(
                     if not updated:
                         result["error"] = f"角色 {character['id']} 不存在，无法更新"
                 else:
-                    result["error"] = "角色更新缺少 target_id，且无法根据角色名匹配现有角色"
+                    inferred_name = _infer_character_name_for_memory_update(item, after_data)
+                    if inferred_name:
+                        created = repo.create_character(
+                            project_id,
+                            name=inferred_name,
+                            role=character_data.get("role", "supporting"),
+                            description=(
+                                character_data.get("description")
+                                or item.get("rationale", "")
+                                or item.get("evidence_text", "")
+                            ),
+                            traits=character_data.get("traits", ""),
+                        )
+                        result["operation"] = "create"
+                        result["success"] = True
+                        result["created_id"] = created["id"] if created else None
+                    else:
+                        result["error"] = "角色更新缺少 target_id，且无法根据角色名匹配现有角色"
 
         elif target_table == "factions":
             if operation == "create":
@@ -799,12 +870,47 @@ def _apply_memory_item(
                 )
                 result["success"] = True
                 result["created_id"] = inst
-            elif operation == "update" and target_id:
-                repo.update_instruction(project_id, target_id, instruction_data)
-                result["success"] = True
+            elif operation == "update":
+                instruction = (
+                    repo.get_instruction_by_id(project_id, _coerce_int(target_id))
+                    if target_id
+                    else None
+                )
+                if not instruction:
+                    chapter_num = _coerce_int(instruction_data.get("chapter_number"))
+                    instruction = (
+                        repo.get_instruction_by_chapter(project_id, chapter_num)
+                        if chapter_num > 0
+                        else None
+                    )
+                if instruction:
+                    updated = repo.update_instruction(
+                        project_id, instruction["id"], instruction_data
+                    )
+                    result["success"] = updated is not None
+                    result["created_id"] = instruction["id"]
+                    if not updated:
+                        result["error"] = f"写作指令 {instruction['id']} 不存在，无法更新"
+                else:
+                    inst = repo.create_instruction(
+                        project_id,
+                        chapter_number=instruction_data.get("chapter_number", 0),
+                        objective=instruction_data.get("objective", ""),
+                        key_events=instruction_data.get("key_events", ""),
+                        plots_to_resolve=instruction_data.get("plots_to_resolve", ""),
+                        plots_to_plant=instruction_data.get("plots_to_plant", ""),
+                        emotion_tone=instruction_data.get("emotion_tone", ""),
+                        ending_hook=instruction_data.get("ending_hook", ""),
+                        word_target=instruction_data.get("word_target"),
+                    )
+                    result["operation"] = "create"
+                    result["success"] = True
+                    result["created_id"] = inst
 
         elif target_table == "story_facts":
-            fact_key = after_data.get("fact_key", "")
+            fact_key = str(after_data.get("fact_key") or "").strip()
+            if not fact_key:
+                fact_key = _derive_story_fact_key(item, after_data)
             if fact_key:
                 # Check if fact exists before upsert (for event type)
                 existing_fact = repo.get_story_fact_by_key(project_id, fact_key)

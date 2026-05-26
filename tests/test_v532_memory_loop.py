@@ -492,6 +492,56 @@ class TestMemoryApplyCanonical:
         assert result["skipped"] is True
         assert repo.get_instruction_by_chapter(project_id, 21) is None
 
+    def test_apply_instruction_update_matches_existing_chapter_without_target_id(self, client, project_id):
+        """Instruction update patches should match by chapter_number when target_id is omitted."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        repo.create_instruction(
+            project_id,
+            chapter_number=24,
+            objective="旧目标",
+            key_events="旧事件",
+            emotion_tone="旧基调",
+            word_target=3000,
+        )
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=23,
+            summary="指令章节匹配更新测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="instructions",
+            operation="update",
+            after_json=json.dumps({
+                "chapter_number": 24,
+                "objective": "推进外环值守与陆澈的下一轮错位追踪。",
+                "key_events": ["外环值守拆除遮蔽", "陆澈转入堤坝外侧旧通道"],
+                "emotion_tone": "高压、紧绷",
+                "word_target": 3200,
+            }, ensure_ascii=False),
+            confidence=0.9,
+            evidence_text="下一章承接外环值守拆除外部遮蔽",
+            rationale="更新下一章指令",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        result = body["data"]["results"][0]
+        assert result["success"] is True
+
+        updated = repo.get_instruction_by_chapter(project_id, 24)
+        assert updated["objective"] == "推进外环值守与陆澈的下一轮错位追踪。"
+        assert "外环值守拆除遮蔽" in updated["key_events"]
+
     def test_apply_updates_plot_hole_without_target_id_by_matching_existing_title(self, client, project_id):
         """plot_holes.update should resolve missing target_id from existing code/title context."""
         from novel_factory.db.repository import Repository
@@ -742,6 +792,127 @@ class TestMemoryApplyCanonical:
         updated_character = repo.get_character(project_id, character["id"])
         assert "追踪取得突破" in updated_character["description"]
 
+    def test_apply_character_update_creates_inferred_character_when_no_existing_target(self, client, project_id):
+        """Unmatched character.update patches should create a character when evidence names one."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=23,
+            summary="角色推断创建测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="characters",
+            operation="update",
+            after_json=json.dumps({
+                "description": "追踪手段包括热源、残温、盐霜脱落点与缝隙热气。",
+            }, ensure_ascii=False),
+            confidence=0.9,
+            evidence_text="值守没继续拆封编号牌，因为他们也听到了身后传来的电磁杂音。",
+            rationale="外环值守行动升级，呼叫增援并强行拆封，威胁持续存在。",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        result = body["data"]["results"][0]
+        assert result["success"] is True
+        assert result["operation"] == "create"
+
+        created = repo.get_character(project_id, result["created_id"])
+        assert created["name"] == "外环值守"
+        assert "追踪手段" in created["description"]
+
+    def test_apply_character_update_does_not_match_object_name_in_description(self, client, project_id):
+        """A mentioned object character must not be mistaken for the update target."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        protagonist = repo.create_character(
+            project_id,
+            name="陆澈",
+            role="protagonist",
+            description="主角旧状态",
+        )
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=23,
+            summary="角色误匹配保护测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="characters",
+            operation="update",
+            after_json=json.dumps({
+                "description": "追踪手段包括热源与残温，正在物理拆除陆澈藏身处的外部遮蔽。",
+            }, ensure_ascii=False),
+            confidence=0.9,
+            evidence_text="他们已经开始拆封编号牌了。",
+            rationale="外环值守行动升级，呼叫增援并强行拆封。",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        result = resp.json()["data"]["results"][0]
+        assert result["success"] is True
+        assert result["operation"] == "create"
+
+        unchanged = repo.get_character(project_id, protagonist["id"])
+        assert unchanged["description"] == "主角旧状态"
+        created = repo.get_character(project_id, result["created_id"])
+        assert created["name"] == "外环值守"
+
+    def test_apply_character_update_creates_inferred_named_person_from_evidence(self, client, project_id):
+        """Character names in evidence text should be enough to create an unmatched update."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=2,
+            summary="证据角色创建测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="characters",
+            operation="update",
+            after_json=json.dumps({
+                "role": "潜在线人",
+                "traits": ["知晓内部信息", "向主角传递暗语"],
+            }, ensure_ascii=False),
+            confidence=0.75,
+            evidence_text="苏小曼忽然伸手拉了一下他的袖子。今天晨会——有人会帮你。",
+            rationale="苏小曼提前知晓外部介入，可能是潜在线人。",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        result = body["data"]["results"][0]
+        assert result["success"] is True
+        assert result["operation"] == "create"
+
+        created = repo.get_character(project_id, result["created_id"])
+        assert created["name"] == "苏小曼"
+        assert "知晓内部信息" in created["traits"]
+
     def test_apply_character_story_status_does_not_overwrite_lifecycle_status(self, client, project_id):
         """Character memory patches must not treat story-state prose as active/inactive status."""
         from novel_factory.db.repository import Repository
@@ -787,6 +958,49 @@ class TestMemoryApplyCanonical:
         updated_character = repo.get_character(project_id, character["id"])
         assert updated_character["status"] == "active"
         assert "编号牌后暗道" in updated_character["description"]
+
+    def test_apply_story_fact_derives_key_from_subject_attribute_without_fact_key(self, client, project_id):
+        """Story fact patches should not fail when LLM omits fact_key but provides subject/attribute."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=23,
+            summary="事实键推断测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="story_facts",
+            operation="create",
+            after_json=json.dumps({
+                "fact_type": "character_state",
+                "subject": "外环值守",
+                "attribute": "追踪状态",
+                "value": "已开始物理拆除陆澈藏身处的外部遮蔽",
+                "source_chapter": 23,
+                "source_agent": "memory_curator",
+            }, ensure_ascii=False),
+            confidence=0.9,
+            evidence_text="就在这块牌子后面！",
+            rationale="沉淀角色状态事实",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        result = body["data"]["results"][0]
+        assert result["success"] is True
+
+        facts = repo.list_story_facts(project_id)
+        assert len(facts) == 1
+        assert facts[0]["fact_key"] == "外环值守.追踪状态"
 
     def test_apply_nonexistent_batch(self, client, project_id):
         resp = client.post("/api/memory/apply", json={
