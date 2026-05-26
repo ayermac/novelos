@@ -1009,7 +1009,6 @@ class MemoryCuratorAgent(BaseAgent):
                     {k: v for k, v in existing.items() if k not in ("id", "created_at", "updated_at")},
                     ensure_ascii=False,
                 )
-                operation = "update"
 
             self.repo.create_memory_item(
                 batch_id=batch["id"],

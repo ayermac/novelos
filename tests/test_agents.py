@@ -1908,6 +1908,75 @@ class TestEditorAgent:
 
 
 class TestMemoryCuratorAgent:
+    def test_memory_curator_preserves_plot_hole_resolve_operation(self, seeded_repo):
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.api.routes.memory_updates import _apply_memory_item
+        from novel_factory.skills.registry import SkillRegistry
+
+        plot = seeded_repo.create_plot_hole(
+            "test_proj",
+            code="PH-001",
+            type="悬念",
+            title="铜钥匙用途",
+            description="铜钥匙能打开哪里仍未知。",
+            planted_chapter=1,
+            planned_resolve_chapter=2,
+            status="planted",
+        )
+        conn = seeded_repo._conn()
+        conn.execute(
+            "INSERT INTO chapters (project_id, chapter_number, title, status) "
+            "VALUES (?, ?, ?, ?)",
+            ("test_proj", 2, "第二章 旧宅", "reviewed"),
+        )
+        conn.commit()
+        conn.close()
+        seeded_repo.save_chapter_content(
+            "test_proj",
+            2,
+            "林默终于用铜钥匙打开城南旧宅地下室，确认它正是旧宅机关的钥匙。",
+            "第二章 旧宅",
+        )
+        seeded_repo.update_chapter_status("test_proj", 2, "reviewed")
+
+        agent = MemoryCuratorAgent(
+            seeded_repo,
+            StubLLMProvider([{
+                "patches": [{
+                    "target_table": "plot_holes",
+                    "operation": "resolve",
+                    "target_name": "PH-001",
+                    "data": {
+                        "description": "铜钥匙已用于打开城南旧宅地下室，钥匙用途伏笔兑现。",
+                    },
+                    "confidence": 0.9,
+                    "evidence_text": "用铜钥匙打开城南旧宅地下室",
+                    "rationale": "本章明确兑现铜钥匙用途。",
+                }]
+            }]),
+            skill_registry=SkillRegistry(),
+        )
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 2,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-memory-resolve",
+        })
+
+        assert result["memory_curator_processed"] is True
+        assert result["memory_items_count"] == 1
+        batch = seeded_repo.list_memory_batches("test_proj")[0]
+        item = seeded_repo.list_memory_items(batch["id"])[0]
+        assert item["operation"] == "resolve"
+        assert item["target_id"] == str(plot["id"])
+
+        apply_result = _apply_memory_item(seeded_repo, "test_proj", item, 2)
+        assert apply_result["success"] is True
+        resolved_plot = seeded_repo.get_plot_hole("test_proj", plot["id"])
+        assert resolved_plot["status"] == "resolved"
+        assert resolved_plot["resolved_chapter"] == 2
+
     def test_memory_curator_falls_back_to_editor_state_card_when_llm_empty(self, seeded_repo):
         from novel_factory.agents.memory_curator import MemoryCuratorAgent
         from novel_factory.skills.registry import SkillRegistry
