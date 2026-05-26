@@ -458,6 +458,90 @@ def test_author_segmented_prompts_use_per_segment_length_budget(tmp_path):
     assert all("正文至少 2550 字符，建议接近 3000 字符" not in prompt for prompt in prompts)
 
 
+def test_author_revision_uses_single_pass_instead_of_segmenting_full_draft(tmp_path):
+    """Revision prompts should not repeat the full saved draft once per segment."""
+    from novel_factory.db.connection import init_db
+    from novel_factory.db.repository import Repository
+    from novel_factory.agents.author import AuthorAgent
+
+    db_path = str(tmp_path / "author_revision_single_pass.db")
+    init_db(db_path)
+    repo = Repository(db_path)
+
+    repo.create_project(
+        project_id="revision-single",
+        name="Revision Single Pass Test",
+        genre="科幻",
+        description="测试",
+        total_chapters_planned=10,
+        target_words=30000,
+    )
+    existing_body = "当前保留稿。" * 300
+    repo.save_chapter(
+        project_id="revision-single",
+        chapter_number=1,
+        title="第一章",
+        content=existing_body,
+        word_count=len(existing_body),
+        status="planned",
+    )
+    repo.create_instruction(
+        project_id="revision-single",
+        chapter_number=1,
+        objective="测试返修",
+        key_events="事件1；事件2；事件3；事件4；事件5；事件6",
+        emotion_tone="紧张",
+        ending_hook="钩子6",
+        word_target=3000,
+    )
+    repo.save_scene_beats(
+        "revision-single",
+        1,
+        [
+            {
+                "sequence": seq,
+                "scene_goal": f"目标{seq}",
+                "conflict": f"冲突{seq}",
+                "turn": f"转折{seq}",
+                "hook": f"钩子{seq}",
+            }
+            for seq in range(1, 7)
+        ],
+    )
+    repo.update_chapter_status("revision-single", 1, "revision")
+
+    prompts: list[str] = []
+
+    class RevisionLLM:
+        config = {"model": "fake"}
+
+        def invoke_text(self, messages, temperature=0.7, max_tokens=4096, **kwargs):
+            prompts.append(messages[-1]["content"])
+            return "返修正文。" * 600 + " 目标6 冲突6 转折6 钩子6"
+
+        def invoke_json(self, messages, **kwargs):
+            raise RuntimeError("JSON not expected")
+
+    result = AuthorAgent(repo, RevisionLLM(), skill_registry=None).run({
+        "project_id": "revision-single",
+        "chapter_number": 1,
+        "llm_mode": "real",
+        "workflow_run_id": "test-run",
+        "chapter_status": "revision",
+        "_revision_review": {
+            "review_id": 1,
+            "revision_target": "author",
+            "issues": ["中段纸册静态比对过长"],
+            "suggestions": ["插入门外威胁的实时感官标记"],
+        },
+    })
+
+    assert result.get("chapter_status") == "drafted"
+    assert len(prompts) == 1
+    assert "【分段写作】" not in prompts[0]
+    assert prompts[0].count("【当前保留稿 / 必须在此基础上返修】") == 1
+
+
 # ---------------------------------------------------------------------------
 # Polisher Segmented Polishing
 # ---------------------------------------------------------------------------

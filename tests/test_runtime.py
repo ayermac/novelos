@@ -204,3 +204,17 @@ class TestRuntimePipeline:
         # Now run — should start from drafted
         result = d.run_chapter("rt_proj", 1)
         assert any(s["agent"] == "polisher" for s in result["steps"])
+
+    def test_human_resume_starts_new_retry_window(self, repo):
+        """Human resume should clear stale revise attempts from the retry window."""
+        _seed_full_project(repo, status="blocking")
+        for _ in range(3):
+            task_id = repo.start_task("rt_proj", 1, "revise", "author")
+            repo.complete_task(task_id, success=True)
+        assert repo.get_chapter_retry_count("rt_proj", 1) == 3
+
+        d = Dispatcher(repo, StubLLM(editor_pass=True), max_retries=3)
+        resume_result = d.resume_blocked("rt_proj", 1, "revision")
+
+        assert resume_result["ok"] is True
+        assert repo.get_chapter_retry_count("rt_proj", 1) == 0

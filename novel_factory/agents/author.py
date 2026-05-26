@@ -1047,7 +1047,7 @@ class AuthorAgent(BaseAgent):
         and deriving the small metadata fields deterministically.
         """
         beats = self._get_scene_beats(state)
-        if state.get("llm_mode") == "real" and len(beats) >= 4:
+        if state.get("llm_mode") == "real" and task_desc != "返修" and len(beats) >= 4:
             return self._try_segmented_plain_text_draft(state, task_desc, context, exec_events=exec_events)
 
         project_id = state["project_id"]

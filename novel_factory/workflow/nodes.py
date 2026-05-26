@@ -644,6 +644,20 @@ def create_node_runners(
                     ch = repo.get_chapter(state.get("project_id", ""), state.get("chapter_number", 0))
                     if ch:
                         artifact.setdefault("content", ch.get("content", ""))
+                elif status_before == ChapterStatus.REVISION.value and prev_agent == "editor":
+                    revision_review = state.get("_revision_review") or {}
+                    if not revision_review:
+                        ch = repo.get_chapter(state.get("project_id", ""), state.get("chapter_number", 0))
+                        if ch:
+                            revision_review = repo.get_latest_review(
+                                state.get("project_id", ""),
+                                ch.get("id"),
+                            ) or {}
+                    artifact.update({
+                        "issues": revision_review.get("issues") or [],
+                        "suggestions": revision_review.get("suggestions") or [],
+                        "target_paragraphs": revision_review.get("target_paragraphs") or [],
+                    })
                 contract_ok, contract_issues = validate_handoff(prev_agent, agent_name, artifact)
                 if not contract_ok:
                     logger.warning(
