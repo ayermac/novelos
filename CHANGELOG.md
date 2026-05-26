@@ -12,6 +12,27 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.7.5 - Chapter Title Generation
+
+Date: 2026-05-26
+
+Key changes:
+
+- **Independent title generation**: Implemented LLM-based chapter title generation that derives titles from comprehensive chapter context instead of content opening text.
+- **Title quality rules**: Generated titles follow specific rules: 4-12 Chinese characters (max 16), no punctuation, no planning verbs/terms, highlight key elements.
+- **Fallback strategy adjustment**: Updated `_derive_title` fallback order to prioritize generated titles over content-opening derivation.
+- **Failure resilience**: Title generation failures do NOT block the workflow; fallback chain continues gracefully.
+- **Plain text path coverage**: Plain-text fallback path also uses new title logic via `_derive_title` call.
+- **Detection and repair**: Added `_is_opening_derived_title` to detect and repair unattractive opening-derived titles.
+- **New model**: Added `TitleGenerationOutput` for structured title generation output.
+- **Comprehensive tests**: Added `test_v675_chapter_title_generation.py` with full coverage of title generation logic.
+- **Version alignment**: Runtime updated to `6.7.5`.
+
+Verification:
+- Title generation tests: 30+ new tests passing
+- Full test suite: passing
+- No lint errors
+
 ## v6.7.3 - Preflight UX & Regression Closure
 
 Date: 2026-05-26
