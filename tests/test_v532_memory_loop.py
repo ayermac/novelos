@@ -437,6 +437,102 @@ class TestMemoryApplyCanonical:
         assert updated_instruction["id"] != existing_instruction_id
         assert updated_instruction["objective"] == "更新后的目标"
 
+    def test_apply_character_create_updates_existing_same_name(self, client, project_id):
+        """Character create patches should not duplicate an existing same-name role."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        character = repo.create_character(
+            project_id,
+            name="祁眠",
+            role="supporting",
+            description="旧描述",
+            traits="旧特征",
+        )
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=17,
+            summary="角色去重测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="characters",
+            operation="create",
+            after_json=json.dumps({
+                "name": "祁眠",
+                "role": "supporting",
+                "description": "祁眠的名字出现在维修班表中，可能与陆澈记忆缺口有关。",
+                "traits": "身份不明",
+            }, ensure_ascii=False),
+            confidence=0.9,
+            evidence_text="祁眠的名字出现在维修班表中。",
+            rationale="LLM 误判为新角色，但应更新同名角色",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        result = body["data"]["results"][0]
+        assert result["success"] is True
+        assert result["operation"] == "update"
+        assert result["created_id"] == character["id"]
+        characters = repo.list_characters(project_id, include_inactive=True)
+        assert [c["name"] for c in characters].count("祁眠") == 1
+        assert "维修班表" in repo.get_character(project_id, character["id"])["description"]
+
+    def test_apply_world_setting_create_updates_existing_same_title(self, client, project_id):
+        """World setting create patches should update same-title settings instead of cloning cards."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        setting = repo.create_world_setting(
+            project_id,
+            category="规则限制",
+            title="记忆真实性的判定边界",
+            content="旧内容",
+        )
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=17,
+            summary="世界资料去重测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="world_settings",
+            operation="create",
+            after_json=json.dumps({
+                "category": "规则限制",
+                "title": "记忆真实性的判定边界",
+                "content": "单一证据无法证明记忆真实，必须由离线纸质记录和未联网设备交叉验证。",
+            }, ensure_ascii=False),
+            confidence=0.9,
+            evidence_text="纸质记录和未联网设备互相印证。",
+            rationale="LLM 误判为新设定，但标题已存在",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        result = body["data"]["results"][0]
+        assert result["success"] is True
+        assert result["operation"] == "update"
+        assert result["created_id"] == setting["id"]
+        settings = repo.list_world_settings(project_id)
+        assert [s["title"] for s in settings].count("记忆真实性的判定边界") == 1
+        assert "交叉验证" in repo.get_world_setting(project_id, setting["id"])["content"]
+
     def test_apply_skips_instruction_duplicate_of_recent_chapter(self, client, project_id):
         """Repeated next-chapter instruction patches should not clone one chapter across an arc."""
         from novel_factory.db.repository import Repository

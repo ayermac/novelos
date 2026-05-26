@@ -8,6 +8,7 @@ from typing import Any
 
 DEFAULT_LIMITS = {
     "characters": 80,
+    "world_settings": 120,
     "story_facts": 160,
     "memory_items": 240,
     "context_chars": 48000,
@@ -43,16 +44,19 @@ def audit_project_memory(
     """Inspect project memory pressure without mutating the database."""
     limits = {**DEFAULT_LIMITS, **(limits or {})}
     characters = _safe_call([], repo.list_characters, project_id, include_inactive=True)
+    world_settings = _safe_call([], repo.list_world_settings, project_id)
     story_facts = _safe_call([], repo.list_story_facts, project_id)
     memory_items = _safe_call([], repo.list_memory_items_by_project, project_id)
 
     character_names = [_norm(item.get("name")) for item in characters]
+    world_titles = [_norm(item.get("title")) for item in world_settings]
     fact_keys = [_norm(item.get("fact_key") or item.get("key")) for item in story_facts]
     fact_texts = [_norm(item.get("content") or item.get("value")) for item in story_facts]
     item_texts = [_norm(item.get("content") or item.get("value")) for item in memory_items]
 
-    context_chars = sum(len(str(item)) for item in characters + story_facts + memory_items)
+    context_chars = sum(len(str(item)) for item in characters + world_settings + story_facts + memory_items)
     duplicate_character_names = _duplicate_values(character_names)
+    duplicate_world_titles = _duplicate_values(world_titles)
     duplicate_fact_keys = _duplicate_values(fact_keys)
     duplicate_fact_texts = _duplicate_values(fact_texts)
 
@@ -63,6 +67,13 @@ def audit_project_memory(
             "count": len(characters),
             "limit": limits["characters"],
             "message": "character count exceeds context planning threshold",
+        })
+    if len(world_settings) > limits["world_settings"]:
+        pressures.append({
+            "name": "world_settings",
+            "count": len(world_settings),
+            "limit": limits["world_settings"],
+            "message": "world setting count exceeds context planning threshold",
         })
     if len(story_facts) > limits["story_facts"]:
         pressures.append({
@@ -88,6 +99,7 @@ def audit_project_memory(
 
     duplicate_groups = {
         "characters": duplicate_character_names[:20],
+        "world_settings": duplicate_world_titles[:20],
         "story_fact_keys": duplicate_fact_keys[:20],
         "story_fact_texts": duplicate_fact_texts[:20],
     }
@@ -103,6 +115,7 @@ def audit_project_memory(
         "project_id": project_id,
         "counts": {
             "characters": len(characters),
+            "world_settings": len(world_settings),
             "story_facts": len(story_facts),
             "memory_items": len(memory_items),
             "context_chars": context_chars,
@@ -121,7 +134,7 @@ def _next_actions(pressures: list[dict[str, Any]], duplicate_count: int, item_te
     if pressures:
         actions.append("prune or summarize low-relevance memory before the next real-LLM run")
     if duplicate_count:
-        actions.append("merge duplicate characters/story facts before long-form generation")
+        actions.append("merge duplicate characters/world settings/story facts before long-form generation")
     if not any(item_texts):
         actions.append("run memory curator after terminal chapters to create trusted memory")
     return actions

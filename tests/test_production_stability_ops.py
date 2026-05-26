@@ -17,6 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 class FakeRepo:
     def __init__(self):
         self.characters = []
+        self.world_settings = []
         self.story_facts = []
         self.memory_items = []
         self.chapter = {}
@@ -25,6 +26,9 @@ class FakeRepo:
 
     def list_characters(self, project_id, include_inactive=False):
         return self.characters
+
+    def list_world_settings(self, project_id):
+        return self.world_settings
 
     def list_story_facts(self, project_id):
         return self.story_facts
@@ -86,6 +90,7 @@ def test_quality_acceptance_reports_actionable_failures():
 def test_memory_governance_detects_duplicates_and_pressure():
     repo = FakeRepo()
     repo.characters = [{"name": "陆澈"}, {"name": "陆澈"}]
+    repo.world_settings = [{"title": "七号残段"}, {"title": "七号残段"}]
     repo.story_facts = [
         {"fact_key": "H-Y-2092", "content": "七分钟窗口"},
         {"fact_key": "H-Y-2092", "content": "七分钟窗口"},
@@ -101,7 +106,8 @@ def test_memory_governance_detects_duplicates_and_pressure():
     assert result["ok"] is False
     assert "duplicates" in result["warnings"]
     assert "context_pressure" in result["warnings"]
-    assert result["duplicate_group_count"] >= 2
+    assert result["duplicate_group_count"] >= 3
+    assert result["duplicates"]["world_settings"][0]["value"] == "七号残段"
 
 
 def test_recovery_drill_marks_stale_running_run():

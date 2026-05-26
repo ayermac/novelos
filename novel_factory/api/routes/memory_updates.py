@@ -584,14 +584,29 @@ def _apply_memory_item(
     try:
         if target_table == "world_settings":
             if operation == "create":
-                ws = repo.create_world_setting(
-                    project_id,
-                    category=after_data.get("category", ""),
-                    title=after_data.get("title", ""),
-                    content=after_data.get("content", ""),
+                existing_setting = _find_world_setting_for_memory_update(
+                    repo, project_id, item, after_data
                 )
-                result["success"] = True
-                result["created_id"] = ws["id"] if ws else None
+                if existing_setting:
+                    updated = repo.update_world_setting(
+                        project_id,
+                        existing_setting["id"],
+                        after_data,
+                    )
+                    result["operation"] = "update"
+                    result["success"] = updated is not None
+                    result["created_id"] = existing_setting["id"]
+                    if not updated:
+                        result["error"] = f"世界观设定 {existing_setting['id']} 不存在，无法更新"
+                else:
+                    ws = repo.create_world_setting(
+                        project_id,
+                        category=after_data.get("category", ""),
+                        title=after_data.get("title", ""),
+                        content=after_data.get("content", ""),
+                    )
+                    result["success"] = True
+                    result["created_id"] = ws["id"] if ws else None
             elif operation == "update":
                 setting = repo.get_world_setting(project_id, _coerce_int(target_id)) if target_id else None
                 if not setting:
@@ -622,15 +637,30 @@ def _apply_memory_item(
         elif target_table == "characters":
             character_data = _normalize_character_memory_data(after_data)
             if operation == "create":
-                ch = repo.create_character(
-                    project_id,
-                    name=character_data.get("name", ""),
-                    role=character_data.get("role", "supporting"),
-                    description=character_data.get("description", ""),
-                    traits=character_data.get("traits", ""),
+                existing_character = _find_character_for_memory_update(
+                    repo, project_id, item, after_data
                 )
-                result["success"] = True
-                result["created_id"] = ch["id"] if ch else None
+                if existing_character:
+                    updated = repo.update_character(
+                        project_id,
+                        existing_character["id"],
+                        character_data,
+                    )
+                    result["operation"] = "update"
+                    result["success"] = updated is not None
+                    result["created_id"] = existing_character["id"]
+                    if not updated:
+                        result["error"] = f"角色 {existing_character['id']} 不存在，无法更新"
+                else:
+                    ch = repo.create_character(
+                        project_id,
+                        name=character_data.get("name", ""),
+                        role=character_data.get("role", "supporting"),
+                        description=character_data.get("description", ""),
+                        traits=character_data.get("traits", ""),
+                    )
+                    result["success"] = True
+                    result["created_id"] = ch["id"] if ch else None
             elif operation == "update":
                 character = (
                     repo.get_character(project_id, _coerce_int(target_id))
