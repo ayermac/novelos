@@ -596,6 +596,52 @@ class TestMemoryApplyCanonical:
         assert instruction["objective"] == "制造迫降与被捕的二选一张力"
         assert "燃料耗尽" in instruction["key_events"]
 
+    def test_apply_character_story_status_does_not_overwrite_lifecycle_status(self, client, project_id):
+        """Character memory patches must not treat story-state prose as active/inactive status."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        character = repo.create_character(
+            project_id,
+            name="陆澈",
+            role="protagonist",
+            description="旧描述",
+            traits="冷静",
+        )
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=22,
+            summary="角色剧情状态测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="characters",
+            target_id=str(character["id"]),
+            operation="update",
+            after_json=json.dumps({
+                "description": "已进入编号牌后暗道，确认自身身份为授权链中被替换的环节。",
+                "status": "深入暗道竖缝，确认自身为授权链替换环节，尚未摆脱外环值守。",
+            }, ensure_ascii=False),
+            confidence=0.98,
+            evidence_text="陆澈进入暗道竖缝",
+            rationale="角色状态更新",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+
+        updated_character = repo.get_character(project_id, character["id"])
+        assert updated_character["status"] == "active"
+        assert "编号牌后暗道" in updated_character["description"]
+
     def test_apply_nonexistent_batch(self, client, project_id):
         resp = client.post("/api/memory/apply", json={
             "project_id": project_id,

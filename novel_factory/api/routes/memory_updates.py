@@ -64,6 +64,22 @@ def _normalize_text_fields(data: dict, fields: tuple[str, ...]) -> dict:
     return normalized
 
 
+def _normalize_character_memory_data(data: dict) -> dict:
+    """Normalize character patch fields without corrupting lifecycle status.
+
+    Memory patches often use "status" to mean the character's story state. In
+    the characters table, status is only an active/inactive lifecycle flag.
+    """
+    normalized = _normalize_text_fields(
+        data, ("traits", "description", "alias", "role", "status")
+    )
+    if "status" in normalized:
+        lifecycle_status = str(normalized.get("status") or "").strip().lower()
+        if lifecycle_status not in {"active", "inactive"}:
+            normalized.pop("status", None)
+    return normalized
+
+
 def _parse_json_object(value) -> dict:
     """Parse a JSON object string safely."""
     if not value:
@@ -455,9 +471,7 @@ def _apply_memory_item(
                         result["created_id"] = ws["id"] if ws else None
 
         elif target_table == "characters":
-            character_data = _normalize_text_fields(
-                after_data, ("traits", "description", "alias", "role", "status")
-            )
+            character_data = _normalize_character_memory_data(after_data)
             if operation == "create":
                 ch = repo.create_character(
                     project_id,
