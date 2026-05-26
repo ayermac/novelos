@@ -80,6 +80,56 @@ def _normalize_character_memory_data(data: dict) -> dict:
     return normalized
 
 
+def _canonical_instruction_value(value) -> str:
+    """Canonicalize instruction text so JSON-list and string forms compare."""
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            parsed = value
+    else:
+        parsed = value
+
+    if isinstance(parsed, list):
+        text = "\n".join(_canonical_instruction_value(item) for item in parsed)
+    elif isinstance(parsed, dict):
+        text = json.dumps(parsed, ensure_ascii=False, sort_keys=True)
+    else:
+        text = str(parsed or "")
+    return re.sub(r"\s+", "", text).strip()
+
+
+def _instruction_signature(data: dict) -> tuple[str, str]:
+    return (
+        _canonical_instruction_value(data.get("objective")),
+        _canonical_instruction_value(data.get("key_events")),
+    )
+
+
+def _find_recent_duplicate_instruction(
+    repo,
+    project_id: str,
+    instruction_data: dict,
+    *,
+    lookback: int = 5,
+) -> dict | None:
+    """Find an identical instruction in the target or recent previous chapters."""
+    chapter_number = _coerce_int(instruction_data.get("chapter_number"))
+    if chapter_number <= 0:
+        return None
+    incoming_objective, incoming_events = _instruction_signature(instruction_data)
+    if not incoming_objective or not incoming_events:
+        return None
+
+    for ch_num in range(max(1, chapter_number - lookback), chapter_number + 1):
+        existing = repo.get_instruction_by_chapter(project_id, ch_num)
+        if not existing:
+            continue
+        if _instruction_signature(existing) == (incoming_objective, incoming_events):
+            return existing
+    return None
+
+
 def _parse_json_object(value) -> dict:
     """Parse a JSON object string safely."""
     if not value:
@@ -661,6 +711,19 @@ def _apply_memory_item(
                 ),
             )
             if operation == "create":
+                duplicate = _find_recent_duplicate_instruction(
+                    repo, project_id, instruction_data
+                )
+                if duplicate:
+                    result.update({
+                        "success": True,
+                        "skipped": True,
+                        "reason": "duplicate_recent_instruction",
+                        "existing_chapter_number": duplicate.get("chapter_number"),
+                        "created_id": duplicate.get("id"),
+                    })
+                    return result
+
                 inst = repo.create_instruction(
                     project_id,
                     chapter_number=instruction_data.get("chapter_number", 0),

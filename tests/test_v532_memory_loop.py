@@ -437,6 +437,61 @@ class TestMemoryApplyCanonical:
         assert updated_instruction["id"] != existing_instruction_id
         assert updated_instruction["objective"] == "更新后的目标"
 
+    def test_apply_skips_instruction_duplicate_of_recent_chapter(self, client, project_id):
+        """Repeated next-chapter instruction patches should not clone one chapter across an arc."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        repo.create_instruction(
+            project_id,
+            chapter_number=20,
+            objective="承接窄缝深处的回震悬念，让陆澈继续寻找外级授权物理标记。",
+            key_events=json.dumps([
+                "陆澈判断缝隙深处回震的来源",
+                "外环值守继续依据残温和热源追踪",
+            ], ensure_ascii=False),
+            emotion_tone="高压、幽闭",
+            word_target=3000,
+        )
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=20,
+            summary="重复下一章指令测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="instructions",
+            operation="create",
+            after_json=json.dumps({
+                "chapter_number": 21,
+                "objective": "承接窄缝深处的回震悬念，让陆澈继续寻找外级授权物理标记。",
+                "key_events": [
+                    "陆澈判断缝隙深处回震的来源",
+                    "外环值守继续依据残温和热源追踪",
+                ],
+                "emotion_tone": "身份不安升级",
+                "word_target": 3000,
+            }, ensure_ascii=False),
+            confidence=0.9,
+            evidence_text="下一章承接",
+            rationale="重复候选应跳过",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+        result = body["data"]["results"][0]
+        assert result["success"] is True
+        assert result["skipped"] is True
+        assert repo.get_instruction_by_chapter(project_id, 21) is None
+
     def test_apply_updates_plot_hole_without_target_id_by_matching_existing_title(self, client, project_id):
         """plot_holes.update should resolve missing target_id from existing code/title context."""
         from novel_factory.db.repository import Repository
