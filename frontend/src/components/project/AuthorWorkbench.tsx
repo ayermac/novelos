@@ -72,6 +72,13 @@ interface RunDetailData {
   duration_ms?: number | null
 }
 
+export interface PreflightWarning {
+  code: string
+  message: string
+  severity: 'warning' | 'info'
+  details?: Record<string, unknown>
+}
+
 interface AuthorWorkbenchProps {
   activeTab: SurfaceTabKey
   chapterDetail: ChapterDetail | null
@@ -95,6 +102,7 @@ interface AuthorWorkbenchProps {
   sseSteps: Record<string, StepStatus>
   timeline?: WorkflowTimelineData | null
   timelineError?: string
+  preflightWarnings?: PreflightWarning[]
   onGenerate: () => void
   onConfirmRegenerate?: () => void
   onGenerateNext?: () => void
@@ -142,6 +150,7 @@ export default function AuthorWorkbench({
   sseSteps,
   timeline,
   timelineError,
+  preflightWarnings,
   onGenerate,
   onConfirmRegenerate,
   onGenerateNext,
@@ -202,6 +211,7 @@ export default function AuthorWorkbench({
         sseSteps={sseSteps}
         timeline={timeline}
         timelineError={timelineError}
+        preflightWarnings={preflightWarnings}
         onGenerate={onGenerate}
         onConfirmRegenerate={onConfirmRegenerate}
         onGenerateNext={onGenerateNext}

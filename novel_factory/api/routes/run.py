@@ -132,13 +132,14 @@ async def start_chapter_run(
 
         from ._run_guards import check_chapter_run_guard
 
-        guard_error = check_chapter_run_guard(repo, body.project_id, body.chapter)
+        guard_error, preflight_warnings = check_chapter_run_guard(repo, body.project_id, body.chapter)
         if guard_error:
             return error_response(
                 guard_error.code,
                 guard_error.message,
                 details={
                     **guard_error.details,
+                    "preflight_warnings": preflight_warnings,
                     "domain_result": _run_guard_domain_result(guard_error),
                 },
             )
@@ -170,6 +171,7 @@ async def start_chapter_run(
 
         return envelope_response({
             "run_id": run_id,
+            "preflight_warnings": preflight_warnings,  # v6.7.2: Expose warnings on success
             "project_id": body.project_id,
             "chapter": body.chapter,
             "workflow_status": "running",
@@ -222,13 +224,14 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
         # terminal chapter status via the shared helper.
         from ._run_guards import check_chapter_run_guard
 
-        guard_error = check_chapter_run_guard(repo, body.project_id, body.chapter)
+        guard_error, preflight_warnings = check_chapter_run_guard(repo, body.project_id, body.chapter)
         if guard_error:
             return error_response(
                 guard_error.code,
                 guard_error.message,
                 details={
                     **guard_error.details,
+                    "preflight_warnings": preflight_warnings,
                     "domain_result": _run_guard_domain_result(guard_error),
                 },
             )
@@ -309,6 +312,7 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
 
         return envelope_response({
             "run_id": result.get("run_id", ""),
+            "preflight_warnings": preflight_warnings,  # v6.7.2: Expose warnings on success
             "project_id": body.project_id,
             "chapter": body.chapter,
             "workflow_status": workflow_status,

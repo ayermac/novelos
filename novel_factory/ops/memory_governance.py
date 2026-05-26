@@ -35,6 +35,52 @@ def _duplicate_values(items: list[str]) -> list[dict[str, Any]]:
     ]
 
 
+def _duplicate_groups(
+    items: list[dict[str, Any]],
+    key_fn,
+    table: str,
+) -> list[dict[str, Any]]:
+    """Build duplicate groups with ids and display values for each duplicate value.
+
+    Args:
+        items: List of dict items from repository (characters, world_settings, etc.)
+        key_fn: Function to extract the comparison key from an item
+        table: Table name for the group metadata
+
+    Returns:
+        List of group dicts with value, count, ids, display_values, table.
+    """
+    from collections import defaultdict
+
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        key = key_fn(item)
+        if key:
+            groups[key].append(item)
+
+    result = []
+    for value, group_items in sorted(groups.items()):
+        if len(group_items) > 1:
+            result.append({
+                "value": value,
+                "count": len(group_items),
+                "table": table,
+                "ids": [_safe_item_id(item) for item in group_items],
+                "display_values": [_safe_display_value(item) for item in group_items],
+            })
+    return result
+
+
+def _safe_item_id(item: dict[str, Any]) -> Any:
+    """Safely extract id from item, returning None if unavailable."""
+    return item.get("id") or item.get("character_id") or item.get("world_setting_id") or item.get("fact_id")
+
+
+def _safe_display_value(item: dict[str, Any]) -> str:
+    """Safely extract display value from item for human-readable reference."""
+    return item.get("name") or item.get("title") or item.get("fact_key") or str(item.get("id", ""))
+
+
 def audit_project_memory(
     repo: Any,
     project_id: str,
@@ -59,6 +105,14 @@ def audit_project_memory(
     duplicate_world_titles = _duplicate_values(world_titles)
     duplicate_fact_keys = _duplicate_values(fact_keys)
     duplicate_fact_texts = _duplicate_values(fact_texts)
+
+    # v6.7.3: Build detailed duplicate groups with ids and display values
+    duplicate_character_groups = _duplicate_groups(
+        characters, lambda item: _norm(item.get("name")), "characters"
+    )
+    duplicate_world_setting_groups = _duplicate_groups(
+        world_settings, lambda item: _norm(item.get("title")), "world_settings"
+    )
 
     pressures = []
     if len(characters) > limits["characters"]:
@@ -103,6 +157,11 @@ def audit_project_memory(
         "story_fact_keys": duplicate_fact_keys[:20],
         "story_fact_texts": duplicate_fact_texts[:20],
     }
+    # v6.7.3: Detailed duplicate groups with ids for UI navigation
+    duplicate_groups_detailed = {
+        "characters": duplicate_character_groups[:20],
+        "world_settings": duplicate_world_setting_groups[:20],
+    }
     duplicate_count = sum(len(v) for v in duplicate_groups.values())
     warnings = []
     if pressures:
@@ -123,6 +182,7 @@ def audit_project_memory(
         "limits": limits,
         "pressures": pressures,
         "duplicates": duplicate_groups,
+        "duplicate_groups": duplicate_groups_detailed,
         "duplicate_group_count": duplicate_count,
         "warnings": warnings,
         "next_actions": _next_actions(pressures, duplicate_count, item_texts),

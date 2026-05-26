@@ -117,7 +117,8 @@ def test_run_guard_auto_creates_continuation_instruction_for_next_arc():
 
         from novel_factory.api.routes._run_guards import check_chapter_run_guard
 
-        assert check_chapter_run_guard(repo, project_id, 13) is None
+        err, _preflight = check_chapter_run_guard(repo, project_id, 13)
+        assert err is None
         assert repo.get_instruction_by_chapter(project_id, 13) is not None
         assert any(o.get("chapters_range") == "11-20" for o in repo.list_outlines(project_id))
     finally:
@@ -168,7 +169,8 @@ def test_run_guard_auto_creates_missing_instruction_when_arc_outline_exists():
 
         from novel_factory.api.routes._run_guards import check_chapter_run_guard
 
-        assert check_chapter_run_guard(repo, project_id, 13) is None
+        err, _preflight = check_chapter_run_guard(repo, project_id, 13)
+        assert err is None
         instruction = repo.get_instruction_by_chapter(project_id, 13)
         assert instruction is not None
         assert instruction["objective"]
