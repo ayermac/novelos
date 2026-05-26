@@ -276,13 +276,33 @@ def _find_character_for_memory_update(repo, project_id: str, item: dict, after_d
         if str(candidate or "").strip()
     ]
     if not names:
-        return None
+        names = []
     characters = repo.list_characters(project_id, include_inactive=True)
-    return next(
+    exact = next(
         (
             character
             for character in characters
             if str(character.get("name") or "").strip() in names
+        ),
+        None,
+    )
+    if exact:
+        return exact
+
+    text = "\n".join(
+        str(part or "")
+        for part in (
+            json.dumps(after_data, ensure_ascii=False),
+            item.get("evidence_text"),
+            item.get("rationale"),
+        )
+    )
+    return next(
+        (
+            character
+            for character in characters
+            if str(character.get("name") or "").strip()
+            and str(character.get("name") or "").strip() in text
         ),
         None,
     )
