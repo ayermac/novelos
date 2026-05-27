@@ -22,12 +22,15 @@ Key changes:
 - **Stale running run detection**: When `run_status` is `running` but the run has exceeded the stale threshold (>2 hours), the UI now shows "标记卡住" (mark_stuck) instead of "确认发布". This prevents publish from masking a stuck workflow.
 - **State integrity fix**: `_derive_recovery_capability()` in `state_integrity.py` now checks `run_status` before `chapter_status` terminal statuses.
 - **Timeline API fix**: `_build_recovery()` in `workflow_timeline.py` now checks `run_status` before terminal statuses.
-- **Comprehensive tests**: 9 new tests covering blocked/failed/stale-running with terminal chapter statuses.
+- **Publish CTA respects recovery priority (round 2)**: All publish CTAs (header button, AI agent panel) now hide when workflow is broken (`blocked`, `failed`, or stale-running). Shows "需要先恢复运行" with workflow recovery link instead.
+- **Backend publish guard**: `POST /api/publish/chapter` now returns `WORKFLOW_RECOVERY_REQUIRED` when latest run is `blocked`, `failed`, or stale-running. Prevents publish via API when workflow needs recovery.
+- **Comprehensive tests**: 15 backend tests (9 recovery state + 6 publish guard) and 9 frontend tests covering all recovery CTA priority scenarios.
 - **Version alignment**: Runtime, frontend, and desktop updated to `6.7.6`.
 
 Verification:
-- v6.7.6 tests: 9/9 passing
-- Full test suite: 1841 passed, 1 pre-existing failure (unrelated)
+- v6.7.6 backend tests: 15/15 passing
+- v6.7.6 frontend tests: 9/9 passing
+- TypeScript typecheck: passing
 - Frontend typecheck/build: passing
 
 ## v6.7.5 - Chapter Title Generation
