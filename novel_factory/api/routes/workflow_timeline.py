@@ -328,6 +328,31 @@ def _build_recovery(
     if run_data and run_data.get("status") == "running" and not is_stale and chapter_status != "blocking":
         return _payload()
 
+    # v6.7.6: Blocked/Failed run takes priority over terminal chapter status
+    # When run is blocked, show recovery actions even if chapter is awaiting_publish
+    run_status = run_data.get("status") if run_data else None
+    if run_status in ("blocked", "failed"):
+        recommended_action = "reset_chapter"
+        reason = "工作流被阻塞，可清除阻塞并重置。" if run_status == "blocked" else "工作流运行失败，可清除阻塞并重置。"
+        safe_actions.extend([
+            {"key": "view_artifacts", "label": "查看产物", "safe": True},
+            {"key": "view_content", "label": "查看正文", "safe": True},
+        ])
+        if retry_target:
+            safe_actions.append({
+                "key": "retry_node",
+                "label": f"重试{retry_target['label']}",
+                "safe": True,
+                "note": f"恢复到 {retry_target['status']}，跳过已完成上游节点",
+            })
+        safe_actions.append({
+            "key": "reset_chapter",
+            "label": "清除阻塞并重置",
+            "safe": True,
+            "note": "保留当前正文和版本，回到 planned，完整重跑",
+        })
+        return _payload()
+
     if chapter_status in terminal_statuses:
         safe_actions.append({"key": "view_artifacts", "label": "查看产物", "safe": True})
         if is_stale:

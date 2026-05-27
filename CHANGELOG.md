@@ -12,6 +12,24 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.7.6 - Workflow Recovery CTA Priority Fix
+
+Date: 2026-05-27
+
+Key changes:
+
+- **Blocked/Failed run priority over terminal statuses**: When `run_status` is `blocked` or `failed`, recovery actions (reset) now take priority over terminal chapter statuses (`awaiting_publish`, `reviewed`, `published`). Previously, terminal statuses caused the UI to show "确认发布" even when the workflow was broken.
+- **Stale running run detection**: When `run_status` is `running` but the run has exceeded the stale threshold (>2 hours), the UI now shows "标记卡住" (mark_stuck) instead of "确认发布". This prevents publish from masking a stuck workflow.
+- **State integrity fix**: `_derive_recovery_capability()` in `state_integrity.py` now checks `run_status` before `chapter_status` terminal statuses.
+- **Timeline API fix**: `_build_recovery()` in `workflow_timeline.py` now checks `run_status` before terminal statuses.
+- **Comprehensive tests**: 9 new tests covering blocked/failed/stale-running with terminal chapter statuses.
+- **Version alignment**: Runtime, frontend, and desktop updated to `6.7.6`.
+
+Verification:
+- v6.7.6 tests: 9/9 passing
+- Full test suite: 1841 passed, 1 pre-existing failure (unrelated)
+- Frontend typecheck/build: passing
+
 ## v6.7.5 - Chapter Title Generation
 
 Date: 2026-05-26
