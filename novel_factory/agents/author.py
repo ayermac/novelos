@@ -31,7 +31,7 @@ from ..validators.death_penalty import (
     sanitize_death_penalty_text,
 )
 from ..validators.plot_verifier import check_plot_coverage
-from ..llm.openai_compatible import OutputValidationError
+from ..llm.openai_compatible import OutputValidationError, TokenUsage
 from ..llm.provider import is_configured_live_provider
 from ..skills.registry import SkillRegistry
 from ..agent_runtime.base import BaseAgent
@@ -1651,6 +1651,9 @@ class AuthorAgent(BaseAgent):
         ]
 
         try:
+            # P1.1: Preserve prior token usage before title generation call
+            prior_usage = getattr(self.llm, "last_token_usage", None)
+
             raw = self._invoke_json(messages, schema=TitleGenerationOutput, temperature=0.7)
             output = TitleGenerationOutput(**raw)
             generated_title = output.title.strip()
@@ -1663,6 +1666,28 @@ class AuthorAgent(BaseAgent):
             if not re.match(rf"^第\s*{chapter_number}\s*章", generated_title):
                 generated_title = f"第{chapter_number}章 {generated_title}"
 
+            # P2: Check if generated title is opening-derived
+            if self._is_opening_derived_title(generated_title, content, chapter_number):
+                logger.info(
+                    "Author: generated title for chapter %d is opening-derived, rejecting: %s",
+                    chapter_number,
+                    generated_title,
+                )
+                return None
+
+            # P1.1: Combine prior usage with title generation usage
+            title_usage = getattr(self.llm, "last_token_usage", None)
+            if prior_usage and title_usage:
+                combined = TokenUsage(
+                    prompt_tokens=prior_usage.prompt_tokens + title_usage.prompt_tokens,
+                    completion_tokens=prior_usage.completion_tokens + title_usage.completion_tokens,
+                    total_tokens=prior_usage.total_tokens + title_usage.total_tokens,
+                    duration_ms=prior_usage.duration_ms + title_usage.duration_ms,
+                )
+                self.llm.last_token_usage = combined
+            elif prior_usage:
+                self.llm.last_token_usage = prior_usage
+
             logger.info(
                 "Author: generated title for chapter %d: %s (reasoning: %s)",
                 chapter_number,
@@ -1673,6 +1698,9 @@ class AuthorAgent(BaseAgent):
 
         except Exception as e:
             logger.warning("Author: title generation failed for chapter %d: %s", chapter_number, e)
+            # P1.1: Restore prior usage on failure
+            if prior_usage:
+                self.llm.last_token_usage = prior_usage
             return None
 
     def _repair_or_generate_title(
@@ -1877,10 +1905,18 @@ class AuthorAgent(BaseAgent):
         """Apply deterministic safe rewrites before hard validation."""
         data = output.model_dump()
         instruction = self._get_instruction(state) or {}
+        chapter_number = state["chapter_number"]
         sanitized_title = self._derive_title(state, instruction, output.content)
-        if not self._is_usable_chapter_title(output.title, state["chapter_number"], instruction):
+
+        # P1.2: Replace title if unusable OR if it's opening-derived
+        should_replace = not self._is_usable_chapter_title(output.title, chapter_number, instruction)
+        if not should_replace and output.content:
+            # Also replace if title is derived from content opening (v6.7.5 goal)
+            should_replace = self._is_opening_derived_title(output.title, output.content, chapter_number)
+        if should_replace:
             data["title"] = sanitized_title
-        data["content"] = ensure_chapter_heading(data.get("content", ""), data.get("title"), state["chapter_number"])
+
+        data["content"] = ensure_chapter_heading(data.get("content", ""), data.get("title"), chapter_number)
 
         if state.get("llm_mode") != "real":
             if data == output.model_dump():

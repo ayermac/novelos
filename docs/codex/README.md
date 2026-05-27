@@ -42,9 +42,12 @@
 - **当前 JSON 韧性基线**: v6.6.21 LLM JSON Resilience Hotfix
 - **当前生产稳定门禁基线**: v6.7.0 Production Stability Gate
 - **当前续规划基线**: v6.7.1 Auto Arc Continuation
+- **当前章节标题生成基线**: v6.7.5 Chapter Title Generation
 - **当前 Preflight UX 基线**: v6.7.3 Preflight UX & Regression Closure
-- **状态**: v6.7.3 完善 preflight 前端展示（非阻断式警告横幅）、增强 warning details（groups、ids、recommended_actions）、补齐 API 成功路径回归测试；v6.7.2 新增轻量级 preflight 诊断，在章节生成前暴露重复角色/世界观、记忆压力等问题。
+- **状态**: v6.7.5 实现独立章节标题生成机制，移除 content opening 作为主要标题来源，使用 LLM 基于章节内容和指令上下文生成更有吸引力的标题；v6.7.3 完善 preflight 前端展示（非阻断式警告横幅）、增强 warning details（groups、ids、recommended_actions）、补齐 API 成功路径回归测试；v6.7.2 新增轻量级 preflight 诊断，在章节生成前暴露重复角色/世界观、记忆压力等问题。
 - **版本规划索引**: [planning/novel-factory-version-planning-index.md](planning/novel-factory-version-planning-index.md)
+- **v6.7.5 规格**: [specs/novel-factory-v6.7.5-chapter-title-generation-spec.md](specs/novel-factory-v6.7.5-chapter-title-generation-spec.md)
+- **v6.7.5 完成报告**: [reports/novel-factory-v6.7.5-completion-report.md](reports/novel-factory-v6.7.5-completion-report.md)
 - **v6.7.3 规格**: [specs/novel-factory-v6.7.3-preflight-ux-regression-spec.md](specs/novel-factory-v6.7.3-preflight-ux-regression-spec.md)
 - **v6.7.3 完成报告**: [reports/novel-factory-v6.7.3-completion-report.md](reports/novel-factory-v6.7.3-completion-report.md)
 - **v6.7.2 规格**: [specs/novel-factory-v6.7.2-memory-dedup-preflight-spec.md](specs/novel-factory-v6.7.2-memory-dedup-preflight-spec.md)
