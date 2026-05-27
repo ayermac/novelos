@@ -1,7 +1,7 @@
 # Novel Factory v6.7.6 Workflow Recovery CTA Priority Fix - Completion Report
 
 **Version**: 6.7.6
-**Branch**: `codex-v6.7.6-workflow-recovery-cta-priority`
+**Branch**: `v6.7.6-workflow-recovery-cta-priority-fix`
 **Date**: 2026-05-27
 **Status**: Completed
 
