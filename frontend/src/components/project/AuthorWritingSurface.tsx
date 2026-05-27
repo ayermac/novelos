@@ -608,6 +608,14 @@ export default function AuthorWritingSurface({
   const isWorkflowActive = workflowBusy || isRunningAnotherChapter
   const showHeaderGenerationAction = activeTab !== 'workflow'
 
+  // v6.7.6: Block publish CTAs when workflow is broken
+  const effectiveRunStatus = timeline?.run_status || runDetail?.workflow_status
+  const workflowNeedsRecovery = Boolean(
+    effectiveRunStatus === 'blocked' ||
+    effectiveRunStatus === 'failed' ||
+    (effectiveRunStatus === 'running' && (timeline?.is_stale || (timeline?.elapsed_minutes !== undefined && timeline?.elapsed_minutes !== null && timeline.elapsed_minutes >= STUCK_RUN_THRESHOLD_MINUTES)))
+  )
+
   const tabs: { key: SurfaceTabKey; label: string; disabled?: boolean }[] = [
     { key: 'content', label: '正文' },
     { key: 'versions', label: '版本' },
@@ -642,7 +650,7 @@ export default function AuthorWritingSurface({
           </span>
         </div>
         <div className="author-surface-actions">
-          {isReviewedReal && onPublish && (
+          {isReviewedReal && onPublish && !workflowNeedsRecovery && (
             <LoadingButton
               className="btn btn-primary btn-sm"
               variant="primary"

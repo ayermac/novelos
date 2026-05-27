@@ -574,6 +574,48 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 },
             )
 
+        # v6.7.6: Block publish when latest run is blocked/failed/stale-running
+        latest_runs = repo.get_workflow_runs_for_project(
+            body.project_id, chapter_number=body.chapter, limit=1
+        )
+        latest_run = latest_runs[0] if latest_runs else None
+        if latest_run:
+            run_status = latest_run.get("status")
+            run_is_broken = run_status in ("blocked", "failed")
+            run_is_stale = False
+            if run_status == "running":
+                from ...workflow.state_integrity import _run_is_recent
+                if not _run_is_recent(latest_run.get("started_at")):
+                    run_is_stale = True
+            if run_is_broken or run_is_stale:
+                reason = (
+                    "工作流被阻塞" if run_status == "blocked"
+                    else "工作流运行失败" if run_status == "failed"
+                    else "工作流运行超时"
+                )
+                message = f"{reason}，需先恢复工作流再发布"
+                return error_response(
+                    "WORKFLOW_RECOVERY_REQUIRED",
+                    message,
+                    details={
+                        "run_status": run_status,
+                        "run_id": latest_run.get("id"),
+                        "domain_result": blocked(
+                            message,
+                            user_message=f"{reason}，请先处理工作流恢复",
+                            next_action="view_workflow",
+                            action_label="查看工作流恢复",
+                            details={
+                                "project_id": body.project_id,
+                                "chapter": body.chapter,
+                                "run_status": run_status,
+                                "run_id": latest_run.get("id"),
+                            },
+                            flags={"publish_blocked": True, "workflow_needs_recovery": True},
+                        ).to_dict(),
+                    },
+                )
+
         memory_result = await _ensure_memory_curated_before_publish(
             request,
             repo,

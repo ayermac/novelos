@@ -90,13 +90,45 @@ All 9 tests pass. Full regression: 1841 passed, 1 pre-existing failure (unrelate
 
 ---
 
-## Files Changed
+## Round 2: Publish CTA Must Respect Recovery Priority
+
+Even after round 1 fixed the workflow panel recovery actions, the publish CTAs in other locations still showed "确认发布" when the workflow was broken:
+
+1. **Header publish button** (`AuthorWritingSurface.tsx`) — showed for `reviewed` status regardless of run_status
+2. **AI agent panel publish card** (`AuthorAgentPanel.tsx`) — showed for `reviewed` and `awaiting_publish` regardless of run_status
+3. **Backend publish endpoint** (`run.py`) — accepted publish even when latest run was blocked/failed/stale
+
+### Round 2 Changes
+
+| File | Change |
+|---|---|
+| `frontend/src/components/project/AuthorAgentPanel.tsx` | Added `workflowNeedsRecovery` boolean; hide publish cards and show "需要先恢复运行" when workflow is broken |
+| `frontend/src/components/project/AuthorWritingSurface.tsx` | Added `workflowNeedsRecovery` boolean; hide header publish button when workflow is broken |
+| `novel_factory/api/routes/run.py` | Added backend guard in `publish_chapter` returning `WORKFLOW_RECOVERY_REQUIRED` when latest run is blocked/failed/stale-running |
+| `tests/test_v676_publish_guard.py` | New: 6 tests for publish endpoint guard |
+| `frontend/src/components/project/__tests__/v676-recovery-cta-priority.test.tsx` | Extended: 5 new tests for header and agent panel publish CTA |
+| `CHANGELOG.md` | Updated with round 2 entries |
+
+### Round 2 Verification
+
+- Backend publish guard tests: 6/6 passing
+- Frontend CTA tests: 9/9 passing (4 existing + 5 new)
+- TypeScript typecheck: passing
+
+---
+
+## Files Changed (Complete)
 
 | File | Change |
 |---|---|
 | `novel_factory/version.py` | Version bump to 6.7.6 |
 | `novel_factory/workflow/state_integrity.py` | Blocked/failed run priority over terminal statuses |
 | `novel_factory/api/routes/workflow_timeline.py` | Blocked/failed run priority over terminal statuses |
+| `novel_factory/api/routes/run.py` | Backend publish guard for blocked/failed/stale runs |
 | `frontend/package.json` | Version bump to 6.7.6 |
 | `desktop/package.json` | Version bump to 6.7.6 |
-| `tests/test_v676_workflow_recovery_cta_priority.py` | New: 9 tests for recovery CTA priority |
+| `frontend/src/components/project/AuthorAgentPanel.tsx` | `workflowNeedsRecovery` — hide publish cards when broken |
+| `frontend/src/components/project/AuthorWritingSurface.tsx` | `workflowNeedsRecovery` — hide header publish button when broken |
+| `tests/test_v676_workflow_recovery_cta_priority.py` | 9 tests for recovery state derivation |
+| `tests/test_v676_publish_guard.py` | 6 tests for publish endpoint guard |
+| `frontend/src/components/project/__tests__/v676-recovery-cta-priority.test.tsx` | 9 tests for frontend CTA priority |
