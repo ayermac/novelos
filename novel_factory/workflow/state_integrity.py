@@ -301,6 +301,8 @@ def derive_workflow_recovery_state(
             checkpoint_thread_id = f"{project_id}-chapter-{chapter_number}"
 
     # Determine recovery capability and safe actions
+    # v6.7.6: Detect stale running runs (running but past the stale threshold)
+    running_stale = (run_status == "running" and not _run_is_recent(run_started_at))
     recovery_capability, safe_actions, recommended_action, blocking_reason, recovery_hint = (
         _derive_recovery_capability(
             chapter_status=chapter_status,
@@ -312,6 +314,7 @@ def derive_workflow_recovery_state(
             has_existing_content=has_existing_content,
             is_local_edit=is_local_edit,
             stale_reason=stale_reason,
+            running_stale=running_stale,
         )
     )
 
@@ -353,6 +356,7 @@ def _derive_recovery_capability(
     has_existing_content: bool,
     is_local_edit: bool,
     stale_reason: Optional[str],
+    running_stale: bool = False,
 ) -> tuple[RecoveryCapability, list[str], Optional[str], Optional[str], str]:
     """Determine recovery capability and safe actions.
 
@@ -362,6 +366,57 @@ def _derive_recovery_capability(
     safe_actions: list[str] = []
     recommended_action: Optional[str] = None
     blocking_reason: Optional[str] = None
+
+    # ── Blocked/Failed run override (v6.7.6) ───────────────────
+    # When a run is blocked or failed, recovery actions take priority
+    # over terminal chapter statuses (awaiting_publish, reviewed).
+    # This prevents showing "publish" when the workflow is actually broken.
+
+    if run_status == "blocked":
+        blocking_reason = "工作流被阻塞，需要人工干预。"
+        safe_actions = ["view_content", "view_detail", "reset"]
+        if checkpoint_state == CheckpointState.STALE:
+            return (
+                RecoveryCapability.MANUAL_INTERVENTION_REQUIRED,
+                safe_actions,
+                "reset",
+                blocking_reason,
+                f"阻塞状态检查点不一致。{blocking_reason}",
+            )
+        return (
+            RecoveryCapability.RESET_TO_PLANNED,
+            safe_actions,
+            "reset",
+            None,
+            "工作流被阻塞，可清除阻塞并重置。",
+        )
+
+    if run_status == "failed":
+        blocking_reason = "工作流运行失败，需要人工干预。"
+        safe_actions = ["view_content", "view_detail", "reset"]
+        return (
+            RecoveryCapability.CLEAR_CHECKPOINT_AND_RERUN,
+            safe_actions,
+            "reset",
+            blocking_reason,
+            f"运行失败。{blocking_reason}",
+        )
+
+    # ── Stale running run override (v6.7.6) ────────────────────
+    # When a run is still marked "running" but has exceeded the stale
+    # threshold, recovery actions take priority over terminal chapter
+    # statuses. This prevents "publish" from masking a stuck workflow.
+
+    if run_status == "running" and running_stale:
+        blocking_reason = "工作流运行超时，需要人工干预。"
+        safe_actions = ["view_content", "view_detail", "mark_stuck"]
+        return (
+            RecoveryCapability.MANUAL_INTERVENTION_REQUIRED,
+            safe_actions,
+            "mark_stuck",
+            blocking_reason,
+            f"运行超时。{blocking_reason}",
+        )
 
     # ── Terminal statuses ────────────────────────────────────────
 
