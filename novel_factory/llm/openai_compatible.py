@@ -88,6 +88,20 @@ class TokenUsage:
         }
 
 
+class _NormalizedChatResponse:
+    """Small response adapter matching the fields used by this provider."""
+
+    def __init__(
+        self,
+        content: str,
+        usage_metadata: dict[str, int] | None = None,
+        response_metadata: dict[str, Any] | None = None,
+    ) -> None:
+        self.content = content
+        self.usage_metadata = usage_metadata or {}
+        self.response_metadata = response_metadata or {}
+
+
 def _message_to_dict(message: Any) -> dict[str, Any]:
     """Convert LangChain or plain message objects to loggable dicts."""
     if isinstance(message, dict):
@@ -142,6 +156,161 @@ class OpenAICompatibleProvider(LLMProvider):
             else:
                 result.append(HumanMessage(content=content))
         return result
+
+    def _normalize_chat_response(self, response: Any) -> Any:
+        """Normalize raw string/dict responses into the minimal AIMessage shape.
+
+        Some OpenAI-compatible gateways work over direct HTTP but trip
+        LangChain/OpenAI SDK response parsing. Keep the rest of the provider on
+        one response contract: content + optional usage/metadata.
+        """
+        if hasattr(response, "content"):
+            return response
+        if isinstance(response, (str, dict)):
+            return self._response_from_http_payload(response)
+        return _NormalizedChatResponse(str(response))
+
+    @staticmethod
+    def _is_langchain_response_shape_error(error: Exception) -> bool:
+        """Return true for SDK/LangChain parser crashes on malformed choices."""
+        error_str = str(error).lower()
+        return any(
+            pattern in error_str
+            for pattern in (
+                "object has no attribute 'choices'",
+                'object has no attribute "choices"',
+                "object has no attribute 'model_dump'",
+                'object has no attribute "model_dump"',
+                "response missing `choices` key",
+            )
+        )
+
+    @staticmethod
+    def _lc_message_to_openai_payload(message: Any) -> dict[str, Any]:
+        if isinstance(message, dict):
+            role = str(message.get("role", "user"))
+            content = message.get("content", "")
+        else:
+            raw_role = getattr(message, "type", None) or getattr(message, "role", None) or "user"
+            role = str(raw_role)
+            content = getattr(message, "content", "")
+        role_map = {"human": "user", "ai": "assistant", "system": "system"}
+        return {"role": role_map.get(role, role), "content": content}
+
+    @staticmethod
+    def _content_to_text(content: Any) -> str:
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, dict):
+                    text = item.get("text") or item.get("content")
+                    if text:
+                        parts.append(str(text))
+                elif item is not None:
+                    parts.append(str(item))
+            return "".join(parts)
+        if isinstance(content, dict):
+            text = content.get("text") or content.get("content")
+            if text is not None:
+                return str(text)
+            return json.dumps(content, ensure_ascii=False)
+        return str(content)
+
+    def _response_from_http_payload(self, payload: Any) -> _NormalizedChatResponse:
+        if isinstance(payload, str):
+            return _NormalizedChatResponse(payload)
+
+        choices = payload.get("choices") if isinstance(payload, dict) else None
+        first_choice = choices[0] if isinstance(choices, list) and choices else {}
+        message = first_choice.get("message", {}) if isinstance(first_choice, dict) else {}
+        content = self._content_to_text(
+            message.get("content") if isinstance(message, dict) else None
+        )
+        if not content and isinstance(first_choice, dict):
+            content = self._content_to_text(first_choice.get("text"))
+
+        usage = payload.get("usage") or {}
+        prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
+        completion_tokens = int(
+            usage.get("completion_tokens") or usage.get("output_tokens") or 0
+        )
+        total_tokens = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
+        finish_reason = first_choice.get("finish_reason") if isinstance(first_choice, dict) else None
+
+        return _NormalizedChatResponse(
+            content=content,
+            usage_metadata={
+                "input_tokens": prompt_tokens,
+                "output_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+            },
+            response_metadata={
+                "token_usage": {
+                    "prompt_tokens": prompt_tokens,
+                    "completion_tokens": completion_tokens,
+                    "total_tokens": total_tokens,
+                },
+                "model_name": payload.get("model"),
+                "id": payload.get("id"),
+                "finish_reason": finish_reason,
+            },
+        )
+
+    def _invoke_http_chat_completion(
+        self,
+        lc_messages: list,
+        request_timeout_seconds: int | None = None,
+        **kwargs,
+    ) -> _NormalizedChatResponse:
+        """Direct HTTP fallback for OpenAI-compatible chat completions."""
+        import urllib.error
+        import urllib.request
+
+        base_url = self.config.base_url.rstrip("/")
+        url = (
+            base_url
+            if base_url.endswith("/chat/completions")
+            else f"{base_url}/chat/completions"
+        )
+        payload: dict[str, Any] = {
+            "model": self.config.model,
+            "messages": [self._lc_message_to_openai_payload(msg) for msg in lc_messages],
+            "temperature": kwargs.get("temperature", self.config.temperature),
+            "max_tokens": kwargs.get("max_tokens", self.config.max_tokens),
+        }
+        for key, value in kwargs.items():
+            if key not in {"temperature", "max_tokens"}:
+                payload[key] = value
+
+        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        request = urllib.request.Request(
+            url,
+            data=data,
+            headers={
+                "Authorization": f"Bearer {self.config.api_key or 'sk-placeholder'}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        timeout = request_timeout_seconds or self.config.request_timeout_seconds
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                raw = response.read().decode("utf-8", errors="replace")
+        except urllib.error.HTTPError as error:
+            raw = error.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"HTTP {error.code}: {raw}") from error
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"connection error: {error.reason}") from error
+
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = raw
+        return self._response_from_http_payload(parsed)
 
     def _handle_api_error(self, error: Exception, timeout_seconds: int | None = None) -> None:
         """Convert API errors to Chinese error messages.
@@ -247,15 +416,43 @@ class OpenAICompatibleProvider(LLMProvider):
                     start_time = time.time()
                     self._last_call_started_at = start_time
                     response = client.invoke(lc_messages, **kwargs)
+                    response = self._normalize_chat_response(response)
                     duration_ms = int((time.time() - start_time) * 1000)
                 except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError) as e:
                     if self.last_call_trace is not None:
                         self.last_call_trace["error"] = redact_sensitive_text(str(e))
                     raise
                 except Exception as e:
-                    if self.last_call_trace is not None:
-                        self.last_call_trace["error"] = redact_sensitive_text(str(e))
-                    self._handle_api_error(e, timeout_seconds=request_timeout_seconds)
+                    if self._is_langchain_response_shape_error(e):
+                        safe_error = redact_sensitive_text(str(e))
+                        request_payload["transport_fallback"] = "http"
+                        request_payload["langchain_error"] = safe_error
+                        logger.warning(
+                            "LangChain response parser failed; retrying via direct HTTP fallback model=%s attempt=%s error=%s",
+                            self.config.model,
+                            attempt_number,
+                            safe_error,
+                        )
+                        try:
+                            response = self._invoke_http_chat_completion(
+                                lc_messages,
+                                request_timeout_seconds=request_timeout_seconds,
+                                **kwargs,
+                            )
+                            response = self._normalize_chat_response(response)
+                            duration_ms = int((time.time() - start_time) * 1000)
+                        except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError) as fallback_error:
+                            if self.last_call_trace is not None:
+                                self.last_call_trace["error"] = redact_sensitive_text(str(fallback_error))
+                            raise
+                        except Exception as fallback_error:
+                            if self.last_call_trace is not None:
+                                self.last_call_trace["error"] = redact_sensitive_text(str(fallback_error))
+                            self._handle_api_error(fallback_error, timeout_seconds=request_timeout_seconds)
+                    else:
+                        if self.last_call_trace is not None:
+                            self.last_call_trace["error"] = redact_sensitive_text(str(e))
+                        self._handle_api_error(e, timeout_seconds=request_timeout_seconds)
 
                 # Extract token usage if available
                 prompt_tokens = 0
@@ -311,19 +508,60 @@ class OpenAICompatibleProvider(LLMProvider):
 
         raise LLMError("未知错误")
 
+    # Patterns that indicate a provider does not support response_format
+    _RESPONSE_FORMAT_UNSUPPORTED_PATTERNS: tuple[str, ...] = (
+        "unsupported parameter",
+        "unknown parameter",
+        "extra fields not permitted",
+        "response_format not supported",
+        "response_format is not supported",
+        "json_object` is not supported by this model",
+        "json_object is not supported by this model",
+        "unrecognized arguments",
+        "got an unexpected keyword argument",
+        "unexpected keyword argument",
+    )
+
+    def _is_response_format_unsupported_error(self, error: Exception) -> bool:
+        """Check if an error indicates response_format is not supported by the provider.
+
+        Only matches explicit parameter-incompatibility errors — never matches
+        auth, balance, timeout, rate-limit, or network errors.
+        """
+        error_str = str(error).lower()
+        return any(pat in error_str for pat in self._RESPONSE_FORMAT_UNSUPPORTED_PATTERNS)
+
     def invoke_json(
         self,
         messages: list[dict[str, str]],
         schema: type | None = None,
         temperature: float | None = None,
         max_tokens: int | None = None,
-        max_retries: int = 1,
+        max_retries: int = 2,
+        agent_id: str = "unknown",
     ) -> dict[str, Any]:
-        """Invoke LLM and parse JSON from the response.
+        """Invoke LLM and parse JSON from the response with resilient retry.
 
-        On JSON parse failure, retries up to *max_retries* times with an
-        explicit correction prompt appended.
+        v6.6.21: 3-tier retry strategy:
+        - Attempt 1: Normal JSON output with optional response_format hint.
+        - Attempt 2: Append error details and ask model to re-emit full valid JSON.
+        - Attempt 3: Provide raw previous output + schema, ask to repair JSON only.
+
+        v6.6.21-review: response_format fallback — if a provider rejects
+        response_format as an unsupported parameter, the error is caught and
+        the call is retried without response_format. This fallback does NOT
+        consume a JSON parse retry slot.
+
+        Args:
+            messages: Chat messages.
+            schema: Optional Pydantic model for validation.
+            temperature: Override temperature (attempt 3 forces 0).
+            max_tokens: Override max tokens.
+            max_retries: Max JSON parse retries (default 2 for 3 attempts total).
+            agent_id: Agent name for diagnostics.
         """
+        from .json_resilience import parse_json
+
         lc_messages = self._to_lc_messages(messages)
 
         kwargs: dict[str, Any] = {}
@@ -332,58 +570,123 @@ class OpenAICompatibleProvider(LLMProvider):
         if max_tokens is not None:
             kwargs["max_tokens"] = max_tokens
 
-        # Add JSON instruction to the last user message if schema is given
+        schema_name = getattr(schema, "__name__", None) if schema else None
+
+        # Attempt 1: Use structured output hint if supported
         if schema:
+            kwargs["response_format"] = {"type": "json_object"}
             lc_messages.append(
                 HumanMessage(
                     content="请严格按照 JSON 格式输出，不要包含任何其他文字。"
                 )
             )
 
-        last_json_error: json.JSONDecodeError | None = None
-        for attempt in range(max_retries + 1):
+        last_raw_text: str = ""
+        last_json_error: Exception | None = None
+        max_attempts = max_retries + 1
+
+        for attempt in range(max_attempts):
             try:
-                response = self._invoke_with_retry(lc_messages, **kwargs)
+                # Force temperature=0 on final repair attempt
+                call_kwargs = dict(kwargs)
+                if attempt == max_attempts - 1 and temperature is None:
+                    call_kwargs["temperature"] = 0.0
+
+                response = self._invoke_with_retry(lc_messages, **call_kwargs)
                 if self.last_call_trace is not None:
                     self.last_call_trace.setdefault("request", {})
                     self.last_call_trace["request"].update({
                         "call_type": "json",
-                        "schema": getattr(schema, "__name__", None) if schema else None,
+                        "schema": schema_name,
                         "json_parse_attempt": attempt + 1,
-                        "json_parse_max_attempts": max_retries + 1,
+                        "json_parse_max_attempts": max_attempts,
+                        "agent_id": agent_id,
                     })
                 text = response.content
-                json_str = self._extract_json(text)
-                return json.loads(json_str)
+                last_raw_text = text
+
+                return parse_json(
+                    text,
+                    agent_id=agent_id,
+                    schema_name=schema_name,
+                    attempt=attempt + 1,
+                    max_attempts=max_attempts,
+                )
             except json.JSONDecodeError as e:
                 last_json_error = e
                 logger.warning(
-                    "JSON parse failed (attempt %d/%d): %s | near: ...%s...",
-                    attempt + 1, max_retries + 1, e,
-                    text[max(0, e.pos - 40):e.pos + 40] if hasattr(e, "pos") and e.pos else text[:80],
+                    "JSON parse failed (attempt %d/%d) agent=%s: %s",
+                    attempt + 1, max_attempts, agent_id, e,
                 )
-                if attempt < max_retries:
-                    # Append a correction prompt and retry
-                    lc_messages.append(HumanMessage(
-                        content=(
-                            f"你上一次输出的 JSON 解析失败，错误为: {e}\n"
-                            "请重新输出完整、合法的 JSON，不要包含注释、尾逗号或 Markdown 标记。"
-                        )
-                    ))
+                if attempt < max_attempts - 1:
+                    if attempt == 0:
+                        # Attempt 2: Ask model to re-emit with error context
+                        lc_messages.append(HumanMessage(
+                            content=(
+                                f"你上一次输出的 JSON 解析失败，错误为: {e}\n"
+                                "请重新输出完整、合法的 JSON，不要包含注释、尾逗号或 Markdown 标记。"
+                            )
+                        ))
+                    else:
+                        # Attempt 3+: Provide raw output and schema, ask to repair
+                        raw_preview = last_raw_text[:1200]
+                        lc_messages.append(HumanMessage(
+                            content=(
+                                f"你上一次输出仍无法解析。原始输出如下（请只修复 JSON 语法，"
+                                f"不要修改内容含义）：\n\n{raw_preview}\n\n"
+                                f"请输出修复后的完整合法 JSON。"
+                            )
+                        ))
                 else:
                     logger.error(
-                        "Failed to parse LLM JSON after %d attempts: %s\nRaw (first 800 chars): %s",
-                        max_retries + 1, e, text[:800],
+                        "Failed to parse LLM JSON after %d attempts agent=%s: %s\nRaw (first 800 chars): %s",
+                        max_attempts, agent_id, e, last_raw_text[:800],
                     )
-                    raise OutputValidationError(f"LLM 输出不是有效的 JSON 格式: {e}") from e
+                    raise OutputValidationError(
+                        f"[{agent_id}] LLM 输出不是有效的 JSON 格式 (attempt {max_attempts}/{max_attempts}): {e}"
+                    ) from e
             except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
                 raise
-            except LLMError:
+            except LLMError as e:
+                # v6.6.21-review: response_format fallback
+                # If provider rejects response_format as an unsupported parameter,
+                # remove it and retry the SAME attempt (not consuming a JSON parse slot).
+                if (
+                    "response_format" in kwargs
+                    and self._is_response_format_unsupported_error(e)
+                ):
+                    logger.warning(
+                        "Provider does not support response_format, falling back to plain JSON call agent=%s: %s",
+                        agent_id, e,
+                    )
+                    kwargs.pop("response_format")
+                    if self.last_call_trace is not None:
+                        self.last_call_trace.setdefault("request", {})
+                        self.last_call_trace["request"]["response_format_fallback"] = True
+                    # Retry same attempt without response_format — do NOT increment attempt
+                    continue
                 raise
             except Exception as e:
+                # v6.6.21-review: Also check raw exceptions for response_format incompatibility
+                # before routing through _handle_api_error which would wrap them as generic LLMError
+                if (
+                    "response_format" in kwargs
+                    and self._is_response_format_unsupported_error(e)
+                ):
+                    logger.warning(
+                        "Provider does not support response_format (raw exception), falling back agent=%s: %s",
+                        agent_id, e,
+                    )
+                    kwargs.pop("response_format")
+                    if self.last_call_trace is not None:
+                        self.last_call_trace.setdefault("request", {})
+                        self.last_call_trace["request"]["response_format_fallback"] = True
+                    continue
                 self._handle_api_error(e)
 
-        raise OutputValidationError(f"LLM 输出不是有效的 JSON 格式: {last_json_error}")
+        raise OutputValidationError(
+            f"[{agent_id}] LLM 输出不是有效的 JSON 格式: {last_json_error}"
+        )
 
     def invoke_text(
         self,

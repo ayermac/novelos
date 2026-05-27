@@ -327,6 +327,63 @@ def test_mark_stuck_run_converts_to_blocking_and_audits_run(tmp_path):
     assert "疑似卡住" in original_task["error_message"]
 
 
+def test_mark_stuck_run_preserves_reviewed_chapter_status(tmp_path):
+    client, repo, _ = _make_client(tmp_path)
+    run_id = _seed_running_run(repo, "recover_reviewed_memory_stuck", minutes_old=50)
+    repo.update_workflow_run(run_id, current_node="memory_curator")
+    repo.update_chapter_status("recover_reviewed_memory_stuck", 1, "reviewed")
+    lock = repo.acquire_memory_curator_lock("recover_reviewed_memory_stuck", 1, run_id=run_id)
+    assert lock["acquired"] is True
+    task_id = repo.start_task(
+        "recover_reviewed_memory_stuck",
+        1,
+        "memory",
+        "memory_curator",
+        workflow_run_id=run_id,
+    )
+    _backdate_task(repo, task_id, minutes_old=50)
+
+    preview = client.get(f"/api/runs/{run_id}/recovery")
+    assert preview.status_code == 200
+    preview_data = preview.json()["data"]
+    assert preview_data["chapter_status"] == "reviewed"
+    assert preview_data["stuck"] is True, preview_data
+    assert preview_data["actions"]["mark_stuck_blocked"]["enabled"] is True
+
+    resp = client.post(f"/api/runs/{run_id}/recovery/mark-stuck", json={"confirm": True})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    data = body["data"]
+    assert data["previous_chapter_status"] == "reviewed"
+    assert data["new_chapter_status"] == "reviewed"
+    assert data["workflow_status"] == "blocked"
+    assert data["closed_running_tasks"] == 1
+    assert data["released_memory_lock"] is True
+    assert repo.get_chapter("recover_reviewed_memory_stuck", 1)["status"] == "reviewed"
+    assert repo.get_memory_curator_lock("recover_reviewed_memory_stuck", 1) is None
+
+    conn = repo._conn()
+    try:
+        run = conn.execute(
+            "SELECT status, error_message, completed_at FROM workflow_runs WHERE id=?",
+            (run_id,),
+        ).fetchone()
+        original_task = conn.execute(
+            "SELECT status, completed_at, error_message FROM task_status WHERE id=?",
+            (task_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    assert run["status"] == "blocked"
+    assert "疑似卡住" in run["error_message"]
+    assert run["completed_at"]
+    assert original_task["status"] == "failed"
+    assert original_task["completed_at"]
+
+
 def test_retry_author_node_recovers_to_scripted_without_full_reset(tmp_path):
     client, repo, _ = _make_client(tmp_path)
     run_id = _seed_running_run(repo, "recover_retry_author", minutes_old=50)

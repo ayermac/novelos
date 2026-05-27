@@ -80,7 +80,7 @@ class TestChapterRunGuardContextCompleteness:
 
         from novel_factory.api.routes._run_guards import check_chapter_run_guard
 
-        err = check_chapter_run_guard(repo_obj, project_id, 1)
+        err, _preflight = check_chapter_run_guard(repo_obj, project_id, 1)
         assert err is not None
         assert err.code == "CONTEXT_INCOMPLETE"
         assert "创世设定" in err.message
@@ -100,7 +100,7 @@ class TestChapterRunGuardContextCompleteness:
 
         from novel_factory.api.routes._run_guards import check_chapter_run_guard
 
-        err = check_chapter_run_guard(repo_obj, project_id, 1)
+        err, _preflight = check_chapter_run_guard(repo_obj, project_id, 1)
         assert err is not None
         assert err.code == "CONTEXT_INCOMPLETE"
         assert "世界观" in err.message
@@ -112,7 +112,8 @@ class TestChapterRunGuardContextCompleteness:
 
         from novel_factory.api.routes._run_guards import check_chapter_run_guard
 
-        assert check_chapter_run_guard(repo_obj, project_id, 1) is None
+        err, _preflight = check_chapter_run_guard(repo_obj, project_id, 1)
+        assert err is None
 
     def test_guard_uses_any_approved_genesis_not_only_latest(self, repo):
         """A later failed/regenerated genesis draft must not erase an already approved initialization."""
@@ -123,7 +124,8 @@ class TestChapterRunGuardContextCompleteness:
 
         from novel_factory.api.routes._run_guards import check_chapter_run_guard
 
-        assert check_chapter_run_guard(repo_obj, project_id, 1) is None
+        err, _preflight = check_chapter_run_guard(repo_obj, project_id, 1)
+        assert err is None
 
 
 class TestProductionNextHealth:

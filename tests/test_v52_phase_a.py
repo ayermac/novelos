@@ -177,10 +177,10 @@ class TestRepositoryMixins:
 
 
 class TestProjectCascadeDelete:
-    """Test project cascade delete functionality."""
+    """Test project soft delete functionality."""
 
     def test_delete_project_cascades_to_characters(self):
-        """Deleting a project should delete all its characters."""
+        """Deleting a project should hide it while preserving its characters."""
         from novel_factory.db.repository import Repository
         from novel_factory.db.connection import init_db
 
@@ -203,16 +203,20 @@ class TestProjectCascadeDelete:
             # Delete project
             assert repo.delete_project("cascade_test") is True
 
-            # Verify characters are gone
+            # Verify project is hidden but child data is preserved.
+            assert repo.get_project("cascade_test") is None
+            deleted_project = repo.get_project("cascade_test", include_deleted=True)
+            assert deleted_project is not None
+            assert deleted_project["deleted"] == 1
             chars_after = repo.list_characters("cascade_test", include_inactive=True)
-            assert len(chars_after) == 0
+            assert len(chars_after) == 2
 
         finally:
             if os.path.exists(db_path):
                 os.unlink(db_path)
 
     def test_delete_project_cascades_to_outlines(self):
-        """Deleting a project should delete all its outlines."""
+        """Deleting a project should hide it while preserving outlines."""
         from novel_factory.db.repository import Repository
         from novel_factory.db.connection import init_db
 
@@ -230,14 +234,15 @@ class TestProjectCascadeDelete:
 
             repo.delete_project("cascade_outline")
 
-            assert len(repo.list_outlines("cascade_outline")) == 0
+            assert repo.get_project("cascade_outline") is None
+            assert len(repo.list_outlines("cascade_outline")) == 1
 
         finally:
             if os.path.exists(db_path):
                 os.unlink(db_path)
 
     def test_delete_project_cascades_to_world_settings(self):
-        """Deleting a project should delete all its world settings."""
+        """Deleting a project should hide it while preserving world settings."""
         from novel_factory.db.repository import Repository
         from novel_factory.db.connection import init_db
 
@@ -255,7 +260,8 @@ class TestProjectCascadeDelete:
 
             repo.delete_project("cascade_ws")
 
-            assert len(repo.list_world_settings("cascade_ws")) == 0
+            assert repo.get_project("cascade_ws") is None
+            assert len(repo.list_world_settings("cascade_ws")) == 1
 
         finally:
             if os.path.exists(db_path):

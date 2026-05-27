@@ -30,6 +30,8 @@ from ._memory_curator_gate import (
 
 router = APIRouter()
 
+PUBLISH_READY_CHAPTER_STATUSES = frozenset({"reviewed", "awaiting_publish", "published"})
+
 
 def _get_run_recovery_settings(request: Request):
     """Load settings for recovery endpoints without blocking reset on cwd loss."""
@@ -40,6 +42,30 @@ def _get_run_recovery_settings(request: Request):
         return get_settings(request)
     except FileNotFoundError:
         return Settings()
+
+
+def _memory_curator_running_domain_result(project_id: str, chapter_number: int, lock: dict | None) -> dict:
+    """Build a blocked domain result for an active MemoryCurator lock."""
+    active_run_id = (lock or {}).get("run_id")
+    message = f"第 {chapter_number} 章记忆提取正在进行中，请等待完成后再重试。"
+    technical_message = f"第 {chapter_number} 章记忆正在提取，不能重复启动。"
+    if active_run_id:
+        technical_message = f"{technical_message} 当前运行: {active_run_id}"
+    return blocked(
+        message,
+        user_message="记忆提取正在进行中，请等待完成后再重试。",
+        next_action="view_workflow",
+        action_label="查看工作流",
+        details={
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "active_run_id": active_run_id,
+            "memory_lock": lock,
+            "error_code": "MEMORY_CURATOR_RUNNING",
+            "technical_message": technical_message,
+        },
+        flags={"memory_curator_running": True},
+    ).to_dict()
 
 
 class RunRecoveryResetRequest(BaseModel):
@@ -791,7 +817,13 @@ async def backfill_run_memory(
     v6.6.10:
     - Response now includes domain_result with unified domain_status.
     """
-    from ..deps import get_repo, get_llm_provider_for_agent, get_llm_mode, LLMConfigMissingError
+    from ..deps import (
+        get_repo,
+        get_llm_fallback_provider_for_agent,
+        get_llm_provider_for_agent,
+        get_llm_mode,
+        LLMConfigMissingError,
+    )
     from ...agents.memory_curator import MemoryCuratorAgent
     from ...skills.registry import SkillRegistry
 
@@ -897,6 +929,29 @@ async def backfill_run_memory(
                 ).to_dict(),
             })
 
+        lock = None
+        if hasattr(repo, "get_memory_curator_lock"):
+            try:
+                lock = repo.get_memory_curator_lock(project_id, chapter_number)
+            except Exception:
+                lock = None
+        if lock and str(lock.get("status") or "") == "running":
+            active_run_id = lock.get("run_id")
+            message = f"第 {chapter_number} 章记忆提取正在进行中，请等待完成后再重试。"
+            technical_message = f"第 {chapter_number} 章记忆正在提取，不能重复启动。"
+            if active_run_id:
+                technical_message = f"{technical_message} 当前运行: {active_run_id}"
+            details = {
+                "run_id": active_run_id,
+                "project_id": project_id,
+                "chapter_number": chapter_number,
+                "active_run_id": active_run_id,
+                "memory_lock": lock,
+                "technical_message": technical_message,
+                "domain_result": _memory_curator_running_domain_result(project_id, chapter_number, lock),
+            }
+            return error_response("MEMORY_CURATOR_RUNNING", message, details=details)
+
         # v6.6.7: If force=true, mark old fallback batches as ignored before re-running
         if body.force:
             try:
@@ -926,6 +981,7 @@ async def backfill_run_memory(
 
         try:
             llm = get_llm_provider_for_agent(request, "memory_curator")
+            fallback_llm = get_llm_fallback_provider_for_agent(request, "memory_curator")
         except LLMConfigMissingError as exc:
             error = str(exc)
             repo.create_workflow_node_event(
@@ -952,7 +1008,7 @@ async def backfill_run_memory(
             }
             return error_response("LLM_CONFIG_MISSING", error, details=details)
 
-        agent = MemoryCuratorAgent(repo, llm, skill_registry=SkillRegistry())
+        agent = MemoryCuratorAgent(repo, llm, skill_registry=SkillRegistry(), fallback_llm=fallback_llm)
         result = await asyncio.to_thread(
             agent.run,
             {
@@ -1193,11 +1249,7 @@ def _build_run_health_item(repo, run_data: dict, timeout_minutes: int) -> dict:
     """Build a single run health row."""
     stuck_info = _detect_stuck_run(repo, run_data, timeout_minutes)
     chapter_status = run_data.get("chapter_status") or "unknown"
-    can_mark_stuck = bool(stuck_info.get("stuck")) and chapter_status not in (
-        "reviewed",
-        "published",
-        "unknown",
-    )
+    can_mark_stuck = bool(stuck_info.get("stuck")) and chapter_status != "unknown"
     return {
         "run_id": run_data.get("id"),
         "project_id": run_data.get("project_id"),
@@ -1268,14 +1320,8 @@ def _mark_stuck_run_for_recovery(repo, settings, run_id: str) -> dict:
         }
 
     current_status = chapter.get("status", "")
-    if current_status in ("reviewed", "published"):
-        return {
-            "ok": False,
-            "run_id": run_id,
-            "error_code": "INVALID_STATUS",
-            "message": f"章节状态为 '{current_status}'，不能从卡住运行标记为阻塞",
-            "details": {"current_status": current_status},
-        }
+    preserve_chapter_status = current_status in PUBLISH_READY_CHAPTER_STATUSES
+    new_chapter_status = current_status if preserve_chapter_status else "blocking"
 
     message = (
         f"运行疑似卡住：超过 {timeout_minutes} 分钟仍为 running。"
@@ -1289,7 +1335,13 @@ def _mark_stuck_run_for_recovery(repo, settings, run_id: str) -> dict:
         workflow_run_id=run_id,
         message=message,
     )
-    _set_chapter_status_unchecked(repo, project_id, chapter_number, "blocking")
+    released_memory_lock = False
+    if hasattr(repo, "release_memory_curator_lock"):
+        released_memory_lock = bool(
+            repo.release_memory_curator_lock(project_id, chapter_number, run_id=run_id)
+        )
+    if not preserve_chapter_status:
+        _set_chapter_status_unchecked(repo, project_id, chapter_number, "blocking")
     _insert_recovery_audit(
         repo,
         project_id,
@@ -1310,10 +1362,11 @@ def _mark_stuck_run_for_recovery(repo, settings, run_id: str) -> dict:
             "project_id": project_id,
             "chapter_number": chapter_number,
             "previous_chapter_status": current_status,
-            "new_chapter_status": "blocking",
+            "new_chapter_status": new_chapter_status,
             "workflow_status": "blocked",
             "message": message,
             "closed_running_tasks": closed_running_tasks,
+            "released_memory_lock": released_memory_lock,
             "recovery": _build_recovery_state(
                 repo,
                 refreshed,
@@ -1344,11 +1397,7 @@ def _build_recovery_state(
     chapter_status = chapter.get("status", "unknown") if chapter else "unknown"
     retry_count = repo.get_chapter_retry_count(project_id, chapter_number)
     stuck_info = _detect_stuck_run(repo, run_data, timeout_minutes)
-    can_mark_stuck = bool(stuck_info.get("stuck", False)) and chapter_status not in (
-        "reviewed",
-        "published",
-        "unknown",
-    )
+    can_mark_stuck = bool(stuck_info.get("stuck", False)) and chapter_status != "unknown"
     can_reset = chapter_status in ("blocking", "revision", "planned")
     retry_target = _node_retry_target(run_data.get("current_node"))
     can_retry_node = bool(retry_target and chapter_status in ("blocking", "revision"))
@@ -1661,10 +1710,10 @@ def _build_steps_timeline(
                 level = "info"
                 if event.get("status") in {"failed", "error"} or event.get("event_type") == "failed":
                     level = "error"
-                elif event.get("status") in {"completed", "success"} or event.get("event_type") == "completed":
-                    level = "success"
                 elif event.get("status") == "warning":
                     level = "warning"
+                elif event.get("status") in {"completed", "success"} or event.get("event_type") == "completed":
+                    level = "success"
                 logs.append({
                     "timestamp": event.get("created_at") or event.get("timestamp"),
                     "level": level,
@@ -1706,6 +1755,8 @@ def _build_steps_timeline(
     task_errors: dict[str, str] = {}
     task_errors_legacy: dict[str, str] = {}
     task_logs: dict[str, list[dict]] = {}
+    failed_event_node: str | None = None
+    failed_event_error: str | None = None
     if repo:
         try:
             conn = repo._conn()
@@ -1785,6 +1836,28 @@ def _build_steps_timeline(
         except Exception:
             pass  # Graceful degradation
 
+        if run_data.get("id"):
+            try:
+                failed_events = [
+                    ev for ev in repo.get_workflow_node_events(run_data["id"])
+                    if ev.get("node_name") in {step["key"] for step in AGENT_STEPS}
+                    and (
+                        ev.get("status") in {"failed", "error"}
+                        or ev.get("event_type") in {"failed", "node_failed"}
+                        or ev.get("error_message")
+                    )
+                ]
+                if failed_events:
+                    latest_failed = failed_events[-1]
+                    failed_event_node = latest_failed.get("node_name")
+                    failed_event_error = (
+                        latest_failed.get("error_message")
+                        or latest_failed.get("message")
+                        or error_message
+                    )
+            except Exception:
+                pass  # Graceful degradation
+
     # Fetch agent_artifacts for per-agent artifact summaries
     # P1 fix: Prefer run-level isolation; fallback to chapter-level for legacy data
     agent_artifacts: dict[str, list[dict]] = {}
@@ -1830,7 +1903,11 @@ def _build_steps_timeline(
 
     blocked_agent = current_node
     if workflow_status == "blocked" and current_node == "human_review":
-        if "editor" in agent_artifacts or final_status in ("blocking", "revision"):
+        if failed_event_node:
+            blocked_agent = failed_event_node
+            if failed_event_error:
+                task_errors.setdefault(failed_event_node, failed_event_error)
+        elif "editor" in agent_artifacts or final_status in ("blocking", "revision"):
             blocked_agent = "editor"
         elif "polisher" in agent_artifacts:
             blocked_agent = "polisher"
@@ -1892,6 +1969,12 @@ def _build_steps_timeline(
                     "message": f"{step_config['label']}节点已完成。",
                 })
             elif step_status in ("failed", "blocked"):
+                # v6.6.21: Always emit a started log so node_started is not conflated with failure
+                logs.append({
+                    "timestamp": run_data.get("started_at"),
+                    "level": "info",
+                    "message": f"{step_config['label']}节点已开始处理。",
+                })
                 logs.append({
                     "timestamp": run_data.get("completed_at") or run_data.get("started_at"),
                     "level": "error" if step_status == "failed" else "warning",
@@ -1964,11 +2047,14 @@ async def run_chapter_stream(
         # rather than HTTP error responses so the client can display them.
         from ._run_guards import check_chapter_run_guard
 
-        guard_error = check_chapter_run_guard(repo, project_id, chapter)
+        guard_error, preflight_warnings = check_chapter_run_guard(repo, project_id, chapter)
         if guard_error:
 
             async def guard_event():
-                yield f"data: {json.dumps({'type': 'run_error', 'error': guard_error.message, 'code': guard_error.code, 'details': guard_error.details}, ensure_ascii=False)}\n\n"
+                error_data = {'type': 'run_error', 'error': guard_error.message, 'code': guard_error.code, 'details': guard_error.details}
+                if preflight_warnings:
+                    error_data['preflight_warnings'] = preflight_warnings
+                yield f"data: {json.dumps(error_data, ensure_ascii=False)}\n\n"
 
             return StreamingResponse(
                 guard_event(),
@@ -1983,6 +2069,10 @@ async def run_chapter_stream(
 
         async def event_generator():
             """Generate SSE events from runner stream."""
+            # v6.7.2: Emit preflight_warnings as initial event
+            if preflight_warnings:
+                yield f"data: {json.dumps({'type': 'preflight_warnings', 'warnings': preflight_warnings}, ensure_ascii=False)}\n\n"
+
             iterator = run_with_graph_stream(
                 project_id=project_id,
                 chapter_number=chapter,

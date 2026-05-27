@@ -34,9 +34,17 @@ interface Step {
   evidence?: WorkflowNodeEvidence
 }
 
+export interface PreflightWarning {
+  code: string
+  message: string
+  severity: 'warning' | 'info'
+  details?: Record<string, unknown>
+}
+
 interface Props {
   steps: Step[]
   compact?: boolean
+  preflightWarnings?: PreflightWarning[]
 }
 
 // v6.1.1: Event type label mapping (Chinese)
@@ -68,6 +76,13 @@ function eventMessage(ev: WorkflowExecutionEvent): string {
   return ev.message || ''
 }
 
+function safePayload(ev: WorkflowExecutionEvent): Record<string, unknown> {
+  if (ev.payload && typeof ev.payload === 'object') {
+    return ev.payload as Record<string, unknown>
+  }
+  return {}
+}
+
 function stepStatusIcon(step: Step): string {
   const nodeStatus = normalizeNodeStatus(step)
   return getNodeStatusBadge(nodeStatus).icon
@@ -89,14 +104,65 @@ const NODE_GROUP_LABELS: Record<string, string> = {
 
 const NODE_GROUP_ORDER = ['system', 'creative_agent', 'support_agent', 'terminal', 'router', 'unknown']
 
-export default function WorkflowTimeline({ steps, compact = false }: Props) {
+function PreflightWarningBanner({ warnings }: { warnings: PreflightWarning[] }) {
+  if (!warnings || warnings.length === 0) return null
+
+  return (
+    <div
+      style={{
+        marginBottom: 16,
+        padding: '12px 16px',
+        borderRadius: 8,
+        background: 'var(--wb-warning-soft, #fff8e6)',
+        border: '1px solid var(--wb-warning, #f5a623)',
+        fontSize: 13,
+        lineHeight: 1.6,
+      }}
+    >
+      <div style={{ fontWeight: 600, marginBottom: 8, color: 'var(--wb-warning, #d4890c)' }}>
+        预检提示
+      </div>
+      {warnings.map((w, i) => (
+        <div key={i} style={{ marginBottom: i < warnings.length - 1 ? 8 : 0 }}>
+          <div style={{ color: 'var(--wb-text-dark-secondary)' }}>{w.message}</div>
+          {w.details && ((w.details.examples as string[] | undefined)?.length || (w.details.groups as unknown[])?.length) && (
+            <div style={{ marginTop: 4, fontSize: 12, color: 'var(--wb-text-dark-muted)' }}>
+              {((w.details.examples as string[] | undefined) || []).join(', ')}
+            </div>
+          )}
+          {w.details && (w.details.recommended_actions as Array<{ label: string; severity: string }>) && (
+            <div style={{ marginTop: 6, display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+              {(w.details.recommended_actions as Array<{ label: string; severity: string }>).map((action, j) => (
+                <span
+                  key={j}
+                  style={{
+                    display: 'inline-block',
+                    padding: '2px 8px',
+                    borderRadius: 4,
+                    background: action.severity === 'warning' ? 'var(--wb-warning-soft)' : 'var(--wb-paper-muted)',
+                    color: action.severity === 'warning' ? 'var(--wb-warning)' : 'var(--wb-text-dark-muted)',
+                    fontSize: 11,
+                  }}
+                >
+                  {action.label}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+    </div>
+  )
+}
+
+export default function WorkflowTimeline({ steps, compact = false, preflightWarnings }: Props) {
   const [expandedStep, setExpandedStep] = useState<string | null>(null)
 
   const toggleExpand = (stepKey: string) => {
     setExpandedStep(expandedStep === stepKey ? null : stepKey)
   }
 
-  if (steps.length === 0) {
+  if (steps.length === 0 && (!preflightWarnings || preflightWarnings.length === 0)) {
     return (
       <div style={{ padding: '24px', textAlign: 'center', color: 'var(--text-muted)', fontSize: '14px' }}>
         暂无工作流数据
@@ -115,6 +181,7 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
 
   return (
     <div className="wf-timeline">
+      <PreflightWarningBanner warnings={preflightWarnings || []} />
       <div className="steps-timeline">
         {groupedSteps.map((group) => (
           <div key={group.group} className="step-group">
@@ -123,7 +190,15 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
               const isExpanded = expandedStep === step.key
               const hasArtifacts = step.status === 'completed' && step.artifacts
               const hasExecutionEvents = Boolean(step.events && step.events.length > 0)
-              const logs = step.logs || []
+              // v6.6.21: Stable sort — null timestamps last, then ascending
+              const logs = (step.logs || []).slice().sort((a, b) => {
+                const ta = a.timestamp || ''
+                const tb = b.timestamp || ''
+                if (!ta && !tb) return 0
+                if (!ta) return 1
+                if (!tb) return -1
+                return ta.localeCompare(tb)
+              })
 
               return (
                 <div key={step.key} className={`step-item ${stepStatusClass(step)}`}>
@@ -205,7 +280,8 @@ export default function WorkflowTimeline({ steps, compact = false }: Props) {
                         )}
                       </div>
                       {step.events!.map((ev, idx) => {
-                        const isLowChange = ev.payload && (ev.payload as Record<string, unknown>).low_change_warning === true
+                        const payload = safePayload(ev)
+                        const isLowChange = payload.low_change_warning === true
                         const hasMeta = (ev.latency_ms != null && ev.latency_ms > 0) || (ev.token_count != null && ev.token_count > 0)
                         return (
                           <div key={ev.id || `ev-${idx}`} className={`exec-event exec-event-${ev.status || 'info'}${isLowChange ? ' exec-event-low-change' : ''}`}>

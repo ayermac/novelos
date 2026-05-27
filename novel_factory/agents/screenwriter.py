@@ -89,7 +89,7 @@ class ScreenwriterAgent(BaseAgent):
                 {"role": "system", "content": SCREENWRITER_SYSTEM_PROMPT},
                 {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请将以上指令拆解为场景 beat。"},
             ]
-            raw = self.llm.invoke_json(messages, schema=ScreenwriterOutput)
+            raw = self._invoke_json(messages, schema=ScreenwriterOutput)
             raw = self._normalize_output(raw)
             out = ScreenwriterOutput(**raw)
             self.validate_output(out.model_dump())
@@ -121,7 +121,7 @@ class ScreenwriterAgent(BaseAgent):
                 {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请将以上指令拆解为场景 beat。确保每个 beat 都有完整的五个字段，sequence 从 1 开始连续编号。"},
             ]
             try:
-                raw = self.llm.invoke_json(messages, schema=ScreenwriterOutput)
+                raw = self._invoke_json(messages, schema=ScreenwriterOutput)
                 raw = self._normalize_output(raw)
                 out = ScreenwriterOutput(**raw)
                 self.validate_output(out.model_dump())

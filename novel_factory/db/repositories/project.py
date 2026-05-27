@@ -7,23 +7,25 @@ from datetime import datetime, timezone
 from ..connection import row_to_dict
 
 class ProjectRepositoryMixin:
-    def list_projects(self) -> list[dict]:
+    def list_projects(self, include_deleted: bool = False) -> list[dict]:
         """List all projects, newest first."""
         conn = self._conn()
         try:
+            where = "" if include_deleted else "WHERE COALESCE(deleted, 0) = 0"
             rows = conn.execute(
-                "SELECT * FROM projects ORDER BY created_at DESC, project_id"
+                f"SELECT * FROM projects {where} ORDER BY created_at DESC, project_id"
             ).fetchall()
             return [row_to_dict(r) for r in rows]
         finally:
             conn.close()
 
-    def get_project(self, project_id: str) -> dict | None:
+    def get_project(self, project_id: str, include_deleted: bool = False) -> dict | None:
         """Get project information."""
         conn = self._conn()
         try:
+            deleted_filter = "" if include_deleted else " AND COALESCE(deleted, 0) = 0"
             row = conn.execute(
-                "SELECT * FROM projects WHERE project_id=?",
+                f"SELECT * FROM projects WHERE project_id=?{deleted_filter}",
                 (project_id,),
             ).fetchone()
             return row_to_dict(row)
@@ -288,109 +290,25 @@ class ProjectRepositoryMixin:
     # ── Learned patterns (Q5) ──────────────────────────────────
 
     def delete_project(self, project_id: str) -> bool:
-        """Delete a project and all associated data (cascade delete).
+        """Soft delete a project while preserving associated data.
 
         Args:
             project_id: Project identifier.
 
         Returns:
-            True if project was deleted, False if not found.
+            True if project was marked deleted, False if not found.
         """
         conn = self._conn()
         try:
-            # Check if project exists
-            existing = conn.execute(
-                "SELECT project_id FROM projects WHERE project_id=?",
+            cursor = conn.execute(
+                "UPDATE projects "
+                "SET deleted=1, deleted_at=datetime('now','+8 hours'), "
+                "status='deleted', is_current=0, updated_at=datetime('now','+8 hours') "
+                "WHERE project_id=? AND COALESCE(deleted, 0)=0",
                 (project_id,),
-            ).fetchone()
-            if not existing:
-                return False
-
-            # Delete dependent child tables that do not carry project_id first.
-            # These rows would otherwise keep their parent project-scoped rows
-            # alive through foreign keys.
-            child_deletes = [
-                (
-                    "production_queue_events",
-                    "DELETE FROM production_queue_events "
-                    "WHERE queue_id IN (SELECT id FROM production_queue WHERE project_id=?)",
-                ),
-                (
-                    "serial_plan_events",
-                    "DELETE FROM serial_plan_events "
-                    "WHERE serial_plan_id IN (SELECT id FROM serial_plans WHERE project_id=?)",
-                ),
-                (
-                    "batch_revision_items",
-                    "DELETE FROM batch_revision_items "
-                    "WHERE revision_run_id IN (SELECT id FROM batch_revision_runs WHERE project_id=?)",
-                ),
-            ]
-            existing_tables = self._get_table_names(conn)
-            for table, sql in child_deletes:
-                if table in existing_tables:
-                    conn.execute(sql, (project_id,))
-
-            # Delete every project-scoped table dynamically.  This keeps project
-            # deletion resilient as new modules add tables with project_id.
-            preferred_order = [
-                "memory_update_items",
-                "memory_update_batches",
-                "story_fact_events",
-                "story_facts",
-                "style_bible_versions",
-                "style_evolution_proposals",
-                "style_samples",
-                "style_bibles",
-                "project_skill_overrides",
-                "chapter_review_notes",
-                "batch_revision_runs",
-                "human_review_sessions",
-                "batch_continuity_gates",
-                "production_run_items",
-                "production_runs",
-                "production_queue",
-                "serial_plans",
-                "genesis_runs",
-                "skill_runs",
-                "quality_reports",
-                "continuity_reports",
-                "architecture_proposals",
-                "scout_reports",
-                "reports",
-                "polish_reports",
-                "agent_artifacts",
-                "agent_messages",
-                "task_status",
-                "workflow_node_events",
-                "workflow_runs",
-                "chapter_versions",
-                "reviews",
-                "state_history",
-                "chapter_state",
-                "chapter_plots",
-                "scene_beats",
-                "chapters",
-                "instructions",
-                "plot_holes",
-                "outlines",
-                "world_settings",
-                "characters",
-                "factions",
-                "learned_patterns",
-                "best_practices",
-            ]
-            project_tables = self._get_project_scoped_tables(conn)
-            ordered_tables = [
-                table for table in preferred_order if table in project_tables
-            ] + sorted(project_tables - set(preferred_order))
-            for table in ordered_tables:
-                conn.execute(f"DELETE FROM {table} WHERE project_id=?", (project_id,))
-
-            # Finally delete the project
-            conn.execute("DELETE FROM projects WHERE project_id=?", (project_id,))
+            )
             conn.commit()
-            return True
+            return cursor.rowcount > 0
         finally:
             conn.close()
 

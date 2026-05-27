@@ -14,6 +14,14 @@ This index maps shipped or reviewed versions to their planning/spec source, comp
 
 | Version | Planning/spec source | Report | Review | Coverage |
 | --- | --- | --- | --- | --- |
+| v6.7.5 | `../specs/novel-factory-v6.7.5-chapter-title-generation-spec.md` | `../reports/novel-factory-v6.7.5-completion-report.md` | none yet | standalone |
+| v6.7.3 | `../specs/novel-factory-v6.7.3-preflight-ux-regression-spec.md` | `../reports/novel-factory-v6.7.3-completion-report.md` | none yet | standalone |
+| v6.7.2 | `../specs/novel-factory-v6.7.2-memory-dedup-preflight-spec.md` | `../reports/novel-factory-v6.7.2-completion-report.md` | none yet | standalone |
+| v6.7.1 | CHANGELOG only (hotfix) | `../reports/novel-factory-v6.7.1-completion-report.md` | none yet | hotfix |
+| v6.7.0 | `novel-factory-v6.6.22-to-v6.7.0-production-stability-roadmap.md` | `../reports/novel-factory-v6.7.0-completion-report.md` | pending | umbrella |
+| v6.6.21 | CHANGELOG only (retrospective) | `../reports/novel-factory-v6.6.21-completion-report.md` | none yet | retrospective |
+| v6.6.20 | CHANGELOG only (retrospective) | `../reports/novel-factory-v6.6.20-completion-report.md` | none yet | retrospective |
+| v6.6.19 | CHANGELOG only (retrospective) | `../reports/novel-factory-v6.6.19-completion-report.md` | none yet | retrospective |
 | v6.6.18 | `../specs/novel-factory-v6.6.18-segmented-agent-payloads-spec.md` | `../reports/novel-factory-v6.6.18-completion-report.md` | none yet | standalone |
 | v6.6.17 | `../specs/novel-factory-v6.6.17-runtime-llm-settings-genesis-reliability-spec.md` | `../reports/novel-factory-v6.6.17-completion-report.md` | none yet | standalone |
 | v6.6.16 | `../specs/novel-factory-v6.6.16-real-project-burnin-spec.md` | `../reports/novel-factory-v6.6.16-completion-report.md` | `../reviews/novel-factory-v6.6.16-review.md` | standalone |

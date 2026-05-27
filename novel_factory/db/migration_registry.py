@@ -415,6 +415,25 @@ MIGRATION_REGISTRY: list[MigrationEntry] = [
         description="Execution events — workflow_execution_events table",
         requirements=(_T("workflow_execution_events"),),
     ),
+
+    # ── 033 ──
+    MigrationEntry(
+        migration_id="033_v6_6_19_memory_curator_locks",
+        sql_filename="033_v6_6_19_memory_curator_locks.sql",
+        description="MemoryCurator locks — one active extraction per project/chapter",
+        requirements=(_T("memory_curator_locks"),),
+    ),
+
+    # ── 034 ──
+    MigrationEntry(
+        migration_id="034_v6_7_4_project_soft_delete",
+        sql_filename="034_v6_7_4_project_soft_delete.sql",
+        description="Project soft delete — preserve child records while hiding deleted projects",
+        requirements=(
+            _C("projects", "deleted"),
+            _C("projects", "deleted_at"),
+        ),
+    ),
 ]
 
 
@@ -489,11 +508,12 @@ class TableIntegrityCheck:
 
 # Critical tables and their required columns for integrity checks
 CRITICAL_TABLE_COLUMNS: dict[str, list[str]] = {
-    "projects": ["project_id", "name", "status"],
+    "projects": ["project_id", "name", "status", "deleted"],
     "chapters": ["project_id", "chapter_number", "title", "status"],
     "workflow_runs": ["id", "project_id", "status"],
     "agent_artifacts": ["id", "project_id", "agent_id", "artifact_type"],
     "memory_update_batches": ["id", "project_id", "status"],
+    "memory_curator_locks": ["project_id", "chapter_number", "status"],
     "story_facts": ["id", "project_id", "fact_key", "fact_type"],
 }
 

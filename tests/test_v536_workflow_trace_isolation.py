@@ -220,6 +220,70 @@ class TestTimelineRunIsolation:
         assert "返修任务已完成。" not in messages
         assert any("返修已派发给执笔" in msg for msg in messages)
 
+    def test_human_review_blocked_run_uses_failed_event_node_for_error_step(self, client, project_id):
+        """A human_review stop caused by Author failure must not be shown as Editor failure."""
+        from novel_factory.db.repository import Repository
+        from novel_factory.api.routes.runs import _build_steps_timeline
+
+        repo = Repository(client.app.state.db_path)
+        run1 = self._create_run(
+            repo,
+            project_id,
+            1,
+            status="blocked",
+            current_node="human_review",
+            error_message="LLM 网络连接失败",
+        )
+        repo.save_artifact(
+            project_id,
+            1,
+            "planner",
+            "chapter_brief",
+            content_json={"objective": "test"},
+            workflow_run_id=run1,
+        )
+        repo.save_artifact(
+            project_id,
+            1,
+            "screenwriter",
+            "scene_plan",
+            content_json={"scene_beats": []},
+            workflow_run_id=run1,
+        )
+        repo.create_workflow_node_event(
+            run_id=run1,
+            project_id=project_id,
+            chapter_number=1,
+            node_name="author",
+            event_type="failed",
+            status="failed",
+            message="执笔 节点失败或阻塞：LLM 网络连接失败",
+            error_message="LLM 网络连接失败",
+        )
+        repo.create_workflow_node_event(
+            run_id=run1,
+            project_id=project_id,
+            chapter_number=1,
+            node_name="human_review",
+            event_type="failed",
+            status="failed",
+            message="人工审核 节点失败或阻塞：LLM 网络连接失败",
+            error_message="LLM 网络连接失败",
+        )
+        repo.update_chapter_status(project_id, 1, "blocking")
+
+        run_data = self._get_run_data(repo, run1)
+        steps = _build_steps_timeline(run_data, None, "stub", repo=repo)
+        author_step = next((s for s in steps if s["key"] == "author"), None)
+        editor_step = next((s for s in steps if s["key"] == "editor"), None)
+
+        assert author_step is not None
+        assert editor_step is not None
+        assert author_step["status"] == "blocked"
+        assert author_step.get("error_message") == "LLM 网络连接失败"
+        assert editor_step["status"] == "pending"
+        assert not editor_step.get("error_message")
+
 
 class TestRunDetailAPI:
     """v5.3.6: Run detail API should expose legacy/fallback flags."""

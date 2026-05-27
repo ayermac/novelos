@@ -85,11 +85,23 @@ class ContinuityCheckerAgent:
                 {"role": "user", "content": context},
             ]
 
-            response = self.llm.invoke_json(
-                messages,
-                schema=ContinuityCheckerOutput,
-                temperature=0.3,
-            )
+            try:
+                response = self.llm.invoke_json(
+                    messages,
+                    schema=ContinuityCheckerOutput,
+                    temperature=0.3,
+                    agent_id=self.agent_id,
+                )
+            except TypeError as te:
+                # v6.6.21-review: Fallback for test fakes that don't accept agent_id
+                if "agent_id" in str(te):
+                    response = self.llm.invoke_json(
+                        messages,
+                        schema=ContinuityCheckerOutput,
+                        temperature=0.3,
+                    )
+                else:
+                    raise
 
             # Parse output
             output = ContinuityCheckerOutput(**response)

@@ -34,6 +34,7 @@ interface Run {
   status: string
   created_at: string
   error_message?: string
+  current_node?: string | null
 }
 
 interface Step {
@@ -42,6 +43,12 @@ interface Step {
   description: string
   status: 'pending' | 'running' | 'completed' | 'failed' | 'blocked'
   error_message?: string
+  logs?: {
+    id?: string
+    timestamp?: string
+    level?: 'info' | 'success' | 'warning' | 'error'
+    message: string
+  }[]
   artifacts?: {
     summary: string
     output_preview?: string
@@ -65,6 +72,13 @@ interface RunDetailData {
   duration_ms?: number | null
 }
 
+export interface PreflightWarning {
+  code: string
+  message: string
+  severity: 'warning' | 'info'
+  details?: Record<string, unknown>
+}
+
 interface AuthorWorkbenchProps {
   activeTab: SurfaceTabKey
   chapterDetail: ChapterDetail | null
@@ -79,6 +93,8 @@ interface AuthorWorkbenchProps {
   isStreaming: boolean
   isWorkflowRunning?: boolean
   isChapterWorkflowRunning?: (chapterNumber: number) => boolean
+  isProjectWorkflowRunning?: boolean
+  runningWorkflowChapter?: number | null
   llmMode: string
   projectId: string
   runDetail: RunDetailData | null
@@ -86,6 +102,7 @@ interface AuthorWorkbenchProps {
   sseSteps: Record<string, StepStatus>
   timeline?: WorkflowTimelineData | null
   timelineError?: string
+  preflightWarnings?: PreflightWarning[]
   onGenerate: () => void
   onConfirmRegenerate?: () => void
   onGenerateNext?: () => void
@@ -124,6 +141,8 @@ export default function AuthorWorkbench({
   isStreaming,
   isWorkflowRunning,
   isChapterWorkflowRunning,
+  isProjectWorkflowRunning,
+  runningWorkflowChapter,
   llmMode,
   projectId,
   runDetail,
@@ -131,6 +150,7 @@ export default function AuthorWorkbench({
   sseSteps,
   timeline,
   timelineError,
+  preflightWarnings,
   onGenerate,
   onConfirmRegenerate,
   onGenerateNext,
@@ -161,6 +181,8 @@ export default function AuthorWorkbench({
         currentChapter={currentChapter}
         llmMode={llmMode}
         isChapterWorkflowRunning={isChapterWorkflowRunning}
+        isProjectWorkflowRunning={isProjectWorkflowRunning}
+        runningWorkflowChapter={runningWorkflowChapter}
         onSelectChapter={onSelectChapter}
         onGenerateChapter={onGenerateChapter}
         onGenerateNextFromChapter={onGenerateNextFromChapter}
@@ -180,6 +202,8 @@ export default function AuthorWorkbench({
         isStub={isStub}
         isStreaming={isStreaming}
         isWorkflowRunning={isWorkflowRunning}
+        isProjectWorkflowRunning={isProjectWorkflowRunning}
+        runningWorkflowChapter={runningWorkflowChapter}
         llmMode={llmMode}
         projectId={projectId}
         runDetail={runDetail}
@@ -187,6 +211,7 @@ export default function AuthorWorkbench({
         sseSteps={sseSteps}
         timeline={timeline}
         timelineError={timelineError}
+        preflightWarnings={preflightWarnings}
         onGenerate={onGenerate}
         onConfirmRegenerate={onConfirmRegenerate}
         onGenerateNext={onGenerateNext}
@@ -213,6 +238,8 @@ export default function AuthorWorkbench({
         runsForChapter={runsForChapter}
         isStreaming={isStreaming}
         isWorkflowRunning={isWorkflowRunning}
+        isProjectWorkflowRunning={isProjectWorkflowRunning}
+        runningWorkflowChapter={runningWorkflowChapter}
         sseSteps={sseSteps}
         genError={genError}
         timeline={timeline}

@@ -307,7 +307,7 @@ class PolisherAgent(BaseAgent):
             if self._should_use_plain_text_primary(state):
                 output = self._try_plain_text_polish(state, context, exec_events=exec_events)
             else:
-                raw = self.llm.invoke_json(messages, schema=PolisherOutput)
+                raw = self._invoke_json(messages, schema=PolisherOutput)
                 output = PolisherOutput(**raw)
         except Exception as e:
             if live_provider and not self._should_use_plain_text_primary(state):
@@ -719,7 +719,7 @@ class PolisherAgent(BaseAgent):
             messages,
             temperature=0.65,
             max_tokens=max_tokens,
-            max_retries=1,
+            max_retries=None,
             request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
         ).strip()
         content = self._coerce_plain_text_content(content)
@@ -778,7 +778,7 @@ class PolisherAgent(BaseAgent):
                 messages,
                 temperature=0.65,
                 max_tokens=max_tokens,
-                max_retries=1,
+                max_retries=None,
                 request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
             ).strip()
             polished = self._coerce_plain_text_content(polished)
@@ -844,7 +844,7 @@ class PolisherAgent(BaseAgent):
                     messages,
                     temperature=0.65,
                     max_tokens=4096,
-                    max_retries=1,
+                    max_retries=None,
                     request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
                 ).strip()
                 polished = self._coerce_plain_text_content(polished)

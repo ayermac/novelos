@@ -114,7 +114,7 @@ def _derive_node_semantics(
                 event_st = "running"
             elif status == "skipped":
                 event_st = "skipped"
-            elif status == "completed":
+            elif status in {"completed", "warning"}:
                 event_st = "completed"
 
         result = memory_curator_node_result(
@@ -133,7 +133,7 @@ def _derive_node_semantics(
         return d
 
     # Generic node derivation
-    if status == "completed":
+    if status in {"completed", "warning"}:
         # Check if node events indicate warnings/degradation
         has_warnings = False
         warning_msg = ""
@@ -221,6 +221,23 @@ def _get_workflow_run_by_id(
         return data
     finally:
         conn.close()
+
+
+def _get_active_memory_curator_lock(
+    repo: Any,
+    project_id: str,
+    chapter_number: int,
+) -> dict | None:
+    """Return the active MemoryCurator lock, letting the repository clear stale locks."""
+    if not hasattr(repo, "get_memory_curator_lock"):
+        return None
+    try:
+        lock = repo.get_memory_curator_lock(project_id, chapter_number)
+    except Exception:
+        return None
+    if lock and str(lock.get("status") or "") == "running":
+        return lock
+    return None
 
 
 def _parse_db_datetime(value: str | None) -> datetime | None:
@@ -444,8 +461,12 @@ def _build_node_timeline(
     def build_node(base: dict[str, Any]) -> dict[str, Any]:
         node_name = base["node_name"]
         evs = node_events.get(node_name, [])
-        # Sort by created_at
-        evs = sorted(evs, key=lambda e: e.get("created_at") or "")
+        # v6.6.21: Stable sort — null/empty timestamps last, then ascending.
+        # Events without timestamps (skip/resume messages) should not float to the top.
+        evs = sorted(
+            evs,
+            key=lambda e: (e.get("created_at") or "9999-12-31T23:59:59", e.get("id") or 0),
+        )
         started_events = [e for e in evs if e.get("event_type") == "started"]
         completed_events = [e for e in evs if e.get("event_type") == "completed"]
         failed_events = [e for e in evs if e.get("event_type") == "failed"]
@@ -457,7 +478,16 @@ def _build_node_timeline(
         if last_ev and last_ev.get("event_type") == "failed":
             status = "failed"
         elif last_ev and last_ev.get("event_type") == "completed":
-            status = "completed"
+            ev_status = last_ev.get("status", "")
+            # v6.6.21-review: completed + failed/error status must show as failed,
+            # not success. This also handles legacy events where event_type was
+            # "completed" but the node actually failed.
+            if ev_status in ("failed", "error"):
+                status = "failed"
+            elif ev_status == "warning":
+                status = "warning"
+            else:
+                status = "completed"
         elif last_ev and last_ev.get("event_type") == "started":
             status = "running"
         elif _is_before_current(node_name):
@@ -474,7 +504,7 @@ def _build_node_timeline(
 
         started_at = started_ev.get("created_at") if started_ev else None
         completed_at = None
-        if status == "completed" and completed_ev:
+        if status in {"completed", "warning"} and completed_ev:
             completed_at = completed_ev.get("created_at")
         elif status == "failed" and failed_ev:
             completed_at = failed_ev.get("created_at")
@@ -714,6 +744,17 @@ async def get_workflow_timeline(
             if runs:
                 target_run = runs[0]
 
+        active_memory_lock = _get_active_memory_curator_lock(repo, project_id, chapter_number)
+        if not run_id and active_memory_lock and active_memory_lock.get("run_id"):
+            locked_run = _get_workflow_run_by_id(
+                repo,
+                project_id,
+                chapter_number,
+                str(active_memory_lock.get("run_id")),
+            )
+            if locked_run:
+                target_run = locked_run
+
         if (
             not run_id
             and target_run
@@ -763,6 +804,8 @@ async def get_workflow_timeline(
                 "started_at": None,
                 "elapsed_minutes": None,
                 "is_stale": False,
+                "memory_curator_running": False,
+                "memory_curator_lock": None,
                 "recovery": recovery,
                 "checkpoint": checkpoint,
                 "nodes": _build_node_timeline([], []),
@@ -772,13 +815,30 @@ async def get_workflow_timeline(
         run_status = target_run.get("status", "unknown")
         current_node = target_run.get("current_node")
         started_at = target_run.get("started_at")
+        active_memory_run_id = active_memory_lock.get("run_id") if active_memory_lock else None
+        memory_curator_running = bool(
+            active_memory_lock
+            and (
+                (active_memory_run_id and str(active_memory_run_id) == str(run_id_str))
+                or (not active_memory_run_id and current_node == "memory_curator")
+            )
+        )
+        stale_run_data = target_run
+        if memory_curator_running:
+            run_status = "running"
+            current_node = "memory_curator"
+            stale_run_data = {
+                **target_run,
+                "status": "running",
+                "current_node": "memory_curator",
+            }
 
-        stale_info = _detect_stale(target_run, timeout_minutes)
+        stale_info = _detect_stale(stale_run_data, timeout_minutes)
 
         # v6.6.6: Get checkpoint info for recovery state
         checkpoint = _checkpoint_metadata(repo, project_id, chapter_number)
         recovery = _build_recovery(
-            target_run,
+            stale_run_data,
             chapter.get("status"),
             timeout_minutes,
             chapter=chapter,
@@ -840,6 +900,8 @@ async def get_workflow_timeline(
             "started_at": started_at,
             "elapsed_minutes": stale_info.get("elapsed_minutes"),
             "is_stale": stale_info.get("is_stale", False),
+            "memory_curator_running": memory_curator_running,
+            "memory_curator_lock": active_memory_lock if memory_curator_running else None,
             "recovery": recovery,
             "checkpoint": checkpoint,
             "nodes": nodes,

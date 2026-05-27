@@ -67,6 +67,8 @@ interface AuthorAgentPanelProps {
   runsForChapter: Run[]
   isStreaming: boolean
   isWorkflowRunning?: boolean
+  isProjectWorkflowRunning?: boolean
+  runningWorkflowChapter?: number | null
   sseSteps: Record<string, StepStatus>
   genError: string
   timeline?: WorkflowTimelineData | null
@@ -112,12 +114,15 @@ function getAgentActionDesc(node: string | null | undefined): string {
 
 export default function AuthorAgentPanel({
   activeTab,
+  currentChapter,
   currentChapterRecord,
   llmMode,
   runDetail,
   runsForChapter,
   isStreaming,
   isWorkflowRunning,
+  isProjectWorkflowRunning,
+  runningWorkflowChapter,
   sseSteps,
   genError,
   timeline,
@@ -138,12 +143,24 @@ export default function AuthorAgentPanel({
     ? timeline.elapsed_minutes
     : elapsedMinutesSince(runDetail?.started_at)
   const workflowStatus = runDetail?.workflow_status
-  const currentNode = runDetail?.current_node
+  const currentNode = timeline?.current_node || runDetail?.current_node
   const sseStepEntries = Object.entries(sseSteps)
   const isReviewedReal = status === 'reviewed' && llmMode === 'real'
   const elapsedMinutes = elapsedMinutesSince(runDetail?.started_at)
+  const memoryCuratorNode = timeline?.nodes?.find((node) => node.node_name === 'memory_curator')
+  const memoryCuratorRunning = Boolean(
+    timeline?.memory_curator_running ||
+    memoryCuratorNode?.status === 'running' ||
+    (
+      effectiveRunStatus === 'running' &&
+      (currentNode === 'memory_curator' || memoryCuratorNode?.flags?.memory_curator_running)
+    )
+  )
   const isStaleRunning = effectiveRunStatus === 'running' && effectiveElapsed !== null && effectiveElapsed >= STUCK_RUN_THRESHOLD_MINUTES
-  const isWorkflowActive = isStreaming || isWorkflowRunning || effectiveRunStatus === 'running'
+  const isRunningAnotherChapter = Boolean(
+    isProjectWorkflowRunning && runningWorkflowChapter && runningWorkflowChapter !== currentChapter
+  )
+  const isWorkflowActive = isStreaming || isWorkflowRunning || effectiveRunStatus === 'running' || isRunningAnotherChapter
   const hasPreservedPlannedContent = status === 'planned' && hasContent
   const needsRecovery = status === 'blocking' || status === 'revision'
   const canShowPrimaryAction = activeTab !== 'workflow'
@@ -160,15 +177,17 @@ export default function AuthorAgentPanel({
         {/* Next recommended action */}
         {isReviewedReal && onPublish && (
           <div className="author-agent-next-action">
-            <div className="action-label">等待人工发布</div>
-            <div className="action-desc">本章已通过 AI 审核，点击确认发布。</div>
+            <div className="action-label">{memoryCuratorRunning ? '记忆提取中' : '等待人工发布'}</div>
+            <div className="action-desc">
+              {memoryCuratorRunning ? '记忆提取完成后才能确认发布。' : '本章已通过 AI 审核，点击确认发布。'}
+            </div>
             <LoadingButton
               className="btn btn-primary btn-sm"
               variant="primary"
               loading={!!publishPending}
               loadingText="发布中..."
               onClick={onPublish}
-              disabled={isStreaming || isWorkflowRunning}
+              disabled={isWorkflowActive || memoryCuratorRunning}
               style={{ marginTop: 8, width: '100%' }}
             >
               <CheckCircle2 size={12} /> 确认发布
@@ -211,7 +230,9 @@ export default function AuthorAgentPanel({
               {isStaleRunning
                 ? `当前运行已超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未完成，建议进入运行恢复处理。`
                 : isWorkflowActive
-                  ? getAgentActionDesc(currentNode || timeline?.current_node)
+                  ? isRunningAnotherChapter && runningWorkflowChapter
+                    ? `第 ${runningWorkflowChapter} 章正在生成，完成前不能启动其它章节。`
+                    : getAgentActionDesc(currentNode || timeline?.current_node)
                   : hasPreservedPlannedContent
                     ? '本章保留了已有正文。请先查看正文，或明确确认覆盖后再重新生成。'
                     : needsRecovery
@@ -260,8 +281,10 @@ export default function AuthorAgentPanel({
 
         {status === 'awaiting_publish' && (
           <div className="author-agent-next-action">
-            <div className="action-label">等待发布</div>
-            <div className="action-desc">本章已完成全部流程，等待最终发布。</div>
+            <div className="action-label">{memoryCuratorRunning ? '记忆提取中' : '等待发布'}</div>
+            <div className="action-desc">
+              {memoryCuratorRunning ? '记忆提取完成后才能发布。' : '本章已完成全部流程，等待最终发布。'}
+            </div>
           </div>
         )}
 

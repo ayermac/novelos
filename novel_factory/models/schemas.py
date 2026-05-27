@@ -85,6 +85,16 @@ class AuthorOutput(BaseModel):
     used_plot_refs: list[str] = Field(default_factory=list)
 
 
+# ── Title generation output (v6.7.5) ────────────────────────────
+
+
+class TitleGenerationOutput(BaseModel):
+    """v6.7.5: Structured output for chapter title generation."""
+
+    title: str
+    reasoning: str = ""
+
+
 # ── Polisher output ────────────────────────────────────────────
 
 

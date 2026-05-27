@@ -567,6 +567,49 @@ class TestAuthorAgent:
 
         assert issues == []
 
+    def test_author_scene_beat_coverage_accepts_paraphrased_final_hook_tail(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "进入旧库", "turn": "黄光逼近", "hook": "镜头锁定"},
+            {"sequence": 2, "scene_goal": "拖延通讯", "turn": "陈科追问", "hook": "旁路监听"},
+            {"sequence": 3, "scene_goal": "复核纸册暗记", "turn": "发现新盐痕", "hook": "投放者刚离开"},
+            {"sequence": 4, "scene_goal": "复核七分钟窗口", "turn": "底档同批次", "hook": "空白登记码"},
+            {"sequence": 5, "scene_goal": "处理外环临时潮汐授权", "turn": "确认堤坝外侧临时潮汐授权", "hook": "旧排潮井箭头"},
+            {"sequence": 6, "scene_goal": "沿离线物理痕迹绕向堤坝外侧", "turn": "发现外侧检潮孔", "hook": "新刮痕仍带潮热"},
+            {
+                "sequence": 7,
+                "scene_goal": "让陆澈以非联网方式脱离旧库封控范围，但保留系统追踪压迫，并抵达下一处与“外”级授权相关的门禁结构前",
+                "turn": "他利用旧排潮井的机械潮阀回落间隙，从无电子反馈的检潮孔爬向堤坝外侧；身后黄光无法穿透厚混凝土，却沿着旧库连廊转向，说明封控系统已把搜索口径从“人”改成“外级授权残页”",
+                "hook": "堤坝外侧检潮孔尽头嵌着一只旧门禁轮盘，轮盘中央刻着“外级临时授权”，签发人栏被一枚新压上的盐封盖住，而盐封边缘仍在发热",
+            },
+        ])
+
+        content = (
+            "陆澈在维护通道里完成前段核验。" + ("潮声压着墙体。" * 90) +
+            "\n\n他将纸册和暗记塞进内袋，双手扣住检潮孔边缘的旧格栅。"
+            "一阵低频震颤顺着混凝土传来，旧排潮井的机械潮阀正在回落。"
+            "陆澈借着这股回震的掩护，猛地推开格栅，侧身挤入狭窄的检潮孔。\n\n"
+            "身后，审计黄光扫过他刚才站立的位置，却无法穿透厚重的混凝土墙体。"
+            "光斑沿着旧库连廊急速转向——封控系统的搜索口径变了，它们不再找人，"
+            "而是在找那张“外级授权残页”。\n\n"
+            "陆澈在逼仄的孔道内匍匐，盐砂磨破手背，直到前方透进一丝湿冷的风。"
+            "堤坝外侧检潮孔的尽头，嵌着一只锈迹斑斑的旧门禁轮盘。\n\n"
+            "他伸手抹去轮盘中央的灰垢，“外级临时授权”几个字赫然入目。\n\n"
+            "视线下移，签发人栏的位置被一枚新压上的盐封死死盖住。\n\n"
+            "陆澈的指尖悬在盐封上方。盐封边缘的潮热还未散去，"
+            "像刚有人在这里按下了他的命运。悬念没有消失。"
+        )
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
+        issues = agent._scene_beat_coverage_issues({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+        }, content)
+
+        assert issues == []
+
     def test_author_context_is_capped_but_preserves_head_and_tail(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent, AUTHOR_CONTEXT_CHAR_LIMIT
 
@@ -726,6 +769,95 @@ class TestAuthorAgent:
         assert "字数超标" in result["quality_gate"]["message"]
         chapter = seeded_repo.get_chapter("test_proj", 1)
         assert not chapter.get("content")
+
+    def test_author_long_target_uses_quality_gate_instead_of_fixed_8000_cap(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET word_target=? WHERE project_id=? AND chapter_number=?",
+            (12500, "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        below_target_content = "长" * 10560
+        stub = StubLLMProvider([{
+            "title": "第一章 测试",
+            "content": below_target_content,
+            "word_count": len(below_target_content),
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == "scripted"
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert result["quality_gate"]["word_target"] == 12500
+        assert "字数未达标" in result["quality_gate"]["message"]
+        assert "8000" not in result.get("error", "")
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert not chapter.get("content")
+
+    def test_author_missing_instruction_word_target_defaults_to_3000(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE projects SET target_words=?, total_chapters_planned=? WHERE project_id=?",
+            (50000, 4, "test_proj"),
+        )
+        conn.execute(
+            "UPDATE instructions SET word_target=NULL WHERE project_id=? AND chapter_number=?",
+            ("test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        content = "这是一段按三千字章节目标生成的正文。" * 150
+        assert len(content) >= 2550
+        assert len(content) < 10625
+        stub = StubLLMProvider([{
+            "title": "第一章 测试",
+            "content": content,
+            "word_count": len(content),
+            "implemented_events": ["事件1"],
+            "used_plot_refs": ["P001"],
+        }])
+
+        agent = AuthorAgent(seeded_repo, stub)
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        assert "12500" not in result.get("error", "")
 
     def test_author_does_not_use_objective_excerpt_as_chapter_title(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
@@ -1776,6 +1908,75 @@ class TestEditorAgent:
 
 
 class TestMemoryCuratorAgent:
+    def test_memory_curator_preserves_plot_hole_resolve_operation(self, seeded_repo):
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.api.routes.memory_updates import _apply_memory_item
+        from novel_factory.skills.registry import SkillRegistry
+
+        plot = seeded_repo.create_plot_hole(
+            "test_proj",
+            code="PH-001",
+            type="悬念",
+            title="铜钥匙用途",
+            description="铜钥匙能打开哪里仍未知。",
+            planted_chapter=1,
+            planned_resolve_chapter=2,
+            status="planted",
+        )
+        conn = seeded_repo._conn()
+        conn.execute(
+            "INSERT INTO chapters (project_id, chapter_number, title, status) "
+            "VALUES (?, ?, ?, ?)",
+            ("test_proj", 2, "第二章 旧宅", "reviewed"),
+        )
+        conn.commit()
+        conn.close()
+        seeded_repo.save_chapter_content(
+            "test_proj",
+            2,
+            "林默终于用铜钥匙打开城南旧宅地下室，确认它正是旧宅机关的钥匙。",
+            "第二章 旧宅",
+        )
+        seeded_repo.update_chapter_status("test_proj", 2, "reviewed")
+
+        agent = MemoryCuratorAgent(
+            seeded_repo,
+            StubLLMProvider([{
+                "patches": [{
+                    "target_table": "plot_holes",
+                    "operation": "resolve",
+                    "target_name": "PH-001",
+                    "data": {
+                        "description": "铜钥匙已用于打开城南旧宅地下室，钥匙用途伏笔兑现。",
+                    },
+                    "confidence": 0.9,
+                    "evidence_text": "用铜钥匙打开城南旧宅地下室",
+                    "rationale": "本章明确兑现铜钥匙用途。",
+                }]
+            }]),
+            skill_registry=SkillRegistry(),
+        )
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 2,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-memory-resolve",
+        })
+
+        assert result["memory_curator_processed"] is True
+        assert result["memory_items_count"] == 1
+        batch = seeded_repo.list_memory_batches("test_proj")[0]
+        item = seeded_repo.list_memory_items(batch["id"])[0]
+        assert item["operation"] == "resolve"
+        assert item["target_id"] == str(plot["id"])
+
+        apply_result = _apply_memory_item(seeded_repo, "test_proj", item, 2)
+        assert apply_result["success"] is True
+        resolved_plot = seeded_repo.get_plot_hole("test_proj", plot["id"])
+        assert resolved_plot["status"] == "resolved"
+        assert resolved_plot["resolved_chapter"] == 2
+
     def test_memory_curator_falls_back_to_editor_state_card_when_llm_empty(self, seeded_repo):
         from novel_factory.agents.memory_curator import MemoryCuratorAgent
         from novel_factory.skills.registry import SkillRegistry

@@ -37,14 +37,26 @@
 - **当前发布准备基线**: v6.6.15 Release Readiness & Desktop Packaging Closure
 - **当前真实项目 burn-in 基线**: v6.6.16 Real Project Burn-in & Regression Closure
 - **当前运行时修复基线**: v6.6.17 Runtime and LLM Settings Updates
-- **当前下一步候选**: v6.6.18 Segmented Agent Payloads & Real LLM Reliability
-- **状态**: v6.6.17 已完成 LLM 设置改造、隐藏未使用预置 Key、Genesis stale/running run 恢复、真实 Provider 连接失败显式失败、Genesis 分段生成以降低大请求失败风险。v6.6.18 候选计划聚焦把同样的分段策略推广到 Author、Polisher、MemoryCurator 等长输入/长输出 Agent。
+- **当前分段 Agent 载荷基线**: v6.6.18 Segmented Agent Payloads & Genesis Quality Gate Semantic Alignment
+- **当前生产运维基线**: v6.6.20 Production Ops & Release Hardening
+- **当前 JSON 韧性基线**: v6.6.21 LLM JSON Resilience Hotfix
+- **当前生产稳定门禁基线**: v6.7.0 Production Stability Gate
+- **当前续规划基线**: v6.7.1 Auto Arc Continuation
+- **当前章节标题生成基线**: v6.7.5 Chapter Title Generation
+- **当前 Preflight UX 基线**: v6.7.3 Preflight UX & Regression Closure
+- **状态**: v6.7.5 实现独立章节标题生成机制，移除 content opening 作为主要标题来源，使用 LLM 基于章节内容和指令上下文生成更有吸引力的标题；v6.7.3 完善 preflight 前端展示（非阻断式警告横幅）、增强 warning details（groups、ids、recommended_actions）、补齐 API 成功路径回归测试；v6.7.2 新增轻量级 preflight 诊断，在章节生成前暴露重复角色/世界观、记忆压力等问题。
 - **版本规划索引**: [planning/novel-factory-version-planning-index.md](planning/novel-factory-version-planning-index.md)
+- **v6.7.5 规格**: [specs/novel-factory-v6.7.5-chapter-title-generation-spec.md](specs/novel-factory-v6.7.5-chapter-title-generation-spec.md)
+- **v6.7.5 完成报告**: [reports/novel-factory-v6.7.5-completion-report.md](reports/novel-factory-v6.7.5-completion-report.md)
+- **v6.7.3 规格**: [specs/novel-factory-v6.7.3-preflight-ux-regression-spec.md](specs/novel-factory-v6.7.3-preflight-ux-regression-spec.md)
+- **v6.7.3 完成报告**: [reports/novel-factory-v6.7.3-completion-report.md](reports/novel-factory-v6.7.3-completion-report.md)
+- **v6.7.2 规格**: [specs/novel-factory-v6.7.2-memory-dedup-preflight-spec.md](specs/novel-factory-v6.7.2-memory-dedup-preflight-spec.md)
+- **v6.7.2 完成报告**: [reports/novel-factory-v6.7.2-completion-report.md](reports/novel-factory-v6.7.2-completion-report.md)
 - **v6.6.17 规格**: [specs/novel-factory-v6.6.17-runtime-llm-settings-genesis-reliability-spec.md](specs/novel-factory-v6.6.17-runtime-llm-settings-genesis-reliability-spec.md)
 - **v6.6.17 完成报告**: [reports/novel-factory-v6.6.17-completion-report.md](reports/novel-factory-v6.6.17-completion-report.md)
 - **v6.4 规格**: [planning/novel-factory-v6.4-chapter-quality-closure-spec.md](planning/novel-factory-v6.4-chapter-quality-closure-spec.md) — 解决生成章节"AI 味重"问题，聚焦 prompt 增强、deterministic validator 补充和 skill 升级。
 - **v6.5 规格**: [planning/novel-factory-v6.5-interaction-excellence-spec.md](planning/novel-factory-v6.5-interaction-excellence-spec.md) — 解决桌面客户端"后台感"问题，先建立 toast/loading/skeleton 等交互基础设施，再逐页升级工作台体验。
-- **测试基线**: v6.6.16 稳定基线为 backend full suite **2616 passed, 0 failed**；v6.6.17 Genesis/secure-key/desktop targeted suites 已通过。声明新稳定基线前应重新跑分层或全量验证。
+- **测试基线**: v6.7.3 preflight UX 回归新增 11 个测试；v6.7.2 preflight 诊断新增 9 个测试；v6.7.1 续规划修复新增 runner/API guard 回归测试；v6.7.0 稳定基线以最终完成报告为准。
 - **v5.5.15 完成报告**: [reports/novel-factory-v5.5.15-completion-report.md](reports/novel-factory-v5.5.15-completion-report.md)
 - **v5.5.15 Review 记录**: [reviews/novel-factory-v5.5.15-review.md](reviews/novel-factory-v5.5.15-review.md)
 - **v5.6 完成报告**: [reports/novel-factory-v5.6-author-workbench-completion-report.md](reports/novel-factory-v5.6-author-workbench-completion-report.md)
@@ -88,7 +100,7 @@
 - **v6.6.5 Runtime Hygiene & Observability 规格**: [planning/novel-factory-v6.6.5-runtime-hygiene-observability-closure-spec.md](planning/novel-factory-v6.6.5-runtime-hygiene-observability-closure-spec.md)
 - **v6.6.5 完成报告**: [reports/novel-factory-v6.6.5-completion-report.md](reports/novel-factory-v6.6.5-completion-report.md)
 - **v6.6.5 Review 记录**: [reviews/novel-factory-v6.6.5-review.md](reviews/novel-factory-v6.6.5-review.md)
-- **v6.6.18 候选计划**: [next/novel-factory-v6.6.18-segmented-agent-payloads-plan.md](next/novel-factory-v6.6.18-segmented-agent-payloads-plan.md)
+- **v6.6.18 历史计划**: [next/novel-factory-v6.6.18-segmented-agent-payloads-plan.md](next/novel-factory-v6.6.18-segmented-agent-payloads-plan.md) — 已完成，见规格与完成报告
 
 ## 当前执行规则
 

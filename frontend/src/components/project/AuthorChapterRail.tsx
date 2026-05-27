@@ -15,6 +15,8 @@ interface AuthorChapterRailProps {
   currentChapter: number
   llmMode: string
   isChapterWorkflowRunning?: (chapterNumber: number) => boolean
+  isProjectWorkflowRunning?: boolean
+  runningWorkflowChapter?: number | null
   onSelectChapter: (chapterNumber: number) => void
   onGenerateChapter?: (chapterNumber: number) => void
   onGenerateNextFromChapter?: (chapterNumber: number) => void
@@ -79,6 +81,8 @@ function ChapterMenu({
   chapter,
   llmMode,
   isWorkflowRunning,
+  isGenerationLocked,
+  runningWorkflowChapter,
   onClose,
   onGenerateChapter,
   onGenerateNextFromChapter,
@@ -89,6 +93,8 @@ function ChapterMenu({
   chapter: Chapter
   llmMode: string
   isWorkflowRunning?: boolean
+  isGenerationLocked?: boolean
+  runningWorkflowChapter?: number | null
   onClose: () => void
   onGenerateChapter?: (chapterNumber: number) => void
   onGenerateNextFromChapter?: (chapterNumber: number) => void
@@ -106,6 +112,10 @@ function ChapterMenu({
   const isAwaiting = status === 'awaiting_publish'
   const hasPreservedPlannedContent = status === 'planned' && chapter.word_count > 0
   const title = chapter.title || `第 ${chapter.chapter_number} 章`
+  const blockedByOtherChapter = Boolean(
+    isGenerationLocked && runningWorkflowChapter && runningWorkflowChapter !== chapter.chapter_number
+  )
+  const generationBlocked = Boolean(isWorkflowRunning || blockedByOtherChapter)
 
   const handleViewContent = () => {
     onOpenChapterView?.(chapter.chapter_number, 'content')
@@ -179,38 +189,44 @@ function ChapterMenu({
           已有运行中工作流
         </div>
       )}
+      {blockedByOtherChapter && (
+        <div className="author-rail-dropdown-hint">
+          <Loader2 size={11} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} className="spin" />
+          第 {runningWorkflowChapter} 章生成中
+        </div>
+      )}
 
-      {!isWorkflowRunning && isReviewedReal && onPublishChapter && (
+      {!generationBlocked && isReviewedReal && onPublishChapter && (
         <button className="author-rail-dropdown-item" role="menuitem" onClick={handlePublish}>
           <CheckCircle2 size={13} /> 确认发布
         </button>
       )}
 
-      {!isWorkflowRunning && isPublished && onGenerateNextFromChapter && (
+      {!generationBlocked && isPublished && onGenerateNextFromChapter && (
         <button className="author-rail-dropdown-item" role="menuitem" onClick={handleGenerateNext}>
           <Sparkles size={13} /> 生成下一章
         </button>
       )}
 
-      {!isWorkflowRunning && (status === 'blocking' || status === 'revision') && onResetRunRecoveryForChapter && (
+      {!generationBlocked && (status === 'blocking' || status === 'revision') && onResetRunRecoveryForChapter && (
         <button className="author-rail-dropdown-item" role="menuitem" onClick={() => { onResetRunRecoveryForChapter(chapter.chapter_number); onClose(); }}>
           <AlertCircle size={13} /> 清除阻塞并重置
         </button>
       )}
 
-      {!isWorkflowRunning && hasPreservedPlannedContent && (
+      {!generationBlocked && hasPreservedPlannedContent && (
         <button className="author-rail-dropdown-item" role="menuitem" onClick={handleViewContent}>
           <FileText size={13} /> 查看正文后确认覆盖
         </button>
       )}
 
-      {!isWorkflowRunning && !hasPreservedPlannedContent && !isTerminal && status !== 'blocking' && onGenerateChapter && (
+      {!generationBlocked && !hasPreservedPlannedContent && !isTerminal && status !== 'blocking' && onGenerateChapter && (
         <button className="author-rail-dropdown-item" role="menuitem" onClick={handleGenerate}>
           <Play size={13} /> {status === 'planned' ? '生成本章' : '继续生成'}
         </button>
       )}
 
-      {!isWorkflowRunning && isAwaiting && (
+      {!generationBlocked && isAwaiting && (
         <div className="author-rail-dropdown-hint">
           <AlertCircle size={11} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />
           等待发布
@@ -225,6 +241,8 @@ export default function AuthorChapterRail({
   currentChapter,
   llmMode,
   isChapterWorkflowRunning,
+  isProjectWorkflowRunning,
+  runningWorkflowChapter,
   onSelectChapter,
   onGenerateChapter,
   onGenerateNextFromChapter,
@@ -278,16 +296,20 @@ export default function AuthorChapterRail({
               }}
               title={`${title} — ${statusLabel}`}
             >
-              <span className="author-rail-icon" style={{ color }}>{icon}</span>
-              <span className="author-rail-label">{title}</span>
-              <span className="author-rail-meta">
-                {isWorkflowRunning && isActive && (
-                  <span className="author-rail-running" />
-                )}
-                {ch.word_count > 0 && (
-                  <span className="author-rail-wordcount">{ch.word_count.toLocaleString()}</span>
-                )}
-                <span className="author-rail-status">{statusLabel}</span>
+              <span className="author-rail-icon" style={{ color }} aria-hidden="true">{icon}</span>
+              <span className="author-rail-content">
+                <span className="author-rail-label">{title}</span>
+                <span className="author-rail-meta">
+                  {isWorkflowRunning && isActive && (
+                    <span className="author-rail-running" aria-label="运行中" />
+                  )}
+                  {ch.word_count > 0 && (
+                    <span className="author-rail-wordcount">{ch.word_count.toLocaleString()} 字</span>
+                  )}
+                  <span className={`author-rail-status status-${ch.status}`}>{statusLabel}</span>
+                </span>
+              </span>
+              <span className="author-rail-actions">
                 <button
                   className="author-rail-menu-btn"
                   type="button"
@@ -312,6 +334,8 @@ export default function AuthorChapterRail({
                   chapter={ch}
                   llmMode={llmMode}
                   isWorkflowRunning={isWorkflowRunning}
+                  isGenerationLocked={isProjectWorkflowRunning}
+                  runningWorkflowChapter={runningWorkflowChapter}
                   onClose={() => setOpenMenuChapter(null)}
                   onGenerateChapter={onGenerateChapter}
                   onGenerateNextFromChapter={onGenerateNextFromChapter}

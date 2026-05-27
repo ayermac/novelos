@@ -1,7 +1,7 @@
 {
   "name": "novelos-desktop",
-  "version": "6.6.18",
-  "description": "Novelos Desktop Client — v6.6.18 Segmented Agent Payloads & Genesis Quality Gate Semantic Alignment",
+  "version": "6.7.5",
+  "description": "Novelos Desktop Client — v6.7.5 Chapter Title Generation",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",

@@ -1,4 +1,4 @@
-"""Project deletion cascade coverage for newer production tables."""
+"""Project soft deletion coverage for newer production tables."""
 
 from __future__ import annotations
 
@@ -195,23 +195,29 @@ def _count_project_rows(repo: Repository, project_id: str) -> int:
         conn.close()
 
 
-def test_delete_project_cascades_newer_project_tables(tmp_path):
+def test_delete_project_soft_deletes_and_preserves_newer_project_tables(tmp_path):
     _, repo = _make_client(tmp_path)
     project_id = "delete_newer_tables"
     _seed_newer_project_rows(repo, project_id)
 
-    assert _count_project_rows(repo, project_id) > 0
+    original_project_rows = _count_project_rows(repo, project_id)
+    assert original_project_rows > 0
 
     assert repo.delete_project(project_id) is True
 
     assert repo.get_project(project_id) is None
-    assert _count_project_rows(repo, project_id) == 0
+    deleted_project = repo.get_project(project_id, include_deleted=True)
+    assert deleted_project is not None
+    assert deleted_project["deleted"] == 1
+    assert deleted_project["status"] == "deleted"
+    assert _count_project_rows(repo, project_id) == original_project_rows
 
 
-def test_delete_project_api_cascades_newer_project_tables(tmp_path):
+def test_delete_project_api_soft_deletes_and_preserves_newer_project_tables(tmp_path):
     client, repo = _make_client(tmp_path)
     project_id = "delete_newer_tables_api"
     _seed_newer_project_rows(repo, project_id)
+    original_project_rows = _count_project_rows(repo, project_id)
 
     resp = client.delete(f"/api/projects/{project_id}")
 
@@ -220,4 +226,5 @@ def test_delete_project_api_cascades_newer_project_tables(tmp_path):
     assert body["ok"] is True
     assert body["data"]["deleted"] is True
     assert repo.get_project(project_id) is None
-    assert _count_project_rows(repo, project_id) == 0
+    assert repo.get_project(project_id, include_deleted=True)["deleted"] == 1
+    assert _count_project_rows(repo, project_id) == original_project_rows

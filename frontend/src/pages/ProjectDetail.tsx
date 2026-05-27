@@ -45,6 +45,7 @@ interface Run {
   status: string
   created_at: string
   error_message?: string
+  current_node?: string | null
 }
 
 interface Workspace {
@@ -161,9 +162,21 @@ export default function ProjectDetail() {
 
   // Set initial chapter only after the user explicitly enters chapter writing.
   useEffect(() => {
-    if (activeModule === 'chapters' && workspace && !searchParams.get('chapter') && workspace.chapters.length > 0) {
+    if (activeModule === 'chapters' && workspace && workspace.chapters.length > 0) {
+      const requestedChapter = searchParams.get('chapter')
+      const chapterExists = requestedChapter
+        ? workspace.chapters.some((chapter) => chapter.chapter_number === Number(requestedChapter))
+        : false
+      if (requestedChapter && chapterExists) return
+
+      const runningChapter = workspace.recent_runs.find((r) => r.status === 'running')?.chapter_number
+      const latestExistingChapter = workspace.chapters.reduce(
+        (latest, chapter) => Math.max(latest, chapter.chapter_number),
+        workspace.chapters[0].chapter_number,
+      )
+      const initialChapter = runningChapter || latestExistingChapter
       setSearchParams(
-        ensureChapterSearchParams(searchParams, workspace.chapters[0].chapter_number),
+        ensureChapterSearchParams(searchParams, initialChapter),
         { replace: true }
       )
     }
@@ -233,9 +246,20 @@ export default function ProjectDetail() {
     }
   }, [activeTab, currentChapter, workspace?.recent_runs, loadRunDetail, loadTimeline, id])
 
+  useEffect(() => {
+    if (activeModule !== 'chapters' || !id || !workspace) return
+    const chapter = workspace.chapters.find((c) => c.chapter_number === currentChapter)
+    const hasRunningRun = workspace.recent_runs.some(
+      (r) => r.chapter_number === currentChapter && r.status === 'running'
+    )
+    const shouldLoadTimeline = hasRunningRun || ['reviewed', 'awaiting_publish'].includes(chapter?.status || '')
+    if (!shouldLoadTimeline) return
+    loadTimeline(id, currentChapter, { silent: true })
+  }, [activeModule, currentChapter, id, loadTimeline, workspace])
+
   // v5.8: Auto-refresh timeline when in workflow view
   useEffect(() => {
-    if ((activeModule !== 'chapters' && activeModule !== 'overview') || (activeTab !== 'workflow' && activeTab !== 'logs')) return
+    if (activeModule !== 'chapters' && activeModule !== 'overview') return
     if (!id) return
 
     const shouldPoll = timeline?.run_status === 'running' || runDetail?.workflow_status === 'running'
@@ -243,15 +267,16 @@ export default function ProjectDetail() {
 
     const timer = window.setInterval(() => {
       loadTimeline(id, currentChapter, { silent: true })
+      refetchWorkspace()
     }, 2000)
 
     return () => window.clearInterval(timer)
   }, [
     activeModule,
-    activeTab,
     currentChapter,
     id,
     loadTimeline,
+    refetchWorkspace,
     timeline?.run_status,
     runDetail?.workflow_status,
   ])
@@ -345,7 +370,7 @@ export default function ProjectDetail() {
     refetchWorkspace()
   }, [loadRunDetail, loadTimeline, refetchWorkspace])
 
-  const { isStreaming, steps: sseHookSteps, startStream } = useSSEStream(
+  const { isStreaming, steps: sseHookSteps, startStream, preflightWarnings: ssePreflightWarnings } = useSSEStream(
     handleSSEComplete,
     handleSSEError,
     handleSSELaunch,
@@ -392,6 +417,15 @@ export default function ProjectDetail() {
       (r) => r.chapter_number === chapterNumber && r.status === 'running'
     )
     if (hasRunningRun) return
+    const runningProjectRun = workspace.recent_runs?.find((r) => r.status === 'running')
+    if (runningProjectRun) {
+      void dialog.alert({
+        title: '已有章节正在生成',
+        message: `第 ${runningProjectRun.chapter_number} 章工作流正在运行，请等待完成后再生成第 ${chapterNumber} 章。`,
+        tone: 'warning',
+      })
+      return
+    }
     setGenerating(true)
     setGeneratingChapter(chapterNumber)
     streamingChapterRef.current = chapterNumber
@@ -407,7 +441,7 @@ export default function ProjectDetail() {
       view: 'workflow',
     }, { replace: true })
     startStream(id, chapterNumber)
-  }, [id, setSearchParams, startStream, workspace])
+  }, [dialog, id, setSearchParams, startStream, workspace])
 
   const handleGenerate = useCallback(() => {
     handleGenerateChapter(currentChapter)
@@ -485,10 +519,21 @@ export default function ProjectDetail() {
       if (res.ok) {
         await refetchWorkspace()
       } else {
+        const details = res.error?.details as Record<string, unknown> | undefined
+        const domainResult = details?.domain_result as
+          | { user_message?: string; flags?: Record<string, boolean> }
+          | undefined
+        const isMemoryCuratorRunning = res.error?.code === 'MEMORY_CURATOR_RUNNING' || Boolean(domainResult?.flags?.memory_curator_running)
+        if (isMemoryCuratorRunning) {
+          await refetchWorkspace()
+          await loadTimeline(id, chapterNumber, { silent: true })
+        }
         await dialog.alert({
-          title: '发布章节失败',
-          message: res.error?.message || '发布章节失败',
-          tone: 'danger',
+          title: isMemoryCuratorRunning ? '等待记忆提取' : '发布章节失败',
+          message: isMemoryCuratorRunning
+            ? (res.error?.message || domainResult?.user_message || '记忆提取正在进行中，请等待完成后再发布。')
+            : (res.error?.message || '发布章节失败'),
+          tone: isMemoryCuratorRunning ? 'warning' : 'danger',
         })
       }
     } catch (err: unknown) {
@@ -500,7 +545,7 @@ export default function ProjectDetail() {
     } finally {
       setPublishPending(false)
     }
-  }, [dialog, id, publishPending, refetchWorkspace])
+  }, [dialog, id, loadTimeline, publishPending, refetchWorkspace])
 
   const handlePublish = useCallback(async () => {
     await handlePublishChapter(currentChapter)
@@ -668,9 +713,16 @@ export default function ProjectDetail() {
   const isStub = llmMode === 'stub'
   const runsForChapter = workspace.recent_runs.filter((r) => r.chapter_number === currentChapter)
   const isCurrentChapterGenerating = (generating || isStreaming) && generatingChapter === currentChapter
-  const isCurrentChapterWorkflowRunning = runsForChapter.some((r) => r.status === 'running')
+  const isTimelineRunningForCurrentChapter = timeline?.chapter_number === currentChapter && timeline?.run_status === 'running'
+  const runningProjectRun = workspace.recent_runs.find((r) => r.status === 'running') || null
+  const runningWorkflowChapter = runningProjectRun?.chapter_number ?? (
+    isTimelineRunningForCurrentChapter ? currentChapter : null
+  )
+  const isProjectWorkflowRunning = Boolean(runningWorkflowChapter)
+  const isCurrentChapterWorkflowRunning = runsForChapter.some((r) => r.status === 'running') || Boolean(isTimelineRunningForCurrentChapter)
   const isChapterWorkflowRunning = (chapterNumber: number) => {
-    return workspace.recent_runs.some((r) => r.chapter_number === chapterNumber && r.status === 'running')
+    return workspace.recent_runs.some((r) => r.chapter_number === chapterNumber && r.status === 'running') ||
+      (chapterNumber === currentChapter && Boolean(isTimelineRunningForCurrentChapter))
   }
   const currentChapterSseSteps = isCurrentChapterGenerating ? sseSteps : {}
 
@@ -698,6 +750,8 @@ export default function ProjectDetail() {
           isStreaming={isCurrentChapterGenerating}
           isWorkflowRunning={isCurrentChapterWorkflowRunning}
           isChapterWorkflowRunning={isChapterWorkflowRunning}
+          isProjectWorkflowRunning={isProjectWorkflowRunning}
+          runningWorkflowChapter={runningWorkflowChapter}
           llmMode={llmMode}
           projectId={id || ''}
           runDetail={runDetail}
@@ -705,6 +759,7 @@ export default function ProjectDetail() {
           sseSteps={currentChapterSseSteps}
           timeline={timeline}
           timelineError={timelineError}
+          preflightWarnings={ssePreflightWarnings}
           onGenerate={handleGenerate}
           onConfirmRegenerate={handleConfirmRegenerate}
           onGenerateNext={handleGenerateNext}

@@ -141,6 +141,60 @@ def test_llm_provider_retries_transient_connection_errors():
     assert client.calls == 2
 
 
+def test_llm_provider_falls_back_to_http_for_langchain_string_choices_error(monkeypatch):
+    """Some OpenAI-compatible gateways return a shape that makes LangChain
+    raise before it can build an AIMessage; provider should still normalize it.
+    """
+    class _BrokenLangChainClient:
+        def invoke(self, _messages, **_kwargs):
+            raise AttributeError("'str' object has no attribute 'choices'")
+
+    class _FallbackResponse:
+        content = '{"ok": true}'
+        usage_metadata = {"input_tokens": 2, "output_tokens": 3}
+        response_metadata = {
+            "token_usage": {
+                "prompt_tokens": 2,
+                "completion_tokens": 3,
+                "total_tokens": 5,
+            },
+            "finish_reason": "stop",
+        }
+
+    config = LLMConfig(
+        api_key="test-key",
+        retry_attempts=1,
+        retry_min_seconds=0,
+        retry_max_seconds=0,
+    )
+    provider = OpenAICompatibleProvider(config)
+    provider._client = _BrokenLangChainClient()  # type: ignore[assignment]
+    fallback_calls = []
+
+    def fake_http_fallback(lc_messages, request_timeout_seconds=None, **kwargs):
+        fallback_calls.append({
+            "message_count": len(lc_messages),
+            "request_timeout_seconds": request_timeout_seconds,
+            "kwargs": kwargs,
+        })
+        return _FallbackResponse()
+
+    monkeypatch.setattr(
+        provider,
+        "_invoke_http_chat_completion",
+        fake_http_fallback,
+        raising=False,
+    )
+
+    result = provider.invoke_json([{"role": "user", "content": "return json"}])
+
+    assert result == {"ok": True}
+    assert fallback_calls
+    assert provider.last_call_trace is not None
+    assert provider.last_call_trace["request"]["transport_fallback"] == "http"
+    assert provider.last_call_trace["response"]["usage"]["total_tokens"] == 5
+
+
 def test_llm_provider_does_not_retry_request_timeout():
     class _TimeoutClient:
         def __init__(self) -> None:

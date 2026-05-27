@@ -339,6 +339,19 @@ class ChapterRepositoryMixin:
         finally:
             conn.close()
 
+    def delete_chapter_states_by_project(self, project_id: str) -> int:
+        """Delete all chapter state cards for a project."""
+        conn = self._conn()
+        try:
+            cursor = conn.execute(
+                "DELETE FROM chapter_state WHERE project_id=?",
+                (project_id,),
+            )
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()
+
     def list_state_history(
         self, project_id: str, chapter_number: int
     ) -> list[dict]:
@@ -365,6 +378,19 @@ class ChapterRepositoryMixin:
                     d["state_data"] = json.loads(d["state_data"])
                 results.append(d)
             return results
+        finally:
+            conn.close()
+
+    def delete_state_history_by_project(self, project_id: str) -> int:
+        """Delete all state history rows for a project."""
+        conn = self._conn()
+        try:
+            cursor = conn.execute(
+                "DELETE FROM state_history WHERE project_id=?",
+                (project_id,),
+            )
+            conn.commit()
+            return cursor.rowcount
         finally:
             conn.close()
 

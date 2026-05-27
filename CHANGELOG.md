@@ -12,14 +12,188 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
-- Fixed the sidebar version badge so the client UI reads from `frontend/package.json` instead of a stale hardcoded `v5.5.9`.
-- Synchronized frontend and desktop package-lock root versions to `6.6.16`.
-- Hardened Genesis initialization fallback: completion patches now deduplicate repeatable sections instead of appending duplicates, scaffold instructions are chapter-specific, and scaffold previews are shown as recovery panels rather than normal drafts.
-- Fixed Genesis real-LLM failure recovery: invalid or incomplete JSON now produces a reviewable `local_recovery` draft based on the project premise instead of an automatically blocked scaffold template; true scaffold fallback reports now score `0`.
-- Fixed Genesis semantic worldbuilding dedupe so near-duplicate concepts such as anomaly definition/classification collapse into one setting slot.
-- Fixed active workflow recovery false positives: running LangGraph checkpoints at routing nodes no longer trigger stale "rerun" recommendations while the run is still progressing.
-- Fixed blocked/revision chapter recovery: direct generation is now guarded with `CHAPTER_NEEDS_RECOVERY`, reset recovery clears active run/task records to a completed `reset_recovery` marker, and legacy sidebar prompts no longer offer direct regeneration from blocked states.
-- Fixed revision routing and evidence continuity: structural chapter defects such as truncated endings, low dialogue, missing hooks, weak conflict, or unclear motivation now route back to Author instead of Polisher; revision feedback now survives state hydration and Author→Polisher handoff.
+## v6.7.5 - Chapter Title Generation
+
+Date: 2026-05-26
+
+Key changes:
+
+- **Independent title generation**: Implemented LLM-based chapter title generation that derives titles from comprehensive chapter context instead of content opening text.
+- **Title quality rules**: Generated titles follow specific rules: 4-12 Chinese characters (max 16), no punctuation, no planning verbs/terms, highlight key elements.
+- **Fallback strategy adjustment**: Updated `_derive_title` fallback order to prioritize generated titles over content-opening derivation.
+- **Failure resilience**: Title generation failures do NOT block the workflow; fallback chain continues gracefully.
+- **Plain text path coverage**: Plain-text fallback path also uses new title logic via `_derive_title` call.
+- **Detection and repair**: Added `_is_opening_derived_title` to detect and repair unattractive opening-derived titles.
+- **New model**: Added `TitleGenerationOutput` for structured title generation output.
+- **Comprehensive tests**: Added `test_v675_chapter_title_generation.py` with full coverage of title generation logic.
+- **Version alignment**: Runtime updated to `6.7.5`.
+
+Verification:
+- Title generation tests: 30+ new tests passing
+- Full test suite: passing
+- No lint errors
+
+## v6.7.3 - Preflight UX & Regression Closure
+
+Date: 2026-05-26
+
+Key changes:
+
+- **API success path regression tests**: Added tests for background start, SSE stream, and production auto-run paths.
+- **Enhanced preflight warning details**: Warnings now include `groups` with database IDs and `recommended_actions` with structured suggestions.
+- **Frontend preflight warning display**: Non-blocking `PreflightWarningBanner` in `WorkflowTimeline` shows warnings with examples and action tags.
+- **SSE preflight event consumption**: `useSSEStream` hook handles `preflight_warnings` event and exposes warnings to components.
+- **GLM/Volcengine JSON fallback**: `response_format` fallback now recognizes `json_object is not supported by this model` errors and retries JSON calls without the unsupported hint.
+- **Version alignment**: Runtime, frontend, desktop, and lockfiles updated to `6.7.3`.
+
+Verification:
+- Preflight UX regression tests: 11 new tests passing
+- Response format fallback tests: passing
+- Frontend typecheck/lint/build: passing
+
+## v6.7.2 - Memory Dedup & Preflight Hardening
+
+Date: 2026-05-26
+
+Key changes:
+
+- **Preflight diagnostics**: New `novel_factory/ops/preflight.py` module exposing lightweight checks for duplicate characters, duplicate world_settings, story_facts pressure, memory_items pressure, and context character pressure before chapter generation.
+- **Run guard integration**: `check_chapter_run_guard()` now returns preflight warnings alongside guard errors, making issues visible at the exact moment a user tries to start chapter generation.
+- **Non-blocking warnings**: Unlike hard guards, preflight checks emit warnings without blocking the workflow.
+- **API response enhancement**: Preflight warnings included in both error and success responses (sync run, background start, SSE stream, auto-run) for full observability.
+- **Exception resilience**: Preflight failures logged with diagnostic warning instead of silently swallowed.
+- **Version alignment**: Runtime, frontend, desktop, and lockfiles updated to `6.7.2`.
+
+Verification:
+- Preflight diagnostics tests: 9 new tests passing
+- Full test suite: 2826 passed, 1 skipped
+
+## v6.7.1 - Auto Arc Continuation
+
+Date: 2026-05-24
+
+Key changes:
+
+- **Auto arc continuation**: Chapter run entrypoints now create deterministic continuation planning when the requested chapter is outside the genesis-seeded outline range. A project with a `1-10` outline can continue into chapter 13 without manually creating a new outline first.
+- **Run guard alignment**: Shared continuation planning runs before `_run_guards` checks for missing chapter instructions, so `/api/run/chapter`, background starts, desktop runs, and workflow runner execution use the same recovery behavior.
+- **Coverage**: Added regression tests for runner-level readiness and API guard behavior when chapter 13 only has prior `1-10` outline coverage.
+- **Version alignment**: Runtime, frontend, desktop, and lockfiles updated to `6.7.1`.
+
+Verification:
+- Auto arc continuation tests: passing
+- Production readiness guard regression tests: passing
+
+## v6.7.0 - Production Stability Gate
+
+Date: 2026-05-24
+
+Key changes:
+
+- **Production stability roadmap**: Added an umbrella plan for v6.6.22-v6.7.0 covering real-LLM soak acceptance, recovery drill diagnostics, long-form memory governance, explainable quality acceptance, and release-candidate gates.
+- **Quality acceptance ops**: Added deterministic chapter quality checks for terminal status, word count, scene beat completeness, per-beat content density, and ending hook observability.
+- **Memory governance ops**: Added project-level audit for duplicate characters/story facts, memory item pressure, and combined context pressure.
+- **Recovery drill ops**: Added chapter workflow recovery diagnostics for failed, blocked, stale-running, terminal, and healthy-running states.
+- **Production stability suite**: Added `scripts/production_stability_suite.py` to aggregate release smoke, soak, quality, recovery, and memory gates with JSON output. Real LLM soak remains explicit opt-in via `--real-soak`.
+- **Version alignment**: Runtime, frontend, desktop, and lockfiles updated to `6.7.0`.
+
+Verification:
+- Targeted production stability ops tests: passing
+- Full verification: see `docs/codex/reports/novel-factory-v6.7.0-completion-report.md`
+
+## v6.6.21 - LLM JSON Resilience Hotfix
+
+Date: 2026-05-24
+
+Key changes:
+
+- **JSON extraction/repair module**: 新增 `novel_factory/llm/json_resilience.py`，统一处理 markdown fence、前后夹文字、尾逗号、BOM、未加引号标量值等常见 LLM JSON 输出问题。所有 JSON agent 共享此修复层。
+- **3-tier retry 策略**: `invoke_json` 从 2 次重试升级为 3 次。第 1 次正常调用，第 2 次带错误信息重试，第 3 次只修复 JSON（temperature=0，不新增剧情内容）。
+- **Structured output 支持**: 有 schema 的 `call_type=json` 自动传 `response_format={"type":"json_object"}`，兼容不支持该参数的 provider（自动 fallback，不消耗 JSON parse retry 次数）。
+- **错误诊断增强**: JSON 解析失败信息现在包含 `agent_id`、`schema_name`、`attempt N/M`、error location 和 content preview。所有 runtime agent 的 `invoke_json` 调用通过 `BaseAgent._invoke_json()` 自动传递 `agent_id`。
+- **日志 level 修复**: `human_review` 节点：质量门打满/已有阻塞 → `event_type="completed", status="warning"`；意外系统错误 → `event_type="failed", status="failed"`。`_build_node_timeline` 兜底识别 `completed + status in {failed, error}` 为 failed。`node_started` 不再因节点最终失败而显示为 error level。
+- **Timeline 排序稳定**: 后端 `_build_node_timeline` 和前段 `WorkflowTimeline` 对 null timestamp 稳定排在末尾而非顶部。
+- **前端白屏容错**: `RunDetail.tsx` 中对 `recovery.running_tasks`、`recovery.actions`、`memory_status` 空值添加安全访问；`WorkflowTimeline.tsx` 对 `payload` null 添加 `safePayload` 函数。
+
+Verification:
+- Full test suite: 2788 passed, 1 skipped, 0 failed
+- Frontend typecheck/lint/build/vitest: passed (310 passed)
+- Desktop typecheck/build: passed
+- Release smoke: all checks passed
+- Soak stub: ok, chapter_status=published
+
+## v6.6.20 - Production Ops & Release Hardening
+
+Date: 2026-05-24
+
+Key changes:
+
+- **启动时 live version mismatch 检测**: API `/api/health` 新增 `startup` 字段，包含 `started_at`, `python`, `source_root`, `cwd`。便于诊断进程是否跑的是旧源码。
+- **Release smoke 脚本**: 新增 `scripts/release_smoke.py`，一键验证 CLI version、API health version、frontend/desktop package version、desktop build。支持 `--json` 输出。
+- **真实 LLM soak 脚本**: 新增 `scripts/soak_real_llm_long_chapter.py`，验证长章节分段生成稳定性。支持 `--llm-mode stub/real` 和 `--dry-run`。
+- **生产运维手册**: 新增 `docs/codex/release/production-ops-runbook.md`，覆盖备份/恢复/故障诊断/发布检查清单。
+- **版本统一**: 全部升级到 `6.6.20`。
+
+Verification:
+- Full test suite: passing
+- Frontend typecheck/lint/build/vitest: passed (300 passed)
+- Desktop typecheck/build: passed
+- Release smoke: passed
+- Soak stub/dry-run: passed
+
+## v6.6.19 - Stability Baseline & Runtime Alignment
+
+Date: 2026-05-24
+
+Key changes:
+
+- **Runtime version alignment**: Killed stale long-running API process (PID 80628, started 2026-05-15 with cached v5.3.0 modules) and restarted from current source. `GET /api/health` now returns `6.6.19`.
+- **Version unification**: Bumped `novel_factory/version.py`, `frontend/package.json`, and `desktop/package.json` from `6.6.18` to `6.6.19`.
+- **Document sync**: Updated `AGENTS.md` baseline to v6.6.19. Updated `docs/codex/README.md` to mark v6.6.18 as completed and v6.6.19 as current stable baseline.
+- **Migration ownership**: Confirmed `033_v6_6_19_memory_curator_locks.sql` is registered in `migration_registry.py` with requirements `(_T("memory_curator_locks"),)`.
+- **Stability guardrails**: Added `test_version_alignment.py` covering runtime version (`novel_factory.version.__version__`), API health version (`/api/health`), frontend package version (`frontend/package.json`), and desktop package version (`desktop/package.json`).
+
+Verification:
+- Full test suite: **2728 passed, 0 failed**
+- Frontend typecheck/lint/build/vitest: passed
+- Desktop typecheck/build: passed
+- API health: `{"version": "6.6.19"}`
+- CLI `--version`: `6.6.19`
+
+## v6.6.18 - Segmented Agent Payloads & Genesis Quality Gate Semantic Alignment
+
+Date: 2026-05-22
+
+Key changes:
+
+- **Genesis Quality Gate Semantic Alignment**: Fixed false positives for high-quality natural-language outputs. Added structured-field helpers, role-aware motivation thresholds, tokenized premise keyword extraction, expanded semantic word lists.
+- **Shared Segmentation Helper**: New `novel_factory/agent_runtime/segmented_generation.py` with `chunk_items()` and `chunk_text_by_paragraphs()`.
+- **Author Segmented Drafting**: Real-mode long chapters now draft by scene-beat segments (threshold: 4+ beats, chunk size: 3 beats).
+- **Polisher Segmented Polishing**: Real-mode long chapters now polish by paragraph chunks (threshold: >2800 chars, soft limit: 2800). Fixed infinite recursion bug.
+- **MemoryCurator Segmented Extraction**: Long chapters now extract memory patches by content chunks (threshold: >1000 chars, soft limit: 1000).
+- **Segment Observability**: Added `EVENT_SEGMENT_STARTED`, `EVENT_SEGMENT_COMPLETED`, `EVENT_SEGMENT_FAILED` event types.
+- **Version bump**: `6.6.18` across runtime, frontend, desktop.
+
+Verification:
+- `tests/test_v6618_segmented_agent_payloads.py`: 13 passed
+- Full suite: 2682 passed, 10 failed (pre-existing v6.4 quality diagnosis failures, same on v6.6.17 baseline)
+
+## v6.6.17 - Runtime and LLM Settings Updates
+
+Date: 2026-05-20
+
+Key changes:
+
+- **LLM Settings**: Added `request_timeout_seconds` support; removed user-facing template `max_tokens` editing; split API key value management from templates; hid unused provider key presets; fixed template-name editing focus loss.
+- **Runtime & Workflow Recovery**: Guarded direct generation from blocked/revision states; reset recovery clears active run/task records; healthy running workflows no longer misreported as stale; pre-instructed chapters receive `memory_context_audit`; structural defects route back to Author; revision feedback survives hydration.
+- **MemoryCurator Fallback**: Added fallback LLM routing for memory extraction; preserved old behavior when unconfigured; propagated fallback timeout metadata.
+- **Genesis Reliability**: Stale running Genesis runs marked failed; `production-next` recommends retry after stale recovery; Genesis UI polls running jobs; provider connection failures return explicit failure; invalid JSON recovers to reviewable local content; real Genesis uses bounded segments instead of oversized single request.
+- **Advisory Skills**: Added manifests for dialogue naturalness, scene texture, show-don't-tell, and info-dump advisory quality skills.
+- **Version bump**: `6.6.17` across runtime, frontend, desktop.
+
+Verification:
+- `tests/test_v532_project_genesis.py`: 22 passed
+- `tests/test_v532_project_genesis.py + test_v663_genesis_quality_gate.py + test_v65_desktop_runtime.py + test_v66_desktop_secure_keys.py`: 55 passed
+- Desktop sidecar live LLM smoke passed
 
 ## v6.6.16 - Real Project Burn-in & Regression Closure
 

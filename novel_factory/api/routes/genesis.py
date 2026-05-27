@@ -15,6 +15,7 @@ from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ...agent_runtime.title_contract import build_title_contract
 from ...llm.provider import is_configured_live_provider
 from ...quality.genesis_quality_gate import evaluate_genesis_draft
+from ...validators.chapter_checker import DEFAULT_INSTRUCTION_WORD_TARGET
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -1189,6 +1190,12 @@ def _coerce_plot_hole(item, index: int) -> dict | None:
 def _coerce_instruction(item, index: int) -> dict | None:
     if isinstance(item, dict):
         chapter_number = _as_int(item.get("chapter_number"), index)
+        word_target = _as_int(
+            item.get("word_target"),
+            DEFAULT_INSTRUCTION_WORD_TARGET,
+        )
+        if word_target <= 0:
+            word_target = DEFAULT_INSTRUCTION_WORD_TARGET
         # v6.6.4: Normalize key_events array into structured text without losing info
         raw_key_events = item.get("key_events", "")
         if isinstance(raw_key_events, list):
@@ -1203,6 +1210,7 @@ def _coerce_instruction(item, index: int) -> dict | None:
             "emotion_tone": _as_text(item.get("emotion_tone", "")),
             "ending_hook": _as_text(item.get("ending_hook", "")),
             "continuity_seed": _as_text(item.get("continuity_seed", "")),
+            "word_target": word_target,
         }
     text = _as_text(item).strip()
     if not text:
@@ -1214,6 +1222,7 @@ def _coerce_instruction(item, index: int) -> dict | None:
         "emotion_tone": "",
         "ending_hook": "",
         "continuity_seed": "",
+        "word_target": DEFAULT_INSTRUCTION_WORD_TARGET,
     }
 
 
@@ -1636,6 +1645,20 @@ def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
 
     applied = {
         "project_updated": False,
+        "context_replaced": False,
+        "world_settings_deleted": 0,
+        "characters_deleted": 0,
+        "factions_deleted": 0,
+        "outlines_deleted": 0,
+        "plot_holes_deleted": 0,
+        "instructions_deleted": 0,
+        "story_facts_deleted": 0,
+        "story_fact_events_deleted": 0,
+        "memory_items_deleted": 0,
+        "memory_batches_deleted": 0,
+        "agent_memories_deleted": 0,
+        "chapter_states_deleted": 0,
+        "state_history_deleted": 0,
         "world_settings_created": 0,
         "characters_created": 0,
         "factions_created": 0,
@@ -1643,6 +1666,44 @@ def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
         "plot_holes_created": 0,
         "instructions_created": 0,
     }
+
+    has_prior_approved_genesis = any(
+        run.get("status") == "approved" for run in repo.list_genesis_runs(project_id)
+    )
+    applied["memory_items_deleted"] = repo.delete_memory_items_by_project(project_id)
+    applied["memory_batches_deleted"] = repo.delete_memory_batches_by_project(project_id)
+    applied["story_fact_events_deleted"] = repo.delete_fact_events_by_project(project_id)
+    applied["story_facts_deleted"] = repo.delete_story_facts_by_project(project_id)
+    applied["world_settings_deleted"] = repo.delete_world_settings_by_project(project_id)
+    applied["characters_deleted"] = repo.delete_characters_by_project(project_id)
+    applied["factions_deleted"] = repo.delete_factions_by_project(project_id)
+    applied["outlines_deleted"] = repo.delete_outlines_by_project(project_id)
+    applied["plot_holes_deleted"] = repo.delete_plot_holes_by_project(project_id)
+    applied["instructions_deleted"] = repo.delete_instructions_by_project(project_id)
+    if hasattr(repo, "delete_agent_memories_by_project"):
+        applied["agent_memories_deleted"] = repo.delete_agent_memories_by_project(project_id)
+    if hasattr(repo, "delete_chapter_states_by_project"):
+        applied["chapter_states_deleted"] = repo.delete_chapter_states_by_project(project_id)
+    if hasattr(repo, "delete_state_history_by_project"):
+        applied["state_history_deleted"] = repo.delete_state_history_by_project(project_id)
+    applied["context_replaced"] = has_prior_approved_genesis or any(
+        applied[key] > 0
+        for key in (
+            "memory_items_deleted",
+            "memory_batches_deleted",
+            "story_fact_events_deleted",
+            "story_facts_deleted",
+            "world_settings_deleted",
+            "characters_deleted",
+            "factions_deleted",
+            "outlines_deleted",
+            "plot_holes_deleted",
+            "instructions_deleted",
+            "agent_memories_deleted",
+            "chapter_states_deleted",
+            "state_history_deleted",
+        )
+    )
 
     # Update project description
     project_updates = draft.get("project_updates", {})

@@ -20,7 +20,7 @@ from typing import Any
 import pytest
 from fastapi.testclient import TestClient
 
-from novel_factory.llm.openai_compatible import LLMTimeoutError, OutputValidationError
+from novel_factory.llm.openai_compatible import LLMConnectionError, LLMTimeoutError, OutputValidationError
 from novel_factory.llm.provider import LLMProvider
 
 
@@ -38,6 +38,21 @@ class TimeoutThenFallbackProvider(LLMProvider):
     def invoke_text(self, messages, temperature=None, max_tokens=None, max_retries=None, request_timeout_seconds=None):
         self.call_count += 1
         raise LLMTimeoutError(f"LLM 响应超时（>{self.model_name}）")
+
+
+class ConnectionFailureProvider(LLMProvider):
+    """Provider that raises LLMConnectionError on every call."""
+
+    def __init__(self):
+        self.call_count = 0
+
+    def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None):
+        self.call_count += 1
+        raise LLMConnectionError("LLM 网络连接失败，请稍后重试: Connection error.")
+
+    def invoke_text(self, messages, temperature=None, max_tokens=None, max_retries=None, request_timeout_seconds=None):
+        self.call_count += 1
+        raise LLMConnectionError("LLM 网络连接失败，请稍后重试: Connection error.")
 
 
 class SuccessProvider(LLMProvider):
@@ -115,10 +130,15 @@ def test_memory_curator_primary_timeout_fallback_success():
     assert primary.call_count >= 1
     assert fallback.call_count == 1
     assert result.get("memory_curator_processed") is True
-    assert result.get("fallback_source") == "fallback_model_after_primary_timeout"
-    assert result.get("memory_curator_fallback") == "fallback_model_after_primary_timeout"
+    assert result.get("fallback_model_used") is True
+    assert result.get("fallback_model_profile") == "unknown"
+    assert result.get("extraction_success") is True
+    assert result.get("fallback_created") is False
+    assert result.get("memory_curator_fallback") is None
     assert result.get("memory_batch_id") is not None
     assert result.get("memory_items_count", 0) > 0
+    from novel_factory.api.routes._memory_curator_gate import has_trusted_memory_batch
+    assert has_trusted_memory_batch(repo, "test-fb", 1) is True
 
     os.unlink(db_path)
 
@@ -163,6 +183,47 @@ def test_memory_curator_primary_and_fallback_timeout_state_card_fallback():
     assert "chapter_state" in result.get("fallback_source")
     assert result.get("memory_batch_id") is not None
     assert result.get("memory_items_count", 0) > 0
+
+    os.unlink(db_path)
+
+
+def test_memory_curator_connection_error_uses_state_card_fallback():
+    """Primary LLMConnectionError should use state_card fallback instead of failing the node."""
+    from novel_factory.agents.memory_curator import MemoryCuratorAgent
+    from novel_factory.db.repository import Repository
+
+    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
+        db_path = f.name
+
+    from novel_factory.db.connection import init_db
+    init_db(db_path)
+
+    repo = Repository(db_path)
+    repo.create_project(project_id="test-conn-fb", name="Test", genre="test")
+    repo.add_chapter("test-conn-fb", 1, title="Ch1", status="reviewed")
+    repo.save_chapter_content("test-conn-fb", 1, "some content here for testing")
+    repo.save_chapter_state("test-conn-fb", 1, state_data={
+        "new_facts": ["connection fallback fact"],
+    })
+
+    primary = ConnectionFailureProvider()
+
+    agent = MemoryCuratorAgent(repo, primary, fallback_llm=None)
+    result = agent.run({
+        "project_id": "test-conn-fb",
+        "chapter_number": 1,
+        "chapter_status": "reviewed",
+        "workflow_run_id": "run-1",
+        "llm_mode": "real",
+    })
+
+    assert primary.call_count >= 1
+    assert result.get("memory_curator_processed") is True
+    assert result.get("fallback_source") is not None
+    assert "chapter_state" in result.get("fallback_source")
+    assert result.get("memory_batch_id") is not None
+    assert result.get("memory_items_count", 0) > 0
+    assert "error" not in result
 
     os.unlink(db_path)
 

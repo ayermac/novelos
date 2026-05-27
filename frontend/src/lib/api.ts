@@ -290,6 +290,8 @@ export interface WorkflowTimelineData {
   started_at: string | null
   elapsed_minutes: number | null
   is_stale: boolean
+  memory_curator_running?: boolean
+  memory_curator_lock?: Record<string, unknown> | null
   recovery: WorkflowTimelineRecovery
   checkpoint?: WorkflowTimelineCheckpoint
   nodes: WorkflowTimelineNode[]

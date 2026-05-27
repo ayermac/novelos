@@ -35,6 +35,8 @@ const baseProps = {
   isStub: true,
   isStreaming: false,
   isWorkflowRunning: false,
+  isProjectWorkflowRunning: false,
+  runningWorkflowChapter: null,
   llmMode: 'stub',
   projectId: 'test-proj',
   runDetail: null,
@@ -85,6 +87,15 @@ describe('AuthorWorkbench', () => {
     expect(screen.getByText('25%')).toBeInTheDocument()
   })
 
+  it('keeps chapter rail title, word count, and status readable', () => {
+    render(<AuthorWorkbench {...baseProps} />)
+    const rail = screen.getByLabelText('章节导航')
+
+    expect(within(rail).getByText('第一章')).toBeInTheDocument()
+    expect(within(rail).getByText('5,000 字')).toBeInTheDocument()
+    expect(within(rail).getByText('已发布')).toHaveClass('status-published')
+  })
+
   it('shows generate button for drafted chapter', () => {
     render(<AuthorWorkbench {...baseProps} />)
     expect(screen.getAllByRole('button', { name: /生成本章/ }).length).toBeGreaterThan(0)
@@ -117,6 +128,50 @@ describe('AuthorWorkbench', () => {
       />
     )
     expect(screen.getAllByRole('button', { name: /确认发布/ }).length).toBeGreaterThan(0)
+  })
+
+  it('shows memory extraction wait state instead of publish-ready when MemoryCurator is running', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        currentChapter={2}
+        currentChapterRecord={baseProps.chapters[1]}
+        llmMode="real"
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 2,
+          run_id: 'memory-run',
+          run_status: 'running',
+          chapter_status: 'reviewed',
+          current_node: 'memory_curator',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 2,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          nodes: [
+            {
+              node_name: 'memory_curator',
+              label: '记忆整理',
+              node_group: 'support_agent',
+              node_type: 'support_agent',
+              status: 'running',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: null,
+              duration_ms: null,
+              messages: ['开始记忆整理'],
+              artifacts: [],
+            },
+          ],
+        }}
+      />
+    )
+
+    expect(screen.getByText('记忆提取中')).toBeInTheDocument()
+    expect(screen.getByText('记忆提取完成后才能确认发布。')).toBeInTheDocument()
+    for (const button of screen.getAllByRole('button', { name: /确认发布/ })) {
+      expect(button).toBeDisabled()
+    }
+    expect(screen.queryByText('本章已通过 AI 审核，点击确认发布。')).not.toBeInTheDocument()
   })
 
   it('shows generate-next button for published chapter', () => {
@@ -356,6 +411,104 @@ describe('AuthorWorkbench', () => {
     fireEvent.click(screen.getByRole('button', { name: '展开 JSON' }))
     expect(screen.getByText(/"event_type": "quality_gate_retry"/)).toBeInTheDocument()
     expect(screen.getByText(/"source": "live"/)).toBeInTheDocument()
+  })
+
+  it('orders same-timestamp logs by workflow progression before run-detail summaries', () => {
+    const { container } = render(
+      <AuthorWorkbench
+        {...baseProps}
+        activeTab="logs"
+        runDetail={{
+          run_id: 'run-log-order',
+          project_id: 'test-proj',
+          chapter_number: 7,
+          workflow_status: 'running',
+          chapter_status: 'scripted',
+          current_node: 'author',
+          llm_mode: 'real',
+          steps: [
+            {
+              key: 'screenwriter',
+              label: '编剧',
+              description: '规划章节场景和情节',
+              status: 'completed',
+              logs: [
+                {
+                  timestamp: '2026-05-13T10:00:00',
+                  level: 'success',
+                  message: '编剧节点已完成。',
+                },
+              ],
+            },
+          ],
+        }}
+        runsForChapter={[{
+          run_id: 'run-log-order',
+          chapter_number: 7,
+          status: 'running',
+          created_at: '2026-05-13T09:58:00',
+        }]}
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 7,
+          run_id: 'run-log-order',
+          run_status: 'running',
+          current_node: 'author',
+          started_at: '2026-05-13T09:58:00',
+          elapsed_minutes: 2,
+          is_stale: false,
+          recovery: { recommended_action: null, reason: null, safe_actions: [] },
+          nodes: [
+            {
+              node_name: 'screenwriter',
+              label: '编剧',
+              node_group: 'creative_agent',
+              node_type: 'creative_agent',
+              status: 'completed',
+              started_at: '2026-05-13T09:59:00',
+              completed_at: '2026-05-13T10:00:00',
+              duration_ms: 50000,
+              messages: ['已生成章节场景规划'],
+              artifacts: [],
+            },
+            {
+              node_name: 'author',
+              label: '执笔',
+              node_group: 'creative_agent',
+              node_type: 'creative_agent',
+              status: 'running',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: null,
+              duration_ms: null,
+              messages: [],
+              artifacts: [],
+              events: [
+                {
+                  id: 41,
+                  node_name: 'author',
+                  event_type: 'context_loaded',
+                  status: 'info',
+                  message: '读取上下文完成：7 个场景、字数目标 3000',
+                  created_at: '2026-05-13T10:00:00',
+                },
+              ],
+            },
+          ],
+        }}
+      />
+    )
+
+    const rows = Array.from(container.querySelectorAll('.workflow-log-row'))
+      .map((row) => row.textContent || '')
+    const screenwriterCompletedIndex = rows.findIndex((text) => text.includes('编剧 节点执行完成'))
+    const authorContextIndex = rows.findIndex((text) => text.includes('读取上下文完成：7 个场景'))
+    const runDetailSummaryIndex = rows.findIndex((text) => text.includes('编剧节点已完成。'))
+
+    expect(screenwriterCompletedIndex).toBeGreaterThanOrEqual(0)
+    expect(authorContextIndex).toBeGreaterThanOrEqual(0)
+    expect(runDetailSummaryIndex).toBeGreaterThanOrEqual(0)
+    expect(screenwriterCompletedIndex).toBeLessThan(authorContextIndex)
+    expect(runDetailSummaryIndex).toBeGreaterThan(screenwriterCompletedIndex)
   })
 
   it('content tab shows loading state without workflow steps while streaming', () => {
@@ -641,6 +794,33 @@ describe('AuthorWorkbench', () => {
     fireEvent.click(screen.getByLabelText('第 4 章操作'))
     fireEvent.click(screen.getByLabelText('第 3 章操作'))
     expect(screen.queryByText(/已有运行中工作流/)).not.toBeInTheDocument()
+  })
+
+  it('project running workflow blocks generation on other chapter menu', () => {
+    baseProps.isChapterWorkflowRunning.mockImplementation((chapterNumber: number) => chapterNumber === 4)
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        isProjectWorkflowRunning
+        runningWorkflowChapter={4}
+      />
+    )
+    fireEvent.click(screen.getByLabelText('第 3 章操作'))
+    expect(screen.getByText(/第 4 章生成中/)).toBeInTheDocument()
+    expect(screen.queryByRole('menuitem', { name: /生成本章/ })).not.toBeInTheDocument()
+  })
+
+  it('project running workflow disables current chapter generate button when another chapter is running', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        isProjectWorkflowRunning
+        runningWorkflowChapter={4}
+      />
+    )
+    const generateButtons = screen.getAllByRole('button', { name: /生成本章/ })
+    expect(generateButtons.every((button) => button.hasAttribute('disabled'))).toBe(true)
+    expect(screen.getByText(/第 4 章工作流正在运行，完成后才能生成本章/)).toBeInTheDocument()
   })
 
   it('terminal chapters do not show generate chapter in menu', () => {

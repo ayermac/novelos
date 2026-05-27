@@ -8,7 +8,7 @@ import {
   FileText,
   PenLine,
 } from 'lucide-react'
-import { StepStatus } from '../../hooks/useSSEStream'
+import { StepStatus, PreflightWarning } from '../../hooks/useSSEStream'
 import { useWorkflowStream } from '../../hooks/useWorkflowStream'
 import { tWorkflowNodeLabel, tWorkflowNodeNarrative } from '../../lib/state-labels'
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
@@ -44,6 +44,7 @@ interface Run {
   status: string
   created_at: string
   error_message?: string
+  current_node?: string | null
 }
 
 interface Step {
@@ -110,6 +111,7 @@ interface WorkflowLogRow {
   payload?: Record<string, unknown> | null
   tokenCount?: number | null
   latencyMs?: number | null
+  sortIndex?: number
 }
 
 const STUCK_RUN_THRESHOLD_MINUTES = 30
@@ -270,12 +272,13 @@ function buildWorkflowLogRows(
 ): WorkflowLogRow[] {
   const rows: WorkflowLogRow[] = []
   const seen = new Set<string>()
+  let sortIndex = 0
 
   const pushRow = (row: WorkflowLogRow) => {
     const dedupe = `${row.timestamp || ''}:${row.node}:${row.eventType}:${row.message}:${row.tokenCount || ''}:${row.latencyMs || ''}`
     if (seen.has(dedupe)) return
     seen.add(dedupe)
-    rows.push(row)
+    rows.push({ ...row, sortIndex: sortIndex++ })
   }
 
   for (const node of timeline?.nodes || []) {
@@ -417,11 +420,35 @@ function buildWorkflowLogRows(
     }
   }
 
+  const nodeOrder = new Map<string, number>()
+  for (const [index, node] of (timeline?.nodes || []).entries()) {
+    nodeOrder.set(node.node_name, index)
+  }
+
+  const nodeRank = (node: string): number => {
+    const timelineRank = nodeOrder.get(node)
+    if (timelineRank !== undefined) return timelineRank
+    const canonicalRank = CANONICAL_GENERATING_STEPS.findIndex((step) => step.key === node)
+    return canonicalRank >= 0 ? 100 + canonicalRank : 1000
+  }
+
+  const sourceRank = (source: WorkflowLogRow['source']): number => {
+    if (source === 'timeline') return 0
+    if (source === 'live') return 1
+    return 2
+  }
+
   return rows.sort((a, b) => {
     const ta = a.timestamp ? new Date(a.timestamp.replace(' ', 'T')).getTime() : 0
     const tb = b.timestamp ? new Date(b.timestamp.replace(' ', 'T')).getTime() : 0
-    if (Number.isNaN(ta) || Number.isNaN(tb) || ta === tb) return a.id.localeCompare(b.id)
-    return ta - tb
+    if (!Number.isNaN(ta) && !Number.isNaN(tb) && ta !== tb) return ta - tb
+    const sourceDelta = sourceRank(a.source) - sourceRank(b.source)
+    if (sourceDelta !== 0) return sourceDelta
+    const nodeDelta = nodeRank(a.node) - nodeRank(b.node)
+    if (nodeDelta !== 0) return nodeDelta
+    const indexDelta = (a.sortIndex ?? 0) - (b.sortIndex ?? 0)
+    if (indexDelta !== 0) return indexDelta
+    return a.id.localeCompare(b.id)
   })
 }
 
@@ -491,6 +518,8 @@ interface AuthorWritingSurfaceProps {
   isStub: boolean
   isStreaming: boolean
   isWorkflowRunning?: boolean
+  isProjectWorkflowRunning?: boolean
+  runningWorkflowChapter?: number | null
   llmMode: string
   projectId: string
   runDetail: RunDetailData | null
@@ -498,6 +527,7 @@ interface AuthorWritingSurfaceProps {
   sseSteps: Record<string, StepStatus>
   timeline?: WorkflowTimelineData | null
   timelineError?: string
+  preflightWarnings?: PreflightWarning[]
   onGenerate: () => void
   onConfirmRegenerate?: () => void
   onGenerateNext?: () => void
@@ -528,6 +558,8 @@ export default function AuthorWritingSurface({
   isStub,
   isStreaming,
   isWorkflowRunning,
+  isProjectWorkflowRunning,
+  runningWorkflowChapter,
   llmMode,
   projectId,
   runDetail,
@@ -535,6 +567,7 @@ export default function AuthorWritingSurface({
   sseSteps,
   timeline,
   timelineError,
+  preflightWarnings,
   onGenerate,
   onConfirmRegenerate,
   onMarkRunStuck,
@@ -559,7 +592,20 @@ export default function AuthorWritingSurface({
   const persistedQualityScore = chapterDetail?.quality_score ?? currentChapterRecord?.quality_score ?? null
   const qualityScore = persistedQualityScore
   const statusLabel = tChapterStatus(status)
-  const isWorkflowActive = isStreaming || isWorkflowRunning || timeline?.run_status === 'running'
+  const memoryCuratorNode = timeline?.nodes?.find((node) => node.node_name === 'memory_curator')
+  const memoryCuratorRunning = Boolean(
+    timeline?.memory_curator_running ||
+    memoryCuratorNode?.status === 'running' ||
+    (
+      timeline?.run_status === 'running' &&
+      (timeline.current_node === 'memory_curator' || memoryCuratorNode?.flags?.memory_curator_running)
+    )
+  )
+  const isRunningAnotherChapter = Boolean(
+    isProjectWorkflowRunning && runningWorkflowChapter && runningWorkflowChapter !== currentChapter
+  )
+  const workflowBusy = isStreaming || isWorkflowRunning || timeline?.run_status === 'running' || memoryCuratorRunning
+  const isWorkflowActive = workflowBusy || isRunningAnotherChapter
   const showHeaderGenerationAction = activeTab !== 'workflow'
 
   const tabs: { key: SurfaceTabKey; label: string; disabled?: boolean }[] = [
@@ -603,7 +649,7 @@ export default function AuthorWritingSurface({
               loading={!!publishPending}
               loadingText="发布中..."
               onClick={onPublish}
-              disabled={isStreaming || isWorkflowRunning}
+              disabled={isWorkflowActive}
             >
               <CheckCircle2 size={12} /> 确认发布
             </LoadingButton>
@@ -623,7 +669,7 @@ export default function AuthorWritingSurface({
             <LoadingButton
               className="btn btn-primary btn-sm"
               variant="primary"
-              loading={isWorkflowActive}
+              loading={workflowBusy}
               loadingText="生成中..."
               onClick={onGenerate}
               disabled={isWorkflowActive}
@@ -687,7 +733,9 @@ export default function AuthorWritingSurface({
             hasContent={hasContent}
             isStub={isStub}
             isStreaming={isStreaming}
-            isWorkflowRunning={isWorkflowRunning}
+            isWorkflowRunning={workflowBusy}
+            isGenerationLocked={isRunningAnotherChapter}
+            runningWorkflowChapter={runningWorkflowChapter}
             projectId={projectId}
             onGenerate={onGenerate}
             onConfirmRegenerate={onConfirmRegenerate}
@@ -704,6 +752,7 @@ export default function AuthorWritingSurface({
             isLaunching={isLaunching}
             isStreaming={isStreaming}
             sseSteps={sseSteps}
+            preflightWarnings={preflightWarnings}
             onGenerate={onGenerate}
             onConfirmRegenerate={onConfirmRegenerate}
             onMarkRunStuck={onMarkRunStuck}
@@ -753,6 +802,8 @@ function ContentBody({
   isStub,
   isStreaming,
   isWorkflowRunning,
+  isGenerationLocked,
+  runningWorkflowChapter,
   projectId,
   onGenerate,
   onConfirmRegenerate,
@@ -769,6 +820,8 @@ function ContentBody({
   isStub: boolean
   isStreaming: boolean
   isWorkflowRunning?: boolean
+  isGenerationLocked?: boolean
+  runningWorkflowChapter?: number | null
   projectId: string
   onGenerate: () => void
   onConfirmRegenerate?: () => void
@@ -812,6 +865,7 @@ function ContentBody({
     onRefreshContent?.()
   }, [onRefreshContent])
   const hasExistingContentGuard = genErrorDetails?.hint === 'review_existing_content'
+  const generationDisabled = Boolean(isWorkflowRunning || isGenerationLocked)
 
   return (
     <div>
@@ -922,11 +976,16 @@ function ContentBody({
               loading={isWorkflowRunning}
               loadingText="生成中..."
               onClick={onGenerate}
-              disabled={isWorkflowRunning}
+              disabled={generationDisabled}
               style={{ marginTop: 20, minWidth: 160 }}
             >
               <PenLine size={14} /> 生成本章
             </LoadingButton>
+          )}
+          {isGenerationLocked && runningWorkflowChapter && (
+            <div style={{ marginTop: 10, fontSize: 12, color: 'var(--wb-text-dark-muted)' }}>
+              第 {runningWorkflowChapter} 章工作流正在运行，完成后才能生成本章。
+            </div>
           )}
           <div style={{ marginTop: 14, fontSize: 12, color: 'var(--wb-text-dark-muted)' }}>
             预计字数: 2,000-4,000 &middot; 生成模式: {isStub ? '演示模式' : '真实 LLM'}
@@ -968,6 +1027,7 @@ function WorkflowBody({
   isLaunching,
   isStreaming,
   sseSteps,
+  preflightWarnings,
   onGenerate,
   onConfirmRegenerate,
   onMarkRunStuck,
@@ -987,6 +1047,7 @@ function WorkflowBody({
   isLaunching: boolean
   isStreaming: boolean
   sseSteps: Record<string, StepStatus>
+  preflightWarnings?: PreflightWarning[]
   onGenerate: () => void
   onConfirmRegenerate?: () => void
   onMarkRunStuck?: (runId: string) => Promise<void> | void
@@ -1279,7 +1340,7 @@ function WorkflowBody({
             </div>
           )}
         </div>
-        <WorkflowTimeline steps={timelineSteps} />
+        <WorkflowTimeline steps={timelineSteps} preflightWarnings={preflightWarnings} />
       </div>
     )
   }
@@ -1404,7 +1465,7 @@ function WorkflowBody({
             工作流时间线暂不可用，此视图可能缺少 memory_curator、awaiting_publish、archive 等 LangGraph 节点。
           </div>
         </div>
-        <WorkflowTimeline steps={runDetail.steps} />
+        <WorkflowTimeline steps={runDetail.steps} preflightWarnings={preflightWarnings} />
       </div>
     )
   }
@@ -1461,7 +1522,7 @@ function WorkflowBody({
             正在等待工作流时间线刷新，先按 canonical 节点骨架显示实时事件。
           </div>
         </div>
-        <WorkflowTimeline steps={steps} />
+        <WorkflowTimeline steps={steps} preflightWarnings={preflightWarnings} />
       </div>
     )
   }
