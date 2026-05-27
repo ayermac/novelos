@@ -168,6 +168,35 @@ cd frontend && npm run typecheck && npm run lint
 
 ---
 
+## Review Fixes (2026-05-27)
+
+### P1.1: Token Usage Overwrite Fix
+- **Problem**: Title generation LLM call overwrites Author token usage
+- **Fix**: Preserve and combine prior token usage with title generation usage
+- **Impact**: Run detail totals and token budgets now correctly accumulate
+
+### P1.2: Opening-Derived Title Repair
+- **Problem**: Usable-but-opening-derived AuthorOutput titles were not repaired
+- **Fix**: `_sanitize_output` now also checks `_is_opening_derived_title`
+- **Impact**: v6.7.5 goal fully achieved - all opening-derived titles are repaired
+
+### P2: Opening-Derived Generated Title Rejection
+- **Problem**: Generated titles from opening text could pass validation
+- **Fix**: `_generate_chapter_title` now checks `_is_opening_derived_title`
+- **Impact**: Generated titles matching opening text are properly rejected
+
+### P3.1: Documentation Updates
+- **Problem**: Documentation entry points not updated to v6.7.5
+- **Fix**: Updated `docs/codex/README.md` and version planning index
+- **Impact**: Documentation now properly references v6.7.5
+
+### P3.2: Test Coverage
+- **Problem**: Some tests were placeholders without assertions
+- **Fix**: Replaced with actual validation assertions
+- **Impact**: Test coverage now accurately reflects behavior
+
+---
+
 ## Known Issues
 
 None.
