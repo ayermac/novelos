@@ -1651,7 +1651,7 @@ class AuthorAgent(BaseAgent):
         ]
 
         try:
-            # P1.1: Preserve prior token usage before title generation call
+            # P1: Preserve prior token usage before title generation call
             prior_usage = getattr(self.llm, "last_token_usage", None)
 
             raw = self._invoke_json(messages, schema=TitleGenerationOutput, temperature=0.7)
@@ -1660,6 +1660,9 @@ class AuthorAgent(BaseAgent):
 
             # Validate generated title
             if not generated_title:
+                # P1: Restore prior usage when rejecting empty title
+                if prior_usage:
+                    self.llm.last_token_usage = prior_usage
                 return None
 
             # Ensure title has chapter prefix
@@ -1673,9 +1676,12 @@ class AuthorAgent(BaseAgent):
                     chapter_number,
                     generated_title,
                 )
+                # P1: Restore prior usage when rejecting opening-derived title
+                if prior_usage:
+                    self.llm.last_token_usage = prior_usage
                 return None
 
-            # P1.1: Combine prior usage with title generation usage
+            # P1: Combine prior usage with title generation usage (success path)
             title_usage = getattr(self.llm, "last_token_usage", None)
             if prior_usage and title_usage:
                 combined = TokenUsage(
@@ -1698,7 +1704,7 @@ class AuthorAgent(BaseAgent):
 
         except Exception as e:
             logger.warning("Author: title generation failed for chapter %d: %s", chapter_number, e)
-            # P1.1: Restore prior usage on failure
+            # P1: Restore prior usage on failure
             if prior_usage:
                 self.llm.last_token_usage = prior_usage
             return None
@@ -1906,14 +1912,17 @@ class AuthorAgent(BaseAgent):
         data = output.model_dump()
         instruction = self._get_instruction(state) or {}
         chapter_number = state["chapter_number"]
-        sanitized_title = self._derive_title(state, instruction, output.content)
 
-        # P1.2: Replace title if unusable OR if it's opening-derived
+        # P2: Check if title needs replacement BEFORE calling _derive_title
+        # to avoid unnecessary LLM calls in real mode
         should_replace = not self._is_usable_chapter_title(output.title, chapter_number, instruction)
         if not should_replace and output.content:
             # Also replace if title is derived from content opening (v6.7.5 goal)
             should_replace = self._is_opening_derived_title(output.title, output.content, chapter_number)
+
+        # Only call _derive_title when replacement is actually needed
         if should_replace:
+            sanitized_title = self._derive_title(state, instruction, output.content)
             data["title"] = sanitized_title
 
         data["content"] = ensure_chapter_heading(data.get("content", ""), data.get("title"), chapter_number)
