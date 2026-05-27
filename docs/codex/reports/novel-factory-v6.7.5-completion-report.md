@@ -98,12 +98,15 @@ The LLM prompt includes:
 | Utility Tests | 15 | ✅ |
 | Integration Tests | 2 | ✅ |
 | Compliance Tests | 2 | ✅ |
-| **Total** | **39** | **✅ All Passing** |
+| Token Usage Tests | 4 | ✅ |
+| Lazy Derivation Tests | 3 | ✅ |
+| Opening-Derived Tests | 4 | ✅ |
+| **Total** | **50** | **✅ All Passing** |
 
 ### Full Test Suite Results
 
 ```
-2879 passed, 1 skipped, 1364 warnings
+2890 passed, 1 skipped, 1364 warnings
 ```
 
 ---
@@ -113,10 +116,10 @@ The LLM prompt includes:
 ### Python Backend
 ```bash
 python3 -m pytest tests/test_v675_chapter_title_generation.py -v
-# 39 passed
+# 50 passed
 
 python3 -m pytest -q
-# 2879 passed, 1 skipped
+# 2890 passed, 1 skipped
 ```
 
 ### Version Verification
@@ -161,7 +164,7 @@ cd frontend && npm run typecheck && npm run lint
 - [x] Title generation failure does not block workflow
 - [x] Plain text path uses new title logic
 - [x] Test file created with comprehensive coverage
-- [x] All tests pass (2879 passed)
+- [x] All tests pass (2890 passed, 50 v6.7.5 tests)
 - [x] Version updated to 6.7.5
 - [x] Frontend typecheck/lint pass
 - [x] No lint errors
@@ -194,6 +197,30 @@ cd frontend && npm run typecheck && npm run lint
 - **Problem**: Some tests were placeholders without assertions
 - **Fix**: Replaced with actual validation assertions
 - **Impact**: Test coverage now accurately reflects behavior
+
+---
+
+## Review Fixes Round 2 (2026-05-27)
+
+### P1: Token Usage Leaky Branches
+- **Problem**: `_generate_chapter_title` did not restore prior token usage on early return paths (empty title, opening-derived rejection)
+- **Fix**: Added `prior_usage` restoration before returning `None` on empty title (line 1664) and opening-derived rejection (line 1681)
+- **Impact**: Token usage accounting no longer corrupted when title generation rejects output
+
+### P2: Unconditional LLM Call in `_sanitize_output`
+- **Problem**: `_sanitize_output` unconditionally called `_derive_title`, causing unnecessary LLM calls in real mode when title was already valid
+- **Fix**: Moved `_derive_title` call inside `if should_replace:` guard block (line 1924)
+- **Impact**: No unnecessary LLM calls when title is already usable and not opening-derived
+
+### P3: Missing Regression Tests
+- **Problem**: No regression tests for token usage preservation or lazy derivation behavior
+- **Fix**: Added 7 new tests:
+  - `TestTokenUsagePreservation` (4 tests): empty title, opening-derived, success combination, exception
+  - `TestSanitizeOutputLazyDerivation` (3 tests): usable title (not called), unusable (called), opening-derived (called)
+- **Impact**: Regression coverage for critical P1/P2 fixes
+
+**Commits**:
+- `c06b46d` - fix(v6.7.5): address round 2 review findings
 
 ---
 
