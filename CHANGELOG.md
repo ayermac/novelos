@@ -12,6 +12,34 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.7.7 - Genesis Generation Progress Streaming
+
+Date: 2026-05-27
+
+Key changes:
+
+- **Async Genesis generation with SSE progress streaming**: New `POST /api/projects/{project_id}/genesis/generate/start` endpoint starts async generation and returns `run_id` + `stream_url`. New `GET /api/projects/{project_id}/genesis/generate/stream/{run_id}` SSE endpoint streams real-time progress events.
+- **Segment-level progress events**: Foundation, cast, plot segments emit `segment_started`/`segment_completed`. Instructions segment emits per-chunk `chapter_start`/`chapter_end`. Repair and quality report phases also emit events.
+- **Stub mode progress simulation**: Stub mode simulates the same progress events with short delays for local demos and testing.
+- **Frontend EventSource integration**: GenesisModule.tsx now prefers the streaming start endpoint, connects via EventSource, and displays step-by-step progress (foundation → cast → plot → instructions → repair → quality). Falls back to polling when EventSource is unavailable or disconnected.
+- **First-run and resumed progress visibility fix**: The frontend now creates a local `running` Genesis record immediately after async start, reconnects streams for already-running Genesis runs loaded from latest status, shows default phase labels before the first SSE event, and normalizes `/api/...` stream URLs before EventSource connection.
+- **Interrupted Genesis recovery**: Reconnecting to a `running` Genesis row without a live in-process progress queue now marks the run failed and reports an interruption instead of showing fake progress after a desktop restart.
+- **Author final beat stability**: Real-mode segmented Author generation now retries only the final segment when the draft misses the last scene beat or chapter hook, preserving agent-authored prose without using synthetic pass-through text.
+- **Backward compatibility preserved**: Existing synchronous `POST /genesis/generate` and path-style `POST /projects/{id}/genesis/generate` endpoints remain fully functional.
+- **Comprehensive tests**: 16 backend tests covering start endpoint, SSE streaming, interrupted run recovery, full flow integration, error cases, and backward compatibility.
+- **Version alignment**: Runtime, frontend, and desktop updated to `6.7.7`.
+
+Verification:
+- v6.7.7 backend tests: 16/16 passing
+- v6.7.7 frontend regression tests: 3/3 passing
+- Author targeted regression tests: 28/28 passing
+- Existing genesis tests: 24/24 passing (no regression)
+- Frontend vitest: 328/328 passing
+- TypeScript typecheck: passing
+- Frontend lint: passing
+- Frontend build: passing
+- Full backend regression: 2920 passed, 1 skipped
+
 ## v6.7.6 - Workflow Recovery CTA Priority Fix
 
 Date: 2026-05-27

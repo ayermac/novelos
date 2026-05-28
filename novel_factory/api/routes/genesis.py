@@ -7,8 +7,10 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timedelta
+from typing import Callable
 
 from fastapi import APIRouter, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
@@ -22,6 +24,43 @@ logger = logging.getLogger(__name__)
 
 
 GENESIS_RUNNING_TIMEOUT_MINUTES = 30
+
+# ---------------------------------------------------------------------------
+# v6.7.7: Genesis progress streaming — in-memory progress store
+# ---------------------------------------------------------------------------
+
+# Maps run_id -> asyncio.Queue for SSE streaming
+_genesis_progress_queues: dict[str, asyncio.Queue] = {}
+
+# Segment display names for UI
+GENESIS_SEGMENT_LABELS = {
+    "foundation": "正在生成基础设定",
+    "cast": "正在生成角色与势力",
+    "plot": "正在生成剧情大纲",
+    "instructions": "正在生成章节指令",
+    "repair": "正在校验设定完整性",
+    "quality_report": "正在评估草案质量",
+}
+
+
+def _push_progress(run_id: str, event: dict) -> None:
+    """Push a progress event to the SSE queue for a given run."""
+    queue = _genesis_progress_queues.get(run_id)
+    if queue is not None:
+        try:
+            queue.put_nowait(event)
+        except asyncio.QueueFull:
+            logger.warning("Genesis progress queue full for run %s, dropping event", run_id)
+
+
+def _make_progress_event(event_type: str, run_id: str, **kwargs) -> dict:
+    """Build a standard progress event dict."""
+    evt = {"event": event_type, "data": {"run_id": run_id, **kwargs}}
+    return evt
+
+
+# Type alias for progress callback
+ProgressCallback = "Callable[[str, dict], None] | None"
 
 
 GENESIS_REQUIRED_SECTIONS = {
@@ -147,6 +186,19 @@ def _recover_stale_running_genesis(repo, genesis: dict | None, timeout_minutes: 
     return updated or {**genesis, "status": "failed", "error_message": message}
 
 
+def _fail_orphaned_running_genesis(repo, genesis: dict) -> dict:
+    """Fail a running Genesis row that no longer has an in-process producer."""
+    message = (
+        "创世任务已中断，可能是客户端关闭或本地服务重启导致。"
+        "请重新生成。"
+    )
+    updated = repo.update_genesis_run(genesis["id"], {
+        "status": "failed",
+        "error_message": message,
+    })
+    return updated or {**genesis, "status": "failed", "error_message": message}
+
+
 def _quality_report_payload(quality_report) -> dict:
     """Serialize a Genesis quality report for API responses and audit metadata."""
     return {
@@ -258,13 +310,32 @@ def _with_project_defaults(
     })
 
 
-def _generate_stub_draft(body: GenesisGenerateRequest) -> dict:
-    """Generate a deterministic stub genesis draft."""
+def _generate_stub_draft(
+    body: GenesisGenerateRequest,
+    *,
+    run_id: str | None = None,
+    progress: Callable | None = None,
+) -> dict:
+    """Generate a deterministic stub genesis draft.
+
+    v6.7.7: Accepts optional progress callback for SSE streaming.
+    In stub mode, simulates realistic progress events with short delays.
+    """
+    import time
+
     title = body.title or "未命名项目"
     genre = body.genre or "奇幻"
     premise = body.premise or "一个关于冒险与成长的故事"
 
-    return {
+    def _emit(event_type: str, **kwargs):
+        if progress and run_id:
+            progress(event_type, {"run_id": run_id, **kwargs})
+
+    # Stub: simulate foundation segment
+    _emit("segment_started", segment="foundation", label=GENESIS_SEGMENT_LABELS["foundation"])
+    time.sleep(0.05)  # simulate work
+
+    draft: dict = {
         "project_updates": {
             "description": f"《{title}》是一部{genre}题材小说。{premise}",
         },
@@ -280,94 +351,120 @@ def _generate_stub_draft(body: GenesisGenerateRequest) -> dict:
                 "content": "修炼体系分为九个大境界，每个境界有初期、中期、后期三个小阶段。",
             },
         ],
-        "characters": [
-            {
-                "name": "主角",
-                "role": "protagonist",
-                "description": f"《{title}》的核心人物，性格坚毅，有着不为人知的过去。",
-                "traits": "聪明、执着、重情义",
-            },
-            {
-                "name": "挚友",
-                "role": "supporting",
-                "description": "主角的青梅竹马，性格开朗，擅长情报收集。",
-                "traits": "机智、幽默、忠诚",
-            },
-            {
-                "name": "反派首领",
-                "role": "antagonist",
-                "description": "幕后黑手，行事隐秘，目的不明。",
-                "traits": "狡猾、冷酷、有魅力",
-            },
-        ],
-        "factions": [
-            {
-                "name": "主角所属势力",
-                "type": "宗门",
-                "description": "主角成长的根据地，历史悠久但近来衰落。",
-                "relationship_with_protagonist": "所属",
-            },
-            {
-                "name": "敌对势力",
-                "type": "组织",
-                "description": "暗中操控局势的神秘组织。",
-                "relationship_with_protagonist": "敌对",
-            },
-        ],
-        "outlines": [
-            {
-                "chapters_range": "1-3",
-                "title": "开篇",
-                "content": "主角出场，建立日常世界，引出核心冲突。",
-                "level": "arc",
-                "sequence": 1,
-            },
-            {
-                "chapters_range": "4-6",
-                "title": "启程",
-                "content": "主角踏上旅程，遇到第一个挑战和盟友。",
-                "level": "arc",
-                "sequence": 2,
-            },
-            {
-                "chapters_range": "7-10",
-                "title": "第一幕高潮",
-                "content": "主角面对第一个重大考验，揭示更大的阴谋。",
-                "level": "arc",
-                "sequence": 3,
-            },
-        ],
-        "plot_holes": [
-            {
-                "code": "PH-001",
-                "type": "悬念",
-                "title": "主角身世之谜",
-                "description": "主角的真实身份和家族秘密。",
-                "planted_chapter": 1,
-                "planned_resolve_chapter": 20,
-                "status": "planted",
-            },
-            {
-                "code": "PH-002",
-                "type": "伏笔",
-                "title": "神秘信物",
-                "description": "主角随身携带的古旧物品的来历。",
-                "planted_chapter": 1,
-                "planned_resolve_chapter": 10,
-                "status": "planted",
-            },
-        ],
-        "instructions": [
-            {
+    }
+    _emit("segment_completed", segment="foundation", label=GENESIS_SEGMENT_LABELS["foundation"])
+
+    # Stub: simulate cast segment
+    _emit("segment_started", segment="cast", label=GENESIS_SEGMENT_LABELS["cast"])
+    time.sleep(0.05)
+
+    draft["characters"] = [
+        {
+            "name": "主角",
+            "role": "protagonist",
+            "description": f"《{title}》的核心人物，性格坚毅，有着不为人知的过去。",
+            "traits": "聪明、执着、重情义",
+        },
+        {
+            "name": "挚友",
+            "role": "supporting",
+            "description": "主角的青梅竹马，性格开朗，擅长情报收集。",
+            "traits": "机智、幽默、忠诚",
+        },
+        {
+            "name": "反派首领",
+            "role": "antagonist",
+            "description": "幕后黑手，行事隐秘，目的不明。",
+            "traits": "狡猾、冷酷、有魅力",
+        },
+    ]
+    draft["factions"] = [
+        {
+            "name": "主角所属势力",
+            "type": "宗门",
+            "description": "主角成长的根据地，历史悠久但近来衰落。",
+            "relationship_with_protagonist": "所属",
+        },
+        {
+            "name": "敌对势力",
+            "type": "组织",
+            "description": "暗中操控局势的神秘组织。",
+            "relationship_with_protagonist": "敌对",
+        },
+    ]
+    _emit("segment_completed", segment="cast", label=GENESIS_SEGMENT_LABELS["cast"])
+
+    # Stub: simulate plot segment
+    _emit("segment_started", segment="plot", label=GENESIS_SEGMENT_LABELS["plot"])
+    time.sleep(0.05)
+
+    draft["outlines"] = [
+        {
+            "chapters_range": "1-3",
+            "title": "开篇",
+            "content": "主角出场，建立日常世界，引出核心冲突。",
+            "level": "arc",
+            "sequence": 1,
+        },
+        {
+            "chapters_range": "4-6",
+            "title": "启程",
+            "content": "主角踏上旅程，遇到第一个挑战和盟友。",
+            "level": "arc",
+            "sequence": 2,
+        },
+        {
+            "chapters_range": "7-10",
+            "title": "第一幕高潮",
+            "content": "主角面对第一个重大考验，揭示更大的阴谋。",
+            "level": "arc",
+            "sequence": 3,
+        },
+    ]
+    draft["plot_holes"] = [
+        {
+            "code": "PH-001",
+            "type": "悬念",
+            "title": "主角身世之谜",
+            "description": "主角的真实身份和家族秘密。",
+            "planted_chapter": 1,
+            "planned_resolve_chapter": 20,
+            "status": "planted",
+        },
+        {
+            "code": "PH-002",
+            "type": "伏笔",
+            "title": "神秘信物",
+            "description": "主角随身携带的古旧物品的来历。",
+            "planted_chapter": 1,
+            "planned_resolve_chapter": 10,
+            "status": "planted",
+        },
+    ]
+    _emit("segment_completed", segment="plot", label=GENESIS_SEGMENT_LABELS["plot"])
+
+    # Stub: simulate instructions segment (per-chunk)
+    chapter_count = min(body.target_chapters, 10)
+    chunk_size = GENESIS_INSTRUCTION_CHUNK_SIZE
+    instructions: list = []
+    for chunk_start in range(0, chapter_count, chunk_size):
+        chunk_end = min(chapter_count, chunk_start + chunk_size)
+        _emit("chapter_start", chapter_start=chunk_start + 1, chapter_end=chunk_end,
+              label=f"正在生成章节指令 {chunk_start + 1}-{chunk_end}")
+        time.sleep(0.03)
+        for i in range(chunk_start, chunk_end):
+            instructions.append({
                 "chapter_number": i + 1,
                 "objective": f"第 {i + 1} 章写作指令",
                 "key_events": f"关键事件 {i + 1}",
                 "emotion_tone": "神秘" if i == 0 else "紧张",
                 "word_target": body.target_words // body.target_chapters,
-            }
-            for i in range(min(body.target_chapters, 10))
-        ],
-    }
+            })
+        _emit("chapter_end", chapter_start=chunk_start + 1, chapter_end=chunk_end,
+              label=f"章节指令 {chunk_start + 1}-{chunk_end} 完成")
+    draft["instructions"] = instructions
+
+    return draft
 
 
 def _as_text(value) -> str:
@@ -1385,18 +1482,36 @@ async def _invoke_genesis_segment(
     )
 
 
-async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
-    """Generate a genesis draft using real LLM."""
+async def _generate_real_draft(
+    body: GenesisGenerateRequest,
+    settings,
+    *,
+    run_id: str | None = None,
+    progress: Callable | None = None,
+) -> dict:
+    """Generate a genesis draft using real LLM.
+
+    v6.7.7: Accepts optional progress callback for SSE streaming.
+    """
+    def _emit(event_type: str, **kwargs):
+        if progress and run_id:
+            progress(event_type, {"run_id": run_id, **kwargs})
+
     llm = _build_genesis_llm(settings)
+
+    # Foundation segment
+    _emit("segment_started", segment="foundation", label=GENESIS_SEGMENT_LABELS["foundation"])
     foundation_prompt = _build_genesis_segment_prompt(body, segment="foundation")
     foundation = await _invoke_genesis_segment(
         llm,
         prompt=foundation_prompt,
         max_tokens=GENESIS_SEGMENT_MAX_TOKENS["foundation"],
     )
-
     merged = _merge_genesis_drafts(None, foundation)
+    _emit("segment_completed", segment="foundation", label=GENESIS_SEGMENT_LABELS["foundation"])
 
+    # Cast segment
+    _emit("segment_started", segment="cast", label=GENESIS_SEGMENT_LABELS["cast"])
     cast_prompt = _build_genesis_segment_prompt(
         body,
         segment="cast",
@@ -1408,7 +1523,10 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
         max_tokens=GENESIS_SEGMENT_MAX_TOKENS["cast"],
     )
     merged = _merge_genesis_drafts(merged, cast)
+    _emit("segment_completed", segment="cast", label=GENESIS_SEGMENT_LABELS["cast"])
 
+    # Plot segment
+    _emit("segment_started", segment="plot", label=GENESIS_SEGMENT_LABELS["plot"])
     plot_prompt = _build_genesis_segment_prompt(
         body,
         segment="plot",
@@ -1420,12 +1538,16 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
         max_tokens=GENESIS_SEGMENT_MAX_TOKENS["plot"],
     )
     merged = _merge_genesis_drafts(merged, plot)
+    _emit("segment_completed", segment="plot", label=GENESIS_SEGMENT_LABELS["plot"])
 
+    # Instructions segment (per-chunk)
     chapter_count = max(1, int(body.target_chapters or 1))
     chunk_size = max(1, GENESIS_INSTRUCTION_CHUNK_SIZE)
     instruction_max_tokens = min(4500, 1800 + chunk_size * 420)
     for chapter_start in range(1, chapter_count + 1, chunk_size):
         chapter_end = min(chapter_count, chapter_start + chunk_size - 1)
+        _emit("chapter_start", chapter_start=chapter_start, chapter_end=chapter_end,
+              label=f"正在生成章节指令 {chapter_start}-{chapter_end}")
         instruction_prompt = _build_genesis_segment_prompt(
             body,
             segment="instructions",
@@ -1439,6 +1561,8 @@ async def _generate_real_draft(body: GenesisGenerateRequest, settings) -> dict:
             max_tokens=instruction_max_tokens,
         )
         merged = _merge_genesis_drafts(merged, instruction_patch)
+        _emit("chapter_end", chapter_start=chapter_start, chapter_end=chapter_end,
+              label=f"章节指令 {chapter_start}-{chapter_end} 完成")
 
     return _dedupe_genesis_draft(_normalize_genesis_draft(merged)) or merged
 
@@ -1497,6 +1621,9 @@ async def _complete_real_genesis_draft(
     body: GenesisGenerateRequest,
     settings,
     draft: dict,
+    *,
+    run_id: str | None = None,
+    progress: Callable | None = None,
 ) -> dict:
     """Repair incomplete real Genesis output before it becomes reviewable."""
     normalized = _dedupe_genesis_draft(_normalize_genesis_draft(draft)) or {}
@@ -1614,13 +1741,28 @@ def _build_genesis_recovery_draft(
 async def _generate_real_draft_with_scaffold_fallback(
     body: GenesisGenerateRequest,
     settings,
+    *,
+    run_id: str | None = None,
+    progress: Callable | None = None,
 ) -> dict:
-    """Generate Genesis with real LLM, falling back only for invalid JSON output."""
+    """Generate Genesis with real LLM, falling back only for invalid JSON output.
+
+    v6.7.7: Accepts optional progress callback for SSE streaming.
+    """
     from ...llm.openai_compatible import OutputValidationError
 
+    def _emit(event_type: str, **kwargs):
+        if progress and run_id:
+            progress(event_type, {"run_id": run_id, **kwargs})
+
     try:
-        draft = await _generate_real_draft(body, settings)
-        return await _complete_real_genesis_draft(body, settings, draft)
+        draft = await _generate_real_draft(body, settings, run_id=run_id, progress=progress)
+
+        # Repair/completion phase
+        _emit("segment_started", segment="repair", label=GENESIS_SEGMENT_LABELS["repair"])
+        result = await _complete_real_genesis_draft(body, settings, draft, run_id=run_id, progress=progress)
+        _emit("segment_completed", segment="repair", label=GENESIS_SEGMENT_LABELS["repair"])
+        return result
     except OutputValidationError as exc:
         logger.warning(
             "Genesis real LLM returned invalid JSON; using scaffold fallback title=%s genre=%s",
@@ -1628,11 +1770,14 @@ async def _generate_real_draft_with_scaffold_fallback(
             body.genre,
             exc_info=True,
         )
-        return _build_genesis_recovery_draft(
+        _emit("segment_started", segment="repair", label="正在使用本地恢复草案")
+        result = _build_genesis_recovery_draft(
             body,
             reason="invalid_json",
             error_message=str(exc),
         )
+        _emit("segment_completed", segment="repair", label="本地恢复草案生成完成")
+        return result
 
 
 def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
@@ -2324,3 +2469,266 @@ async def reject_genesis_canonical(
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"拒绝创世记录失败: {str(e)[:200]}")
+
+
+# ---------------------------------------------------------------------------
+# v6.7.7: Genesis progress streaming endpoints
+# ---------------------------------------------------------------------------
+
+
+@router.post("/projects/{project_id}/genesis/generate/start")
+async def start_genesis_generate(
+    request: Request,
+    project_id: str,
+    body: GenesisGenerateRequest,
+) -> EnvelopeResponse:
+    """Start async Genesis generation with progress streaming.
+
+    v6.7.7: Creates a running genesis run and kicks off background generation.
+    Returns run_id and stream_url for SSE progress monitoring.
+    The existing synchronous POST /genesis/generate is preserved for backward compatibility.
+    """
+    from ..deps import get_repo, get_llm_mode, get_settings
+
+    try:
+        repo = get_repo(request)
+        llm_mode = get_llm_mode(request)
+        settings = get_settings(request)
+
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        body = _with_project_defaults(body, project, project_id)
+        body.project_id = project_id
+        validation_error = _validate_genesis_generate_request(body)
+        if validation_error:
+            return error_response(*validation_error)
+
+        # Check for running genesis
+        latest = repo.get_latest_genesis_run(project_id)
+        latest = _recover_stale_running_genesis(
+            repo, latest, _genesis_timeout_minutes(settings),
+        )
+        if latest and latest["status"] == "running":
+            return error_response(
+                "GENESIS_IN_PROGRESS",
+                "已有正在运行的创世任务，请等待完成",
+            )
+
+        # Create genesis run record
+        input_json = json.dumps(body.model_dump(), ensure_ascii=False)
+        genesis_run = repo.create_genesis_run(project_id, input_json, status="running")
+        run_id = genesis_run["id"]
+
+        # Create progress queue
+        queue: asyncio.Queue = asyncio.Queue(maxsize=500)
+        _genesis_progress_queues[run_id] = queue
+
+        # Emit started event
+        _push_progress(run_id, _make_progress_event("genesis_started", run_id))
+
+        # Launch background task
+        asyncio.create_task(
+            _run_genesis_background(
+                run_id=run_id,
+                project_id=project_id,
+                body=body,
+                llm_mode=llm_mode,
+                settings=settings,
+                db_path=getattr(request.app.state, "db_path", None),
+                config_path=getattr(request.app.state, "config_path", None),
+            )
+        )
+
+        stream_url = f"/api/projects/{project_id}/genesis/generate/stream/{run_id}"
+
+        return envelope_response({
+            "run_id": run_id,
+            "stream_url": stream_url,
+            "status": "running",
+        })
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"启动创世生成失败: {str(e)[:200]}")
+
+
+async def _run_genesis_background(
+    *,
+    run_id: str,
+    project_id: str,
+    body: GenesisGenerateRequest,
+    llm_mode: str,
+    settings,
+    db_path: str | None,
+    config_path: str | None,
+) -> None:
+    """Background task for async Genesis generation with progress streaming.
+
+    v6.7.7: Runs the full generation pipeline and emits progress events.
+    """
+    from ...db.repository import Repository
+    from ...config.loader import load_settings_with_cli
+
+    repo = Repository(db_path) if db_path else Repository()
+
+    def _progress_callback(event_type: str, data: dict) -> None:
+        _push_progress(run_id, _make_progress_event(event_type, run_id, **{k: v for k, v in data.items() if k != "run_id"}))
+
+    try:
+        if llm_mode == "stub":
+            draft = _generate_stub_draft(body, run_id=run_id, progress=_progress_callback)
+        else:
+            draft = await _generate_real_draft_with_scaffold_fallback(
+                body, settings, run_id=run_id, progress=_progress_callback,
+            )
+
+        # Validation phase (structural completeness check)
+        draft, missing_sections = _validate_complete_genesis_draft(draft)
+        if draft is None:
+            raise ValueError("创世草案数据格式错误，未生成可应用的 JSON 对象")
+        if missing_sections:
+            raise ValueError(_incomplete_genesis_message(missing_sections))
+
+        # Quality report phase
+        _progress_callback("segment_started", {"segment": "quality_report", "label": GENESIS_SEGMENT_LABELS["quality_report"]})
+        quality_report = evaluate_genesis_draft(
+            draft,
+            title=body.title,
+            genre=body.genre,
+            premise=body.premise,
+            target_chapters=body.target_chapters,
+        )
+        _progress_callback("segment_completed", {"segment": "quality_report", "label": GENESIS_SEGMENT_LABELS["quality_report"]})
+
+        # Update genesis run (use 'generated' for consistency with existing system)
+        repo.update_genesis_run(run_id, {
+            "status": "generated",
+            "draft_json": json.dumps(draft, ensure_ascii=False),
+        })
+        genesis_run = repo.get_genesis_run(run_id)
+
+        # Build completion payload
+        response_data = dict(genesis_run) if genesis_run else {}
+        response_data["quality_report"] = _quality_report_payload(quality_report)
+
+        # Emit completed event
+        _push_progress(run_id, _make_progress_event(
+            "genesis_completed", run_id,
+            genesis_run=response_data,
+        ))
+
+    except Exception as e:
+        logger.error("Genesis background generation failed for run %s: %s", run_id, str(e), exc_info=True)
+        error_msg = str(e)[:500]
+        repo.update_genesis_run(run_id, {
+            "status": "failed",
+            "error_message": error_msg,
+        })
+        _push_progress(run_id, _make_progress_event(
+            "genesis_failed", run_id,
+            error=error_msg,
+        ))
+    finally:
+        # Clean up queue after a delay (allow final events to be consumed)
+        await asyncio.sleep(5)
+        _genesis_progress_queues.pop(run_id, None)
+
+
+@router.get("/projects/{project_id}/genesis/generate/stream/{run_id}")
+async def stream_genesis_progress(
+    request: Request,
+    project_id: str,
+    run_id: str,
+):
+    """SSE endpoint for real-time Genesis generation progress.
+
+    v6.7.7: Streams progress events as text/event-stream.
+    Pushes segment_started, segment_completed, chapter_start, chapter_end events,
+    then genesis_completed or genesis_failed when done.
+    """
+    from ..deps import get_repo
+
+    repo = get_repo(request)
+
+    # Validate run exists and belongs to project
+    genesis_run = repo.get_genesis_run(run_id)
+    if not genesis_run:
+        async def not_found_stream():
+            yield f"event: genesis_failed\ndata: {json.dumps({'run_id': run_id, 'error': 'GENESIS_NOT_FOUND'})}\n\n"
+        return StreamingResponse(not_found_stream(), media_type="text/event-stream")
+
+    if genesis_run["project_id"] != project_id:
+        async def mismatch_stream():
+            yield f"event: genesis_failed\ndata: {json.dumps({'run_id': run_id, 'error': 'PROJECT_MISMATCH'})}\n\n"
+        return StreamingResponse(mismatch_stream(), media_type="text/event-stream")
+
+    # If already completed/failed, send final event immediately
+    if genesis_run["status"] in ("generated", "completed"):
+        quality_report = _quality_report_for_genesis(genesis_run, repo.get_project(project_id))
+        response_data = dict(genesis_run)
+        if quality_report is not None:
+            response_data["quality_report"] = quality_report
+        async def done_stream():
+            yield f"event: genesis_completed\ndata: {json.dumps({'run_id': run_id, 'genesis_run': response_data}, ensure_ascii=False)}\n\n"
+        return StreamingResponse(done_stream(), media_type="text/event-stream")
+
+    if genesis_run["status"] == "failed":
+        async def failed_stream():
+            yield f"event: genesis_failed\ndata: {json.dumps({'run_id': run_id, 'error': genesis_run.get('error_message', 'Unknown error')}, ensure_ascii=False)}\n\n"
+        return StreamingResponse(failed_stream(), media_type="text/event-stream")
+
+    # For running status, the queue is the in-process producer contract.
+    # If it is missing, the desktop sidecar or local API process was restarted
+    # and no background task can still emit progress for this run.
+    queue = _genesis_progress_queues.get(run_id)
+    if queue is None:
+        # The task may have completed between the check above and now, re-check
+        genesis_run = repo.get_genesis_run(run_id)
+        if genesis_run and genesis_run["status"] != "running":
+            # Re-route to done/failed
+            if genesis_run["status"] in ("generated", "completed"):
+                response_data = dict(genesis_run)
+                async def done_stream2():
+                    yield f"event: genesis_completed\ndata: {json.dumps({'run_id': run_id, 'genesis_run': response_data}, ensure_ascii=False)}\n\n"
+                return StreamingResponse(done_stream2(), media_type="text/event-stream")
+            else:
+                async def failed_stream2():
+                    yield f"event: genesis_failed\ndata: {json.dumps({'run_id': run_id, 'error': genesis_run.get('error_message', 'Unknown')}, ensure_ascii=False)}\n\n"
+                return StreamingResponse(failed_stream2(), media_type="text/event-stream")
+
+        if genesis_run and genesis_run["status"] == "running":
+            genesis_run = _fail_orphaned_running_genesis(repo, genesis_run)
+            async def orphaned_stream():
+                yield f"event: genesis_failed\ndata: {json.dumps({'run_id': run_id, 'error': genesis_run.get('error_message', 'Unknown')}, ensure_ascii=False)}\n\n"
+            return StreamingResponse(orphaned_stream(), media_type="text/event-stream")
+
+        async def missing_stream():
+            yield f"event: genesis_failed\ndata: {json.dumps({'run_id': run_id, 'error': 'GENESIS_NOT_FOUND'}, ensure_ascii=False)}\n\n"
+        return StreamingResponse(missing_stream(), media_type="text/event-stream")
+
+    async def event_stream():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=30.0)
+                    event_type = event.get("event", "progress")
+                    data = event.get("data", {})
+                    yield f"event: {event_type}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+                    # If terminal event, stop
+                    if event_type in ("genesis_completed", "genesis_failed"):
+                        break
+                except asyncio.TimeoutError:
+                    # Send keepalive comment
+                    yield ": keepalive\n\n"
+        except (asyncio.CancelledError, GeneratorExit):
+            raise
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+        },
+    )

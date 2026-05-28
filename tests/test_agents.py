@@ -507,6 +507,76 @@ class TestAuthorAgent:
         assert issues
         assert any("scene beat" in issue["message"] for issue in issues)
 
+    def test_author_final_scene_beat_guard_converges_instead_of_retrying(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        class MissingHookLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.text_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("real author path should use plain text")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                if self.text_calls >= 3:
+                    return (
+                        "林默没有再看结算倒影，白塔私信出现。"
+                        "未知联系人逼近的压迫感从屏幕背后渗出来。"
+                        "周砚白发来坐标，光标停在一行新字上：聊聊十二年前的事。"
+                    ) * 2
+                return (
+                    "林默进入车站，定位住户，触发隔离。"
+                    "他救出住户后，灵体停止追击，许知夏追问选择。"
+                    "任务结算界面三段式展示，失败名单滚动出现。"
+                    "但是正文停在屏幕闪烁处，没有写到最后的私信。"
+                ) * 3
+
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "进入车站", "conflict": "门禁失效", "turn": "发现异常", "hook": "下探站台"},
+            {"sequence": 2, "scene_goal": "定位住户", "conflict": "数据被遮蔽", "turn": "数据被篡改", "hook": "系统建议忽略"},
+            {"sequence": 3, "scene_goal": "触发隔离", "conflict": "警报响起", "turn": "系统记录违规", "hook": "住户醒来"},
+            {"sequence": 4, "scene_goal": "任务结算界面三段式展示", "conflict": "结算异常", "turn": "失败名单滚动出现", "hook": "周砚白名字浮现"},
+            {"sequence": 5, "scene_goal": "白塔私信出现", "conflict": "未知联系人逼近", "turn": "周砚白发来坐标", "hook": "聊聊十二年前的事"},
+        ])
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET ending_hook=?, word_target=? WHERE project_id=? AND chapter_number=?",
+            ("周砚白发来坐标，聊聊十二年前的事", 120, "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, MissingHookLLM())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result.get("error") != "Author 未完成场景 beat 覆盖，正文未写到章末钩子"
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        assert agent.llm.text_calls == 3
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "白塔私信出现" in chapter["content"]
+        assert "周砚白发来坐标" in chapter["content"]
+        assert "聊聊十二年前的事" in chapter["content"]
+
     def test_author_scene_beat_coverage_passes_when_ending_lands(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
 
@@ -609,6 +679,139 @@ class TestAuthorAgent:
         }, content)
 
         assert issues == []
+
+    def test_author_scene_beat_repair_appends_missing_tail_before_full_rewrite(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.models.schemas import AuthorOutput
+
+        class TailRepairLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.text_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("tail repair should use plain text")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                assert "只补结尾" in messages[-1]["content"]
+                return (
+                    "林默没有再看结算倒影，白塔私信在屏幕边缘弹出。"
+                    "周砚白发来坐标，光标停在一行新字上：聊聊十二年前的事。"
+                    "他终于明白，失败名单不是结算，而是下一道门。"
+                )
+
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "进入车站", "turn": "发现异常", "hook": "下探站台"},
+            {"sequence": 2, "scene_goal": "定位住户", "turn": "数据被篡改", "hook": "系统建议忽略"},
+            {"sequence": 3, "scene_goal": "触发隔离", "turn": "系统记录违规", "hook": "住户醒来"},
+            {"sequence": 4, "scene_goal": "救出住户", "turn": "灵体停止追击", "hook": "许知夏追问选择"},
+            {"sequence": 5, "scene_goal": "任务结算界面三段式展示", "turn": "失败名单滚动出现", "hook": "周砚白名字浮现"},
+            {"sequence": 6, "scene_goal": "白塔私信出现", "turn": "周砚白发来坐标", "hook": "聊聊十二年前的事"},
+        ])
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET ending_hook=? WHERE project_id=? AND chapter_number=?",
+            ("周砚白发来坐标，聊聊十二年前的事", "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, TailRepairLLM())
+        state = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "llm_mode": "real",
+        }
+        output = AuthorOutput(
+            title="第1章 车站",
+            content=(
+                "林默进入车站，定位住户，触发隔离。"
+                "他救出住户后，灵体停止追击，许知夏追问选择。"
+                "任务结算界面三段式展示，失败名单滚动出现，但正文停在屏幕闪烁处。"
+            ),
+            word_count=0,
+            implemented_events=["事件1"],
+            used_plot_refs=["P001"],
+        )
+        issues = agent._scene_beat_coverage_issues(state, output.content)
+        assert issues
+
+        repaired = agent._try_repair_scene_beat_coverage(state, output, issues, "fallback context")
+
+        assert repaired is not None
+        assert "正文停在屏幕闪烁处" in repaired.content
+        assert "白塔私信在屏幕边缘弹出" in repaired.content
+        assert agent.llm.text_calls == 1
+        assert agent._scene_beat_coverage_issues(state, repaired.content) == []
+
+    def test_author_scene_beat_repair_does_not_fake_pass_when_llm_misses_hook(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.models.schemas import AuthorOutput
+
+        class BadTailLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.text_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("scene beat repair should use plain text")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                return "林默抬起头，风从站台尽头吹来，但这一段仍然没有写到指定钩子。"
+
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "进入车站", "turn": "发现异常", "hook": "下探站台"},
+            {"sequence": 2, "scene_goal": "定位住户", "turn": "数据被篡改", "hook": "系统建议忽略"},
+            {"sequence": 3, "scene_goal": "任务结算界面三段式展示", "turn": "失败名单滚动出现", "hook": "周砚白名字浮现"},
+            {"sequence": 4, "scene_goal": "白塔私信出现", "turn": "周砚白发来坐标", "hook": "聊聊十二年前的事"},
+        ])
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET ending_hook=? WHERE project_id=? AND chapter_number=?",
+            ("周砚白发来坐标，聊聊十二年前的事", "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, BadTailLLM())
+        state = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "llm_mode": "real",
+        }
+        output = AuthorOutput(
+            title="第1章 车站",
+            content="林默进入车站，定位住户，触发隔离。正文停在屏幕闪烁处。",
+            word_count=0,
+            implemented_events=["事件1"],
+            used_plot_refs=["P001"],
+        )
+        issues = agent._scene_beat_coverage_issues(state, output.content)
+        assert issues
+
+        repaired = agent._try_repair_scene_beat_coverage(state, output, issues, "fallback context")
+
+        assert repaired is None
 
     def test_author_context_is_capped_but_preserves_head_and_tail(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent, AUTHOR_CONTEXT_CHAR_LIMIT
@@ -1248,6 +1451,74 @@ class TestAuthorAgent:
 
         assert result["chapter_status"] == ChapterStatus.DRAFTED.value
         assert llm.text_calls == 2
+
+    def test_author_segmented_plain_text_merges_overlapping_segment_tail_once(self, seeded_repo, monkeypatch):
+        """Later author segments may restate the previous tail; merge must not duplicate it."""
+        from novel_factory.agents.author import AuthorAgent
+
+        repeated_tail = "他听见身后钢门震动，外环值守正在逼近。"
+        first_segment = f"陆澈压低手电，蓝光照见舱壁上的盐痕。\n{repeated_tail}"
+        second_segment = f"{repeated_tail}\n过渡舱深处传来低频轰鸣，神秘人留下的铜牌在地面翻转。"
+
+        class OverlapSegmentLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.text_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("segmented plain text path should not call JSON")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                return first_segment if self.text_calls == 1 else second_segment
+
+        agent = AuthorAgent(seeded_repo, OverlapSegmentLLM())
+        monkeypatch.setattr(agent, "_get_instruction", lambda state: {})
+        monkeypatch.setattr(agent, "_get_word_target", lambda state: 300)
+        monkeypatch.setattr(agent, "_build_plain_text_context", lambda state, context: "压缩上下文")
+        monkeypatch.setattr(agent, "_derive_title", lambda state, instruction, content: "第1章 过渡舱")
+        monkeypatch.setattr(agent, "_get_scene_beats", lambda state: [
+            {"sequence": i, "scene_goal": f"目标{i}", "conflict": "冲突", "turn": "转折", "hook": "钩子"}
+            for i in range(1, 7)
+        ])
+
+        output = agent._try_segmented_plain_text_draft(
+            {
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "scripted",
+                "retry_count": 0,
+                "max_retries": 3,
+                "requires_human": False,
+                "error": None,
+                "llm_mode": "real",
+            },
+            "创作",
+            "完整上下文",
+        )
+
+        assert output.content.count(repeated_tail) == 1
+        assert "过渡舱深处传来低频轰鸣" in output.content
+
+    def test_author_segmented_plain_text_trims_near_duplicate_boundary_paragraph(self):
+        """Boundary merge also removes lightly revised duplicate paragraphs."""
+        from novel_factory.agents.author import AuthorAgent
+
+        previous = "陆澈压低手电，蓝光照见舱壁上的盐痕。\n他听见身后钢门震动，外环值守正在逼近。"
+        current = "他听见身后钢门震动，外环值守已在逼近。\n过渡舱深处传来低频轰鸣。"
+
+        merged = AuthorAgent._merge_segment_outputs([previous, current])
+
+        assert "过渡舱深处传来低频轰鸣" in merged
+        assert merged.count("他听见身后钢门震动") == 1
 
 
 class TestPolisherAgent:
