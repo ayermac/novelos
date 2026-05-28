@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from difflib import SequenceMatcher
 from typing import Any
 
 from ..agent_runtime.segmented_generation import chunk_items
@@ -849,6 +850,12 @@ class AuthorAgent(BaseAgent):
         if state.get("llm_mode") != "real":
             return None
 
+        appended = self._try_append_scene_beat_tail(
+            state, output, coverage_issues, fallback_context,
+        )
+        if appended is not None:
+            return appended
+
         instruction = self._get_instruction(state) or {}
         word_target = self._get_word_target(state)
         current_body_len = count_words(strip_chapter_heading(output.content, state["chapter_number"], output.title))
@@ -909,9 +916,98 @@ class AuthorAgent(BaseAgent):
             )
             repaired = self._sanitize_output(repaired, state)
             self.validate_output(repaired.model_dump())
+            if self._scene_beat_coverage_issues(state, repaired.content):
+                return None
             return repaired
         except Exception as e:
             logger.warning("Author: scene-beat coverage repair failed: %s", e)
+            return None
+
+    def _try_append_scene_beat_tail(
+        self,
+        state: FactoryState,
+        output: AuthorOutput,
+        coverage_issues: list[dict[str, Any]],
+        fallback_context: str,
+    ) -> AuthorOutput | None:
+        """Append a missing final beat tail before falling back to full rewrite."""
+        instruction = self._get_instruction(state) or {}
+        beats = self._get_scene_beats(state)
+        if not beats:
+            return None
+
+        chapter_number = state["chapter_number"]
+        current_body = strip_chapter_heading(output.content, chapter_number, output.title)
+        current_tail = current_body[-900:] if len(current_body) > 900 else current_body
+        final_beats = beats[-min(3, len(beats)):]
+        beat_lines = "\n".join(
+            f"{beat.get('sequence', '?')}. 目标: {beat.get('scene_goal', '')} | "
+            f"冲突: {beat.get('conflict', '')} | 转折: {beat.get('turn', '')} | "
+            f"钩子: {beat.get('hook', '')}"
+            for beat in final_beats
+        )
+        issue_lines = "\n".join(
+            f"- {issue.get('message', '')}" for issue in coverage_issues
+        )
+        compact_context = self._build_plain_text_context(state, fallback_context)
+        tail_target = max(450, min(1200, int(self._get_word_target(state) * 0.35)))
+        prose_max_tokens = max(1024, min(3072, int(tail_target * 1.8) + 512))
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是网文工厂的执笔。现在只补写章节结尾续写段落。"
+                    "只输出可直接接在当前正文后的纯正文，不要标题、解释、清单、JSON 或 Markdown。"
+                    "必须自然承接当前尾段，补齐最后 scene beat，并以章节 ending_hook 收束。"
+                    "禁止复述已写正文，禁止从开头重写。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"第{chapter_number}章当前正文没有写到章末，缺口如下：\n{issue_lines}\n\n"
+                    f"请续写约 {tail_target} 字符，只补结尾，不要重写前文。\n\n"
+                    f"{compact_context}\n\n"
+                    f"【必须落地的最后 scene beat】\n{beat_lines}\n\n"
+                    f"【章节 ending_hook】\n{instruction.get('ending_hook', '')}\n\n"
+                    f"【当前正文尾段】\n{current_tail}\n\n"
+                    "请输出可直接追加到正文末尾的续写正文。"
+                ),
+            },
+        ]
+
+        try:
+            tail = self._invoke_text_for_author(
+                messages,
+                temperature=0.66,
+                max_tokens=prose_max_tokens,
+                max_retries=None,
+                request_timeout_seconds=(
+                    AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                    if is_configured_live_provider(self.llm)
+                    else None
+                ),
+            )
+            tail = self._coerce_plain_text_content(tail)
+            if not tail:
+                return None
+
+            merged = self._merge_segment_outputs([output.content, tail])
+            repaired = AuthorOutput(
+                title=self._derive_title(state, instruction, merged),
+                content=merged,
+                word_count=len(merged),
+                implemented_events=output.implemented_events or self._instruction_items(instruction.get("key_events", "")),
+                used_plot_refs=output.used_plot_refs or self._instruction_items(instruction.get("plots_to_plant", "")),
+            )
+            repaired = self._sanitize_output(repaired, state)
+            self.validate_output(repaired.model_dump())
+            if self._scene_beat_coverage_issues(state, repaired.content):
+                return None
+            return repaired
+        except Exception as e:
+            logger.warning("Author: scene-beat tail append repair failed: %s", e)
             return None
 
     @staticmethod
@@ -1353,7 +1449,18 @@ class AuthorAgent(BaseAgent):
                     },
                 })
 
-        merged_content = "\n\n".join(segment_outputs)
+        merged_content = self._merge_segment_outputs(segment_outputs)
+        merged_content = self._repair_final_segment_if_needed(
+            state=state,
+            merged_content=merged_content,
+            segment_outputs=segment_outputs,
+            chunks=chunks,
+            compact_context=compact_context,
+            instruction=instruction,
+            chapter_number=chapter_number,
+            task_desc=task_desc,
+            exec_events=exec_events,
+        )
         title = self._derive_title(state, instruction, merged_content)
         return AuthorOutput(
             title=title,
@@ -1362,6 +1469,164 @@ class AuthorAgent(BaseAgent):
             implemented_events=self._instruction_items(instruction.get("key_events", "")),
             used_plot_refs=self._instruction_items(instruction.get("plots_to_plant", "")),
         )
+
+    def _repair_final_segment_if_needed(
+        self,
+        *,
+        state: FactoryState,
+        merged_content: str,
+        segment_outputs: list[str],
+        chunks: list[list[dict[str, Any]]],
+        compact_context: str,
+        instruction: dict[str, Any],
+        chapter_number: int,
+        task_desc: str,
+        exec_events: list[dict] | None,
+    ) -> str:
+        """Retry only the final author segment when it misses the chapter hook."""
+        issues = self._scene_beat_coverage_issues(state, merged_content)
+        if not issues or not segment_outputs or not chunks:
+            return merged_content
+
+        final_chunk = chunks[-1]
+        prior_segments = segment_outputs[:-1]
+        prior_content = self._merge_segment_outputs(prior_segments)
+        prior_tail = prior_content[-900:] if len(prior_content) > 900 else prior_content
+        issue_lines = "\n".join(f"- {issue.get('message', '')}" for issue in issues)
+        beat_lines = "\n".join(
+            f"  {beat.get('sequence', '?')}. 目标: {beat.get('scene_goal', '')} | "
+            f"冲突: {beat.get('conflict', '')} | 转折: {beat.get('turn', '')} | "
+            f"钩子: {beat.get('hook', '')}"
+            for beat in final_chunk
+        )
+        final_target = max(650, len(segment_outputs[-1]))
+        prose_max_tokens = max(1536, min(4096, int(final_target * 1.7) + 512))
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是网文工厂的执笔。现在只重写本章最后一段正文。"
+                    "只输出可直接接在前文后的纯正文，不要标题、解释、清单、JSON 或 Markdown。"
+                    "必须自然承接前文，完整覆盖给定最后 scene beat，并以章节 ending_hook 收束。"
+                    "禁止复述前文，禁止停在中途动作、选择或对话上。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"项目ID: {state['project_id']}\n章节号: {chapter_number}\n任务: {task_desc}\n"
+                    f"上一版最后分段没有写到章末，问题如下：\n{issue_lines}\n\n"
+                    f"请重写最后分段，至少 {final_target} 字符，必须写到最后一句。\n\n"
+                    f"{compact_context}\n\n"
+                    f"【前文尾段，仅用于承接，禁止重复】\n{prior_tail}\n\n"
+                    f"【最后分段必须覆盖的 scene beat】\n{beat_lines}\n\n"
+                    f"【章节 ending_hook，必须自然写入章末】\n{instruction.get('ending_hook', '')}\n\n"
+                    "请只输出修复后的最后分段正文。"
+                ),
+            },
+        ]
+
+        if exec_events is not None:
+            exec_events.append({
+                "event_type": "segment_repair_started",
+                "message": "Author 最后分段未覆盖章末钩子，开始定向重写最后分段",
+                "status": "warning",
+                "payload": {"issues": [issue.get("message", "") for issue in issues]},
+            })
+
+        try:
+            repaired_tail = self._invoke_text_for_author(
+                messages,
+                temperature=0.68,
+                max_tokens=prose_max_tokens,
+                max_retries=None,
+                request_timeout_seconds=(
+                    AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                    if is_configured_live_provider(self.llm)
+                    else None
+                ),
+            )
+            repaired_tail = self._coerce_plain_text_content(repaired_tail)
+        except Exception as e:
+            logger.warning("Author: final segment targeted repair failed: %s", e)
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": "segment_repair_failed",
+                    "message": f"Author 最后分段定向重写失败: {e}",
+                    "status": "error",
+                    "payload": {"error": str(e)[:200]},
+                })
+            return merged_content
+
+        if not repaired_tail:
+            return merged_content
+
+        candidate = self._merge_segment_outputs([*prior_segments, repaired_tail])
+        remaining = self._scene_beat_coverage_issues(state, candidate)
+        if remaining:
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": "segment_repair_failed",
+                    "message": "Author 最后分段定向重写后仍未覆盖章末钩子",
+                    "status": "warning",
+                    "payload": {"issues": [issue.get("message", "") for issue in remaining]},
+                })
+            return merged_content
+
+        if exec_events is not None:
+            exec_events.append({
+                "event_type": "segment_repair_completed",
+                "message": f"Author 最后分段定向重写完成 ({len(repaired_tail)} 字)",
+                "status": "info",
+                "payload": {"segment_length": len(repaired_tail)},
+            })
+        return candidate
+
+    @classmethod
+    def _merge_segment_outputs(cls, segments: list[str]) -> str:
+        """Merge segmented prose without duplicating boundary overlap."""
+        merged = ""
+        for segment in segments:
+            cleaned = str(segment or "").strip()
+            if not cleaned:
+                continue
+            if not merged:
+                merged = cleaned
+                continue
+            cleaned = cls._trim_segment_boundary_overlap(merged, cleaned)
+            if cleaned:
+                merged = f"{merged.rstrip()}\n\n{cleaned.lstrip()}"
+        return merged.strip()
+
+    @staticmethod
+    def _trim_segment_boundary_overlap(previous: str, current: str) -> str:
+        """Trim text the model repeated from the previous segment boundary."""
+        prev = str(previous or "").rstrip()
+        cur = str(current or "").lstrip()
+        if not prev or not cur:
+            return cur
+
+        max_overlap = min(len(prev), len(cur), 1200)
+        for size in range(max_overlap, 11, -1):
+            if prev[-size:] == cur[:size]:
+                return cur[size:].lstrip()
+
+        prev_parts = [p.strip() for p in re.split(r"\n+", prev) if p.strip()]
+        cur_parts = [p.strip() for p in re.split(r"\n+", cur) if p.strip()]
+        while prev_parts and cur_parts:
+            prev_tail = prev_parts[-1]
+            cur_head = cur_parts[0]
+            if min(len(prev_tail), len(cur_head)) < 12:
+                break
+            if max(len(prev_tail), len(cur_head)) > 500:
+                break
+            similarity = SequenceMatcher(None, prev_tail, cur_head).ratio()
+            if prev_tail == cur_head or similarity >= 0.9:
+                cur_parts.pop(0)
+                continue
+            break
+        return "\n".join(cur_parts).lstrip() if cur_parts else ""
 
     def _should_use_plain_text_primary(self, state: FactoryState) -> bool:
         """Use prose-first authoring for live providers.
