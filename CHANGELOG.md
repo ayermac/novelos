@@ -12,6 +12,26 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.7.8 - Revision Retry Accounting & Continuity Semantics
+
+Date: 2026-05-29
+
+Key changes:
+
+- **Internal compression no longer consumes chapter-level retries**: Author and Polisher internal word-count auto-compression failures (when `_try_compress_overlong_output`/`_try_compress_overlong_polish` fails) are now marked with `consume_revision_retry: false` in the quality gate. The `_handle_retryable_quality_gate` function checks this field and uses `internal_repair` task type instead of `revise`, preserving the chapter-level retry counter.
+- **Internal repair attempt cap with per-run isolation**: New `get_chapter_internal_repair_count(workflow_run_id)` repository method and `MAX_INTERNAL_REPAIR_ATTEMPTS = 2` constant in `nodes.py`. Count is scoped to `workflow_run_id` so old runs and cross-agent repairs don't pollute each other's budget. After the cap is reached within a run, internal repairs are escalated to chapter-level retries (consuming `retry_count`), preventing infinite agent loops.
+- **Distinct event types for internal repairs vs chapter retries**: Internal repairs emit `internal_repair_attempt` events (with `repair_scope` payload) instead of `quality_gate_retry`. This eliminates UI/audit confusion between agent-internal compression attempts and genuine chapter-level revision retries.
+- **Deterministic status-fact filter with hard-contradiction guard**: Editor's `_run_story_facts_compliance` includes a deterministic post-LLM filter that downgrades `blocking` violations to `warning` when the fact is a status-type description (恐惧/被围住/瘫软/狼狈/被控制等) and the violation text contains consistent-action keywords (强撑/虚张声势/挣扎/颤抖/嘴硬/色厉内荏等). A hard-contradiction guard (`_HARD_CONTRADICTION_PHRASES`) prevents downgrading when the text also contains unambiguously incompatible behavior (从容指挥安保/大步离开/自由离开/调动安保/etc.), fixing the false-negative risk.
+- **Expanded keyword coverage**: Added real-log trigger phrases (强行维持/摇摇欲坠/声音粗重/声音干涩/声音发颤/强作镇定/咬牙撑住/etc.) to the consistent-action keyword list.
+- **Refined LLM compliance prompt**: The editor's story facts compliance system prompt now explicitly instructs the LLM that status-type facts combined with subsequent actions/dialogue are not contradictions, and only explicit behavioral contradictions (freely commanding security, walking away unimpeded) should be flagged.
+- **Version alignment**: Runtime, frontend, and desktop updated to `6.7.8`.
+
+Verification:
+- v6.7.8 dedicated tests: 16/16 passing (8 retry accounting + cap isolation, 5 status-fact production tests, 3 version alignment)
+- Full test suite: 2953/2953 passing (1 skipped)
+- Version alignment tests: all passing
+- Linter: 0 errors
+
 ## v6.7.7 - Genesis Generation Progress Streaming
 
 Date: 2026-05-27

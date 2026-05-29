@@ -598,6 +598,11 @@ class AuthorAgent(BaseAgent):
                         "word_target": word_target,
                         "agent": "author",
                         "workflow_run_id": state.get("workflow_run_id"),
+                        # v6.7.8: internal compression failure does not consume
+                        # chapter-level revision retries.
+                        "internal_repair": True,
+                        "consume_revision_retry": False,
+                        "repair_scope": "internal_word_count_compression",
                     },
                     "_trace": trace,
                     "_autonomy": autonomy,
@@ -618,6 +623,11 @@ class AuthorAgent(BaseAgent):
                         "word_target": word_target,
                         "agent": "author",
                         "workflow_run_id": state.get("workflow_run_id"),
+                        # v6.7.8: internal compression failure does not consume
+                        # chapter-level revision retries.
+                        "internal_repair": True,
+                        "consume_revision_retry": False,
+                        "repair_scope": "internal_word_count_compression",
                     },
                     "_trace": trace,
                     "_autonomy": autonomy,
