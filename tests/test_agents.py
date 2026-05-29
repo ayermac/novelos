@@ -1021,6 +1021,56 @@ class TestAuthorAgent:
         assert "压缩后的正文" in chapter["content"]
         assert "明显超出章节目标" not in chapter["content"]
 
+    def test_author_overlong_real_draft_uses_quality_gate_when_compression_fails(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        overlong_content = "这是一段明显超出章节目标的正文。" * 320
+        still_overlong_content = "压缩后仍然明显超出章节目标的正文。" * 320
+
+        class FailingCompressionAuthorLLM(StubLLMProvider):
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                if self._call_count == 0:
+                    self._call_count += 1
+                    return {
+                        "title": "第一章 测试",
+                        "content": overlong_content,
+                        "word_count": len(overlong_content),
+                        "implemented_events": ["事件1"],
+                        "used_plot_refs": ["P001"],
+                    }
+                self._call_count += 1
+                return {
+                    "title": "第一章 测试",
+                    "content": still_overlong_content,
+                    "word_count": len(still_overlong_content),
+                    "implemented_events": ["事件1"],
+                    "used_plot_refs": ["P001"],
+                }
+
+        agent = AuthorAgent(seeded_repo, FailingCompressionAuthorLLM())
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == "scripted"
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert result["quality_gate"]["revision_target"] == "author"
+        assert "字数超标" in result["quality_gate"]["message"]
+        assert result["quality_gate"].get("self_check_fail") is not True
+        assert "repair_fn returned None" not in result["error"]
+
     def test_author_long_target_uses_quality_gate_instead_of_fixed_8000_cap(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
 

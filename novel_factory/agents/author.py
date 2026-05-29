@@ -466,7 +466,7 @@ class AuthorAgent(BaseAgent):
             # failures are handled below by hard validation / quality gates so
             # workflow routing can consume retry attempts instead of jumping
             # straight to human blocking.
-            if issue_types and issue_types.issubset({"death_penalty", "word_count"}):
+            if issue_types and issue_types.issubset({"death_penalty", "word_count", "word_count_overflow"}):
                 pass
             else:
                 reason = autonomy.get("reason") or "Author 自检未通过"
