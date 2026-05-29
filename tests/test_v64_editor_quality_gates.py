@@ -415,11 +415,13 @@ class TestEditorAdvisoryIntegration:
             "llm_mode": "real",
         }
         result = agent.run(state)
-        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
+        # v6.7.9: Fallback can no longer auto-pass; check score cap and advisory inclusion
+        assert result["quality_gate"]["score"] <= 70
 
         review = seeded_repo.get_latest_review("test_proj", 1)
         issues = json.loads(review["issues"])
         assert any("v6.4质量信号" in i for i in issues)
+        assert any("规则兜底" in i for i in issues)
 
 
 class TestEditorAdvisoryDoesNotAffectRouting:

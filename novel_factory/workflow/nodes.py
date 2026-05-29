@@ -1215,12 +1215,45 @@ def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider,
 
 
 def publisher_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
-    """Publish a reviewed chapter."""
+    """Publish a reviewed chapter.
+
+    v6.7.9: Runs narrative continuity gate before publishing.
+    Blocking continuity issues prevent auto-publish.
+    """
     _update_run_node(state, repo, "publisher")
     _log_node_event(state, repo, "publisher", "started", status="running")
 
     project_id = state.get("project_id", "")
     chapter_number = state.get("chapter_number", 0)
+
+    # v6.7.9: Continuity gate before publish
+    try:
+        from ..quality.continuity_gate import evaluate_publish_continuity, SEVERITY_BLOCKING
+
+        continuity_result = evaluate_publish_continuity(repo, project_id, chapter_number)
+        if continuity_result.should_block_publish or continuity_result.severity == SEVERITY_BLOCKING:
+            error_msg = (
+                "发布前连续性检查未通过：" + "; ".join(continuity_result.issues[:3])
+            )
+            _log_node_event(
+                state, repo, "publisher", "failed",
+                status="failed", error_message=error_msg,
+            )
+            _finalize_run(state, repo, "failed", error_msg)
+            return {
+                "error": error_msg,
+                "requires_human": True,
+                "continuity_gate": continuity_result.to_dict(),
+            }
+        if continuity_result.issues:
+            # Advisory/warning: log but do not block
+            _log_node_event(
+                state, repo, "publisher", "completed",
+                status="warning",
+                error_message="发布通过，但存在连续性建议：" + "; ".join(continuity_result.issues[:2]),
+            )
+    except Exception:
+        logger.warning("Publisher: continuity gate failed (best-effort)", exc_info=True)
 
     ok = repo.publish_chapter(project_id, chapter_number)
     if not ok:
