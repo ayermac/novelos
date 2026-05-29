@@ -1299,7 +1299,13 @@ class EditorAgent(BaseAgent):
             "正文把同一角色写成另一个身份、名字、阵营或状态）。\n"
             "2. 事实未被章节提及 = 不算违规，不要报告。\n"
             "3. 伏笔未兑现 = 不算违规。\n"
-            "4. 严格输出 JSON，无额外说明。\n\n"
+            "4. 状态型事实（恐惧、被围住、瘫软、狼狈、被控制等）与后续行为/对话"
+            "的搭配不算矛盾。例如事实为\"赵宏明.状态=被安保围住，极度恐惧\"，"
+            "正文写\"赵宏明强撑着威胁对方\"或\"赵宏明虚张声势地大喊\"属于"
+            "合理的人物反应（恐惧中的强撑/挣扎/伪装），不应标记为矛盾。"
+            "只有当正文明确写出角色自由行动、主动命令安保、或完全忽略被围状态时"
+            "（如\"赵宏明从容指挥安保\"、\"赵宏明大步离开\"），才构成矛盾。\n"
+            "5. 严格输出 JSON，无额外说明。\n\n"
             '输出格式：{"violations": [{"fact_key": "...", "fact_statement": "...", '
             '"violation_text": "章节中矛盾段落(30-80字)", "severity": "blocking"|"warning"}]}'
         )
@@ -1320,6 +1326,62 @@ class EditorAgent(BaseAgent):
         except Exception as e:
             logger.warning("Editor: story_facts compliance check failed: %s", e)
             return result
+
+        # v6.7.8: Deterministic status-fact filter.
+        # Status-type facts (fear, surrounded, paralyzed, bedraggled, controlled, etc.)
+        # combined with actions/dialogue that are *consistent* with that status
+        # (struggling, bluffing, speaking under duress) should never be blocking.
+        #
+        # P1-2: A hard-contradiction guard prevents downgrading when the text
+        # also contains phrases that are unambiguously incompatible with the
+        # status (e.g. "从容指挥安保" while fact says "被围住").
+        _STATUS_FACT_KEYWORDS = (
+            "恐惧", "害怕", "惊恐", "被围", "围住", "包围", "瘫软", "瘫倒",
+            "狼狈", "被控制", "被困", "被擒", "被缚", "被押", "动弹不得",
+            "无法动弹", "极度恐惧", "瑟瑟发抖", "浑身发抖", "双腿发软",
+            "遍体鳞伤", "精疲力竭", "奄奄一息", "伤痕累累",
+        )
+        _CONSISTENT_ACTION_KEYWORDS = (
+            "强撑", "虚张声势", "硬撑", "挣扎", "颤抖", "哆嗦", "勉强",
+            "嘴硬", "色厉内荏", "外强中干", "装作", "假装", "强装",
+            "鼓起勇气", "壮着胆子", "硬着头皮", "故作", "强自",
+            "强行维持", "摇摇欲坠", "声音粗重", "声音干涩", "声音发颤",
+            "强作镇定", "故作镇定", "咬牙撑住", "强打精神", "苦撑",
+            "外厉内荏", "有气无力", "气若游丝",
+        )
+        # Hard-contradiction phrases: if the violation text contains any of
+        # these, the downgrade is blocked regardless of consistent-action hits.
+        _HARD_CONTRADICTION_PHRASES = (
+            "从容指挥", "从容离开", "大步离开", "大步走出", "大步走开",
+            "自由离开", "自由行动", "调动安保", "解除包围", "指挥安保",
+            "下令放行", "转身离去", "起身离去", "扬长而去", "拂袖而去",
+            "泰然自若", "若无其事", "面不改色", "镇定自若", "气定神闲",
+            "安然无恙", "毫发无伤", "从容不迫",
+        )
+
+        def _is_status_fact_consistent(violation: dict) -> bool:
+            """Return True if the violation is a status-fact vs consistent-action.
+
+            Returns False (no downgrade) when:
+            - The fact is not a status-type fact, OR
+            - The text contains a hard-contradiction phrase, OR
+            - The text does not contain any consistent-action keyword.
+            """
+            fact_stmt = str(violation.get("fact_statement") or violation.get("fact_key") or "")
+            violation_text = str(violation.get("violation_text") or "")
+            has_status = any(kw in fact_stmt for kw in _STATUS_FACT_KEYWORDS)
+            if not has_status:
+                return False
+            # Hard-contradiction guard: explicit incompatible behavior blocks downgrade.
+            if any(kw in violation_text for kw in _HARD_CONTRADICTION_PHRASES):
+                return False
+            has_consistent_action = any(kw in violation_text for kw in _CONSISTENT_ACTION_KEYWORDS)
+            return has_consistent_action
+
+        for v in violations:
+            if v.get("severity") == "blocking" and _is_status_fact_consistent(v):
+                v["severity"] = "warning"
+                v["_downgrade_reason"] = "status_fact_with_consistent_action"
 
         blocking = [v for v in violations if v.get("severity") == "blocking"]
         result.checked = True

@@ -367,6 +367,12 @@ def _enforce_token_budget(state: FactoryState, updates: dict[str, Any]) -> dict[
     return None
 
 
+# v6.7.8: Cap on internal repair attempts to prevent infinite loops when
+# agent auto-compression keeps failing.  Exceeding this converts the failure
+# into a chapter-level retry (consumes retry_count) or requires_human.
+MAX_INTERNAL_REPAIR_ATTEMPTS = 2
+
+
 def _handle_retryable_quality_gate(
     state: FactoryState,
     repo: Repository,
@@ -379,6 +385,13 @@ def _handle_retryable_quality_gate(
     recoverable defects. They should consume a revision attempt and route back
     to the responsible agent until the chapter-level retry cap is reached.
     Other errors remain blocking.
+
+    v6.7.8: Quality gate results may carry ``consume_revision_retry=False``
+    to signal an *internal repair* (e.g. author/polisher auto-compression).
+    Internal repairs still trigger revision routing but do **not** increment
+    the chapter-level retry counter and emit ``internal_repair_attempt``
+    instead of ``quality_gate_retry``.  A separate cap
+    (``MAX_INTERNAL_REPAIR_ATTEMPTS``) prevents infinite internal repair loops.
     """
     gate = result.get("quality_gate") or {}
     retryable_gate = (
@@ -390,10 +403,44 @@ def _handle_retryable_quality_gate(
     if not result.get("error") or not retryable_gate:
         return result
 
+    # v6.7.8: internal repairs (e.g. auto-compression) should not consume
+    # chapter-level revision retries.
+    consume_retry = gate.get("consume_revision_retry", True)
+
     project_id = state.get("project_id", "")
     chapter_number = state.get("chapter_number", 0)
     retry_count = repo.get_chapter_retry_count(project_id, chapter_number)
     max_retries = state.get("max_retries", 3)
+
+    # v6.7.8 P1-1: Check internal repair cap before the chapter retry cap,
+    # so that exhausted internal repairs are escalated properly.
+    # Scope by workflow_run_id and revision target so cross-run and cross-agent
+    # repairs are isolated.
+    if not consume_retry:
+        workflow_run_id = state.get("workflow_run_id")
+        repair_agent_id = gate.get("revision_target") or gate.get("agent")
+        internal_count = repo.get_chapter_internal_repair_count(
+            project_id, chapter_number,
+            workflow_run_id=workflow_run_id,
+            agent_id=repair_agent_id,
+        )
+        if internal_count >= MAX_INTERNAL_REPAIR_ATTEMPTS:
+            # Internal repair budget exhausted.  Escalate to a chapter-level
+            # retry so the agent gets a fresh attempt (and retry_count advances).
+            logger.info(
+                "Internal repair cap (%d) reached for %s ch%d — "
+                "escalating to chapter-level retry",
+                MAX_INTERNAL_REPAIR_ATTEMPTS, project_id, chapter_number,
+            )
+            consume_retry = True  # fall through to chapter-level path
+            # Patch the gate so downstream consumers see the escalation.
+            gate["consume_revision_retry"] = True
+            gate.pop("internal_repair", None)
+            gate["message"] = (
+                gate.get("message", "")
+                + f" [内部修复已达上限{MAX_INTERNAL_REPAIR_ATTEMPTS}次，升级为章节重试]"
+            )
+
     if retry_count >= max_retries:
         result["requires_human"] = True
         result["retry_count"] = retry_count
@@ -411,30 +458,58 @@ def _handle_retryable_quality_gate(
     ):
         repo.update_chapter_status(project_id, chapter_number, ChapterStatus.REVISION.value)
 
-    task_id = repo.start_task(
-        project_id, chapter_number, "revise", revision_target,
-        workflow_run_id=state.get("workflow_run_id"),
-    )
-    repo.complete_task(task_id, success=True)
-
     updated = dict(result)
     updated.pop("error", None)
     updated["chapter_status"] = ChapterStatus.REVISION.value
     updated["current_stage"] = "revision"
-    updated["retry_count"] = retry_count + 1
     updated["requires_human"] = False
     updated["retryable_quality_gate"] = True
-    updated.setdefault("_exec_events", []).append({
-        "event_type": "quality_gate_retry",
-        "message": gate.get("message") or "质量门未通过，已进入返修重试",
-        "status": "warning",
-        "payload": {
-            "revision_target": revision_target,
-            "retry_count": retry_count + 1,
-            "max_retries": max_retries,
-            "quality_gate": gate,
-        },
-    })
+
+    if consume_retry:
+        # Chapter-level retry: create a "revise" task (counted by
+        # get_chapter_retry_count) and increment the retry counter.
+        task_id = repo.start_task(
+            project_id, chapter_number, "revise", revision_target,
+            workflow_run_id=state.get("workflow_run_id"),
+        )
+        repo.complete_task(task_id, success=True)
+        updated["retry_count"] = retry_count + 1
+        updated.setdefault("_exec_events", []).append({
+            "event_type": "quality_gate_retry",
+            "message": gate.get("message") or "质量门未通过，已进入返修重试",
+            "status": "warning",
+            "payload": {
+                "revision_target": revision_target,
+                "retry_count": retry_count + 1,
+                "max_retries": max_retries,
+                "quality_gate": gate,
+            },
+        })
+    else:
+        # Internal repair: use "internal_repair" task type (not counted by
+        # get_chapter_retry_count) and preserve current retry counter.
+        repair_scope = gate.get("repair_scope", "internal")
+        task_id = repo.start_task(
+            project_id, chapter_number, "internal_repair", revision_target,
+            workflow_run_id=state.get("workflow_run_id"),
+        )
+        repo.complete_task(task_id, success=True)
+        updated["retry_count"] = retry_count
+        updated.setdefault("_exec_events", []).append({
+            "event_type": "internal_repair_attempt",
+            "message": (
+                f"内部修复({repair_scope})未通过，已重新路由但不消耗章节重试次数"
+            ),
+            "status": "info",
+            "payload": {
+                "revision_target": revision_target,
+                "retry_count": retry_count,
+                "max_retries": max_retries,
+                "quality_gate": gate,
+                "repair_scope": repair_scope,
+                "internal_repair": True,
+            },
+        })
     return updated
 
 

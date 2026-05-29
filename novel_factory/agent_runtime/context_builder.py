@@ -228,26 +228,38 @@ def extract_timeline_constraints(
         subject = str(fact.get("subject") or "")
         attribute = str(fact.get("attribute") or "")
         text = f"{subject}.{attribute}: {value}" if subject or attribute else value
-        if fact_type in ("timeline_event", "time_constraint", "deadline", "appointment"):
+        source_chapter = int(fact.get("source_chapter") or fact.get("last_changed_chapter") or 0)
+        if fact_type in ("timeline_event", "time_constraint", "deadline", "appointment") and _is_current_timeline_constraint(
+            fact_type,
+            text,
+            source_chapter=source_chapter,
+            current_chapter=chapter_number,
+        ):
             items.append(
                 ContextItem(
                     kind="timeline_constraint",
                     text=text,
                     source=f"story_fact:{fact.get('fact_key')}",
                     confidence=float(fact.get("confidence") or 1.0),
-                    chapter_number=int(fact.get("source_chapter") or fact.get("last_changed_chapter") or 0),
+                    chapter_number=source_chapter,
                     priority=1,
                     trusted=True,
                 )
             )
-        elif _TIMELINE_KEYWORDS.search(text):
+        elif _TIMELINE_KEYWORDS.search(text) and _is_current_timeline_constraint(
+            fact_type,
+            text,
+            source_chapter=source_chapter,
+            current_chapter=chapter_number,
+            inferred=True,
+        ):
             items.append(
                 ContextItem(
                     kind="timeline_constraint",
                     text=text,
                     source=f"story_fact:{fact.get('fact_key')}",
                     confidence=float(fact.get("confidence") or 1.0),
-                    chapter_number=int(fact.get("source_chapter") or fact.get("last_changed_chapter") or 0),
+                    chapter_number=source_chapter,
                     priority=2,
                     trusted=True,
                 )
@@ -313,6 +325,64 @@ def extract_timeline_constraints(
             seen.add(key)
             deduped.append(it)
     return deduped
+
+
+_FULFILLED_TIMELINE_MARKERS = (
+    "完成",
+    "离开",
+    "出门",
+    "前往",
+    "抵达",
+    "到达",
+    "进入",
+    "进去",
+    "踏进",
+    "坐下",
+    "落座",
+    "待命",
+    "接到指令",
+    "已",
+)
+
+_STALE_RELATIVE_TIME_MARKERS = ("今晚", "今夜", "当晚", "十分钟前")
+
+
+def _is_current_timeline_constraint(
+    fact_type: str,
+    text: str,
+    *,
+    source_chapter: int,
+    current_chapter: int,
+    inferred: bool = False,
+) -> bool:
+    """Return whether a timeline-like fact should constrain this chapter.
+
+    Historical timestamps are still valuable story facts, but they must not be
+    promoted to current hard constraints after the story has moved past them.
+    Otherwise an old "left the office at 22:05" fact can overpower the latest
+    chapter seam and make a revision jump backward in time.
+    """
+    fact_type = str(fact_type or "").lower()
+    text = str(text or "")
+
+    if source_chapter and source_chapter < max(1, current_chapter - 1):
+        if any(marker in text for marker in _STALE_RELATIVE_TIME_MARKERS):
+            return False
+        if any(marker in text for marker in _FULFILLED_TIMELINE_MARKERS):
+            return False
+
+    if fact_type in {"deadline", "appointment", "time_constraint"}:
+        return True
+
+    if source_chapter and source_chapter < max(1, current_chapter - 1):
+        return False
+
+    if fact_type == "timeline_event" or inferred:
+        if any(marker in text for marker in _FULFILLED_TIMELINE_MARKERS):
+            return False
+        return True
+
+    return True
 
 
 # ── Builder ──────────────────────────────────────────────────────

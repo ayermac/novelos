@@ -393,7 +393,7 @@ def _build_recovery(
             "safe": True,
             "note": "回到 planned，完整重跑",
         })
-    elif run_data and run_data.get("status") == "completed" and chapter_status in ("drafted", "polished", "review"):
+    elif run_data and run_data.get("status") == "completed" and chapter_status in ("scripted", "drafted", "polished", "review"):
         recommended_action = "generate"
         reason = f"本次运行没有到达发布终态，章节仍停在 {chapter_status}，可从当前状态继续生成。"
         safe_actions.extend([
