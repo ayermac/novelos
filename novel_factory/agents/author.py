@@ -314,6 +314,9 @@ class AuthorAgent(BaseAgent):
             wc_passed, wc_msg = check_word_count_quality_gate(body_content, wt, "author")
             if not wc_passed:
                 issues.append({"type": "word_count", "message": wc_msg})
+            upper_passed, upper_msg = check_word_count_upper_gate(body_content, wt, "author")
+            if not upper_passed:
+                issues.append({"type": "word_count_overflow", "message": upper_msg})
 
             # v6.4.1: Show-don't-tell heuristic (warning only)
             # Scan only narrative text, excluding dialogue lines
@@ -371,7 +374,7 @@ class AuthorAgent(BaseAgent):
                 )
 
             repairable = any(
-                i["type"] in ("word_count", "death_penalty", "scene_beat_coverage")
+                i["type"] in ("word_count", "word_count_overflow", "death_penalty", "scene_beat_coverage")
                 for i in issues
             )
             return SelfCheckResult(
@@ -391,6 +394,11 @@ class AuthorAgent(BaseAgent):
                 expanded = self._try_expand_short_output(state, out, wc_msg)
                 if expanded is not None:
                     return {"output": expanded}
+            upper_passed, upper_msg = check_word_count_upper_gate(body_content, wt, "author")
+            if not upper_passed:
+                compressed = self._try_compress_overlong_output(state, out, upper_msg)
+                if compressed is not None:
+                    return {"output": compressed}
             scene_coverage_issues = [
                 issue for issue in check.issues
                 if issue.get("type") == "scene_beat_coverage"
@@ -555,25 +563,65 @@ class AuthorAgent(BaseAgent):
             body_content, word_target, "author"
         )
         if not upper_gate_passed:
-            logger.warning("Author: word count upper gate failed: %s", upper_gate_msg)
-            from ..validators.chapter_checker import count_words
-            actual_wc = count_words(body_content)
-            return {
-                "error": f"字数质量门未通过: {upper_gate_msg}",
-                "chapter_status": state.get("chapter_status"),
-                "quality_gate": {
-                    "pass": False,
-                    "revision_target": "author",
-                    "word_count_fail": True,
-                    "message": upper_gate_msg,
-                    "actual_word_count": actual_wc,
-                    "word_target": word_target,
-                    "agent": "author",
-                    "workflow_run_id": state.get("workflow_run_id"),
-                },
-                "_trace": trace,
-                "_autonomy": autonomy,
-            }
+            compressed = self._try_compress_overlong_output(state, output, upper_gate_msg)
+            if compressed is not None:
+                output = compressed
+                self.validate_output(output.model_dump())
+                body_content = strip_chapter_heading(output.content, chapter_number, output.title)
+                word_gate_passed, word_gate_msg = check_word_count_quality_gate(
+                    body_content, word_target, "author"
+                )
+                upper_gate_passed, upper_gate_msg = check_word_count_upper_gate(
+                    body_content, word_target, "author"
+                )
+                if word_gate_passed and upper_gate_passed:
+                    exec_events.append({
+                        "event_type": "word_count_compressed",
+                        "message": "执笔稿超出字数上限，已自动压缩后继续",
+                        "status": "info",
+                        "payload": {"agent": "author", "word_target": word_target},
+                    })
+
+            if not word_gate_passed:
+                logger.warning("Author: word count quality gate failed after compression: %s", word_gate_msg)
+                from ..validators.chapter_checker import count_words
+                actual_wc = count_words(body_content)
+                return {
+                    "error": f"字数质量门未通过: {word_gate_msg}",
+                    "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "author",
+                        "word_count_fail": True,
+                        "message": word_gate_msg,
+                        "actual_word_count": actual_wc,
+                        "word_target": word_target,
+                        "agent": "author",
+                        "workflow_run_id": state.get("workflow_run_id"),
+                    },
+                    "_trace": trace,
+                    "_autonomy": autonomy,
+                }
+            if not upper_gate_passed:
+                logger.warning("Author: word count upper gate failed: %s", upper_gate_msg)
+                from ..validators.chapter_checker import count_words
+                actual_wc = count_words(body_content)
+                return {
+                    "error": f"字数质量门未通过: {upper_gate_msg}",
+                    "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "author",
+                        "word_count_fail": True,
+                        "message": upper_gate_msg,
+                        "actual_word_count": actual_wc,
+                        "word_target": word_target,
+                        "agent": "author",
+                        "workflow_run_id": state.get("workflow_run_id"),
+                    },
+                    "_trace": trace,
+                    "_autonomy": autonomy,
+                }
 
         # v6.1.1: Emit revision diff event for revision chapters
         if is_revision and chapter:
@@ -603,11 +651,16 @@ class AuthorAgent(BaseAgent):
             from ..quality.version_regression_guard import VersionRegressionGuard
 
             revision_review = revision_review or {}
+            system_compressed = any(
+                ev.get("event_type") == "word_count_compressed"
+                for ev in exec_events
+            )
             reject, reason = VersionRegressionGuard.should_reject_new_draft(
                 chapter.get("content", "") or "",
                 output.content,
                 self._get_word_target(state),
                 editor_suggestions=revision_review.get("suggestions", []),
+                allow_system_compression=system_compressed,
             )
             if reject:
                 self.repo.save_artifact(
@@ -762,6 +815,60 @@ class AuthorAgent(BaseAgent):
         except Exception as e:
             logger.warning("Author: expand-short-output retry failed: %s", e)
             return None
+
+    def _try_compress_overlong_output(
+        self,
+        state: FactoryState,
+        output: AuthorOutput,
+        upper_gate_msg: str,
+    ) -> AuthorOutput | None:
+        """Ask the LLM once to compress an overlong complete draft."""
+        if state.get("llm_mode") != "real":
+            return None
+
+        instruction = self._get_instruction(state)
+        project = self.repo.get_project(state["project_id"])
+        word_target = derive_word_target(instruction, project)
+        minimum_required = int(word_target * 0.85)
+        maximum_allowed = max(word_target + 1200, int(word_target * 1.6))
+
+        messages = [
+            {"role": "system", "content": AUTHOR_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"第{state['chapter_number']}章正文超过字数硬闸门：{upper_gate_msg}。\n"
+                    f"请压缩正文到 {minimum_required} 到 {maximum_allowed} 字符之间，"
+                    "必须保留已实现关键事件、伏笔、事实、角色动机和章末钩子。"
+                    "只删除重复铺陈、冗余心理解释、重复环境描写和同义反复，"
+                    "不要新增事件，不要改成摘要。\n"
+                    "必须返回完整 JSON，字段仍为 title/content/word_count/"
+                    "implemented_events/used_plot_refs。word_count 可填写估算值，"
+                    "系统会以 content 实际长度为准。\n\n"
+                    f"【当前标题】\n{output.title}\n\n"
+                    f"【当前正文】\n{output.content}\n\n"
+                    f"【已实现事件】\n{json.dumps(output.implemented_events, ensure_ascii=False)}\n"
+                    f"【已使用伏笔】\n{json.dumps(output.used_plot_refs, ensure_ascii=False)}"
+                ),
+            },
+        ]
+
+        try:
+            raw = self._invoke_json(messages, schema=AuthorOutput)
+            compressed = AuthorOutput(**normalize_declared_word_count(raw))
+            compressed = self._sanitize_output(compressed, state)
+            self.validate_output(compressed.model_dump())
+            body_content = strip_chapter_heading(
+                compressed.content, state["chapter_number"], compressed.title
+            )
+            lower_passed, _ = check_word_count_quality_gate(body_content, word_target, "author")
+            upper_passed, _ = check_word_count_upper_gate(body_content, word_target, "author")
+            coverage_issues = self._scene_beat_coverage_issues(state, compressed.content)
+            if lower_passed and upper_passed and not coverage_issues:
+                return compressed
+        except Exception as e:
+            logger.warning("Author: compress-overlong-output retry failed: %s", e)
+        return None
 
     _SCENE_TERM_STOPWORDS = {
         "场景", "目标", "冲突", "转折", "钩子", "正文", "本章", "章节", "最后",
@@ -1278,6 +1385,7 @@ class AuthorAgent(BaseAgent):
         chunks = list(chunk_items(beats, size=3))
         total_chunks = len(chunks)
         total_segment_beats = max(1, sum(len(chunk) for chunk in chunks))
+        chapter_upper_bound = max(effective_target + 800, int(effective_target * 1.35))
         per_call_retries = None
 
         compact_context = self._build_plain_text_context(state, context)
@@ -1313,9 +1421,9 @@ class AuthorAgent(BaseAgent):
             segment_target = max(1, int(round(effective_target * segment_weight)))
             segment_minimum = max(1, int(round(minimum_required * segment_weight)))
             segment_upper_bound = max(
-                segment_target + 250,
-                segment_minimum + 250,
-                int(segment_target * 1.6),
+                segment_target + 150,
+                segment_minimum + 150,
+                int(round(chapter_upper_bound * segment_weight)),
             )
             beat_lines = "\n".join(
                 f"  {b['sequence']}. 目标: {b.get('scene_goal', '')} | 冲突: {b.get('conflict', '')} "

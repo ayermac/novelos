@@ -17,7 +17,12 @@ from ..workflow.execution_events import (
 )
 from ..models.schemas import PolisherOutput
 from ..models.state import ChapterStatus, FactoryState
-from ..validators.chapter_checker import validate_chapter_output, check_word_count_quality_gate, derive_word_target
+from ..validators.chapter_checker import (
+    validate_chapter_output,
+    check_word_count_quality_gate,
+    check_word_count_upper_gate,
+    derive_word_target,
+)
 from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_critical_violation
 from ..validators.fact_lock import check_fact_integrity, extract_fact_lock
 from ..skills.registry import SkillRegistry
@@ -429,6 +434,90 @@ class PolisherAgent(BaseAgent):
                 },
             }
 
+        upper_gate_passed, upper_gate_msg = check_word_count_upper_gate(
+            polished_content, word_target, "polisher"
+        )
+        if not upper_gate_passed:
+            compressed_content = self._try_compress_overlong_polish(
+                state=state,
+                content=polished_content,
+                word_target=word_target,
+                upper_gate_msg=upper_gate_msg,
+            )
+            if compressed_content:
+                compressed_content = ensure_chapter_heading(
+                    compressed_content, chapter_title, chapter_number
+                )
+                if fact_lock:
+                    integrity = check_fact_integrity(original_content, compressed_content, fact_lock)
+                    if integrity.risk != "none":
+                        missing = [f.content for f in integrity.missing_facts]
+                        changed = [f.content for f in integrity.changed_facts]
+                        logger.error(
+                            "Polisher: compressed output fact lock verification FAILED — "
+                            "missing=%s changed=%s risk=%s",
+                            missing, changed, integrity.risk,
+                        )
+                        return {
+                            "error": (
+                                f"Polisher: fact lock verification failed after compression "
+                                f"(risk={integrity.risk}, "
+                                f"missing={missing}, changed={changed})"
+                            ),
+                            "chapter_status": state.get("chapter_status"),
+                        }
+                polished_content = compressed_content
+                upper_gate_passed, upper_gate_msg = check_word_count_upper_gate(
+                    polished_content, word_target, "polisher"
+                )
+                exec_events.append({
+                    "event_type": "word_count_compressed",
+                    "message": "润色稿超出字数上限，已自动压缩后继续",
+                    "status": "info",
+                    "payload": {"agent": "polisher", "word_target": word_target},
+                })
+
+            if not upper_gate_passed:
+                logger.warning("Polisher: word count upper gate failed: %s", upper_gate_msg)
+                from ..validators.chapter_checker import count_words
+                actual_wc = count_words(polished_content)
+                return {
+                    "error": f"字数质量门未通过: {upper_gate_msg}",
+                    "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "polisher",
+                        "word_count_fail": True,
+                        "message": upper_gate_msg,
+                        "actual_word_count": actual_wc,
+                        "word_target": word_target,
+                        "agent": "polisher",
+                        "workflow_run_id": state.get("workflow_run_id"),
+                    },
+                }
+
+        lower_gate_passed, lower_gate_msg = check_word_count_quality_gate(
+            polished_content, word_target, "polisher"
+        )
+        if not lower_gate_passed:
+            logger.warning("Polisher: word count quality gate failed after compression: %s", lower_gate_msg)
+            from ..validators.chapter_checker import count_words
+            actual_wc = count_words(polished_content)
+            return {
+                "error": f"字数质量门未通过: {lower_gate_msg}",
+                "chapter_status": state.get("chapter_status"),
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": "polisher",
+                    "word_count_fail": True,
+                    "message": lower_gate_msg,
+                    "actual_word_count": actual_wc,
+                    "word_target": word_target,
+                    "agent": "polisher",
+                    "workflow_run_id": state.get("workflow_run_id"),
+                },
+            }
+
         # Apply skills from config (before_save stage)
         if self.skill_registry:
             project_skill_overrides = self._get_project_skill_overrides(project_id)
@@ -511,11 +600,16 @@ class PolisherAgent(BaseAgent):
             from ..quality.version_regression_guard import VersionRegressionGuard
 
             revision_review = revision_review or {}
+            system_compressed = any(
+                ev.get("event_type") == "word_count_compressed"
+                for ev in exec_events
+            )
             reject, reason = VersionRegressionGuard.should_reject_new_draft(
                 original_content,
                 polished_content,
                 word_target,
                 editor_suggestions=revision_review.get("suggestions", []),
+                allow_system_compression=system_compressed,
             )
             if reject:
                 self.repo.save_artifact(
@@ -888,6 +982,59 @@ class PolisherAgent(BaseAgent):
             deferred_quality_findings=[],
             quality_risk_note=None,
         )
+
+    def _try_compress_overlong_polish(
+        self,
+        state: FactoryState,
+        content: str,
+        word_target: int,
+        upper_gate_msg: str,
+    ) -> str | None:
+        """Ask the model once to compress an overlong polished chapter."""
+        if state.get("llm_mode") != "real":
+            return None
+
+        maximum_allowed = max(word_target + 1200, int(word_target * 1.6))
+        chapter_number = state["chapter_number"]
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是网文工厂的润色编辑。请只输出压缩后的完整正文纯文本，"
+                    "不要输出 JSON、字段名、Markdown、解释或摘要。"
+                    "必须保留剧情事实、关键事件、伏笔、角色动机和章末钩子；"
+                    "只删除重复铺陈、冗余心理解释、重复环境描写和同义反复，不新增事件。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"第{chapter_number}章润色稿超过字数上限：{upper_gate_msg}。\n"
+                    f"请将正文压缩到 {word_target} 到 {maximum_allowed} 字符之间，"
+                    "保持小说正文完整、自然、有章末钩子，不要改成摘要。\n\n"
+                    f"【当前正文】\n{content}"
+                ),
+            },
+        ]
+
+        try:
+            compressed = self._invoke_text_for_polisher(
+                messages,
+                temperature=0.45,
+                max_tokens=max(2048, min(6144, int(maximum_allowed * 1.25))),
+                max_retries=None,
+                request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
+            ).strip()
+            compressed = self._coerce_plain_text_content(compressed)
+            if not compressed:
+                return None
+            lower_passed, _ = check_word_count_quality_gate(compressed, word_target, "polisher")
+            upper_passed, _ = check_word_count_upper_gate(compressed, word_target, "polisher")
+            if lower_passed and upper_passed:
+                return compressed
+        except Exception as e:
+            logger.warning("Polisher: compress-overlong retry failed: %s", e)
+        return None
 
     def _invoke_text_for_polisher(
         self,

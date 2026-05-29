@@ -258,6 +258,23 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
             recommended_action="必须返修或人工介入",
         )
 
+    # Effective priority = LLM priority + quality priority + seam blocking
+    effective_priority = p.priority_issue_count + p.quality_priority_count + p.seam_blocking_count
+
+    # Near-miss plateau guard: after at least one retry, a 78-79 review with
+    # no actionable priority/blocking issue should not loop forever. Treat it
+    # as publishable with advisory notes; concrete priority issues still route
+    # to revision/human_review normally.
+    if p.score >= 78 and p.retry_count > 0 and effective_priority == 0:
+        return EditorDecision(
+            pass_=True,
+            revision_needed=False,
+            category="advisory",
+            decision_type="advisory_pass",
+            reason="分数 78-79 且已返修，未发现可执行高优先级问题，转为 advisory pass",
+            recommended_action="进入 awaiting_publish with warnings，不再自动返修",
+        )
+
     # Rule 2: Max retries reached
     if p.retry_count >= p.max_retries:
         return EditorDecision(
@@ -267,9 +284,6 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
             reason=f"已达最大返修次数 ({p.retry_count}/{p.max_retries})",
             recommended_action="停止自动返修，进入人工审核",
         )
-
-    # Effective priority = LLM priority + quality priority + seam blocking
-    effective_priority = p.priority_issue_count + p.quality_priority_count + p.seam_blocking_count
 
     # Rule 3: score >= 85
     if p.score >= 85:

@@ -528,6 +528,42 @@ class TestScore80to84Boundary:
         assert d.pass_ is False
         assert d.category == "revision"
 
+    def test_79_after_retry_without_priority_is_advisory_pass(self):
+        """Near-miss reviews should not loop forever when no concrete priority issue remains."""
+        from novel_factory.quality.editor_strategy import EditorPolicyInput, classify_editor_result
+        p = EditorPolicyInput(score=79, pass_=False, advisory_issue_count=2, retry_count=1, max_retries=3)
+        d = classify_editor_result(p)
+        assert d.pass_ is True
+        assert d.category == "advisory"
+        assert d.decision_type == "advisory_pass"
+        assert d.revision_needed is False
+
+    def test_79_after_retry_with_priority_still_revises(self):
+        """Concrete priority issues at 79 must still route to revision."""
+        from novel_factory.quality.editor_strategy import EditorPolicyInput, classify_editor_result
+        p = EditorPolicyInput(score=79, pass_=False, priority_issue_count=1, retry_count=1, max_retries=3)
+        d = classify_editor_result(p)
+        assert d.pass_ is False
+        assert d.category == "revision"
+        assert d.revision_needed is True
+
+    def test_79_after_max_retry_without_priority_avoids_human_review_plateau(self):
+        """The plateau guard should run before max-retry escalation for advisory-only 79."""
+        from novel_factory.quality.editor_strategy import EditorPolicyInput, classify_editor_result
+        p = EditorPolicyInput(score=79, pass_=False, advisory_issue_count=1, retry_count=3, max_retries=3)
+        d = classify_editor_result(p)
+        assert d.pass_ is True
+        assert d.category == "advisory"
+        assert d.decision_type == "advisory_pass"
+
+    def test_79_after_max_retry_with_priority_goes_human_review(self):
+        """Max retry escalation still applies when 79 has concrete priority issues."""
+        from novel_factory.quality.editor_strategy import EditorPolicyInput, classify_editor_result
+        p = EditorPolicyInput(score=79, pass_=False, priority_issue_count=1, retry_count=3, max_retries=3)
+        d = classify_editor_result(p)
+        assert d.pass_ is False
+        assert d.category == "human_review"
+
     def test_quality_advisory_alone_no_revision(self):
         """quality_advisory_count alone must NOT cause revision for score >= 80."""
         from novel_factory.quality.editor_strategy import EditorPolicyInput, classify_editor_result

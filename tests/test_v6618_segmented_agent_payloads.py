@@ -599,7 +599,7 @@ def test_polisher_real_mode_polishes_long_text_in_chunks(monkeypatch, tmp_path):
                 "max_retries": kwargs.get("max_retries"),
             })
             seg = len([c for c in calls if c["type"] == "invoke_text"])
-            return f"润色段{seg}：优化后的段落内容更加流畅自然。" * 300
+            return f"润色段{seg}：优化后的段落内容更加流畅自然。" * 90
 
         def invoke_json(self, messages, **kwargs):
             raise RuntimeError("JSON not expected")

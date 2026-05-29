@@ -942,7 +942,7 @@ class TestAuthorAgent:
     def test_author_rejects_overlong_draft_before_save(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
 
-        overlong_content = "这是一段明显超出章节目标的正文。" * 260
+        overlong_content = "这是一段明显超出章节目标的正文。" * 320
         stub = StubLLMProvider([{
             "title": "第一章 测试",
             "content": overlong_content,
@@ -972,6 +972,54 @@ class TestAuthorAgent:
         assert "字数超标" in result["quality_gate"]["message"]
         chapter = seeded_repo.get_chapter("test_proj", 1)
         assert not chapter.get("content")
+
+    def test_author_compresses_overlong_real_draft_before_save(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        overlong_content = "这是一段明显超出章节目标的正文。" * 320
+        compressed_content = "压缩后的正文保留关键事件、伏笔和章末钩子。" * 130
+
+        class CompressingAuthorLLM(StubLLMProvider):
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                if self._call_count == 0:
+                    self._call_count += 1
+                    return {
+                        "title": "第一章 测试",
+                        "content": overlong_content,
+                        "word_count": len(overlong_content),
+                        "implemented_events": ["事件1"],
+                        "used_plot_refs": ["P001"],
+                    }
+                self._call_count += 1
+                return {
+                    "title": "第一章 测试",
+                    "content": compressed_content,
+                    "word_count": len(compressed_content),
+                    "implemented_events": ["事件1"],
+                    "used_plot_refs": ["P001"],
+                }
+
+        agent = AuthorAgent(seeded_repo, CompressingAuthorLLM())
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "压缩后的正文" in chapter["content"]
+        assert "明显超出章节目标" not in chapter["content"]
 
     def test_author_long_target_uses_quality_gate_instead_of_fixed_8000_cap(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
@@ -1607,6 +1655,133 @@ class TestPolisherAgent:
         assert llm.text_calls == 1
         assert llm.last_timeout == 300
 
+    def test_polisher_rejects_overlong_output_before_save(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        base_content = "草稿正文。" * 900
+        overlong_content = "润色后正文明显过长。" * 900
+        seeded_repo.save_chapter_content("test_proj", 1, base_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET word_target=? WHERE project_id=? AND chapter_number=?",
+            (3000, "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        stub = StubLLMProvider([{
+            "content": overlong_content,
+            "fact_change_risk": "none",
+            "changed_scope": ["sentence"],
+            "summary": "润色完成",
+        }])
+
+        result = PolisherAgent(seeded_repo, stub).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == "drafted"
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert result["quality_gate"]["revision_target"] == "polisher"
+        assert "字数超标" in result["quality_gate"]["message"]
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["content"].startswith("草稿正文。")
+        assert "润色后正文明显过长" not in chapter["content"]
+
+    def test_polisher_compresses_overlong_real_output_before_save(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        base_content = "草稿正文。" * 900
+        overlong_content = "润色后正文明显过长。" * 900
+        compressed_content = "压缩后的润色正文仍保留关键事件和章末钩子。" * 130
+        seeded_repo.save_chapter_content("test_proj", 1, base_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET word_target=? WHERE project_id=? AND chapter_number=?",
+            (3000, "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        class CompressingPolisherLLM(StubLLMProvider):
+            config = type("Config", (), {"max_tokens": 4096})()
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None, **kwargs) -> str:
+                if self._call_count == 0:
+                    self._call_count += 1
+                    return overlong_content
+                self._call_count += 1
+                return compressed_content
+
+        result = PolisherAgent(seeded_repo, CompressingPolisherLLM()).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == ChapterStatus.POLISHED.value
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "压缩后的润色正文" in chapter["content"]
+        assert "润色后正文明显过长" not in chapter["content"]
+
+    def test_polisher_keeps_quality_gate_when_compression_still_overlong(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        base_content = "草稿正文。" * 900
+        overlong_content = "润色后正文明显过长。" * 900
+        still_overlong_content = "压缩后仍然明显过长。" * 900
+        seeded_repo.save_chapter_content("test_proj", 1, base_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET word_target=? WHERE project_id=? AND chapter_number=?",
+            (3000, "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        class FailingCompressionPolisherLLM(StubLLMProvider):
+            config = type("Config", (), {"max_tokens": 4096})()
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None, **kwargs) -> str:
+                if self._call_count == 0:
+                    self._call_count += 1
+                    return overlong_content
+                self._call_count += 1
+                return still_overlong_content
+
+        result = PolisherAgent(seeded_repo, FailingCompressionPolisherLLM()).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == "drafted"
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert result["quality_gate"]["revision_target"] == "polisher"
+        assert "字数超标" in result["quality_gate"]["message"]
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["content"].startswith("草稿正文。")
+        assert "压缩后仍然明显过长" not in chapter["content"]
+
     def test_polisher_v6_context_preserves_complete_current_draft_when_aux_context_is_large(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent
 
@@ -1864,6 +2039,69 @@ class TestEditorAgent:
         assert review["pass"] == 0
         assert review["revision_target"] == "author"
         assert "章间衔接" in review["issues"]
+
+    def test_editor_accepts_same_venue_seam_with_natural_rewording(self, seeded_repo):
+        from novel_factory.agents.editor import EditorAgent
+
+        previous = (
+            "苏婉清看向林辰，声音不高：'还有几位老朋友，听说您在这儿，已经到楼下了。'"
+            "她侧身示意，赵家今晚在云澜预订的宴厅里，所有人都屏住了呼吸。"
+        )
+        seeded_repo.save_chapter_content("test_proj", 1, previous, "第一章 测试")
+        seeded_repo.save_chapter_state(
+            "test_proj",
+            1,
+            {
+                "新增事实": ["赵家今晚在云澜预订的宴厅被苏婉清接管"],
+                "悬念": ["几位老朋友已到云澜楼下"],
+            },
+            "第1章状态卡",
+        )
+
+        opening = (
+            "林辰推开云澜宴会厅那扇沉重的鎏金双开门时，里面正好一静。"
+            "他径直走到正中央那张主位前坐下，苏婉清立在侧后方半步。"
+            "赵天宇和柳梦瑶周围的人群像退潮般让开，压低声音议论着楼下刚到的客人。"
+        )
+        current = "第二章 旧友压场\n" + opening * 35
+        conn = seeded_repo._conn()
+        conn.execute(
+            "INSERT INTO chapters (project_id, chapter_number, title, status, content, word_count) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("test_proj", 2, "第二章 旧友压场", "polished", current, len(current)),
+        )
+        conn.execute(
+            "INSERT INTO instructions (project_id, chapter_number, objective, key_events, ending_hook, word_target, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'active')",
+            ("test_proj", 2, "揭晓老朋友身份", '["老朋友登场"]', "新的反扑", 2500),
+        )
+        conn.commit()
+        conn.close()
+
+        stub = StubLLMProvider([{
+            "pass": True,
+            "score": 92,
+            "scores": {"setting": 23, "logic": 23, "poison": 18, "text": 14, "pacing": 14},
+            "issues": [],
+            "suggestions": [],
+            "revision_target": None,
+            "state_card": {"新增事实": ["林辰在云澜宴会厅等老朋友登场"]},
+        }])
+        agent = EditorAgent(seeded_repo, stub)
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 2,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
+        assert result["quality_gate"]["pass"] is True
+        assert "chapter_seam_fail" not in result["quality_gate"]
 
     def test_editor_fail_routes_to_revision(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent
