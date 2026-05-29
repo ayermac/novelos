@@ -658,6 +658,42 @@ class AuthorAgent(BaseAgent):
         # v6.6.0: Do not let a revision candidate overwrite a stronger
         # existing draft when it clearly regresses.
         if is_revision and chapter and chapter.get("content"):
+            reject, reason = self._should_reject_revision_continuity_regression(
+                current_content=chapter.get("content", "") or "",
+                candidate_content=output.content,
+                chapter_number=chapter_number,
+                current_title=chapter.get("title"),
+                candidate_title=output.title,
+                revision_review=revision_review or {},
+            )
+            if reject:
+                self.repo.save_artifact(
+                    project_id,
+                    chapter_number,
+                    "author",
+                    "rejected_regression",
+                    content_json={
+                        "title": output.title,
+                        "content": output.content,
+                        "rejection_reason": reason,
+                        "revision_source_review_id": (revision_review or {}).get("review_id"),
+                    },
+                    workflow_run_id=state.get("workflow_run_id"),
+                )
+                return {
+                    "error": f"返修稿退化，已保留上一版本：{reason}",
+                    "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "author",
+                        "version_regression": True,
+                        "revision_continuity_regression": True,
+                        "message": reason,
+                    },
+                    "_revision_review": revision_review,
+                    "_exec_events": exec_events,
+                }
+
             from ..quality.version_regression_guard import VersionRegressionGuard
 
             revision_review = revision_review or {}
@@ -760,6 +796,77 @@ class AuthorAgent(BaseAgent):
             "_autonomy": autonomy,
             "_exec_events": exec_events,
         }
+
+    @staticmethod
+    def _should_reject_revision_continuity_regression(
+        *,
+        current_content: str,
+        candidate_content: str,
+        chapter_number: int,
+        current_title: str | None,
+        candidate_title: str | None,
+        revision_review: dict[str, Any] | None,
+    ) -> tuple[bool, str]:
+        """Reject revision drafts that reintroduce an explicitly flagged bad opening."""
+        review_text = "\n".join(
+            str(item)
+            for item in [
+                *((revision_review or {}).get("issues") or []),
+                *((revision_review or {}).get("suggestions") or []),
+            ]
+        )
+        if not any(marker in review_text for marker in ("章首", "开头", "章间衔接", "时空断裂", "直接从")):
+            return False, ""
+
+        current_body = strip_chapter_heading(current_content, chapter_number, current_title).strip()
+        candidate_body = strip_chapter_heading(candidate_content, chapter_number, candidate_title).strip()
+        if not current_body or not candidate_body:
+            return False, ""
+
+        candidate_opening = candidate_body[:900]
+        current_opening = current_body[:900]
+
+        required_anchor_groups: list[tuple[str, ...]] = []
+        if "宴会厅" in review_text and "主位" in review_text:
+            required_anchor_groups.append(("宴会厅", "主位"))
+        if "云澜" in review_text and "会馆" in review_text and "主位" in review_text:
+            required_anchor_groups.append(("云澜", "主位"))
+
+        stale_opening_terms: list[str] = []
+        if any(marker in review_text for marker in ("出租车", "倒叙", "离开公司", "时空断裂")):
+            stale_opening_terms.extend([
+                "离开公司",
+                "公司走廊",
+                "叫了车",
+                "车上",
+                "下车步行",
+                "会馆正门",
+                "黑西装保安",
+                "内部包场",
+            ])
+
+        misses_required_anchor = bool(required_anchor_groups) and not any(
+            all(term in candidate_opening for term in group)
+            for group in required_anchor_groups
+        )
+        reintroduces_stale_opening = any(term in candidate_opening for term in stale_opening_terms)
+
+        if misses_required_anchor and reintroduces_stale_opening:
+            return (
+                True,
+                "返修稿开头重新回到 Editor 已指出的旧时空线，未按退回意见从当前场景接笔",
+            )
+
+        if required_anchor_groups and any(
+            all(term in current_opening for term in group)
+            for group in required_anchor_groups
+        ) and misses_required_anchor:
+            return (
+                True,
+                "返修稿丢失当前保留稿的章首连续性锚点，疑似使用了旧稿作为底稿",
+            )
+
+        return False, ""
 
     def validate_output(self, output: dict) -> None:
         AuthorOutput(**output)
@@ -901,6 +1008,35 @@ class AuthorAgent(BaseAgent):
                 terms.append(token)
         return terms
 
+    @staticmethod
+    def _is_generic_ending_hook(text: Any) -> bool:
+        """Return true for planner placeholder hooks with no concrete content.
+
+        These hooks describe the function of an ending ("leave a new clue")
+        rather than a literal story element. Requiring their exact terms in the
+        tail creates false retry loops; concrete final scene beat checks still
+        enforce that the chapter lands on a real hook.
+        """
+        raw = re.sub(r"[\s，。！？、；：,.!?;:]+", "", str(text or ""))
+        if not raw:
+            return False
+        generic_hooks = {
+            "悬念",
+            "新悬念",
+            "留下悬念",
+            "留下新悬念",
+            "留下线索",
+            "留下新线索",
+            "留下新的线索",
+            "留下未解线索",
+            "留下新的未解线索",
+            "新的未解线索",
+            "留下一条新线索",
+            "留下可继续追踪的钩子",
+            "留下新的可追踪线索",
+        }
+        return raw in generic_hooks
+
     def _scene_beat_coverage_issues(
         self,
         state: FactoryState,
@@ -946,8 +1082,13 @@ class AuthorAgent(BaseAgent):
             })
 
         instruction = self._get_instruction(state) or {}
-        ending_terms = self._scene_terms(instruction.get("ending_hook", ""))
-        if ending_terms and not any(term in tail for term in ending_terms[:8]):
+        ending_hook = instruction.get("ending_hook", "")
+        ending_terms = self._scene_terms(ending_hook)
+        if (
+            ending_terms
+            and not self._is_generic_ending_hook(ending_hook)
+            and not any(term in tail for term in ending_terms[:8])
+        ):
             issues.append({
                 "type": "scene_beat_coverage",
                 "message": f"正文尾段缺少章节 ending_hook: {', '.join(ending_terms[:5])}",

@@ -5,11 +5,13 @@ Works with OpenAI, OpenRouter, 火山方舟 and any OpenAI-compatible API.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import time
 from typing import Any
 
+import httpx
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -133,13 +135,16 @@ class OpenAICompatibleProvider(LLMProvider):
 
     def _build_client(self, request_timeout_seconds: int | None = None) -> BaseChatModel:
         """Build a ChatOpenAI client, optionally using a per-call timeout."""
+        timeout = request_timeout_seconds or self.config.request_timeout_seconds
         return ChatOpenAI(
             base_url=self.config.base_url,
             api_key=self.config.api_key or "sk-placeholder",
             model=self.config.model,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
-            request_timeout=request_timeout_seconds or self.config.request_timeout_seconds,
+            request_timeout=timeout,
+            http_client=httpx.Client(timeout=timeout, trust_env=False),
+            http_async_client=httpx.AsyncClient(timeout=timeout, trust_env=False),
             # Keep retry policy centralized in _invoke_with_retry so provider
             # behavior is predictable across OpenAI-compatible backends.
             max_retries=0,
@@ -356,6 +361,34 @@ class OpenAICompatibleProvider(LLMProvider):
         else:
             raise LLMError(f"LLM 调用失败: {safe_error}") from error
 
+    def _invoke_client_with_hard_timeout(
+        self,
+        client: BaseChatModel,
+        lc_messages: list,
+        timeout_seconds: int,
+        **kwargs,
+    ) -> Any:
+        """Invoke the SDK client with a wall-clock timeout guard.
+
+        Some OpenAI-compatible SDK paths can outlive their configured HTTPX
+        timeout in desktop environments. Keep workflow runs bounded even when
+        the underlying transport fails to return.
+        """
+        if timeout_seconds <= 0:
+            return client.invoke(lc_messages, **kwargs)
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(client.invoke, lc_messages, **kwargs)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError as error:
+            future.cancel()
+            raise LLMTimeoutError(
+                f"LLM 响应超时（>{timeout_seconds}秒），请稍后重试"
+            ) from error
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
     def _invoke_with_retry(
         self,
         lc_messages: list,
@@ -415,7 +448,12 @@ class OpenAICompatibleProvider(LLMProvider):
                             time.sleep(interval - elapsed)
                     start_time = time.time()
                     self._last_call_started_at = start_time
-                    response = client.invoke(lc_messages, **kwargs)
+                    response = self._invoke_client_with_hard_timeout(
+                        client,
+                        lc_messages,
+                        request_timeout_seconds or self.config.request_timeout_seconds,
+                        **kwargs,
+                    )
                     response = self._normalize_chat_response(response)
                     duration_ms = int((time.time() - start_time) * 1000)
                 except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError) as e:
