@@ -164,11 +164,20 @@ skills:
     description: "检查润色后关键事实是否被保留"
     config: {}
 
+  foreshadowing-debt:
+    enabled: true
+    manifest: config/skills/manifest/foreshadowing-debt.yaml
+    type: validator
+    class: ForeshadowingDebtSkill
+    description: "检查伏笔债务：已埋未兑现、已过期、指令未覆盖"
+    config: {}
+
 # Agent挂载配置
 agent_skills:
   planner:
     after_llm:
       - chapter-objective-checker
+      - foreshadowing-debt
 
   screenwriter:
     after_llm:
@@ -201,6 +210,7 @@ agent_skills:
       - chapter-seam
       - death-penalty
       - word-count-gate
+      - foreshadowing-debt
 
   memory_curator:
     after_extract:

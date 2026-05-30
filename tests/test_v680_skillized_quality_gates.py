@@ -217,7 +217,59 @@ def test_fact_lock_with_items(skill_registry):
     assert "risk_level" in result["data"]
 
 
-# ── H. Skill envelope contract ──────────────────────────────────
+# ── H. ForeshadowingDebtSkill ───────────────────────────────────
+
+
+def test_foreshadowing_debt_no_plots(skill_registry):
+    """ForeshadowingDebtSkill passes when no plot data provided."""
+    skill = skill_registry.get_skill("foreshadowing-debt")
+    result = skill.run({})
+    assert result["ok"] is True
+    assert result["data"]["debt"] == []
+
+
+def test_foreshadowing_debt_stale_plot(skill_registry):
+    """ForeshadowingDebtSkill detects stale plot past planned resolve chapter."""
+    skill = skill_registry.get_skill("foreshadowing-debt")
+    result = skill.run({
+        "chapter_number": 10,
+        "plot_holes": [
+            {"code": "PH-001", "status": "planted", "planted_chapter": 3, "planned_resolve_chapter": 7},
+        ],
+    })
+    assert result["ok"] is False
+    assert "PH-001" in result["data"]["stale"]
+    assert result["data"]["blocking"] is True
+
+
+def test_foreshadowing_debt_missing_resolve(skill_registry):
+    """ForeshadowingDebtSkill detects instruction resolve not in used_plot_refs."""
+    skill = skill_registry.get_skill("foreshadowing-debt")
+    result = skill.run({
+        "chapter_number": 5,
+        "instruction": {"plots_to_resolve": '["PH-001"]'},
+        "used_plot_refs": [],
+    })
+    assert result["ok"] is False
+    assert "PH-001" in result["data"]["missing_resolves"]
+
+
+def test_foreshadowing_debt_no_debt(skill_registry):
+    """ForeshadowingDebtSkill passes when plots are on track."""
+    skill = skill_registry.get_skill("foreshadowing-debt")
+    result = skill.run({
+        "chapter_number": 5,
+        "plot_holes": [
+            {"code": "PH-001", "status": "planted", "planted_chapter": 3, "planned_resolve_chapter": 8},
+        ],
+        "instruction": {"plots_to_plant": '["PH-002"]'},
+        "used_plot_refs": ["PH-002"],
+    })
+    assert result["ok"] is True
+    assert result["data"]["blocking"] is False
+
+
+# ── I. Skill envelope contract ──────────────────────────────────
 
 
 def test_all_phase1_skills_return_envelope(skill_registry):
@@ -228,6 +280,7 @@ def test_all_phase1_skills_return_envelope(skill_registry):
         ("death-penalty", {"text": "test content"}),
         ("word-count-gate", {"text": "test content"}),
         ("fact-lock", {"text": "test content"}),
+        ("foreshadowing-debt", {}),
     ]
     for skill_id, payload in skills_and_payloads:
         skill = skill_registry.get_skill(skill_id)
