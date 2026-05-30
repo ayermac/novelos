@@ -417,7 +417,11 @@ class AuthorAgent(BaseAgent):
                     new_data = out.model_dump()
                     new_data["content"] = sanitized
                     return {"output": AuthorOutput(**normalize_declared_word_count(new_data))}
-            return None
+            # v6.8.0: Return original output instead of None.
+            # None signals "repair failed" to self_check, triggering an error.
+            # Returning the original lets the loop continue — the issue will
+            # be surfaced to Editor for judgment.
+            return {"output": out}
 
         loop_result = loop.run(_generate_wrap, _self_check_wrap, _repair_wrap)
         output = loop_result["output"]
