@@ -1,0 +1,85 @@
+id: opening-hook-checker
+name: Opening Hook Checker
+version: "1.0.0"
+kind: validator
+class_name: OpeningHookChecker
+description: "检测章节开局 200 字是否包含钩子（悬念/冲突/反转/金手指暗示/逆袭预期）"
+enabled: true
+builtin: true
+allowed_agents:
+  - editor
+  - author
+  - qualityhub
+  - manual
+allowed_stages:
+  - before_review
+  - after_llm
+  - advisory
+  - diagnose
+  - manual
+permissions:
+  read_context: false
+  read_chapter: false
+  transform_text: false
+  validate_text: true
+  write_quality_report: false
+  write_skill_run: true
+  write_chapter_content: false
+  update_chapter_status: false
+  send_agent_message: false
+  call_llm: false
+  call_network: false
+input_schema:
+  type: object
+  required:
+    - text
+  properties:
+    text:
+      type: string
+      description: "章节正文内容"
+    content:
+      type: string
+      description: "备用文本字段（兼容）"
+    style_profile:
+      type: object
+      description: "风格配置（可选）"
+output_schema:
+  type: object
+  required:
+    - passed
+    - hook_type
+    - hook_strength
+    - findings
+  properties:
+    passed:
+      type: boolean
+      description: "是否通过开局钩子检查"
+    hook_type:
+      type: string
+      nullable: true
+      description: "检测到的钩子类型"
+    hook_strength:
+      type: integer
+      minimum: 0
+      maximum: 100
+      description: "钩子强度（0-100）"
+    opening_text:
+      type: string
+      description: "前 200 字文本"
+    depression_count:
+      type: integer
+      minimum: 0
+      description: "压抑标记数量"
+    findings:
+      type: array
+      items:
+        type: object
+config_schema:
+  type: object
+  properties: {}
+default_config: {}
+failure_policy:
+  on_error: warn
+  max_retries: 0
+  timeout_seconds: null
+  blocking_threshold: null

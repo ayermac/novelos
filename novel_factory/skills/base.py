@@ -31,6 +31,8 @@ BUILTIN_SKILLS = {
     "WordCountGateSkill": None,  # v6.8.0
     "FactLockSkill": None,  # v6.8.0
     "ForeshadowingDebtSkill": None,  # v6.8.0
+    "OpeningHookChecker": None,  # v6.8.1
+    "ExcitementDensityChecker": None,  # v6.8.1
 }
 
 
@@ -97,6 +99,12 @@ def _get_skill_class(class_name: str):
     elif class_name == "ForeshadowingDebtSkill":
         from .foreshadowing_debt_skill import ForeshadowingDebtSkill
         return ForeshadowingDebtSkill
+    elif class_name == "OpeningHookChecker":
+        from .opening_hook_checker import OpeningHookChecker
+        return OpeningHookChecker
+    elif class_name == "ExcitementDensityChecker":
+        from .excitement_density_checker import ExcitementDensityChecker
+        return ExcitementDensityChecker
 
     return None
 

@@ -172,6 +172,22 @@ skills:
     description: "检查伏笔债务：已埋未兑现、已过期、指令未覆盖"
     config: {}
 
+  opening-hook-checker:
+    enabled: true
+    manifest: config/skills/manifest/opening-hook-checker.yaml
+    type: validator
+    class: OpeningHookChecker
+    description: "检查前 200 字是否有开局钩子"
+    config: {}
+
+  excitement-density-checker:
+    enabled: true
+    manifest: config/skills/manifest/excitement-density-checker.yaml
+    type: validator
+    class: ExcitementDensityChecker
+    description: "检查全文爽点分布和压抑占比"
+    config: {}
+
 # Agent挂载配置
 agent_skills:
   planner:
@@ -188,6 +204,7 @@ agent_skills:
       - event-coverage-checker
       - death-penalty
       - word-count-gate
+      - opening-hook-checker
 
   polisher:
     after_llm:
@@ -211,6 +228,8 @@ agent_skills:
       - death-penalty
       - word-count-gate
       - foreshadowing-debt
+      - opening-hook-checker
+      - excitement-density-checker
 
   memory_curator:
     after_extract:

@@ -172,6 +172,11 @@ class AuthorAgent(BaseAgent):
         if style_ctx:
             parts.append(style_ctx)
 
+        # v6.8.1: Style-aware prompt injection (webnovel excitement, suspense, romance)
+        style_prompt = self._get_style_prompt_injection(project_id, "author")
+        if style_prompt:
+            parts.append(style_prompt)
+
         repair_context = self._build_death_penalty_repair_context(state)
         if repair_context:
             parts.append(repair_context)

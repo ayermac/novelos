@@ -246,6 +246,11 @@ class EditorAgent(BaseAgent):
         if style_ctx:
             parts.append(style_ctx)
 
+        # v6.8.1: Style-aware prompt injection (webnovel excitement, suspense, romance)
+        style_prompt = self._get_style_prompt_injection(project_id, "editor")
+        if style_prompt:
+            parts.append(style_prompt)
+
         # v6.6.1: Inject deterministic quality diagnosis feedback
         quality_feedback = self._build_quality_feedback(state)
         if quality_feedback:
@@ -779,6 +784,71 @@ class EditorAgent(BaseAgent):
             policy_input=policy_input,
             word_gate_details=word_gate_details,
         )
+
+    def _apply_style_weight_adjustment(
+        self,
+        inputs: EditorInputs,
+        output: EditorOutput,
+    ) -> None:
+        """v6.8.1: Adjust dimension scores based on style profile.
+
+        In excitement mode (high), pacing weight increases from 15→30,
+        and other weights decrease proportionally. The LLM scores are
+        post-processed so that pacing carries more weight in the final total.
+        """
+        try:
+            from ..quality.style_detector import detect_style_from_text, get_editor_weight_multiplier
+            project = self.repo.get_project(inputs.project_id)
+            if not project:
+                return
+            text = " ".join(filter(None, [
+                project.get("title", ""),
+                project.get("genre", ""),
+                project.get("premise", ""),
+            ]))
+            if not text.strip():
+                return
+            profile = detect_style_from_text(text)
+            multipliers = get_editor_weight_multiplier(profile)
+
+            # Only adjust if multipliers differ from identity
+            if all(abs(v - 1.0) < 0.01 for v in multipliers.values()):
+                return
+
+            # Apply multipliers to each dimension score (cap at max)
+            max_scores = {"setting": 25, "logic": 25, "poison": 20, "text": 15, "pacing": 15}
+            adjusted_scores = {}
+            weighted_sum = 0.0
+            for dim in ("setting", "logic", "poison", "text", "pacing"):
+                raw = getattr(output.scores, dim, 0) if hasattr(output.scores, dim) else output.scores.get(dim, 0)
+                mult = multipliers.get(dim, 1.0)
+                adjusted = min(round(raw * mult), max_scores.get(dim, 25))
+                adjusted_scores[dim] = adjusted
+                weighted_sum += adjusted
+
+            # Recalculate total score (normalized to 100)
+            # Default total max = 25+25+20+15+15 = 100
+            # With multipliers, the weighted max = sum(max * mult)
+            weighted_max = sum(max_scores[dim] * multipliers.get(dim, 1.0) for dim in max_scores)
+            if weighted_max > 0:
+                new_total = round(weighted_sum / weighted_max * 100)
+            else:
+                new_total = output.score
+
+            # Update scores and total
+            for dim, val in adjusted_scores.items():
+                if hasattr(output.scores, dim):
+                    setattr(output.scores, dim, val)
+                elif isinstance(output.scores, dict):
+                    output.scores[dim] = val
+            output.score = new_total
+
+            logger.info(
+                "Editor: style weight adjustment applied (excitement_level=%s, new_score=%d)",
+                profile.excitement_level, new_total,
+            )
+        except Exception:
+            logger.warning("Editor: style weight adjustment failed", exc_info=True)
 
     def _run_continuity_gate(
         self,
@@ -1523,6 +1593,9 @@ class EditorAgent(BaseAgent):
 
         # Step 2: Call LLM
         output, exec_events = self._call_editor_llm(inputs, state)
+
+        # Step 2.5: Style-aware weight adjustment (v6.8.1)
+        self._apply_style_weight_adjustment(inputs, output)
 
         # Step 3: Quality diagnosis
         quality_result = self._run_quality_diagnosis(inputs, output)

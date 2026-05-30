@@ -122,6 +122,11 @@ class PlannerAgent(BaseAgent):
         if style_ctx:
             parts.append(style_ctx)
 
+        # v6.8.1: Style-aware prompt injection (webnovel excitement, suspense, romance)
+        style_prompt = self._get_style_prompt_injection(project_id, "planner")
+        if style_prompt:
+            parts.append(style_prompt)
+
         return "\n\n".join(parts)
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:
