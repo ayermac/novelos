@@ -72,6 +72,11 @@ class ScreenwriterAgent(BaseAgent):
                          f"埋设伏笔: {instruction.get('plots_to_plant', '[]')}\n"
                          f"兑现伏笔: {instruction.get('plots_to_resolve', '[]')}")
 
+        # v6.8.1: Style-aware prompt injection (webnovel excitement, suspense, romance)
+        style_prompt = self._get_style_prompt_injection(project_id, "screenwriter")
+        if style_prompt:
+            parts.append(style_prompt)
+
         return "\n\n".join(parts)
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:
