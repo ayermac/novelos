@@ -95,18 +95,21 @@ def extract_json(text: str) -> str:
 def _pre_repair_json(text: str) -> str:
     """Fix common LLM JSON malformations before standard repair.
 
-    Handles:
+    Handles patterns common with GLM-5 and similar models:
     - Quoted booleans: "true" -> true, "false" -> false
     - Quoted null: "null" -> null
     - Quoted numbers in value position: "88" -> 88
-
-    These patterns are common with GLM-5 and similar models that
-    wrap JSON literals in string quotes.
+    - Trailing comma inside quotes: "false," -> false,
+    - Colon inside key name: "score:" -> "score"
     """
-    # Fix quoted booleans/nulls in JSON value positions
-    text = re.sub(r':\s*"(true|false|null)"\s*(?=[,}\]\n\r])', r': \1', text)
-    # Fix quoted integers in score/value positions
-    text = re.sub(r':\s*"(\d+)"\s*(?=[,}\]\n\r])', r': \1', text)
+    # Fix quoted booleans/nulls with optional trailing comma inside quotes
+    # Matches: "true" "false" "null" "true," "false," "null,"
+    # Lookahead: comma/bracket/newline OR whitespace before next quote (key)
+    text = re.sub(r':\s*"(true|false|null),?"\s*(?=[,}\]\n\r]|\s")', r': \1', text)
+    # Fix quoted integers in value positions (with optional trailing comma)
+    text = re.sub(r':\s*"(\d+),?"\s*(?=[,}\]\n\r]|\s")', r': \1', text)
+    # Fix colon bleeding into key name: "score:" -> "score"
+    text = re.sub(r'"(\w+):"\s*:', r'"\1":', text)
     return text
 
 
