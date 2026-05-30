@@ -1630,17 +1630,7 @@ class AuthorAgent(BaseAgent):
                 },
             ]
 
-            if exec_events is not None:
-                exec_events.append({
-                    "event_type": EVENT_SEGMENT_STARTED,
-                    "message": f"Author 开始生成第 {segment_num}/{total_chunks} 段",
-                    "status": "info",
-                    "payload": {
-                        "segment_index": segment_num,
-                        "total_segments": total_chunks,
-                        "beats": [b.get("sequence") for b in beat_chunk],
-                    },
-                })
+            # v6.8.0: Skip segment_started logging (reduces noise)
 
             try:
                 content = self._invoke_text_for_author(
@@ -1703,16 +1693,7 @@ class AuthorAgent(BaseAgent):
 
             segment_outputs.append(content)
 
-            if exec_events is not None:
-                exec_events.append({
-                    "event_type": EVENT_SEGMENT_COMPLETED,
-                    "message": f"Author 完成第 {segment_num}/{total_chunks} 段 ({len(content)} 字)",
-                    "status": "info",
-                    "payload": {
-                        "segment_index": segment_num,
-                        "segment_length": len(content),
-                    },
-                })
+            # v6.8.0: Skip segment_completed logging (reduces noise)
 
         merged_content = self._merge_segment_outputs(segment_outputs)
         merged_content = self._repair_final_segment_if_needed(

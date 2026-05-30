@@ -927,16 +927,7 @@ class PolisherAgent(BaseAgent):
                 },
             ]
 
-            if exec_events is not None:
-                exec_events.append({
-                    "event_type": EVENT_SEGMENT_STARTED,
-                    "message": f"Polisher 开始润色第 {segment_num}/{total_chunks} 段",
-                    "status": "info",
-                    "payload": {
-                        "segment_index": segment_num,
-                        "total_segments": total_chunks,
-                    },
-                })
+            # v6.8.0: Skip segment_started logging (reduces noise)
 
             try:
                 polished = self._invoke_text_for_polisher(
@@ -966,16 +957,7 @@ class PolisherAgent(BaseAgent):
 
             segment_outputs.append(polished)
 
-            if exec_events is not None:
-                exec_events.append({
-                    "event_type": EVENT_SEGMENT_COMPLETED,
-                    "message": f"Polisher 完成第 {segment_num}/{total_chunks} 段 ({len(polished)} 字)",
-                    "status": "info",
-                    "payload": {
-                        "segment_index": segment_num,
-                        "segment_length": len(polished),
-                    },
-                })
+            # v6.8.0: Skip segment_completed logging (reduces noise)
 
         merged_content = "\n\n".join(segment_outputs)
         return PolisherOutput(
