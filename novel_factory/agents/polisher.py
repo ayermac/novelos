@@ -654,8 +654,23 @@ class PolisherAgent(BaseAgent):
             expected_status=expected_status,
         )
         if not ok:
-            logger.error("Polisher: status advance %s→polished failed (stale state)", expected_status)
-            return {"error": "Polisher: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
+            # v6.8.1: Check if chapter is already at or past POLISHED (recovery run)
+            current_status = self.repo.get_chapter_status(project_id, chapter_number)
+            _STATUS_ORDER = {
+                "idea": 0, "outlined": 1, "planned": 2, "scripted": 3,
+                "drafted": 4, "polished": 5, "review": 6, "reviewed": 7,
+                "revision": 8, "published": 9, "blocking": 10,
+            }
+            current_order = _STATUS_ORDER.get(current_status, -1)
+            polished_order = _STATUS_ORDER.get("polished", 5)
+            if current_order >= polished_order:
+                logger.info(
+                    "Polisher: chapter already at '%s' (order %d >= %d), skipping status advance (recovery run)",
+                    current_status, current_order, polished_order,
+                )
+            else:
+                logger.error("Polisher: status advance %s→polished failed (stale state)", expected_status)
+                return {"error": "Polisher: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
 
         # Save polished content (only after status advance succeeds)
         try:
