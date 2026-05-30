@@ -89,31 +89,51 @@ def _redact_trace_value(value: Any) -> Any:
 
 
 def _log_llm_trace_events(state: FactoryState, repo: Repository, agent_name: str, llm: LLMProvider) -> None:
-    """Best-effort log detailed LLM request/response traces."""
+    """Best-effort log LLM request/response metadata (v6.8.0: reduced verbosity).
+
+    Only logs compact metadata (model, tokens, duration, error) — not full
+    prompt/response text. Full payloads are available in the LLM provider's
+    last_call_trace for debugging but are no longer persisted to DB.
+    """
     trace = getattr(llm, "last_call_trace", None)
     if not isinstance(trace, dict):
         return
     request = trace.get("request")
     if isinstance(request, dict) and request:
         try:
+            compact_request = {
+                "provider": request.get("provider"),
+                "model": request.get("model"),
+                "temperature": request.get("temperature"),
+                "max_tokens": request.get("max_tokens"),
+                "call_type": request.get("call_type"),
+                "schema": request.get("schema"),
+                "agent_id": request.get("agent_id"),
+            }
             log_execution_event(
                 repo, state, agent_name, EVENT_LLM_REQUEST_DETAIL,
                 message=f"LLM 请求详情：{agent_name}",
                 agent_id=agent_name,
                 status="info",
-                payload=_redact_trace_value(request),
+                payload=compact_request,
             )
         except Exception:
             logger.debug("Failed to log LLM request detail for %s", agent_name, exc_info=True)
     response = trace.get("response")
     if isinstance(response, dict) and response:
         try:
+            usage = response.get("usage") or response.get("usage_metadata") or {}
+            compact_response = {
+                "content_length": len(str(response.get("content", ""))),
+                "usage": usage,
+                "finish_reason": response.get("finish_reason"),
+            }
             log_execution_event(
                 repo, state, agent_name, EVENT_LLM_RESPONSE_DETAIL,
                 message=f"LLM 响应详情：{agent_name}",
                 agent_id=agent_name,
                 status="info",
-                payload=_redact_trace_value(response),
+                payload=compact_response,
             )
         except Exception:
             logger.debug("Failed to log LLM response detail for %s", agent_name, exc_info=True)
@@ -875,6 +895,7 @@ def create_node_runners(
                 )  # Best-effort
 
         # v6.1: Verify completion evidence on success
+        # v6.8.0: Only log evidence events on failure or warning (skip pass)
         if (
             "error" not in result
             and not result.get("retryable_quality_gate")
@@ -890,20 +911,22 @@ def create_node_runners(
                 elif severity == EVIDENCE_STATUS_WARN:
                     ev_msg = f"完成证据校验通过（有警告）：{warn_str}"
                 else:
-                    ev_msg = "完成证据校验通过"
-                log_execution_event(
-                    repo, state, agent_name, EVENT_EVIDENCE_VERIFIED,
-                    message=ev_msg,
-                    agent_id=agent_name,
-                    status=severity,
-                    payload={
-                        "ok": evidence["ok"],
-                        "severity": severity,
-                        "checks": evidence["checks"],
-                        "missing": evidence["missing"],
-                        "warnings": evidence["warnings"],
-                    },
-                )
+                    # v6.8.0: Skip logging for passing evidence (reduces noise)
+                    ev_msg = None
+                if ev_msg is not None:
+                    log_execution_event(
+                        repo, state, agent_name, EVENT_EVIDENCE_VERIFIED,
+                        message=ev_msg,
+                        agent_id=agent_name,
+                        status=severity,
+                        payload={
+                            "ok": evidence["ok"],
+                            "severity": severity,
+                            "checks": evidence["checks"],
+                            "missing": evidence["missing"],
+                            "warnings": evidence["warnings"],
+                        },
+                    )
                 # Log evidence failure as node-level warning but don't block
                 if severity == EVIDENCE_STATUS_FAIL:
                     logger.warning(

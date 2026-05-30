@@ -92,6 +92,27 @@ def extract_json(text: str) -> str:
     return text.strip()
 
 
+def _pre_repair_json(text: str) -> str:
+    """Fix common LLM JSON malformations before standard repair.
+
+    Handles patterns common with GLM-5 and similar models:
+    - Quoted booleans: "true" -> true, "false" -> false
+    - Quoted null: "null" -> null
+    - Quoted numbers in value position: "88" -> 88
+    - Trailing comma inside quotes: "false," -> false,
+    - Colon inside key name: "score:" -> "score"
+    """
+    # Fix quoted booleans/nulls with optional trailing comma inside quotes
+    # Matches: "true" "false" "null" "true," "false," "null,"
+    # Lookahead: comma/bracket/newline OR whitespace before next quote (key)
+    text = re.sub(r':\s*"(true|false|null),?"\s*(?=[,}\]\n\r]|\s")', r': \1', text)
+    # Fix quoted integers in value positions (with optional trailing comma)
+    text = re.sub(r':\s*"(\d+),?"\s*(?=[,}\]\n\r]|\s")', r': \1', text)
+    # Fix colon bleeding into key name: "score:" -> "score"
+    text = re.sub(r'"(\w+):"\s*:', r'"\1":', text)
+    return text
+
+
 def _repair_json(text: str) -> str:
     """Attempt to fix common LLM JSON output issues before parsing.
 
@@ -184,7 +205,8 @@ def parse_json(
         json.JSONDecodeError: If JSON cannot be extracted or repaired.
     """
     candidate = extract_json(text)
-    repaired = _repair_json(candidate)
+    pre_repaired = _pre_repair_json(candidate)
+    repaired = _repair_json(pre_repaired)
 
     try:
         return json.loads(repaired)

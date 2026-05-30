@@ -417,7 +417,11 @@ class AuthorAgent(BaseAgent):
                     new_data = out.model_dump()
                     new_data["content"] = sanitized
                     return {"output": AuthorOutput(**normalize_declared_word_count(new_data))}
-            return None
+            # v6.8.0: Return original output instead of None.
+            # None signals "repair failed" to self_check, triggering an error.
+            # Returning the original lets the loop continue — the issue will
+            # be surfaced to Editor for judgment.
+            return {"output": out}
 
         loop_result = loop.run(_generate_wrap, _self_check_wrap, _repair_wrap)
         output = loop_result["output"]
@@ -425,22 +429,24 @@ class AuthorAgent(BaseAgent):
         autonomy = loop_result.get("_autonomy", {})
         final_scene_coverage_issues = self._scene_beat_coverage_issues(state, output.content)
         if final_scene_coverage_issues:
-            message = "Author 未完成场景 beat 覆盖，正文未写到章末钩子"
-            return {
-                "error": message,
-                "chapter_status": state.get("chapter_status"),
-                "quality_gate": {
-                    "pass": False,
-                    "revision_target": "author",
-                    "scene_beat_coverage_fail": True,
-                    "message": message,
-                    "issues": [i.get("message", "") for i in final_scene_coverage_issues],
-                    "agent": "author",
-                    "workflow_run_id": state.get("workflow_run_id"),
+            # v6.8.0: Downgrade to warning after loop exhaustion.
+            # The repair loop already injected specific beat issues into the
+            # retry prompt — if the model still can't cover all beats, forcing
+            # another workflow-level retry won't help. Let Editor judge instead.
+            missing = [i.get("message", "") for i in final_scene_coverage_issues]
+            logger.warning(
+                "Author: scene beat coverage incomplete after repair attempts: %s",
+                "; ".join(missing[:3]),
+            )
+            exec_events.append({
+                "event_type": "scene_beat_coverage_warning",
+                "message": f"场景 beat 覆盖不完整（{len(missing)} 项），已降级为警告",
+                "status": "warning",
+                "payload": {
+                    "issues": missing,
+                    "downgraded": True,
                 },
-                "_trace": trace,
-                "_autonomy": autonomy,
-            }
+            })
         self_check_data = trace.get("self_check", {}) if isinstance(trace, dict) else {}
         sc_passed = self_check_data.get("passed", True)
         sc_issues = self_check_data.get("issues", [])
@@ -1624,17 +1630,7 @@ class AuthorAgent(BaseAgent):
                 },
             ]
 
-            if exec_events is not None:
-                exec_events.append({
-                    "event_type": EVENT_SEGMENT_STARTED,
-                    "message": f"Author 开始生成第 {segment_num}/{total_chunks} 段",
-                    "status": "info",
-                    "payload": {
-                        "segment_index": segment_num,
-                        "total_segments": total_chunks,
-                        "beats": [b.get("sequence") for b in beat_chunk],
-                    },
-                })
+            # v6.8.0: Skip segment_started logging (reduces noise)
 
             try:
                 content = self._invoke_text_for_author(
@@ -1697,16 +1693,7 @@ class AuthorAgent(BaseAgent):
 
             segment_outputs.append(content)
 
-            if exec_events is not None:
-                exec_events.append({
-                    "event_type": EVENT_SEGMENT_COMPLETED,
-                    "message": f"Author 完成第 {segment_num}/{total_chunks} 段 ({len(content)} 字)",
-                    "status": "info",
-                    "payload": {
-                        "segment_index": segment_num,
-                        "segment_length": len(content),
-                    },
-                })
+            # v6.8.0: Skip segment_completed logging (reduces noise)
 
         merged_content = self._merge_segment_outputs(segment_outputs)
         merged_content = self._repair_final_segment_if_needed(
