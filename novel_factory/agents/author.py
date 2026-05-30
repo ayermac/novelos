@@ -425,22 +425,24 @@ class AuthorAgent(BaseAgent):
         autonomy = loop_result.get("_autonomy", {})
         final_scene_coverage_issues = self._scene_beat_coverage_issues(state, output.content)
         if final_scene_coverage_issues:
-            message = "Author 未完成场景 beat 覆盖，正文未写到章末钩子"
-            return {
-                "error": message,
-                "chapter_status": state.get("chapter_status"),
-                "quality_gate": {
-                    "pass": False,
-                    "revision_target": "author",
-                    "scene_beat_coverage_fail": True,
-                    "message": message,
-                    "issues": [i.get("message", "") for i in final_scene_coverage_issues],
-                    "agent": "author",
-                    "workflow_run_id": state.get("workflow_run_id"),
+            # v6.8.0: Downgrade to warning after loop exhaustion.
+            # The repair loop already injected specific beat issues into the
+            # retry prompt — if the model still can't cover all beats, forcing
+            # another workflow-level retry won't help. Let Editor judge instead.
+            missing = [i.get("message", "") for i in final_scene_coverage_issues]
+            logger.warning(
+                "Author: scene beat coverage incomplete after repair attempts: %s",
+                "; ".join(missing[:3]),
+            )
+            exec_events.append({
+                "event_type": "scene_beat_coverage_warning",
+                "message": f"场景 beat 覆盖不完整（{len(missing)} 项），已降级为警告",
+                "status": "warning",
+                "payload": {
+                    "issues": missing,
+                    "downgraded": True,
                 },
-                "_trace": trace,
-                "_autonomy": autonomy,
-            }
+            })
         self_check_data = trace.get("self_check", {}) if isinstance(trace, dict) else {}
         sc_passed = self_check_data.get("passed", True)
         sc_issues = self_check_data.get("issues", [])
