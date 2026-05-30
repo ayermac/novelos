@@ -12,6 +12,28 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.8.0 - Skillized Quality Gates (Phase 1)
+
+Date: 2026-05-29
+
+Key changes:
+
+- **5 new Phase 1 Skills**: Register existing deterministic quality modules as standard Skills.
+  - `continuity-gate`: Narrative continuity gate (time regression, cross-chapter anchors, title integrity, event replay)
+  - `chapter-seam`: Chapter-to-chapter seam break detection (time/location/hook discontinuity)
+  - `death-penalty`: AI cliche / death-penalty phrase detector
+  - `word-count-gate`: Word count upper/lower bound validation
+  - `fact-lock`: Fact integrity checker for polished text
+- Each Skill has: class file (`skills/*_skill.py`), manifest YAML (`config/skills/manifest/`), registration in `base.py` BUILTIN_SKILLS + `skills.yaml`
+- All Skills are pure functions (no LLM, no repo, no side effects)
+- 19 new unit tests in `test_v680_skillized_quality_gates.py`
+- Phase 1 does NOT change Editor/Author/Polisher call paths — skills are registered but not yet mounted to agents
+
+Verification:
+- v6.8.0 skill tests: 19/19 passing
+- Version alignment: 6.8.0 (python + frontend + desktop)
+- Regression: pending full suite
+
 ## v6.7.9 - Narrative Continuity Gate
 
 Date: 2026-05-29

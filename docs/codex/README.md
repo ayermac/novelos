@@ -47,9 +47,11 @@
 - **当前 Genesis 进度基线**: v6.7.7 Genesis Generation Progress Streaming
 - **当前 Revision 重试会计基线**: v6.7.8 Revision Retry Accounting & Continuity Semantics
 - **当前叙事连续性门禁基线**: v6.7.9 Narrative Continuity Gate
+- **当前 Skill 化质量门禁基线**: v6.8.0 Skillized Quality Gates
 - **当前 Preflight UX 基线**: v6.7.3 Preflight UX & Regression Closure
-- **状态**: v6.7.9 新增确定性叙事连续性硬门控（时间回退/跨章锚点/事件重播检测），Editor fallback 降权至 70 分；v6.7.8 修正 revision retry 会计（内部压缩不再消耗章节重试），新增状态型事实过滤器减少误报；v6.7.7 为 Genesis 项目设定生成新增异步启动和 SSE 分段进度展示；v6.7.6 修复 blocked/failed/stale-running 状态下 terminal chapter status 导致 recovery CTA 被 publish 掩盖的问题；v6.7.5 实现独立章节标题生成机制，移除 content opening 作为主要标题来源，使用 LLM 基于章节内容和指令上下文生成更有吸引力的标题；v6.7.3 完善 preflight 前端展示（非阻断式警告横幅）、增强 warning details（groups、ids、recommended_actions）、补齐 API 成功路径回归测试；v6.7.2 新增轻量级 preflight 诊断，在章节生成前暴露重复角色/世界观、记忆压力等问题。
+- **状态**: v6.8.0 将确定性质量检查注册为标准 Skills（continuity-gate, chapter-seam, death-penalty, word-count-gate, fact-lock），新增测试基础设施（test-impacted.py, test-smoke.sh, pytest markers）；v6.7.9 新增确定性叙事连续性硬门控（时间回退/跨章锚点/事件重播检测），Editor fallback 降权至 70 分；v6.7.8 修正 revision retry 会计（内部压缩不再消耗章节重试），新增状态型事实过滤器减少误报；v6.7.7 为 Genesis 项目设定生成新增异步启动和 SSE 分段进度展示；v6.7.6 修复 blocked/failed/stale-running 状态下 terminal chapter status 导致 recovery CTA 被 publish 掩盖的问题；v6.7.5 实现独立章节标题生成机制，移除 content opening 作为主要标题来源，使用 LLM 基于章节内容和指令上下文生成更有吸引力的标题；v6.7.3 完善 preflight 前端展示（非阻断式警告横幅）、增强 warning details（groups、ids、recommended_actions）、补齐 API 成功路径回归测试；v6.7.2 新增轻量级 preflight 诊断，在章节生成前暴露重复角色/世界观、记忆压力等问题。
 - **版本规划索引**: [planning/novel-factory-version-planning-index.md](planning/novel-factory-version-planning-index.md)
+- **v6.8.0 规格**: [specs/novel-factory-v6.8.0-skillized-quality-gates-spec.md](specs/novel-factory-v6.8.0-skillized-quality-gates-spec.md)
 - **v6.7.9 规格**: [specs/novel-factory-v6.7.9-narrative-continuity-gate-spec.md](specs/novel-factory-v6.7.9-narrative-continuity-gate-spec.md)
 - **v6.7.9 完成报告**: [reports/novel-factory-v6.7.9-completion-report.md](reports/novel-factory-v6.7.9-completion-report.md)
 - **v6.7.8 规格**: [specs/novel-factory-v6.7.8-revision-retry-accounting-spec.md](specs/novel-factory-v6.7.8-revision-retry-accounting-spec.md)
