@@ -511,7 +511,7 @@ class EditorAgent(BaseAgent):
         ]
 
         try:
-            invoke_kwargs = {"max_tokens": 1500} if use_compact_review else {}
+            invoke_kwargs = {}
             raw = self._invoke_json(
                 messages,
                 schema=EditorOutput,
