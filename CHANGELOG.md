@@ -12,6 +12,64 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.8.0 - Skillized Quality Gates (Phase 1)
+
+Date: 2026-05-29
+
+Key changes:
+
+- **5 new Phase 1 Skills**: Register existing deterministic quality modules as standard Skills.
+  - `continuity-gate`: Narrative continuity gate (time regression, cross-chapter anchors, title integrity, event replay)
+  - `chapter-seam`: Chapter-to-chapter seam break detection (time/location/hook discontinuity)
+  - `death-penalty`: AI cliche / death-penalty phrase detector
+  - `word-count-gate`: Word count upper/lower bound validation
+  - `fact-lock`: Fact integrity checker for polished text
+- Each Skill has: class file (`skills/*_skill.py`), manifest YAML (`config/skills/manifest/`), registration in `base.py` BUILTIN_SKILLS + `skills.yaml`
+- All Skills are pure functions (no LLM, no repo, no side effects)
+- 19 new unit tests in `test_v680_skillized_quality_gates.py`
+- Phase 1 does NOT change Editor/Author/Polisher call paths — skills are registered but not yet mounted to agents
+
+Verification:
+- v6.8.0 skill tests: 19/19 passing
+- Version alignment: 6.8.0 (python + frontend + desktop)
+- Regression: pending full suite
+
+## v6.7.9 - Narrative Continuity Gate
+
+Date: 2026-05-29
+
+Key changes:
+
+- **Narrative Continuity Hard Gate (`novel_factory/quality/continuity_gate.py`)**: New deterministic module that blocks chapters with obvious narrative continuity defects before they reach (or leave) the publish pipeline.
+  - `evaluate_chapter_continuity(repo, project_id, chapter_number, content, title)` checks:
+    - Chapter-internal time regression (e.g., "两小时前" back to a completed old scene without a flashback frame) → **blocking**
+    - Cross-chapter time-anchor conflicts (e.g., previous chapter sets "明日午时", current chapter is already next-day morning but still says "明日") → **blocking**
+    - Truncated/malformed titles (ending with "无/的/与/和/了" or too short) → **warning**
+    - Title-content keyword mismatch → **warning**
+    - Replay of already-completed plot events across chapters → **blocking**
+  - `evaluate_publish_continuity(repo, project_id, chapter_number)` reads chapter from DB and delegates to the above.
+  - All logic is generic — no hardcoded project, chapter, character, or location names.
+- **Editor fallback review de-powered**: `_fallback_rule_review` can no longer give 88/excellent.
+  - Maximum score is **70** (down from 88).
+  - Issues list always contains: "AI 审核不可用，本结果仅为规则兜底，不代表完整审校通过。"
+  - If continuity gate finds blocking issues, fallback forces `pass_=False` and `revision_target="author"`.
+  - `fallback_used` event payload now includes `degraded_review: true` and `blocks_auto_publish`.
+- **Editor normal flow integrates continuity gate**: After chapter seam check and story facts compliance, `_run_continuity_gate` runs. Blocking issues:
+  - Force `pass_=False`
+  - Cap score at 70
+  - Set `revision_target="author"`
+  - Inject `[连续性阻断]` / `[连续性修复]` notes into issues/suggestions
+- **Publish endpoint hard gate**: `POST /publish/chapter` now runs `evaluate_publish_continuity` **before** publishing. If blocking, returns `CONTINUITY_GATE_BLOCKED` error with issues and suggestions. UI can still show "awaiting_publish", but confirm-publish is rejected.
+- **Publisher node hard gate**: `publisher_node` in `nodes.py` also runs the continuity gate before `repo.publish_chapter()`.
+- **Regression tests updated**: Existing fallback tests (`test_agents.py`, `test_v64_editor_quality_gates.py`) now assert score ≤ 70 and `fallback_used` event presence instead of expecting auto-pass.
+- **Version alignment**: Runtime, frontend, and desktop updated to `6.7.9`.
+
+Verification:
+- v6.7.9 dedicated tests: 12/12 passing (time regression, flashback framing, cross-chapter anchors, title checks, fallback de-power, publish blocking, generic logic)
+- v6.7.8 regression tests: 16/16 passing
+- Regression tests (test_agents.py, test_v64_editor_quality_gates.py, test_v61_acceptance_fixes.py): 104/104 passing
+- Full test suite: running
+
 ## v6.7.8 - Revision Retry Accounting & Continuity Semantics
 
 Date: 2026-05-29

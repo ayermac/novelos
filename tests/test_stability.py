@@ -978,7 +978,7 @@ class TestAgentWriteFailureCompensation:
         from novel_factory.agents.editor import EditorAgent
 
         _seed_project_chapter(repo, status="polished")
-        repo.save_chapter_content("stab_proj", 1, LONG_CHAPTER_CONTENT, "第一章")
+        repo.save_chapter_content("stab_proj", 1, LONG_CHAPTER_CONTENT, "第一章 林默初入江湖遇到神秘人")
         repo.update_chapter_status("stab_proj", 1, "polished")
         state = _make_state(chapter_status="polished")
 

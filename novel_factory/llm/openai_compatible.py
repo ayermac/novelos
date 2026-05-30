@@ -169,6 +169,8 @@ class OpenAICompatibleProvider(LLMProvider):
         LangChain/OpenAI SDK response parsing. Keep the rest of the provider on
         one response contract: content + optional usage/metadata.
         """
+        if response is None:
+            return _NormalizedChatResponse("")
         if hasattr(response, "content"):
             return response
         if isinstance(response, (str, dict)):
@@ -187,6 +189,8 @@ class OpenAICompatibleProvider(LLMProvider):
                 "object has no attribute 'model_dump'",
                 'object has no attribute "model_dump"',
                 "response missing `choices` key",
+                "'nonetype' object has no attribute",
+                "none has no attribute",
             )
         )
 
@@ -226,6 +230,8 @@ class OpenAICompatibleProvider(LLMProvider):
         return str(content)
 
     def _response_from_http_payload(self, payload: Any) -> _NormalizedChatResponse:
+        if payload is None:
+            return _NormalizedChatResponse("")
         if isinstance(payload, str):
             return _NormalizedChatResponse(payload)
 
@@ -315,6 +321,8 @@ class OpenAICompatibleProvider(LLMProvider):
             parsed = json.loads(raw)
         except json.JSONDecodeError:
             parsed = raw
+        if parsed is None:
+            parsed = {}
         return self._response_from_http_payload(parsed)
 
     def _handle_api_error(self, error: Exception, timeout_seconds: int | None = None) -> None:

@@ -115,11 +115,17 @@ def classify_issue(issue: str) -> ClassifiedIssue:
     Uses keyword matching. Falls back to 'logic' if no keywords match.
     """
     if any(keyword in issue for keyword in _AUTHOR_STRUCTURAL_KEYWORDS):
-        return ClassifiedIssue(
-            issue=issue,
-            category=IssueCategory.PLOT,
-            revision_target="author",
-        )
+        # v6.7.9: Title truncation is a surface issue, not a structural
+        # author-level problem. Exclude title-related issues from structural
+        # author routing.
+        if "标题" in issue:
+            pass  # fall through to normal keyword matching
+        else:
+            return ClassifiedIssue(
+                issue=issue,
+                category=IssueCategory.PLOT,
+                revision_target="author",
+            )
 
     best_category = IssueCategory.LOGIC  # default
     best_score = 0

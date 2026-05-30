@@ -36,6 +36,10 @@ from ..agent_runtime.revision_context import normalize_revision_review
 from ..agent_runtime.skill_hooks import run_agent_skills
 from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
 from ..quality.chapter_seam import build_chapter_seam_context, evaluate_chapter_seam
+from ..quality.continuity_gate import (
+    evaluate_chapter_continuity,
+    SEVERITY_BLOCKING,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -379,39 +383,79 @@ class EditorAgent(BaseAgent):
 
         return issues, suggestions
 
-    def _fallback_rule_review(self, content: str, reason: str) -> EditorOutput:
-        """Fallback review when live editor LLM cannot return a usable result."""
+    def _fallback_rule_review(
+        self, content: str, reason: str, *,
+        project_id: str = "",
+        chapter_number: int = 0,
+    ) -> EditorOutput:
+        """Fallback review when live editor LLM cannot return a usable result.
+
+        v6.7.9: Degraded fallback — can no longer give 88/excellent.
+        Maximum score is 70 with a clear warning that this is a rule-based
+        fallback, not a full editorial review.
+        """
         dp_result = check_death_penalty_structured(content)
         has_content = bool(content.strip())
-        passed = has_content and not dp_result.has_critical
-        score = 88 if passed else 60
+
+        # v6.7.9: Run continuity gate even in fallback
+        continuity_result = None
+        if project_id and chapter_number:
+            try:
+                continuity_result = evaluate_chapter_continuity(
+                    self.repo, project_id, chapter_number, content,
+                )
+            except Exception:
+                logger.warning("Editor fallback: continuity gate failed", exc_info=True)
+
+        continuity_blocking = continuity_result is not None and continuity_result.should_block_publish
+
+        # v6.7.9: Fallback can never auto-pass if continuity blocks
+        passed = has_content and not dp_result.has_critical and not continuity_blocking
+        # v6.7.9: Cap fallback score at 70
+        score = 70 if passed else 60
+
         issues = []
         if not has_content:
             issues.append("正文为空")
         if dp_result.has_critical:
             issues.extend([f"CRITICAL 死刑红线: {v}" for v in dp_result.violations])
-        if reason:
-            issues.append(f"AI 审核降级为规则检查: {reason}")
+
+        # v6.7.9: Mandatory degraded-review warning
+        issues.append(
+            "AI 审核不可用，本结果仅为规则兜底，不代表完整审校通过。"
+            f"降级原因: {reason}"
+        )
+
+        if continuity_blocking and continuity_result:
+            for ci in continuity_result.issues:
+                if ci not in issues:
+                    issues.append(f"[连续性阻断] {ci}")
 
         # v6.4.4: Advisory quality signals even in fallback
         advisory_issues, advisory_suggestions = self._run_advisory_quality_check(content)
         issues = issues + advisory_issues
 
+        suggestions = ["请人工复核后再继续。"] + advisory_suggestions
+        if continuity_result:
+            suggestions = continuity_result.suggestions + suggestions
+
         return EditorOutput(
             pass_=passed,
             score=score,
             scores={
-                "setting": 22 if passed else 15,
-                "logic": 22 if passed else 15,
-                "poison": 18 if passed else 10,
-                "text": 13 if passed else 10,
-                "pacing": 13 if passed else 10,
+                "setting": 18 if passed else 12,
+                "logic": 18 if passed else 12,
+                "poison": 14 if passed else 10,
+                "text": 10 if passed else 8,
+                "pacing": 10 if passed else 8,
             },
             issues=issues,
-            suggestions=advisory_suggestions if passed else (["请人工检查正文后再继续。"] + advisory_suggestions),
-            revision_target=None if passed else "polisher",
+            suggestions=suggestions,
+            revision_target=None if passed else "author" if continuity_blocking else "polisher",
             state_card={
                 "summary": "AI 审核不可用，已完成规则兜底检查；请人工发布前复核。",
+                "degraded_review": True,
+                "fallback_type": "rule_review",
             } if passed else {},
         )
 
@@ -476,11 +520,20 @@ class EditorAgent(BaseAgent):
             if not use_compact_review:
                 raise
             logger.warning("Editor: LLM review degraded to rule-based fallback: %s", e)
-            output = self._fallback_rule_review(inputs.content, str(e))
+            output = self._fallback_rule_review(
+                inputs.content, str(e),
+                project_id=inputs.project_id,
+                chapter_number=inputs.chapter_number,
+            )
             exec_events.append({
                 "event_type": "fallback_used",
                 "message": f"LLM 审核降级为规则兜底：{str(e)[:100]}",
-                "payload": {"fallback_type": "rule_review", "reason": str(e)[:200]},
+                "payload": {
+                    "fallback_type": "rule_review",
+                    "reason": str(e)[:200],
+                    "degraded_review": True,
+                    "blocks_auto_publish": not output.pass_,
+                },
             })
 
         return output, exec_events
@@ -633,9 +686,19 @@ class EditorAgent(BaseAgent):
 
         # Classify issues for revision_target (overrides LLM self-report)
         # But NOT if a specific gate (word count, seam) already set a target
+        # v6.7.9: Exclude advisory/warning continuity issues from target
+        # classification — they are structural/continuity signals, not prose
+        # or plot issues that should reroute to author/polisher.
         if not output.pass_ and output.issues:
             pre_classify_target = output.revision_target
-            classify_result = classify_issues(output.issues, output.revision_target)
+            classifyable_issues = [
+                i for i in output.issues
+                if not i.startswith("[连续性建议]") and not i.startswith("[连续性警告]")
+            ]
+            classify_result = classify_issues(
+                classifyable_issues if classifyable_issues else output.issues,
+                output.revision_target,
+            )
             gate_forced_target = bool(word_gate_details) or seam_result.blocking_count > 0
             # Override the LLM's self-reported target when issue semantics are clearer.
             # Preserve targets set by hard gates such as word count and chapter seam.
@@ -713,6 +776,66 @@ class EditorAgent(BaseAgent):
             policy_input=policy_input,
             word_gate_details=word_gate_details,
         )
+
+    def _run_continuity_gate(
+        self,
+        inputs: EditorInputs,
+        output: EditorOutput,
+    ) -> Any:
+        """Run deterministic narrative continuity gate (v6.7.9).
+
+        Blocking continuity issues override pass_/score and force revision.
+        Warning/advisory issues are appended to issues/suggestions but do NOT
+        mutate score or pass_ unless the issue is blocking.
+        """
+        from ..quality.continuity_gate import evaluate_chapter_continuity, SEVERITY_BLOCKING, SEVERITY_WARNING
+
+        try:
+            result = evaluate_chapter_continuity(
+                self.repo,
+                inputs.project_id,
+                inputs.chapter_number,
+                inputs.content,
+                title=inputs.chapter.get("title") if inputs.chapter else None,
+            )
+        except Exception:
+            logger.warning("Editor: continuity gate execution failed", exc_info=True)
+            return None
+
+        if result.should_block_publish or result.severity == SEVERITY_BLOCKING:
+            output.pass_ = False
+            output.score = min(output.score, 70)
+            output.revision_target = output.revision_target or "author"
+            for issue in result.issues[:3]:
+                note = f"[连续性阻断] {issue}"
+                if note not in output.issues:
+                    output.issues.append(note)
+            for suggestion in result.suggestions[:3]:
+                note = f"[连续性修复] {suggestion}"
+                if note not in output.suggestions:
+                    output.suggestions.append(note)
+        elif result.severity == SEVERITY_WARNING:
+            # Warning: inject into issues for visibility but do NOT force
+            # score/pass changes; let the Editor strategy decide.
+            for issue in result.issues[:2]:
+                note = f"[连续性警告] {issue}"
+                if note not in output.issues:
+                    output.issues.append(note)
+            for suggestion in result.suggestions[:2]:
+                note = f"[连续性建议] {suggestion}"
+                if note not in output.suggestions:
+                    output.suggestions.append(note)
+        elif result.issues:
+            # Advisory only: these are informational signals that do not indicate
+            # a defect. Placing them in suggestions (not issues) ensures they
+            # don't trigger issue classification or revision routing, but remain
+            # visible to human reviewers.
+            for issue in result.issues[:2]:
+                note = f"[连续性建议] {issue}"
+                if note not in output.suggestions:
+                    output.suggestions.append(note)
+
+        return result
 
     def _run_before_review_skills(self, inputs: EditorInputs, output: EditorOutput) -> None:
         """Run before_review skill hooks and append findings to output."""
@@ -1417,6 +1540,9 @@ class EditorAgent(BaseAgent):
                         output.issues.append(issue_msg)
             output.pass_ = False
             output.revision_target = output.revision_target or "author"
+
+        # Step 4.6: Narrative continuity gate (v6.7.9)
+        continuity_result = self._run_continuity_gate(inputs, output)
 
         # Step 5: Apply review strategy (THE single decision point)
         strategy_result = self._apply_review_strategy(

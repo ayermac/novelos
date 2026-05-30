@@ -2440,8 +2440,10 @@ class TestEditorAgent:
 
         result = agent.run(state)
 
-        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
-        assert result["quality_gate"]["pass"] is True
+        # v6.7.9: Fallback can no longer auto-pass (score capped at 70)
+        assert result["quality_gate"]["score"] <= 70
+        exec_events = result.get("_exec_events", [])
+        assert any(ev.get("event_type") == "fallback_used" for ev in exec_events)
         assert llm.json_calls == 1
 
     def test_editor_real_mode_generic_llm_error_degrades_to_rule_review(self, seeded_repo):
@@ -2476,9 +2478,10 @@ class TestEditorAgent:
         })
 
         assert "error" not in result
-        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
-        assert result["quality_gate"]["pass"] is True
-        assert any(ev["event_type"] == "fallback_used" for ev in result["_exec_events"])
+        # v6.7.9: Fallback can no longer auto-pass (score capped at 70)
+        assert result["quality_gate"]["score"] <= 70
+        exec_events = result.get("_exec_events", [])
+        assert any(ev.get("event_type") == "fallback_used" for ev in exec_events)
 
     def test_editor_word_gate_reports_target_details(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent

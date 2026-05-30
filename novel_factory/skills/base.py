@@ -25,6 +25,12 @@ BUILTIN_SKILLS = {
     "InfoDumpDetector": None,  # v6.4.3
     "SceneTextureChecker": None,  # v6.4.3
     "DialogueNaturalnessChecker": None,  # v6.4.3
+    "ContinuityGateSkill": None,  # v6.8.0
+    "ChapterSeamSkill": None,  # v6.8.0
+    "DeathPenaltySkill": None,  # v6.8.0
+    "WordCountGateSkill": None,  # v6.8.0
+    "FactLockSkill": None,  # v6.8.0
+    "ForeshadowingDebtSkill": None,  # v6.8.0
 }
 
 
@@ -73,6 +79,24 @@ def _get_skill_class(class_name: str):
     elif class_name == "DialogueNaturalnessChecker":
         from .dialogue_naturalness_checker import DialogueNaturalnessChecker
         return DialogueNaturalnessChecker
+    elif class_name == "ContinuityGateSkill":
+        from .continuity_gate_skill import ContinuityGateSkill
+        return ContinuityGateSkill
+    elif class_name == "ChapterSeamSkill":
+        from .chapter_seam_skill import ChapterSeamSkill
+        return ChapterSeamSkill
+    elif class_name == "DeathPenaltySkill":
+        from .death_penalty_skill import DeathPenaltySkill
+        return DeathPenaltySkill
+    elif class_name == "WordCountGateSkill":
+        from .word_count_gate_skill import WordCountGateSkill
+        return WordCountGateSkill
+    elif class_name == "FactLockSkill":
+        from .fact_lock_skill import FactLockSkill
+        return FactLockSkill
+    elif class_name == "ForeshadowingDebtSkill":
+        from .foreshadowing_debt_skill import ForeshadowingDebtSkill
+        return ForeshadowingDebtSkill
 
     return None
 

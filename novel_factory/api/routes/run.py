@@ -533,6 +533,9 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
     This endpoint is for real mode where auto-publish is disabled.
     Only chapters with status='reviewed' can be published. Before publishing,
     it also guarantees MemoryCurator has run at least once for this chapter.
+
+    v6.7.9: Added narrative continuity gate — blocking continuity issues
+    prevent publication even when status is 'reviewed'.
     """
     from ..deps import get_repo
 
@@ -570,6 +573,37 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                             "error_code": "INVALID_STATUS",
                         },
                         flags={"publish_blocked": True},
+                    ).to_dict(),
+                },
+            )
+
+        # v6.7.9: Narrative continuity gate — hard block before publish
+        from ...quality.continuity_gate import evaluate_publish_continuity, SEVERITY_BLOCKING
+
+        continuity_result = evaluate_publish_continuity(
+            repo, body.project_id, body.chapter,
+        )
+        if continuity_result.should_block_publish or continuity_result.severity == SEVERITY_BLOCKING:
+            message = "连续性检查未通过，发布被拒绝"
+            return error_response(
+                "CONTINUITY_GATE_BLOCKED",
+                message,
+                details={
+                    "issues": continuity_result.issues,
+                    "suggestions": continuity_result.suggestions,
+                    "domain_result": blocked(
+                        message,
+                        user_message="本章存在叙事连续性问题，请修复后再发布",
+                        next_action="run_chapter",
+                        action_label="重新生成/修复章节",
+                        details={
+                            "project_id": body.project_id,
+                            "chapter": body.chapter,
+                            "continuity_issues": continuity_result.issues,
+                            "continuity_suggestions": continuity_result.suggestions,
+                            "error_code": "CONTINUITY_GATE_BLOCKED",
+                        },
+                        flags={"publish_blocked": True, "continuity_blocking": True},
                     ).to_dict(),
                 },
             )
