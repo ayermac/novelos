@@ -81,6 +81,9 @@ EDITOR_SYSTEM_PROMPT = """你是网文工厂的质检（Editor），是读者毒
 - revision_target: 退回目标 ("author"/"polisher"/"planner"/null)
 - state_card: 如果通过，提取本章状态卡数据
 
+示例（注意布尔值不加引号，null不加引号）：
+{"pass":true,"score":85,"scores":{"setting":24,"logic":23,"poison":18,"text":12,"pacing":8},"issues":["问题描述"],"suggestions":["修改建议"],"revision_target":null,"state_card":{}}
+
 revision_target 规则：
 - 剧情、逻辑、设定、伏笔问题 → "author"
 - 文风、句式、节奏、AI 痕迹、对白、场景质感问题 → "polisher"
