@@ -257,6 +257,32 @@ def _update_run_node(state: FactoryState, repo: Repository, node_name: str) -> N
         repo.update_workflow_run(run_id, current_node=node_name)
 
 
+def _guard_blocking_db_status(state: FactoryState, repo: Repository) -> dict[str, Any] | None:
+    """Stop agent execution when DB truth has already entered blocking."""
+    project_id = state.get("project_id", "")
+    chapter_number = state.get("chapter_number", 0)
+    if not project_id or not chapter_number:
+        return None
+
+    try:
+        db_status = repo.get_chapter_status(project_id, chapter_number)
+    except Exception:
+        logger.debug(
+            "Failed to read chapter status before agent execution for %s/%s",
+            project_id, chapter_number,
+            exc_info=True,
+        )
+        return None
+
+    if db_status == ChapterStatus.BLOCKING.value:
+        return {
+            "chapter_status": ChapterStatus.BLOCKING.value,
+            "requires_human": True,
+            "error": "章节已处于阻塞状态，停止下游 Agent 执行，请先解除阻塞后再继续工作流。",
+        }
+    return None
+
+
 def _finalize_run(state: FactoryState, repo: Repository, status: str, error: str | None = None) -> None:
     """Finalize workflow run with given status and token usage."""
     run_id = state.get("workflow_run_id")
@@ -436,6 +462,7 @@ def _handle_retryable_quality_gate(
     # so that exhausted internal repairs are escalated properly.
     # Scope by workflow_run_id and revision target so cross-run and cross-agent
     # repairs are isolated.
+    internal_repair_escalated_event: dict[str, Any] | None = None
     if not consume_retry:
         workflow_run_id = state.get("workflow_run_id")
         repair_agent_id = gate.get("revision_target") or gate.get("agent")
@@ -460,6 +487,24 @@ def _handle_retryable_quality_gate(
                 gate.get("message", "")
                 + f" [内部修复已达上限{MAX_INTERNAL_REPAIR_ATTEMPTS}次，升级为章节重试]"
             )
+
+            # v6.8.2: Log escalation event
+            internal_repair_escalated_event = {
+                "event_type": "internal_repair_escalated",
+                "message": (
+                    f"内部修复已达上限 {MAX_INTERNAL_REPAIR_ATTEMPTS} 次，"
+                    f"升级为章节级重试（retry_count 将从 {retry_count} 增加到 {retry_count + 1}）"
+                ),
+                "status": "warning",
+                "payload": {
+                    "internal_repair_count": internal_count,
+                    "internal_repair_limit": MAX_INTERNAL_REPAIR_ATTEMPTS,
+                    "escalated_to": "chapter_retry",
+                    "current_retry_count": retry_count,
+                    "new_retry_count": retry_count + 1,
+                },
+            }
+
 
     if retry_count >= max_retries:
         result["requires_human"] = True
@@ -505,6 +550,8 @@ def _handle_retryable_quality_gate(
                 "quality_gate": gate,
             },
         })
+        if internal_repair_escalated_event:
+            updated.setdefault("_exec_events", []).append(internal_repair_escalated_event)
     else:
         # Internal repair: use "internal_repair" task type (not counted by
         # get_chapter_retry_count) and preserve current retry counter.
@@ -518,13 +565,16 @@ def _handle_retryable_quality_gate(
         updated.setdefault("_exec_events", []).append({
             "event_type": "internal_repair_attempt",
             "message": (
-                f"内部修复({repair_scope})未通过，已重新路由但不消耗章节重试次数"
+                f"内部修复({repair_scope})未通过，已重新路由但不消耗章节重试次数 "
+                f"(内部修复 {internal_count + 1}/{MAX_INTERNAL_REPAIR_ATTEMPTS})"
             ),
             "status": "info",
             "payload": {
                 "revision_target": revision_target,
                 "retry_count": retry_count,
                 "max_retries": max_retries,
+                "internal_repair_count": internal_count + 1,
+                "internal_repair_limit": MAX_INTERNAL_REPAIR_ATTEMPTS,
                 "quality_gate": gate,
                 "repair_scope": repair_scope,
                 "internal_repair": True,
@@ -675,6 +725,10 @@ def create_node_runners(
         Equivalent to dispatch/chapter.py ChapterDispatchMixin._run_agent().
         v6.0: Injects tool_registry and trace_store; validates handoff contracts.
         """
+        blocking_guard = _guard_blocking_db_status(state, repo)
+        if blocking_guard:
+            return blocking_guard
+
         _update_run_node(state, repo, agent_name)
         _log_node_event(state, repo, agent_name, "started", status="running")
 
@@ -1082,6 +1136,9 @@ def _v6_agent_kwargs(repo: Repository, skill_registry: Any | None = None) -> dic
 
 def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Planner agent."""
+    blocking_guard = _guard_blocking_db_status(state, repo)
+    if blocking_guard:
+        return blocking_guard
     _update_run_node(state, repo, "planner")
     _log_node_event(state, repo, "planner", "started", status="running")
     agent = PlannerAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
@@ -1104,6 +1161,9 @@ def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_
 
 def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Screenwriter agent."""
+    blocking_guard = _guard_blocking_db_status(state, repo)
+    if blocking_guard:
+        return blocking_guard
     _update_run_node(state, repo, "screenwriter")
     _log_node_event(state, repo, "screenwriter", "started", status="running")
     audit = _save_memory_context_audit_if_missing(
@@ -1133,6 +1193,9 @@ def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider, s
 
 def author_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Author agent."""
+    blocking_guard = _guard_blocking_db_status(state, repo)
+    if blocking_guard:
+        return blocking_guard
     _update_run_node(state, repo, "author")
     _log_node_event(state, repo, "author", "started", status="running")
     agent = AuthorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
@@ -1155,6 +1218,9 @@ def author_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
 
 def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Polisher agent."""
+    blocking_guard = _guard_blocking_db_status(state, repo)
+    if blocking_guard:
+        return blocking_guard
     _update_run_node(state, repo, "polisher")
     _log_node_event(state, repo, "polisher", "started", status="running")
     agent = PolisherAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
@@ -1177,6 +1243,9 @@ def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill
 
 def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Editor agent."""
+    blocking_guard = _guard_blocking_db_status(state, repo)
+    if blocking_guard:
+        return blocking_guard
     _update_run_node(state, repo, "editor")
     _log_node_event(state, repo, "editor", "started", status="running")
     agent = EditorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
@@ -1203,6 +1272,9 @@ def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider,
     v5.3.2 closure: In real mode, failure is blocking (requires_human=True).
     In stub mode, failure is non-blocking (log and continue).
     """
+    blocking_guard = _guard_blocking_db_status(state, repo)
+    if blocking_guard:
+        return blocking_guard
     _update_run_node(state, repo, "memory_curator")
     _log_node_event(state, repo, "memory_curator", "started", status="running")
     agent = MemoryCuratorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
@@ -1324,6 +1396,7 @@ def revision_router_node(state: FactoryState, repo: Repository | None = None) ->
 
     v6.2: Added mid-run hydration to protect against state corruption
     during long-running revision flows.
+    v6.8.2: Enhanced hydration to include retry_count and force-load _revision_review from DB.
     """
     if repo is not None:
         _update_run_node(state, repo, "revision_router")
@@ -1335,9 +1408,37 @@ def revision_router_node(state: FactoryState, repo: Repository | None = None) ->
         hydrated = hydrate_revision_state(state, repo)
         updates = {
             key: hydrated[key]
-            for key in ("quality_gate", "_revision_review")
+            for key in ("quality_gate", "_revision_review", "retry_count")
             if hydrated.get(key) != state.get(key)
         }
+
+        # v6.8.2: Force-load _revision_review from DB if still missing after hydration
+        if not updates.get("_revision_review"):
+            project_id = state.get("project_id")
+            chapter_number = state.get("chapter_number")
+            if project_id and chapter_number:
+                try:
+                    chapter = repo.get_chapter(project_id, chapter_number)
+                    if chapter:
+                        review = repo.get_latest_review(project_id, chapter["id"])
+                        if review:
+                            updates["_revision_review"] = {
+                                "review_id": review.get("id"),
+                                "score": review.get("score"),
+                                "revision_target": review.get("revision_target"),
+                                "issues": review.get("issues") or [],
+                                "suggestions": review.get("suggestions") or [],
+                            }
+                            logger.info(
+                                "revision_router: force-loaded _revision_review from DB for %s ch%d (review_id=%s)",
+                                project_id, chapter_number, review.get("id"),
+                            )
+                except Exception:
+                    logger.warning(
+                        "revision_router: failed to force-load _revision_review for %s ch%d",
+                        project_id, chapter_number,
+                        exc_info=True,
+                    )
 
         _log_node_event(state, repo, "revision_router", "completed", status="completed")
         return updates

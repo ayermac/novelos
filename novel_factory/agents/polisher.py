@@ -200,6 +200,21 @@ class PolisherAgent(BaseAgent):
             if draft_block:
                 parts.append(draft_block)
 
+        chapter = self._get_chapter_info(state)
+        current_content = (chapter or {}).get("content") or ""
+        if current_content and (
+            state.get("_revision_review")
+            or state.get("chapter_status") == ChapterStatus.REVISION.value
+            or ((chapter or {}).get("status") == ChapterStatus.REVISION.value)
+        ):
+            current_wc = count_words(current_content)
+            upper_bound = max(current_wc + 400, int(current_wc * 1.12))
+            parts.append(
+                "【返修润色边界】\n"
+                f"当前稿约 {current_wc} 字符。返修润色必须以当前稿为底稿做局部语言修正，"
+                f"不要扩写新场景；除非 Editor 明确要求扩写，润色后总篇幅不要超过 {upper_bound} 字符。"
+            )
+
         # v6.4.2: Inject quality-diagnosis-derived writing reminders
         parts.append(
             "【润色写作提醒】\n"
@@ -286,6 +301,25 @@ class PolisherAgent(BaseAgent):
         current_status = state.get("chapter_status", "")
         revision_review = self._load_revision_review(state, chapter)
         in_revision_chain = current_status == ChapterStatus.REVISION.value or bool(revision_review)
+
+        # v6.8.2: Validate revision context exists when in revision mode
+        if current_status == ChapterStatus.REVISION.value and not revision_review:
+            logger.error(
+                "Polisher: revision context missing for %s ch%d",
+                project_id, chapter_number,
+            )
+            return {
+                "error": "Polisher: 返修上下文缺失，无法加载 Editor 审核意见",
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": True,
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": "polisher",
+                    "message": "返修上下文缺失，需要人工确认后重新触发",
+                    "context_missing": True,
+                },
+            }
+
         if in_revision_chain:
             if revision_review:
                 issues = revision_review.get("issues") or []

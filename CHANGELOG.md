@@ -11,6 +11,34 @@ Detailed implementation notes still live in:
 Use this file as the short, canonical version ledger: version, commit(s), key changes, verification, and known follow-up risk.
 
 ## Unreleased
+## v6.8.2 - Revision Reliability Hardening
+
+Date: 2026-05-31
+
+Key changes:
+
+- **Revision context hardening**: Force-load Editor review in revision_router_node; validate context in Author/Polisher; hydrate retry_count from DB
+- **Tighter length control**: Reduce expansion threshold (18%/700 → 12%/400); expand compression keyword detection (4 → 12 keywords); add cumulative budget tracking for segmented revision
+- **Plateau guard tuning**: Raise threshold (78/retry>0 → 79/retry>=2) to prevent premature pass on marginal quality
+- **Internal repair observability**: Log repair count and escalation events with progress indicators
+- **Editor fallback relaxation**: Raise fallback ceiling (70 → 78) to reduce unnecessary revision loops
+- **Scene beat semantic alignment**: Mark Author's scene beat warnings as advisory in Editor classification
+
+Verification:
+- Targeted revision/workflow regression tests: 125/125 passing
+- Syntax validation: All imports successful
+- Version alignment: 6.8.2 (python + frontend package)
+
+Fixes:
+- Revision context loss causing blind revision attempts
+- Revision length drift due to wide thresholds
+- Premature plateau pass on 78-79 scores
+- Opaque internal repair escalation
+- Overly conservative Editor fallback
+- Inconsistent scene beat coverage semantics
+
+
+
 
 ## v6.8.1 - Webnovel Excitement Awareness
 

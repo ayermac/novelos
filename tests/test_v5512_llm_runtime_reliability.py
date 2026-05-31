@@ -298,6 +298,28 @@ def test_llm_provider_text_call_can_override_timeout_without_mutating_config():
     assert provider.config.request_timeout_seconds == 60
 
 
+def test_llm_provider_text_call_tolerates_none_response_metadata():
+    class _TextResponse:
+        content = "ok"
+        usage_metadata = {}
+        response_metadata = None
+
+    class _Client:
+        def invoke(self, _messages, **_kwargs):
+            return _TextResponse()
+
+    provider = OpenAICompatibleProvider(LLMConfig(api_key="test-key"))
+    provider._client = _Client()  # type: ignore[assignment]
+
+    text = provider.invoke_text([{"role": "user", "content": "write"}])
+
+    assert text == "ok"
+    assert provider.last_token_usage is not None
+    assert provider.last_token_usage.total_tokens == 0
+    assert provider.last_call_trace is not None
+    assert provider.last_call_trace["response"]["response_metadata"] == {}
+
+
 def test_llm_provider_respects_configured_min_interval(monkeypatch):
     class _TextResponse:
         content = "ok"

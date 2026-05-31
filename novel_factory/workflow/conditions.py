@@ -97,6 +97,20 @@ def hydrate_revision_state(state: FactoryState, repo: Any) -> FactoryState:
             "suggestions": review.get("suggestions"),
         }
 
+    # v6.8.2: Hydrate retry_count from DB as source of truth. Do this even
+    # when state already has a non-zero value because resumed graph state may
+    # lag behind task-table retry accounting.
+    try:
+        retry_count = repo.get_chapter_retry_count(project_id, int(chapter_number))
+        hydrated["retry_count"] = retry_count
+    except Exception:
+        logger.debug(
+            "hydrate_revision_state: failed to load retry_count for %s/%s",
+            project_id, chapter_number,
+            exc_info=True,
+        )
+
+
     return hydrated
 
 

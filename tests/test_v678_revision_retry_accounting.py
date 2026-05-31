@@ -306,6 +306,9 @@ class TestInternalRepairRetryAccounting:
         assert repo.get_chapter_retry_count("test_proj", 1) == 1
         events = updated.get("_exec_events", [])
         assert events[0]["event_type"] == "quality_gate_retry"
+        assert events[1]["event_type"] == "internal_repair_escalated"
+        assert events[1]["payload"]["current_retry_count"] == 0
+        assert events[1]["payload"]["new_retry_count"] == 1
 
     def test_author_internal_repairs_do_not_exhaust_polisher_budget(self, seeded_repo):
         """6. (P2 regression) Author internal repairs scoped to run don't affect polisher."""
@@ -579,16 +582,16 @@ class TestStatusFactFilterProduction:
 
 
 class TestVersionAlignment:
-    """v6.7.8: All version sources must agree."""
+    """v6.8.2: All version sources must agree."""
 
-    def test_version_py_is_6_7_9(self):
+    def test_version_py_is_6_8_2(self):
         from novel_factory.version import __version__
-        assert __version__ == "6.8.0"
+        assert __version__ == "6.8.2"
 
     def test_frontend_package_json_matches(self):
         with open("frontend/package.json") as f:
             data = json.load(f)
-        assert data["version"] == "6.8.0"
+        assert data["version"] == "6.8.2"
 
     def test_desktop_package_json_matches(self):
         with open("desktop/package.json") as f:

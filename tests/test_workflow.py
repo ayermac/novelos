@@ -255,6 +255,45 @@ class TestGraphExitGuard:
         assert repo.events[0]["node_name"] == "editor"
 
 
+class TestAgentNodeStaleDbGuard:
+    def test_agent_runner_stops_before_llm_when_db_is_blocking(self, tmp_path):
+        """A stale in-memory status must not let downstream agents execute."""
+        from novel_factory.config.settings import load_settings
+        from novel_factory.db.connection import init_db
+        from novel_factory.db.repository import Repository
+        from novel_factory.workflow.nodes import create_node_runners
+
+        class FailIfCalledRouter:
+            def for_agent(self, agent_name):
+                raise AssertionError(f"LLM router should not be called for {agent_name}")
+
+        db_path = tmp_path / "stale-blocking-guard.db"
+        init_db(db_path)
+        repo = Repository(str(db_path))
+        repo.create_project(project_id="stale_guard", name="Stale Guard", genre="fantasy")
+        repo.save_chapter("stale_guard", 1, title="第一章", content="正文", word_count=2, status="blocking")
+        run_id = repo.create_workflow_run("stale_guard", 1)
+        repo.update_workflow_run(run_id, status="running", current_node="author")
+
+        runners = create_node_runners(load_settings(), repo, FailIfCalledRouter())
+        result = runners["polisher"]({
+            "project_id": "stale_guard",
+            "chapter_number": 1,
+            "workflow_run_id": run_id,
+            "chapter_status": ChapterStatus.DRAFTED.value,
+            "requires_human": False,
+            "error": None,
+            "steps": [],
+        })
+
+        assert result["chapter_status"] == ChapterStatus.BLOCKING.value
+        assert result["requires_human"] is True
+        assert "已处于阻塞状态" in result["error"]
+        assert repo.get_workflow_node_events(run_id, node_name="polisher") == []
+        run = repo.get_workflow_runs_for_project("stale_guard", chapter_number=1, limit=1)[0]
+        assert run["current_node"] == "author"
+
+
 class TestRouteByReviewResult:
     def test_pass_goes_to_memory_curator_in_stub_mode(self):
         """v5.3.2: Stub mode routes to memory_curator after pass."""
@@ -382,14 +421,18 @@ class TestRouteByRevisionType:
 
 class TestRevisionStateHydration:
     class FakeRepo:
-        def __init__(self, review=None):
+        def __init__(self, review=None, retry_count=0):
             self.review = review
+            self.retry_count = retry_count
 
         def get_chapter(self, project_id, chapter_number):
             return {"id": 42, "project_id": project_id, "chapter_number": chapter_number}
 
         def get_latest_review(self, project_id, chapter_id):
             return self.review
+
+        def get_chapter_retry_count(self, project_id, chapter_number):
+            return self.retry_count
 
     def test_normalize_revision_target_only_allows_routable_agents(self):
         assert normalize_revision_target("author") == "author"
@@ -475,6 +518,19 @@ class TestRevisionStateHydration:
 
         assert hydrated["quality_gate"]["revision_target"] == "author"
         assert hydrated["_revision_review"]["review_id"] == 11
+
+    def test_hydrate_revision_state_overwrites_stale_retry_count_from_db(self):
+        repo = self.FakeRepo({"id": 12, "revision_target": "author"}, retry_count=2)
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "chapter_status": ChapterStatus.REVISION.value,
+            "retry_count": 1,
+        }
+
+        hydrated = hydrate_revision_state(state, repo)
+
+        assert hydrated["retry_count"] == 2
 
     def test_prepare_resume_after_human_review_clears_checkpoint_and_flags(self):
         repo = self.FakeRepo()

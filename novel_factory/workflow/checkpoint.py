@@ -237,7 +237,8 @@ def inspect_checkpoint_thread(
         if isinstance(writes, dict) and writes:
             checkpoint_node = next(iter(writes.keys()), None)
         checkpoint_node = checkpoint_node or metadata.get("source")
-    current_node = state_values.get("current_node") or checkpoint_node
+    visible_checkpoint_node = _visible_checkpoint_node(checkpoint_node)
+    current_node = state_values.get("current_node") or visible_checkpoint_node
     state_keys = sorted(str(key) for key in state_values.keys())[:30]
     status = state_values.get("chapter_status") or state_values.get("current_stage")
     checkpoint_summary = None
@@ -251,13 +252,24 @@ def inspect_checkpoint_thread(
 
     summary.update({
         "checkpoint_exists": True,
-        "checkpoint_node": checkpoint_node,
+        "checkpoint_node": visible_checkpoint_node,
+        "raw_checkpoint_node": checkpoint_node,
         "current_node": current_node,
         "checkpoint_summary": checkpoint_summary,
         "state_keys": state_keys,
         "recovery_available": True,
     })
     return summary
+
+
+def _visible_checkpoint_node(node: Any) -> str | None:
+    """Hide LangGraph branch/internal checkpoints from user-facing summaries."""
+    if not node:
+        return None
+    text = str(node)
+    if text == "loop" or text.startswith("branch:"):
+        return None
+    return text
 
 
 def resume_from_checkpoint(
