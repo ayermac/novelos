@@ -301,6 +301,25 @@ class PolisherAgent(BaseAgent):
         current_status = state.get("chapter_status", "")
         revision_review = self._load_revision_review(state, chapter)
         in_revision_chain = current_status == ChapterStatus.REVISION.value or bool(revision_review)
+
+        # v6.8.2: Validate revision context exists when in revision mode
+        if current_status == ChapterStatus.REVISION.value and not revision_review:
+            logger.error(
+                "Polisher: revision context missing for %s ch%d",
+                project_id, chapter_number,
+            )
+            return {
+                "error": "Polisher: 返修上下文缺失，无法加载 Editor 审核意见",
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": True,
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": "polisher",
+                    "message": "返修上下文缺失，需要人工确认后重新触发",
+                    "context_missing": True,
+                },
+            }
+
         if in_revision_chain:
             if revision_review:
                 issues = revision_review.get("issues") or []

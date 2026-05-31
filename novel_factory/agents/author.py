@@ -237,6 +237,24 @@ class AuthorAgent(BaseAgent):
         is_revision = chapter and chapter.get("status") == ChapterStatus.REVISION.value
         revision_review = self._load_revision_review(state, chapter) if is_revision else None
 
+        # v6.8.2: Validate revision context exists when in revision mode
+        if is_revision and not revision_review:
+            logger.error(
+                "Author: revision context missing for %s ch%d",
+                project_id, chapter_number,
+            )
+            return {
+                "error": "Author: 返修上下文缺失，无法加载 Editor 审核意见",
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": True,
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": "author",
+                    "message": "返修上下文缺失，需要人工确认后重新触发",
+                    "context_missing": True,
+                },
+            }
+
         # v6.1.1: Emit revision context loaded event
         if is_revision:
             if revision_review:
@@ -654,7 +672,7 @@ class AuthorAgent(BaseAgent):
             revised_wc = _cw(revised_body)
             wc_delta = revised_wc - original_wc
             low_change = abs(wc_delta) < 20 and original_body.strip() == revised_body.strip()
-            expansion_limit = max(700, int(original_wc * 0.18))
+            expansion_limit = max(400, int(original_wc * 0.12))
             overexpanded = (
                 original_wc > 0
                 and wc_delta > expansion_limit
@@ -1343,7 +1361,12 @@ class AuthorAgent(BaseAgent):
         suggestions = (revision_review or {}).get("suggestions") or []
         issues = (revision_review or {}).get("issues") or []
         text = "\n".join(str(item) for item in [*suggestions, *issues])
-        return any(word in text for word in ("压缩", "缩短", "精简", "删减篇幅"))
+        keywords = [
+            "压缩", "缩短", "精简", "删减", "去掉", "减少",
+            "过长", "冗余", "啰嗦", "拖沓", "重复",
+            "字数过多", "篇幅过大", "超出", "超标",
+        ]
+        return any(kw in text for kw in keywords)
 
     def _try_repair_revision_length_regression(
         self,

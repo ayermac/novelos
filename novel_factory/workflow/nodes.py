@@ -544,13 +544,16 @@ def _handle_retryable_quality_gate(
         updated.setdefault("_exec_events", []).append({
             "event_type": "internal_repair_attempt",
             "message": (
-                f"内部修复({repair_scope})未通过，已重新路由但不消耗章节重试次数"
+                f"内部修复({repair_scope})未通过，已重新路由但不消耗章节重试次数 "
+                f"(内部修复 {internal_count + 1}/{MAX_INTERNAL_REPAIR_ATTEMPTS})"
             ),
             "status": "info",
             "payload": {
                 "revision_target": revision_target,
                 "retry_count": retry_count,
                 "max_retries": max_retries,
+                "internal_repair_count": internal_count + 1,
+                "internal_repair_limit": MAX_INTERNAL_REPAIR_ATTEMPTS,
                 "quality_gate": gate,
                 "repair_scope": repair_scope,
                 "internal_repair": True,
@@ -1372,6 +1375,7 @@ def revision_router_node(state: FactoryState, repo: Repository | None = None) ->
 
     v6.2: Added mid-run hydration to protect against state corruption
     during long-running revision flows.
+    v6.8.2: Enhanced hydration to include retry_count and force-load _revision_review from DB.
     """
     if repo is not None:
         _update_run_node(state, repo, "revision_router")
@@ -1383,9 +1387,37 @@ def revision_router_node(state: FactoryState, repo: Repository | None = None) ->
         hydrated = hydrate_revision_state(state, repo)
         updates = {
             key: hydrated[key]
-            for key in ("quality_gate", "_revision_review")
+            for key in ("quality_gate", "_revision_review", "retry_count")
             if hydrated.get(key) != state.get(key)
         }
+
+        # v6.8.2: Force-load _revision_review from DB if still missing after hydration
+        if not updates.get("_revision_review"):
+            project_id = state.get("project_id")
+            chapter_number = state.get("chapter_number")
+            if project_id and chapter_number:
+                try:
+                    chapter = repo.get_chapter(project_id, chapter_number)
+                    if chapter:
+                        review = repo.get_latest_review(project_id, chapter["id"])
+                        if review:
+                            updates["_revision_review"] = {
+                                "review_id": review.get("id"),
+                                "score": review.get("score"),
+                                "revision_target": review.get("revision_target"),
+                                "issues": review.get("issues") or [],
+                                "suggestions": review.get("suggestions") or [],
+                            }
+                            logger.info(
+                                "revision_router: force-loaded _revision_review from DB for %s ch%d (review_id=%s)",
+                                project_id, chapter_number, review.get("id"),
+                            )
+                except Exception:
+                    logger.warning(
+                        "revision_router: failed to force-load _revision_review for %s ch%d",
+                        project_id, chapter_number,
+                        exc_info=True,
+                    )
 
         _log_node_event(state, repo, "revision_router", "completed", status="completed")
         return updates

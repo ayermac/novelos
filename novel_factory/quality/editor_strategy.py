@@ -134,6 +134,13 @@ def count_issue_types(issues: list[str] | str | None) -> tuple[int, int, int]:
     advisory = 0
     for issue in _normalize_issue_items(issues):
         text = str(issue)
+        
+        # v6.8.2: Recognize Author's scene beat coverage warning as advisory
+        if "场景 beat 覆盖不完整" in text and "已降级为警告" in text:
+            advisory += 1
+            continue
+        
+        
         is_blocking = any(m in text for m in _HARD_ISSUE_MARKERS)
         is_advisory = any(m in text for m in _ADVISORY_MARKERS)
         if is_blocking:
@@ -265,13 +272,13 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
     # no actionable priority/blocking issue should not loop forever. Treat it
     # as publishable with advisory notes; concrete priority issues still route
     # to revision/human_review normally.
-    if p.score >= 78 and p.retry_count > 0 and effective_priority == 0:
+    if p.score >= 79 and p.retry_count >= 2 and effective_priority == 0:
         return EditorDecision(
             pass_=True,
             revision_needed=False,
             category="advisory",
             decision_type="advisory_pass",
-            reason="分数 78-79 且已返修，未发现可执行高优先级问题，转为 advisory pass",
+            reason="分数 79 且已返修 2 次，未发现可执行高优先级问题，转为 advisory pass",
             recommended_action="进入 awaiting_publish with warnings，不再自动返修",
         )
 

@@ -419,8 +419,8 @@ class EditorAgent(BaseAgent):
 
         # v6.7.9: Fallback can never auto-pass if continuity blocks
         passed = has_content and not dp_result.has_critical and not continuity_blocking
-        # v6.7.9: Cap fallback score at 70
-        score = 70 if passed else 60
+        # v6.8.2: Raise fallback ceiling to 78 (just below pass threshold)
+        score = 78 if passed else 60
 
         issues = []
         if not has_content:
