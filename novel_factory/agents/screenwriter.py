@@ -204,8 +204,23 @@ class ScreenwriterAgent(BaseAgent):
             expected_status=ChapterStatus.PLANNED.value,
         )
         if not ok:
-            logger.error("Screenwriter: status advance planned→scripted failed (stale state)")
-            return {"error": "Screenwriter: stale state, status advance failed", "chapter_status": state.get("chapter_status"), "_trace": trace, "_autonomy": autonomy}
+            # v6.8.1: Check if chapter is already at or past SCRIPTED (recovery run)
+            current_status = self.repo.get_chapter_status(project_id, chapter_number)
+            _STATUS_ORDER = {
+                "idea": 0, "outlined": 1, "planned": 2, "scripted": 3,
+                "drafted": 4, "polished": 5, "review": 6, "reviewed": 7,
+                "revision": 8, "published": 9, "blocking": 10,
+            }
+            current_order = _STATUS_ORDER.get(current_status, -1)
+            scripted_order = _STATUS_ORDER.get("scripted", 3)
+            if current_order >= scripted_order:
+                logger.info(
+                    "Screenwriter: chapter already at '%s' (order %d >= %d), skipping status advance (recovery run)",
+                    current_status, current_order, scripted_order,
+                )
+            else:
+                logger.error("Screenwriter: status advance planned→scripted failed (stale state)")
+                return {"error": "Screenwriter: stale state, status advance failed", "chapter_status": state.get("chapter_status"), "_trace": trace, "_autonomy": autonomy}
 
         # Save scene beats (only after status advance succeeds)
         try:

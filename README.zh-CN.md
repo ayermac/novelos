@@ -12,6 +12,7 @@
 [![Electron](https://img.shields.io/badge/Electron-30+-47848F?logo=electron&logoColor=white)](https://www.electronjs.org/)
 [![LangGraph](https://img.shields.io/badge/LangGraph-Workflow-1C3C3C?logo=langchain&logoColor=white)](https://langchain-ai.github.io/langgraph/)
 [![SQLite](https://img.shields.io/badge/SQLite-Local-003B57?logo=sqlite&logoColor=white)](https://www.sqlite.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 </div>
 
@@ -302,4 +303,4 @@ bash packaging/scripts/verify-desktop-mac.sh
 
 ## 许可证
 
-当前仓库尚未包含许可证文件。
+Novelos 使用 [MIT License](LICENSE) 开源。

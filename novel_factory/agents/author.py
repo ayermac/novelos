@@ -754,8 +754,24 @@ class AuthorAgent(BaseAgent):
             expected_status=expected_status,
         )
         if not ok:
-            logger.error(f"Author: status advance {expected_status}→drafted failed (stale state)")
-            return {"error": "Author: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
+            # v6.8.1: Check if chapter is already at or past DRAFTED (recovery run)
+            # If so, skip status advance — the chapter was already advanced in a previous run
+            current_status = self.repo.get_chapter_status(project_id, chapter_number)
+            _STATUS_ORDER = {
+                "idea": 0, "outlined": 1, "planned": 2, "scripted": 3,
+                "drafted": 4, "polished": 5, "review": 6, "reviewed": 7,
+                "revision": 8, "published": 9, "blocking": 10,
+            }
+            current_order = _STATUS_ORDER.get(current_status, -1)
+            drafted_order = _STATUS_ORDER.get("drafted", 4)
+            if current_order >= drafted_order:
+                logger.info(
+                    "Author: chapter already at '%s' (order %d >= %d), skipping status advance (recovery run)",
+                    current_status, current_order, drafted_order,
+                )
+            else:
+                logger.error(f"Author: status advance {expected_status}→drafted failed (stale state)")
+                return {"error": "Author: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
 
         # Save chapter content (only after status advance succeeds)
         try:
