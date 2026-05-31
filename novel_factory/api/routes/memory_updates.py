@@ -558,6 +558,25 @@ def _next_outline_sequence(repo, project_id: str, level: str) -> int:
     return max(sequences, default=0) + 1
 
 
+# v6.8.3: Operation apply priority. create/update apply BEFORE resolve/deprecate so
+# that terminal status transitions are not overwritten by same-batch descriptive
+# updates (which may carry a stale status="planted").
+_OP_APPLY_PRIORITY = {"create": 0, "update": 1, "resolve": 2, "deprecate": 2}
+
+
+def _order_items_for_apply(items: list[dict]) -> list[dict]:
+    """Stable-sort memory items so terminal operations apply last.
+
+    A stable sort preserves the original (insertion) order within each priority
+    group, so create-before-update ordering for the same target is retained while
+    resolve/deprecate are guaranteed to apply after any plain update.
+    """
+    return sorted(
+        items,
+        key=lambda it: _OP_APPLY_PRIORITY.get(it.get("operation", "update"), 1),
+    )
+
+
 def _apply_memory_item(
     repo,
     project_id: str,
@@ -836,11 +855,19 @@ def _apply_memory_item(
                 )
                 if plot:
                     plot_data = dict(after_data)
-                    if operation == "resolve":
-                        plot_data.setdefault("status", "resolved")
+                    if operation == "update":
+                        # v6.8.3: A plain update may only change descriptive fields.
+                        # Status transitions must go through resolve/deprecate so a
+                        # stale status="planted" cannot revert a prior resolve.
+                        plot_data.pop("status", None)
+                        plot_data.pop("resolved_chapter", None)
+                    elif operation == "resolve":
+                        # v6.8.3: assign (not setdefault) so a stray status field in
+                        # after_data cannot weaken the resolve.
+                        plot_data["status"] = "resolved"
                         plot_data.setdefault("resolved_chapter", chapter_number or None)
                     elif operation == "deprecate":
-                        plot_data.setdefault("status", "abandoned")
+                        plot_data["status"] = "abandoned"
                     updated = repo.update_plot_hole(project_id, plot["id"], plot_data)
                     result["success"] = updated is not None
                     result["created_id"] = plot["id"]
@@ -1236,6 +1263,8 @@ async def apply_memory_batch(
             return _fallback_apply_error()
         results = []
 
+        # v6.8.3: Apply create/update before resolve/deprecate (terminal ops last).
+        items = _order_items_for_apply(items)
         for item in items:
             apply_result = _apply_memory_item(
                 repo, project_id, item,
@@ -1374,6 +1403,8 @@ async def apply_memory_batch_canonical(
             return _fallback_apply_error()
         results = []
 
+        # v6.8.3: Apply create/update before resolve/deprecate (terminal ops last).
+        items = _order_items_for_apply(items)
         for item in items:
             apply_result = _apply_memory_item(
                 repo, body.project_id, item,
