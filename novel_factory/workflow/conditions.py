@@ -97,6 +97,15 @@ def hydrate_revision_state(state: FactoryState, repo: Any) -> FactoryState:
             "suggestions": review.get("suggestions"),
         }
 
+    # v6.8.2: Hydrate retry_count from DB
+    if not hydrated.get("retry_count"):
+        try:
+            retry_count = repo.get_chapter_retry_count(project_id, int(chapter_number))
+            hydrated["retry_count"] = retry_count
+        except Exception:
+            pass
+
+
     return hydrated
 
 

@@ -487,6 +487,24 @@ def _handle_retryable_quality_gate(
                 + f" [内部修复已达上限{MAX_INTERNAL_REPAIR_ATTEMPTS}次，升级为章节重试]"
             )
 
+            # v6.8.2: Log escalation event
+            result.setdefault("_exec_events", []).append({
+                "event_type": "internal_repair_escalated",
+                "message": (
+                    f"内部修复已达上限 {MAX_INTERNAL_REPAIR_ATTEMPTS} 次，"
+                    f"升级为章节级重试（retry_count 将从 {retry_count} 增加到 {retry_count + 1}）"
+                ),
+                "status": "warning",
+                "payload": {
+                    "internal_repair_count": internal_count,
+                    "internal_repair_limit": MAX_INTERNAL_REPAIR_ATTEMPTS,
+                    "escalated_to": "chapter_retry",
+                    "current_retry_count": retry_count,
+                    "new_retry_count": retry_count + 1,
+                },
+            })
+
+
     if retry_count >= max_retries:
         result["requires_human"] = True
         result["retry_count"] = retry_count

@@ -1791,7 +1791,21 @@ class AuthorAgent(BaseAgent):
 
             segment_outputs.append(content)
 
-            # v6.8.0: Skip segment_completed logging (reduces noise)
+            # v6.8.0: Skip segment_completed logging
+
+            # v6.8.2: Track cumulative budget and adjust remaining segments
+            if idx < total_chunks - 1:  # Not the last segment
+                accumulated_wc = sum(count_words(seg) for seg in segment_outputs)
+                remaining_budget = max(0, chapter_upper_bound - accumulated_wc)
+                
+                if remaining_budget < segment_target:
+                    logger.warning(
+                        "Author segmented revision: approaching upper bound "
+                        "(%d accumulated, %d remaining, next target %d)",
+                        accumulated_wc, remaining_budget, segment_target,
+                    )
+                    # Note: Next segment's target will be calculated in next iteration
+                    # This warning helps track budget exhaustion (reduces noise)
 
         merged_content = self._merge_segment_outputs(segment_outputs)
         merged_content = self._repair_final_segment_if_needed(
