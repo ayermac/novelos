@@ -25,9 +25,9 @@ Key changes:
 - **Scene beat semantic alignment**: Mark Author's scene beat warnings as advisory in Editor classification
 
 Verification:
-- Core workflow tests: 108/108 passing
+- Targeted revision/workflow regression tests: 125/125 passing
 - Syntax validation: All imports successful
-- Version alignment: 6.8.2 (python)
+- Version alignment: 6.8.2 (python + frontend package)
 
 Fixes:
 - Revision context loss causing blind revision attempts

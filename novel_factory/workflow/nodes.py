@@ -462,6 +462,7 @@ def _handle_retryable_quality_gate(
     # so that exhausted internal repairs are escalated properly.
     # Scope by workflow_run_id and revision target so cross-run and cross-agent
     # repairs are isolated.
+    internal_repair_escalated_event: dict[str, Any] | None = None
     if not consume_retry:
         workflow_run_id = state.get("workflow_run_id")
         repair_agent_id = gate.get("revision_target") or gate.get("agent")
@@ -488,7 +489,7 @@ def _handle_retryable_quality_gate(
             )
 
             # v6.8.2: Log escalation event
-            result.setdefault("_exec_events", []).append({
+            internal_repair_escalated_event = {
                 "event_type": "internal_repair_escalated",
                 "message": (
                     f"内部修复已达上限 {MAX_INTERNAL_REPAIR_ATTEMPTS} 次，"
@@ -502,7 +503,7 @@ def _handle_retryable_quality_gate(
                     "current_retry_count": retry_count,
                     "new_retry_count": retry_count + 1,
                 },
-            })
+            }
 
 
     if retry_count >= max_retries:
@@ -549,6 +550,8 @@ def _handle_retryable_quality_gate(
                 "quality_gate": gate,
             },
         })
+        if internal_repair_escalated_event:
+            updated.setdefault("_exec_events", []).append(internal_repair_escalated_event)
     else:
         # Internal repair: use "internal_repair" task type (not counted by
         # get_chapter_retry_count) and preserve current retry counter.

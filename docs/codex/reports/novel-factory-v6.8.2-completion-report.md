@@ -2,7 +2,7 @@
 
 **Version**: v6.8.2  
 **Branch**: `v6.8.2-revision-reliability-hardening`  
-**Commits**: `1224741`, `954f9e8`, `cf2a6fc`  
+**Commits**: `1224741`, `954f9e8`, `cf2a6fc`, `6a55ebb`  
 **Date**: 2026-05-31  
 **Status**: ✅ COMPLETED
 
@@ -38,25 +38,30 @@
 ## Code Changes
 
 ```
-9 files changed, 132 insertions(+), 10 deletions(-)
+Core implementation and documentation touched workflow, agent, quality,
+version, frontend package metadata, tests, changelog, and report/spec files.
 
-novel_factory/agents/author.py              | +48
-novel_factory/agents/editor.py              | +4/-1
-novel_factory/agents/polisher.py            | +17
-novel_factory/quality/editor_strategy.py    | +8/-1
-novel_factory/version.py                    | +2/-1
-novel_factory/workflow/nodes.py             | +45
-novel_factory/workflow/conditions.py        | +8
-CHANGELOG.md                                | +28
+Key files:
+- `novel_factory/agents/author.py`
+- `novel_factory/agents/editor.py`
+- `novel_factory/agents/polisher.py`
+- `novel_factory/quality/editor_strategy.py`
+- `novel_factory/workflow/conditions.py`
+- `novel_factory/workflow/nodes.py`
+- `novel_factory/version.py`
+- `frontend/package.json`
+- `tests/test_workflow.py`
+- `tests/test_v678_revision_retry_accounting.py`
+- `CHANGELOG.md`
 ```
 
 ---
 
 ## Testing
 
-- Core workflow tests: 108/108 passing
+- Targeted revision/workflow regression tests: 125/125 passing
 - Syntax validation: All imports successful
-- Version alignment: 6.8.2
+- Version alignment: 6.8.2 (Python + frontend package)
 
 ---
 
@@ -64,8 +69,8 @@ CHANGELOG.md                                | +28
 
 ✅ All 6 phases implemented  
 ✅ CHANGELOG updated  
-✅ Spec requirements met  
-✅ Ready for merge to main
+✅ Implementation scope met  
+⚠ Full 2616+ test suite and real-project manual validation still recommended before merge
 
 ---
 

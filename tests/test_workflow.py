@@ -421,14 +421,18 @@ class TestRouteByRevisionType:
 
 class TestRevisionStateHydration:
     class FakeRepo:
-        def __init__(self, review=None):
+        def __init__(self, review=None, retry_count=0):
             self.review = review
+            self.retry_count = retry_count
 
         def get_chapter(self, project_id, chapter_number):
             return {"id": 42, "project_id": project_id, "chapter_number": chapter_number}
 
         def get_latest_review(self, project_id, chapter_id):
             return self.review
+
+        def get_chapter_retry_count(self, project_id, chapter_number):
+            return self.retry_count
 
     def test_normalize_revision_target_only_allows_routable_agents(self):
         assert normalize_revision_target("author") == "author"
@@ -514,6 +518,19 @@ class TestRevisionStateHydration:
 
         assert hydrated["quality_gate"]["revision_target"] == "author"
         assert hydrated["_revision_review"]["review_id"] == 11
+
+    def test_hydrate_revision_state_overwrites_stale_retry_count_from_db(self):
+        repo = self.FakeRepo({"id": 12, "revision_target": "author"}, retry_count=2)
+        state = {
+            "project_id": "demo",
+            "chapter_number": 2,
+            "chapter_status": ChapterStatus.REVISION.value,
+            "retry_count": 1,
+        }
+
+        hydrated = hydrate_revision_state(state, repo)
+
+        assert hydrated["retry_count"] == 2
 
     def test_prepare_resume_after_human_review_clears_checkpoint_and_flags(self):
         repo = self.FakeRepo()
