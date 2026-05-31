@@ -257,6 +257,32 @@ def _update_run_node(state: FactoryState, repo: Repository, node_name: str) -> N
         repo.update_workflow_run(run_id, current_node=node_name)
 
 
+def _guard_blocking_db_status(state: FactoryState, repo: Repository) -> dict[str, Any] | None:
+    """Stop agent execution when DB truth has already entered blocking."""
+    project_id = state.get("project_id", "")
+    chapter_number = state.get("chapter_number", 0)
+    if not project_id or not chapter_number:
+        return None
+
+    try:
+        db_status = repo.get_chapter_status(project_id, chapter_number)
+    except Exception:
+        logger.debug(
+            "Failed to read chapter status before agent execution for %s/%s",
+            project_id, chapter_number,
+            exc_info=True,
+        )
+        return None
+
+    if db_status == ChapterStatus.BLOCKING.value:
+        return {
+            "chapter_status": ChapterStatus.BLOCKING.value,
+            "requires_human": True,
+            "error": "章节已处于阻塞状态，停止下游 Agent 执行，请先解除阻塞后再继续工作流。",
+        }
+    return None
+
+
 def _finalize_run(state: FactoryState, repo: Repository, status: str, error: str | None = None) -> None:
     """Finalize workflow run with given status and token usage."""
     run_id = state.get("workflow_run_id")
@@ -675,6 +701,10 @@ def create_node_runners(
         Equivalent to dispatch/chapter.py ChapterDispatchMixin._run_agent().
         v6.0: Injects tool_registry and trace_store; validates handoff contracts.
         """
+        blocking_guard = _guard_blocking_db_status(state, repo)
+        if blocking_guard:
+            return blocking_guard
+
         _update_run_node(state, repo, agent_name)
         _log_node_event(state, repo, agent_name, "started", status="running")
 
@@ -1082,6 +1112,9 @@ def _v6_agent_kwargs(repo: Repository, skill_registry: Any | None = None) -> dic
 
 def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Planner agent."""
+    blocking_guard = _guard_blocking_db_status(state, repo)
+    if blocking_guard:
+        return blocking_guard
     _update_run_node(state, repo, "planner")
     _log_node_event(state, repo, "planner", "started", status="running")
     agent = PlannerAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
@@ -1104,6 +1137,9 @@ def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_
 
 def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Screenwriter agent."""
+    blocking_guard = _guard_blocking_db_status(state, repo)
+    if blocking_guard:
+        return blocking_guard
     _update_run_node(state, repo, "screenwriter")
     _log_node_event(state, repo, "screenwriter", "started", status="running")
     audit = _save_memory_context_audit_if_missing(
@@ -1133,6 +1169,9 @@ def screenwriter_node(state: FactoryState, repo: Repository, llm: LLMProvider, s
 
 def author_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Author agent."""
+    blocking_guard = _guard_blocking_db_status(state, repo)
+    if blocking_guard:
+        return blocking_guard
     _update_run_node(state, repo, "author")
     _log_node_event(state, repo, "author", "started", status="running")
     agent = AuthorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
@@ -1155,6 +1194,9 @@ def author_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
 
 def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Polisher agent."""
+    blocking_guard = _guard_blocking_db_status(state, repo)
+    if blocking_guard:
+        return blocking_guard
     _update_run_node(state, repo, "polisher")
     _log_node_event(state, repo, "polisher", "started", status="running")
     agent = PolisherAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
@@ -1177,6 +1219,9 @@ def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill
 
 def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Editor agent."""
+    blocking_guard = _guard_blocking_db_status(state, repo)
+    if blocking_guard:
+        return blocking_guard
     _update_run_node(state, repo, "editor")
     _log_node_event(state, repo, "editor", "started", status="running")
     agent = EditorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
@@ -1203,6 +1248,9 @@ def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider,
     v5.3.2 closure: In real mode, failure is blocking (requires_human=True).
     In stub mode, failure is non-blocking (log and continue).
     """
+    blocking_guard = _guard_blocking_db_status(state, repo)
+    if blocking_guard:
+        return blocking_guard
     _update_run_node(state, repo, "memory_curator")
     _log_node_event(state, repo, "memory_curator", "started", status="running")
     agent = MemoryCuratorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))

@@ -828,6 +828,8 @@ class TestAuthorLiveCallBudget:
         assert "【当前保留稿 / 必须在此基础上返修】" in prompt
         assert "旧稿内容，场景仍在推进。" in prompt
         assert "禁止脱离该底稿另起炉灶重写短版" in prompt
+        assert "返修篇幅边界" in prompt
+        assert "返修后总篇幅应基本持平" in prompt
         assert "最多不要超过 3250 字符" not in prompt
         assert llm.calls[-1]["max_tokens"] > 4096
 
@@ -905,3 +907,56 @@ class TestAuthorLiveCallBudget:
         assert "不要另起炉灶重写短版" in prompt
         assert "旧稿主体继续推进。" in prompt
         assert "短返修稿补了章末钩子。" in prompt
+
+    def test_revision_diff_flags_overexpanded_candidate(self, repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.llm.stub_provider import StubLLM
+        from novel_factory.models.schemas import AuthorOutput
+        from novel_factory.validators.chapter_checker import count_words
+
+        current = "第1章 测试\n\n" + ("旧稿主体继续推进。" * 260)
+        candidate = "第1章 测试\n\n" + ("旧稿主体继续推进，新增解释不断膨胀。" * 185)
+        repo.save_chapter_content("test_proj", 1, current, "第一章 测试")
+        repo.update_chapter_status("test_proj", 1, "revision")
+
+        class OverexpandingAuthor(AuthorAgent):
+            def _try_plain_text_draft(self, state, task_desc, context, exec_events=None):
+                return AuthorOutput(
+                    title="第一章 测试",
+                    content=candidate,
+                    word_count=count_words(candidate),
+                    implemented_events=["事件1", "事件2"],
+                    used_plot_refs=[],
+                )
+
+        result = OverexpandingAuthor(repo, StubLLM()).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "revision",
+            "llm_mode": "stub",
+            "_revision_review": {
+                "issues": ["章末钩子不足"],
+                "suggestions": ["补足章末钩子"],
+                "revision_target": "author",
+            },
+        })
+
+        diff_events = [
+            event for event in result.get("_exec_events", [])
+            if event.get("event_type") == "revision_diff_generated"
+        ]
+        assert diff_events
+        assert diff_events[-1]["status"] == "warning"
+        assert diff_events[-1]["payload"]["overexpanded_warning"] is True
+        assert result["quality_gate"]["revision_overexpanded"] is True
+        assert result["quality_gate"]["version_regression"] is True
+
+        chapter = repo.get_chapter("test_proj", 1)
+        assert "新增解释不断膨胀" not in (chapter.get("content") or "")
+
+        artifacts = repo.get_artifacts_for_chapter("test_proj", 1)
+        assert any(
+            artifact["agent_id"] == "author"
+            and artifact["artifact_type"] == "rejected_regression"
+            for artifact in artifacts
+        )

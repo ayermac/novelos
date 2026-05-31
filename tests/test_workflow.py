@@ -255,6 +255,45 @@ class TestGraphExitGuard:
         assert repo.events[0]["node_name"] == "editor"
 
 
+class TestAgentNodeStaleDbGuard:
+    def test_agent_runner_stops_before_llm_when_db_is_blocking(self, tmp_path):
+        """A stale in-memory status must not let downstream agents execute."""
+        from novel_factory.config.settings import load_settings
+        from novel_factory.db.connection import init_db
+        from novel_factory.db.repository import Repository
+        from novel_factory.workflow.nodes import create_node_runners
+
+        class FailIfCalledRouter:
+            def for_agent(self, agent_name):
+                raise AssertionError(f"LLM router should not be called for {agent_name}")
+
+        db_path = tmp_path / "stale-blocking-guard.db"
+        init_db(db_path)
+        repo = Repository(str(db_path))
+        repo.create_project(project_id="stale_guard", name="Stale Guard", genre="fantasy")
+        repo.save_chapter("stale_guard", 1, title="第一章", content="正文", word_count=2, status="blocking")
+        run_id = repo.create_workflow_run("stale_guard", 1)
+        repo.update_workflow_run(run_id, status="running", current_node="author")
+
+        runners = create_node_runners(load_settings(), repo, FailIfCalledRouter())
+        result = runners["polisher"]({
+            "project_id": "stale_guard",
+            "chapter_number": 1,
+            "workflow_run_id": run_id,
+            "chapter_status": ChapterStatus.DRAFTED.value,
+            "requires_human": False,
+            "error": None,
+            "steps": [],
+        })
+
+        assert result["chapter_status"] == ChapterStatus.BLOCKING.value
+        assert result["requires_human"] is True
+        assert "已处于阻塞状态" in result["error"]
+        assert repo.get_workflow_node_events(run_id, node_name="polisher") == []
+        run = repo.get_workflow_runs_for_project("stale_guard", chapter_number=1, limit=1)[0]
+        assert run["current_node"] == "author"
+
+
 class TestRouteByReviewResult:
     def test_pass_goes_to_memory_curator_in_stub_mode(self):
         """v5.3.2: Stub mode routes to memory_curator after pass."""

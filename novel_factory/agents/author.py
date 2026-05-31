@@ -654,17 +654,60 @@ class AuthorAgent(BaseAgent):
             revised_wc = _cw(revised_body)
             wc_delta = revised_wc - original_wc
             low_change = abs(wc_delta) < 20 and original_body.strip() == revised_body.strip()
+            expansion_limit = max(700, int(original_wc * 0.18))
+            overexpanded = (
+                original_wc > 0
+                and wc_delta > expansion_limit
+                and not self._revision_requests_compression(revision_review or {})
+            )
             exec_events.append({
                 "event_type": "revision_diff_generated",
                 "message": f"返修改动：{original_wc} → {revised_wc} 字（{'内容几乎未变' if low_change else f'变化 {wc_delta:+d} 字'}）",
-                "status": "warning" if low_change else "info",
+                "status": "warning" if (low_change or overexpanded) else "info",
                 "payload": {
                     "original_word_count": original_wc,
                     "revised_word_count": revised_wc,
                     "word_count_delta": wc_delta,
                     "low_change_warning": low_change,
+                    "overexpanded_warning": overexpanded,
+                    "expansion_limit": expansion_limit,
                 },
             })
+            if overexpanded:
+                reason = (
+                    f"返修稿异常膨胀：{original_wc} → {revised_wc} 字，"
+                    f"增长 {wc_delta} 字，超过允许增长 {expansion_limit} 字；"
+                    "Editor 未要求扩写，已保留上一版本"
+                )
+                self.repo.save_artifact(
+                    project_id,
+                    chapter_number,
+                    "author",
+                    "rejected_regression",
+                    content_json={
+                        "title": output.title,
+                        "content": output.content,
+                        "rejection_reason": reason,
+                        "revision_source_review_id": (revision_review or {}).get("review_id"),
+                        "original_word_count": original_wc,
+                        "revised_word_count": revised_wc,
+                        "word_count_delta": wc_delta,
+                    },
+                    workflow_run_id=state.get("workflow_run_id"),
+                )
+                return {
+                    "error": f"返修稿退化，已保留上一版本：{reason}",
+                    "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "author",
+                        "version_regression": True,
+                        "revision_overexpanded": True,
+                        "message": reason,
+                    },
+                    "_revision_review": revision_review,
+                    "_exec_events": exec_events,
+                }
 
         # v6.6.0: Do not let a revision candidate overwrite a stronger
         # existing draft when it clearly regresses.
@@ -1465,9 +1508,9 @@ class AuthorAgent(BaseAgent):
                 effective_target = max(word_target, existing_len)
                 upper_bound = max(effective_target + 700, int(existing_len * 1.08))
                 length_guard_note = (
-                    f"当前保留稿约 {existing_len} 字符，Editor 未要求压缩；"
+                    f"【返修篇幅边界】当前保留稿约 {existing_len} 字符，Editor 未要求压缩；"
                     f"返修必须保留完整篇幅，不要主动压缩。正文至少 {minimum_required} 字符，"
-                    f"建议接近 {effective_target} 字符，合理上限 {upper_bound} 字符。"
+                    f"返修后总篇幅应基本持平，建议接近 {effective_target} 字符，合理上限 {upper_bound} 字符。"
                 )
         prose_max_tokens = max(1024, min(6144, int(effective_target * 1.5)))
         compact_context = self._build_plain_text_context(state, context)
@@ -1590,6 +1633,17 @@ class AuthorAgent(BaseAgent):
             if existing_len > 0 and not compress_requested:
                 minimum_required = max(minimum_required, int(existing_len * 0.9))
                 effective_target = max(word_target, existing_len)
+                chapter_upper_bound = min(
+                    max(effective_target + 800, int(effective_target * 1.35)),
+                    max(existing_len + 700, int(existing_len * 1.18)),
+                )
+                revision_source_section += (
+                    f"\n【返修篇幅边界】当前保留稿约 {existing_len} 字符。"
+                    "Editor 未要求压缩时，返修后总篇幅应基本持平；"
+                    f"建议不低于 {int(existing_len * 0.9)} 字符，"
+                    f"也不要超过 {chapter_upper_bound} 字符。"
+                    "禁止通过整段新增解释、重复心理描写或无关打斗来凑修改。\n"
+                )
 
         segment_outputs: list[str] = []
 

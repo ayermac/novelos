@@ -509,8 +509,9 @@ class OpenAICompatibleProvider(LLMProvider):
                     prompt_tokens = response.usage_metadata.get("input_tokens", 0)
                     completion_tokens = response.usage_metadata.get("output_tokens", 0)
                     total_tokens = prompt_tokens + completion_tokens
-                elif hasattr(response, "response_metadata"):
-                    usage = response.response_metadata.get("token_usage", {})
+                else:
+                    response_metadata = getattr(response, "response_metadata", None) or {}
+                    usage = response_metadata.get("token_usage", {})
                     prompt_tokens = usage.get("prompt_tokens", 0)
                     completion_tokens = usage.get("completion_tokens", 0)
                     total_tokens = usage.get("total_tokens", 0)
@@ -521,16 +522,17 @@ class OpenAICompatibleProvider(LLMProvider):
                     total_tokens=total_tokens,
                     duration_ms=duration_ms,
                 )
+                response_metadata = getattr(response, "response_metadata", None) or {}
                 response_text = redact_sensitive_text(str(getattr(response, "content", "")))
                 response_payload = {
                     "content": response_text,
                     "content_preview": response_text[:2000],
                     "content_length": len(response_text),
                     "usage": self.last_token_usage.to_dict(),
-                    "response_metadata": getattr(response, "response_metadata", None) or {},
+                    "response_metadata": response_metadata,
                     "finish_reason": (
-                        (getattr(response, "response_metadata", None) or {}).get("finish_reason")
-                        or (getattr(response, "response_metadata", None) or {}).get("stop_reason")
+                        response_metadata.get("finish_reason")
+                        or response_metadata.get("stop_reason")
                     ),
                     "attempt_number": attempt_number,
                     "duration_ms": duration_ms,
