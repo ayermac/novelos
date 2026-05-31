@@ -12,6 +12,24 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.8.1 - Webnovel Excitement Awareness
+
+Date: 2026-05-30
+
+Key changes:
+
+- **Style detection module** (`novel_factory/quality/style_detector.py`): Deterministic style detection from project metadata (title, genre, premise). Supports webnovel_excitement, suspense, romance, general styles.
+- **Style-aware prompt injection**: Planner/Screenwriter/Author/Editor inject style-specific instructions via `BaseAgent._get_style_prompt_injection()`
+- **Editor weight adjustment**: `_apply_style_weight_adjustment()` — pacing weight 15→30 in webnovel_excitement mode
+- **Opening Hook Checker Skill**: Detects narrative hooks in first 200 chars. Mounted to editor.before_review, author.after_llm
+- **Excitement Density Checker Skill**: Checks full-text excitement distribution and depression ratio. Mounted to editor.before_review
+- **Stale state recovery fix**: Author/Screenwriter/Polisher skip status advance when chapter is already at or past the target status (recovery runs)
+
+Verification:
+- v6.8.1 style detector tests: 41/41 passing
+- Agent tests: 44/44 passing
+- Version alignment: 6.8.1 (python + frontend + desktop)
+
 ## v6.8.0 - Skillized Quality Gates (Phase 1)
 
 Date: 2026-05-29

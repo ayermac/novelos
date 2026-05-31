@@ -88,6 +88,9 @@
 | `novel_factory/config/skills/manifest/opening-hook-checker.yaml` | NEW | Skill manifest |
 | `novel_factory/config/skills/manifest/excitement-density-checker.yaml` | NEW | Skill manifest |
 | `novel_factory/version.py` | MODIFY | 版本号 6.8.0 → 6.8.1 |
+| `novel_factory/agents/author.py` | MODIFY | 恢复运行时 stale state 修复 |
+| `novel_factory/agents/screenwriter.py` | MODIFY | 恢复运行时 stale state 修复 |
+| `novel_factory/agents/polisher.py` | MODIFY | 恢复运行时 stale state 修复 |
 | `tests/test_v681_style_detector.py` | NEW | 41 个测试 |
 | `docs/codex/specs/novel-factory-v6.8.1-webnovel-excitement-awareness-spec.md` | NEW | 规格文档 |
 
