@@ -79,10 +79,12 @@ class TestMigrationDetector:
         assert _plot_hole_status_repaired(conn) is True
         conn.close()
 
-    def test_detector_true_when_no_table(self, tmp_path):
+    def test_detector_false_when_no_table(self, tmp_path):
+        # An uninitialized DB (no plot_holes table) means the migration has NOT
+        # been applied yet — detector must report False so health shows pending.
         db = tmp_path / "empty.db"
         conn = sqlite3.connect(str(db))
-        assert _plot_hole_status_repaired(conn) is True
+        assert _plot_hole_status_repaired(conn) is False
         conn.close()
 
 

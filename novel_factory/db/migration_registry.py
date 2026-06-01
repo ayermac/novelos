@@ -114,10 +114,11 @@ def _plot_hole_status_repaired(conn: sqlite3.Connection) -> bool:
 
     The migration is considered applied when there are no rows with a
     resolved_chapter but a non-terminal status, and no legacy 'validated' rows.
-    If the plot_holes table doesn't exist yet, treat as not-applicable (applied).
+    If the plot_holes table doesn't exist yet, the DB is not initialized, so the
+    migration has NOT been applied (an empty DB shows all migrations pending).
     """
     if not _table_exists(conn, "plot_holes"):
-        return True
+        return False
     try:
         row = conn.execute(
             "SELECT COUNT(*) FROM plot_holes "
