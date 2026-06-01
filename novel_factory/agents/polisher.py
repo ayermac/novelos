@@ -995,10 +995,11 @@ class PolisherAgent(BaseAgent):
             # v6.8.0: Skip segment_started logging (reduces noise)
 
             try:
+                config_max = int(getattr(getattr(self.llm, "config", None), "max_tokens", 4096) or 4096)
                 polished = self._invoke_text_for_polisher(
                     messages,
                     temperature=0.65,
-                    max_tokens=4096,
+                    max_tokens=config_max,
                     max_retries=None,
                     request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
                 ).strip()
@@ -1046,6 +1047,7 @@ class PolisherAgent(BaseAgent):
         if state.get("llm_mode") != "real":
             return None
 
+        config_max = int(getattr(getattr(self.llm, "config", None), "max_tokens", 4096) or 4096)
         maximum_allowed = max(word_target + 1200, int(word_target * 1.6))
         chapter_number = state["chapter_number"]
         messages = [
@@ -1073,7 +1075,7 @@ class PolisherAgent(BaseAgent):
             compressed = self._invoke_text_for_polisher(
                 messages,
                 temperature=0.45,
-                max_tokens=max(2048, min(8192, int(maximum_allowed * 1.25))),
+                max_tokens=max(2048, min(config_max, int(maximum_allowed * 1.25))),
                 max_retries=None,
                 request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
             ).strip()
