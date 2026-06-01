@@ -21,6 +21,7 @@ from ..validators.chapter_checker import (
     validate_chapter_output,
     check_word_count_quality_gate,
     check_word_count_upper_gate,
+    count_words,
     derive_word_target,
 )
 from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_critical_violation

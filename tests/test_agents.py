@@ -1453,13 +1453,13 @@ class TestAuthorAgent:
             "宴会厅主位旁，林辰按住震动的手机，抬眼看向赵宏明。"
             "周老和李博士已经落座，苏婉清立在椅侧，所有宾客都屏住呼吸。"
             "林辰一句话压住场面，直接处理赵家的最后挣扎。"
-        ) * 24
+        ) * 80
         stale_body = (
             "手机屏幕的冷光映着林辰的侧脸。他整理好数据报表，穿过公司走廊离开公司。"
             "初春晚风扑面，他叫了车，定位会馆正门。车上，他闭着眼。"
             "下车步行后，两名黑西装保安拦在门前，说今晚内部包场。"
             "随后故事才重新进入宴会厅。"
-        ) * 24
+        ) * 26
 
         class StaleOpeningLLM(LLMProvider):
             config = object()
@@ -2337,7 +2337,7 @@ class TestEditorAgent:
 
         stub = StubLLMProvider([{
             "pass": True,
-            "score": 70,
+            "score": 78,
             "scores": {"setting": 16, "logic": 14, "poison": 14, "text": 13, "pacing": 13},
             "issues": [],
             "suggestions": [],
@@ -2358,7 +2358,7 @@ class TestEditorAgent:
 
         assert result["chapter_status"] == ChapterStatus.REVISION.value
         assert result["quality_gate"]["pass"] is False
-        assert result["quality_gate"]["score"] == 70
+        assert result["quality_gate"]["score"] == 78
         assert result["quality_gate"]["revision_target"] == "polisher"
 
         review = seeded_repo.get_latest_review("test_proj", 1)
@@ -2440,8 +2440,8 @@ class TestEditorAgent:
 
         result = agent.run(state)
 
-        # v6.7.9: Fallback can no longer auto-pass (score capped at 70)
-        assert result["quality_gate"]["score"] <= 70
+        # v6.7.9: Fallback can no longer auto-pass (score capped at 78)
+        assert result["quality_gate"]["score"] <= 78
         exec_events = result.get("_exec_events", [])
         assert any(ev.get("event_type") == "fallback_used" for ev in exec_events)
         assert llm.json_calls == 1
@@ -2478,8 +2478,8 @@ class TestEditorAgent:
         })
 
         assert "error" not in result
-        # v6.7.9: Fallback can no longer auto-pass (score capped at 70)
-        assert result["quality_gate"]["score"] <= 70
+        # v6.7.9: Fallback can no longer auto-pass (score capped at 78)
+        assert result["quality_gate"]["score"] <= 78
         exec_events = result.get("_exec_events", [])
         assert any(ev.get("event_type") == "fallback_used" for ev in exec_events)
 

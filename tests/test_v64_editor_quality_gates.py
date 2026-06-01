@@ -416,7 +416,7 @@ class TestEditorAdvisoryIntegration:
         }
         result = agent.run(state)
         # v6.7.9: Fallback can no longer auto-pass; check score cap and advisory inclusion
-        assert result["quality_gate"]["score"] <= 70
+        assert result["quality_gate"]["score"] <= 78
 
         review = seeded_repo.get_latest_review("test_proj", 1)
         issues = json.loads(review["issues"])

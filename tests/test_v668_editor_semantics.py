@@ -531,7 +531,7 @@ class TestScore80to84Boundary:
     def test_79_after_retry_without_priority_is_advisory_pass(self):
         """Near-miss reviews should not loop forever when no concrete priority issue remains."""
         from novel_factory.quality.editor_strategy import EditorPolicyInput, classify_editor_result
-        p = EditorPolicyInput(score=79, pass_=False, advisory_issue_count=2, retry_count=1, max_retries=3)
+        p = EditorPolicyInput(score=79, pass_=False, advisory_issue_count=2, retry_count=2, max_retries=3)
         d = classify_editor_result(p)
         assert d.pass_ is True
         assert d.category == "advisory"

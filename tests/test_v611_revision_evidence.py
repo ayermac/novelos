@@ -24,6 +24,19 @@ def _seed_project_and_chapter(repo: Repository, project_id: str, chapter_number:
     repo.add_chapter(project_id, chapter_number, title=f"Ch{chapter_number}", status=status)
 
 
+
+def _save_revision_review(repo, project_id, chapter_number):
+    """Save a review so Author/Polisher DB fallback can load revision context."""
+    ch = repo.get_chapter(project_id, chapter_number)
+    if ch:
+        repo.save_review(
+            project_id=project_id, chapter_id=ch["id"],
+            passed=False, score=75,
+            setting_score=20, logic_score=20, poison_score=15, text_score=10, pacing_score=10,
+            issues=["需返修"], suggestions=["优化"],
+            revision_target="author",
+        )
+
 class TestRevisionTargetRecovery:
     """Tests for revision target recovery from latest review."""
 
@@ -114,6 +127,7 @@ class TestRevisionContextEvents:
         _, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "demo")
         repo.update_chapter_status("demo", 1, "revision")
+        _save_revision_review(repo, "demo", 1)
 
         from novel_factory.agents.author import AuthorAgent
         from novel_factory.llm.stub_provider import StubLLM
@@ -147,6 +161,7 @@ class TestRevisionContextEvents:
         _, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "demo")
         repo.update_chapter_status("demo", 1, "revision")
+        _save_revision_review(repo, "demo", 1)
         repo.save_chapter_content("demo", 1, "这是测试正文内容。" * 50, "测试章节")
 
         from novel_factory.agents.polisher import PolisherAgent
@@ -177,6 +192,7 @@ class TestRevisionContextEvents:
         _, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "demo")
         repo.update_chapter_status("demo", 1, "revision")
+        _save_revision_review(repo, "demo", 1)
         chapter = repo.get_chapter("demo", 1)
         review_id = repo.save_review(
             "demo", chapter["id"], False, 80,
@@ -205,6 +221,7 @@ class TestRevisionContextEvents:
         _, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "demo")
         repo.update_chapter_status("demo", 1, "revision")
+        _save_revision_review(repo, "demo", 1)
         repo.save_chapter_content("demo", 1, "这是测试正文内容。" * 50, "测试章节")
         chapter = repo.get_chapter("demo", 1)
         review_id = repo.save_review(
@@ -238,6 +255,7 @@ class TestRevisionDiffEvent:
         _, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "demo")
         repo.update_chapter_status("demo", 1, "revision")
+        _save_revision_review(repo, "demo", 1)
         repo.save_chapter_content("demo", 1, "原始正文内容。" * 100, "测试章节")
 
         from novel_factory.agents.author import AuthorAgent
@@ -266,6 +284,7 @@ class TestRevisionDiffEvent:
         _, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "demo")
         repo.update_chapter_status("demo", 1, "revision")
+        _save_revision_review(repo, "demo", 1)
         repo.save_chapter_content("demo", 1, "原始正文内容。" * 100, "测试章节")
 
         from novel_factory.agents.polisher import PolisherAgent
@@ -392,6 +411,7 @@ class TestRevisionArtifactMetadata:
         run_id = repo.create_workflow_run("demo", 1)
         repo.update_workflow_run(run_id, status="running")
         repo.update_chapter_status("demo", 1, "revision")
+        _save_revision_review(repo, "demo", 1)
 
         from novel_factory.agents.author import AuthorAgent
         from novel_factory.llm.stub_provider import StubLLM
@@ -444,6 +464,7 @@ class TestPlannerRevisionTarget:
         _, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "demo")
         repo.update_chapter_status("demo", 1, "revision")
+        _save_revision_review(repo, "demo", 1)
 
         from novel_factory.agents.planner import PlannerAgent
         from novel_factory.llm.stub_provider import StubLLM

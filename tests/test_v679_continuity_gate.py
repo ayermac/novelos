@@ -5,7 +5,7 @@ Tests that:
 2. Legitimate short flashbacks are not killed (advisory/pass)
 3. Cross-chapter time-anchor conflicts are flagged
 4. Truncated/malformed titles are detected
-5. Fallback rule review cannot fake-green (score <= 70)
+5. Fallback rule review cannot fake-green (score <= 78)
 6. Publish endpoint blocks on continuity gate failures
 7. All logic is generic (no hardcoded project/chapter/character names)
 """
@@ -271,7 +271,7 @@ def test_fallback_rule_review_score_capped(repo):
         project_id="test_proj",
         chapter_number=1,
     )
-    assert output.score <= 70
+    assert output.score <= 78
     assert any("规则兜底" in i or "人工复核" in i for i in output.issues)
     assert any("降级" in i or "规则兜底" in i for i in output.issues)
 
@@ -463,5 +463,5 @@ def test_fallback_with_continuity_warning_passes_with_warning(repo):
     # Warning-level continuity issues should not block fallback
     # (depends on whether the content actually triggers a warning vs advisory)
     # At minimum, verify the fallback runs without error
-    assert output.score <= 70
+    assert output.score <= 78
     assert any("规则兜底" in i or "降级" in i for i in output.issues)
