@@ -1305,6 +1305,27 @@ def memory_curator_node(state: FactoryState, repo: Repository, llm: LLMProvider,
             result.pop("error", None)
             result["requires_human"] = False
     else:
+        # v6.8.3: Deterministic plot resolution reconciliation. Auto-resolve
+        # plots the chapter planned to resolve whose code appears in the prose,
+        # independent of the LLM curator's resolve patches.
+        try:
+            from .reconciliation import reconcile_plot_resolution
+            recon = reconcile_plot_resolution(
+                repo,
+                state.get("project_id", ""),
+                int(state.get("chapter_number", 0) or 0),
+            )
+            resolved_codes = recon.get("resolved") or []
+            if resolved_codes:
+                log_execution_event(
+                    repo, state, "memory_curator", "plot_resolution_reconciled",
+                    message=f"确定性回收伏笔 {len(resolved_codes)} 项：{', '.join(resolved_codes)}",
+                    agent_id="memory_curator",
+                    status="info",
+                    payload={"resolved": resolved_codes},
+                )
+        except Exception:
+            logger.debug("plot resolution reconciliation failed (best-effort)", exc_info=True)
         _log_node_event(state, repo, "memory_curator", "completed", status="completed")
     return result
 

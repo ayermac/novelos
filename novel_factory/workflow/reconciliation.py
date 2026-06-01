@@ -7,11 +7,17 @@ than the run row says.
 
 from __future__ import annotations
 
+import json
+import logging
 from datetime import datetime, timedelta
 from typing import Any
 
+logger = logging.getLogger(__name__)
+
 
 ACTIVE_RUN_RECONCILE_GRACE_SECONDS = 120
+
+_TERMINAL_PLOT_STATUSES = ("resolved", "abandoned")
 
 
 def reconcile_revision_running_workflows(
@@ -276,3 +282,91 @@ def _ensure_revision_router_events(
     except Exception:
         # Reconciliation must never break user-facing reads or run guards.
         return
+
+
+def _parse_plot_codes(raw: Any) -> list[str]:
+    """Parse a plots_to_resolve field (JSON list or comma text) into codes."""
+    if not raw:
+        return []
+    if isinstance(raw, list):
+        return [str(x).strip() for x in raw if str(x).strip()]
+    text = str(raw).strip()
+    if not text:
+        return []
+    try:
+        parsed = json.loads(text)
+        if isinstance(parsed, list):
+            return [str(x).strip() for x in parsed if str(x).strip()]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    # Fallback: comma/space separated
+    return [tok.strip() for tok in text.replace("，", ",").split(",") if tok.strip()]
+
+
+def reconcile_plot_resolution(
+    repo: Any,
+    project_id: str,
+    chapter_number: int,
+) -> dict[str, Any]:
+    """v6.8.3: Deterministically resolve plot holes a chapter planned to resolve.
+
+    A plot is auto-resolved when BOTH conditions hold:
+      1. Its code appears in the chapter instruction's ``plots_to_resolve``.
+      2. That same code literally appears in the published chapter content
+         (hard evidence the foreshadow was actually paid off in the prose).
+
+    This is a safety net independent of the LLM MemoryCurator: even if the
+    curator never emits a ``resolve`` patch, a planned-and-paid-off plot still
+    gets marked resolved. It is a no-op when the plot is already terminal.
+
+    Returns a dict ``{"resolved": [codes...]}``. Never raises — reconciliation
+    must not break the workflow.
+    """
+    try:
+        instruction = repo.get_instruction_by_chapter(project_id, chapter_number)
+        if not instruction:
+            return {"resolved": []}
+
+        planned = _parse_plot_codes(instruction.get("plots_to_resolve"))
+        if not planned:
+            return {"resolved": []}
+
+        chapter = repo.get_chapter(project_id, chapter_number)
+        content = (chapter or {}).get("content") or ""
+
+        plots = {
+            str(p.get("code") or "").strip(): p
+            for p in repo.list_plot_holes(project_id)
+            if str(p.get("code") or "").strip()
+        }
+
+        resolved: list[str] = []
+        for code in planned:
+            plot = plots.get(code)
+            if not plot:
+                continue
+            if plot.get("status") in _TERMINAL_PLOT_STATUSES:
+                continue
+            # Hard evidence: the plot code must appear in the chapter prose.
+            if code not in content:
+                continue
+            repo.update_plot_hole(
+                project_id,
+                plot["id"],
+                {"status": "resolved", "resolved_chapter": chapter_number},
+            )
+            resolved.append(code)
+
+        if resolved:
+            logger.info(
+                "reconcile_plot_resolution: auto-resolved %s for %s ch%d",
+                resolved, project_id, chapter_number,
+            )
+        return {"resolved": resolved}
+    except Exception:
+        logger.debug(
+            "reconcile_plot_resolution failed for %s ch%s",
+            project_id, chapter_number,
+            exc_info=True,
+        )
+        return {"resolved": []}
