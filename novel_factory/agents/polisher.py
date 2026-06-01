@@ -1073,7 +1073,7 @@ class PolisherAgent(BaseAgent):
             compressed = self._invoke_text_for_polisher(
                 messages,
                 temperature=0.45,
-                max_tokens=max(2048, min(6144, int(maximum_allowed * 1.25))),
+                max_tokens=max(2048, min(8192, int(maximum_allowed * 1.25))),
                 max_retries=None,
                 request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
             ).strip()
