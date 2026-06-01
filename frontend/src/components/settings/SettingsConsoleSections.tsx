@@ -61,6 +61,7 @@ interface DesktopProfile {
   api_key_configured: boolean
   api_key_source: string
   temperature?: number
+  max_tokens?: number
   timeout?: number
   request_timeout_seconds?: number
 }
@@ -84,6 +85,7 @@ interface LlmTemplateForm {
   model: string
   api_key_env: string
   temperature: number
+  max_tokens: number
   request_timeout_seconds: number
 }
 
@@ -132,18 +134,20 @@ const TEMPLATE_PROVIDER_OPTIONS = [
   { value: 'anthropic', label: 'Anthropic' },
 ]
 
-const PROVIDER_PRESETS: Record<string, Pick<LlmTemplateForm, 'provider' | 'base_url' | 'model' | 'api_key_env'>> = {
+const PROVIDER_PRESETS: Record<string, Pick<LlmTemplateForm, 'provider' | 'base_url' | 'model' | 'api_key_env' | 'max_tokens'>> = {
   default: {
     provider: 'openai_compatible',
     base_url: 'https://api.openai.com/v1',
     model: 'gpt-4o-mini',
     api_key_env: 'OPENAI_API_KEY',
+    max_tokens: 4096,
   },
   author: {
     provider: 'openai_compatible',
     base_url: 'https://api.openai.com/v1',
     model: 'gpt-4o',
     api_key_env: 'OPENAI_API_KEY',
+    max_tokens: 4096,
   },
 }
 
@@ -415,6 +419,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
             model: profile.model || '',
             api_key_env: profile.api_key_env || 'OPENAI_API_KEY',
             temperature: profile.temperature ?? 0.7,
+            max_tokens: profile.max_tokens ?? 4096,
             request_timeout_seconds: profile.request_timeout_seconds ?? profile.timeout ?? 60,
           }))
         : [{
@@ -422,6 +427,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
             name: 'default',
             ...PROVIDER_PRESETS.default,
             temperature: 0.7,
+            max_tokens: 4096,
             request_timeout_seconds: 300,
           }]
       const defaultName = cfg.default_llm || nextTemplates[0]?.name || 'default'
@@ -485,6 +491,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
         name,
         ...(PROVIDER_PRESETS[name] || PROVIDER_PRESETS.default),
         temperature: 0.7,
+        max_tokens: 4096,
         request_timeout_seconds: name === 'author' ? 300 : 180,
       },
     ])
@@ -526,6 +533,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
         base_url: template.base_url.trim(),
         api_key_env: template.api_key_env.trim(),
         temperature: template.temperature,
+        max_tokens: normalizePositiveInt(Number(template.max_tokens), 4096),
         request_timeout_seconds: normalizePositiveInt(Number(template.request_timeout_seconds), 300),
       },
     ]))
@@ -987,6 +995,18 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
                             value={template.request_timeout_seconds}
                             onChange={(e) => updateTemplate(template.id, {
                               request_timeout_seconds: normalizePositiveInt(Number(e.target.value), template.request_timeout_seconds),
+                            })}
+                          />
+                        </FormField>
+                        <FormField label="max_tokens">
+                          <NumberInput
+                            aria-label={`${template.name} max_tokens`}
+                            min="256"
+                            max="65536"
+                            step="1024"
+                            value={template.max_tokens}
+                            onChange={(e) => updateTemplate(template.id, {
+                              max_tokens: normalizePositiveInt(Number(e.target.value), template.max_tokens),
                             })}
                           />
                         </FormField>

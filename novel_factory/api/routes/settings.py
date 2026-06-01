@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
+from pathlib import Path
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 
 router = APIRouter()
@@ -373,3 +374,92 @@ async def validate_config(request: Request, body: ValidateConfigRequest) -> Enve
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"验证配置失败: {str(e)}")
+
+
+# ── v6.8.3: PATCH /settings/llm-profiles/{name} ──────────────────────
+
+# Fields that are safe to modify via the API (never secrets or env bindings)
+_MODIFIABLE_PROFILE_FIELDS = frozenset({
+    "model", "max_tokens", "temperature", "request_timeout_seconds",
+    "retry_attempts", "retry_max_seconds", "retry_min_seconds", "min_interval_seconds",
+})
+
+
+@router.patch("/settings/llm-profiles/{profile_name}")
+async def update_llm_profile(
+    request: Request,
+    profile_name: str,
+) -> EnvelopeResponse:
+    """Update safe fields of a single LLM profile in the config YAML.
+
+    Only fields listed in ``_MODIFIABLE_PROFILE_FIELDS`` may be changed.
+    API keys, base URLs, env bindings, and provider are never written.
+    The change is persisted to the YAML config file on disk and takes effect
+    on the next ``get_settings()`` call (no restart required for profile params).
+    """
+    from ..deps import get_config_path
+    import yaml
+
+    try:
+        config_path = get_config_path(request)
+        if not config_path:
+            return error_response("CONFIG_NOT_FOUND", "未找到配置文件路径")
+
+        config_file = Path(config_path)
+        if not config_file.exists():
+            return error_response("CONFIG_NOT_FOUND", f"配置文件不存在: {config_path}")
+
+        raw_body = await request.json()
+        if not isinstance(raw_body, dict) or not raw_body:
+            return error_response("INVALID_BODY", "请求体必须是非空 JSON 对象")
+
+        # Reject sensitive fields
+        sensitive_keys = {"api_key", "api_key_env", "base_url", "base_url_env", "provider"}
+        for key in raw_body:
+            if key in sensitive_keys:
+                return error_response("SECURITY_REJECTED", f"不允许通过 API 修改字段: {key}")
+
+        # Only allow known modifiable fields
+        invalid_keys = set(raw_body.keys()) - _MODIFIABLE_PROFILE_FIELDS
+        if invalid_keys:
+            return error_response(
+                "VALIDATION_ERROR",
+                f"不允许修改的字段: {', '.join(sorted(invalid_keys))}",
+            )
+
+        # Read current config
+        with open(config_file, "r", encoding="utf-8") as f:
+            raw = yaml.safe_load(f) or {}
+
+        profiles = raw.get("llm_profiles") or {}
+        if profile_name not in profiles:
+            return error_response("PROFILE_NOT_FOUND", f"LLM profile '{profile_name}' 不存在")
+
+        # Validate numeric fields
+        for key, value in raw_body.items():
+            if key in ("max_tokens", "temperature", "request_timeout_seconds",
+                       "retry_attempts", "retry_max_seconds", "retry_min_seconds",
+                       "min_interval_seconds"):
+                if not isinstance(value, (int, float)) or value < 0:
+                    return error_response("VALIDATION_ERROR", f"{key} 必须为非负数")
+
+        # Apply changes
+        profile = dict(profiles[profile_name])
+        old_values = {k: profile.get(k) for k in raw_body}
+        profile.update(raw_body)
+        profiles[profile_name] = profile
+        raw["llm_profiles"] = profiles
+
+        # Write back
+        config_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(config_file, "w", encoding="utf-8") as f:
+            yaml.dump(raw, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+
+        return envelope_response({
+            "saved": True,
+            "profile_name": profile_name,
+            "updated_fields": {k: {"old": old_values.get(k), "new": raw_body[k]} for k in raw_body},
+            "message": f"Profile '{profile_name}' 已更新，无需重启即可生效。",
+        })
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"更新 LLM profile 失败: {str(e)}")
