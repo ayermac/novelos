@@ -303,23 +303,38 @@ class PolisherAgent(BaseAgent):
         revision_review = self._load_revision_review(state, chapter)
         in_revision_chain = current_status == ChapterStatus.REVISION.value or bool(revision_review)
 
-        # v6.8.2: Validate revision context exists when in revision mode
+        # v6.8.2: Validate revision context exists when in revision mode.
+        # v6.8.3: Only fail-fast for real Editor rejections, NOT for quality gate
+        # internal repairs which temporarily set chapter_status=REVISION.
         if current_status == ChapterStatus.REVISION.value and not revision_review:
-            logger.error(
-                "Polisher: revision context missing for %s ch%d",
-                project_id, chapter_number,
+            gate = state.get("quality_gate") or {}
+            is_quality_gate_retry = bool(
+                gate.get("word_count_fail")
+                or gate.get("death_penalty_fail")
+                or gate.get("scene_beat_coverage_fail")
+                or gate.get("version_regression")
             )
-            return {
-                "error": "Polisher: 返修上下文缺失，无法加载 Editor 审核意见",
-                "chapter_status": state.get("chapter_status"),
-                "requires_human": True,
-                "quality_gate": {
-                    "pass": False,
-                    "revision_target": "polisher",
-                    "message": "返修上下文缺失，需要人工确认后重新触发",
-                    "context_missing": True,
-                },
-            }
+            if not is_quality_gate_retry:
+                logger.error(
+                    "Polisher: revision context missing for %s ch%d",
+                    project_id, chapter_number,
+                )
+                return {
+                    "error": "Polisher: 返修上下文缺失，无法加载 Editor 审核意见",
+                    "chapter_status": state.get("chapter_status"),
+                    "requires_human": True,
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "polisher",
+                        "message": "返修上下文缺失，需要人工确认后重新触发",
+                        "context_missing": True,
+                    },
+                }
+            else:
+                logger.info(
+                    "Polisher: revision context missing for %s ch%d but quality gate retry — continuing without review",
+                    project_id, chapter_number,
+                )
 
         if in_revision_chain:
             if revision_review:
