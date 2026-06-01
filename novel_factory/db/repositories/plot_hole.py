@@ -2,11 +2,32 @@
 
 from __future__ import annotations
 
+import logging
+
 from ..connection import row_to_dict
+
+logger = logging.getLogger(__name__)
 
 # v6.8.3: Canonical plot hole status values and terminal set.
 VALID_PLOT_STATUSES = ("planted", "resolved", "abandoned")
 TERMINAL_PLOT_STATUSES = ("resolved", "abandoned")
+
+
+def _normalize_plot_status(status, *, context: str = "") -> str:
+    """v6.8.3: Coerce a plot status to a canonical value.
+
+    Unknown/empty values fall back to 'planted' with a warning so legacy or
+    stray inputs (e.g. 'validated') cannot persist illegal states.
+    """
+    text = str(status or "").strip()
+    if text in VALID_PLOT_STATUSES:
+        return text
+    if text:
+        logger.warning(
+            "Plot hole status %r is not canonical%s; normalizing to 'planted'",
+            text, f" ({context})" if context else "",
+        )
+    return "planted"
 
 
 class PlotHoleRepositoryMixin:
@@ -86,6 +107,7 @@ class PlotHoleRepositoryMixin:
         Returns:
             Created plot hole dict with id.
         """
+        status = _normalize_plot_status(status, context=f"create {code}")
         conn = self._conn()
         try:
             cursor = conn.execute(
@@ -161,6 +183,12 @@ class PlotHoleRepositoryMixin:
                     # accompanying resolved_chapter so the terminal state holds.
                     data.pop("status", None)
                     data.pop("resolved_chapter", None)
+
+            # v6.8.3: Normalize any surviving status value to a canonical one.
+            if "status" in data:
+                data["status"] = _normalize_plot_status(
+                    data["status"], context=f"update id={plot_id}"
+                )
 
             fields = []
             values = []
