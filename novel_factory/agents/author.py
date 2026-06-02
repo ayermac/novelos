@@ -688,7 +688,7 @@ class AuthorAgent(BaseAgent):
             revised_wc = _cw(revised_body)
             wc_delta = revised_wc - original_wc
             low_change = abs(wc_delta) < 20 and original_body.strip() == revised_body.strip()
-            expansion_limit = max(400, int(original_wc * 0.12))
+            expansion_limit = max(500, int(original_wc * 0.15))
             overexpanded = (
                 original_wc > 0
                 and wc_delta > expansion_limit
@@ -737,6 +737,7 @@ class AuthorAgent(BaseAgent):
                         "revision_target": "author",
                         "version_regression": True,
                         "revision_overexpanded": True,
+                        "consume_revision_retry": False,
                         "message": reason,
                     },
                     "_revision_review": revision_review,
