@@ -450,10 +450,17 @@ async def update_llm_profile(
         profiles[profile_name] = profile
         raw["llm_profiles"] = profiles
 
-        # Write back
+        # Write back (with file lock to prevent concurrent write corruption)
+        import fcntl
         config_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(config_file, "w", encoding="utf-8") as f:
-            yaml.dump(raw, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+        with open(config_file, "r+", encoding="utf-8") as f:
+            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+            try:
+                f.seek(0)
+                f.truncate()
+                yaml.dump(raw, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+            finally:
+                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 
         return envelope_response({
             "saved": True,

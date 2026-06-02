@@ -92,6 +92,12 @@ class PolisherAgent(BaseAgent):
         super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
 
+
+    @staticmethod
+    def _config_max_tokens(llm, fallback: int = 4096) -> int:
+        """Read max_tokens from LLM config, with fallback."""
+        return int(getattr(getattr(llm, "config", None), "max_tokens", fallback) or fallback)
+
     def _load_revision_review(
         self,
         state: FactoryState,
@@ -878,7 +884,7 @@ class PolisherAgent(BaseAgent):
                 ),
             },
         ]
-        max_tokens = int(getattr(getattr(self.llm, "config", None), "max_tokens", 4096) or 4096)
+        max_tokens = self._config_max_tokens(self.llm)
         content = self._invoke_text_for_polisher(
             messages,
             temperature=0.65,
@@ -937,7 +943,7 @@ class PolisherAgent(BaseAgent):
                     ),
                 },
             ]
-            max_tokens = int(getattr(getattr(self.llm, "config", None), "max_tokens", 4096) or 4096)
+            max_tokens = self._config_max_tokens(self.llm)
             polished = self._invoke_text_for_polisher(
                 messages,
                 temperature=0.65,
@@ -995,7 +1001,7 @@ class PolisherAgent(BaseAgent):
             # v6.8.0: Skip segment_started logging (reduces noise)
 
             try:
-                config_max = int(getattr(getattr(self.llm, "config", None), "max_tokens", 4096) or 4096)
+                config_max = self._config_max_tokens(self.llm)
                 polished = self._invoke_text_for_polisher(
                     messages,
                     temperature=0.65,
@@ -1047,7 +1053,7 @@ class PolisherAgent(BaseAgent):
         if state.get("llm_mode") != "real":
             return None
 
-        config_max = int(getattr(getattr(self.llm, "config", None), "max_tokens", 4096) or 4096)
+        config_max = self._config_max_tokens(self.llm)
         maximum_allowed = max(word_target + 1200, int(word_target * 1.6))
         chapter_number = state["chapter_number"]
         messages = [

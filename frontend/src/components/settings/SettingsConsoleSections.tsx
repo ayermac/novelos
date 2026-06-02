@@ -1166,6 +1166,13 @@ function ReadonlyLlmSnapshot({ data }: { data: SettingsData }) {
     const res = await patch(`/settings/llm-profiles/${profileName}`, values)
     setSaving(null)
     if (res.ok) {
+      // Optimistic update: reflect saved values in the local data prop
+      if (data?.llm_profiles) {
+        const updated = data.llm_profiles.map((p) =>
+          p.name === profileName ? { ...p, ...values } : p
+        )
+        data.llm_profiles = updated
+      }
       showToast({ tone: 'success', title: '已保存', message: `${profileName} 的 max_tokens 已更新。` })
       setEditingProfile(null)
     } else {
