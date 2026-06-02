@@ -582,18 +582,18 @@ class TestStatusFactFilterProduction:
 
 
 class TestVersionAlignment:
-    """v6.8.4: All version sources must agree."""
+    """v6.8.5: All version sources must agree."""
 
     def test_version_py_is_6_8_4(self):
         from novel_factory.version import __version__
-        assert __version__ == "6.8.4"
+        assert __version__ == "6.8.5"
 
     def test_frontend_package_json_matches(self):
         with open("frontend/package.json") as f:
             data = json.load(f)
-        assert data["version"] == "6.8.4"
+        assert data["version"] == "6.8.5"
 
     def test_desktop_package_json_matches(self):
         with open("desktop/package.json") as f:
             data = json.load(f)
-        assert data["version"] == "6.8.4"
+        assert data["version"] == "6.8.5"
