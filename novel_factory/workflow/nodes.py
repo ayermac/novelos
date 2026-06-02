@@ -1242,6 +1242,181 @@ def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill
 
 
 # v6.8.5: Quality Gate 独立节点
+def _check_death_penalty(content: str) -> dict[str, Any]:
+    """检查死刑红线"""
+    from ..validators.death_penalty import check_death_penalty_structured
+    from ..quality.issue_codes import IssueCode
+
+    dp_result = check_death_penalty_structured(content)
+    return {
+        "check_name": "death_penalty",
+        "passed": not dp_result.has_critical,
+        "blocking_issues": [f"CRITICAL 死刑红线: {v}" for v in dp_result.violations] if dp_result.has_critical else [],
+        "score_penalty": 50 if dp_result.has_critical else 0,
+        "issue_codes": [IssueCode.DEATH_PENALTY] if dp_result.has_critical else [],
+        "diagnostics": {
+            "has_critical": dp_result.has_critical,
+            "violations": dp_result.violations,
+        },
+    }
+
+
+def _check_word_count(content: str, repo: Repository, project_id: str, chapter_number: int) -> dict[str, Any]:
+    """检查字数门禁"""
+    from ..validators.chapter_checker import count_words, check_word_count_quality_gate, derive_word_target
+    from ..quality.issue_codes import IssueCode
+
+    instruction = repo.get_instruction(project_id, chapter_number)
+    project = repo.get_project(project_id)
+    word_target = derive_word_target(instruction, project)
+    word_gate_passed, word_gate_msg = check_word_count_quality_gate(
+        content, word_target, "quality_gate"
+    )
+
+    issue_codes = []
+    if not word_gate_passed:
+        issue_codes.append(IssueCode.WORD_COUNT_BELOW_MIN)
+
+    return {
+        "check_name": "word_count_gate",
+        "passed": word_gate_passed,
+        "blocking_issues": [word_gate_msg] if not word_gate_passed else [],
+        "score_penalty": 30 if not word_gate_passed else 0,
+        "issue_codes": issue_codes,
+        "diagnostics": {
+            "passed": word_gate_passed,
+            "message": word_gate_msg,
+            "actual_word_count": count_words(content),
+            "word_target": word_target,
+        },
+    }
+
+
+def _check_chapter_seam(repo: Repository, project_id: str, chapter_number: int, content: str) -> dict[str, Any]:
+    """检查章间衔接"""
+    from ..quality.chapter_seam import evaluate_chapter_seam
+    from ..quality.issue_codes import IssueCode
+
+    seam_gate = evaluate_chapter_seam(repo, project_id, chapter_number, content)
+    passed = seam_gate.get("pass", True)
+
+    issue_codes = []
+    if not passed:
+        issue_codes.append(IssueCode.CHAPTER_SEAM_BREAK)
+
+    return {
+        "check_name": "chapter_seam",
+        "passed": passed,
+        "blocking_issues": seam_gate.get("blocking_issues", [])[:3] if not passed else [],
+        "advisory_issues": seam_gate.get("advisory_issues", [])[:2],
+        "score_penalty": 21 if not passed else 0,
+        "issue_codes": issue_codes,
+        "diagnostics": {
+            "passed": passed,
+            "blocking_issues": seam_gate.get("blocking_issues", []),
+            "advisory_issues": seam_gate.get("advisory_issues", []),
+        },
+    }
+
+
+def _check_continuity_gate(repo: Repository, project_id: str, chapter_number: int, content: str, title: str = None) -> dict[str, Any]:
+    """检查叙事连续性"""
+    from ..quality.continuity_gate import evaluate_chapter_continuity, SEVERITY_BLOCKING
+    from ..quality.issue_codes import IssueCode
+
+    continuity_result = evaluate_chapter_continuity(
+        repo, project_id, chapter_number, content,
+        title=title,
+    )
+    should_block = continuity_result.should_block_publish or continuity_result.severity == SEVERITY_BLOCKING
+
+    issue_codes = []
+    if should_block:
+        # 根据具体问题类型确定 issue_code
+        for issue in continuity_result.issues:
+            if "时间" in issue or "回归" in issue:
+                issue_codes.append(IssueCode.CONTINUITY_TIME_REGRESSION)
+            elif "事件" in issue or "重播" in issue:
+                issue_codes.append(IssueCode.CONTINUITY_EVENT_REPLAY)
+            elif "标题" in issue or "截断" in issue:
+                issue_codes.append(IssueCode.CONTINUITY_TITLE_TRUNCATION)
+            else:
+                issue_codes.append(IssueCode.CONTINUITY_TIME_REGRESSION)  # 默认
+
+    return {
+        "check_name": "continuity_gate",
+        "passed": not should_block,
+        "blocking_issues": [f"[连续性阻断] {i}" for i in continuity_result.issues[:3]] if should_block else [],
+        "advisory_issues": [f"[连续性建议] {i}" for i in continuity_result.issues[:2]] if not should_block else [],
+        "score_penalty": 30 if should_block else 0,
+        "issue_codes": issue_codes,
+        "diagnostics": {
+            "should_block": continuity_result.should_block_publish,
+            "severity": continuity_result.severity,
+            "issues": continuity_result.issues,
+        },
+    }
+
+
+def _check_quality_diagnosis(content: str, repo: Repository, project_id: str, chapter_number: int, skill_registry) -> dict[str, Any]:
+    """检查质量诊断"""
+    from ..quality.hub import QualityHub
+    from ..quality.feedback_bridge import build_compact_feedback
+    from ..quality.issue_codes import IssueCode
+
+    hub = QualityHub(repo, skill_registry)
+    diagnose_result = hub.diagnose(content, context={
+        "project_id": project_id,
+        "chapter_number": chapter_number,
+    })
+    qf = build_compact_feedback(diagnose_result)
+
+    issue_codes = []
+    if qf.priority_findings:
+        for f in qf.priority_findings[:3]:
+            code = f.get("code", "")
+            if "ai_trace" in code.lower() or "ai-style" in code.lower():
+                issue_codes.append(IssueCode.QUALITY_AI_TRACE)
+            elif "narrative" in code.lower():
+                issue_codes.append(IssueCode.QUALITY_NARRATIVE_LOW)
+            else:
+                issue_codes.append(IssueCode.QUALITY_STYLE_ISSUE)
+
+    return {
+        "check_name": "quality_diagnosis",
+        "passed": True,  # 质量诊断不阻塞，只提供优先级信息
+        "priority_issues": [f"[诊断] [{f['code']}] {f['message']}" for f in qf.priority_findings[:3]],
+        "advisory_issues": [f"[诊断建议] [{f['code']}] {f['message']}" for f in qf.advisory_findings[:2]],
+        "score_penalty": 0,
+        "issue_codes": issue_codes,
+        "diagnostics": {
+            "priority_count": len(qf.priority_findings),
+            "advisory_count": len(qf.advisory_findings),
+        },
+    }
+
+
+def _determine_revision_target(issue_codes: list) -> str | None:
+    """根据结构化问题代码确定返修目标"""
+    from ..quality.issue_codes import IssueCode, ISSUE_CODE_TO_REVISION_TARGET
+
+    if not issue_codes:
+        return None
+
+    # 优先级：author > polisher
+    # 如果有任何 author 级别的问题，返修到 author
+    author_codes = {IssueCode.DEATH_PENALTY, IssueCode.CHAPTER_SEAM_BREAK,
+                    IssueCode.CONTINUITY_TIME_REGRESSION, IssueCode.CONTINUITY_EVENT_REPLAY,
+                    IssueCode.CONTINUITY_TITLE_TRUNCATION, IssueCode.STORY_FACTS_CONTRADICTION}
+
+    for code in issue_codes:
+        if code in author_codes:
+            return "author"
+
+    # 否则返修到 polisher
+    return "polisher"
+
+
 def quality_gate_node(state: FactoryState, repo: Repository, skill_registry=None) -> dict[str, Any]:
     """独立质检节点：运行所有确定性质量检查
 
@@ -1258,12 +1433,7 @@ def quality_gate_node(state: FactoryState, repo: Repository, skill_registry=None
     - quality_gate.diagnostics — 各检查器详细结果
     """
     from datetime import datetime, timezone
-    from ..quality.chapter_seam import evaluate_chapter_seam
-    from ..quality.continuity_gate import evaluate_chapter_continuity, SEVERITY_BLOCKING
-    from ..quality.hub import QualityHub
-    from ..quality.feedback_bridge import build_compact_feedback
-    from ..validators.death_penalty import check_death_penalty_structured
-    from ..validators.chapter_checker import count_words, check_word_count_quality_gate, derive_word_target
+    from ..quality.issue_codes import IssueCode, CheckerConfigError, CheckerTemporaryFailure, CheckerTimeoutError
 
     blocking_guard = _guard_blocking_db_status(state, repo)
     if blocking_guard:
@@ -1295,124 +1465,148 @@ def quality_gate_node(state: FactoryState, repo: Repository, skill_registry=None
     advisory_issues = []
     diagnostics = {}
     checks_run = []
+    all_issue_codes = []
     score = 100.0  # 从满分开始扣分
+    checker_errors = []  # 记录检查器错误
 
     # ── 检查 1: Death Penalty（死刑红线）────────────────────────────
     try:
-        dp_result = check_death_penalty_structured(content)
-        checks_run.append("death_penalty")
-        diagnostics["death_penalty"] = {
-            "has_critical": dp_result.has_critical,
-            "violations": dp_result.violations,
-        }
-        if dp_result.has_critical:
-            blocking_issues.extend([f"CRITICAL 死刑红线: {v}" for v in dp_result.violations])
-            score = min(score, 50)
-    except Exception:
+        result = _check_death_penalty(content)
+        checks_run.append(result["check_name"])
+        diagnostics[result["check_name"]] = result["diagnostics"]
+        if not result["passed"]:
+            blocking_issues.extend(result["blocking_issues"])
+            score = min(score, score - result["score_penalty"])
+        all_issue_codes.extend(result["issue_codes"])
+    except CheckerConfigError as e:
+        logger.error("QualityGate: death_penalty config error: %s", e)
+        checker_errors.append({"checker": "death_penalty", "error_type": "config", "message": str(e)})
+        diagnostics["death_penalty"] = {"error": "config_error", "message": str(e)}
+    except CheckerTimeoutError as e:
+        logger.warning("QualityGate: death_penalty timeout: %s", e)
+        checker_errors.append({"checker": "death_penalty", "error_type": "timeout", "message": str(e)})
+        diagnostics["death_penalty"] = {"error": "timeout", "message": str(e)}
+    except CheckerTemporaryFailure as e:
+        logger.warning("QualityGate: death_penalty temporary failure: %s", e)
+        checker_errors.append({"checker": "death_penalty", "error_type": "temporary", "message": str(e)})
+        diagnostics["death_penalty"] = {"error": "temporary_failure", "message": str(e)}
+    except Exception as e:
         logger.warning("QualityGate: death_penalty check failed", exc_info=True)
+        checker_errors.append({"checker": "death_penalty", "error_type": "unknown", "message": str(e)})
         diagnostics["death_penalty"] = {"error": "check failed"}
 
     # ── 检查 2: Word Count Gate（字数门禁）────────────────────────
     try:
-        instruction = repo.get_instruction(project_id, chapter_number)
-        project = repo.get_project(project_id)
-        word_target = derive_word_target(instruction, project)
-        word_gate_passed, word_gate_msg = check_word_count_quality_gate(
-            content, word_target, "quality_gate"
-        )
-        checks_run.append("word_count_gate")
-        diagnostics["word_count_gate"] = {
-            "passed": word_gate_passed,
-            "message": word_gate_msg,
-            "actual_word_count": count_words(content),
-            "word_target": word_target,
-        }
-        if not word_gate_passed:
-            blocking_issues.append(word_gate_msg)
-            score = min(score, 70)
-    except Exception:
+        result = _check_word_count(content, repo, project_id, chapter_number)
+        checks_run.append(result["check_name"])
+        diagnostics[result["check_name"]] = result["diagnostics"]
+        if not result["passed"]:
+            blocking_issues.extend(result["blocking_issues"])
+            score = min(score, score - result["score_penalty"])
+        all_issue_codes.extend(result["issue_codes"])
+    except CheckerConfigError as e:
+        logger.error("QualityGate: word_count_gate config error: %s", e)
+        checker_errors.append({"checker": "word_count_gate", "error_type": "config", "message": str(e)})
+        diagnostics["word_count_gate"] = {"error": "config_error", "message": str(e)}
+    except CheckerTimeoutError as e:
+        logger.warning("QualityGate: word_count_gate timeout: %s", e)
+        checker_errors.append({"checker": "word_count_gate", "error_type": "timeout", "message": str(e)})
+        diagnostics["word_count_gate"] = {"error": "timeout", "message": str(e)}
+    except CheckerTemporaryFailure as e:
+        logger.warning("QualityGate: word_count_gate temporary failure: %s", e)
+        checker_errors.append({"checker": "word_count_gate", "error_type": "temporary", "message": str(e)})
+        diagnostics["word_count_gate"] = {"error": "temporary_failure", "message": str(e)}
+    except Exception as e:
         logger.warning("QualityGate: word_count_gate check failed", exc_info=True)
+        checker_errors.append({"checker": "word_count_gate", "error_type": "unknown", "message": str(e)})
         diagnostics["word_count_gate"] = {"error": "check failed"}
 
     # ── 检查 3: Chapter Seam Check（章间衔接）────────────────────
     try:
-        seam_gate = evaluate_chapter_seam(repo, project_id, chapter_number, content)
-        checks_run.append("chapter_seam")
-        diagnostics["chapter_seam"] = {
-            "passed": seam_gate.get("pass", True),
-            "blocking_issues": seam_gate.get("blocking_issues", []),
-            "advisory_issues": seam_gate.get("advisory_issues", []),
-        }
-        if not seam_gate.get("pass", True):
-            blocking_issues.extend(seam_gate.get("blocking_issues", [])[:3])
-            score = min(score, 79)
-        advisory_issues.extend(seam_gate.get("advisory_issues", [])[:2])
-    except Exception:
+        result = _check_chapter_seam(repo, project_id, chapter_number, content)
+        checks_run.append(result["check_name"])
+        diagnostics[result["check_name"]] = result["diagnostics"]
+        if not result["passed"]:
+            blocking_issues.extend(result["blocking_issues"])
+            score = min(score, score - result["score_penalty"])
+        advisory_issues.extend(result.get("advisory_issues", []))
+        all_issue_codes.extend(result["issue_codes"])
+    except CheckerConfigError as e:
+        logger.error("QualityGate: chapter_seam config error: %s", e)
+        checker_errors.append({"checker": "chapter_seam", "error_type": "config", "message": str(e)})
+        diagnostics["chapter_seam"] = {"error": "config_error", "message": str(e)}
+    except CheckerTimeoutError as e:
+        logger.warning("QualityGate: chapter_seam timeout: %s", e)
+        checker_errors.append({"checker": "chapter_seam", "error_type": "timeout", "message": str(e)})
+        diagnostics["chapter_seam"] = {"error": "timeout", "message": str(e)}
+    except CheckerTemporaryFailure as e:
+        logger.warning("QualityGate: chapter_seam temporary failure: %s", e)
+        checker_errors.append({"checker": "chapter_seam", "error_type": "temporary", "message": str(e)})
+        diagnostics["chapter_seam"] = {"error": "temporary_failure", "message": str(e)}
+    except Exception as e:
         logger.warning("QualityGate: chapter_seam check failed", exc_info=True)
+        checker_errors.append({"checker": "chapter_seam", "error_type": "unknown", "message": str(e)})
         diagnostics["chapter_seam"] = {"error": "check failed"}
 
     # ── 检查 4: Continuity Gate（叙事连续性）────────────────────
     try:
-        continuity_result = evaluate_chapter_continuity(
-            repo, project_id, chapter_number, content,
-            title=chapter.get("title"),
-        )
-        checks_run.append("continuity_gate")
-        diagnostics["continuity_gate"] = {
-            "should_block": continuity_result.should_block_publish,
-            "severity": continuity_result.severity,
-            "issues": continuity_result.issues,
-        }
-        if continuity_result.should_block_publish or continuity_result.severity == SEVERITY_BLOCKING:
-            blocking_issues.extend([f"[连续性阻断] {i}" for i in continuity_result.issues[:3]])
-            score = min(score, 70)
-        else:
-            advisory_issues.extend([f"[连续性建议] {i}" for i in continuity_result.issues[:2]])
-    except Exception:
+        result = _check_continuity_gate(repo, project_id, chapter_number, content, title=chapter.get("title"))
+        checks_run.append(result["check_name"])
+        diagnostics[result["check_name"]] = result["diagnostics"]
+        if not result["passed"]:
+            blocking_issues.extend(result["blocking_issues"])
+            score = min(score, score - result["score_penalty"])
+        advisory_issues.extend(result.get("advisory_issues", []))
+        all_issue_codes.extend(result["issue_codes"])
+    except CheckerConfigError as e:
+        logger.error("QualityGate: continuity_gate config error: %s", e)
+        checker_errors.append({"checker": "continuity_gate", "error_type": "config", "message": str(e)})
+        diagnostics["continuity_gate"] = {"error": "config_error", "message": str(e)}
+    except CheckerTimeoutError as e:
+        logger.warning("QualityGate: continuity_gate timeout: %s", e)
+        checker_errors.append({"checker": "continuity_gate", "error_type": "timeout", "message": str(e)})
+        diagnostics["continuity_gate"] = {"error": "timeout", "message": str(e)}
+    except CheckerTemporaryFailure as e:
+        logger.warning("QualityGate: continuity_gate temporary failure: %s", e)
+        checker_errors.append({"checker": "continuity_gate", "error_type": "temporary", "message": str(e)})
+        diagnostics["continuity_gate"] = {"error": "temporary_failure", "message": str(e)}
+    except Exception as e:
         logger.warning("QualityGate: continuity_gate check failed", exc_info=True)
+        checker_errors.append({"checker": "continuity_gate", "error_type": "unknown", "message": str(e)})
         diagnostics["continuity_gate"] = {"error": "check failed"}
 
     # ── 检查 5: QualityHub.diagnose()（质量诊断聚合）────────────
     if skill_registry:
         try:
-            hub = QualityHub(repo, skill_registry)
-            diagnose_result = hub.diagnose(content, context={
-                "project_id": project_id,
-                "chapter_number": chapter_number,
-            })
-            qf = build_compact_feedback(diagnose_result)
-            checks_run.append("quality_diagnosis")
-            diagnostics["quality_diagnosis"] = {
-                "priority_count": len(qf.priority_findings),
-                "advisory_count": len(qf.advisory_findings),
-            }
-            if qf.priority_findings:
-                priority_issues.extend(
-                    [f"[诊断] [{f['code']}] {f['message']}" for f in qf.priority_findings[:3]]
-                )
-            advisory_issues.extend(
-                [f"[诊断建议] [{f['code']}] {f['message']}" for f in qf.advisory_findings[:2]]
-            )
-        except Exception:
+            result = _check_quality_diagnosis(content, repo, project_id, chapter_number, skill_registry)
+            checks_run.append(result["check_name"])
+            diagnostics[result["check_name"]] = result["diagnostics"]
+            priority_issues.extend(result.get("priority_issues", []))
+            advisory_issues.extend(result.get("advisory_issues", []))
+            all_issue_codes.extend(result["issue_codes"])
+        except CheckerConfigError as e:
+            logger.error("QualityGate: quality_diagnosis config error: %s", e)
+            checker_errors.append({"checker": "quality_diagnosis", "error_type": "config", "message": str(e)})
+            diagnostics["quality_diagnosis"] = {"error": "config_error", "message": str(e)}
+        except CheckerTimeoutError as e:
+            logger.warning("QualityGate: quality_diagnosis timeout: %s", e)
+            checker_errors.append({"checker": "quality_diagnosis", "error_type": "timeout", "message": str(e)})
+            diagnostics["quality_diagnosis"] = {"error": "timeout", "message": str(e)}
+        except CheckerTemporaryFailure as e:
+            logger.warning("QualityGate: quality_diagnosis temporary failure: %s", e)
+            checker_errors.append({"checker": "quality_diagnosis", "error_type": "temporary", "message": str(e)})
+            diagnostics["quality_diagnosis"] = {"error": "temporary_failure", "message": str(e)}
+        except Exception as e:
             logger.warning("QualityGate: quality_diagnosis check failed", exc_info=True)
+            checker_errors.append({"checker": "quality_diagnosis", "error_type": "unknown", "message": str(e)})
             diagnostics["quality_diagnosis"] = {"error": "check failed"}
 
     # ── 综合判定 ─────────────────────────────────────────────────
     has_blocking = len(blocking_issues) > 0
     passed = not has_blocking
 
-    # 确定返修目标
-    revision_target = None
-    if not passed:
-        # 默认返修目标
-        if any("死刑红线" in i or "连续性阻断" in i for i in blocking_issues):
-            revision_target = "author"
-        elif any("字数" in i for i in blocking_issues):
-            revision_target = "polisher"
-        elif any("章间衔接" in i for i in blocking_issues):
-            revision_target = "author"
-        else:
-            revision_target = "polisher"
+    # 使用结构化错误码确定返修目标
+    revision_target = _determine_revision_target(all_issue_codes) if not passed else None
 
     # 构建质量门禁结果
     quality_gate_result = {
@@ -1424,7 +1618,9 @@ def quality_gate_node(state: FactoryState, repo: Repository, skill_registry=None
         "advisory_issues": advisory_issues,
         "diagnostics": diagnostics,
         "checks_run": checks_run,
+        "issue_codes": [code.value for code in all_issue_codes],
         "revision_target": revision_target,
+        "checker_errors": checker_errors,  # v6.8.5: 记录检查器错误
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -1437,6 +1633,10 @@ def quality_gate_node(state: FactoryState, repo: Repository, skill_registry=None
             status="failed",
             error_message=f"Quality gate failed: {len(blocking_issues)} blocking issues",
         )
+
+    # 记录检查器错误警告
+    if checker_errors:
+        logger.warning("QualityGate: %d checker errors occurred: %s", len(checker_errors), checker_errors)
 
     return {
         "quality_gate": quality_gate_result,
@@ -1578,6 +1778,19 @@ def publisher_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
 
     # Fallback: re-run continuity check if quality_gate diagnostics missing
     if not continuity_diag:
+        # v6.8.5: Log warning when quality_gate diagnostics are missing
+        logger.warning(
+            "Publisher: quality_gate continuity diagnostics missing, falling back to re-check. "
+            "This may indicate upstream quality_gate_node did not run or failed. "
+            "project_id=%s, chapter_number=%s",
+            project_id, chapter_number,
+        )
+        _log_node_event(
+            state, repo, "publisher", "fallback_continuity_check",
+            status="warning",
+            error_message="质量门禁连续性诊断缺失，回退到重新检查",
+        )
+
         try:
             from ..quality.continuity_gate import evaluate_publish_continuity, SEVERITY_BLOCKING
             continuity_result = evaluate_publish_continuity(repo, project_id, chapter_number)

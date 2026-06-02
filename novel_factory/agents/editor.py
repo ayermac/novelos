@@ -802,9 +802,9 @@ class EditorAgent(BaseAgent):
             if not project:
                 return
             text = " ".join(filter(None, [
-                project.get("title", ""),
-                project.get("genre", ""),
-                project.get("premise", ""),
+                project.get("name", ""),  # 项目名称
+                project.get("genre", ""),  # 类型
+                project.get("description", ""),  # 项目描述
             ]))
             if not text.strip():
                 return
@@ -1606,6 +1606,21 @@ class EditorAgent(BaseAgent):
 
         # v6.8.5: Read quality_gate results from state (set by upstream quality_gate_node)
         quality_gate = state.get("quality_gate", {}) or {}
+
+        # v6.8.5: Validate quality_gate presence
+        if not quality_gate:
+            logger.warning(
+                "Editor: quality_gate missing from state, using defaults. "
+                "This may indicate upstream quality_gate_node did not run. "
+                "project_id=%s, chapter_number=%s",
+                inputs.project_id, inputs.chapter_number,
+            )
+        elif not quality_gate.get("checks_run"):
+            logger.warning(
+                "Editor: quality_gate present but checks_run empty, quality_gate_node may have failed. "
+                "project_id=%s, chapter_number=%s",
+                inputs.project_id, inputs.chapter_number,
+            )
 
         # Build quality_result from quality_gate state
         quality_result = QualityDiagnosisResult(
