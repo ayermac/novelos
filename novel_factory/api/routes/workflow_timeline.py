@@ -965,6 +965,15 @@ async def workflow_stream_sse(
         if runs:
             target_run = runs[0]
 
+    # v6.8.4 Phase 3: Wait for run creation when no run_id provided
+    if not target_run and not run_id:
+        for _ in range(10):
+            await asyncio.sleep(0.5)
+            runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=1)
+            if runs:
+                target_run = runs[0]
+                break
+
     run_id_str = target_run.get("id") or target_run.get("run_id", "") if target_run else ""
     run_status = target_run.get("status", "") if target_run else ""
 
@@ -993,11 +1002,11 @@ async def workflow_stream_sse(
                         "created_at": ev.get("created_at"),
                     }
                     yield f"event: workflow_event\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("SSE event_generator error: %s", e, exc_info=True)
 
         # If run is already terminal, emit done and close
-        if not run_id_str or run_status in ("completed", "failed", "blocked"):
+        if not run_id_str or run_status in ("completed", "failed", "blocked", "cancelled"):
             done_payload = {"run_id": run_id_str, "status": run_status or "no_run"}
             yield f"event: workflow_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
             return
@@ -1005,11 +1014,19 @@ async def workflow_stream_sse(
         # Poll for new events while run is active
         max_poll_seconds = 1800  # 30 minutes max
         poll_interval = 1.5
+        heartbeat_interval = 10  # send heartbeat every ~15s (10 * 1.5s)
+        heartbeat_counter = 0
         start = time.time()
         while time.time() - start < max_poll_seconds:
             # Check if client disconnected
             if await request.is_disconnected():
                 break
+
+            # v6.8.4 Phase 1: Send heartbeat to prevent proxy timeout
+            heartbeat_counter += 1
+            if heartbeat_counter >= heartbeat_interval:
+                heartbeat_counter = 0
+                yield ":heartbeat\n\n"
 
             try:
                 new_events = repo.get_workflow_execution_events_since(
@@ -1031,20 +1048,20 @@ async def workflow_stream_sse(
                         "created_at": ev.get("created_at"),
                     }
                     yield f"event: workflow_event\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("SSE event_generator error: %s", e, exc_info=True)
 
             # Check if run has completed
             try:
                 current_run = _get_workflow_run_by_id(
                     repo, project_id, chapter_number, run_id_str,
                 )
-                if current_run and current_run.get("status") in ("completed", "failed", "blocked"):
+                if current_run and current_run.get("status") in ("completed", "failed", "blocked", "cancelled"):
                     done_payload = {"run_id": run_id_str, "status": current_run["status"]}
                     yield f"event: workflow_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
                     return
-            except Exception:
-                pass
+            except Exception as e:
+                logger.warning("SSE event_generator error: %s", e, exc_info=True)
 
             await asyncio.sleep(poll_interval)
 
