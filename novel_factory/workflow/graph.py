@@ -21,6 +21,7 @@ from .conditions import (
     route_after_agent,
     route_after_memory_curator,
     route_by_chapter_status,
+    route_by_quality_gate,
     route_by_revision_type,
     route_by_review_result,
 )
@@ -36,6 +37,7 @@ CANONICAL_WORKFLOW_NODES: tuple[dict[str, str], ...] = (
     {"node_name": "screenwriter", "label": "编剧", "node_group": "creative_agent", "node_type": "creative_agent"},
     {"node_name": "author", "label": "执笔", "node_group": "creative_agent", "node_type": "creative_agent"},
     {"node_name": "polisher", "label": "润色", "node_group": "creative_agent", "node_type": "creative_agent"},
+    {"node_name": "quality_gate", "label": "质检门禁", "node_group": "quality", "node_type": "quality"},  # v6.8.5
     {"node_name": "editor", "label": "审核", "node_group": "creative_agent", "node_type": "creative_agent"},
     {"node_name": "memory_curator", "label": "记忆整理", "node_group": "support_agent", "node_type": "support_agent"},
     {"node_name": "publisher", "label": "发布", "node_group": "terminal", "node_type": "terminal"},
@@ -97,6 +99,7 @@ def build_graph(
         graph.add_node("screenwriter", runners["screenwriter"])
         graph.add_node("author", runners["author"])
         graph.add_node("polisher", runners["polisher"])
+        graph.add_node("quality_gate", lambda s: nodes.quality_gate_node(s, repo, skill_registry))  # v6.8.5
         graph.add_node("editor", runners["editor"])
         graph.add_node("memory_curator", runners["memory_curator"])
         graph.add_node("publisher", lambda s: nodes.publisher_node(s, repo))
@@ -129,6 +132,10 @@ def build_graph(
         graph.add_node(
             "polisher",
             lambda s: nodes.polisher_node(s, repo, llm),
+        )
+        graph.add_node(
+            "quality_gate",
+            lambda s: nodes.quality_gate_node(s, repo, skill_registry),  # v6.8.5
         )
         graph.add_node(
             "editor",
@@ -198,7 +205,18 @@ def build_graph(
     graph.add_conditional_edges(
         "polisher",
         route_after_agent,
-        {"next": "editor", "human_review": "human_review", "revision_router": "revision_router"},
+        {"next": "quality_gate", "human_review": "human_review", "revision_router": "revision_router"},
+    )
+
+    # v6.8.5: After quality_gate: pass → editor, fail → revision_router or human
+    graph.add_conditional_edges(
+        "quality_gate",
+        route_by_quality_gate,
+        {
+            "editor": "editor",
+            "revision_router": "revision_router",
+            "human_review": "human_review",
+        },
     )
 
     # After editor: pass → memory_curator, fail → revise or human

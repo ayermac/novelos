@@ -2167,6 +2167,9 @@ class TestEditorAgent:
         }])
         agent = EditorAgent(seeded_repo, stub)
 
+        # v6.8.5: Quality gate checks are now in quality_gate_node, not Editor.
+        # The Editor receives quality_gate results from state and should pass through.
+        # For this test, we need to simulate quality_gate results in state.
         result = agent.run({
             "project_id": "test_proj",
             "chapter_number": 2,
@@ -2175,12 +2178,19 @@ class TestEditorAgent:
             "max_retries": 3,
             "requires_human": False,
             "error": None,
+            "quality_gate": {
+                "passed": False,
+                "score": 79,
+                "blocking_issues": ["[章间衔接] 章间衔接检查失败"],
+                "priority_issues": [],
+                "advisory_issues": [],
+                "revision_target": "author",
+            },
         })
 
         assert result["chapter_status"] == ChapterStatus.REVISION.value
         assert result["quality_gate"]["pass"] is False
         assert result["quality_gate"]["revision_target"] == "author"
-        assert result["quality_gate"]["chapter_seam_fail"] is True
         review = seeded_repo.get_latest_review("test_proj", 2)
         assert review is not None
         assert review["pass"] == 0

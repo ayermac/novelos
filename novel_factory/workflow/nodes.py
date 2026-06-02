@@ -1241,6 +1241,208 @@ def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill
     return result
 
 
+# v6.8.5: Quality Gate 独立节点
+def quality_gate_node(state: FactoryState, repo: Repository, skill_registry=None) -> dict[str, Any]:
+    """独立质检节点：运行所有确定性质量检查
+
+    v6.8.5: 将确定性质检从 Editor 中剥离，实现：
+    - 确定性检查与 LLM 审校解耦
+    - 质量检查结果可复用（Publisher 直接读取）
+    - 快速失败：确定性检查不过时跳过 LLM 调用
+
+    输出：
+    - quality_gate.pass — 通过/失败
+    - quality_gate.score — 确定性检查综合分
+    - quality_gate.revision_target — 失败时的返修目标
+    - quality_gate.issues — 问题列表
+    - quality_gate.diagnostics — 各检查器详细结果
+    """
+    from datetime import datetime, timezone
+    from ..quality.chapter_seam import evaluate_chapter_seam
+    from ..quality.continuity_gate import evaluate_chapter_continuity, SEVERITY_BLOCKING
+    from ..quality.hub import QualityHub
+    from ..quality.feedback_bridge import build_compact_feedback
+    from ..validators.death_penalty import check_death_penalty_structured
+    from ..validators.chapter_checker import count_words, check_word_count_quality_gate, derive_word_target
+
+    blocking_guard = _guard_blocking_db_status(state, repo)
+    if blocking_guard:
+        return blocking_guard
+
+    _update_run_node(state, repo, "quality_gate")
+    _log_node_event(state, repo, "quality_gate", "started", status="running")
+
+    project_id = state.get("project_id", "")
+    chapter_number = state.get("chapter_number", 0)
+    llm_mode = state.get("llm_mode", "stub")
+
+    # 加载章节内容
+    chapter = repo.get_chapter(project_id, chapter_number)
+    if not chapter:
+        error_msg = f"Chapter not found: {project_id}/{chapter_number}"
+        _log_node_event(state, repo, "quality_gate", "failed", status="failed", error_message=error_msg)
+        return {"error": error_msg, "requires_human": True}
+
+    content = chapter.get("content", "")
+    if not content.strip():
+        error_msg = "Chapter content is empty"
+        _log_node_event(state, repo, "quality_gate", "failed", status="failed", error_message=error_msg)
+        return {"error": error_msg, "requires_human": True}
+
+    # 初始化结果
+    blocking_issues = []
+    priority_issues = []
+    advisory_issues = []
+    diagnostics = {}
+    checks_run = []
+    score = 100.0  # 从满分开始扣分
+
+    # ── 检查 1: Death Penalty（死刑红线）────────────────────────────
+    try:
+        dp_result = check_death_penalty_structured(content)
+        checks_run.append("death_penalty")
+        diagnostics["death_penalty"] = {
+            "has_critical": dp_result.has_critical,
+            "violations": dp_result.violations,
+        }
+        if dp_result.has_critical:
+            blocking_issues.extend([f"CRITICAL 死刑红线: {v}" for v in dp_result.violations])
+            score = min(score, 50)
+    except Exception:
+        logger.warning("QualityGate: death_penalty check failed", exc_info=True)
+        diagnostics["death_penalty"] = {"error": "check failed"}
+
+    # ── 检查 2: Word Count Gate（字数门禁）────────────────────────
+    try:
+        instruction = repo.get_instruction(project_id, chapter_number)
+        project = repo.get_project(project_id)
+        word_target = derive_word_target(instruction, project)
+        word_gate_passed, word_gate_msg = check_word_count_quality_gate(
+            content, word_target, "quality_gate"
+        )
+        checks_run.append("word_count_gate")
+        diagnostics["word_count_gate"] = {
+            "passed": word_gate_passed,
+            "message": word_gate_msg,
+            "actual_word_count": count_words(content),
+            "word_target": word_target,
+        }
+        if not word_gate_passed:
+            blocking_issues.append(word_gate_msg)
+            score = min(score, 70)
+    except Exception:
+        logger.warning("QualityGate: word_count_gate check failed", exc_info=True)
+        diagnostics["word_count_gate"] = {"error": "check failed"}
+
+    # ── 检查 3: Chapter Seam Check（章间衔接）────────────────────
+    try:
+        seam_gate = evaluate_chapter_seam(repo, project_id, chapter_number, content)
+        checks_run.append("chapter_seam")
+        diagnostics["chapter_seam"] = {
+            "passed": seam_gate.get("pass", True),
+            "blocking_issues": seam_gate.get("blocking_issues", []),
+            "advisory_issues": seam_gate.get("advisory_issues", []),
+        }
+        if not seam_gate.get("pass", True):
+            blocking_issues.extend(seam_gate.get("blocking_issues", [])[:3])
+            score = min(score, 79)
+        advisory_issues.extend(seam_gate.get("advisory_issues", [])[:2])
+    except Exception:
+        logger.warning("QualityGate: chapter_seam check failed", exc_info=True)
+        diagnostics["chapter_seam"] = {"error": "check failed"}
+
+    # ── 检查 4: Continuity Gate（叙事连续性）────────────────────
+    try:
+        continuity_result = evaluate_chapter_continuity(
+            repo, project_id, chapter_number, content,
+            title=chapter.get("title"),
+        )
+        checks_run.append("continuity_gate")
+        diagnostics["continuity_gate"] = {
+            "should_block": continuity_result.should_block_publish,
+            "severity": continuity_result.severity,
+            "issues": continuity_result.issues,
+        }
+        if continuity_result.should_block_publish or continuity_result.severity == SEVERITY_BLOCKING:
+            blocking_issues.extend([f"[连续性阻断] {i}" for i in continuity_result.issues[:3]])
+            score = min(score, 70)
+        else:
+            advisory_issues.extend([f"[连续性建议] {i}" for i in continuity_result.issues[:2]])
+    except Exception:
+        logger.warning("QualityGate: continuity_gate check failed", exc_info=True)
+        diagnostics["continuity_gate"] = {"error": "check failed"}
+
+    # ── 检查 5: QualityHub.diagnose()（质量诊断聚合）────────────
+    if skill_registry:
+        try:
+            hub = QualityHub(repo, skill_registry)
+            diagnose_result = hub.diagnose(content, context={
+                "project_id": project_id,
+                "chapter_number": chapter_number,
+            })
+            qf = build_compact_feedback(diagnose_result)
+            checks_run.append("quality_diagnosis")
+            diagnostics["quality_diagnosis"] = {
+                "priority_count": len(qf.priority_findings),
+                "advisory_count": len(qf.advisory_findings),
+            }
+            if qf.priority_findings:
+                priority_issues.extend(
+                    [f"[诊断] [{f['code']}] {f['message']}" for f in qf.priority_findings[:3]]
+                )
+            advisory_issues.extend(
+                [f"[诊断建议] [{f['code']}] {f['message']}" for f in qf.advisory_findings[:2]]
+            )
+        except Exception:
+            logger.warning("QualityGate: quality_diagnosis check failed", exc_info=True)
+            diagnostics["quality_diagnosis"] = {"error": "check failed"}
+
+    # ── 综合判定 ─────────────────────────────────────────────────
+    has_blocking = len(blocking_issues) > 0
+    passed = not has_blocking
+
+    # 确定返修目标
+    revision_target = None
+    if not passed:
+        # 默认返修目标
+        if any("死刑红线" in i or "连续性阻断" in i for i in blocking_issues):
+            revision_target = "author"
+        elif any("字数" in i for i in blocking_issues):
+            revision_target = "polisher"
+        elif any("章间衔接" in i for i in blocking_issues):
+            revision_target = "author"
+        else:
+            revision_target = "polisher"
+
+    # 构建质量门禁结果
+    quality_gate_result = {
+        "passed": passed,
+        "pass": passed,  # v6.8.5: 兼容现有路由逻辑（route_by_review_result 检查 "pass" 字段）
+        "score": score,
+        "blocking_issues": blocking_issues,
+        "priority_issues": priority_issues,
+        "advisory_issues": advisory_issues,
+        "diagnostics": diagnostics,
+        "checks_run": checks_run,
+        "revision_target": revision_target,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # 记录日志
+    if passed:
+        _log_node_event(state, repo, "quality_gate", "passed", status="completed")
+    else:
+        _log_node_event(
+            state, repo, "quality_gate", "failed",
+            status="failed",
+            error_message=f"Quality gate failed: {len(blocking_issues)} blocking issues",
+        )
+
+    return {
+        "quality_gate": quality_gate_result,
+    }
+
+
 def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
     """Run the Editor agent."""
     blocking_guard = _guard_blocking_db_status(state, repo)
@@ -1334,6 +1536,7 @@ def publisher_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
     """Publish a reviewed chapter.
 
     v6.7.9: Runs narrative continuity gate before publishing.
+    v6.8.5: Reuses quality_gate results from upstream quality_gate_node.
     Blocking continuity issues prevent auto-publish.
     """
     _update_run_node(state, repo, "publisher")
@@ -1342,34 +1545,64 @@ def publisher_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
     project_id = state.get("project_id", "")
     chapter_number = state.get("chapter_number", 0)
 
-    # v6.7.9: Continuity gate before publish
-    try:
-        from ..quality.continuity_gate import evaluate_publish_continuity, SEVERITY_BLOCKING
+    # v6.8.5: Reuse quality_gate results if available (continuity already checked)
+    quality_gate = state.get("quality_gate", {}) or {}
+    quality_gate_passed = quality_gate.get("passed", False)
 
-        continuity_result = evaluate_publish_continuity(repo, project_id, chapter_number)
-        if continuity_result.should_block_publish or continuity_result.severity == SEVERITY_BLOCKING:
-            error_msg = (
-                "发布前连续性检查未通过：" + "; ".join(continuity_result.issues[:3])
-            )
-            _log_node_event(
-                state, repo, "publisher", "failed",
-                status="failed", error_message=error_msg,
-            )
-            _finalize_run(state, repo, "failed", error_msg)
-            return {
-                "error": error_msg,
-                "requires_human": True,
-                "continuity_gate": continuity_result.to_dict(),
-            }
-        if continuity_result.issues:
-            # Advisory/warning: log but do not block
-            _log_node_event(
-                state, repo, "publisher", "completed",
-                status="warning",
-                error_message="发布通过，但存在连续性建议：" + "; ".join(continuity_result.issues[:2]),
-            )
-    except Exception:
-        logger.warning("Publisher: continuity gate failed (best-effort)", exc_info=True)
+    if not quality_gate_passed:
+        # Quality gate failed upstream — should not reach publisher, but safety check
+        error_msg = "质量门禁未通过，无法发布"
+        _log_node_event(
+            state, repo, "publisher", "failed",
+            status="failed", error_message=error_msg,
+        )
+        _finalize_run(state, repo, "failed", error_msg)
+        return {"error": error_msg, "requires_human": True}
+
+    # v6.8.5: Check continuity from quality_gate diagnostics (already computed)
+    continuity_diag = quality_gate.get("diagnostics", {}).get("continuity_gate", {})
+    if continuity_diag.get("should_block") or continuity_diag.get("severity") == "blocking":
+        error_msg = (
+            "发布前连续性检查未通过：" + "; ".join(continuity_diag.get("issues", [])[:3])
+        )
+        _log_node_event(
+            state, repo, "publisher", "failed",
+            status="failed", error_message=error_msg,
+        )
+        _finalize_run(state, repo, "failed", error_msg)
+        return {
+            "error": error_msg,
+            "requires_human": True,
+            "continuity_gate": continuity_diag,
+        }
+
+    # Fallback: re-run continuity check if quality_gate diagnostics missing
+    if not continuity_diag:
+        try:
+            from ..quality.continuity_gate import evaluate_publish_continuity, SEVERITY_BLOCKING
+            continuity_result = evaluate_publish_continuity(repo, project_id, chapter_number)
+            if continuity_result.should_block_publish or continuity_result.severity == SEVERITY_BLOCKING:
+                error_msg = (
+                    "发布前连续性检查未通过：" + "; ".join(continuity_result.issues[:3])
+                )
+                _log_node_event(
+                    state, repo, "publisher", "failed",
+                    status="failed", error_message=error_msg,
+                )
+                _finalize_run(state, repo, "failed", error_msg)
+                return {
+                    "error": error_msg,
+                    "requires_human": True,
+                    "continuity_gate": continuity_result.to_dict(),
+                }
+            if continuity_result.issues:
+                _log_node_event(
+                    state, repo, "publisher", "completed",
+                    status="warning",
+                    error_message="发布通过，但存在连续性建议：" + "; ".join(continuity_result.issues[:2]),
+                )
+        except Exception:
+            logger.warning("Publisher: continuity gate failed (best-effort)", exc_info=True)
 
     ok = repo.publish_chapter(project_id, chapter_number)
     if not ok:

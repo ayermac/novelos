@@ -57,6 +57,21 @@ def is_valid_transition(current: str, target: str) -> bool:
     return target in allowed
 
 
+# v6.8.5: Quality Gate 独立节点结果类型
+class QualityGateResult(TypedDict, total=False):
+    """确定性质检结果 — quality_gate_node 输出"""
+
+    passed: bool  # 综合判定：通过/失败
+    score: float  # 确定性检查综合分 (0-100)
+    blocking_issues: list[str]  # 阻塞问题（必须修复）
+    priority_issues: list[str]  # 高优先级问题
+    advisory_issues: list[str]  # 建议性问题
+    diagnostics: dict[str, Any]  # 各检查器详细结果
+    checks_run: list[str]  # 已执行的检查列表
+    revision_target: str  # 失败时的返修目标 ("author"/"polisher"/"planner")
+    timestamp: str  # 检查时间戳
+
+
 class FactoryState(TypedDict, total=False):
     """LangGraph global state for a chapter production run.
 
