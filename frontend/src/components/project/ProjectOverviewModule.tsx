@@ -189,7 +189,7 @@ const MAX_AUTO_RECONNECT_ATTEMPTS = 3
 function stepBorderColor(result: string): string {
   if (result === 'success') return 'var(--success)'
   if (result === 'failed') return 'var(--danger)'
-  if (result === 'skipped') return 'var(--text-muted)'
+  if (result === 'skipped' || result === 'skipped_terminal') return 'var(--text-muted)'
   if (result === 'running') return 'var(--primary)'
   return 'var(--warning)'
 }
@@ -1666,7 +1666,7 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                   stopReason={autoResult?.stop_reason || ''}
                   sessionStatus={autoResult?.status || 'stopped'}
                   lastError={streamError?.message || autoResult?.steps?.filter((s) => s.result === 'failed').pop()?.error}
-                  targetChapter={autoResult?.steps?.filter((s) => s.result === 'failed').pop()?.target_chapter || currentCh}
+                  targetChapter={autoResult?.steps?.filter((s) => s.result === 'failed' || s.result === 'skipped' || s.result === 'skipped_terminal').pop()?.target_chapter || currentCh}
                   steps={streamSteps.length > 0 ? streamSteps : autoResult?.steps}
                 />
               )}
@@ -1729,14 +1729,14 @@ export default function ProjectOverviewModule({ project, stats, chapterNumber }:
                                 fontSize: 11,
                                 padding: '2px 6px',
                                 borderRadius: 4,
-                                  background: step.result === 'success' ? 'color-mix(in srgb, var(--success) 14%, transparent)' : step.result === 'failed' ? 'color-mix(in srgb, var(--danger) 14%, transparent)' : step.result === 'skipped' ? 'var(--bg-tertiary)' : step.result === 'running' ? 'var(--accent-soft)' : 'color-mix(in srgb, var(--warning) 16%, transparent)',
-                                color: step.result === 'success' ? 'var(--success)' : step.result === 'failed' ? 'var(--danger)' : step.result === 'skipped' ? 'var(--text-secondary)' : step.result === 'running' ? 'var(--primary)' : 'var(--warning)',
+                                  background: step.result === 'success' ? 'color-mix(in srgb, var(--success) 14%, transparent)' : step.result === 'failed' ? 'color-mix(in srgb, var(--danger) 14%, transparent)' : (step.result === 'skipped' || step.result === 'skipped_terminal') ? 'var(--bg-tertiary)' : step.result === 'running' ? 'var(--accent-soft)' : 'color-mix(in srgb, var(--warning) 16%, transparent)',
+                                color: step.result === 'success' ? 'var(--success)' : step.result === 'failed' ? 'var(--danger)' : (step.result === 'skipped' || step.result === 'skipped_terminal') ? 'var(--text-secondary)' : step.result === 'running' ? 'var(--primary)' : 'var(--warning)',
                               }}
                             >
                               {tStepResult(step.result)}
                             </span>
                           </div>
-                          {step.error && (
+                          {step.error && step.result !== 'skipped' && step.result !== 'skipped_terminal' && (
                             <div style={{ fontSize: 12, color: 'var(--danger)', marginTop: 4 }}>{step.error}</div>
                           )}
                           {step.warnings && step.warnings.length > 0 && (
