@@ -89,7 +89,7 @@ config_schema:
   properties: {}
 default_config: {}
 failure_policy:
-  on_error: warn
-  max_retries: 0
-  timeout_seconds: null
-  blocking_threshold: null
+  on_error: block
+  max_retries: 1
+  timeout_seconds: 30
+  blocking_threshold: 50

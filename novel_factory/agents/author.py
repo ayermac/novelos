@@ -576,7 +576,7 @@ class AuthorAgent(BaseAgent):
             "message": f"保存产物：章节初稿 ({_count_words(body_content)} 字)",
             "payload": {"artifact_type": "draft", "word_count": _count_words(body_content)},
         })
-        run_agent_skills(
+        after_llm_hook = run_agent_skills(
             repo=self.repo,
             skill_registry=self.skill_registry,
             project_id=project_id,
@@ -590,7 +590,49 @@ class AuthorAgent(BaseAgent):
             },
             project_overrides=self._get_project_skill_overrides(project_id),
             skill_type_hint="validator",
+            honor_manifest_failure_policy=True,
         )
+        
+        # v6.8.5: Check if any validator skill failed with blocking policy
+        if not after_llm_hook.ok:
+            blocking_error = after_llm_hook.blocking_error
+            logger.warning("Author: after_llm skill hook failed: %s", blocking_error)
+            exec_events.append({
+                "event_type": "skill_blocked",
+                "message": f"执笔稿被 Skill 阻断：{blocking_error}",
+                "status": "blocking",
+                "payload": {"stage": "after_llm", "blocking_error": blocking_error},
+            })
+            # Find the specific skill that failed for revision targeting
+            revision_target = "author"
+            for skill_item in after_llm_hook.skill_results:
+                if not skill_item.get("ok"):
+                    skill_id = skill_item.get("skill_id", "")
+                    if "excitement" in skill_id:
+                        revision_target = "author"
+                        break
+                    elif "death" in skill_id:
+                        revision_target = "author"
+                        break
+                    elif "event" in skill_id:
+                        revision_target = "author"
+                        break
+            
+            return {
+                "error": f"执笔稿质量检查未通过: {blocking_error}",
+                "chapter_status": state.get("chapter_status"),
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": revision_target,
+                    "skill_fail": True,
+                    "message": blocking_error,
+                    "agent": "author",
+                    "workflow_run_id": state.get("workflow_run_id"),
+                    "skill_results": after_llm_hook.skill_results,
+                },
+                "_trace": trace,
+                "_autonomy": autonomy,
+            }
 
         # v5.3.0: Word count quality gate (final guard after self-check loop)
         word_target = self._get_word_target(state)
