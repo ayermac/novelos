@@ -116,6 +116,8 @@ class GenesisApproveWithForceRequest(BaseModel):
     genesis_id: str
     force_apply: bool = False
     confirm_quality_risk: bool = False
+    # v6.8.5: Chapter cleanup mode for re-genesis
+    chapter_cleanup_mode: str | None = None
 
 
 class GenesisForceApplyBody(BaseModel):
@@ -123,6 +125,12 @@ class GenesisForceApplyBody(BaseModel):
 
     force_apply: bool = False
     confirm_quality_risk: bool = False
+    # v6.8.5: Chapter cleanup mode for re-genesis
+    # "keep_published" - Keep published/reviewed/awaiting_publish chapters, reset others
+    # "reset_all" - Reset ALL chapters including terminal ones
+    # "delete_all" - Delete ALL chapters
+    # None - No chapter cleanup (default, preserves all chapters)
+    chapter_cleanup_mode: str | None = None
 
 
 def _parse_genesis_timestamp(value) -> datetime | None:
@@ -1780,10 +1788,23 @@ async def _generate_real_draft_with_scaffold_fallback(
         return result
 
 
-def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
+def _apply_genesis_to_project(repo, project_id: str, draft: dict, chapter_cleanup_mode: str | None = None) -> dict:
     """Apply an approved genesis draft to formal tables.
 
-    Returns a summary of what was applied.
+    v6.8.5: Added chapter_cleanup_mode for re-genesis protection.
+
+    Args:
+        repo: Repository instance.
+        project_id: Project identifier.
+        draft: Genesis draft data.
+        chapter_cleanup_mode: How to handle existing chapters:
+            - "keep_published": Keep published/reviewed/awaiting_publish, reset others
+            - "reset_all": Reset ALL chapters including terminal ones
+            - "delete_all": Delete ALL chapters
+            - None: No chapter cleanup (default, preserves all chapters)
+
+    Returns:
+        A summary of what was applied.
     """
     if not isinstance(draft, dict):
         raise ValueError("创世草案必须是 JSON 对象")
@@ -1815,6 +1836,29 @@ def _apply_genesis_to_project(repo, project_id: str, draft: dict) -> dict:
     has_prior_approved_genesis = any(
         run.get("status") == "approved" for run in repo.list_genesis_runs(project_id)
     )
+
+    # v6.8.5: Chapter cleanup before applying new genesis
+    chapter_cleanup_summary = {"mode": chapter_cleanup_mode, "chapters_affected": 0}
+    if chapter_cleanup_mode:
+        if chapter_cleanup_mode == "keep_published":
+            # Keep published/reviewed/awaiting_publish, reset others to planned
+            chapter_cleanup_summary["chapters_affected"] = repo.reset_non_terminal_chapters(project_id)
+            # Reset current_chapter to 1
+            repo.update_project(project_id, current_chapter=1)
+            chapter_cleanup_summary["current_chapter_reset"] = True
+        elif chapter_cleanup_mode == "reset_all":
+            # Reset ALL chapters including terminal ones
+            chapter_cleanup_summary["chapters_affected"] = repo.reset_all_chapters(project_id)
+            repo.update_project(project_id, current_chapter=1)
+            chapter_cleanup_summary["current_chapter_reset"] = True
+        elif chapter_cleanup_mode == "delete_all":
+            # Delete ALL chapters
+            chapter_cleanup_summary["chapters_affected"] = repo.delete_all_chapters(project_id)
+            repo.update_project(project_id, current_chapter=1)
+            chapter_cleanup_summary["current_chapter_reset"] = True
+        logger.info("Re-genesis chapter cleanup: %s", chapter_cleanup_summary)
+    applied["chapter_cleanup"] = chapter_cleanup_summary
+
     applied["memory_items_deleted"] = repo.delete_memory_items_by_project(project_id)
     applied["memory_batches_deleted"] = repo.delete_memory_batches_by_project(project_id)
     applied["story_fact_events_deleted"] = repo.delete_fact_events_by_project(project_id)
@@ -2130,6 +2174,102 @@ async def get_latest_genesis(request: Request, project_id: str) -> EnvelopeRespo
         return error_response("INTERNAL_ERROR", f"获取创世记录失败: {str(e)[:200]}")
 
 
+@router.get("/projects/{project_id}/genesis/{genesis_id}/chapter-impact")
+async def get_genesis_chapter_impact(
+    request: Request,
+    project_id: str,
+    genesis_id: str,
+) -> EnvelopeResponse:
+    """v6.8.5: Pre-check chapter impact before approving genesis.
+
+    Returns chapter status summary and warnings for re-genesis scenarios.
+    """
+    from ..deps import get_repo
+
+    try:
+        repo = get_repo(request)
+
+        project = repo.get_project(project_id)
+        if not project:
+            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        genesis = repo.get_genesis_run(genesis_id)
+        if not genesis:
+            return error_response("GENESIS_NOT_FOUND", "创世记录不存在")
+
+        if genesis["project_id"] != project_id:
+            return error_response("GENESIS_NOT_FOUND", "创世记录不属于该项目")
+
+        # Get chapter status summary
+        chapter_status_counts = repo.count_chapters_by_status(project_id)
+        terminal_chapters = repo.get_terminal_chapters(project_id)
+        non_terminal_chapters = repo.get_non_terminal_chapters(project_id)
+
+        total_chapters = sum(chapter_status_counts.values())
+        has_existing_chapters = total_chapters > 0
+
+        # Build warnings
+        warnings = []
+        if terminal_chapters:
+            warnings.append({
+                "type": "terminal_chapters_exist",
+                "message": f"项目已有 {len(terminal_chapters)} 个终态章节（已发布/已审核/等待发布），重新创世将导致这些章节内容与新设定脱节",
+                "chapters": [ch["chapter_number"] for ch in terminal_chapters],
+            })
+        if non_terminal_chapters:
+            warnings.append({
+                "type": "non_terminal_chapters_exist",
+                "message": f"项目已有 {len(non_terminal_chapters)} 个非终态章节，重新创世将重置这些章节",
+                "chapters": [ch["chapter_number"] for ch in non_terminal_chapters],
+            })
+
+        # Build cleanup options
+        cleanup_options = []
+        if terminal_chapters:
+            cleanup_options.append({
+                "mode": "keep_published",
+                "label": "保留已发布章节",
+                "description": f"保留 {len(terminal_chapters)} 个终态章节，重置 {len(non_terminal_chapters)} 个非终态章节",
+            })
+            cleanup_options.append({
+                "mode": "reset_all",
+                "label": "全部重来",
+                "description": f"重置所有 {total_chapters} 个章节（包括已发布章节）",
+            })
+            cleanup_options.append({
+                "mode": "delete_all",
+                "label": "删除所有章节",
+                "description": f"删除所有 {total_chapters} 个章节",
+            })
+        elif non_terminal_chapters:
+            cleanup_options.append({
+                "mode": "keep_published",
+                "label": "重置非终态章节",
+                "description": f"重置 {len(non_terminal_chapters)} 个非终态章节",
+            })
+            cleanup_options.append({
+                "mode": "delete_all",
+                "label": "删除所有章节",
+                "description": f"删除所有 {total_chapters} 个章节",
+            })
+
+        return envelope_response({
+            "project_id": project_id,
+            "genesis_id": genesis_id,
+            "chapter_status_counts": chapter_status_counts,
+            "total_chapters": total_chapters,
+            "has_existing_chapters": has_existing_chapters,
+            "terminal_chapters_count": len(terminal_chapters),
+            "non_terminal_chapters_count": len(non_terminal_chapters),
+            "warnings": warnings,
+            "cleanup_options": cleanup_options,
+            "recommended_mode": "keep_published" if terminal_chapters else ("keep_published" if non_terminal_chapters else None),
+        })
+
+    except Exception as e:
+        return error_response("INTERNAL_ERROR", f"获取章节影响分析失败: {str(e)[:200]}")
+
+
 @router.post("/projects/{project_id}/genesis/{genesis_id}/approve")
 async def approve_genesis(
     request: Request,
@@ -2141,6 +2281,7 @@ async def approve_genesis(
 
     v6.6.3: Runs quality gate before approval. Blocked drafts cannot be approved
     without explicit force_apply + confirm_quality_risk flags.
+    v6.8.5: Added chapter_cleanup_mode for re-genesis protection.
     """
     from ..deps import get_repo
 
@@ -2203,7 +2344,9 @@ async def approve_genesis(
                 )
 
         # Apply to formal tables
-        applied = _apply_genesis_to_project(repo, project_id, draft)
+        # v6.8.5: Pass chapter_cleanup_mode for re-genesis protection
+        chapter_cleanup_mode = body.chapter_cleanup_mode if body else None
+        applied = _apply_genesis_to_project(repo, project_id, draft, chapter_cleanup_mode=chapter_cleanup_mode)
 
         forced_apply = force_apply and not quality_report.passed
         _approve_genesis_run_with_quality_audit(
@@ -2412,7 +2555,8 @@ async def approve_genesis_canonical(
                     },
                 )
 
-        applied = _apply_genesis_to_project(repo, body.project_id, draft)
+        # v6.8.5: Pass chapter_cleanup_mode for re-genesis protection
+        applied = _apply_genesis_to_project(repo, body.project_id, draft, chapter_cleanup_mode=body.chapter_cleanup_mode)
 
         forced_apply = not quality_report.passed and body.force_apply
         _approve_genesis_run_with_quality_audit(
