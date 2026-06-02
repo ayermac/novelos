@@ -1,7 +1,7 @@
 # Novel Factory v6.8.4 — SSE Streaming & Workflow Observability
 
 **Version**: v6.8.4
-**Type**: Bug Fix + Reliability Hardening + Architecture
+**Type**: Bug Fix + Reliability Hardening + Architecture + Architecture
 **Priority**: HIGH
 **Status**: Planning
 
@@ -67,38 +67,115 @@ can take >60s for long runs).
 
 ### Phase 2: Frontend Auto-Reconnect (P0)
 
-**File**: `frontend/src/hooks/useWorkflowStream.ts`
+**Files**: `frontend/src/hooks/useWorkflowStream.ts`, `frontend/src/hooks/useSSEStream.ts`
 
 Add exponential backoff reconnection when the SSE connection drops.
 
-**Change**:
+**Two hooks have different reconnection strategies**:
+
+1. `useWorkflowStream.ts` — Direct SSE connection (no POST). Reconnect is simple:
+   create a new `EventSource` with the same URL + `since_id` param.
+
+2. `useSSEStream.ts` — POST `/run/chapter/start` first, then connect SSE.
+   Reconnect must **NOT** re-POST (would create duplicate run). Store `runId`
+   from the initial POST and reuse it on reconnect.
+
+**Common constants**:
 ```typescript
-// On error, instead of stopStream():
+const MAX_RETRIES = 10
+const INITIAL_DELAY_MS = 1000
+const MAX_DELAY_MS = 16000
+const HEARTBEAT_TIMEOUT_MS = 30000  // 30s no heartbeat → proactive reconnect
+```
+
+**useWorkflowStream.ts changes**:
+```typescript
+// Track lastEventId from workflow_event payloads
+eventSource.addEventListener('workflow_event', (e) => {
+    const event = JSON.parse(e.data)
+    if (event.id) lastEventId = event.id
+    // Dedup: skip events already received
+    if (receivedEventIds.has(event.id)) return
+    receivedEventIds.add(event.id)
+    ...
+})
+
+// Heartbeat timeout detection
+let heartbeatTimer: ReturnType<typeof setTimeout> | null = null
+const resetHeartbeat = () => {
+    if (heartbeatTimer) clearTimeout(heartbeatTimer)
+    heartbeatTimer = setTimeout(() => {
+        // No heartbeat for 30s → proactive reconnect
+        setError('心跳超时，正在重连...')
+        eventSource.close()
+        triggerReconnect()
+    }, HEARTBEAT_TIMEOUT_MS)
+}
+// Reset on every SSE comment (":heartbeat\n\n") or event
+eventSource.onmessage = () => resetHeartbeat()
+
+// On error, auto-reconnect with exponential backoff
 eventSource.onerror = () => {
     setIsConnected(false)
     eventSource.close()
     eventSourceRef.current = null
-
-    // Auto-reconnect with exponential backoff
-    if (!doneStatus && isActive) {
-        const delay = Math.min(1000 * Math.pow(2, retryCount), 16000)
+    if (!doneStatus && isActive && retryCount < MAX_RETRIES) {
+        setIsReconnecting(true)
+        setError(null)
+        const delay = Math.min(INITIAL_DELAY_MS * Math.pow(2, retryCount), MAX_DELAY_MS)
         retryCount++
         reconnectTimerRef.current = setTimeout(() => {
-            if (!doneStatus && isActive) {
-                const reconnectUrl = url + (lastEventId ? `&since_id=${lastEventId}` : '')
-                connect(reconnectUrl)
-            }
+            const reconnectUrl = url + (lastEventId ? `&since_id=${lastEventId}` : '')
+            connect(reconnectUrl)
+        }, delay)
+    } else if (retryCount >= MAX_RETRIES) {
+        setError('重连失败，请刷新页面')
+    }
+}
+```
+
+**useSSEStream.ts changes**:
+```typescript
+// Store runId from initial POST, reuse on reconnect
+let storedRunId: string | null = null
+let storedUrl: string | null = null
+
+// After successful POST:
+storedRunId = data.run_id
+storedUrl = apiUrl(`/projects/${...}/chapters/${...}/workflow-stream?run_id=${storedRunId}`)
+
+// On error, reconnect with stored runId (no re-POST)
+eventSource.onerror = () => {
+    setIsConnected(false)
+    eventSource.close()
+    if (!doneStatus && storedRunId && retryCount < MAX_RETRIES) {
+        setIsReconnecting(true)
+        const delay = Math.min(INITIAL_DELAY_MS * Math.pow(2, retryCount), MAX_DELAY_MS)
+        retryCount++
+        reconnectTimerRef.current = setTimeout(() => {
+            const reconnectUrl = storedUrl + (lastEventId ? `&since_id=${lastEventId}` : '')
+            connectSSE(reconnectUrl)
         }, delay)
     }
 }
 ```
 
-Track `lastEventId` from received events. Pass it as `since_id` on reconnect so the
-backend replays only missed events.
+**Event deduplication** (both hooks):
+```typescript
+const receivedEventIds = new Set<number>()
+// In event handler:
+if (event.id && receivedEventIds.has(event.id)) return
+if (event.id) receivedEventIds.add(event.id)
+```
 
-Also update `useSSEStream.ts` with the same reconnection logic.
+**Reconnection UI state** (both hooks):
+- Add `isReconnecting: boolean` to hook return type
+- UI shows "重连中..." spinner when `isReconnecting && !isConnected`
+- Reset `error` state before attempting reconnect
 
-**Rationale**: Users no longer need to manually refresh after connection drops.
+**Rationale**: Users no longer need to manually refresh. Two hooks have different
+reconnect paths because `useSSEStream` creates the run via POST. Heartbeat timeout
+detects silent disconnects faster than TCP timeout.
 
 ---
 
@@ -108,11 +185,16 @@ Also update `useSSEStream.ts` with the same reconnection logic.
 
 When no `run_id` is provided and no run exists yet, wait briefly before giving up.
 
+**Note**: This only affects `useWorkflowStream.ts` which connects without a prior POST.
+`useSSEStream.ts` always POSTs first to get `run_id`, so this race does not apply.
+
 **Change**:
 ```python
 if not target_run and not run_id:
-    # Wait up to 5s for the run to be created (background task may be slow)
     for _ in range(10):
+        yield ":heartbeat
+
+"  # Keep proxy connection alive during wait
         await asyncio.sleep(0.5)
         runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=1)
         if runs:
@@ -121,7 +203,7 @@ if not target_run and not run_id:
 ```
 
 **Rationale**: Background task creates the run within 1-2s typically. A 5s wait
-covers edge cases without blocking indefinitely.
+covers edge cases. Heartbeat during wait prevents proxy timeout.
 
 ---
 
@@ -295,12 +377,38 @@ construction. Should be done after SSE fixes are stable.
 
 ---
 
+## Additional Requirements (from Spec Review)
+
+### Frontend Heartbeat Timeout Detection
+If no heartbeat comment received for >30s, frontend should proactively disconnect
+and trigger reconnect (faster than waiting for TCP/proxy timeout).
+Reference: `genesis.py:2710-2734` and `production.py:21` have existing keepalive patterns.
+
+### Event Deduplication
+Frontend `useWorkflowStream.ts:84` currently does `setLiveEvents((prev) => [...prev, event])`
+with no dedup. On reconnect, backend may replay events the frontend already has.
+Solution: Track received event IDs in a `Set<number>`, skip duplicates.
+
+### Reconnection UI State
+During reconnection attempts, UI should show "重连中..." indicator instead of
+blank screen or error banner. Add `isReconnecting` boolean to both hooks.
+
+### Test Timing Strategy
+Heartbeat timing tests should use `asyncio` mock or `time.time()` patching
+rather than real 15s sleeps. Frontend reconnect tests should mock `EventSource`
+to simulate disconnect/reconnect cycles.
+
+---
+
 ## Success Criteria
 1. All 7 phases implemented and tested
 2. Full test suite passes
 3. SSE connection survives 90s+ LLM calls
 4. Frontend auto-recovers from disconnects within 16s
 5. `blocked` correctly distinguished from `failed` in UI
+6. Frontend heartbeat timeout detection (>30s no heartbeat → proactive reconnect)
+7. Event deduplication on frontend (no duplicate events on reconnect)
+8. Reconnection UI state shows "重连中..." indicator
 
 ---
 
