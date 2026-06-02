@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
+from ruamel.yaml import YAML
 
 from pathlib import Path
 from ..envelope import envelope_response, error_response, EnvelopeResponse
@@ -427,9 +428,11 @@ async def update_llm_profile(
                 f"不允许修改的字段: {', '.join(sorted(invalid_keys))}",
             )
 
-        # Read current config
+        # Read current config (preserving comments with ruamel.yaml)
+        ry = YAML()
+        ry.preserve_quotes = True
         with open(config_file, "r", encoding="utf-8") as f:
-            raw = yaml.safe_load(f) or {}
+            raw = ry.load(f) or {}
 
         profiles = raw.get("llm_profiles") or {}
         if profile_name not in profiles:
@@ -458,7 +461,7 @@ async def update_llm_profile(
             try:
                 f.seek(0)
                 f.truncate()
-                yaml.dump(raw, f, allow_unicode=True, sort_keys=False, default_flow_style=False)
+                ry.dump(raw, f)
             finally:
                 fcntl.flock(f.fileno(), fcntl.LOCK_UN)
 

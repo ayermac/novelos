@@ -127,9 +127,12 @@ export async function post<T = unknown>(
 }
 
 
-export async function patch<T = unknown>(
+export async function patch<
+  T = unknown,
+  B extends Record<string, unknown> = Record<string, unknown>,
+>(
   path: string,
-  body?: Record<string, unknown>,
+  body?: B,
 ): Promise<EnvelopeResponse<T>> {
   return api<T>(path, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined })
 }
