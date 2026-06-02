@@ -133,9 +133,9 @@ def test_revision_router_updates_run_node_and_timeline_events(tmp_path):
 
     from novel_factory.workflow.nodes import revision_router_node
 
-    assert revision_router_node(state, repo) == {
-        "quality_gate": {"pass": False, "revision_target": "author"}
-    }
+    result = revision_router_node(state, repo)
+    assert result["quality_gate"] == {"pass": False, "revision_target": "author"}
+    assert result.get("retry_count", 0) == 0
 
     run = repo.get_workflow_runs_for_project("revision-route-proj", chapter_number=1, limit=1)[0]
     assert run["current_node"] == "revision_router"

@@ -164,9 +164,11 @@ class TestGetSkillConfig:
         resp = test_client.get("/api/skills/config")
         data = resp.json()["data"]
         agent_skills = data["agent_skills"]
-        assert agent_skills["planner"]["after_llm"] == ["chapter-objective-checker"]
+        assert "chapter-objective-checker" in agent_skills["planner"]["after_llm"]
+        assert "foreshadowing-debt" in agent_skills["planner"]["after_llm"]
         assert agent_skills["screenwriter"]["after_llm"] == ["scene-conflict-checker"]
-        assert agent_skills["author"]["after_llm"] == ["event-coverage-checker"]
+        assert "event-coverage-checker" in agent_skills["author"]["after_llm"]
+        assert "opening-hook-checker" in agent_skills["author"]["after_llm"]
         assert agent_skills["memory_curator"]["after_extract"] == ["memory-patch-validator"]
 
     def test_new_agent_skills_have_manifest_and_are_not_legacy(self, test_client):
@@ -721,26 +723,40 @@ class TestReorderSkills:
             "agent": "editor",
             "stage": "before_review",
             "skill_ids": [
-                "style-bible-checker",
-                "narrative-quality",
                 "ai-style-detector",
+                "narrative-quality",
+                "style-bible-checker",
                 "show-dont-tell",
                 "info-dump-detector",
                 "scene-texture",
                 "dialogue-naturalness",
+                "continuity-gate",
+                "chapter-seam",
+                "death-penalty",
+                "word-count-gate",
+                "foreshadowing-debt",
+                "opening-hook-checker",
+                "excitement-density-checker",
             ],
         })
         assert resp.status_code == 200
         data = resp.json()
         assert data["ok"] is True
         assert data["data"]["skill_ids"] == [
-            "style-bible-checker",
-            "narrative-quality",
             "ai-style-detector",
+            "narrative-quality",
+            "style-bible-checker",
             "show-dont-tell",
             "info-dump-detector",
             "scene-texture",
             "dialogue-naturalness",
+            "continuity-gate",
+            "chapter-seam",
+            "death-penalty",
+            "word-count-gate",
+            "foreshadowing-debt",
+            "opening-hook-checker",
+            "excitement-density-checker",
         ]
 
     def test_reorder_rejects_missing_or_extra_ids(self, test_client):

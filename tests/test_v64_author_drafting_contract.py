@@ -833,6 +833,77 @@ class TestAuthorLiveCallBudget:
         assert "最多不要超过 3250 字符" not in prompt
         assert llm.calls[-1]["max_tokens"] > 4096
 
+    def test_revision_plain_text_prompt_prioritizes_blocking_review_issues(self, repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.config.settings import LLMConfig
+        from novel_factory.llm.provider import LLMProvider
+
+        class LiveLikeLLM(LLMProvider):
+            def __init__(self):
+                self.config = LLMConfig(
+                    base_url="https://example.test/v1",
+                    api_key="sk-test",
+                    model="revision-author-model",
+                )
+                self.calls = []
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None, max_retries=None):
+                return {}
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ):
+                self.calls.append({"messages": messages})
+                return "他把时间线重新压回日落前，完成医院签到后才转入下一场。" * 80
+
+        repo.save_chapter_content("test_proj", 1, "第1章 测试\n\n" + ("旧稿写成任务超时。" * 160), "第一章 测试")
+        repo.update_chapter_status("test_proj", 1, "revision")
+
+        llm = LiveLikeLLM()
+        agent = AuthorAgent(repo, llm)
+        output = agent._try_plain_text_draft(
+            {
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "revision",
+                "llm_mode": "real",
+                "_revision_review": {
+                    "score": 65,
+                    "revision_target": "author",
+                    "issues": [
+                        "不可违背事实冲突：Hard Constraints明确要求必须在日落前完成医院签到任务，但正文写成超时未完成",
+                        "[章间衔接] 章间衔接断裂：上一章结尾存在明确时间节点“今晚”，本章开头未承接。",
+                        "对白口语化不足",
+                    ],
+                    "suggestions": [
+                        "修正任务逻辑：确保林辰在日落前完成医院签到",
+                        "增加口语化标记",
+                    ],
+                },
+            },
+            "返修",
+            agent.build_context({
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "revision",
+            }),
+        )
+
+        prompt = llm.calls[-1]["messages"][1]["content"]
+        assert output.content
+        assert "【返修硬阻断优先级】" in prompt
+        assert "必须先修复以下硬阻断问题" in prompt
+        assert "不可违背事实冲突" in prompt
+        assert "Hard Constraints" in prompt
+        assert "章间衔接断裂" in prompt
+        assert "日落前完成医院签到" in prompt
+        assert "不得只做语言润色" in prompt
+
     def test_revision_length_regression_repair_merges_candidate_with_current_draft(self, repo):
         from novel_factory.agents.author import AuthorAgent
         from novel_factory.config.settings import LLMConfig

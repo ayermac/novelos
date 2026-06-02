@@ -126,6 +126,17 @@ export async function post<T = unknown>(
   })
 }
 
+
+export async function patch<
+  T = unknown,
+  B extends Record<string, unknown> = Record<string, unknown>,
+>(
+  path: string,
+  body?: B,
+): Promise<EnvelopeResponse<T>> {
+  return api<T>(path, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined })
+}
+
 export async function del<T = unknown>(path: string, body?: unknown): Promise<EnvelopeResponse<T>> {
   return api<T>(path, {
     method: 'DELETE',

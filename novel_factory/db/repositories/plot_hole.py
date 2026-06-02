@@ -2,7 +2,32 @@
 
 from __future__ import annotations
 
+import logging
+
 from ..connection import row_to_dict
+
+logger = logging.getLogger(__name__)
+
+# v6.8.3: Canonical plot hole status values and terminal set.
+VALID_PLOT_STATUSES = ("planted", "resolved", "abandoned")
+TERMINAL_PLOT_STATUSES = ("resolved", "abandoned")
+
+
+def _normalize_plot_status(status, *, context: str = "") -> str:
+    """v6.8.3: Coerce a plot status to a canonical value.
+
+    Unknown/empty values fall back to 'planted' with a warning so legacy or
+    stray inputs (e.g. 'validated') cannot persist illegal states.
+    """
+    text = str(status or "").strip()
+    if text in VALID_PLOT_STATUSES:
+        return text
+    if text:
+        logger.warning(
+            "Plot hole status %r is not canonical%s; normalizing to 'planted'",
+            text, f" ({context})" if context else "",
+        )
+    return "planted"
 
 
 class PlotHoleRepositoryMixin:
@@ -82,6 +107,7 @@ class PlotHoleRepositoryMixin:
         Returns:
             Created plot hole dict with id.
         """
+        status = _normalize_plot_status(status, context=f"create {code}")
         conn = self._conn()
         try:
             cursor = conn.execute(
@@ -114,6 +140,8 @@ class PlotHoleRepositoryMixin:
         project_id: str,
         plot_id: int,
         data: dict,
+        *,
+        protect_terminal: bool = True,
     ) -> dict | None:
         """Update a plot hole.
 
@@ -121,12 +149,47 @@ class PlotHoleRepositoryMixin:
             project_id: Project identifier.
             plot_id: Plot hole ID.
             data: Dict with fields to update.
+            protect_terminal: v6.8.3 — when True (default), a plot already in a
+                terminal status (resolved/abandoned) cannot have its status or
+                resolved_chapter regressed by a non-terminal update. This is the
+                last line of defense against same-batch ``update`` patches that
+                carry a stale ``status="planted"`` and silently revert a prior
+                ``resolve``. Explicit re-resolve/deprecate (a terminal incoming
+                status) still passes through.
 
         Returns:
             Updated plot hole dict or None if not found.
         """
         conn = self._conn()
         try:
+            current = row_to_dict(
+                conn.execute(
+                    "SELECT * FROM plot_holes WHERE project_id=? AND id=?",
+                    (project_id, plot_id),
+                ).fetchone()
+            )
+            if current is None:
+                return None
+
+            data = dict(data)
+            # v6.8.3: Terminal status protection. A non-terminal update must not
+            # knock a resolved/abandoned plot back to planted. Only strip fields
+            # when the incoming update *explicitly* carries a regressive status;
+            # an update that merely sets resolved_chapter (no status) is allowed.
+            if protect_terminal and current.get("status") in TERMINAL_PLOT_STATUSES:
+                incoming_status = data.get("status")
+                if incoming_status is not None and incoming_status not in TERMINAL_PLOT_STATUSES:
+                    # Regressive status change attempt — drop the status and any
+                    # accompanying resolved_chapter so the terminal state holds.
+                    data.pop("status", None)
+                    data.pop("resolved_chapter", None)
+
+            # v6.8.3: Normalize any surviving status value to a canonical one.
+            if "status" in data:
+                data["status"] = _normalize_plot_status(
+                    data["status"], context=f"update id={plot_id}"
+                )
+
             fields = []
             values = []
             for key in ("code", "type", "title", "description", "planted_chapter",
@@ -136,7 +199,7 @@ class PlotHoleRepositoryMixin:
                     values.append(data[key])
 
             if not fields:
-                return self.get_plot_hole(project_id, plot_id)
+                return current
 
             values.extend([project_id, plot_id])
             cursor = conn.execute(

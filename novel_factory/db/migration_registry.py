@@ -109,6 +109,27 @@ def _index_exists(conn: sqlite3.Connection, index_name: str) -> bool:
     return row is not None
 
 
+def _plot_hole_status_repaired(conn: sqlite3.Connection) -> bool:
+    """v6.8.3 data-repair detector: True when no inconsistent plot rows remain.
+
+    The migration is considered applied when there are no rows with a
+    resolved_chapter but a non-terminal status, and no legacy 'validated' rows.
+    If the plot_holes table doesn't exist yet, the DB is not initialized, so the
+    migration has NOT been applied (an empty DB shows all migrations pending).
+    """
+    if not _table_exists(conn, "plot_holes"):
+        return False
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM plot_holes "
+            "WHERE (resolved_chapter IS NOT NULL AND status NOT IN ('resolved','abandoned')) "
+            "   OR status = 'validated'"
+        ).fetchone()
+        return (row[0] if row else 0) == 0
+    except Exception:
+        return False
+
+
 # ── Registry ────────────────────────────────────────────────────────
 
 # Helper shortcuts
@@ -433,6 +454,14 @@ MIGRATION_REGISTRY: list[MigrationEntry] = [
             _C("projects", "deleted"),
             _C("projects", "deleted_at"),
         ),
+    ),
+
+    # ── 035 ──
+    MigrationEntry(
+        migration_id="035_v6_8_3_plot_hole_status_repair",
+        sql_filename="035_v6_8_3_plot_hole_status_repair.sql",
+        description="Repair legacy plot hole status (resolved_chapter set but non-terminal; 'validated' -> 'planted')",
+        custom_detector=_plot_hole_status_repaired,
     ),
 ]
 

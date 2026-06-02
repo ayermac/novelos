@@ -11,6 +11,41 @@ Detailed implementation notes still live in:
 Use this file as the short, canonical version ledger: version, commit(s), key changes, verification, and known follow-up risk.
 
 ## Unreleased
+## v6.8.3 - Plot Hole Resolution Integrity
+
+Date: 2026-06-01
+
+Fixes a systemic bug where plot hole (伏笔) resolution status was never persisted:
+a `resolve` patch was silently overwritten by a same-batch `update` patch carrying
+a stale status="planted", leaving every plot stuck in `planted` (0 resolved across
+6 published chapters in burn-in project; PH-002 showed resolved_chapter=4 but
+status=planted).
+
+Key changes:
+
+- **Terminal status protection** (`db/repositories/plot_hole.py`): `update_plot_hole`
+  gains `protect_terminal` (default True) — a non-terminal update cannot revert a
+  resolved/abandoned plot. Last line of defense.
+- **Update patches stripped of status** (`api/routes/memory_updates.py`): plain
+  `update` ops pop status/resolved_chapter; only resolve/deprecate change status.
+  resolve uses assignment (not setdefault) so a stray status cannot weaken it.
+- **Operation-priority ordering**: `_order_items_for_apply` stable-sorts create/update
+  before resolve/deprecate in both apply paths (defense-in-depth).
+- **Planner structured plot fields** (`agents/planner.py`): injects pending plot codes
+  into context; self-check warns when a due plot is missing from plots_to_resolve.
+- **Deterministic reconciliation** (`workflow/reconciliation.py`):
+  `reconcile_plot_resolution` auto-resolves plots that are BOTH in instruction's
+  plots_to_resolve AND literally present in chapter prose; wired into
+  memory_curator_node, emits plot_resolution_reconciled event.
+- **Data repair migration** (`035_v6_8_3_plot_hole_status_repair.sql`): idempotent —
+  resolved_chapter-set-but-non-terminal -> resolved; legacy 'validated' -> 'planted'.
+- **Repository status guard**: create/update_plot_hole normalize illegal status to
+  'planted' with a warning.
+
+Verification:
+- v6.8.3 tests: 27 new (integrity 9 + reconciliation 10 + migration 8)
+- Version alignment: 6.8.3 (python)
+
 ## v6.8.2 - Revision Reliability Hardening
 
 Date: 2026-05-31

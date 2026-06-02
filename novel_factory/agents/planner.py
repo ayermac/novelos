@@ -111,6 +111,37 @@ class PlannerAgent(BaseAgent):
         if seam_context:
             parts.append(seam_context)
 
+        # v6.8.3: Inject pending plot holes so the Planner can fill structured
+        # plots_to_plant / plots_to_resolve fields with real codes (e.g. PH-002).
+        # Production data showed these fields empty because the model had no
+        # explicit list of resolvable codes to reference.
+        pending_plots = self.repo.list_plot_holes(project_id, status="planted")
+        if pending_plots:
+            due_now = [
+                p for p in pending_plots
+                if p.get("planned_resolve_chapter") == chapter_number
+            ]
+            plot_lines = [
+                f"- {p.get('code', '')}: {p.get('title', '')}"
+                + (
+                    f"（计划第{p.get('planned_resolve_chapter')}章兑现）"
+                    if p.get("planned_resolve_chapter")
+                    else ""
+                )
+                for p in pending_plots[:15]
+            ]
+            due_codes = [p.get("code", "") for p in due_now if p.get("code")]
+            plot_block = ["【待处理伏笔（未兑现）】", *plot_lines]
+            if due_codes:
+                plot_block.append(
+                    f"\n本章计划兑现（必须填入 plots_to_resolve）：{', '.join(due_codes)}"
+                )
+            plot_block.append(
+                "\n要求：plots_to_plant / plots_to_resolve 必须填写伏笔代码"
+                "（如 PH-002），不要写描述性文字；本章不埋/不兑现则留空数组。"
+            )
+            parts.append("\n".join(plot_block))
+
         # Pending messages
         messages = self.repo.get_pending_messages(state["project_id"], "planner")
         if messages:
@@ -148,6 +179,33 @@ class PlannerAgent(BaseAgent):
 
         # Save instruction to DB, preserving word_target if one already exists
         brief = output.chapter_brief
+
+        # v6.8.3: Self-check — if a plot is due for resolution this chapter but
+        # the brief left plots_to_resolve empty, warn so the gap is visible.
+        try:
+            due_plots = [
+                p for p in self.repo.list_plot_holes(project_id, status="planted")
+                if p.get("planned_resolve_chapter") == chapter_number
+            ]
+            due_codes = {p.get("code", "") for p in due_plots if p.get("code")}
+            planned_resolve = set(brief.plots_to_resolve or [])
+            missing_resolve = sorted(due_codes - planned_resolve)
+            if missing_resolve:
+                exec_events.append({
+                    "event_type": "planner_plot_resolve_gap",
+                    "message": (
+                        f"本章计划兑现伏笔 {missing_resolve} 未写入 plots_to_resolve，"
+                        "请确认是否遗漏"
+                    ),
+                    "status": "warning",
+                    "payload": {
+                        "due_codes": sorted(due_codes),
+                        "planned_resolve": sorted(planned_resolve),
+                        "missing": missing_resolve,
+                    },
+                })
+        except Exception:
+            logger.debug("Planner plot resolve self-check failed", exc_info=True)
 
         # v6.6.2: Inheritance check on generated brief
         prev_state = self._get_prev_state_card(state)

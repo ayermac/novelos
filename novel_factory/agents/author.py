@@ -237,23 +237,39 @@ class AuthorAgent(BaseAgent):
         is_revision = chapter and chapter.get("status") == ChapterStatus.REVISION.value
         revision_review = self._load_revision_review(state, chapter) if is_revision else None
 
-        # v6.8.2: Validate revision context exists when in revision mode
+        # v6.8.2: Validate revision context exists when in revision mode.
+        # v6.8.3: Only fail-fast for real Editor rejections, NOT for quality gate
+        # internal repairs (word_count_fail, death_penalty_fail, etc.) which
+        # temporarily set chapter_status=REVISION without creating a review.
         if is_revision and not revision_review:
-            logger.error(
-                "Author: revision context missing for %s ch%d",
-                project_id, chapter_number,
+            gate = state.get("quality_gate") or {}
+            is_quality_gate_retry = bool(
+                gate.get("word_count_fail")
+                or gate.get("death_penalty_fail")
+                or gate.get("scene_beat_coverage_fail")
+                or gate.get("version_regression")
             )
-            return {
-                "error": "Author: 返修上下文缺失，无法加载 Editor 审核意见",
-                "chapter_status": state.get("chapter_status"),
-                "requires_human": True,
-                "quality_gate": {
-                    "pass": False,
-                    "revision_target": "author",
-                    "message": "返修上下文缺失，需要人工确认后重新触发",
-                    "context_missing": True,
-                },
-            }
+            if not is_quality_gate_retry:
+                logger.error(
+                    "Author: revision context missing for %s ch%d",
+                    project_id, chapter_number,
+                )
+                return {
+                    "error": "Author: 返修上下文缺失，无法加载 Editor 审核意见",
+                    "chapter_status": state.get("chapter_status"),
+                    "requires_human": True,
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "author",
+                        "message": "返修上下文缺失，需要人工确认后重新触发",
+                        "context_missing": True,
+                    },
+                }
+            else:
+                logger.info(
+                    "Author: revision context missing for %s ch%d but quality gate retry — continuing without review",
+                    project_id, chapter_number,
+                )
 
         # v6.1.1: Emit revision context loaded event
         if is_revision:
@@ -672,7 +688,7 @@ class AuthorAgent(BaseAgent):
             revised_wc = _cw(revised_body)
             wc_delta = revised_wc - original_wc
             low_change = abs(wc_delta) < 20 and original_body.strip() == revised_body.strip()
-            expansion_limit = max(400, int(original_wc * 0.12))
+            expansion_limit = max(500, int(original_wc * 0.15))
             overexpanded = (
                 original_wc > 0
                 and wc_delta > expansion_limit
@@ -721,6 +737,7 @@ class AuthorAgent(BaseAgent):
                         "revision_target": "author",
                         "version_regression": True,
                         "revision_overexpanded": True,
+                        "consume_revision_retry": False,
                         "message": reason,
                     },
                     "_revision_review": revision_review,
@@ -1368,6 +1385,51 @@ class AuthorAgent(BaseAgent):
         ]
         return any(kw in text for kw in keywords)
 
+    @staticmethod
+    def _revision_blocking_priority_block(revision_review: dict[str, Any] | None) -> str:
+        """Extract hard revision issues that must dominate the rewrite plan."""
+        if not revision_review:
+            return ""
+        issues = (revision_review or {}).get("issues") or []
+        suggestions = (revision_review or {}).get("suggestions") or []
+        hard_markers = (
+            "不可违背事实",
+            "Hard Constraints",
+            "硬约束",
+            "时间线",
+            "章间衔接",
+            "连续性阻断",
+            "连续性修复",
+            "关键情节缺失",
+            "必须",
+            "直接违反",
+            "硬冲突",
+            "标题与正文脱节",
+        )
+        priority_items = [
+            str(item).strip()
+            for item in issues
+            if str(item).strip() and any(marker in str(item) for marker in hard_markers)
+        ][:6]
+        if not priority_items:
+            return ""
+
+        suggestion_items = [
+            str(item).strip()
+            for item in suggestions
+            if str(item).strip() and any(marker in str(item) for marker in hard_markers)
+        ][:4]
+        lines = [
+            "【返修硬阻断优先级】",
+            "必须先修复以下硬阻断问题，再考虑语言润色、感官细节或节奏微调；不得只做语言润色。",
+            "若退回问题涉及不可违背事实、Hard Constraints、时间线或章间衔接，必须直接改写相关剧情事实和场景顺序。",
+            "硬阻断问题:",
+            *[f"- {item}" for item in priority_items],
+        ]
+        if suggestion_items:
+            lines.extend(["硬阻断修复建议:", *[f"- {item}" for item in suggestion_items]])
+        return "\n".join(lines)
+
     def _try_repair_revision_length_regression(
         self,
         state: FactoryState,
@@ -1508,6 +1570,7 @@ class AuthorAgent(BaseAgent):
             f"最多不要超过 {max(word_target + 250, minimum_required + 250)} 字符。"
         )
         revision_source_section = ""
+        revision_priority_section = ""
         if task_desc == "返修":
             existing_chapter = self._get_chapter_info(state) or {}
             existing_body = strip_chapter_heading(
@@ -1525,6 +1588,7 @@ class AuthorAgent(BaseAgent):
                     f"{existing_body.strip()}\n"
                 )
             revision_review = normalize_revision_review(state.get("_revision_review")) or {}
+            revision_priority_section = self._revision_blocking_priority_block(revision_review)
             compress_requested = self._revision_requests_compression(revision_review)
             if existing_len > 0 and not compress_requested:
                 minimum_required = max(minimum_required, int(existing_len * 0.9))
@@ -1556,6 +1620,7 @@ class AuthorAgent(BaseAgent):
                 "content": (
                     f"项目ID: {project_id}\n章节号: {chapter_number}\n任务: {task_desc}\n"
                     f"{length_guard_note}\n\n"
+                    f"{revision_priority_section}\n\n"
                     f"{compact_context}\n\n"
                     f"{revision_source_section}\n"
                     f"请直接写第{chapter_number}章正文。"
@@ -1635,6 +1700,7 @@ class AuthorAgent(BaseAgent):
         compact_context = self._build_plain_text_context(state, context)
 
         revision_source_section = ""
+        revision_priority_section = ""
         if task_desc == "返修":
             existing_chapter = self._get_chapter_info(state) or {}
             existing_body = strip_chapter_heading(
@@ -1651,6 +1717,7 @@ class AuthorAgent(BaseAgent):
                     f"{existing_body.strip()}\n"
                 )
             revision_review = normalize_revision_review(state.get("_revision_review")) or {}
+            revision_priority_section = self._revision_blocking_priority_block(revision_review)
             compress_requested = self._revision_requests_compression(revision_review)
             existing_len = count_words(existing_body)
             if existing_len > 0 and not compress_requested:
@@ -1720,6 +1787,7 @@ class AuthorAgent(BaseAgent):
                         f"本段正文至少 {segment_minimum} 字符，建议接近 {segment_target} 字符；"
                         f"最多不要超过 {segment_upper_bound} 字符。"
                         f"整章合并后目标约 {effective_target} 字符。\n\n"
+                        f"{revision_priority_section}\n\n"
                         f"{compact_context}\n\n"
                         f"{segment_note}\n\n"
                         f"{revision_source_section}\n"

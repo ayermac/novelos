@@ -21,6 +21,7 @@ from ..validators.chapter_checker import (
     validate_chapter_output,
     check_word_count_quality_gate,
     check_word_count_upper_gate,
+    count_words,
     derive_word_target,
 )
 from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_critical_violation
@@ -90,6 +91,12 @@ class PolisherAgent(BaseAgent):
         """
         super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
+
+
+    @staticmethod
+    def _config_max_tokens(llm, fallback: int = 4096) -> int:
+        """Read max_tokens from LLM config, with fallback."""
+        return int(getattr(getattr(llm, "config", None), "max_tokens", fallback) or fallback)
 
     def _load_revision_review(
         self,
@@ -302,23 +309,38 @@ class PolisherAgent(BaseAgent):
         revision_review = self._load_revision_review(state, chapter)
         in_revision_chain = current_status == ChapterStatus.REVISION.value or bool(revision_review)
 
-        # v6.8.2: Validate revision context exists when in revision mode
+        # v6.8.2: Validate revision context exists when in revision mode.
+        # v6.8.3: Only fail-fast for real Editor rejections, NOT for quality gate
+        # internal repairs which temporarily set chapter_status=REVISION.
         if current_status == ChapterStatus.REVISION.value and not revision_review:
-            logger.error(
-                "Polisher: revision context missing for %s ch%d",
-                project_id, chapter_number,
+            gate = state.get("quality_gate") or {}
+            is_quality_gate_retry = bool(
+                gate.get("word_count_fail")
+                or gate.get("death_penalty_fail")
+                or gate.get("scene_beat_coverage_fail")
+                or gate.get("version_regression")
             )
-            return {
-                "error": "Polisher: 返修上下文缺失，无法加载 Editor 审核意见",
-                "chapter_status": state.get("chapter_status"),
-                "requires_human": True,
-                "quality_gate": {
-                    "pass": False,
-                    "revision_target": "polisher",
-                    "message": "返修上下文缺失，需要人工确认后重新触发",
-                    "context_missing": True,
-                },
-            }
+            if not is_quality_gate_retry:
+                logger.error(
+                    "Polisher: revision context missing for %s ch%d",
+                    project_id, chapter_number,
+                )
+                return {
+                    "error": "Polisher: 返修上下文缺失，无法加载 Editor 审核意见",
+                    "chapter_status": state.get("chapter_status"),
+                    "requires_human": True,
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "polisher",
+                        "message": "返修上下文缺失，需要人工确认后重新触发",
+                        "context_missing": True,
+                    },
+                }
+            else:
+                logger.info(
+                    "Polisher: revision context missing for %s ch%d but quality gate retry — continuing without review",
+                    project_id, chapter_number,
+                )
 
         if in_revision_chain:
             if revision_review:
@@ -862,7 +884,7 @@ class PolisherAgent(BaseAgent):
                 ),
             },
         ]
-        max_tokens = int(getattr(getattr(self.llm, "config", None), "max_tokens", 4096) or 4096)
+        max_tokens = self._config_max_tokens(self.llm)
         content = self._invoke_text_for_polisher(
             messages,
             temperature=0.65,
@@ -921,7 +943,7 @@ class PolisherAgent(BaseAgent):
                     ),
                 },
             ]
-            max_tokens = int(getattr(getattr(self.llm, "config", None), "max_tokens", 4096) or 4096)
+            max_tokens = self._config_max_tokens(self.llm)
             polished = self._invoke_text_for_polisher(
                 messages,
                 temperature=0.65,
@@ -979,10 +1001,11 @@ class PolisherAgent(BaseAgent):
             # v6.8.0: Skip segment_started logging (reduces noise)
 
             try:
+                config_max = self._config_max_tokens(self.llm)
                 polished = self._invoke_text_for_polisher(
                     messages,
                     temperature=0.65,
-                    max_tokens=4096,
+                    max_tokens=config_max,
                     max_retries=None,
                     request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
                 ).strip()
@@ -1030,6 +1053,7 @@ class PolisherAgent(BaseAgent):
         if state.get("llm_mode") != "real":
             return None
 
+        config_max = self._config_max_tokens(self.llm)
         maximum_allowed = max(word_target + 1200, int(word_target * 1.6))
         chapter_number = state["chapter_number"]
         messages = [
@@ -1057,7 +1081,7 @@ class PolisherAgent(BaseAgent):
             compressed = self._invoke_text_for_polisher(
                 messages,
                 temperature=0.45,
-                max_tokens=max(2048, min(6144, int(maximum_allowed * 1.25))),
+                max_tokens=max(2048, min(config_max, int(maximum_allowed * 1.25))),
                 max_retries=None,
                 request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
             ).strip()
