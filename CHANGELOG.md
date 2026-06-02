@@ -11,6 +11,34 @@ Detailed implementation notes still live in:
 Use this file as the short, canonical version ledger: version, commit(s), key changes, verification, and known follow-up risk.
 
 ## Unreleased
+
+## v6.8.4 - SSE Streaming & Workflow Observability
+
+Date: 2026-06-02
+
+Key changes:
+
+- **Backend heartbeat**: 15s SSE heartbeat comments to prevent proxy timeout during long LLM calls
+- **Frontend auto-reconnect**: Both useWorkflowStream and useSSEStream now auto-reconnect with
+  exponential backoff (MAX_RETRIES=10, delay 1s→16s), since_id replay, event dedup, and heartbeat
+  timeout detection (30s)
+- **Race condition fix**: SSE endpoint waits up to 5s for run creation when no run_id provided
+- **Error logging**: 3 silent `except:pass` blocks replaced with `logger.warning`
+- **blocked vs failed**: Frontend correctly distinguishes blocked (human_review) from failed states
+- **Terminal state completeness**: Added cancelled to terminal state set
+- **Phase 7 deferred**: Quality gate node refactor deferred to v6.9 (architectural change)
+
+Verification:
+- TypeScript: typecheck passes
+- Backend: 18 regression tests pass
+- Version alignment: 6.8.4 (python)
+
+Fixes:
+- SSE connections dropping silently during long LLM calls
+- No auto-reconnect after network interruptions
+- Race condition when SSE connects before run is created
+- Silent exception swallowing hiding real errors
+- blocked status treated as error in frontend
 ## v6.8.3 - Plot Hole Resolution Integrity
 
 Date: 2026-06-01

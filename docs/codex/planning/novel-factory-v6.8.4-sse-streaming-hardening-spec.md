@@ -3,7 +3,7 @@
 **Version**: v6.8.4
 **Type**: Bug Fix + Reliability Hardening + Architecture + Architecture
 **Priority**: HIGH
-**Status**: Planning
+**Status**: Completed (Phase 1-6, Phase 7 deferred to v6.9)
 
 ---
 
@@ -420,4 +420,4 @@ to simulate disconnect/reconnect cycles.
 ---
 
 **Spec Author**: Claude (Opus 4.8)
-**Status**: Planning — awaiting implementation approval
+**Status**: Completed (Phase 1-6, Phase 7 deferred to v6.9) — awaiting implementation approval
