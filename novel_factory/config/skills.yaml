@@ -205,6 +205,7 @@ agent_skills:
       - death-penalty
       - word-count-gate
       - opening-hook-checker
+      - excitement-density-checker  # v6.8.5: 爽点密度预防性检查
 
   polisher:
     after_llm:
