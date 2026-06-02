@@ -1,6 +1,6 @@
 {
   "name": "novel-factory-frontend",
-  "version": "6.8.3",
+  "version": "6.8.5",
   "type": "module",
   "scripts": {
     "dev": "vite",

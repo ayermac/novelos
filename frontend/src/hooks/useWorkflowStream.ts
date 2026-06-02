@@ -1,5 +1,5 @@
 /**
- * v6.1: SSE Stream Hook for real-time workflow execution events.
+ * v6.8.4: SSE Stream Hook with auto-reconnect, heartbeat timeout, and event dedup.
  *
  * Connects to /api/projects/{id}/chapters/{n}/workflow-stream
  * and provides live execution events for the workflow timeline.
@@ -9,18 +9,20 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { apiUrl } from '../lib/api'
 import type { WorkflowExecutionEvent } from '../lib/api'
 
+const MAX_RETRIES = 10
+const INITIAL_DELAY_MS = 1000
+const MAX_DELAY_MS = 16000
+const HEARTBEAT_TIMEOUT_MS = 30000
+
 export interface WorkflowStreamState {
   isConnected: boolean
   isStreaming: boolean
+  isReconnecting: boolean
   liveEvents: WorkflowExecutionEvent[]
   error: string | null
   doneStatus: string | null
 }
 
-/**
- * Hook for SSE streaming of workflow execution events.
- * Connects when a run is active, provides live events, auto-closes on done.
- */
 export function useWorkflowStream(
   projectId: string | null,
   chapterNumber: number | null,
@@ -29,19 +31,125 @@ export function useWorkflowStream(
 ): WorkflowStreamState {
   const [isConnected, setIsConnected] = useState(false)
   const [isStreaming, setIsStreaming] = useState(false)
+  const [isReconnecting, setIsReconnecting] = useState(false)
   const [liveEvents, setLiveEvents] = useState<WorkflowExecutionEvent[]>([])
   const [error, setError] = useState<string | null>(null)
   const [doneStatus, setDoneStatus] = useState<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
   const previousRunRef = useRef<string | null>(null)
+  const retryCountRef = useRef(0)
+  const lastEventIdRef = useRef<number>(0)
+  const receivedEventIds = useRef<Set<number>>(new Set())
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const heartbeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const urlRef = useRef<string>('')
+
+  const resetHeartbeat = useCallback(() => {
+    if (heartbeatTimerRef.current) clearTimeout(heartbeatTimerRef.current)
+    heartbeatTimerRef.current = setTimeout(() => {
+      setError('心跳超时，正在重连...')
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+      triggerReconnect()
+    }, HEARTBEAT_TIMEOUT_MS)
+  }, [])
+
+  const triggerReconnect = useCallback(() => {
+    if (doneStatus || !isActive) return
+    if (retryCountRef.current >= MAX_RETRIES) {
+      setError('重连失败，请刷新页面')
+      setIsStreaming(false)
+      setIsReconnecting(false)
+      return
+    }
+    setIsReconnecting(true)
+    setError(null)
+    const delay = Math.min(INITIAL_DELAY_MS * Math.pow(2, retryCountRef.current), MAX_DELAY_MS)
+    retryCountRef.current++
+    reconnectTimerRef.current = setTimeout(() => {
+      if (doneStatus || !isActive) return
+      const url = urlRef.current + (lastEventIdRef.current ? `&since_id=${lastEventIdRef.current}` : '')
+      connectSSE(url)
+    }, delay)
+  }, [doneStatus, isActive])
+
+  const connectSSE = useCallback((url: string) => {
+    if (typeof EventSource === 'undefined') {
+      setError('浏览器不支持 SSE')
+      return
+    }
+
+    const eventSource = new EventSource(url)
+    eventSourceRef.current = eventSource
+
+    eventSource.onopen = () => {
+      setIsConnected(true)
+      setIsReconnecting(false)
+      retryCountRef.current = 0
+      resetHeartbeat()
+    }
+
+    eventSource.addEventListener('workflow_event', ((e: MessageEvent) => {
+      try {
+        const event: WorkflowExecutionEvent = JSON.parse(e.data)
+        // Dedup
+        if (event.id && receivedEventIds.current.has(event.id)) return
+        if (event.id) {
+          receivedEventIds.current.add(event.id)
+          lastEventIdRef.current = event.id
+        }
+        setLiveEvents((prev) => [...prev, event])
+        resetHeartbeat()
+      } catch {
+        // ignore parse errors
+      }
+    }) as EventListener)
+
+    eventSource.addEventListener('workflow_done', ((e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data)
+        setDoneStatus(data.status || 'done')
+      } catch {
+        setDoneStatus('done')
+      }
+      if (heartbeatTimerRef.current) clearTimeout(heartbeatTimerRef.current)
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+      setIsStreaming(false)
+      setIsConnected(false)
+      setIsReconnecting(false)
+    }) as EventListener)
+
+    // SSE comment messages (heartbeat) also reset the timer
+    eventSource.onmessage = () => {
+      resetHeartbeat()
+    }
+
+    eventSource.onerror = () => {
+      setIsConnected(false)
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+      if (heartbeatTimerRef.current) clearTimeout(heartbeatTimerRef.current)
+      triggerReconnect()
+    }
+  }, [resetHeartbeat, triggerReconnect])
 
   const stopStream = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close()
       eventSourceRef.current = null
     }
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current)
+    if (heartbeatTimerRef.current) clearTimeout(heartbeatTimerRef.current)
     setIsStreaming(false)
     setIsConnected(false)
+    setIsReconnecting(false)
   }, [])
 
   useEffect(() => {
@@ -51,63 +159,36 @@ export function useWorkflowStream(
       setDoneStatus(null)
       setLiveEvents([])
       setError(null)
+      receivedEventIds.current.clear()
+      lastEventIdRef.current = 0
+      retryCountRef.current = 0
     }
 
-    // Only connect when a run is actively in progress
     if (!isActive || !projectId || !chapterNumber || doneStatus) {
       stopStream()
-      return
-    }
-
-    if (typeof EventSource === 'undefined') {
-      setError('浏览器不支持 SSE')
       return
     }
 
     setLiveEvents([])
     setError(null)
     setIsStreaming(true)
+    receivedEventIds.current.clear()
+    lastEventIdRef.current = 0
+    retryCountRef.current = 0
 
     let url = apiUrl(`/projects/${encodeURIComponent(projectId)}/chapters/${chapterNumber}/workflow-stream`)
     if (runId) {
       url += `?run_id=${encodeURIComponent(runId)}`
     }
-
-    const eventSource = new EventSource(url)
-    eventSourceRef.current = eventSource
-
-    eventSource.onopen = () => setIsConnected(true)
-
-    eventSource.addEventListener('workflow_event', (e: MessageEvent) => {
-      try {
-        const event: WorkflowExecutionEvent = JSON.parse(e.data)
-        setLiveEvents((prev) => [...prev, event])
-      } catch {
-        // ignore parse errors
-      }
-    })
-
-    eventSource.addEventListener('workflow_done', (e: MessageEvent) => {
-      try {
-        const data = JSON.parse(e.data)
-        setDoneStatus(data.status || 'done')
-      } catch {
-        setDoneStatus('done')
-      }
-      stopStream()
-    })
-
-    eventSource.onerror = () => {
-      setError('SSE 连接断开')
-      stopStream()
-    }
+    urlRef.current = url
+    connectSSE(url)
 
     return () => {
       stopStream()
     }
-  }, [isActive, projectId, chapterNumber, runId, doneStatus, stopStream])
+  }, [isActive, projectId, chapterNumber, runId, doneStatus, stopStream, connectSSE])
 
-  return { isConnected, isStreaming, liveEvents, error, doneStatus }
+  return { isConnected, isStreaming, isReconnecting, liveEvents, error, doneStatus }
 }
 
 export default useWorkflowStream

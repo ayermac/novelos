@@ -802,9 +802,9 @@ class EditorAgent(BaseAgent):
             if not project:
                 return
             text = " ".join(filter(None, [
-                project.get("title", ""),
-                project.get("genre", ""),
-                project.get("premise", ""),
+                project.get("name", ""),  # 项目名称
+                project.get("genre", ""),  # 类型
+                project.get("description", ""),  # 项目描述
             ]))
             if not text.strip():
                 return
@@ -1198,6 +1198,7 @@ class EditorAgent(BaseAgent):
             "requires_human": False,
             "quality_gate": {
                 "pass": True,
+                "passed": True,  # v6.8.5: 兼容 quality_gate_node 的字段名
                 "score": output.score,
                 "revision_target": None,
                 **strategy_result.word_gate_details,
@@ -1587,7 +1588,13 @@ class EditorAgent(BaseAgent):
         return result
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:
-        """Execute editor review — refactored to clear pipeline steps."""
+        """Execute editor review — v6.8.5 simplified pipeline.
+
+        v6.8.5: Deterministic quality checks (death_penalty, word_count, seam,
+        continuity, quality_diagnosis) are now handled by the upstream
+        quality_gate_node. Editor focuses on LLM-based review and final
+        strategy decision.
+        """
         # Step 1: Load inputs
         inputs = self._load_editor_inputs(state)
 
@@ -1597,13 +1604,54 @@ class EditorAgent(BaseAgent):
         # Step 2.5: Style-aware weight adjustment (v6.8.1)
         self._apply_style_weight_adjustment(inputs, output)
 
-        # Step 3: Quality diagnosis
-        quality_result = self._run_quality_diagnosis(inputs, output)
+        # v6.8.5: Read quality_gate results from state (set by upstream quality_gate_node)
+        quality_gate = state.get("quality_gate", {}) or {}
 
-        # Step 4: Chapter seam check
-        seam_result = self._run_chapter_seam_check(inputs, output)
+        # v6.8.5: Validate quality_gate presence
+        if not quality_gate:
+            logger.warning(
+                "Editor: quality_gate missing from state, using defaults. "
+                "This may indicate upstream quality_gate_node did not run. "
+                "project_id=%s, chapter_number=%s",
+                inputs.project_id, inputs.chapter_number,
+            )
+        elif not quality_gate.get("checks_run"):
+            logger.warning(
+                "Editor: quality_gate present but checks_run empty, quality_gate_node may have failed. "
+                "project_id=%s, chapter_number=%s",
+                inputs.project_id, inputs.chapter_number,
+            )
 
-        # Step 4.5: Story facts compliance check (v6.6.14)
+        # Build quality_result from quality_gate state
+        quality_result = QualityDiagnosisResult(
+            priority_count=len(quality_gate.get("priority_issues", [])),
+            advisory_count=len(quality_gate.get("advisory_issues", [])),
+            advisory_only=not quality_gate.get("priority_issues"),
+        )
+
+        # Build seam_result from quality_gate state
+        seam_diagnostics = quality_gate.get("diagnostics", {}).get("chapter_seam", {})
+        seam_result = SeamCheckResult(
+            passed=seam_diagnostics.get("passed", True),
+            blocking_count=len(quality_gate.get("blocking_issues", [])) if "章间衔接" in str(quality_gate.get("blocking_issues", [])) else 0,
+            advisory_count=len(seam_diagnostics.get("advisory_issues", [])),
+        )
+
+        # Inject quality_gate issues into output for strategy
+        if quality_gate.get("blocking_issues"):
+            for issue in quality_gate["blocking_issues"]:
+                if issue not in output.issues:
+                    output.issues.append(issue)
+        if quality_gate.get("priority_issues"):
+            for issue in quality_gate["priority_issues"][:3]:
+                if issue not in output.issues:
+                    output.issues.append(issue)
+        if quality_gate.get("advisory_issues"):
+            for issue in quality_gate["advisory_issues"][:2]:
+                if issue not in output.suggestions:
+                    output.suggestions.append(issue)
+
+        # Step 4.5: Story facts compliance check (v6.6.14) — still runs in Editor (LLM-based)
         compliance_result = self._run_story_facts_compliance(inputs)
         if compliance_result.blocking_violation_count >= FACTS_COMPLIANCE_BLOCK_THRESHOLD:
             for v in compliance_result.violations:
@@ -1616,9 +1664,6 @@ class EditorAgent(BaseAgent):
                         output.issues.append(issue_msg)
             output.pass_ = False
             output.revision_target = output.revision_target or "author"
-
-        # Step 4.6: Narrative continuity gate (v6.7.9)
-        continuity_result = self._run_continuity_gate(inputs, output)
 
         # Step 5: Apply review strategy (THE single decision point)
         strategy_result = self._apply_review_strategy(

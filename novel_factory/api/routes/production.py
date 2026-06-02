@@ -1401,7 +1401,9 @@ STOP_REASON_TOKEN_BUDGET = "token_budget_exceeded"
 
 
 # v5.5.10: Guardrail helpers
+# v6.8.5: "skipped_terminal" excluded — terminal chapter skips are expected, not failures
 _NO_PROGRESS_RESULTS = {"skipped", "failed", "blocked", "dry_run"}
+_SKIP_TERMINAL_RESULT = "skipped_terminal"  # v6.8.5: Terminal chapter skip (not a failure)
 
 
 def _check_consecutive_no_progress(steps: list[dict], max_count: int) -> bool:

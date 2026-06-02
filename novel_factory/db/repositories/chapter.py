@@ -757,3 +757,136 @@ class ChapterRepositoryMixin:
             return cursor.rowcount > 0
         finally:
             conn.close()
+
+    # v6.8.5: Re-genesis protection — bulk chapter operations
+
+    def count_chapters_by_status(self, project_id: str) -> dict[str, int]:
+        """Count chapters grouped by status.
+
+        Args:
+            project_id: Project identifier.
+
+        Returns:
+            Dict mapping status to count, e.g. {"planned": 3, "reviewed": 2, "published": 5}
+        """
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT status, COUNT(*) as cnt FROM chapters WHERE project_id=? GROUP BY status",
+                (project_id,),
+            ).fetchall()
+            return {row["status"]: row["cnt"] for row in rows}
+        finally:
+            conn.close()
+
+    def get_non_terminal_chapters(self, project_id: str) -> list[dict]:
+        """Get chapters that are NOT in terminal state (reviewed/awaiting_publish/published).
+
+        Args:
+            project_id: Project identifier.
+
+        Returns:
+            List of chapter records in non-terminal states.
+        """
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM chapters WHERE project_id=? "
+                "AND status NOT IN ('reviewed', 'awaiting_publish', 'published') "
+                "ORDER BY chapter_number",
+                (project_id,),
+            ).fetchall()
+            return [row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def get_terminal_chapters(self, project_id: str) -> list[dict]:
+        """Get chapters in terminal state (reviewed/awaiting_publish/published).
+
+        Args:
+            project_id: Project identifier.
+
+        Returns:
+            List of chapter records in terminal states.
+        """
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM chapters WHERE project_id=? "
+                "AND status IN ('reviewed', 'awaiting_publish', 'published') "
+                "ORDER BY chapter_number",
+                (project_id,),
+            ).fetchall()
+            return [row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def reset_non_terminal_chapters(self, project_id: str) -> int:
+        """Reset all non-terminal chapters to 'planned' status.
+
+        Resets chapters in: idea, outlined, scripted, drafted, polished,
+        review, revision, blocking → planned.
+
+        Does NOT touch: reviewed, awaiting_publish, published.
+
+        Args:
+            project_id: Project identifier.
+
+        Returns:
+            Number of chapters reset.
+        """
+        conn = self._conn()
+        try:
+            cursor = conn.execute(
+                "UPDATE chapters SET status='planned', content=NULL, word_count=0, "
+                "updated_at=datetime('now','+8 hours') "
+                "WHERE project_id=? "
+                "AND status NOT IN ('reviewed', 'awaiting_publish', 'published')",
+                (project_id,),
+            )
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()
+
+    def reset_all_chapters(self, project_id: str) -> int:
+        """Reset ALL chapters to 'planned' status, including terminal ones.
+
+        Args:
+            project_id: Project identifier.
+
+        Returns:
+            Number of chapters reset.
+        """
+        conn = self._conn()
+        try:
+            cursor = conn.execute(
+                "UPDATE chapters SET status='planned', content=NULL, word_count=0, "
+                "updated_at=datetime('now','+8 hours') "
+                "WHERE project_id=?",
+                (project_id,),
+            )
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()
+
+    def delete_all_chapters(self, project_id: str) -> int:
+        """Delete ALL chapters for a project.
+
+        Args:
+            project_id: Project identifier.
+
+        Returns:
+            Number of chapters deleted.
+        """
+        conn = self._conn()
+        try:
+            cursor = conn.execute(
+                "DELETE FROM chapters WHERE project_id=?",
+                (project_id,),
+            )
+            conn.commit()
+            return cursor.rowcount
+        finally:
+            conn.close()

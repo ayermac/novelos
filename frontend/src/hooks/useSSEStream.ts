@@ -68,9 +68,14 @@ export interface WorkflowNodeLog {
   message: string;
 }
 
+const MAX_RETRIES = 10
+const INITIAL_DELAY_MS = 1000
+const MAX_DELAY_MS = 16000
+
 export interface UseSSEStreamResult {
   isConnected: boolean;
   isStreaming: boolean;
+  isReconnecting: boolean;
   steps: Record<string, StepStatus>;
   events: SSEEvent[];
   preflightWarnings: PreflightWarning[];
@@ -126,6 +131,11 @@ export function useSSEStream(
   const [events, setEvents] = useState<SSEEvent[]>([]);
   const [preflightWarnings, setPreflightWarnings] = useState<PreflightWarning[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [isReconnecting, setIsReconnecting] = useState(false);
+  const retryCountRef = useRef(0);
+  const lastEventIdRef = useRef<number>(0);
+  const storedUrlRef = useRef<string | null>(null);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const eventSourceRef = useRef<EventSource | null>(null);
 
@@ -134,9 +144,113 @@ export function useSSEStream(
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
+    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     setIsStreaming(false);
     setIsConnected(false);
+    setIsReconnecting(false);
   }, []);
+
+  const triggerReconnect = useCallback((url: string) => {
+    if (retryCountRef.current >= MAX_RETRIES) {
+      setError("重连失败，请刷新页面");
+      setIsStreaming(false);
+      setIsReconnecting(false);
+      return;
+    }
+    setIsReconnecting(true);
+    setError(null);
+    const delay = Math.min(INITIAL_DELAY_MS * Math.pow(2, retryCountRef.current), MAX_DELAY_MS);
+    retryCountRef.current++;
+    reconnectTimerRef.current = setTimeout(() => {
+      const reconnectUrl = url + (lastEventIdRef.current ? `&since_id=${lastEventIdRef.current}` : "");
+      connectSSE(reconnectUrl);
+    }, delay);
+  }, []);
+
+  const connectSSE = useCallback((url: string) => {
+    if (typeof EventSource === "undefined") {
+      setError("浏览器不支持 SSE");
+      setIsStreaming(false);
+      return;
+    }
+
+    const eventSource = new EventSource(url);
+    eventSourceRef.current = eventSource;
+
+    eventSource.onopen = () => {
+      setIsConnected(true);
+      setIsReconnecting(false);
+      retryCountRef.current = 0;
+    };
+
+    eventSource.addEventListener("workflow_event", ((e: MessageEvent) => {
+      try {
+        const event = JSON.parse((e as MessageEvent<string>).data);
+        if (event.id) lastEventIdRef.current = event.id;
+        const agentKey = normalizeAgentKey(event.node_name || event.agent_id);
+        if (!agentKey) return;
+        setSteps((prev) => ({
+          ...prev,
+          [agentKey]: {
+            ...prev[agentKey],
+            status: workflowEventStepStatus(event),
+            started_at: prev[agentKey]?.started_at || event.created_at || new Date().toISOString(),
+            completed_at: event.event_type === "evidence_verified"
+              ? event.created_at || new Date().toISOString()
+              : prev[agentKey]?.completed_at,
+            duration_ms: event.latency_ms ?? prev[agentKey]?.duration_ms,
+            logs: appendStepLog(prev[agentKey], {
+              timestamp: event.created_at || new Date().toISOString(),
+              level: workflowEventLevel(event),
+              message: event.message || "节点运行中。",
+            }),
+          },
+        }));
+      } catch (err) {
+        console.error("Failed to parse workflow event:", err);
+      }
+    }) as EventListener);
+
+    eventSource.addEventListener("workflow_done", ((e: MessageEvent) => {
+      let status = "completed";
+      try {
+        const done = JSON.parse((e as MessageEvent<string>).data) as { status?: string; run_id?: string };
+        status = done.status || status;
+      } catch {
+        // Ignore
+      }
+      setIsStreaming(false);
+      setIsConnected(false);
+      setIsReconnecting(false);
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+      eventSource.close();
+      if (status === "failed") {
+        const message = "章节生成失败";
+        onError?.(message, { type: "run_error", error: message });
+        return;
+      }
+      // v6.8.4 Phase 5: blocked is NOT an error — it is a valid terminal state
+      if (status === "blocked") {
+        onComplete?.({ type: "run_complete" } as SSEEvent);
+        return;
+      }
+      onComplete?.({ type: "run_complete" });
+    }) as EventListener);
+
+    eventSource.onmessage = () => {
+      // Legacy message handler - reset heartbeat on any message
+    };
+
+    eventSource.onerror = () => {
+      setIsConnected(false);
+      eventSource.close();
+      eventSourceRef.current = null;
+      // Auto-reconnect instead of permanent disconnect
+      if (storedUrlRef.current) {
+        triggerReconnect(storedUrlRef.current);
+      }
+    };
+  }, [triggerReconnect, onComplete, onError]);
 
   const startStream = useCallback((projectId: string, chapter: number) => {
     setSteps({});
@@ -368,7 +482,7 @@ export function useSSEStream(
     };
   }, []);
 
-  return { isConnected, isStreaming, steps, events, preflightWarnings, error, startStream, stopStream };
+  return { isConnected, isStreaming, isReconnecting, steps, events, preflightWarnings, error, startStream, stopStream };
 }
 
 export default useSSEStream;

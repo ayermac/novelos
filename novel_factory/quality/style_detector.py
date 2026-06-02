@@ -134,7 +134,7 @@ def detect_style_from_text(text: str) -> StyleProfile:
     """Detect style profile from project metadata text.
 
     Pure deterministic detection — no LLM dependencies.
-    Input: concatenated title + genre + premise text.
+    Input: concatenated name + genre + description text from projects table.
     """
     text_lower = text.lower()
 

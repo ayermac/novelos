@@ -235,6 +235,7 @@ class TestWorkflowTimelineApi:
             "screenwriter": "creative_agent",
             "author": "creative_agent",
             "polisher": "creative_agent",
+            "quality_gate": "quality",  # v6.8.5: 新增质检门禁节点
             "editor": "creative_agent",
             "memory_curator": "support_agent",
             "publisher": "terminal",
@@ -243,7 +244,7 @@ class TestWorkflowTimelineApi:
             "revision_router": "router",
             "human_review": "terminal",
         }
-        assert list(nodes.keys())[:13] == list(expected_groups.keys())
+        assert list(nodes.keys())[:14] == list(expected_groups.keys())
         for node_name, group in expected_groups.items():
             assert nodes[node_name]["node_group"] == group
             assert nodes[node_name]["node_type"] == group

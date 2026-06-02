@@ -365,9 +365,9 @@ class BaseAgent:
             if not project:
                 return ""
             text = " ".join(filter(None, [
-                project.get("title", ""),
-                project.get("genre", ""),
-                project.get("premise", ""),
+                project.get("name", ""),  # 项目名称
+                project.get("genre", ""),  # 类型
+                project.get("description", ""),  # 项目描述
             ]))
             if not text.strip():
                 return ""
