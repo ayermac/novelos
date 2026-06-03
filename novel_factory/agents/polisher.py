@@ -1014,6 +1014,17 @@ class PolisherAgent(BaseAgent):
                     raise OutputValidationError(
                         f"Polisher 分段润色第 {segment_num} 段返回空内容"
                     )
+                # v6.8.5: Detect per-segment truncation by checking word count
+                # ratio.  A >40% loss signals finish_reason=length or severe
+                # content degradation that must not silently propagate.
+                from ..validators.chapter_checker import count_words as _seg_wc
+                seg_in_wc = _seg_wc(chunk)
+                seg_out_wc = _seg_wc(polished)
+                if seg_in_wc > 100 and seg_out_wc < seg_in_wc * 0.6:
+                    raise OutputValidationError(
+                        f"Polisher 分段润色第 {segment_num} 段字数异常缩减: "
+                        f"{seg_in_wc} → {seg_out_wc} (loss > 40%)"
+                    )
             except Exception as e:
                 if exec_events is not None:
                     exec_events.append({

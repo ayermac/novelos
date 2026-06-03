@@ -770,6 +770,7 @@ class EditorAgent(BaseAgent):
                     llm_revision_target=output.revision_target,
                     quality_priority_count=quality_result.priority_count,
                     seam_blocking_count=seam_result.blocking_count,
+                    retry_count=inputs.retry_count,
                 )
             strategy_note = f"[v6.6策略] {strategy_decision.reason}"
             if strategy_note not in output.issues:

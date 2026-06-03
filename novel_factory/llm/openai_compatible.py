@@ -784,6 +784,20 @@ class OpenAICompatibleProvider(LLMProvider):
                     "call_type": "text",
                     "agent_id": agent_id,
                 })
+            # v6.8.5: Detect truncation — finish_reason=length means the model
+            # hit max_tokens before completing the response.  Returning the
+            # truncated content silently causes downstream data loss (e.g. the
+            # polisher losing 35% of a chapter).  Raise so callers can fall back
+            # to passthrough / retry instead of accepting broken output.
+            if self.last_call_trace is not None:
+                resp_finish = (
+                    self.last_call_trace.get("response", {}).get("finish_reason")
+                )
+                if resp_finish == "length":
+                    raise LLMError(
+                        f"[{agent_id}] LLM 输出被截断 (finish_reason=length)，"
+                        f"content_length={len(response.content)}"
+                    )
             return response.content
         except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
             raise
