@@ -310,7 +310,33 @@ class AuthorAgent(BaseAgent):
         ]
 
         if self._should_use_plain_text_primary(state):
-            output = self._try_plain_text_draft(state, task_desc, context, exec_events=exec_events)
+            try:
+                output = self._try_plain_text_draft(state, task_desc, context, exec_events=exec_events)
+            except Exception as e:
+                gate = state.get("quality_gate") or {}
+                if gate.get("internal_repair") and not gate.get("consume_revision_retry", True):
+                    repair_scope = gate.get("repair_scope") or "internal_word_count_compression"
+                    message = f"内部修复({repair_scope})调用失败: {e}"
+                    logger.warning("Author: %s", message)
+                    return {
+                        "error": message,
+                        "chapter_status": state.get("chapter_status"),
+                        "quality_gate": {
+                            **gate,
+                            "pass": False,
+                            "revision_target": gate.get("revision_target") or "author",
+                            "agent": gate.get("agent") or "author",
+                            "word_count_fail": gate.get("word_count_fail", True),
+                            "message": message,
+                            "workflow_run_id": state.get("workflow_run_id"),
+                            "internal_repair": True,
+                            "consume_revision_retry": False,
+                            "repair_scope": repair_scope,
+                            "internal_repair_failed": True,
+                        },
+                        "_exec_events": exec_events,
+                    }
+                raise
             exec_events.append({
                 "event_type": "long_form_generation",
                 "message": "使用长文直写模式生成，避免长章节 JSON 截断",
@@ -2129,7 +2155,14 @@ class AuthorAgent(BaseAgent):
     ) -> str:
         """Invoke text generation with per-call retry control when supported."""
         if max_retries is None and request_timeout_seconds is None:
-            return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
+            try:
+                return self.llm.invoke_text(
+                    messages, temperature=temperature, max_tokens=max_tokens, agent_id=self.agent_id
+                )
+            except TypeError as exc:
+                if "agent_id" not in str(exc):
+                    raise
+                return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
         try:
             return self.llm.invoke_text(
                 messages,
@@ -2137,10 +2170,11 @@ class AuthorAgent(BaseAgent):
                 max_tokens=max_tokens,
                 max_retries=max_retries,
                 request_timeout_seconds=request_timeout_seconds,
+                agent_id=self.agent_id,
             )
         except TypeError as exc:
             exc_text = str(exc)
-            if "max_retries" not in exc_text and "request_timeout_seconds" not in exc_text:
+            if "max_retries" not in exc_text and "request_timeout_seconds" not in exc_text and "agent_id" not in exc_text:
                 raise
             try:
                 return self.llm.invoke_text(
@@ -2148,9 +2182,11 @@ class AuthorAgent(BaseAgent):
                     temperature=temperature,
                     max_tokens=max_tokens,
                     max_retries=max_retries,
+                    agent_id=self.agent_id,
                 )
             except TypeError as retry_exc:
-                if "max_retries" not in str(retry_exc):
+                retry_text = str(retry_exc)
+                if "max_retries" not in retry_text and "agent_id" not in retry_text:
                     raise
                 return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
 
