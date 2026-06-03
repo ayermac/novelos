@@ -32,7 +32,7 @@ from ..validators.death_penalty import (
     sanitize_death_penalty_text,
 )
 from ..validators.plot_verifier import check_plot_coverage
-from ..llm.openai_compatible import OutputValidationError, TokenUsage
+from ..llm.openai_compatible import LLMError, OutputValidationError, TokenUsage
 from ..llm.provider import is_configured_live_provider
 from ..skills.registry import SkillRegistry
 from ..agent_runtime.base import BaseAgent
@@ -1710,17 +1710,49 @@ class AuthorAgent(BaseAgent):
             },
         ]
 
-        content = self._invoke_text_for_author(
-            messages,
-            temperature=0.7,
-            max_tokens=prose_max_tokens,
-            max_retries=per_call_retries,
-            request_timeout_seconds=(
-                AUTHOR_LONG_FORM_TIMEOUT_SECONDS
-                if is_configured_live_provider(self.llm)
-                else None
-            ),
-        ).strip()
+        # v6.8.5: Truncation retry — if finish_reason=length, retry with 1.5x
+        # max_tokens (capped at 8192) to give the model enough room.
+        try:
+            content = self._invoke_text_for_author(
+                messages,
+                temperature=0.7,
+                max_tokens=prose_max_tokens,
+                max_retries=per_call_retries,
+                request_timeout_seconds=(
+                    AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                    if is_configured_live_provider(self.llm)
+                    else None
+                ),
+            ).strip()
+        except LLMError as e:
+            if "finish_reason=length" not in str(e):
+                raise
+            retry_max = min(8192, int(prose_max_tokens * 1.5))
+            logger.warning(
+                "Author: truncation detected (max_tokens=%d), retrying with max_tokens=%d",
+                prose_max_tokens, retry_max,
+            )
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": "truncation_retry",
+                    "message": f"Author 输出被截断，使用 max_tokens={retry_max} 重试",
+                    "status": "warning",
+                    "payload": {
+                        "original_max_tokens": prose_max_tokens,
+                        "retry_max_tokens": retry_max,
+                    },
+                })
+            content = self._invoke_text_for_author(
+                messages,
+                temperature=0.7,
+                max_tokens=retry_max,
+                max_retries=per_call_retries,
+                request_timeout_seconds=(
+                    AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                    if is_configured_live_provider(self.llm)
+                    else None
+                ),
+            ).strip()
         content = self._coerce_plain_text_content(content)
         if not content:
             retry_messages = [
@@ -1881,17 +1913,38 @@ class AuthorAgent(BaseAgent):
             # v6.8.0: Skip segment_started logging (reduces noise)
 
             try:
-                content = self._invoke_text_for_author(
-                    messages,
-                    temperature=0.7,
-                    max_tokens=prose_max_tokens,
-                    max_retries=per_call_retries,
-                    request_timeout_seconds=(
-                        AUTHOR_LONG_FORM_TIMEOUT_SECONDS
-                        if is_configured_live_provider(self.llm)
-                        else None
-                    ),
-                ).strip()
+                # v6.8.5: Truncation retry for segmented path
+                try:
+                    content = self._invoke_text_for_author(
+                        messages,
+                        temperature=0.7,
+                        max_tokens=prose_max_tokens,
+                        max_retries=per_call_retries,
+                        request_timeout_seconds=(
+                            AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                            if is_configured_live_provider(self.llm)
+                            else None
+                        ),
+                    ).strip()
+                except LLMError as trunc_err:
+                    if "finish_reason=length" not in str(trunc_err):
+                        raise
+                    seg_retry_max = min(4096, int(prose_max_tokens * 1.5))
+                    logger.warning(
+                        "Author segment %d: truncation (max_tokens=%d), retrying with %d",
+                        segment_num, prose_max_tokens, seg_retry_max,
+                    )
+                    content = self._invoke_text_for_author(
+                        messages,
+                        temperature=0.7,
+                        max_tokens=seg_retry_max,
+                        max_retries=per_call_retries,
+                        request_timeout_seconds=(
+                            AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                            if is_configured_live_provider(self.llm)
+                            else None
+                        ),
+                    ).strip()
                 content = self._coerce_plain_text_content(content)
                 if not content:
                     retry_messages = [
