@@ -320,6 +320,54 @@ def test_llm_provider_text_call_tolerates_none_response_metadata():
     assert provider.last_call_trace["response"]["response_metadata"] == {}
 
 
+def test_llm_provider_text_call_tolerates_none_token_usage():
+    class _TextResponse:
+        content = "ok"
+        usage_metadata = {}
+        response_metadata = {"token_usage": None, "finish_reason": "stop"}
+
+    class _Client:
+        def invoke(self, _messages, **_kwargs):
+            return _TextResponse()
+
+    provider = OpenAICompatibleProvider(LLMConfig(api_key="test-key"))
+    provider._client = _Client()  # type: ignore[assignment]
+
+    text = provider.invoke_text([{"role": "user", "content": "write"}], agent_id="author")
+
+    assert text == "ok"
+    assert provider.last_token_usage is not None
+    assert provider.last_token_usage.total_tokens == 0
+    assert provider.last_call_trace is not None
+    assert provider.last_call_trace["request"]["call_type"] == "text"
+    assert provider.last_call_trace["request"]["agent_id"] == "author"
+
+
+def test_llm_provider_text_call_falls_back_on_none_shape_error(monkeypatch):
+    class _Client:
+        def invoke(self, _messages, **_kwargs):
+            raise AttributeError("'NoneType' object has no attribute 'get'")
+
+    provider = OpenAICompatibleProvider(LLMConfig(api_key="test-key"))
+    provider._client = _Client()  # type: ignore[assignment]
+
+    def _fake_http_fallback(_messages, **_kwargs):
+        return {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": None,
+        }
+
+    monkeypatch.setattr(provider, "_invoke_http_chat_completion", _fake_http_fallback)
+
+    text = provider.invoke_text([{"role": "user", "content": "write"}], agent_id="author")
+
+    assert text == "ok"
+    assert provider.last_call_trace is not None
+    assert provider.last_call_trace["request"]["call_type"] == "text"
+    assert provider.last_call_trace["request"]["agent_id"] == "author"
+    assert provider.last_call_trace["request"]["transport_fallback"] == "http"
+
+
 def test_llm_provider_respects_configured_min_interval(monkeypatch):
     class _TextResponse:
         content = "ok"

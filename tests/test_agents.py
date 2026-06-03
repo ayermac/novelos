@@ -410,6 +410,49 @@ class TestScreenwriterAgent:
 
 
 class TestAuthorAgent:
+    def test_author_internal_repair_text_failure_returns_quality_gate(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        class FailingTextLLM(LLMProvider):
+            config = object()
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None, agent_id="unknown") -> dict:
+                return {}
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None, **kwargs) -> str:
+                raise Exception("LLM 调用失败: 'NoneType' object has no attribute 'get'")
+
+        seeded_repo.update_chapter_status("test_proj", 1, "revision")
+        agent = AuthorAgent(seeded_repo, FailingTextLLM())
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "revision",
+            "llm_mode": "real",
+            "workflow_run_id": "run-internal-repair-failure",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "author",
+                "word_count_fail": True,
+                "message": "字数超标",
+                "internal_repair": True,
+                "consume_revision_retry": False,
+                "repair_scope": "internal_word_count_compression",
+            },
+        })
+
+        gate = result.get("quality_gate") or {}
+        assert "内部修复(internal_word_count_compression)调用失败" in result.get("error", "")
+        assert gate.get("internal_repair_failed") is True
+        assert gate.get("internal_repair") is True
+        assert gate.get("consume_revision_retry") is False
+        assert gate.get("repair_scope") == "internal_word_count_compression"
+
     def test_author_context_derives_missing_word_target(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
 

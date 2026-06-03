@@ -32,7 +32,7 @@ from ..validators.death_penalty import (
     sanitize_death_penalty_text,
 )
 from ..validators.plot_verifier import check_plot_coverage
-from ..llm.openai_compatible import OutputValidationError, TokenUsage
+from ..llm.openai_compatible import LLMError, OutputValidationError, TokenUsage
 from ..llm.provider import is_configured_live_provider
 from ..skills.registry import SkillRegistry
 from ..agent_runtime.base import BaseAgent
@@ -310,7 +310,33 @@ class AuthorAgent(BaseAgent):
         ]
 
         if self._should_use_plain_text_primary(state):
-            output = self._try_plain_text_draft(state, task_desc, context, exec_events=exec_events)
+            try:
+                output = self._try_plain_text_draft(state, task_desc, context, exec_events=exec_events)
+            except Exception as e:
+                gate = state.get("quality_gate") or {}
+                if gate.get("internal_repair") and not gate.get("consume_revision_retry", True):
+                    repair_scope = gate.get("repair_scope") or "internal_word_count_compression"
+                    message = f"内部修复({repair_scope})调用失败: {e}"
+                    logger.warning("Author: %s", message)
+                    return {
+                        "error": message,
+                        "chapter_status": state.get("chapter_status"),
+                        "quality_gate": {
+                            **gate,
+                            "pass": False,
+                            "revision_target": gate.get("revision_target") or "author",
+                            "agent": gate.get("agent") or "author",
+                            "word_count_fail": gate.get("word_count_fail", True),
+                            "message": message,
+                            "workflow_run_id": state.get("workflow_run_id"),
+                            "internal_repair": True,
+                            "consume_revision_retry": False,
+                            "repair_scope": repair_scope,
+                            "internal_repair_failed": True,
+                        },
+                        "_exec_events": exec_events,
+                    }
+                raise
             exec_events.append({
                 "event_type": "long_form_generation",
                 "message": "使用长文直写模式生成，避免长章节 JSON 截断",
@@ -576,7 +602,7 @@ class AuthorAgent(BaseAgent):
             "message": f"保存产物：章节初稿 ({_count_words(body_content)} 字)",
             "payload": {"artifact_type": "draft", "word_count": _count_words(body_content)},
         })
-        run_agent_skills(
+        after_llm_hook = run_agent_skills(
             repo=self.repo,
             skill_registry=self.skill_registry,
             project_id=project_id,
@@ -590,7 +616,49 @@ class AuthorAgent(BaseAgent):
             },
             project_overrides=self._get_project_skill_overrides(project_id),
             skill_type_hint="validator",
+            honor_manifest_failure_policy=True,
         )
+        
+        # v6.8.5: Check if any validator skill failed with blocking policy
+        if not after_llm_hook.ok:
+            blocking_error = after_llm_hook.blocking_error
+            logger.warning("Author: after_llm skill hook failed: %s", blocking_error)
+            exec_events.append({
+                "event_type": "skill_blocked",
+                "message": f"执笔稿被 Skill 阻断：{blocking_error}",
+                "status": "blocking",
+                "payload": {"stage": "after_llm", "blocking_error": blocking_error},
+            })
+            # Find the specific skill that failed for revision targeting
+            revision_target = "author"
+            for skill_item in after_llm_hook.skill_results:
+                if not skill_item.get("ok"):
+                    skill_id = skill_item.get("skill_id", "")
+                    if "excitement" in skill_id:
+                        revision_target = "author"
+                        break
+                    elif "death" in skill_id:
+                        revision_target = "author"
+                        break
+                    elif "event" in skill_id:
+                        revision_target = "author"
+                        break
+            
+            return {
+                "error": f"执笔稿质量检查未通过: {blocking_error}",
+                "chapter_status": state.get("chapter_status"),
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": revision_target,
+                    "skill_fail": True,
+                    "message": blocking_error,
+                    "agent": "author",
+                    "workflow_run_id": state.get("workflow_run_id"),
+                    "skill_results": after_llm_hook.skill_results,
+                },
+                "_trace": trace,
+                "_autonomy": autonomy,
+            }
 
         # v5.3.0: Word count quality gate (final guard after self-check loop)
         word_target = self._get_word_target(state)
@@ -1642,17 +1710,49 @@ class AuthorAgent(BaseAgent):
             },
         ]
 
-        content = self._invoke_text_for_author(
-            messages,
-            temperature=0.7,
-            max_tokens=prose_max_tokens,
-            max_retries=per_call_retries,
-            request_timeout_seconds=(
-                AUTHOR_LONG_FORM_TIMEOUT_SECONDS
-                if is_configured_live_provider(self.llm)
-                else None
-            ),
-        ).strip()
+        # v6.8.5: Truncation retry — if finish_reason=length, retry with 1.5x
+        # max_tokens (capped at 8192) to give the model enough room.
+        try:
+            content = self._invoke_text_for_author(
+                messages,
+                temperature=0.7,
+                max_tokens=prose_max_tokens,
+                max_retries=per_call_retries,
+                request_timeout_seconds=(
+                    AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                    if is_configured_live_provider(self.llm)
+                    else None
+                ),
+            ).strip()
+        except LLMError as e:
+            if "finish_reason=length" not in str(e):
+                raise
+            retry_max = min(8192, int(prose_max_tokens * 1.5))
+            logger.warning(
+                "Author: truncation detected (max_tokens=%d), retrying with max_tokens=%d",
+                prose_max_tokens, retry_max,
+            )
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": "truncation_retry",
+                    "message": f"Author 输出被截断，使用 max_tokens={retry_max} 重试",
+                    "status": "warning",
+                    "payload": {
+                        "original_max_tokens": prose_max_tokens,
+                        "retry_max_tokens": retry_max,
+                    },
+                })
+            content = self._invoke_text_for_author(
+                messages,
+                temperature=0.7,
+                max_tokens=retry_max,
+                max_retries=per_call_retries,
+                request_timeout_seconds=(
+                    AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                    if is_configured_live_provider(self.llm)
+                    else None
+                ),
+            ).strip()
         content = self._coerce_plain_text_content(content)
         if not content:
             retry_messages = [
@@ -1813,17 +1913,38 @@ class AuthorAgent(BaseAgent):
             # v6.8.0: Skip segment_started logging (reduces noise)
 
             try:
-                content = self._invoke_text_for_author(
-                    messages,
-                    temperature=0.7,
-                    max_tokens=prose_max_tokens,
-                    max_retries=per_call_retries,
-                    request_timeout_seconds=(
-                        AUTHOR_LONG_FORM_TIMEOUT_SECONDS
-                        if is_configured_live_provider(self.llm)
-                        else None
-                    ),
-                ).strip()
+                # v6.8.5: Truncation retry for segmented path
+                try:
+                    content = self._invoke_text_for_author(
+                        messages,
+                        temperature=0.7,
+                        max_tokens=prose_max_tokens,
+                        max_retries=per_call_retries,
+                        request_timeout_seconds=(
+                            AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                            if is_configured_live_provider(self.llm)
+                            else None
+                        ),
+                    ).strip()
+                except LLMError as trunc_err:
+                    if "finish_reason=length" not in str(trunc_err):
+                        raise
+                    seg_retry_max = min(4096, int(prose_max_tokens * 1.5))
+                    logger.warning(
+                        "Author segment %d: truncation (max_tokens=%d), retrying with %d",
+                        segment_num, prose_max_tokens, seg_retry_max,
+                    )
+                    content = self._invoke_text_for_author(
+                        messages,
+                        temperature=0.7,
+                        max_tokens=seg_retry_max,
+                        max_retries=per_call_retries,
+                        request_timeout_seconds=(
+                            AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                            if is_configured_live_provider(self.llm)
+                            else None
+                        ),
+                    ).strip()
                 content = self._coerce_plain_text_content(content)
                 if not content:
                     retry_messages = [
@@ -2087,7 +2208,14 @@ class AuthorAgent(BaseAgent):
     ) -> str:
         """Invoke text generation with per-call retry control when supported."""
         if max_retries is None and request_timeout_seconds is None:
-            return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
+            try:
+                return self.llm.invoke_text(
+                    messages, temperature=temperature, max_tokens=max_tokens, agent_id=self.agent_id
+                )
+            except TypeError as exc:
+                if "agent_id" not in str(exc):
+                    raise
+                return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
         try:
             return self.llm.invoke_text(
                 messages,
@@ -2095,10 +2223,11 @@ class AuthorAgent(BaseAgent):
                 max_tokens=max_tokens,
                 max_retries=max_retries,
                 request_timeout_seconds=request_timeout_seconds,
+                agent_id=self.agent_id,
             )
         except TypeError as exc:
             exc_text = str(exc)
-            if "max_retries" not in exc_text and "request_timeout_seconds" not in exc_text:
+            if "max_retries" not in exc_text and "request_timeout_seconds" not in exc_text and "agent_id" not in exc_text:
                 raise
             try:
                 return self.llm.invoke_text(
@@ -2106,9 +2235,11 @@ class AuthorAgent(BaseAgent):
                     temperature=temperature,
                     max_tokens=max_tokens,
                     max_retries=max_retries,
+                    agent_id=self.agent_id,
                 )
             except TypeError as retry_exc:
-                if "max_retries" not in str(retry_exc):
+                retry_text = str(retry_exc)
+                if "max_retries" not in retry_text and "agent_id" not in retry_text:
                     raise
                 return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
 

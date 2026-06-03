@@ -268,17 +268,22 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
     # Effective priority = LLM priority + quality priority + seam blocking
     effective_priority = p.priority_issue_count + p.quality_priority_count + p.seam_blocking_count
 
-    # Near-miss plateau guard: after at least one retry, a 78-79 review with
-    # no actionable priority/blocking issue should not loop forever. Treat it
-    # as publishable with advisory notes; concrete priority issues still route
-    # to revision/human_review normally.
-    if p.score >= 79 and p.retry_count >= 2 and effective_priority == 0:
+    # Near-miss plateau guard: a borderline review with no actionable
+    # priority/blocking issue should not loop forever.  Two tiers:
+    #   - At max retries (retry_count >= max_retries): score >= 79 → advisory pass
+    #     (original behaviour — prevents blocking on borderline scores)
+    #   - Before max retries (retry_count >= 1): score >= 75 → advisory pass
+    #     (v6.8.5 — catches chapters stuck in the 75-79 band after one retry)
+    # Concrete priority issues still route to revision/human_review normally.
+    _at_max = p.retry_count >= p.max_retries
+    _near_miss_threshold = 79 if _at_max else 75
+    if p.score >= _near_miss_threshold and p.retry_count >= 1 and effective_priority == 0:
         return EditorDecision(
             pass_=True,
             revision_needed=False,
             category="advisory",
             decision_type="advisory_pass",
-            reason="分数 79 且已返修 2 次，未发现可执行高优先级问题，转为 advisory pass",
+            reason=f"分数 {p.score:.0f} 且已返修 {p.retry_count} 次，未发现可执行高优先级问题，转为 advisory pass",
             recommended_action="进入 awaiting_publish with warnings，不再自动返修",
         )
 
@@ -434,16 +439,20 @@ def determine_revision_target(
     llm_revision_target: str | None = None,
     quality_priority_count: int = 0,
     seam_blocking_count: int = 0,
+    retry_count: int = 0,
 ) -> str:
     """Determine revision target based on issue semantics.
 
-    Rules (v6.6.8):
+    Rules (v6.8.5):
     - death penalty / continuity / plot logic -> author (or planner for instruction-level)
     - prose/style/advisory polish -> polisher
     - missing scene/content -> author
     - unknown -> polisher (non-empty default)
     - advisory_pass should NOT set revision_target
     - human_review preserves revision_target_hint but doesn't trigger auto revision
+    - v6.8.5: after retry_count >= 1, style-oriented issues that were
+      previously always routed to author are re-routed to polisher to break
+      the author-only doom loop (e.g. low dialogue ratio, exposition).
     """
     if death_penalty:
         return "author"
@@ -456,9 +465,24 @@ def determine_revision_target(
         if any(kw in str(issue) for kw in planner_keywords):
             return "planner"
 
+    # v6.8.5: Style-oriented issues that are partly polisher-addressable.
+    # After at least one author retry, route these to polisher instead.
+    # On the first attempt (retry_count == 0), keep the original behavior of
+    # routing to author so the author gets a chance to fix content first.
+    _style_overlapping_keywords = (
+        "LOW_DIALOGUE_RATIO", "对白占比", "对白仅占", "对白过低",
+        "增加对话", "新增对话", "补充对话",
+        "info dump", "旁白式", "直白情绪",
+        "冲突强度", "缺乏冲突",
+    )
+    if retry_count >= 1:
+        for issue in issues:
+            if any(kw in str(issue) for kw in _style_overlapping_keywords):
+                return "polisher"
+
     # Check if issues contain author-level problems
     author_keywords = (
-        "逻辑漏洞", "剧情", "伏笔", "设定", "info dump", "旁白式", "直白情绪",
+        "逻辑漏洞", "剧情", "伏笔", "设定",
         "[CRITICAL]", "[DIALOGUE]", "[HOOK]",
         "LOW_DIALOGUE_RATIO", "对白占比", "对白仅占", "对白过低",
         "缺少角色言行", "角色对话", "动作场景呈现",
@@ -468,6 +492,7 @@ def determine_revision_target(
         "没有后续动作/决定/结果", "无法得知", "严重破坏阅读完整性",
         "章末钩子缺失", "钩子缺失", "被截断",
         "人物动机", "动机表达", "目标、阻力",
+        "info dump", "旁白式", "直白情绪",
     )
     for issue in issues:
         if any(kw in str(issue) for kw in author_keywords):

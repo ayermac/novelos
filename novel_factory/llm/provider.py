@@ -41,6 +41,7 @@ class LLMProvider(ABC):
         max_tokens: int | None = None,
         max_retries: int | None = None,
         request_timeout_seconds: int | None = None,
+        agent_id: str = "unknown",
     ) -> str:
         """Invoke the LLM and return raw text output.
 
@@ -50,6 +51,7 @@ class LLMProvider(ABC):
             max_tokens: Override default max tokens.
             max_retries: Override provider retry attempts for this call.
             request_timeout_seconds: Override request timeout for this call.
+            agent_id: Agent name for diagnostics.
 
         Returns:
             Raw text response.

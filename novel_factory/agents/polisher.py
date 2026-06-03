@@ -32,7 +32,7 @@ from ..agent_runtime.chapter_text import default_chapter_title, ensure_chapter_h
 from ..agent_runtime.revision_context import normalize_revision_review, revision_feedback_block
 from ..agent_runtime.skill_hooks import run_agent_skills
 from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
-from ..llm.openai_compatible import OutputValidationError
+from ..llm.openai_compatible import LLMError, OutputValidationError
 from ..llm.provider import is_configured_live_provider
 from ..quality.feedback_bridge import build_compact_feedback, format_polisher_context
 
@@ -1001,18 +1001,46 @@ class PolisherAgent(BaseAgent):
             # v6.8.0: Skip segment_started logging (reduces noise)
 
             try:
+                # v6.8.5: Truncation retry for segmented polisher
                 config_max = self._config_max_tokens(self.llm)
-                polished = self._invoke_text_for_polisher(
-                    messages,
-                    temperature=0.65,
-                    max_tokens=config_max,
-                    max_retries=None,
-                    request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
-                ).strip()
+                try:
+                    polished = self._invoke_text_for_polisher(
+                        messages,
+                        temperature=0.65,
+                        max_tokens=config_max,
+                        max_retries=None,
+                        request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
+                    ).strip()
+                except LLMError as trunc_err:
+                    if "finish_reason=length" not in str(trunc_err):
+                        raise
+                    seg_retry_max = min(8192, int(config_max * 1.5))
+                    logger.warning(
+                        "Polisher segment %d: truncation (max_tokens=%d), retrying with %d",
+                        segment_num, config_max, seg_retry_max,
+                    )
+                    polished = self._invoke_text_for_polisher(
+                        messages,
+                        temperature=0.65,
+                        max_tokens=seg_retry_max,
+                        max_retries=None,
+                        request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
+                    ).strip()
                 polished = self._coerce_plain_text_content(polished)
                 if not polished:
                     raise OutputValidationError(
                         f"Polisher 分段润色第 {segment_num} 段返回空内容"
+                    )
+                # v6.8.5: Detect per-segment truncation by checking word count
+                # ratio.  A >40% loss signals finish_reason=length or severe
+                # content degradation that must not silently propagate.
+                from ..validators.chapter_checker import count_words as _seg_wc
+                seg_in_wc = _seg_wc(chunk)
+                seg_out_wc = _seg_wc(polished)
+                if seg_in_wc > 100 and seg_out_wc < seg_in_wc * 0.6:
+                    raise OutputValidationError(
+                        f"Polisher 分段润色第 {segment_num} 段字数异常缩减: "
+                        f"{seg_in_wc} → {seg_out_wc} (loss > 40%)"
                     )
             except Exception as e:
                 if exec_events is not None:

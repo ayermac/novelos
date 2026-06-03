@@ -519,6 +519,7 @@ class StubLLM(LLMProvider):
         max_tokens=None,
         max_retries=None,
         request_timeout_seconds=None,
+        agent_id="unknown",
     ) -> str:
         # Set mock token usage for tracking (v5.2)
         self.last_token_usage = TokenUsage(

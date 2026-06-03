@@ -244,7 +244,8 @@ class OpenAICompatibleProvider(LLMProvider):
         if not content and isinstance(first_choice, dict):
             content = self._content_to_text(first_choice.get("text"))
 
-        usage = payload.get("usage") or {}
+        raw_usage = payload.get("usage") if isinstance(payload, dict) else None
+        usage = raw_usage if isinstance(raw_usage, dict) else {}
         prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
         completion_tokens = int(
             usage.get("completion_tokens") or usage.get("output_tokens") or 0
@@ -402,6 +403,9 @@ class OpenAICompatibleProvider(LLMProvider):
         lc_messages: list,
         max_retries: int | None = None,
         request_timeout_seconds: int | None = None,
+        trace_call_type: str | None = None,
+        trace_schema: str | None = None,
+        trace_agent_id: str | None = None,
         **kwargs,
     ) -> Any:
         """Invoke with exponential backoff for transient provider failures."""
@@ -437,6 +441,9 @@ class OpenAICompatibleProvider(LLMProvider):
                     "retry_attempts_configured": attempts,
                     "attempt_number": attempt_number,
                     "message_count": len(lc_messages),
+                    "call_type": trace_call_type,
+                    "schema": trace_schema,
+                    "agent_id": trace_agent_id,
                     "messages": [_message_to_dict(msg) for msg in lc_messages],
                     "kwargs": {
                         key: redact_sensitive_text(str(value))
@@ -501,20 +508,27 @@ class OpenAICompatibleProvider(LLMProvider):
                         self._handle_api_error(e, timeout_seconds=request_timeout_seconds)
 
                 # Extract token usage if available
+                # v6.8.5: Defensive None checks for malformed responses (e.g. 502 HTML)
                 prompt_tokens = 0
                 completion_tokens = 0
                 total_tokens = 0
 
-                if hasattr(response, "usage_metadata") and response.usage_metadata:
-                    prompt_tokens = response.usage_metadata.get("input_tokens", 0)
-                    completion_tokens = response.usage_metadata.get("output_tokens", 0)
-                    total_tokens = prompt_tokens + completion_tokens
+                if response is None:
+                    logger.warning("LLM response is None, using zero token counts")
+                elif hasattr(response, "usage_metadata") and response.usage_metadata:
+                    raw_metadata = response.usage_metadata
+                    if isinstance(raw_metadata, dict):
+                        prompt_tokens = raw_metadata.get("input_tokens", 0) or 0
+                        completion_tokens = raw_metadata.get("output_tokens", 0) or 0
+                        total_tokens = prompt_tokens + completion_tokens
                 else:
-                    response_metadata = getattr(response, "response_metadata", None) or {}
-                    usage = response_metadata.get("token_usage", {})
-                    prompt_tokens = usage.get("prompt_tokens", 0)
-                    completion_tokens = usage.get("completion_tokens", 0)
-                    total_tokens = usage.get("total_tokens", 0)
+                    raw_response_metadata = getattr(response, "response_metadata", None)
+                    response_metadata = raw_response_metadata if isinstance(raw_response_metadata, dict) else {}
+                    raw_usage = response_metadata.get("token_usage") if isinstance(response_metadata, dict) else None
+                    usage = raw_usage if isinstance(raw_usage, dict) else {}
+                    prompt_tokens = usage.get("prompt_tokens", 0) or 0
+                    completion_tokens = usage.get("completion_tokens", 0) or 0
+                    total_tokens = usage.get("total_tokens", 0) or 0
 
                 self.last_token_usage = TokenUsage(
                     prompt_tokens=prompt_tokens,
@@ -522,7 +536,8 @@ class OpenAICompatibleProvider(LLMProvider):
                     total_tokens=total_tokens,
                     duration_ms=duration_ms,
                 )
-                response_metadata = getattr(response, "response_metadata", None) or {}
+                raw_response_metadata = getattr(response, "response_metadata", None)
+                response_metadata = raw_response_metadata if isinstance(raw_response_metadata, dict) else {}
                 response_text = redact_sensitive_text(str(getattr(response, "content", "")))
                 response_payload = {
                     "content": response_text,
@@ -743,6 +758,7 @@ class OpenAICompatibleProvider(LLMProvider):
         max_tokens: int | None = None,
         max_retries: int | None = None,
         request_timeout_seconds: int | None = None,
+        agent_id: str = "unknown",
     ) -> str:
         """Invoke LLM and return raw text."""
         lc_messages = self._to_lc_messages(messages)
@@ -758,13 +774,30 @@ class OpenAICompatibleProvider(LLMProvider):
                 lc_messages,
                 max_retries=max_retries,
                 request_timeout_seconds=request_timeout_seconds,
+                trace_call_type="text",
+                trace_agent_id=agent_id,
                 **kwargs,
             )
             if self.last_call_trace is not None:
                 self.last_call_trace.setdefault("request", {})
                 self.last_call_trace["request"].update({
                     "call_type": "text",
+                    "agent_id": agent_id,
                 })
+            # v6.8.5: Detect truncation — finish_reason=length means the model
+            # hit max_tokens before completing the response.  Returning the
+            # truncated content silently causes downstream data loss (e.g. the
+            # polisher losing 35% of a chapter).  Raise so callers can fall back
+            # to passthrough / retry instead of accepting broken output.
+            if self.last_call_trace is not None:
+                resp_finish = (
+                    self.last_call_trace.get("response", {}).get("finish_reason")
+                )
+                if resp_finish == "length":
+                    raise LLMError(
+                        f"[{agent_id}] LLM 输出被截断 (finish_reason=length)，"
+                        f"content_length={len(response.content)}"
+                    )
             return response.content
         except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
             raise
