@@ -358,8 +358,12 @@ class PolisherAgent(BaseAgent):
                     },
                 })
 
+        # v6.8.5: Include death penalty list so polisher avoids banned words
+        from ..validators.death_penalty import format_death_penalty_for_prompt
+        dp_prompt = format_death_penalty_for_prompt()
+        polisher_system = f"{POLISHER_SYSTEM_PROMPT}\n\n{dp_prompt}" if dp_prompt else POLISHER_SYSTEM_PROMPT
         messages = [
-            {"role": "system", "content": POLISHER_SYSTEM_PROMPT},
+            {"role": "system", "content": polisher_system},
             {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请润色以上草稿，注意不要改变任何剧情事实。"},
         ]
 
@@ -867,14 +871,20 @@ class PolisherAgent(BaseAgent):
         if state.get("llm_mode") == "real" and len(content) > 2800:
             return self._try_segmented_plain_text_polish(state, context, exec_events=exec_events)
 
+        # v6.8.5: Include death penalty list so polisher avoids banned words
+        from ..validators.death_penalty import format_death_penalty_for_prompt as _dp_prompt
+        dp_text = _dp_prompt()
+        system_content = (
+            "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
+            "不要输出 JSON、字段名、Markdown、解释或摘要。"
+            "必须保留剧情事实、关键事件、伏笔和角色动机。"
+        )
+        if dp_text:
+            system_content = f"{system_content}\n\n{dp_text}"
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
-                    "不要输出 JSON、字段名、Markdown、解释或摘要。"
-                    "必须保留剧情事实、关键事件、伏笔和角色动机。"
-                ),
+                "content": system_content,
             },
             {
                 "role": "user",
@@ -926,14 +936,20 @@ class PolisherAgent(BaseAgent):
         # If only one chunk, process directly without recursion
         if total_chunks <= 1:
             chunk = chunks[0] if chunks else content
+            # v6.8.5: Include death penalty list
+            from ..validators.death_penalty import format_death_penalty_for_prompt as _dp_seg
+            _dp_txt = _dp_seg()
+            _sys = (
+                "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
+                "不要输出 JSON、字段名、Markdown、解释或摘要。"
+                "必须保留剧情事实、关键事件、伏笔和角色动机。"
+            )
+            if _dp_txt:
+                _sys = f"{_sys}\n\n{_dp_txt}"
             messages = [
                 {
                     "role": "system",
-                    "content": (
-                        "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
-                        "不要输出 JSON、字段名、Markdown、解释或摘要。"
-                        "必须保留剧情事实、关键事件、伏笔和角色动机。"
-                    ),
+                    "content": _sys,
                 },
                 {
                     "role": "user",
@@ -977,14 +993,20 @@ class PolisherAgent(BaseAgent):
             if idx == total_chunks - 1:
                 segment_instruction += " 这是最后一段。"
 
+            # v6.8.5: Include death penalty list per segment
+            from ..validators.death_penalty import format_death_penalty_for_prompt as _dp_mc
+            _dp_mc_txt = _dp_mc()
+            _sys_mc = (
+                "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
+                "不要输出 JSON、字段名、Markdown、解释或摘要。"
+                "必须保留剧情事实、关键事件、伏笔和角色动机。"
+            )
+            if _dp_mc_txt:
+                _sys_mc = f"{_sys_mc}\n\n{_dp_mc_txt}"
             messages = [
                 {
                     "role": "system",
-                    "content": (
-                        "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
-                        "不要输出 JSON、字段名、Markdown、解释或摘要。"
-                        "必须保留剧情事实、关键事件、伏笔和角色动机。"
-                    ),
+                    "content": _sys_mc,
                 },
                 {
                     "role": "user",
