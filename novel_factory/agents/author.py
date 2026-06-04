@@ -452,6 +452,56 @@ class AuthorAgent(BaseAgent):
                     "建议增加有冲突或潜台词的角色对话"
                 )
 
+            # v6.8.5: Exposition paragraph detection (warning only)
+            # Split by double newlines to get paragraphs, check for pure exposition
+            paragraphs = [p.strip() for p in re.split(r'\n\s*\n', out.content) if p.strip()]
+            exposition_count = 0
+            for para in paragraphs:
+                if len(para) < 50:
+                    continue
+                has_dialogue = bool(re.search(r'[""「『].*?[""」』]', para))
+                has_action = bool(re.search(r'[走跑跳拿放推拉打踢砍刺冲撞闪躲握抓扔抛甩]|站起|坐下|转身|回头|低头|抬头|靠近|后退|推开|抓住', para))
+                has_sensory = bool(re.search(r'[光影视声响味香臭冷热湿风雨雷温度颜色]|听到|看到|闻到|感到|摸到', para))
+                if not has_dialogue and not has_action and not has_sensory:
+                    exposition_count += 1
+            if exposition_count > 3:
+                warnings_list.append(
+                    f"exposition: 检测到 {exposition_count} 处纯说明段落（无对白/动作/感官），"
+                    "建议将设定解释融入角色行为或对话中"
+                )
+
+            # v6.8.5: Ending hook strength check (warning only)
+            last_200 = out.content[-200:] if len(out.content) > 200 else out.content
+            hook_markers = [
+                r'[？\?]',  # 疑问句
+                r'难道|莫非|竟然|居然',  # 意外
+                r'必须|不得不|只能|只有',  # 抉择
+                r'突然|忽然|骤然|猛然',  # 转折
+                r'可是|但是|然而|只是',  # 转折
+                r'如果|要是|倘若|万一',  # 假设悬念
+                r'不能|不可|不准|不许',  # 禁令悬念
+            ]
+            hook_count = sum(1 for m in hook_markers if re.search(m, last_200))
+            has_unfinished_action = bool(re.search(r'[走跑冲跳]|靠近|推开|抓住|拔出|打开|按下|转身', last_200))
+            if hook_count == 0 and not has_unfinished_action:
+                warnings_list.append(
+                    "ending_hook: 章末200字缺乏悬念标记（问句/转折/抉择/未完成动作），"
+                    "建议在结尾增加悬念或未完成的动作"
+                )
+
+            # v6.8.5: Title integration check (warning only)
+            title_text = out.title or ""
+            if title_text:
+                # Extract meaningful keywords from title (2+ chars, skip common words)
+                title_keywords = [kw for kw in re.findall(r'[一-鿿]{2,}', title_text)
+                                  if kw not in ('章节', '第章', '章', '卷', '篇', '部', '上', '下', '前', '后')]
+                missing_keywords = [kw for kw in title_keywords if kw not in out.content]
+                if missing_keywords and len(missing_keywords) == len(title_keywords):
+                    warnings_list.append(
+                        f"title_integration: 标题关键词 {missing_keywords} 未在正文中出现，"
+                        "建议通过角色对话或场景描写自然融入标题元素"
+                    )
+
             repairable = any(
                 i["type"] in ("word_count", "word_count_overflow", "death_penalty", "scene_beat_coverage")
                 for i in issues
@@ -771,9 +821,10 @@ class AuthorAgent(BaseAgent):
             wc_delta = revised_wc - original_wc
             low_change = abs(wc_delta) < 20 and original_body.strip() == revised_body.strip()
             expansion_limit = max(500, int(original_wc * 0.15))
+            expansion_tolerance = max(80, int(original_wc * 0.03))
             overexpanded = (
                 original_wc > 0
-                and wc_delta > expansion_limit
+                and wc_delta > expansion_limit + expansion_tolerance
                 and not self._revision_requests_compression(revision_review or {})
             )
             exec_events.append({
@@ -787,6 +838,7 @@ class AuthorAgent(BaseAgent):
                     "low_change_warning": low_change,
                     "overexpanded_warning": overexpanded,
                     "expansion_limit": expansion_limit,
+                    "expansion_tolerance": expansion_tolerance,
                 },
             })
             if overexpanded:
@@ -1675,11 +1727,15 @@ class AuthorAgent(BaseAgent):
             if existing_len > 0 and not compress_requested:
                 minimum_required = max(minimum_required, int(existing_len * 0.9))
                 effective_target = max(word_target, existing_len)
-                upper_bound = max(effective_target + 700, int(existing_len * 1.08))
+                expansion_limit = max(500, int(existing_len * 0.15))
+                upper_bound = existing_len + expansion_limit
                 length_guard_note = (
                     f"【返修篇幅边界】当前保留稿约 {existing_len} 字符，Editor 未要求压缩；"
+                    "这次是补丁式返修，不是重新扩写。"
                     f"返修必须保留完整篇幅，不要主动压缩。正文至少 {minimum_required} 字符，"
                     f"返修后总篇幅应基本持平，建议接近 {effective_target} 字符，合理上限 {upper_bound} 字符。"
+                    f"最大允许新增 {expansion_limit} 字符，超过此新增上限会被系统拒绝；"
+                    "只替换或压缩退回问题涉及的句段，新增句子必须同步删除等量冗余说明。"
                 )
         prose_max_tokens = max(1024, min(6144, int(effective_target * 1.5)))
         compact_context = self._build_plain_text_context(state, context)
@@ -1695,6 +1751,17 @@ class AuthorAgent(BaseAgent):
                     "禁止写成剧情摘要或设定说明；以场景为单位推进。"
                     "情绪通过动作、神态、对话展现，禁止直白情绪词。"
                     "对白要有冲突或潜台词，避免功能化问答。"
+                    "\n【反说明段落规则】"
+                    "禁止连续超过100字的纯说明/旁白段落。每段说明后必须紧跟角色动作、对白或环境反馈。"
+                    "设定、背景、能力解释必须融入角色行为或对话中，不得独立成段。"
+                    "检测标准：如果一段文字没有对白引号、没有动作动词、没有感官描写，就是说明段落——必须改写。"
+                    "\n【章末钩子规则】"
+                    "最后200字必须包含以下至少一种：悬念问句、未完成的动作、角色的艰难抉择、意外信息揭露、冲突升级。"
+                    "禁止以'总结本章'、'归纳意义'、'主角反思'结尾。必须让读者想翻下一页。"
+                    "\n【对白比例规则】"
+                    "对白占比至少10%。每500字至少有一段角色对话。对话必须有冲突、潜台词或信息交换，禁止功能化问答。"
+                    "\n【标题整合规则】"
+                    "章节标题的关键词必须在正文中至少出现一次，通过角色对话、内心活动或场景描写自然融入。"
                 ),
             },
             {
@@ -1837,16 +1904,16 @@ class AuthorAgent(BaseAgent):
             if existing_len > 0 and not compress_requested:
                 minimum_required = max(minimum_required, int(existing_len * 0.9))
                 effective_target = max(word_target, existing_len)
-                chapter_upper_bound = min(
-                    max(effective_target + 800, int(effective_target * 1.35)),
-                    max(existing_len + 700, int(existing_len * 1.18)),
-                )
+                expansion_limit = max(500, int(existing_len * 0.15))
+                chapter_upper_bound = existing_len + expansion_limit
                 revision_source_section += (
                     f"\n【返修篇幅边界】当前保留稿约 {existing_len} 字符。"
-                    "Editor 未要求压缩时，返修后总篇幅应基本持平；"
+                    "Editor 未要求压缩时，这次是补丁式返修，不是重新扩写；返修后总篇幅应基本持平。"
                     f"建议不低于 {int(existing_len * 0.9)} 字符，"
                     f"也不要超过 {chapter_upper_bound} 字符。"
-                    "禁止通过整段新增解释、重复心理描写或无关打斗来凑修改。\n"
+                    f"最大允许新增 {expansion_limit} 字符，超过此新增上限会被系统拒绝。"
+                    "禁止通过整段新增解释、重复心理描写或无关打斗来凑修改；"
+                    "新增句子必须同步删除等量冗余说明。\n"
                 )
 
         segment_outputs: list[str] = []
@@ -1892,6 +1959,16 @@ class AuthorAgent(BaseAgent):
                         "禁止写成剧情摘要或设定说明；以场景为单位推进。"
                         "情绪通过动作、神态、对话展现，禁止直白情绪词。"
                         "对白要有冲突或潜台词，避免功能化问答。"
+                        "\n【反说明段落规则】"
+                        "禁止连续超过100字的纯说明/旁白段落。每段说明后必须紧跟角色动作、对白或环境反馈。"
+                        "设定、背景、能力解释必须融入角色行为或对话中，不得独立成段。"
+                        "\n【章末钩子规则】"
+                        "最后200字必须包含以下至少一种：悬念问句、未完成的动作、角色的艰难抉择、意外信息揭露、冲突升级。"
+                        "禁止以'总结本章'、'归纳意义'、'主角反思'结尾。必须让读者想翻下一页。"
+                        "\n【对白比例规则】"
+                        "对白占比至少10%。每500字至少有一段角色对话。对话必须有冲突、潜台词或信息交换，禁止功能化问答。"
+                        "\n【标题整合规则】"
+                        "章节标题的关键词必须在正文中至少出现一次，通过角色对话、内心活动或场景描写自然融入。"
                     ),
                 },
                 {
@@ -2241,7 +2318,17 @@ class AuthorAgent(BaseAgent):
                 retry_text = str(retry_exc)
                 if "max_retries" not in retry_text and "agent_id" not in retry_text:
                     raise
-                return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
+                try:
+                    return self.llm.invoke_text(
+                        messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        request_timeout_seconds=request_timeout_seconds,
+                    )
+                except TypeError as final_exc:
+                    if "request_timeout_seconds" not in str(final_exc):
+                        raise
+                    return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
 
     def _build_plain_text_context(self, state: FactoryState, fallback_context: str) -> str:
         """Build a compact prompt for direct prose generation.

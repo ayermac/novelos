@@ -473,6 +473,17 @@ class TestQ7RevisionClassifier:
         ])
         assert result.dominant_target == "author"
 
+    def test_soft_style_and_minor_timing_issues_route_to_polisher(self):
+        from novel_factory.validators.revision_classifier import classify_issues
+        result = classify_issues([
+            "时间显示逻辑仍有微瑕：手机17:45距18:00实际有15分钟，虽通过堵车暗示，但仍易造成读者误判",
+            "部分段落说明性较强，缺乏动作穿插，如黑丝攻击的某些描述可更紧凑",
+            "[v6.4质量信号] EXPOSITION_PARAGRAPH: 检测到 14 处纯说明段落",
+            "[v6.4质量信号] LOW_COLLOQUIAL_MARKERS: 对白口语化标记不足",
+            "[质量诊断建议] 人物动机表达不够清晰",
+        ], llm_revision_target="author")
+        assert result.dominant_target == "polisher"
+
     def test_truncated_hook_and_dialogue_issues_route_to_author(self):
         from novel_factory.validators.revision_classifier import classify_issues
         result = classify_issues([
