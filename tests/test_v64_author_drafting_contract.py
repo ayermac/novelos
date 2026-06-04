@@ -1019,6 +1019,7 @@ class TestAuthorLiveCallBudget:
         assert diff_events
         assert diff_events[-1]["status"] == "warning"
         assert diff_events[-1]["payload"]["overexpanded_warning"] is True
+        assert diff_events[-1]["payload"]["expansion_tolerance"] >= 80
         assert result["quality_gate"]["revision_overexpanded"] is True
         assert result["quality_gate"]["version_regression"] is True
 
@@ -1031,3 +1032,52 @@ class TestAuthorLiveCallBudget:
             and artifact["artifact_type"] == "rejected_regression"
             for artifact in artifacts
         )
+
+    def test_revision_plain_text_prompt_includes_hard_expansion_delta(self, repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.llm.provider import LLMProvider
+
+        current = "第1章 测试\n\n" + ("旧稿主体继续推进。" * 260)
+        repo.save_chapter_content("test_proj", 1, current, "第一章 测试")
+        repo.update_chapter_status("test_proj", 1, "revision")
+
+        class CaptureTextLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.calls = []
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None, agent_id="unknown") -> dict:
+                return {}
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None, **kwargs) -> str:
+                self.calls.append({"messages": messages, "kwargs": kwargs})
+                return "旧稿主体继续推进。" * 260
+
+        llm = CaptureTextLLM()
+        agent = AuthorAgent(repo, llm)
+        agent._try_plain_text_draft(
+            {
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "revision",
+                "llm_mode": "real",
+                "_revision_review": {
+                    "score": 78,
+                    "revision_target": "author",
+                    "issues": ["时间显示逻辑仍有微瑕", "部分段落说明性较强"],
+                    "suggestions": ["只修正时间歧义和说明段"],
+                },
+            },
+            "返修",
+            agent.build_context({
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "revision",
+            }),
+        )
+
+        prompt = llm.calls[-1]["messages"][1]["content"]
+        assert "最大允许新增" in prompt
+        assert "超过此新增上限会被系统拒绝" in prompt
+        assert "补丁式返修" in prompt

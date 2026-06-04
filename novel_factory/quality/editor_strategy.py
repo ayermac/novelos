@@ -87,6 +87,29 @@ _ADVISORY_MARKERS = (
     "章间衔接建议",
 )
 
+_SOFT_SUGGESTION_MARKERS = (
+    "建议",
+    "略显",
+    "稍显",
+    "可通过",
+    "可让",
+    "可插入",
+    "可增加",
+    "可增删",
+    "避免读者混淆",
+    "易被误读",
+    "微瑕",
+    "说明性较强",
+    "缺乏动作穿插",
+    "可更紧凑",
+    "易造成读者误判",
+    "仍易造成",
+    "感官碎片",
+    "感官细节",
+    "打破均匀节奏",
+    "模拟真实录音卡顿",
+)
+
 
 def _has_hard_issue_text(issues: list[str]) -> bool:
     return any(
@@ -143,9 +166,10 @@ def count_issue_types(issues: list[str] | str | None) -> tuple[int, int, int]:
         
         is_blocking = any(m in text for m in _HARD_ISSUE_MARKERS)
         is_advisory = any(m in text for m in _ADVISORY_MARKERS)
+        is_soft_suggestion = any(m in text for m in _SOFT_SUGGESTION_MARKERS)
         if is_blocking:
             blocking += 1
-        elif is_advisory:
+        elif is_advisory or is_soft_suggestion:
             advisory += 1
         else:
             # Issues that are neither blocking markers nor advisory
@@ -267,17 +291,20 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
 
     # Effective priority = LLM priority + quality priority + seam blocking
     effective_priority = p.priority_issue_count + p.quality_priority_count + p.seam_blocking_count
+    advisory_signal_count = p.advisory_issue_count + p.quality_advisory_count + p.seam_advisory_count
 
-    # Near-miss plateau guard: a borderline review with no actionable
-    # priority/blocking issue should not loop forever.  Two tiers:
-    #   - At max retries (retry_count >= max_retries): score >= 79 → advisory pass
-    #     (original behaviour — prevents blocking on borderline scores)
-    #   - Before max retries (retry_count >= 1): score >= 75 → advisory pass
-    #     (v6.8.5 — catches chapters stuck in the 75-79 band after one retry)
+    # Near-miss plateau guard: after at least one retry, a borderline
+    # review with no actionable priority/blocking issue should not loop
+    # forever or escalate at the final retry only because the score is
+    # still in the 75-79 band.
     # Concrete priority issues still route to revision/human_review normally.
-    _at_max = p.retry_count >= p.max_retries
-    _near_miss_threshold = 79 if _at_max else 75
-    if p.score >= _near_miss_threshold and p.retry_count >= 1 and effective_priority == 0:
+    _near_miss_threshold = 75
+    if (
+        p.score >= _near_miss_threshold
+        and p.retry_count >= 1
+        and effective_priority == 0
+        and advisory_signal_count > 0
+    ):
         return EditorDecision(
             pass_=True,
             revision_needed=False,
@@ -299,10 +326,7 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
 
     # Rule 3: score >= 85
     if p.score >= 85:
-        has_only_advisory = (
-            p.advisory_issue_count + p.quality_advisory_count + p.seam_advisory_count > 0
-        )
-        if has_only_advisory and effective_priority == 0:
+        if advisory_signal_count > 0 and effective_priority == 0:
             return EditorDecision(
                 pass_=True,
                 revision_needed=False,

@@ -106,6 +106,50 @@ _AUTHOR_STRUCTURAL_KEYWORDS = (
     "人物动机",
     "动机表达",
     "目标、阻力",
+    # v6.8.5: Moved from _SOFT_POLISH_KEYWORDS — these are content-level
+    # issues that require author to add content, not polisher to refine.
+    "对话比例较低",
+    "章末钩子强度不足",
+)
+
+_SOFT_POLISH_KEYWORDS = (
+    "微瑕",
+    "略显",
+    "稍显",
+    "说明性较强",
+    "缺乏动作穿插",
+    "可更紧凑",
+    "易造成读者误判",
+    "仍易造成",
+    "可插入",
+    "可增加",
+    "可增删",
+    "感官碎片",
+    "感官细节",
+    "打破均匀节奏",
+    "模拟真实录音卡顿",
+    "口语化标记不足",
+    # v6.8.5: "对话比例较低" and "章末钩子强度不足" moved to
+    # _AUTHOR_STRUCTURAL_KEYWORDS — these are content-level issues that
+    # polisher cannot fix (can't add dialogue or create hooks from scratch).
+    "[v6.4质量信号]",
+    "[质量诊断建议]",
+)
+
+_HARD_STRUCTURAL_KEYWORDS = (
+    "[CRITICAL]",
+    "[DIALOGUE]",
+    "[HOOK]",
+    "硬阻塞",
+    "缺失",
+    "截断",
+    "戛然而止",
+    "未实现",
+    "伏笔债务",
+    "任务结算",
+    "失败名单",
+    "逻辑漏洞",
+    "硬伤",
 )
 
 
@@ -114,6 +158,16 @@ def classify_issue(issue: str) -> ClassifiedIssue:
 
     Uses keyword matching. Falls back to 'logic' if no keywords match.
     """
+    if (
+        any(keyword in issue for keyword in _SOFT_POLISH_KEYWORDS)
+        and not any(keyword in issue for keyword in _HARD_STRUCTURAL_KEYWORDS)
+    ):
+        return ClassifiedIssue(
+            issue=issue,
+            category=IssueCategory.TEXT,
+            revision_target="polisher",
+        )
+
     if any(keyword in issue for keyword in _AUTHOR_STRUCTURAL_KEYWORDS):
         # v6.7.9: Title truncation is a surface issue, not a structural
         # author-level problem. Exclude title-related issues from structural
