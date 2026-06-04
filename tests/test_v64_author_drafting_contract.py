@@ -775,6 +775,7 @@ class TestAuthorLiveCallBudget:
                     base_url="https://example.test/v1",
                     api_key="sk-test",
                     model="revision-author-model",
+                    max_tokens=8192,
                 )
                 self.calls = []
 

@@ -102,6 +102,11 @@ class AuthorAgent(BaseAgent):
         super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
 
+    @staticmethod
+    def _config_max_tokens(llm, fallback: int = 6144) -> int:
+        """Read max_tokens from LLM config, with fallback."""
+        return int(getattr(getattr(llm, "config", None), "max_tokens", fallback) or fallback)
+
     def _load_revision_review(
         self,
         state: FactoryState,
@@ -1362,7 +1367,8 @@ class AuthorAgent(BaseAgent):
         issue_lines = "\n".join(
             f"- {issue.get('message', '')}" for issue in coverage_issues
         )
-        prose_max_tokens = max(2048, min(6144, int(word_target * 2.0)))
+        config_max = self._config_max_tokens(self.llm)
+        prose_max_tokens = max(2048, min(config_max, int(word_target * 2.0)))
         per_call_retries = None
 
         messages = [
@@ -1737,7 +1743,8 @@ class AuthorAgent(BaseAgent):
                     f"最大允许新增 {expansion_limit} 字符，超过此新增上限会被系统拒绝；"
                     "只替换或压缩退回问题涉及的句段，新增句子必须同步删除等量冗余说明。"
                 )
-        prose_max_tokens = max(1024, min(6144, int(effective_target * 1.5)))
+        config_max = self._config_max_tokens(self.llm)
+        prose_max_tokens = max(1024, min(config_max, int(effective_target * 1.5)))
         compact_context = self._build_plain_text_context(state, context)
         per_call_retries = None
 
@@ -1794,7 +1801,8 @@ class AuthorAgent(BaseAgent):
         except LLMError as e:
             if "finish_reason=length" not in str(e):
                 raise
-            retry_max = min(8192, int(prose_max_tokens * 1.5))
+            config_max = self._config_max_tokens(self.llm)
+            retry_max = min(config_max, int(prose_max_tokens * 1.5))
             logger.warning(
                 "Author: truncation detected (max_tokens=%d), retrying with max_tokens=%d",
                 prose_max_tokens, retry_max,
@@ -1947,7 +1955,8 @@ class AuthorAgent(BaseAgent):
             if idx == total_chunks - 1:
                 segment_note += "\n这是最后一段，必须写到章末钩子，不要停在半途。"
 
-            prose_max_tokens = max(1024, min(4096, int(segment_target * 1.5) + 512))
+            config_max = self._config_max_tokens(self.llm)
+            prose_max_tokens = max(1024, min(config_max, int(segment_target * 1.5) + 512))
 
             messages = [
                 {
@@ -2006,7 +2015,8 @@ class AuthorAgent(BaseAgent):
                 except LLMError as trunc_err:
                     if "finish_reason=length" not in str(trunc_err):
                         raise
-                    seg_retry_max = min(4096, int(prose_max_tokens * 1.5))
+                    config_max = self._config_max_tokens(self.llm)
+                    seg_retry_max = min(config_max, int(prose_max_tokens * 1.5))
                     logger.warning(
                         "Author segment %d: truncation (max_tokens=%d), retrying with %d",
                         segment_num, prose_max_tokens, seg_retry_max,
