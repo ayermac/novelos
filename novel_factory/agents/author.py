@@ -451,10 +451,11 @@ class AuthorAgent(BaseAgent):
             dialogues = re.findall(r'[""“”「『]([^""”」』]+)[""”」』]', out.content)
             dialogue_chars = sum(len(d) for d in dialogues)
             dialogue_ratio = dialogue_chars / max(len(out.content), 1)
-            if dialogue_ratio < 0.05:
+            # v6.8.5: 阈值从 5% 提升到 10%，与 Editor 和 Prompt 规则保持一致
+            if dialogue_ratio < 0.10:
                 warnings_list.append(
-                    f"dialogue: 对白占比 {dialogue_ratio*100:.1f}%，"
-                    "建议增加有冲突或潜台词的角色对话"
+                    f"dialogue: 对白占比 {dialogue_ratio*100:.1f}%（低于 10%），"
+                    "必须增加有冲突或潜台词的角色对话"
                 )
 
             # v6.8.5: Exposition paragraph detection (warning only)

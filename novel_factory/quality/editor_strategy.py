@@ -517,6 +517,8 @@ def determine_revision_target(
         "章末钩子缺失", "钩子缺失", "被截断",
         "人物动机", "动机表达", "目标、阻力",
         "info dump", "旁白式", "直白情绪",
+        # v6.8.5: 这些是内容缺失问题，需要 Author 增加内容，Polisher 无法修复
+        "对话比例较低", "章末钩子强度不足",
     )
     for issue in issues:
         if any(kw in str(issue) for kw in author_keywords):

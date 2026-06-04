@@ -660,6 +660,49 @@ class PolisherAgent(BaseAgent):
             },
         })
 
+        # v6.8.5: Check for excessive word count drift even on first polish.
+        # If the polished draft is >20% shorter than the original without any
+        # compression request, reject it and keep the original.
+        if not in_revision_chain and original_content and polished_wc < original_wc * 0.8:
+            # Check if word_count_compressed event exists (system compression)
+            system_compressed = any(
+                ev.get("event_type") == "word_count_compressed"
+                for ev in exec_events
+            )
+            if not system_compressed:
+                shrink_pct = (original_wc - polished_wc) / original_wc * 100
+                reason = f"润色稿字数异常缩减：{original_wc} → {polished_wc} 字（-{shrink_pct:.1f}%），超过 20% 阈值"
+                logger.warning("Polisher: first polish excessive shrink: %s", reason)
+                self.repo.save_artifact(
+                    project_id,
+                    chapter_number,
+                    "polisher",
+                    "rejected_regression",
+                    content_json={"content": polished_content, "rejection_reason": reason},
+                )
+                exec_events.append({
+                    "event_type": "quality_gate_retry",
+                    "message": reason,
+                    "status": "warning",
+                    "payload": {
+                        "revision_target": "polisher",
+                        "retry_count": 0,
+                        "quality_gate": {
+                            "pass": False,
+                            "revision_target": "polisher",
+                            "version_regression": True,
+                            "message": reason,
+                        },
+                    },
+                })
+                # Keep original content, return as passthrough
+                return {
+                    "chapter_status": ChapterStatus.POLISHED.value,
+                    "current_stage": "polished",
+                    "_revision_review": state.get("_revision_review"),
+                    "_exec_events": exec_events,
+                }
+
         # v6.6.0: Protect the current draft from a regressing revision pass.
         if in_revision_chain and original_content:
             from ..quality.version_regression_guard import VersionRegressionGuard
