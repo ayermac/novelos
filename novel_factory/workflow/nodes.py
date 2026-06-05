@@ -18,6 +18,7 @@ from ..models.state import ChapterStatus, FactoryState
 from .conditions import hydrate_revision_state, revision_target_from_state
 from ..agents.planner import PlannerAgent
 from ..agents.planner import build_memory_context_audit
+from ..quality.chapter_brief_validator import validate_chapter_brief, fill_missing_tier2_fields
 from ..agents.screenwriter import ScreenwriterAgent
 from ..agents.author import AuthorAgent
 from ..agents.polisher import PolisherAgent
@@ -1294,3 +1295,56 @@ def archive_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
         state.get("project_id"), state.get("chapter_number"),
     )
     return {}
+
+def brief_validation_node(state: FactoryState) -> dict:
+    """Validate chapter brief from planner output.
+    
+    Checks Tier 1 fields. If missing, routes back to planner.
+    Fills missing Tier 2 fields with genre profile defaults.
+    """
+    logger = logging.getLogger(__name__)
+    
+    # Get planner output from state
+    planner_output = state.get("planner_output")
+    if not planner_output:
+        logger.warning("No planner output found in state")
+        return {"status": "revision", "revision_reason": "missing_planner_output"}
+    
+    # Extract chapter brief
+    chapter_brief = planner_output.get("chapter_brief", {})
+    if not chapter_brief:
+        logger.warning("No chapter_brief found in planner output")
+        return {"status": "revision", "revision_reason": "missing_chapter_brief"}
+    
+    # Get genre profile from project context
+    project_id = state.get("project_id")
+    genre_profile = None
+    if project_id:
+        try:
+            from ..config.genre_profile_loader import get_default_genre_profile
+            genre_profile = get_default_genre_profile()
+        except Exception as e:
+            logger.warning(f"Failed to load genre profile: {e}")
+    
+    # Validate Tier 1 fields
+    is_valid, missing_fields = validate_chapter_brief(chapter_brief)
+    
+    if not is_valid:
+        logger.warning(f"Chapter brief missing Tier 1 fields: {missing_fields}")
+        return {
+            "status": "revision",
+            "revision_reason": f"missing_tier1_fields: {', '.join(missing_fields)}",
+            "missing_tier1_fields": missing_fields,
+        }
+    
+    # Fill missing Tier 2 fields
+    if genre_profile:
+        filled_brief = fill_missing_tier2_fields(chapter_brief, genre_profile)
+    else:
+        filled_brief = chapter_brief
+    
+    # Update state with validated brief
+    return {
+        "chapter_brief": filled_brief,
+        "brief_validated": True,
+    }

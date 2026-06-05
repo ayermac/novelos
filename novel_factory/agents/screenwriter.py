@@ -31,11 +31,14 @@ SCREENWRITER_SYSTEM_PROMPT = """你是网文工厂的编剧（Screenwriter），
 1. 每个场景必须有推进作用
 2. 标记伏笔埋设或兑现位置
 3. 控制单章节奏，确保章末钩子
+4. 遵守 ChapterBrief 的 forbidden_moves（禁止动作）
+5. 优先处理 ledger_debts_to_pay（需要偿还的台账债务）
 
 禁止：
 - 改写世界观和角色设定
 - 写最终正文
-- 决定审核结果"""
+- 决定审核结果
+- 违反 ChapterBrief 中明确禁止的动作"""
 
 
 class ScreenwriterAgent(BaseAgent):
@@ -71,6 +74,19 @@ class ScreenwriterAgent(BaseAgent):
                          f"章末钩子: {instruction.get('ending_hook', '')}\n"
                          f"埋设伏笔: {instruction.get('plots_to_plant', '[]')}\n"
                          f"兑现伏笔: {instruction.get('plots_to_resolve', '[]')}")
+        
+        # v6.9.0: Inject ChapterBrief constraints
+        chapter_brief = state.get("chapter_brief", {})
+        if chapter_brief:
+            forbidden_moves = chapter_brief.get("forbidden_moves", [])
+            ledger_debts = chapter_brief.get("ledger_debts_to_pay", [])
+            if forbidden_moves or ledger_debts:
+                brief_constraints = []
+                if forbidden_moves:
+                    brief_constraints.append(f"禁止动作: {', '.join(forbidden_moves)}")
+                if ledger_debts:
+                    brief_constraints.append(f"需要偿还的债务: {', '.join(ledger_debts)}")
+                parts.append("【ChapterBrief 约束】\n" + "\n".join(brief_constraints))
 
         return "\n\n".join(parts)
 

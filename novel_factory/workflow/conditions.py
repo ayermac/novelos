@@ -226,6 +226,29 @@ def route_after_memory_curator(state: FactoryState) -> str:
     return "publish"
 
 
+def route_after_brief_validation(state: FactoryState) -> str:
+    """Route after brief validation: if Tier 1 fields are missing, go back to planner.
+    
+    v6.9.0: Brief validation checks Tier 1 fields are present.
+    If missing, routes back to planner for revision.
+    If valid, proceeds to screenwriter.
+    """
+    if state.get("requires_human") or state.get("error"):
+        return "human_review"
+    
+    # Check if brief validation passed
+    if state.get("brief_validated"):
+        return "screenwriter"
+    
+    # Check for revision reason
+    revision_reason = state.get("revision_reason", "")
+    if "missing_tier1_fields" in revision_reason or "missing_chapter_brief" in revision_reason:
+        return "planner"
+    
+    # Default: proceed to screenwriter
+    return "screenwriter"
+
+
 def route_by_revision_type(state: FactoryState) -> str:
     """Route revision to the appropriate agent based on revision_target."""
     status = state.get("chapter_status", "")

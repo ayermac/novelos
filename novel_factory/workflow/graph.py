@@ -19,6 +19,7 @@ from ..llm.provider import LLMProvider
 from ..models.state import FactoryState
 from .conditions import (
     route_after_agent,
+    route_after_brief_validation,
     route_after_memory_curator,
     route_by_chapter_status,
     route_by_revision_type,
@@ -94,6 +95,7 @@ def build_graph(
         graph.add_node("health_check", lambda s: nodes.health_check_node(s, repo))
         graph.add_node("task_discovery", lambda s: nodes.task_discovery_node(s, repo))
         graph.add_node("planner", runners["planner"])
+        graph.add_node("brief_validation", lambda s: nodes.brief_validation_node(s))
         graph.add_node("screenwriter", runners["screenwriter"])
         graph.add_node("author", runners["author"])
         graph.add_node("polisher", runners["polisher"])
@@ -117,6 +119,10 @@ def build_graph(
         graph.add_node(
             "planner",
             lambda s: nodes.planner_node(s, repo, llm, skill_registry),
+        )
+        graph.add_node(
+            "brief_validation",
+            lambda s: nodes.brief_validation_node(s),
         )
         graph.add_node(
             "screenwriter",
@@ -180,10 +186,18 @@ def build_graph(
 
     # Linear happy path, with a safety stop after each agent. Agent nodes set
     # requires_human on errors, so never flow into the next precondition blindly.
+    # v6.9.0: After planner, go to brief validation before screenwriter
     graph.add_conditional_edges(
         "planner",
         route_after_agent,
-        {"next": "screenwriter", "human_review": "human_review", "revision_router": "revision_router"},
+        {"next": "brief_validation", "human_review": "human_review", "revision_router": "revision_router"},
+    )
+    
+    # v6.9.0: Brief validation - check Tier 1 fields, route back to planner if missing
+    graph.add_conditional_edges(
+        "brief_validation",
+        route_after_brief_validation,
+        {"screenwriter": "screenwriter", "planner": "planner", "human_review": "human_review"},
     )
     graph.add_conditional_edges(
         "screenwriter",
