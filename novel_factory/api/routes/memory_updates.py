@@ -319,6 +319,41 @@ def _derive_story_fact_key(item: dict, after_data: dict) -> str:
     return ""
 
 
+def _story_fact_data_from_unresolved_faction_update(
+    item: dict,
+    after_data: dict,
+    chapter_number: int,
+) -> dict:
+    """Convert a misclassified faction update into a traceable story fact."""
+    text = "\n".join(
+        str(part or "")
+        for part in (
+            after_data.get("description"),
+            after_data.get("relationship_with_protagonist"),
+            item.get("rationale"),
+            item.get("evidence_text"),
+        )
+    )
+    if not any(marker in text for marker in ("关系", "转折", "最后通牒", "预览", "决裂", "承诺")):
+        return {}
+
+    subject = "赵倩与林辰" if "赵倩" in text and "林辰" in text else "角色关系"
+    attribute = "关系转折" if any(marker in text for marker in ("关系", "转折")) else "关系状态"
+    value = {
+        "summary": after_data.get("description") or item.get("rationale") or item.get("evidence_text"),
+        "evidence": item.get("evidence_text", ""),
+    }
+    return {
+        "fact_key": f"chapter_{chapter_number}.relationship_shift",
+        "fact_type": "character_relationship",
+        "subject": subject,
+        "attribute": attribute,
+        "value": value,
+        "source_chapter": chapter_number,
+        "source_agent": "memory_curator",
+    }
+
+
 def _infer_character_name_for_memory_update(item: dict, after_data: dict) -> str:
     """Infer a concise character/group name from prose-only character patches."""
     before_data = _parse_json_object(item.get("before_json"))
@@ -339,6 +374,26 @@ def _infer_character_name_for_memory_update(item: dict, after_data: dict) -> str
             json.dumps(after_data, ensure_ascii=False),
         )
     ]
+    code_name_pattern = re.compile(r"(?<![A-Za-z0-9])([A-Z]{1,4}-\d{1,4})(?![A-Za-z0-9])")
+    code_context_markers = (
+        "唤醒",
+        "苏醒",
+        "形态",
+        "威胁",
+        "角色",
+        "生命",
+        "状态",
+        "发出",
+        "释放",
+        "喘息",
+    )
+    for part in parts:
+        if not any(marker in part for marker in code_context_markers):
+            continue
+        match = code_name_pattern.search(part)
+        if match:
+            return match.group(1)
+
     patterns = (
         r"^([\u4e00-\u9fffA-Za-z0-9]{2,12}?)(?:的|行动|追踪|忽然|提前|没继续|继续|已经|正在|用)",
     )
@@ -742,7 +797,30 @@ def _apply_memory_item(
                 else:
                     inferred_name = _infer_faction_name(repo, project_id, item, after_data)
                     if not inferred_name:
-                        result["error"] = "势力更新缺少 target_id，且无法从证据中推断势力名称"
+                        story_fact_data = _story_fact_data_from_unresolved_faction_update(
+                            item,
+                            after_data,
+                            chapter_number,
+                        )
+                        if story_fact_data:
+                            fact_key = story_fact_data["fact_key"]
+                            existing_fact = repo.get_story_fact_by_key(project_id, fact_key)
+                            fact = repo.upsert_story_fact(
+                                project_id,
+                                fact_key=fact_key,
+                                fact_type=story_fact_data.get("fact_type", "fact"),
+                                value_json=json.dumps(story_fact_data.get("value", {}), ensure_ascii=False),
+                                source_chapter=story_fact_data.get("source_chapter"),
+                                source_agent=story_fact_data.get("source_agent"),
+                                subject=story_fact_data.get("subject"),
+                                attribute=story_fact_data.get("attribute"),
+                                unit=story_fact_data.get("unit"),
+                            )
+                            result["operation"] = "create" if existing_fact is None else "update"
+                            result["success"] = fact is not None
+                            result["created_id"] = fact["id"] if fact else None
+                        else:
+                            result["error"] = "势力更新缺少 target_id，且无法从证据中推断势力名称"
                     else:
                         existing = next(
                             (

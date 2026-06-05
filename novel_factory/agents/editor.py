@@ -459,7 +459,13 @@ class EditorAgent(BaseAgent):
             },
             issues=issues,
             suggestions=suggestions,
-            revision_target=None if passed else "author" if continuity_blocking else "polisher",
+            # v6.8.5-fix: 使用 determine_revision_target() 而非硬编码，
+            # 确保 fallback 路径也能正确路由作者级问题（时间逻辑、冲突、对话比例等）
+            revision_target=None if passed else determine_revision_target(
+                issues=issues,
+                death_penalty=dp_result.has_critical,
+                seam_blocking_count=1 if continuity_blocking else 0,
+            ),
             state_card={
                 "summary": "AI 审核不可用，已完成规则兜底检查；请人工发布前复核。",
                 "degraded_review": True,

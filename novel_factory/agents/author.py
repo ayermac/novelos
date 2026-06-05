@@ -452,6 +452,8 @@ class AuthorAgent(BaseAgent):
             dialogue_chars = sum(len(d) for d in dialogues)
             dialogue_ratio = dialogue_chars / max(len(out.content), 1)
             # v6.8.5: 阈值从 5% 提升到 10%，与 Editor 和 Prompt 规则保持一致
+            # v6.8.5-fix: 保持 warning 级别，依赖 editor_strategy.determine_revision_target()
+            # 中的路由关键词修复确保 LOW_DIALOGUE_RATIO 返修路由到 Author 而非 Polisher
             if dialogue_ratio < 0.10:
                 warnings_list.append(
                     f"dialogue: 对白占比 {dialogue_ratio*100:.1f}%（低于 10%），"

@@ -396,6 +396,72 @@ class TestRevisionTargetSemantics:
         from novel_factory.quality.editor_strategy import determine_revision_target
         assert determine_revision_target() == "polisher"
 
+    def test_time_logic_routes_to_author_even_after_retry(self):
+        """v6.8.5-fix: 时间逻辑问题必须路由到 Author，不能走 Polisher 死循环。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["时间逻辑不一致，第二幕和第三幕的时间线存在矛盾"],
+            retry_count=2,
+        ) == "author"
+
+    def test_key_event_routes_to_author_even_after_retry(self):
+        """v6.8.5-fix: 关键事件执行偏差必须路由到 Author。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["关键事件执行偏差：缺少场景 beat 覆盖"],
+            retry_count=1,
+        ) == "author"
+
+    def test_conflict_strength_routes_to_author_even_after_retry(self):
+        """v6.8.5-fix: 冲突强度不足是内容问题，Polisher 无法修复。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["冲突强度不足，缺乏面对面的张力场景"],
+            retry_count=2,
+        ) == "author"
+
+    def test_low_dialogue_routes_to_author_even_after_retry(self):
+        """v6.8.5-fix: 对话比例过低是内容缺失，Polisher 无法添加对话。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["[LOW_DIALOGUE_RATIO] 对白占比2.8%严重偏低"],
+            retry_count=2,
+        ) == "author"
+
+    def test_dialogue_ratio_low_routes_to_author_even_after_retry(self):
+        """v6.8.5-fix: 对话比例较低路由到 Author。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["对话比例较低，需要增加角色对话"],
+            retry_count=1,
+        ) == "author"
+
+    def test_hard_constraint_routes_to_author(self):
+        """v6.8.5-fix: 硬约束冲突路由到 Author。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["硬约束冲突：设定中角色不能飞行但文中出现飞行场景"],
+            retry_count=0,
+        ) == "author"
+
+    def test_seam_blocking_routes_to_author(self):
+        """v6.8.5-fix: 连续性阻断路由到 Author（通过 seam_blocking_count）。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["[连续性阻断] 章中时空回退"],
+            seam_blocking_count=1,
+        ) == "author"
+
+    def test_advisory_with_author_keyword_routes_to_author(self):
+        """v6.8.5-fix: fallback 中 advisory issues 包含作者级关键词时路由到 Author。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=[
+                "AI 审核不可用，本结果仅为规则兜底。",
+                "[EXPOSITION_PARAGRAPH] 10处旁白式陈述",
+            ],
+        ) == "author"
+
 
 # ── C. count_issue_types tests ──────────────────────────────────
 

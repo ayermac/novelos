@@ -493,11 +493,10 @@ def determine_revision_target(
     # After at least one author retry, route these to polisher instead.
     # On the first attempt (retry_count == 0), keep the original behavior of
     # routing to author so the author gets a chance to fix content first.
+    # v6.8.5-fix: 仅保留 Polisher 可修的纯文风问题；对话/冲突/时间逻辑等
+    # 内容级别问题始终路由到 Author，不在此列表中
     _style_overlapping_keywords = (
-        "LOW_DIALOGUE_RATIO", "对白占比", "对白仅占", "对白过低",
-        "增加对话", "新增对话", "补充对话",
         "info dump", "旁白式", "直白情绪",
-        "冲突强度", "缺乏冲突",
     )
     if retry_count >= 1:
         for issue in issues:
@@ -517,8 +516,10 @@ def determine_revision_target(
         "章末钩子缺失", "钩子缺失", "被截断",
         "人物动机", "动机表达", "目标、阻力",
         "info dump", "旁白式", "直白情绪",
-        # v6.8.5: 这些是内容缺失问题，需要 Author 增加内容，Polisher 无法修复
+        # v6.8.5: 内容缺失问题，Author 增加内容，Polisher 无法修复
         "对话比例较低", "章末钩子强度不足",
+        # v6.8.5-fix: 时间逻辑、关键事件、冲突强度是 Author 内容问题
+        "时间逻辑", "关键事件", "硬约束冲突", "执行偏差",
     )
     for issue in issues:
         if any(kw in str(issue) for kw in author_keywords):
