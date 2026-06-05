@@ -39,6 +39,7 @@ CANONICAL_WORKFLOW_NODES: tuple[dict[str, str], ...] = (
     {"node_name": "author", "label": "执笔", "node_group": "creative_agent", "node_type": "creative_agent"},
     {"node_name": "polisher", "label": "润色", "node_group": "creative_agent", "node_type": "creative_agent"},
     {"node_name": "editor", "label": "审核", "node_group": "creative_agent", "node_type": "creative_agent"},
+    {"node_name": "editor_lenses", "label": "专项审核", "node_group": "creative_agent", "node_type": "creative_agent"},  # v6.9.0
     {"node_name": "memory_curator", "label": "记忆整理", "node_group": "support_agent", "node_type": "support_agent"},
     {"node_name": "publisher", "label": "发布", "node_group": "terminal", "node_type": "terminal"},
     {"node_name": "awaiting_publish", "label": "等待发布", "node_group": "terminal", "node_type": "terminal"},
@@ -102,6 +103,7 @@ def build_graph(
         graph.add_node("author", runners["author"])
         graph.add_node("polisher", runners["polisher"])
         graph.add_node("editor", runners["editor"])
+        graph.add_node("editor_lenses", lambda s: nodes.editor_lenses_node(s, repo))  # v6.9.0
         graph.add_node("memory_curator", runners["memory_curator"])
         graph.add_node("publisher", lambda s: nodes.publisher_node(s, repo))
         graph.add_node("awaiting_publish", lambda s: nodes.awaiting_publish_node(s, repo))  # v5.3.0
@@ -147,6 +149,10 @@ def build_graph(
             "editor",
             lambda s: nodes.editor_node(s, repo, llm),
         )
+        graph.add_node(
+            "editor_lenses",
+            lambda s: nodes.editor_lenses_node(s, repo),
+        )  # v6.9.0
         graph.add_node(
             "memory_curator",
             lambda s: nodes.memory_curator_node(s, repo, llm, skill_registry),
@@ -227,14 +233,26 @@ def build_graph(
         route_after_agent,
         {"next": "polisher", "human_review": "human_review", "revision_router": "revision_router"},
     )
+    # v6.9.0: polisher → editor_lenses (replaces polisher → editor)
     graph.add_conditional_edges(
         "polisher",
         route_after_agent,
-        {"next": "editor", "human_review": "human_review", "revision_router": "revision_router"},
+        {"next": "editor_lenses", "human_review": "human_review", "revision_router": "revision_router"},
     )
 
-    # After editor: pass → memory_curator, fail → revise or human
-    # v5.3.2: Memory curator extracts facts before publish decision
+    # v6.9.0: After editor_lenses: pass → memory_curator, fail → revise or human
+    # Uses same route_by_review_result logic as old editor node
+    graph.add_conditional_edges(
+        "editor_lenses",
+        route_by_review_result,
+        {
+            "memory_curator": "memory_curator",  # v5.3.2: fact extraction
+            "revise": "revision_router",
+            "human_review": "human_review",
+        },
+    )
+
+    # Keep legacy editor node for revision_router fallback
     graph.add_conditional_edges(
         "editor",
         route_by_review_result,

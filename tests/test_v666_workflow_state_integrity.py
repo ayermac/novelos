@@ -82,8 +82,9 @@ def test_state_matrix_running_stale_checkpoint():
 
     assert result["chapter_status"] == "drafted"
     assert result["run_status"] == "running"
-    assert result["recovery_capability"] == RecoveryCapability.CLEAR_CHECKPOINT_AND_RERUN.value
-    assert "rerun" in result["safe_actions"]
+    # v6.7.6: Stale running runs require manual intervention
+    assert result["recovery_capability"] == RecoveryCapability.MANUAL_INTERVENTION_REQUIRED.value
+    assert "mark_stuck" in result["safe_actions"]
 
 
 def test_state_matrix_failed_with_checkpoint():
@@ -102,7 +103,8 @@ def test_state_matrix_failed_with_checkpoint():
     assert result["chapter_status"] == "drafted"
     assert result["run_status"] == "failed"
     assert result["recovery_capability"] == RecoveryCapability.CLEAR_CHECKPOINT_AND_RERUN.value
-    assert "rerun" in result["safe_actions"]
+    # v6.7.6: Failed runs use "reset" action (not "rerun")
+    assert "reset" in result["safe_actions"]
     assert result["checkpoint_status"] == CheckpointState.STALE.value
 
 
