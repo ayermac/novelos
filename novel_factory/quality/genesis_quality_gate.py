@@ -2,9 +2,18 @@
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import Literal, Any
+
+from ..models.creative_contracts import (
+    GenreProfile,
+    ProjectLaunchProfile,
+    GenreContract,
+    PayoffCadence,
+    PressureLimits,
+)
 
 
 @dataclass
@@ -1142,3 +1151,277 @@ def evaluate_genesis_draft(
         issues=issues,
         metrics=metrics,
     )
+
+
+# ── v6.9.0: Creative Contract Generation ──────────────────────────────────
+
+
+def generate_launch_profile(
+    user_idea: str,
+    genre_profile: GenreProfile,
+    llm_caller: Any = None,
+) -> ProjectLaunchProfile:
+    """Generate a ProjectLaunchProfile from user idea and genre profile.
+
+    Args:
+        user_idea: User's creative idea/premise text
+        genre_profile: Genre profile template to use
+        llm_caller: Optional LLM caller for real mode (stub mode uses defaults)
+
+    Returns:
+        ProjectLaunchProfile with fields populated from genre defaults
+    """
+    # Stub mode: generate deterministic profile from genre defaults
+    if llm_caller is None:
+        return _generate_stub_launch_profile(user_idea, genre_profile)
+
+    # Real mode: call LLM to generate profile
+    return _generate_llm_launch_profile(user_idea, genre_profile, llm_caller)
+
+
+def _generate_stub_launch_profile(
+    user_idea: str,
+    genre_profile: GenreProfile,
+) -> ProjectLaunchProfile:
+    """Generate a deterministic launch profile for stub mode."""
+    # Extract genre family from profile_id
+    genre_family = genre_profile.profile_id.split("_")[0] if "_" in genre_profile.profile_id else genre_profile.profile_id
+
+    # Build core hook from user idea (first 100 chars)
+    core_hook = user_idea[:100].strip() if user_idea else genre_profile.default_payoff_loop
+
+    return ProjectLaunchProfile(
+        target_reader="网络小说读者",
+        market_lane=genre_profile.profile_id,
+        genre_family=genre_family,
+        subgenre="",
+        title_promise="",
+        core_hook=core_hook,
+        primary_payoff_loop=genre_profile.default_payoff_loop,
+        secondary_payoff_loops=[],
+        protagonist_growth_engine="",
+        commercial_comps=[],
+        first_30_chapter_strategy="",
+        hard_do_not_drift_rules=genre_profile.profile_specific_rules.get("avoid_patterns", []),
+    )
+
+
+def _generate_llm_launch_profile(
+    user_idea: str,
+    genre_profile: GenreProfile,
+    llm_caller: Any,
+) -> ProjectLaunchProfile:
+    """Generate launch profile using LLM."""
+    # Build prompt for LLM
+    prompt = f"""根据以下用户创意和类型配置，生成项目启动配置。
+
+用户创意：
+{user_idea}
+
+类型配置：
+- profile_id: {genre_profile.profile_id}
+- 默认读者期望: {', '.join(genre_profile.default_reader_expectations)}
+- 默认回报循环: {genre_profile.default_payoff_loop}
+- 开篇要求: {', '.join(genre_profile.opening_requirements)}
+- 常见毒点: {', '.join(genre_profile.common_poison_points)}
+
+请生成以下JSON格式的项目启动配置：
+{{
+    "target_reader": "目标读者群体",
+    "market_lane": "市场赛道",
+    "genre_family": "类型家族",
+    "subgenre": "子类型",
+    "title_promise": "标题承诺",
+    "core_hook": "核心钩子",
+    "primary_payoff_loop": "主要回报循环",
+    "secondary_payoff_loops": ["次要回报循环1", "次要回报循环2"],
+    "protagonist_growth_engine": "主角成长引擎",
+    "commercial_comps": ["商业对标1", "商业对标2"],
+    "first_30_chapter_strategy": "前30章策略",
+    "hard_do_not_drift_rules": ["禁止漂移规则1", "禁止漂移规则2"]
+}}
+
+只返回JSON，不要其他文字。"""
+
+    try:
+        # Call LLM
+        response = llm_caller(prompt)
+        # Parse JSON response
+        data = json.loads(response)
+        return ProjectLaunchProfile(**data)
+    except (json.JSONDecodeError, Exception) as e:
+        # Fallback to stub mode on error
+        return _generate_stub_launch_profile(user_idea, genre_profile)
+
+
+def generate_genre_contract(
+    launch_profile: ProjectLaunchProfile,
+    genre_profile: GenreProfile,
+    llm_caller: Any = None,
+) -> GenreContract:
+    """Generate a GenreContract from launch profile and genre profile.
+
+    Args:
+        launch_profile: Project launch profile
+        genre_profile: Genre profile template
+        llm_caller: Optional LLM caller for real mode
+
+    Returns:
+        GenreContract with fields populated
+    """
+    # Stub mode: generate deterministic contract
+    if llm_caller is None:
+        return _generate_stub_genre_contract(launch_profile, genre_profile)
+
+    # Real mode: call LLM to generate contract
+    return _generate_llm_genre_contract(launch_profile, genre_profile, llm_caller)
+
+
+def _generate_stub_genre_contract(
+    launch_profile: ProjectLaunchProfile,
+    genre_profile: GenreProfile,
+) -> GenreContract:
+    """Generate a deterministic genre contract for stub mode."""
+    # Build promise statement from launch profile
+    promise_statement = f"这是一部{genre_profile.profile_id}类型的小说，核心承诺：{launch_profile.primary_payoff_loop}"
+
+    # Get editor weights from genre profile
+    editor_weights = genre_profile.editor_weight_profile
+
+    return GenreContract(
+        genre_id=genre_profile.profile_id,
+        promise_statement=promise_statement,
+        reader_expectations=genre_profile.default_reader_expectations,
+        must_have_beats=genre_profile.profile_specific_rules.get("must_have_tropes", []),
+        allowed_dark_lines=[],
+        forbidden_drift=genre_profile.profile_specific_rules.get("avoid_patterns", []),
+        payoff_cadence=PayoffCadence(
+            minor_payoff=f"每{genre_profile.chapter_rhythm_defaults.get('minor_payoff_frequency', 1)}章",
+            visible_upgrade=f"每{genre_profile.chapter_rhythm_defaults.get('visible_upgrade_frequency', 5)}章",
+            public_reversal=f"每{genre_profile.chapter_rhythm_defaults.get('public_reversal_frequency', 8)}章",
+        ),
+        pressure_limits=PressureLimits(
+            max_consecutive_heavy=genre_profile.chapter_rhythm_defaults.get("max_consecutive_pressure", 3),
+            max_passive_protagonist=2,
+        ),
+        upgrade_cadence="",
+        relationship_cadence="",
+        mystery_reveal_cadence="",
+        style_constraints=genre_profile.profile_specific_rules.get("style_constraints", []),
+        editor_weights=editor_weights,
+    )
+
+
+def _generate_llm_genre_contract(
+    launch_profile: ProjectLaunchProfile,
+    genre_profile: GenreProfile,
+    llm_caller: Any,
+) -> GenreContract:
+    """Generate genre contract using LLM."""
+    # Build prompt for LLM
+    prompt = f"""根据以下项目启动配置和类型配置，生成类型合同。
+
+项目启动配置：
+- 目标读者: {launch_profile.target_reader}
+- 市场赛道: {launch_profile.market_lane}
+- 核心钩子: {launch_profile.core_hook}
+- 主要回报循环: {launch_profile.primary_payoff_loop}
+- 禁止漂移规则: {', '.join(launch_profile.hard_do_not_drift_rules)}
+
+类型配置：
+- profile_id: {genre_profile.profile_id}
+- 默认读者期望: {', '.join(genre_profile.default_reader_expectations)}
+- 必须包含元素: {', '.join(genre_profile.profile_specific_rules.get('must_have_tropes', []))}
+- 常见毒点: {', '.join(genre_profile.common_poison_points)}
+- 编辑权重: {genre_profile.editor_weight_profile}
+
+请生成以下JSON格式的类型合同：
+{{
+    "genre_id": "类型ID",
+    "promise_statement": "核心承诺声明",
+    "reader_expectations": ["读者期望1", "读者期望2"],
+    "must_have_beats": ["必须包含节拍1", "必须包含节拍2"],
+    "allowed_dark_lines": ["允许的黑暗元素1", "允许的黑暗元素2"],
+    "forbidden_drift": ["禁止漂移1", "禁止漂移2"],
+    "payoff_cadence": {{
+        "minor_payoff": "每X章",
+        "visible_upgrade": "每X章",
+        "public_reversal": "每X章"
+    }},
+    "pressure_limits": {{
+        "max_consecutive_heavy": 3,
+        "max_passive_protagonist": 2
+    }},
+    "upgrade_cadence": "升级节奏描述",
+    "relationship_cadence": "关系发展节奏描述",
+    "mystery_reveal_cadence": "悬念揭示节奏描述",
+    "style_constraints": ["风格约束1", "风格约束2"],
+    "editor_weights": {{
+        "weight1": 30,
+        "weight2": 25
+    }}
+}}
+
+只返回JSON，不要其他文字。"""
+
+    try:
+        # Call LLM
+        response = llm_caller(prompt)
+        # Parse JSON response
+        data = json.loads(response)
+
+        # Parse nested objects
+        if "payoff_cadence" in data and isinstance(data["payoff_cadence"], dict):
+            data["payoff_cadence"] = PayoffCadence(**data["payoff_cadence"])
+        if "pressure_limits" in data and isinstance(data["pressure_limits"], dict):
+            data["pressure_limits"] = PressureLimits(**data["pressure_limits"])
+
+        return GenreContract(**data)
+    except (json.JSONDecodeError, Exception) as e:
+        # Fallback to stub mode on error
+        return _generate_stub_genre_contract(launch_profile, genre_profile)
+
+
+def check_project_ready_for_production(
+    project_id: str,
+    repo: Any,
+) -> bool:
+    """Check if a project is ready for chapter production.
+
+    A project is ready if it has:
+    1. A launch_profile in project_creative_contracts
+    2. A genre_contract in project_creative_contracts
+    3. The genre_contract has approved=True in its contract_data JSON
+
+    Args:
+        project_id: Project identifier
+        repo: Repository instance with creative contracts methods
+
+    Returns:
+        True if project is ready for production
+    """
+    try:
+        # Check for launch profile
+        launch_profile_row = repo.get_creative_contract(project_id, "launch_profile")
+        if not launch_profile_row:
+            return False
+
+        # Check for genre contract
+        genre_contract_row = repo.get_creative_contract(project_id, "genre_contract")
+        if not genre_contract_row:
+            return False
+
+        # Parse contract_data JSON to check approved field
+        contract_data_str = genre_contract_row.get("contract_data", "{}")
+        if isinstance(contract_data_str, str):
+            contract_data = json.loads(contract_data_str)
+        else:
+            contract_data = contract_data_str
+
+        # Check if genre contract is approved
+        if not contract_data.get("approved", False):
+            return False
+
+        return True
+    except Exception:
+        return False
