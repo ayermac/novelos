@@ -21,6 +21,7 @@ from .conditions import (
     route_after_agent,
     route_after_brief_validation,
     route_after_memory_curator,
+    route_after_rhythm_budget,
     route_by_chapter_status,
     route_by_revision_type,
     route_by_review_result,
@@ -96,6 +97,7 @@ def build_graph(
         graph.add_node("task_discovery", lambda s: nodes.task_discovery_node(s, repo))
         graph.add_node("planner", runners["planner"])
         graph.add_node("brief_validation", lambda s: nodes.brief_validation_node(s))
+        graph.add_node("rhythm_budget_preflight", lambda s: nodes.rhythm_budget_preflight_node(s, repo))
         graph.add_node("screenwriter", runners["screenwriter"])
         graph.add_node("author", runners["author"])
         graph.add_node("polisher", runners["polisher"])
@@ -103,6 +105,7 @@ def build_graph(
         graph.add_node("memory_curator", runners["memory_curator"])
         graph.add_node("publisher", lambda s: nodes.publisher_node(s, repo))
         graph.add_node("awaiting_publish", lambda s: nodes.awaiting_publish_node(s, repo))  # v5.3.0
+        graph.add_node("creative_ledger_curator", lambda s: nodes.creative_ledger_curator_node(s, repo))
         graph.add_node("revision_router", lambda s: nodes.revision_router_node(s, repo))
         graph.add_node("human_review", lambda s: nodes.human_review_node(s, repo))
         graph.add_node("archive", lambda s: nodes.archive_node(s, repo))
@@ -123,6 +126,10 @@ def build_graph(
         graph.add_node(
             "brief_validation",
             lambda s: nodes.brief_validation_node(s),
+        )
+        graph.add_node(
+            "rhythm_budget_preflight",
+            lambda s: nodes.rhythm_budget_preflight_node(s, repo),
         )
         graph.add_node(
             "screenwriter",
@@ -152,6 +159,10 @@ def build_graph(
             "awaiting_publish",
             lambda s: nodes.awaiting_publish_node(s, repo),
         )  # v5.3.0
+        graph.add_node(
+            "creative_ledger_curator",
+            lambda s: nodes.creative_ledger_curator_node(s, repo),
+        )
         graph.add_node("revision_router", lambda s: nodes.revision_router_node(s, repo))
         graph.add_node(
             "human_review",
@@ -197,6 +208,13 @@ def build_graph(
     graph.add_conditional_edges(
         "brief_validation",
         route_after_brief_validation,
+        {"rhythm_budget_preflight": "rhythm_budget_preflight", "planner": "planner", "human_review": "human_review"},
+    )
+    
+    # v6.9.0: Rhythm budget preflight - check rhythm metrics before screenwriter
+    graph.add_conditional_edges(
+        "rhythm_budget_preflight",
+        route_after_rhythm_budget,
         {"screenwriter": "screenwriter", "planner": "planner", "human_review": "human_review"},
     )
     graph.add_conditional_edges(
@@ -253,8 +271,9 @@ def build_graph(
         },
     )
 
-    # Terminal nodes
-    graph.add_edge("publisher", "archive")
+    # v6.9.0: After publisher, update creative ledgers before archive
+    graph.add_edge("publisher", "creative_ledger_curator")
+    graph.add_edge("creative_ledger_curator", "archive")
     graph.add_edge("archive", END)
     graph.add_edge("awaiting_publish", END)  # v5.3.0: Real mode terminal
     graph.add_edge("human_review", END)

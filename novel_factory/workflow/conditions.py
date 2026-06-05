@@ -231,18 +231,41 @@ def route_after_brief_validation(state: FactoryState) -> str:
     
     v6.9.0: Brief validation checks Tier 1 fields are present.
     If missing, routes back to planner for revision.
-    If valid, proceeds to screenwriter.
+    If valid, proceeds to rhythm budget preflight.
     """
     if state.get("requires_human") or state.get("error"):
         return "human_review"
     
     # Check if brief validation passed
     if state.get("brief_validated"):
-        return "screenwriter"
+        return "rhythm_budget_preflight"
     
     # Check for revision reason
     revision_reason = state.get("revision_reason", "")
     if "missing_tier1_fields" in revision_reason or "missing_chapter_brief" in revision_reason:
+        return "planner"
+    
+    # Default: proceed to rhythm budget
+    return "rhythm_budget_preflight"
+
+
+def route_after_rhythm_budget(state: FactoryState) -> str:
+    """Route after rhythm budget preflight: if blocking issues, go back to planner.
+    
+    v6.9.0: Rhythm budget checks pacing and narrative metrics.
+    If blocking issues detected, routes back to planner for brief revision.
+    If passed, proceeds to screenwriter.
+    """
+    if state.get("requires_human") or state.get("error"):
+        return "human_review"
+    
+    # Check if rhythm budget passed
+    if state.get("rhythm_budget_passed"):
+        return "screenwriter"
+    
+    # Check for rhythm budget blocking
+    revision_reason = state.get("revision_reason", "")
+    if "rhythm_budget_blocked" in revision_reason:
         return "planner"
     
     # Default: proceed to screenwriter

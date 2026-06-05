@@ -32,6 +32,7 @@ from .desktop import router as desktop_router
 from .quality_diagnosis import router as quality_diagnosis_router
 from .creative_contracts import router as creative_contracts_router
 from .chapter_briefs import router as chapter_briefs_router
+from .ledgers import router as ledgers_router
 
 __all__ = [
     "health_router",
@@ -66,4 +67,5 @@ __all__ = [
     "quality_diagnosis_router",
     "creative_contracts_router",
     "chapter_briefs_router",
+    "ledgers_router",
 ]

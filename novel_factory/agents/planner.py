@@ -144,6 +144,16 @@ class PlannerAgent(BaseAgent):
         if style_ctx:
             parts.append(style_ctx)
 
+        # v6.9.0: Creative ledger context injection
+        try:
+            from ..context.ledger_context import load_ledgers_for_planner, format_ledger_context_for_prompt
+            ledgers = load_ledgers_for_planner(self.repo, project_id, chapter_number)
+            ledger_context = format_ledger_context_for_prompt(ledgers)
+            if ledger_context:
+                parts.append(ledger_context)
+        except Exception as e:
+            logger.warning(f"Failed to load ledger context: {e}")
+
         return "\n\n".join(parts)
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:

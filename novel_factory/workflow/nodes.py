@@ -1348,3 +1348,121 @@ def brief_validation_node(state: FactoryState) -> dict:
         "chapter_brief": filled_brief,
         "brief_validated": True,
     }
+
+
+# ── Rhythm Budget Preflight Node (v6.9.0) ────────────────────────────────
+
+
+def rhythm_budget_preflight_node(state: FactoryState, repo: Repository) -> dict:
+    """Rhythm budget preflight check before screenwriter.
+
+    Runs deterministic rhythm checks on the chapter brief and previous chapters.
+    If blocking issues detected, routes back to planner for brief revision.
+    """
+    logger = logging.getLogger(__name__)
+
+    project_id = state.get("project_id")
+    chapter_number = state.get("chapter_number", 0)
+
+    if not project_id or not chapter_number:
+        logger.warning("Rhythm budget preflight: missing project_id or chapter_number")
+        return {"rhythm_budget_passed": True}  # Allow to proceed
+
+    # Get chapter brief
+    chapter_brief = state.get("chapter_brief", {})
+    if not chapter_brief:
+        logger.warning("Rhythm budget preflight: no chapter brief found")
+        return {"rhythm_budget_passed": True}  # Allow to proceed
+
+    # Get previous chapters for rhythm analysis
+    try:
+        previous_chapters = []
+        for i in range(max(1, chapter_number - 10), chapter_number):
+            chapter = repo.get_chapter(project_id, i)
+            if chapter:
+                previous_chapters.append(chapter)
+    except Exception as e:
+        logger.warning(f"Failed to load previous chapters: {e}")
+        previous_chapters = []
+
+    # Get genre contract for custom thresholds
+    genre_contract = None
+    try:
+        contract_data = repo.get_creative_contract(project_id, "genre_contract")
+        if contract_data:
+            import json
+            genre_contract = json.loads(contract_data.get("contract_data", "{}"))
+    except Exception:
+        pass
+
+    # Run deterministic rhythm budget evaluation
+    from ..quality.rhythm_budget import evaluate_deterministic
+    result = evaluate_deterministic(
+        chapters=previous_chapters,
+        brief=chapter_brief,
+        genre_contract=genre_contract,
+    )
+
+    # Apply genre-specific rules
+    if genre_contract:
+        from ..quality.rhythm_budget import apply_genre_specific_rules
+        result = apply_genre_specific_rules(result, genre_contract)
+
+    if not result.passed:
+        logger.warning(f"Rhythm budget BLOCKED: {result.blocking_reasons}")
+        return {
+            "rhythm_budget_passed": False,
+            "rhythm_budget_result": result.model_dump(),
+            "revision_reason": f"rhythm_budget_blocked: {'; '.join(result.blocking_reasons)}",
+        }
+
+    if result.warnings:
+        logger.info(f"Rhythm budget warnings: {result.warnings}")
+
+    return {
+        "rhythm_budget_passed": True,
+        "rhythm_budget_result": result.model_dump(),
+    }
+
+
+# ── Creative Ledger Curator Node (v6.9.0) ────────────────────────────────
+
+
+def creative_ledger_curator_node(state: FactoryState, repo: Repository) -> dict:
+    """Update creative ledgers after chapter passes review.
+
+    Runs AFTER publisher (or awaiting_publish) to record chapter
+    contributions to ongoing narrative threads.
+    """
+    _logger = logging.getLogger(__name__)
+
+    project_id = state.get("project_id")
+    chapter_number = state.get("chapter_number", 0)
+
+    if not project_id or not chapter_number:
+        _logger.warning("CreativeLedgerCurator: missing identifiers")
+        return {"ledger_update_result": {"status": "skipped"}}
+
+    # Get chapter content and review data
+    chapter = state.get("chapter", {})
+    content = chapter.get("content", "") if isinstance(chapter, dict) else ""
+    review_data = state.get("quality_gate", {})
+
+    # Create curator instance
+    from ..agents.creative_ledger_curator import CreativeLedgerCurator
+    curator = CreativeLedgerCurator(repo=repo, llm=None)  # LLM not needed for stub mode
+
+    # Update ledgers (synchronous call)
+    try:
+        result = curator._execute({
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "content": content,
+            "review_data": review_data,
+            "workflow_run_id": state.get("workflow_run_id"),
+        })
+    except Exception as e:
+        _logger.warning(f"CreativeLedgerCurator failed: {e}")
+        result = {"ledger_update_result": {"status": "error", "error": str(e)}}
+
+    return result
