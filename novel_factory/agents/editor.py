@@ -30,6 +30,7 @@ from ..quality.editor_strategy import (
 )
 from ..quality.feedback_bridge import build_compact_feedback, format_editor_context
 from ..skills.registry import SkillRegistry
+from ..skills.base import SkillFinding, parse_skill_findings, sort_findings_by_severity
 from ..llm.provider import is_configured_live_provider
 from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.revision_context import normalize_revision_review
@@ -337,17 +338,19 @@ class EditorAgent(BaseAgent):
 
         These are advisory only — they are appended to issues/suggestions but do NOT
         affect pass/fail/score/revision_target.  No LLM calls.
+
+        v6.9.1: Skill IDs now read from registry config instead of hard-coded list.
         """
         if not content or not self.skill_registry:
             return [], []
 
-        skill_ids = [
-            "show-dont-tell",
-            "info-dump-detector",
-            "scene-texture",
-            "dialogue-naturalness",
-        ]
-        all_findings: list[dict[str, Any]] = []
+        try:
+            skill_ids = self.skill_registry.get_skills_for_agent("editor", "advisory")
+        except Exception:
+            logger.warning("Editor: failed to load advisory skills from registry", exc_info=True)
+            return [], []
+
+        all_findings: list[SkillFinding] = []
 
         for skill_id in skill_ids:
             try:
@@ -359,9 +362,8 @@ class EditorAgent(BaseAgent):
                 )
                 if result.get("ok"):
                     data = result.get("data") or {}
-                    for f in data.get("findings", []):
-                        if isinstance(f, dict):
-                            all_findings.append(f)
+                    findings = parse_skill_findings(data)
+                    all_findings.extend(findings)
             except Exception:
                 logger.warning("Editor: advisory skill %s failed", skill_id, exc_info=True)
                 continue
@@ -369,21 +371,15 @@ class EditorAgent(BaseAgent):
         if not all_findings:
             return [], []
 
-        # Severity ordering: critical > high > medium > warning > info
-        severity_order = {"critical": 0, "high": 1, "medium": 2, "warning": 3, "info": 4}
-        all_findings.sort(
-            key=lambda f: severity_order.get(f.get("severity", "info"), 5)
-        )
-
-        # Cap to avoid noise explosion
+        all_findings = sort_findings_by_severity(all_findings)
         capped = all_findings[:3]
 
         issues: list[str] = []
         suggestions: list[str] = []
         for finding in capped:
-            code = finding.get("code", "")
-            message = finding.get("message", "")
-            suggestion = finding.get("suggestion", "")
+            code = finding.code
+            message = finding.message
+            suggestion = finding.suggestion
             if message:
                 issues.append(f"[v6.4质量信号] {code}: {message}")
             if suggestion:
@@ -596,50 +592,91 @@ class EditorAgent(BaseAgent):
         return result
 
     def _run_chapter_seam_check(self, inputs: EditorInputs, output: EditorOutput) -> SeamCheckResult:
-        """Step 4: Chapter seam check.
+        """Step 4: Chapter seam check via skill system (v6.9.1).
 
         Blocking seam issues can enter priority/blocking.
         Advisory seam issues do not hard-block.
         """
-        seam_gate = evaluate_chapter_seam(
-            self.repo, inputs.project_id, inputs.chapter_number, inputs.content
-        )
+        if not self.skill_registry:
+            return SeamCheckResult()
 
-        result = SeamCheckResult(
-            passed=seam_gate.get("pass", True),
-            blocking_count=len(seam_gate.get("blocking_issues", [])),
-            advisory_count=len(seam_gate.get("advisory_issues", [])),
-            blocking_issues=seam_gate.get("blocking_issues", []),
-            advisory_issues=seam_gate.get("advisory_issues", []),
-            suggestions=seam_gate.get("suggestions", []),
-        )
+        try:
+            # Run chapter-seam skill
+            skill_result = self.skill_registry.run_skill(
+                "chapter-seam",
+                {
+                    "content": inputs.content,
+                    "project_id": inputs.project_id,
+                    "chapter_number": inputs.chapter_number,
+                    "_repo": self.repo,
+                },
+                agent="editor",
+                stage="before_review",
+            )
 
-        if not result.passed:
-            output.pass_ = False
-            output.score = min(output.score, 79)
-            output.revision_target = "author"
-            for issue in result.blocking_issues[:3]:
-                note = f"[章间衔接] {issue}"
-                if note not in output.issues:
-                    output.issues.append(note)
-            for suggestion in result.suggestions[:3]:
-                note = f"[章间衔接修复] {suggestion}"
-                if note not in output.suggestions:
-                    output.suggestions.append(note)
-            result.details = {
-                "chapter_seam_fail": True,
-                "message": "; ".join(result.blocking_issues[:3]),
-                "revision_target": "author",
-                "agent": "editor",
-                "workflow_run_id": inputs.workflow_run_id,
-            }
-        else:
-            for issue in result.advisory_issues[:2]:
-                note = f"[章间衔接建议] {issue}"
-                if note not in output.suggestions:
-                    output.suggestions.append(note)
+            if not skill_result.get("ok"):
+                logger.warning("Editor: chapter-seam skill failed: %s", skill_result.get("error"))
+                return SeamCheckResult()
 
-        return result
+            data = skill_result.get("data") or {}
+            findings = data.get("findings") or []
+            
+            # Extract blocking and advisory issues from findings
+            blocking_issues = []
+            advisory_issues = []
+            suggestions = []
+            
+            for finding in findings:
+                severity = finding.get("severity", "info")
+                message = finding.get("message", "")
+                suggestion = finding.get("suggestion", "")
+                
+                if severity == "blocking":
+                    blocking_issues.append(message)
+                elif severity == "warning":
+                    advisory_issues.append(message)
+                else:  # info
+                    if suggestion:
+                        suggestions.append(suggestion)
+
+            result = SeamCheckResult(
+                passed=data.get("passed", True),
+                blocking_count=len(blocking_issues),
+                advisory_count=len(advisory_issues),
+                blocking_issues=blocking_issues,
+                advisory_issues=advisory_issues,
+                suggestions=suggestions,
+            )
+
+            if not result.passed:
+                output.pass_ = False
+                output.score = min(output.score, 79)
+                output.revision_target = "author"
+                for issue in result.blocking_issues[:3]:
+                    note = f"[章间衔接] {issue}"
+                    if note not in output.issues:
+                        output.issues.append(note)
+                for suggestion in result.suggestions[:3]:
+                    note = f"[章间衔接修复] {suggestion}"
+                    if note not in output.suggestions:
+                        output.suggestions.append(note)
+                result.details = {
+                    "chapter_seam_fail": True,
+                    "message": "; ".join(result.blocking_issues[:3]),
+                    "revision_target": "author",
+                    "agent": "editor",
+                    "workflow_run_id": inputs.workflow_run_id,
+                }
+            else:
+                for issue in result.advisory_issues[:2]:
+                    note = f"[章间衔接建议] {issue}"
+                    if note not in output.suggestions:
+                        output.suggestions.append(note)
+
+            return result
+        except Exception:
+            logger.warning("Editor: chapter seam check execution failed", exc_info=True)
+            return SeamCheckResult()
 
     def _apply_review_strategy(
         self,
@@ -862,63 +899,80 @@ class EditorAgent(BaseAgent):
         inputs: EditorInputs,
         output: EditorOutput,
     ) -> Any:
-        """Run deterministic narrative continuity gate (v6.7.9).
+        """Run deterministic narrative continuity gate via skill system (v6.9.1).
 
         Blocking continuity issues override pass_/score and force revision.
         Warning/advisory issues are appended to issues/suggestions but do NOT
         mutate score or pass_ unless the issue is blocking.
         """
-        from ..quality.continuity_gate import evaluate_chapter_continuity, SEVERITY_BLOCKING, SEVERITY_WARNING
+        if not self.skill_registry:
+            return None
 
         try:
-            result = evaluate_chapter_continuity(
-                self.repo,
-                inputs.project_id,
-                inputs.chapter_number,
-                inputs.content,
-                title=inputs.chapter.get("title") if inputs.chapter else None,
+            # Run continuity-gate skill
+            skill_result = self.skill_registry.run_skill(
+                "continuity-gate",
+                {
+                    "content": inputs.content,
+                    "title": inputs.chapter.get("title") if inputs.chapter else "",
+                    "project_id": inputs.project_id,
+                    "chapter_number": inputs.chapter_number,
+                    "_repo": self.repo,
+                },
+                agent="editor",
+                stage="before_review",
             )
+
+            if not skill_result.get("ok"):
+                logger.warning("Editor: continuity-gate skill failed: %s", skill_result.get("error"))
+                return None
+
+            data = skill_result.get("data") or {}
+            findings = data.get("findings") or []
+            
+            # Process findings
+            for finding in findings:
+                severity = finding.get("severity", "info")
+                message = finding.get("message", "")
+                suggestion = finding.get("suggestion", "")
+                code = finding.get("code", "")
+                
+                if severity == "blocking":
+                    output.pass_ = False
+                    output.score = min(output.score, 70)
+                    output.revision_target = output.revision_target or "author"
+                    note = f"[连续性阻断] {message}"
+                    if note not in output.issues:
+                        output.issues.append(note)
+                    if suggestion:
+                        note = f"[连续性修复] {suggestion}"
+                        if note not in output.suggestions:
+                            output.suggestions.append(note)
+                elif severity == "warning":
+                    note = f"[连续性警告] {message}"
+                    if note not in output.issues:
+                        output.issues.append(note)
+                    if suggestion:
+                        note = f"[连续性建议] {suggestion}"
+                        if note not in output.suggestions:
+                            output.suggestions.append(note)
+                else:  # info
+                    if suggestion:
+                        note = f"[连续性建议] {suggestion}"
+                        if note not in output.suggestions:
+                            output.suggestions.append(note)
+
+            return data
         except Exception:
             logger.warning("Editor: continuity gate execution failed", exc_info=True)
             return None
 
-        if result.should_block_publish or result.severity == SEVERITY_BLOCKING:
-            output.pass_ = False
-            output.score = min(output.score, 70)
-            output.revision_target = output.revision_target or "author"
-            for issue in result.issues[:3]:
-                note = f"[连续性阻断] {issue}"
-                if note not in output.issues:
-                    output.issues.append(note)
-            for suggestion in result.suggestions[:3]:
-                note = f"[连续性修复] {suggestion}"
-                if note not in output.suggestions:
-                    output.suggestions.append(note)
-        elif result.severity == SEVERITY_WARNING:
-            # Warning: inject into issues for visibility but do NOT force
-            # score/pass changes; let the Editor strategy decide.
-            for issue in result.issues[:2]:
-                note = f"[连续性警告] {issue}"
-                if note not in output.issues:
-                    output.issues.append(note)
-            for suggestion in result.suggestions[:2]:
-                note = f"[连续性建议] {suggestion}"
-                if note not in output.suggestions:
-                    output.suggestions.append(note)
-        elif result.issues:
-            # Advisory only: these are informational signals that do not indicate
-            # a defect. Placing them in suggestions (not issues) ensures they
-            # don't trigger issue classification or revision routing, but remain
-            # visible to human reviewers.
-            for issue in result.issues[:2]:
-                note = f"[连续性建议] {issue}"
-                if note not in output.suggestions:
-                    output.suggestions.append(note)
-
-        return result
-
     def _run_before_review_skills(self, inputs: EditorInputs, output: EditorOutput) -> None:
-        """Run before_review skill hooks and append findings to output."""
+        """Run before_review skill hooks and append findings to output.
+
+        v6.9.1: Removed hard-coded skill_id branches. All skills now parsed
+        uniformly via ``parse_skill_findings()``.
+        """
         if not self.skill_registry:
             return
 
@@ -955,40 +1009,28 @@ class EditorAgent(BaseAgent):
             if not result.get("data"):
                 continue
 
-            if skill_id == "ai-style-detector":
-                ai_trace_score = result["data"].get("ai_trace_score", 0)
-                ai_issues = result["data"].get("issues", [])
-                if ai_issues:
-                    ai_style_issues = [
-                        f"[质量诊断建议] {issue.get('message', '')}"
-                        for issue in ai_issues
-                        if issue.get("message")
-                    ]
-                    output.issues = output.issues + ai_style_issues
-                if ai_trace_score > 70:
-                    note = f"[质量诊断建议] AI痕迹偏高 (评分: {ai_trace_score})"
-                    if note not in output.suggestions:
-                        output.suggestions.append(note)
+            # v6.9.1: Unified parsing — no special-case branches per skill_id
+            findings = parse_skill_findings(result["data"])
+            if not findings:
+                continue
 
-            elif skill_id == "narrative-quality":
-                narrative_score = result["data"].get("scores", {}).get("overall_score", 0)
-                narrative_issues_list = result["data"].get("issues", [])
-                suggestions = result["data"].get("suggestions", [])
-                if narrative_issues_list:
-                    narrative_issues = [
-                        f"[质量诊断建议] {issue.get('message', '')}"
-                        for issue in narrative_issues_list
-                        if issue.get("message")
-                    ]
-                    output.issues = output.issues + narrative_issues
-                if suggestions:
-                    output.suggestions = output.suggestions + [
-                        f"[质量诊断建议] {suggestion}" for suggestion in suggestions
-                    ]
-                if narrative_score < 50:
-                    note = f"[质量诊断建议] 叙事质量偏低 (评分: {narrative_score})"
-                    if note not in output.suggestions:
-                        output.suggestions.append(note)
+            findings = sort_findings_by_severity(findings)
+
+            for finding in findings:
+                prefix = "[质量诊断]"
+                if finding.severity in ("blocking", "critical"):
+                    msg = f"{prefix} [{finding.code}] {finding.message}" if finding.code else f"{prefix} {finding.message}"
+                    if msg not in output.issues:
+                        output.issues.append(msg)
+                elif finding.severity == "warning":
+                    msg = f"{prefix} [{finding.code}] {finding.message}" if finding.code else f"{prefix} {finding.message}"
+                    if msg not in output.suggestions:
+                        output.suggestions.append(msg)
+                else:  # info
+                    if finding.suggestion:
+                        sugg = f"[质量诊断建议] [{finding.code}] {finding.suggestion}" if finding.code else f"[质量诊断建议] {finding.suggestion}"
+                        if sugg not in output.suggestions:
+                            output.suggestions.append(sugg)
 
     def _run_final_gate(self, inputs: EditorInputs, output: EditorOutput) -> None:
         """Run QualityHub final_gate on passing reviews."""

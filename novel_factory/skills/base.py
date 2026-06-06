@@ -7,6 +7,7 @@ Skills return unified envelope: {ok: bool, error: str|null, data: dict}
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -253,3 +254,85 @@ class ReportSkill(BaseSkill):
         Returns report data to be saved.
         """
         pass
+
+
+# ── v6.9.1: Unified Skill Finding schema ──────────────────────────────
+
+
+@dataclass
+class SkillFinding:
+    """Structured finding returned by a Skill.
+
+    Every skill that performs validation/analysis should emit findings
+    in this format.  ``parse_skill_findings()`` converts raw dicts into
+    this dataclass for uniform downstream processing.
+    """
+
+    severity: str = "info"      # blocking | warning | info
+    code: str = ""              # e.g. "AI_TRACE", "SEAM_BLOCKING"
+    message: str = ""           # human-readable description
+    suggestion: str = ""        # actionable fix advice
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "severity": self.severity,
+            "code": self.code,
+            "message": self.message,
+            "suggestion": self.suggestion,
+        }
+
+
+def parse_skill_findings(data: dict[str, Any]) -> list[SkillFinding]:
+    """Extract a list of ``SkillFinding`` from a skill's ``data`` dict.
+
+    Accepts keys ``findings``, ``issues``, and ``warnings`` with varying
+    formats and normalises them into the canonical ``SkillFinding`` shape.
+    Non-conforming entries are silently skipped so callers don't break on
+    unexpected skill output.
+    """
+    raw_findings: list[Any] = []
+
+    # Primary key used by new skills
+    for f in (data.get("findings") or []):
+        if isinstance(f, dict):
+            raw_findings.append(f)
+        elif isinstance(f, str):
+            raw_findings.append({"message": f, "severity": "info"})
+
+    # Legacy keys from older skills / QualityHub
+    for key, default_severity in [("issues", "blocking"), ("warnings", "warning")]:
+        for f in (data.get(key) or []):
+            if isinstance(f, dict):
+                raw_findings.append(f)
+            elif isinstance(f, str):
+                raw_findings.append({"message": f, "severity": default_severity})
+
+    result: list[SkillFinding] = []
+    for f in raw_findings:
+        message = str(f.get("message", f.get("text", "")))
+        if not message:
+            continue
+        result.append(SkillFinding(
+            severity=str(f.get("severity", "info")),
+            code=str(f.get("code", "")),
+            message=message,
+            suggestion=str(f.get("suggestion", "")),
+        ))
+
+    return result
+
+
+# Severity ordering for sorting: lower number = higher priority
+SEVERITY_ORDER: dict[str, int] = {
+    "blocking": 0,
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "warning": 3,
+    "info": 4,
+}
+
+
+def sort_findings_by_severity(findings: list[SkillFinding]) -> list[SkillFinding]:
+    """Sort findings by severity (blocking first)."""
+    return sorted(findings, key=lambda f: SEVERITY_ORDER.get(f.severity, 5))

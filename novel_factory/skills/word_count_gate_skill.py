@@ -37,32 +37,42 @@ class WordCountGateSkill(ValidatorSkill):
             return {
                 "ok": False,
                 "error": "缺少 text 字段",
-                "data": {"passed": False, "word_count": 0, "target": word_target, "issues": ["正文为空"]},
+                "data": {
+                    "passed": False,
+                    "score": 0,
+                    "findings": [{"severity": "blocking", "code": "EMPTY_TEXT", "message": "正文为空", "suggestion": "请提供章节正文"}],
+                    "summary": "正文为空，无法进行字数检查",
+                },
             }
 
         word_count = count_words(text)
-        issues: list[str] = []
+        findings: list[str] = []
 
         if word_target > 0:
             lower_ok, lower_msg = check_word_count_quality_gate(text, word_target, tolerance_ratio)
             upper_ok, upper_msg = check_word_count_upper_gate(text, word_target, tolerance_ratio)
             if not lower_ok:
-                issues.append(lower_msg)
+                findings.append({"severity": "blocking", "code": "WORD_COUNT_LOW", "message": lower_msg, "suggestion": "请增加正文内容"})
             if not upper_ok:
-                issues.append(upper_msg)
+                findings.append({"severity": "blocking", "code": "WORD_COUNT_HIGH", "message": upper_msg, "suggestion": "请精简正文内容"})
         else:
             lower_ok, upper_ok = True, True
 
         passed = lower_ok and upper_ok
+        score = 100 if passed else 60
+        summary = f"字数检查{'通过' if passed else '未通过'}，当前字数: {word_count}，目标: {word_target}"
+        
         return {
             "ok": passed,
-            "error": "; ".join(issues) if not passed else None,
+            "error": "; ".join([f["message"] for f in findings]) if not passed else None,
             "data": {
                 "passed": passed,
+                "score": score,
+                "findings": findings,
+                "summary": summary,
                 "word_count": word_count,
                 "target": word_target,
                 "lower_bound": int(word_target * (1 - tolerance_ratio)) if word_target else 0,
                 "upper_bound": int(word_target * (1 + tolerance_ratio)) if word_target else 0,
-                "issues": issues,
             },
         }
