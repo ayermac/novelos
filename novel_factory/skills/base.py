@@ -34,6 +34,10 @@ BUILTIN_SKILLS = {
     "ForeshadowingDebtSkill": None,  # v6.8.0
     "OpeningHookChecker": None,  # v6.8.1
     "ExcitementDensityChecker": None,  # v6.8.1
+    "CommercialViabilityChecker": None,  # v6.9.1
+    "PacingProfileChecker": None,  # v6.9.1
+    "CharacterVoiceChecker": None,  # v6.9.1
+    "MysteryIntegrityChecker": None,  # v6.9.1
 }
 
 
@@ -106,6 +110,18 @@ def _get_skill_class(class_name: str):
     elif class_name == "ExcitementDensityChecker":
         from .excitement_density_checker import ExcitementDensityChecker
         return ExcitementDensityChecker
+    elif class_name == "CommercialViabilityChecker":
+        from .commercial_viability_checker import CommercialViabilityChecker
+        return CommercialViabilityChecker
+    elif class_name == "PacingProfileChecker":
+        from .pacing_profile_checker import PacingProfileChecker
+        return PacingProfileChecker
+    elif class_name == "CharacterVoiceChecker":
+        from .character_voice_checker import CharacterVoiceChecker
+        return CharacterVoiceChecker
+    elif class_name == "MysteryIntegrityChecker":
+        from .mystery_integrity_checker import MysteryIntegrityChecker
+        return MysteryIntegrityChecker
 
     return None
 

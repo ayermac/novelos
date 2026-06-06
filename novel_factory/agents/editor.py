@@ -732,8 +732,26 @@ class EditorAgent(BaseAgent):
                 "workflow_run_id": inputs.workflow_run_id,
             }
 
-        # Run before_review skills
-        self._run_before_review_skills(inputs, output)
+        # Run before_review skills and collect aggregation data
+        skill_aggregation = self._run_before_review_skills(inputs, output)
+        skill_scores = skill_aggregation.get("skill_scores", {})
+        blocking_skill_count = skill_aggregation.get("blocking_skill_count", 0)
+        warning_skill_count = skill_aggregation.get("warning_skill_count", 0)
+
+        # Get editor_weights from genre contract
+        editor_weights: dict[str, float] = {}
+        try:
+            project = self.repo.get_project(inputs.project_id)
+            if project and "genre_contract" in project:
+                genre_contract = project["genre_contract"]
+                if isinstance(genre_contract, dict):
+                    editor_weights = genre_contract.get("editor_weights", {})
+        except Exception:
+            logger.warning("Editor: failed to load genre contract for editor_weights", exc_info=True)
+
+        # Calculate skill_weighted_score
+        from ..quality.editor_strategy import aggregate_skill_scores
+        skill_weighted_score = aggregate_skill_scores(skill_scores, editor_weights)
 
         # Classify issues for revision_target (overrides LLM self-report)
         # But NOT if a specific gate (word count, seam) already set a target
@@ -777,6 +795,11 @@ class EditorAgent(BaseAgent):
             seam_advisory_count=seam_result.advisory_count,
             retry_count=inputs.retry_count,
             max_retries=inputs.max_retries,
+            skill_weighted_score=skill_weighted_score,
+            blocking_skill_count=blocking_skill_count,
+            warning_skill_count=warning_skill_count,
+            skill_scores=skill_scores,
+            editor_weights=editor_weights,
         )
         strategy_decision = classify_editor_result(policy_input)
 
@@ -795,6 +818,11 @@ class EditorAgent(BaseAgent):
                 seam_advisory_count=seam_result.advisory_count,
                 retry_count=inputs.retry_count,
                 max_retries=inputs.max_retries,
+                skill_weighted_score=skill_weighted_score,
+                blocking_skill_count=blocking_skill_count,
+                warning_skill_count=warning_skill_count,
+                skill_scores=skill_scores,
+                editor_weights=editor_weights,
             )
 
         if strategy_decision.pass_ and not output.pass_:
@@ -967,14 +995,15 @@ class EditorAgent(BaseAgent):
             logger.warning("Editor: continuity gate execution failed", exc_info=True)
             return None
 
-    def _run_before_review_skills(self, inputs: EditorInputs, output: EditorOutput) -> None:
+    def _run_before_review_skills(self, inputs: EditorInputs, output: EditorOutput) -> dict[str, Any]:
         """Run before_review skill hooks and append findings to output.
 
         v6.9.1: Removed hard-coded skill_id branches. All skills now parsed
-        uniformly via ``parse_skill_findings()``.
+        uniformly via ``parse_skill_findings()``. Returns skill aggregation data
+        for use in strategy layer.
         """
         if not self.skill_registry:
-            return
+            return {}
 
         skill_payload: dict[str, Any] = {"text": inputs.content, "chapter_number": inputs.chapter_number}
         try:
@@ -998,6 +1027,11 @@ class EditorAgent(BaseAgent):
             skill_type_hint="validator",
         )
 
+        # Collect skill scores and counts for strategy layer
+        skill_scores: dict[str, float] = {}
+        blocking_skill_count = 0
+        warning_skill_count = 0
+
         for skill_item in before_review_hook.skill_results:
             skill_id = skill_item.get("skill_id", "")
             result = {"ok": skill_item.get("ok"), "error": skill_item.get("error"), "data": skill_item.get("data") or {}}
@@ -1016,7 +1050,18 @@ class EditorAgent(BaseAgent):
 
             findings = sort_findings_by_severity(findings)
 
+            # Collect skill score if available
+            skill_score = result["data"].get("score")
+            if skill_score is not None:
+                skill_scores[skill_id] = float(skill_score)
+
+            # Count blocking and warning findings
             for finding in findings:
+                if finding.severity in ("blocking", "critical"):
+                    blocking_skill_count += 1
+                elif finding.severity == "warning":
+                    warning_skill_count += 1
+
                 prefix = "[质量诊断]"
                 if finding.severity in ("blocking", "critical"):
                     msg = f"{prefix} [{finding.code}] {finding.message}" if finding.code else f"{prefix} {finding.message}"
@@ -1031,6 +1076,12 @@ class EditorAgent(BaseAgent):
                         sugg = f"[质量诊断建议] [{finding.code}] {finding.suggestion}" if finding.code else f"[质量诊断建议] {finding.suggestion}"
                         if sugg not in output.suggestions:
                             output.suggestions.append(sugg)
+
+        return {
+            "skill_scores": skill_scores,
+            "blocking_skill_count": blocking_skill_count,
+            "warning_skill_count": warning_skill_count,
+        }
 
     def _run_final_gate(self, inputs: EditorInputs, output: EditorOutput) -> None:
         """Run QualityHub final_gate on passing reviews."""

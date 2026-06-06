@@ -95,15 +95,17 @@ def test_continuity_gate_title_only(skill_registry):
     skill = skill_registry.get_skill("continuity-gate")
     result = skill.run({"content": "some text", "title": "第5章 三家世界五百强企业宣布无"})
     assert "data" in result
-    assert result["data"]["severity"] == "warning"
+    assert result["data"]["passed"] is False
+    assert len(result["data"]["findings"]) > 0
+    assert any(f["severity"] == "warning" for f in result["data"]["findings"])
 
 
 def test_continuity_gate_title_truncation(skill_registry):
     """ContinuityGateSkill detects truncated title."""
     skill = skill_registry.get_skill("continuity-gate")
     result = skill.run({"content": "some text", "title": "第5章 三家世界五百强企业宣布无"})
-    issues = result["data"]["issues"]
-    assert any("截断" in i or "残缺" in i for i in issues)
+    findings = result["data"]["findings"]
+    assert any("截断" in f["message"] or "残缺" in f["message"] for f in findings)
 
 
 # ── D. ChapterSeamSkill ─────────────────────────────────────────
@@ -170,7 +172,7 @@ def test_word_count_gate_too_short(skill_registry):
     result = skill.run({"text": "太短了", "word_target": 1000, "tolerance_ratio": 0.25})
     assert result["ok"] is False
     assert result["data"]["passed"] is False
-    assert len(result["data"]["issues"]) > 0
+    assert len(result["data"]["findings"]) > 0
 
 
 def test_word_count_gate_no_target(skill_registry):

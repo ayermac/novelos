@@ -101,14 +101,14 @@ class TestAITraceDetection:
         """AI trace pattern is detected."""
         text = "他的深邃的目光扫过房间。"
         result = checker.run({"text": text, "style_bible": strict_bible.to_storage_dict()})
-        assert any(i["rule_type"] == "ai_trace" for i in result["data"]["issues"])
+        assert any(f["code"] == "AI_TRACE" for f in result["data"]["findings"])
 
     def test_no_ai_trace(self, checker, strict_bible):
         """Clean text has no AI trace issues."""
         text = "他看了一眼房间，皱了皱眉。"
         result = checker.run({"text": text, "style_bible": strict_bible.to_storage_dict()})
-        ai_issues = [i for i in result["data"]["issues"] if i["rule_type"] == "ai_trace"]
-        assert len(ai_issues) == 0
+        ai_findings = [f for f in result["data"]["findings"] if f["code"] == "AI_TRACE"]
+        assert len(ai_findings) == 0
 
 
 class TestSentenceRules:
@@ -119,7 +119,7 @@ class TestSentenceRules:
         # Create a sentence without punctuation marks (>80 chars)
         long_sentence = "这是一段非常非常长的句子" + "包含了大量的文字描述和详细说明" * 10
         result = checker.run({"text": long_sentence, "style_bible": strict_bible.to_storage_dict()})
-        assert any(i["rule_type"] == "rule_violation" and "超长句" in i["description"] for i in result["data"]["issues"])
+        assert any(f["code"] == "RULE_VIOLATION" and "超长句" in f["message"] for f in result["data"]["findings"])
 
 
 class TestParagraphRules:
@@ -129,7 +129,7 @@ class TestParagraphRules:
         """Very long paragraph is detected."""
         long_para = "这是一段中等长度的句子。" * 60  # >500 chars in one paragraph
         result = checker.run({"text": long_para, "style_bible": strict_bible.to_storage_dict()})
-        assert any(i["rule_type"] == "rule_violation" and "超长段落" in i["description"] for i in result["data"]["issues"])
+        assert any(f["code"] == "RULE_VIOLATION" and "超长段落" in f["message"] for f in result["data"]["findings"])
 
 
 class TestChapterRules:
