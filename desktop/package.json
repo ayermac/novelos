@@ -1,7 +1,7 @@
 {
   "name": "novelos-desktop",
-  "version": "6.7.6",
-  "description": "Novelos Desktop Client — v6.7.6 Workflow Recovery CTA Priority Fix",
+  "version": "6.9.0",
+  "description": "Novelos Desktop Client — v6.9.0 Creative Factory Capability Upgrade",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",

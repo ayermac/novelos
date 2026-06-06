@@ -35,6 +35,8 @@ CANONICAL_WORKFLOW_NODES: tuple[dict[str, str], ...] = (
     {"node_name": "health_check", "label": "预检", "node_group": "system", "node_type": "system"},
     {"node_name": "task_discovery", "label": "任务识别", "node_group": "system", "node_type": "system"},
     {"node_name": "planner", "label": "规划", "node_group": "creative_agent", "node_type": "creative_agent"},
+    {"node_name": "brief_validation", "label": "规划校验", "node_group": "system", "node_type": "system"},  # v6.9.0
+    {"node_name": "rhythm_budget_preflight", "label": "节奏预检", "node_group": "system", "node_type": "system"},  # v6.9.0
     {"node_name": "screenwriter", "label": "编剧", "node_group": "creative_agent", "node_type": "creative_agent"},
     {"node_name": "author", "label": "执笔", "node_group": "creative_agent", "node_type": "creative_agent"},
     {"node_name": "polisher", "label": "润色", "node_group": "creative_agent", "node_type": "creative_agent"},
@@ -42,6 +44,7 @@ CANONICAL_WORKFLOW_NODES: tuple[dict[str, str], ...] = (
     {"node_name": "editor_lenses", "label": "专项审核", "node_group": "creative_agent", "node_type": "creative_agent"},  # v6.9.0
     {"node_name": "memory_curator", "label": "记忆整理", "node_group": "support_agent", "node_type": "support_agent"},
     {"node_name": "publisher", "label": "发布", "node_group": "terminal", "node_type": "terminal"},
+    {"node_name": "creative_ledger_curator", "label": "创作台账", "node_group": "support_agent", "node_type": "support_agent"},  # v6.9.0
     {"node_name": "awaiting_publish", "label": "等待发布", "node_group": "terminal", "node_type": "terminal"},
     {"node_name": "archive", "label": "归档", "node_group": "terminal", "node_type": "terminal"},
     {"node_name": "revision_router", "label": "返修路由", "node_group": "router", "node_type": "router"},

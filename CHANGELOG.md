@@ -12,6 +12,22 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.9.0 - Creative Factory Capability Upgrade
+
+Date: 2026-06-05
+
+Key changes:
+
+- **创作合同系统**: 新增 `ProjectLaunchProfile`、`GenreContract`、`GenreProfile` 模型，项目启动前必须生成并审批合同
+- **章节 Brief 合同**: Planner 产出结构化 `ChapterBrief`（Tier 1/2 字段），下游 Screenwriter/Author 受 brief 约束
+- **节奏预算**: 6 个确定性指标 + 4 条阻塞规则 + genre 特定规则，在章节生成前预检
+- **创作台账**: 7 个专用台账（ReaderPromise、PowerGrowth、CharacterArc、MysteryReveal、Conflict、Payoff、StyleFatigue），增量追踪叙事元素
+- **专业编辑视角**: 7 个并行 editor lens（type/continuity/commercial/pacing/character/mystery/style）+ chief editor 汇总决策，9 类修订路由
+- **前端创作合同模块**: 项目设置页新增合同查看/审批界面
+- **API 端点**: 合同 CRUD、章节 brief、编辑报告、台账查询
+- **CLI 命令**: `novelos contract show/approve`
+- **166 新增测试**: 覆盖 rhythm_budget、editor_lenses、genesis_contract、chapter_brief、creative_ledgers、e2e 工作流
+
 ## v6.7.6 - Workflow Recovery CTA Priority Fix
 
 Date: 2026-05-27

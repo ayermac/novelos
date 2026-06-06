@@ -30,3 +30,4 @@ novel_factory = ["db/schema/*.sql", "db/migrations/*.sql", "config/*.yaml", "*.y
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-n auto"
