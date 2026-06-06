@@ -1001,6 +1001,9 @@ class EditorAgent(BaseAgent):
         v6.9.1: Removed hard-coded skill_id branches. All skills now parsed
         uniformly via ``parse_skill_findings()``. Returns skill aggregation data
         for use in strategy layer.
+
+        v6.9.1 Phase 4: Dynamic skill scheduling — resolve_active_skills()
+        filters the skill list based on genre, chapter position, and sampling.
         """
         if not self.skill_registry:
             return {}
@@ -1014,6 +1017,34 @@ class EditorAgent(BaseAgent):
             logger.warning("Editor: failed to load style_bible for skill payload", exc_info=True)
 
         project_skill_overrides = self._get_project_skill_overrides(inputs.project_id)
+
+        # v6.9.1 Phase 4: Dynamic skill scheduling
+        # Get genre contract and full skill list, then filter
+        try:
+            from ..skills.editor_skill_resolver import resolve_active_skills
+            project = self.repo.get_project(inputs.project_id)
+            genre_contract = project.get("genre_contract") if project else None
+            full_skill_ids = self.skill_registry.get_skills_for_agent(
+                "editor", "before_review", project_overrides=project_skill_overrides,
+            )
+            active_skill_ids = resolve_active_skills(
+                project_id=inputs.project_id,
+                chapter_number=inputs.chapter_number,
+                genre_contract=genre_contract,
+                skill_ids=full_skill_ids,
+                repo=self.repo,
+            )
+            skipped_ids = set(full_skill_ids) - set(active_skill_ids)
+            if skipped_ids:
+                logger.info("Editor: skipped %d skills via resolver: %s", len(skipped_ids), skipped_ids)
+                # Disable skipped skills via project_overrides["skills"][skill_id]
+                if not project_skill_overrides:
+                    project_skill_overrides = {}
+                skills_overrides = project_skill_overrides.setdefault("skills", {})
+                for sid in skipped_ids:
+                    skills_overrides[sid] = {"enabled": False}
+        except Exception:
+            logger.warning("Editor: skill resolver failed, running all skills", exc_info=True)
 
         before_review_hook = run_agent_skills(
             repo=self.repo,
