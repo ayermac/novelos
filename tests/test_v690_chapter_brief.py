@@ -9,7 +9,6 @@ Covers:
 
 from __future__ import annotations
 
-import pytest
 
 from novel_factory.models.chapter_contracts import (
     ChapterBrief,
@@ -101,12 +100,13 @@ class TestValidateChapterBrief:
         assert "chapter_goal" in missing
 
     def test_empty_string_passes(self):
-        """Empty string is still a key present, so it passes validation."""
+        """Empty string for a Tier 1 field is treated as missing (v6.9.0 stricter validation)."""
         brief = _full_tier1_brief()
         brief["chapter_goal"] = ""
         is_valid, missing = validate_chapter_brief(brief)
-        # Empty string is present as a key, so it should not be in missing
-        assert "chapter_goal" not in missing
+        # v6.9.0: empty values for required Tier 1 fields are now flagged as missing
+        assert is_valid is False
+        assert "chapter_goal" in missing
 
 
 class TestFillMissingTier2Fields:
@@ -180,3 +180,60 @@ class TestChapterBriefModel:
         assert "tier2" in data
         restored = ChapterBrief(**data)
         assert restored.tier1.chapter_goal == brief.tier1.chapter_goal
+
+
+class TestNestedShapeSupport:
+    """v6.9.0: validator must handle nested {tier1, tier2} dicts from ChapterBrief.model_dump()."""
+
+    def test_validate_nested_brief_passes(self):
+        brief_model = ChapterBrief(
+            tier1=ChapterBriefTier1(
+                chapter_goal="追查灵力",
+                reader_payoff="揭真相",
+                protagonist_agency="主动",
+                forbidden_moves=["不开挂"],
+            ),
+        )
+        is_valid, missing = validate_chapter_brief(brief_model.model_dump())
+        assert is_valid is True
+        assert missing == []
+
+    def test_validate_nested_brief_missing_tier1_field(self):
+        brief_model = ChapterBrief(
+            tier1=ChapterBriefTier1(
+                chapter_goal="目标",
+                # reader_payoff missing (defaults to "")
+                protagonist_agency="主动",
+                forbidden_moves=["x"],
+            ),
+        )
+        is_valid, missing = validate_chapter_brief(brief_model.model_dump())
+        assert is_valid is False
+        assert "reader_payoff" in missing
+
+    def test_fill_tier2_preserves_nested_shape(self):
+        brief_model = ChapterBrief(
+            tier1=ChapterBriefTier1(chapter_goal="g", reader_payoff="p",
+                                     protagonist_agency="a", forbidden_moves=["x"]),
+        )
+        filled = fill_missing_tier2_fields(brief_model.model_dump(), _sample_genre_profile())
+        # Should remain nested
+        assert "tier1" in filled and "tier2" in filled
+        assert "scene_count_target" in filled["tier2"]
+
+    def test_fill_tier2_flat_shape_unchanged(self):
+        brief = _full_tier1_brief()
+        filled = fill_missing_tier2_fields(brief, _sample_genre_profile())
+        # Should remain flat
+        assert "tier1" not in filled
+        assert "scene_count_target" in filled
+
+    def test_validate_and_fill_round_trip_nested(self):
+        brief_dict = ChapterBrief(
+            tier1=ChapterBriefTier1(chapter_goal="g", reader_payoff="p",
+                                     protagonist_agency="a", forbidden_moves=["x"]),
+        ).model_dump()
+        is_valid, filled, missing = validate_and_fill_brief(brief_dict, _sample_genre_profile())
+        assert is_valid is True
+        assert missing == []
+        assert "tier1" in filled and "tier2" in filled

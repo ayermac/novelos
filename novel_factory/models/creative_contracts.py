@@ -6,7 +6,45 @@ genre expectations, and creative strategy before chapter production begins.
 
 from __future__ import annotations
 
+from typing import TypedDict
+
 from pydantic import BaseModel, Field
+
+
+# ── Typed sub-shapes for GenreProfile dicts ─────────────────────
+
+
+class ChapterRhythmDefaults(TypedDict, total=False):
+    """Default rhythm pacing parameters loaded from a genre profile YAML."""
+
+    minor_payoff_frequency: int
+    visible_upgrade_frequency: int
+    public_reversal_frequency: int
+    max_consecutive_pressure: int
+    max_passive_protagonist: int
+    max_payoff_gap: int
+    max_visible_upgrade_gap: int
+
+
+class EditorWeightProfile(TypedDict, total=False):
+    """Editor weighting profile for ChiefEditor aggregation."""
+
+    type: int
+    commercial: int
+    pacing: int
+    character: int
+    mystery: int
+    style: int
+    continuity: int
+    logic: int
+
+
+class ProfileSpecificRules(TypedDict, total=False):
+    """Genre-specific deterministic rules."""
+
+    must_have_tropes: list[str]
+    avoid_patterns: list[str]
+    style_constraints: list[str]
 
 
 # ── Genre Profile (config-driven template) ──────────────────────
@@ -19,7 +57,7 @@ class GenreProfile(BaseModel):
     for a specific genre lane. Does NOT contain project-specific overrides.
     """
 
-    profile_id: str
+    profile_id: str = "generic"
     default_reader_expectations: list[str] = Field(default_factory=list)
     default_payoff_loop: str = ""
     opening_requirements: list[str] = Field(default_factory=list)

@@ -9,14 +9,13 @@ import json
 import logging
 from typing import Any
 
-from fastapi import APIRouter, Request, HTTPException
+from fastapi import APIRouter, Request
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ...models.creative_contracts import (
     ProjectLaunchProfile,
     GenreContract,
-    GenreProfile,
 )
 from ...quality.genesis_quality_gate import (
     generate_launch_profile,
@@ -244,12 +243,12 @@ async def generate_creative_contracts(
         repo.upsert_creative_contract(
             project_id=project_id,
             contract_type="launch_profile",
-            data=_serialize_model(launch_profile),
+            contract_data=_serialize_model(launch_profile),
         )
         repo.upsert_creative_contract(
             project_id=project_id,
             contract_type="genre_contract",
-            data=_serialize_model(genre_contract),
+            contract_data=_serialize_model(genre_contract),
         )
     except Exception as e:
         logger.error(f"Failed to save creative contracts: {e}")
@@ -318,7 +317,7 @@ async def approve_creative_contracts(
         repo.upsert_creative_contract(
             project_id=project_id,
             contract_type="genre_contract",
-            data=contract_data,
+            contract_data=contract_data,
         )
     except Exception as e:
         logger.error(f"Failed to approve genre contract: {e}")

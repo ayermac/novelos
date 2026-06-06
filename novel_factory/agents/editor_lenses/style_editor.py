@@ -1,6 +1,10 @@
 """Style Editor Lens — prose quality, AI traces, and style fatigue.
 
 Checks for repetitive imagery, AI template phrases, and awkward phrasing.
+
+AI phrase and pattern lists are exposed as module constants so callers
+can extend or replace them per project. The lens reads the *current*
+module-level constants on each call so monkey-patching for tests works.
 """
 
 from __future__ import annotations
@@ -14,8 +18,9 @@ from .base_lens import BaseEditorLens
 
 logger = logging.getLogger(__name__)
 
-# AI template phrases (death penalty in existing editor)
-_AI_PHRASES = [
+# Default AI template phrases (death penalty in existing editor).
+# Override or extend by mutating this list, or pass a context override.
+DEFAULT_AI_PHRASES: list[str] = [
     "嘴角微扬", "嘴角微微上扬", "冷笑", "嗤笑", "嘴角勾起一抹",
     "不禁", "不由得", "下意识", "本能地",
     "心中暗想", "心中暗道", "暗自思忖",
@@ -23,12 +28,16 @@ _AI_PHRASES = [
     "一股暖流涌上心头", "一阵暖意",
 ]
 
-# Repetitive imagery patterns
-_REPETITIVE_IMAGERY = [
+# Default repetitive imagery patterns (regex, description).
+DEFAULT_REPETITIVE_IMAGERY: list[tuple[str, str]] = [
     (r"如同.{2,6}一般", "比喻重复"),
     (r"仿佛.{2,6}似的", "比喻重复"),
     (r"宛如.{2,6}一样", "比喻重复"),
 ]
+
+# Backward-compat aliases (some tests/callers may import these names).
+_AI_PHRASES = DEFAULT_AI_PHRASES
+_REPETITIVE_IMAGERY = DEFAULT_REPETITIVE_IMAGERY
 
 
 class StyleEditorLens(BaseEditorLens):
@@ -52,9 +61,13 @@ class StyleEditorLens(BaseEditorLens):
                 summary="内容过短，跳过文风检查",
             )
 
+        # Allow per-call overrides from context (e.g. project-specific lists)
+        ai_phrases = context.get("ai_phrases") or DEFAULT_AI_PHRASES
+        imagery_patterns = context.get("repetitive_imagery") or DEFAULT_REPETITIVE_IMAGERY
+
         # Check AI template phrases (death penalty)
         ai_phrase_count = 0
-        for phrase in _AI_PHRASES:
+        for phrase in ai_phrases:
             count = content.count(phrase)
             if count > 0:
                 ai_phrase_count += count
@@ -66,7 +79,7 @@ class StyleEditorLens(BaseEditorLens):
                 ))
 
         # Check repetitive imagery
-        for pattern, desc in _REPETITIVE_IMAGERY:
+        for pattern, desc in imagery_patterns:
             matches = re.findall(pattern, content)
             if len(matches) > 2:
                 findings.append(self._finding(

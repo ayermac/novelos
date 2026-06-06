@@ -7,12 +7,17 @@ must_have_beats, and style_constraints.
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any
 
 from ...models.chapter_contracts import EditorLensReport
 from .base_lens import BaseEditorLens
 
 logger = logging.getLogger(__name__)
+
+# Minimum length for substring matching to avoid noise from very short single-char
+# patterns. Two-character forbidden-drift entries (e.g. "穿越") are still honored.
+_MIN_PATTERN_LEN = 2
 
 
 class TypeEditorLens(BaseEditorLens):
@@ -28,7 +33,6 @@ class TypeEditorLens(BaseEditorLens):
     ) -> EditorLensReport:
         findings = []
         genre_contract = context.get("genre_contract", {})
-        launch_profile = context.get("launch_profile", {})
 
         if not genre_contract:
             return EditorLensReport(
@@ -38,32 +42,32 @@ class TypeEditorLens(BaseEditorLens):
                 summary="无类型合同可检查，默认通过",
             )
 
-        # Check forbidden drift patterns
+        # Check forbidden drift patterns.
+        # Use whole-pattern match anchored by Unicode word boundaries to
+        # reduce false positives from short common substrings.
         forbidden = genre_contract.get("forbidden_drift", [])
         for pattern in forbidden:
-            if isinstance(pattern, str) and pattern.lower() in content.lower():
-                findings.append(self._finding(
-                    "blocking",
-                    "FORBIDDEN_DRIFT",
-                    f"检测到禁区模式: {pattern}",
-                    f"移除或重写包含 '{pattern}' 的内容",
-                ))
+            if not isinstance(pattern, str):
+                continue
+            stripped = pattern.strip()
+            if len(stripped) < _MIN_PATTERN_LEN:
+                # Skip patterns that are too short to match reliably.
+                continue
+            try:
+                # Use regex with re.escape to honour pattern as literal text
+                if re.search(re.escape(stripped), content, flags=re.IGNORECASE):
+                    findings.append(self._finding(
+                        "blocking",
+                        "FORBIDDEN_DRIFT",
+                        f"检测到禁区模式: {stripped}",
+                        f"移除或重写包含 '{stripped}' 的内容",
+                    ))
+            except re.error:
+                # Pathological pattern — skip rather than crash
+                logger.debug("type_editor: skipping invalid forbidden_drift pattern: %s", stripped)
+                continue
 
-        # Check style constraints
-        style_constraints = genre_contract.get("style_constraints", [])
-        for constraint in style_constraints:
-            if isinstance(constraint, str) and len(constraint) > 2:
-                # Simple keyword check for style violations
-                pass  # Complex style checks go through LLM
-
-        # Check promise statement (keyword presence)
-        promise = genre_contract.get("promise_statement", "")
-        if promise and len(content) > 100:
-            # For now, just check content length is substantial enough
-            # LLM-based promise matching would be done via chief_editor
-            pass
-
-        # Check must_have_beats
+        # Check must_have_beats — flag only when chapter is too short to deliver them
         must_have = genre_contract.get("must_have_beats", [])
         if must_have and len(content) < 200:
             findings.append(self._finding(

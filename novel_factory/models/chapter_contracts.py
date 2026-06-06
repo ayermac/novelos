@@ -105,7 +105,7 @@ class EditorLensReport(BaseModel):
     produces one of these. Chief Editor aggregates them into a final decision.
     """
 
-    lens_type: str  # 'type', 'commercial', 'pacing', 'character', 'mystery', 'style', 'continuity'
+    lens_type: str = ""  # 'type', 'commercial', 'pacing', 'character', 'mystery', 'style', 'continuity'
     passed: bool = True
     score: float = 0.0
     findings: list[EditorLensFinding] = Field(default_factory=list)

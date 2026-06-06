@@ -182,6 +182,48 @@ class CreativeContractsRepositoryMixin:
         finally:
             conn.close()
 
+    def get_latest_creative_ledger(
+        self,
+        project_id: str,
+        ledger_type: str,
+    ) -> dict | None:
+        """Get the most recent ledger snapshot for a given ledger type (any chapter).
+
+        Returns the snapshot with the highest chapter_number, breaking ties
+        by created_at DESC. Used when current chapter has no snapshot and we
+        need to fall back to the most recent prior snapshot.
+        """
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                """SELECT * FROM creative_ledger_snapshots
+                   WHERE project_id=? AND ledger_type=?
+                   ORDER BY chapter_number DESC, created_at DESC
+                   LIMIT 1""",
+                (project_id, ledger_type),
+            ).fetchone()
+            return row_to_dict(row)
+        finally:
+            conn.close()
+
+    def get_creative_ledger_history(
+        self,
+        project_id: str,
+        ledger_type: str,
+    ) -> list[dict]:
+        """Get all snapshots for a given ledger type, ordered by chapter ASC."""
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                """SELECT * FROM creative_ledger_snapshots
+                   WHERE project_id=? AND ledger_type=?
+                   ORDER BY chapter_number ASC, created_at ASC""",
+                (project_id, ledger_type),
+            ).fetchall()
+            return [row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+
     # ── Editor Lens Reports ─────────────────────────────────────────
 
     def get_editor_lens_report(
@@ -251,6 +293,32 @@ class CreativeContractsRepositoryMixin:
             rows = conn.execute(
                 "SELECT * FROM editor_lens_reports WHERE project_id=? AND chapter_number=? ORDER BY lens_type",
                 (project_id, chapter_number),
+            ).fetchall()
+            return [row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+
+    def list_recent_lens_reports(
+        self,
+        project_id: str,
+        lens_type: str,
+        before_chapter: int,
+        limit: int,
+    ) -> list[dict]:
+        """List recent lens reports for a lens type, excluding the current chapter.
+
+        Returns reports for chapters in (before_chapter - limit, before_chapter),
+        ordered by chapter_number DESC. Used by the scheduler to decide whether
+        a lens has been consistently passing and can be skipped.
+        """
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                """SELECT * FROM editor_lens_reports
+                   WHERE project_id = ? AND lens_type = ?
+                   AND chapter_number < ? AND chapter_number >= ?
+                   ORDER BY chapter_number DESC LIMIT ?""",
+                (project_id, lens_type, before_chapter, before_chapter - limit, limit),
             ).fetchall()
             return [row_to_dict(r) for r in rows]
         finally:

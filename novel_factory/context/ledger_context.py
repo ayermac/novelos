@@ -56,8 +56,8 @@ def load_ledgers_for_planner(
         try:
             # Get latest snapshot before current chapter
             snapshot = repo.get_creative_ledger(project_id, chapter_number - 1, ledger_type)
-            if not snapshot:
-                # Try earlier chapters
+            if not snapshot and hasattr(repo, "get_latest_creative_ledger"):
+                # Try earlier chapters via the latest-snapshot fallback
                 snapshot = repo.get_latest_creative_ledger(project_id, ledger_type)
 
             if snapshot:
@@ -161,15 +161,38 @@ def _parse_ledger_data(data: str | dict) -> dict:
 
 
 def _extract_recent_entries(entries: list[dict], limit: int = 5) -> list[dict]:
-    """Extract most recent entries from ledger."""
+    """Extract most recent entries from ledger.
+
+    Each ledger type uses different field names for the chapter index
+    (``chapter``, ``chapter_introduced``, ``chapter_acquired``,
+    ``chapter_started``, ``chapter_detected``). We probe a known set of
+    keys to find the chapter number; if none is present, the entry is
+    sorted with chapter 0 (i.e. treated as oldest).
+    """
     if not entries:
         return []
-    # Sort by chapter number (descending) and take recent
-    sorted_entries = sorted(
-        entries,
-        key=lambda e: e.get("chapter", e.get("chapter_introduced", 0)),
-        reverse=True,
+
+    chapter_keys = (
+        "chapter",
+        "chapter_introduced",
+        "chapter_acquired",
+        "chapter_started",
+        "chapter_detected",
+        "chapter_revealed",
+        "chapter_resolved",
+        "chapter_upgraded",
     )
+
+    def _chapter_of(entry: dict) -> int:
+        for key in chapter_keys:
+            val = entry.get(key)
+            if isinstance(val, int):
+                return val
+            if isinstance(val, str) and val.isdigit():
+                return int(val)
+        return 0
+
+    sorted_entries = sorted(entries, key=_chapter_of, reverse=True)
     return sorted_entries[:limit]
 
 

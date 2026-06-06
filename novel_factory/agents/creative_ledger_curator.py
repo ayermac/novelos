@@ -7,6 +7,7 @@ passes review. Produces incremental patches, not full rewrites.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import Any
 
@@ -38,6 +39,9 @@ class CreativeLedgerCurator(BaseAgent):
     def _execute(self, state: dict) -> dict:
         """Execute creative ledger updates.
 
+        Internal entry used by BaseAgent.run. Most call sites should use
+        ``update_for_chapter`` which provides a clearer signature.
+
         Args:
             state: Chapter workflow state containing project_id, chapter_number, etc.
 
@@ -61,6 +65,28 @@ class CreativeLedgerCurator(BaseAgent):
                 results[ledger_type] = {"status": "error", "error": str(e)}
 
         return {"ledger_update_result": results}
+
+    def update_for_chapter(
+        self,
+        project_id: str,
+        chapter_number: int,
+        content: str,
+        review_data: dict | None = None,
+        workflow_run_id: str | None = None,
+    ) -> dict:
+        """Public entry to update ledgers for a single chapter.
+
+        Wraps ``_execute`` with a clearer signature and explicit
+        identifiers, avoiding the need for callers to construct a partial
+        FactoryState dict.
+        """
+        return self._execute({
+            "project_id": project_id,
+            "chapter_number": chapter_number,
+            "content": content or "",
+            "review_data": review_data or {},
+            "workflow_run_id": workflow_run_id,
+        })
 
     def _update_ledger(
         self,

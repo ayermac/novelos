@@ -13,11 +13,9 @@ import logging
 from typing import Any
 
 from ..models.chapter_contracts import (
-    ChapterBrief,
     RhythmBudgetResult,
     RhythmBudgetFlags,
 )
-from ..models.creative_contracts import GenreContract
 
 logger = logging.getLogger(__name__)
 
@@ -150,11 +148,34 @@ def count_new_mysteries(brief: dict) -> int:
 
     Returns the number of new mystery threads being opened.
     Too many new mysteries without resolution creates reader frustration.
+
+    Supports several action shapes:
+      - dict with ``type`` in {``introduce``, ``new``, ``open``} or
+        ``status`` == ``new``
+      - dict with truthy ``is_new`` flag
+      - plain string containing ``introduce`` / ``new`` / ``开`` / ``引入``
+        (heuristic fallback for older/string-typed briefs)
     """
     mystery_actions = brief.get("mystery_actions", [])
-    if isinstance(mystery_actions, list):
-        return len([m for m in mystery_actions if "introduce" in str(m).lower() or "new" in str(m).lower()])
-    return 0
+    if not isinstance(mystery_actions, list):
+        return 0
+
+    count = 0
+    for m in mystery_actions:
+        if isinstance(m, dict):
+            mtype = str(m.get("type", "")).lower()
+            mstatus = str(m.get("status", "")).lower()
+            if mtype in ("introduce", "new", "open") or mstatus == "new":
+                count += 1
+                continue
+            if bool(m.get("is_new")):
+                count += 1
+                continue
+        elif isinstance(m, str):
+            ml = m.lower()
+            if "introduce" in ml or "new" in ml or "引入" in ml or ml.startswith("开"):
+                count += 1
+    return count
 
 
 def detect_mystery_answer_gap(chapters: list[dict]) -> int:

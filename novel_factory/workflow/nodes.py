@@ -38,11 +38,6 @@ from .execution_events import (
     EVENT_LLM_FAILED,
     EVENT_EVIDENCE_VERIFIED,
     EVENT_FALLBACK_USED,
-    EVENT_ARTIFACT_SAVED,
-    EVENT_DIFF_GENERATED,
-    EVENT_SELF_CHECK_COMPLETED,
-    EVENT_SKILL_COMPLETED,
-    EVIDENCE_STATUS_PASS,
     EVIDENCE_STATUS_FAIL,
     EVIDENCE_STATUS_WARN,
 )
@@ -1393,7 +1388,7 @@ def rhythm_budget_preflight_node(state: FactoryState, repo: Repository) -> dict:
             import json
             genre_contract = json.loads(contract_data.get("contract_data", "{}"))
     except Exception:
-        pass
+        logger.warning("rhythm_budget_preflight: failed to load genre_contract", exc_info=True)
 
     # Run deterministic rhythm budget evaluation
     from ..quality.rhythm_budget import evaluate_deterministic
@@ -1452,15 +1447,15 @@ def creative_ledger_curator_node(state: FactoryState, repo: Repository) -> dict:
     from ..agents.creative_ledger_curator import CreativeLedgerCurator
     curator = CreativeLedgerCurator(repo=repo, llm=None)  # LLM not needed for stub mode
 
-    # Update ledgers (synchronous call)
+    # Update ledgers (synchronous call, via the public API)
     try:
-        result = curator._execute({
-            "project_id": project_id,
-            "chapter_number": chapter_number,
-            "content": content,
-            "review_data": review_data,
-            "workflow_run_id": state.get("workflow_run_id"),
-        })
+        result = curator.update_for_chapter(
+            project_id=project_id,
+            chapter_number=chapter_number,
+            content=content,
+            review_data=review_data,
+            workflow_run_id=state.get("workflow_run_id"),
+        )
     except Exception as e:
         _logger.warning(f"CreativeLedgerCurator failed: {e}")
         result = {"ledger_update_result": {"status": "error", "error": str(e)}}
@@ -1537,7 +1532,7 @@ def editor_lenses_node(state: FactoryState, repo: Repository) -> dict:
             import json
             genre_contract = json.loads(contract_data.get("contract_data", "{}"))
     except Exception:
-        pass
+        _logger.warning("EditorLenses: failed to load genre_contract", exc_info=True)
 
     # Load launch profile
     launch_profile = {}
@@ -1547,7 +1542,7 @@ def editor_lenses_node(state: FactoryState, repo: Repository) -> dict:
             import json
             launch_profile = json.loads(profile_data.get("contract_data", "{}"))
     except Exception:
-        pass
+        _logger.warning("EditorLenses: failed to load launch_profile", exc_info=True)
 
     # Load chapter brief
     chapter_brief = state.get("chapter_brief", {})
@@ -1558,7 +1553,7 @@ def editor_lenses_node(state: FactoryState, repo: Repository) -> dict:
                 import json
                 chapter_brief = json.loads(brief_artifact.get("content_json", "{}"))
         except Exception:
-            pass
+            _logger.warning("EditorLenses: failed to load chapter_brief artifact", exc_info=True)
 
     # Load ledger context
     ledger_context = {}
@@ -1566,7 +1561,7 @@ def editor_lenses_node(state: FactoryState, repo: Repository) -> dict:
         from ..context.ledger_context import load_ledgers_for_planner
         ledger_context = load_ledgers_for_planner(repo, project_id, chapter_number)
     except Exception:
-        pass
+        _logger.warning("EditorLenses: failed to load ledger_context", exc_info=True)
 
     # Get previous chapters for continuity
     previous_chapters = []
@@ -1576,7 +1571,7 @@ def editor_lenses_node(state: FactoryState, repo: Repository) -> dict:
             if ch:
                 previous_chapters.append(ch)
     except Exception:
-        pass
+        _logger.warning("EditorLenses: failed to load previous chapters", exc_info=True)
 
     # Build context dict for lenses
     lens_context = {

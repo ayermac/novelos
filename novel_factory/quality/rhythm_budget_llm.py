@@ -8,6 +8,10 @@ rhythm issues that require semantic understanding:
 - Relationship movement (relationship progression)
 
 Spec reference: Section 4.6.3 - LLM-assisted rhythm checks.
+
+All LLM calls go through ``LLMProvider.invoke_json`` for interface
+consistency with the rest of the codebase. Calls are synchronous; callers
+can wrap with ``asyncio.to_thread`` if concurrency is needed.
 """
 
 from __future__ import annotations
@@ -28,7 +32,7 @@ STYLE_FATIGUE_PROMPT = """分析以下章节文本，检测是否存在风格疲
 
 返回JSON格式：
 {{
-    "fatigue_score": 0.0-1.0,  // 0=无疲劳, 1=严重疲劳
+    "fatigue_score": 0.0-1.0,
     "repetitive_patterns": ["pattern1", "pattern2"],
     "ai_template_signs": ["sign1", "sign2"]
 }}
@@ -56,7 +60,7 @@ BREATHING_ROOM_PROMPT = """分析以下章节文本，检查高强度场景之�
 返回JSON格式：
 {{
     "breathing_room_ok": true/false,
-    "intensity_pattern": ["high", "medium", "low", ...],
+    "intensity_pattern": ["high", "medium", "low"],
     "suggestion": "建议内容"
 }}
 
@@ -84,10 +88,40 @@ RELATIONSHIP_MOVEMENT_PROMPT = """分析以下章节文本，检查角色关系�
 {relationships}"""
 
 
-# ── LLM check functions ──────────────────────────────────────────────────
+# ── Helper to invoke LLM uniformly ───────────────────────────────────────
 
 
-async def check_style_fatigue(
+def _invoke_llm_json(llm: LLMProvider, prompt: str, agent_id: str) -> dict[str, Any]:
+    """Invoke an LLM provider for a JSON response, tolerant of different shapes.
+
+    Always prefer ``invoke_json`` (the formal interface). Falls back to other
+    method names only if the provider does not implement it (e.g. test mocks).
+    """
+    messages = [{"role": "user", "content": prompt}]
+    if hasattr(llm, "invoke_json"):
+        result = llm.invoke_json(messages, agent_id=agent_id)
+        if isinstance(result, dict):
+            return result
+        if isinstance(result, str):
+            try:
+                return json.loads(result)
+            except json.JSONDecodeError:
+                return {}
+        return {}
+    # Last-resort fallbacks (test mocks may expose these)
+    if hasattr(llm, "invoke_text"):
+        text = llm.invoke_text(messages)
+        try:
+            return json.loads(text)
+        except (json.JSONDecodeError, TypeError):
+            return {}
+    return {}
+
+
+# ── LLM check functions (synchronous) ────────────────────────────────────
+
+
+def check_style_fatigue(
     draft: str,
     llm: LLMProvider,
     ledger: dict | None = None,
@@ -95,22 +129,20 @@ async def check_style_fatigue(
     """Check for style fatigue in the draft.
 
     Returns a fatigue score from 0.0 (no fatigue) to 1.0 (severe fatigue).
-    High scores indicate repetitive patterns, AI templates, or formulaic writing.
     """
     if not draft or len(draft) < 100:
         return 0.0
 
     try:
-        prompt = STYLE_FATIGUE_PROMPT.format(draft=draft[:3000])  # Limit token usage
-        response = await llm.generate(prompt, response_format={"type": "json_object"})
-        result = json.loads(response)
+        prompt = STYLE_FATIGUE_PROMPT.format(draft=draft[:3000])
+        result = _invoke_llm_json(llm, prompt, agent_id="rhythm_budget.style_fatigue")
         return float(result.get("fatigue_score", 0.0))
-    except Exception as e:
-        logger.warning(f"Style fatigue check failed: {e}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Style fatigue check failed: %s", exc)
         return 0.0
 
 
-async def detect_character_tooling(
+def detect_character_tooling(
     draft: str,
     llm: LLMProvider,
     characters: list[str] | None = None,
@@ -119,8 +151,6 @@ async def detect_character_tooling(
     """Detect characters being used as plot tools.
 
     Returns list of character names identified as tooling.
-    Tooling means characters exist only to serve plot needs without
-    independent motivation or agency.
     """
     if not draft or len(draft) < 100:
         return []
@@ -131,33 +161,29 @@ async def detect_character_tooling(
             draft=draft[:3000],
             characters=char_list,
         )
-        response = await llm.generate(prompt, response_format={"type": "json_object"})
-        result = json.loads(response)
+        result = _invoke_llm_json(llm, prompt, agent_id="rhythm_budget.character_tooling")
         if result.get("tooling_detected", False):
-            return result.get("tool_characters", [])
+            tools = result.get("tool_characters", [])
+            return [str(c) for c in tools] if isinstance(tools, list) else []
         return []
-    except Exception as e:
-        logger.warning(f"Character tooling check failed: {e}")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Character tooling check failed: %s", exc)
         return []
 
 
-async def check_breathing_room(
+def check_breathing_room(
     draft: str,
     llm: LLMProvider,
     previous_chapters: list[dict] | None = None,
 ) -> bool:
-    """Check if there's adequate breathing room between intense scenes.
-
-    Returns True if pacing is acceptable, False if too intense without breaks.
-    """
+    """Check if there's adequate breathing room between intense scenes."""
     if not draft or len(draft) < 100:
         return True
 
-    # Build previous chapters summary
     prev_summary = ""
     if previous_chapters:
         summaries = []
-        for ch in previous_chapters[-3:]:  # Last 3 chapters
+        for ch in previous_chapters[-3:]:
             content = ch.get("content", "")[:200]
             summaries.append(content)
         prev_summary = "\n---\n".join(summaries)
@@ -167,24 +193,20 @@ async def check_breathing_room(
             draft=draft[:3000],
             previous_chapters_summary=prev_summary[:1000],
         )
-        response = await llm.generate(prompt, response_format={"type": "json_object"})
-        result = json.loads(response)
-        return result.get("breathing_room_ok", True)
-    except Exception as e:
-        logger.warning(f"Breathing room check failed: {e}")
+        result = _invoke_llm_json(llm, prompt, agent_id="rhythm_budget.breathing_room")
+        return bool(result.get("breathing_room_ok", True))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Breathing room check failed: %s", exc)
         return True
 
 
-async def check_relationship_movement(
+def check_relationship_movement(
     draft: str,
     llm: LLMProvider,
     relationships: list[dict] | None = None,
     ledger: dict | None = None,
 ) -> bool:
-    """Check if character relationships have movement/progression.
-
-    Returns True if relationships are progressing, False if stagnant.
-    """
+    """Check if character relationships have movement/progression."""
     if not draft or len(draft) < 100:
         return True
 
@@ -197,18 +219,17 @@ async def check_relationship_movement(
             draft=draft[:3000],
             relationships=rel_list[:500],
         )
-        response = await llm.generate(prompt, response_format={"type": "json_object"})
-        result = json.loads(response)
-        return result.get("relationship_movement", True)
-    except Exception as e:
-        logger.warning(f"Relationship movement check failed: {e}")
+        result = _invoke_llm_json(llm, prompt, agent_id="rhythm_budget.relationship_movement")
+        return bool(result.get("relationship_movement", True))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Relationship movement check failed: %s", exc)
         return True
 
 
 # ── Main evaluation function ─────────────────────────────────────────────
 
 
-async def evaluate_llm_signals(
+def evaluate_llm_signals(
     draft: str,
     llm: LLMProvider,
     characters: list[str] | None = None,
@@ -216,38 +237,16 @@ async def evaluate_llm_signals(
     previous_chapters: list[dict] | None = None,
     ledger: dict | None = None,
 ) -> RhythmBudgetLLMSignals:
-    """Run all LLM-assisted rhythm checks.
+    """Run all LLM-assisted rhythm checks sequentially.
 
-    Returns RhythmBudgetLLMSignals with all check results.
-    These signals are informational and don't block production,
-    but are used by the chief editor for final decisions.
+    Each check is independent and failures are degraded gracefully to
+    a neutral default. The result is informational; the chief editor
+    may use these signals when weighing review decisions.
     """
-    import asyncio
-
-    # Run checks concurrently
-    fatigue_task = check_style_fatigue(draft, llm, ledger)
-    tooling_task = detect_character_tooling(draft, llm, characters, ledger)
-    breathing_task = check_breathing_room(draft, llm, previous_chapters)
-    relationship_task = check_relationship_movement(draft, llm, relationships, ledger)
-
-    fatigue_score, tool_characters, breathing_ok, relationship_ok = await asyncio.gather(
-        fatigue_task, tooling_task, breathing_task, relationship_task,
-        return_exceptions=True,
-    )
-
-    # Handle exceptions
-    if isinstance(fatigue_score, Exception):
-        logger.warning(f"Fatigue check failed: {fatigue_score}")
-        fatigue_score = 0.0
-    if isinstance(tool_characters, Exception):
-        logger.warning(f"Tooling check failed: {tool_characters}")
-        tool_characters = []
-    if isinstance(breathing_ok, Exception):
-        logger.warning(f"Breathing check failed: {breathing_ok}")
-        breathing_ok = True
-    if isinstance(relationship_ok, Exception):
-        logger.warning(f"Relationship check failed: {relationship_ok}")
-        relationship_ok = True
+    fatigue_score = check_style_fatigue(draft, llm, ledger)
+    tool_characters = detect_character_tooling(draft, llm, characters, ledger)
+    breathing_ok = check_breathing_room(draft, llm, previous_chapters)
+    relationship_ok = check_relationship_movement(draft, llm, relationships, ledger)
 
     return RhythmBudgetLLMSignals(
         style_fatigue_score=float(fatigue_score),
