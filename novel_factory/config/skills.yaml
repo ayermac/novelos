@@ -188,6 +188,41 @@ skills:
     description: "检查全文爽点分布和压抑占比"
     config: {}
 
+  # v6.9.1: 新增编辑专项 Skills
+  commercial-viability-check:
+    enabled: true
+    manifest: config/skills/manifest/commercial-viability-check.yaml
+    type: validator
+    class: CommercialViabilityChecker
+    description: "检测商业可行性：首章钩子强度、付费点密度、追读吸引力、主角能动性"
+    config: {}
+
+  pacing-profile-check:
+    enabled: true
+    manifest: config/skills/manifest/pacing-profile-check.yaml
+    type: validator
+    class: PacingProfileChecker
+    description: "检测节奏配置：段落长短分布、高潮位置、场景多样性、对话/描写比例"
+    config: {}
+
+  character-voice-check:
+    enabled: true
+    manifest: config/skills/manifest/character-voice-check.yaml
+    type: validator
+    class: CharacterVoiceChecker
+    description: "检测角色口吻一致性、工具人风险、角色出场均衡性"
+    config: {}
+
+  mystery-integrity-check:
+    enabled: false  # 默认关闭，仅悬疑/推理/惊悚类型启用
+    manifest: config/skills/manifest/mystery-integrity-check.yaml
+    type: validator
+    class: MysteryIntegrityChecker
+    description: "检测悬疑完整性：伏笔债务、揭示节奏、误导合理性、术语过载"
+    config: {}
+    failure_policy: warn
+    project_override_key: genre
+
 # Agent挂载配置
 agent_skills:
   planner:
@@ -231,6 +266,10 @@ agent_skills:
       - foreshadowing-debt
       - opening-hook-checker
       - excitement-density-checker
+      - commercial-viability-check
+      - pacing-profile-check
+      - character-voice-check
+      - mystery-integrity-check
 
   memory_curator:
     after_extract:
