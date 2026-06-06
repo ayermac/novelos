@@ -52,9 +52,13 @@ class TestSkillConfiguration:
         editor_before_review = registry.get_skills_for_agent("editor", "before_review")
         assert isinstance(editor_before_review, list)
 
-        assert registry.get_skills_for_agent("planner", "after_llm") == ["chapter-objective-checker"]
+        planner_skills = registry.get_skills_for_agent("planner", "after_llm")
+        assert "chapter-objective-checker" in planner_skills
+        assert "foreshadowing-debt" in planner_skills
         assert registry.get_skills_for_agent("screenwriter", "after_llm") == ["scene-conflict-checker"]
-        assert registry.get_skills_for_agent("author", "after_llm") == ["event-coverage-checker"]
+        author_skills = registry.get_skills_for_agent("author", "after_llm")
+        assert "event-coverage-checker" in author_skills
+        assert "opening-hook-checker" in author_skills
         assert registry.get_skills_for_agent("memory_curator", "after_extract") == ["memory-patch-validator"]
 
     def test_new_agent_skills_have_manifests(self):

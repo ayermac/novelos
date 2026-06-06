@@ -533,6 +533,9 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
     This endpoint is for real mode where auto-publish is disabled.
     Only chapters with status='reviewed' can be published. Before publishing,
     it also guarantees MemoryCurator has run at least once for this chapter.
+
+    v6.7.9: Added narrative continuity gate — blocking continuity issues
+    prevent publication even when status is 'reviewed'.
     """
     from ..deps import get_repo
 
@@ -573,6 +576,79 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                     ).to_dict(),
                 },
             )
+
+        # v6.7.9: Narrative continuity gate — hard block before publish
+        from ...quality.continuity_gate import evaluate_publish_continuity, SEVERITY_BLOCKING
+
+        continuity_result = evaluate_publish_continuity(
+            repo, body.project_id, body.chapter,
+        )
+        if continuity_result.should_block_publish or continuity_result.severity == SEVERITY_BLOCKING:
+            message = "连续性检查未通过，发布被拒绝"
+            return error_response(
+                "CONTINUITY_GATE_BLOCKED",
+                message,
+                details={
+                    "issues": continuity_result.issues,
+                    "suggestions": continuity_result.suggestions,
+                    "domain_result": blocked(
+                        message,
+                        user_message="本章存在叙事连续性问题，请修复后再发布",
+                        next_action="run_chapter",
+                        action_label="重新生成/修复章节",
+                        details={
+                            "project_id": body.project_id,
+                            "chapter": body.chapter,
+                            "continuity_issues": continuity_result.issues,
+                            "continuity_suggestions": continuity_result.suggestions,
+                            "error_code": "CONTINUITY_GATE_BLOCKED",
+                        },
+                        flags={"publish_blocked": True, "continuity_blocking": True},
+                    ).to_dict(),
+                },
+            )
+
+        # v6.7.6: Block publish when latest run is blocked/failed/stale-running
+        latest_runs = repo.get_workflow_runs_for_project(
+            body.project_id, chapter_number=body.chapter, limit=1
+        )
+        latest_run = latest_runs[0] if latest_runs else None
+        if latest_run:
+            run_status = latest_run.get("status")
+            run_is_broken = run_status in ("blocked", "failed")
+            run_is_stale = False
+            if run_status == "running":
+                from ...workflow.state_integrity import _run_is_recent
+                if not _run_is_recent(latest_run.get("started_at")):
+                    run_is_stale = True
+            if run_is_broken or run_is_stale:
+                reason = (
+                    "工作流被阻塞" if run_status == "blocked"
+                    else "工作流运行失败" if run_status == "failed"
+                    else "工作流运行超时"
+                )
+                message = f"{reason}，需先恢复工作流再发布"
+                return error_response(
+                    "WORKFLOW_RECOVERY_REQUIRED",
+                    message,
+                    details={
+                        "run_status": run_status,
+                        "run_id": latest_run.get("id"),
+                        "domain_result": blocked(
+                            message,
+                            user_message=f"{reason}，请先处理工作流恢复",
+                            next_action="view_workflow",
+                            action_label="查看工作流恢复",
+                            details={
+                                "project_id": body.project_id,
+                                "chapter": body.chapter,
+                                "run_status": run_status,
+                                "run_id": latest_run.get("id"),
+                            },
+                            flags={"publish_blocked": True, "workflow_needs_recovery": True},
+                        ).to_dict(),
+                    },
+                )
 
         memory_result = await _ensure_memory_curated_before_publish(
             request,

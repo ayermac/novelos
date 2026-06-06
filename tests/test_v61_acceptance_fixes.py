@@ -133,9 +133,9 @@ def test_revision_router_updates_run_node_and_timeline_events(tmp_path):
 
     from novel_factory.workflow.nodes import revision_router_node
 
-    assert revision_router_node(state, repo) == {
-        "quality_gate": {"pass": False, "revision_target": "author"}
-    }
+    result = revision_router_node(state, repo)
+    assert result["quality_gate"] == {"pass": False, "revision_target": "author"}
+    assert result.get("retry_count", 0) == 0
 
     run = repo.get_workflow_runs_for_project("revision-route-proj", chapter_number=1, limit=1)[0]
     assert run["current_node"] == "revision_router"
@@ -316,3 +316,25 @@ def test_timeline_completed_non_terminal_run_offers_continue_generate(tmp_path):
     }
     generate = next(action for action in data["recovery"]["safe_actions"] if action["key"] == "generate")
     assert generate["label"] == "继续生成"
+
+
+def test_timeline_author_retry_recovery_scripted_offers_continue_generate(tmp_path):
+    client, repo = _make_client(tmp_path)
+    repo.create_project(project_id="completed-scripted-proj", name="作者恢复后继续", genre="urban")
+    repo.save_chapter("completed-scripted-proj", 1, "第1章", "已有正文", 4, "scripted")
+    run_id = repo.create_workflow_run("completed-scripted-proj", 1)
+    repo.update_workflow_run(run_id, status="completed", current_node="author_retry_recovery")
+
+    resp = client.get("/api/projects/completed-scripted-proj/chapters/1/workflow-timeline")
+    assert resp.status_code == 200
+    data = resp.json()["data"]
+    assert data["run_status"] == "completed"
+    assert data["chapter_status"] == "scripted"
+    assert data["recovery"]["recommended_action"] == "generate"
+    assert {action["key"] for action in data["recovery"]["safe_actions"]} >= {
+        "view_content",
+        "generate",
+    }
+    generate = next(action for action in data["recovery"]["safe_actions"] if action["key"] == "generate")
+    assert generate["label"] == "继续生成"
+    assert "不覆盖" in generate["note"]

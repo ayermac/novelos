@@ -5,11 +5,13 @@ Works with OpenAI, OpenRouter, 火山方舟 and any OpenAI-compatible API.
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import logging
 import time
 from typing import Any
 
+import httpx
 from langchain_core.language_models.chat_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 from langchain_openai import ChatOpenAI
@@ -133,13 +135,16 @@ class OpenAICompatibleProvider(LLMProvider):
 
     def _build_client(self, request_timeout_seconds: int | None = None) -> BaseChatModel:
         """Build a ChatOpenAI client, optionally using a per-call timeout."""
+        timeout = request_timeout_seconds or self.config.request_timeout_seconds
         return ChatOpenAI(
             base_url=self.config.base_url,
             api_key=self.config.api_key or "sk-placeholder",
             model=self.config.model,
             temperature=self.config.temperature,
             max_tokens=self.config.max_tokens,
-            request_timeout=request_timeout_seconds or self.config.request_timeout_seconds,
+            request_timeout=timeout,
+            http_client=httpx.Client(timeout=timeout, trust_env=False),
+            http_async_client=httpx.AsyncClient(timeout=timeout, trust_env=False),
             # Keep retry policy centralized in _invoke_with_retry so provider
             # behavior is predictable across OpenAI-compatible backends.
             max_retries=0,
@@ -164,6 +169,8 @@ class OpenAICompatibleProvider(LLMProvider):
         LangChain/OpenAI SDK response parsing. Keep the rest of the provider on
         one response contract: content + optional usage/metadata.
         """
+        if response is None:
+            return _NormalizedChatResponse("")
         if hasattr(response, "content"):
             return response
         if isinstance(response, (str, dict)):
@@ -182,6 +189,8 @@ class OpenAICompatibleProvider(LLMProvider):
                 "object has no attribute 'model_dump'",
                 'object has no attribute "model_dump"',
                 "response missing `choices` key",
+                "'nonetype' object has no attribute",
+                "none has no attribute",
             )
         )
 
@@ -221,6 +230,8 @@ class OpenAICompatibleProvider(LLMProvider):
         return str(content)
 
     def _response_from_http_payload(self, payload: Any) -> _NormalizedChatResponse:
+        if payload is None:
+            return _NormalizedChatResponse("")
         if isinstance(payload, str):
             return _NormalizedChatResponse(payload)
 
@@ -233,7 +244,8 @@ class OpenAICompatibleProvider(LLMProvider):
         if not content and isinstance(first_choice, dict):
             content = self._content_to_text(first_choice.get("text"))
 
-        usage = payload.get("usage") or {}
+        raw_usage = payload.get("usage") if isinstance(payload, dict) else None
+        usage = raw_usage if isinstance(raw_usage, dict) else {}
         prompt_tokens = int(usage.get("prompt_tokens") or usage.get("input_tokens") or 0)
         completion_tokens = int(
             usage.get("completion_tokens") or usage.get("output_tokens") or 0
@@ -310,6 +322,8 @@ class OpenAICompatibleProvider(LLMProvider):
             parsed = json.loads(raw)
         except json.JSONDecodeError:
             parsed = raw
+        if parsed is None:
+            parsed = {}
         return self._response_from_http_payload(parsed)
 
     def _handle_api_error(self, error: Exception, timeout_seconds: int | None = None) -> None:
@@ -356,11 +370,42 @@ class OpenAICompatibleProvider(LLMProvider):
         else:
             raise LLMError(f"LLM 调用失败: {safe_error}") from error
 
+    def _invoke_client_with_hard_timeout(
+        self,
+        client: BaseChatModel,
+        lc_messages: list,
+        timeout_seconds: int,
+        **kwargs,
+    ) -> Any:
+        """Invoke the SDK client with a wall-clock timeout guard.
+
+        Some OpenAI-compatible SDK paths can outlive their configured HTTPX
+        timeout in desktop environments. Keep workflow runs bounded even when
+        the underlying transport fails to return.
+        """
+        if timeout_seconds <= 0:
+            return client.invoke(lc_messages, **kwargs)
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        future = executor.submit(client.invoke, lc_messages, **kwargs)
+        try:
+            return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError as error:
+            future.cancel()
+            raise LLMTimeoutError(
+                f"LLM 响应超时（>{timeout_seconds}秒），请稍后重试"
+            ) from error
+        finally:
+            executor.shutdown(wait=False, cancel_futures=True)
+
     def _invoke_with_retry(
         self,
         lc_messages: list,
         max_retries: int | None = None,
         request_timeout_seconds: int | None = None,
+        trace_call_type: str | None = None,
+        trace_schema: str | None = None,
+        trace_agent_id: str | None = None,
         **kwargs,
     ) -> Any:
         """Invoke with exponential backoff for transient provider failures."""
@@ -396,6 +441,9 @@ class OpenAICompatibleProvider(LLMProvider):
                     "retry_attempts_configured": attempts,
                     "attempt_number": attempt_number,
                     "message_count": len(lc_messages),
+                    "call_type": trace_call_type,
+                    "schema": trace_schema,
+                    "agent_id": trace_agent_id,
                     "messages": [_message_to_dict(msg) for msg in lc_messages],
                     "kwargs": {
                         key: redact_sensitive_text(str(value))
@@ -415,7 +463,12 @@ class OpenAICompatibleProvider(LLMProvider):
                             time.sleep(interval - elapsed)
                     start_time = time.time()
                     self._last_call_started_at = start_time
-                    response = client.invoke(lc_messages, **kwargs)
+                    response = self._invoke_client_with_hard_timeout(
+                        client,
+                        lc_messages,
+                        request_timeout_seconds or self.config.request_timeout_seconds,
+                        **kwargs,
+                    )
                     response = self._normalize_chat_response(response)
                     duration_ms = int((time.time() - start_time) * 1000)
                 except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError) as e:
@@ -455,19 +508,27 @@ class OpenAICompatibleProvider(LLMProvider):
                         self._handle_api_error(e, timeout_seconds=request_timeout_seconds)
 
                 # Extract token usage if available
+                # v6.8.5: Defensive None checks for malformed responses (e.g. 502 HTML)
                 prompt_tokens = 0
                 completion_tokens = 0
                 total_tokens = 0
 
-                if hasattr(response, "usage_metadata") and response.usage_metadata:
-                    prompt_tokens = response.usage_metadata.get("input_tokens", 0)
-                    completion_tokens = response.usage_metadata.get("output_tokens", 0)
-                    total_tokens = prompt_tokens + completion_tokens
-                elif hasattr(response, "response_metadata"):
-                    usage = response.response_metadata.get("token_usage", {})
-                    prompt_tokens = usage.get("prompt_tokens", 0)
-                    completion_tokens = usage.get("completion_tokens", 0)
-                    total_tokens = usage.get("total_tokens", 0)
+                if response is None:
+                    logger.warning("LLM response is None, using zero token counts")
+                elif hasattr(response, "usage_metadata") and response.usage_metadata:
+                    raw_metadata = response.usage_metadata
+                    if isinstance(raw_metadata, dict):
+                        prompt_tokens = raw_metadata.get("input_tokens", 0) or 0
+                        completion_tokens = raw_metadata.get("output_tokens", 0) or 0
+                        total_tokens = prompt_tokens + completion_tokens
+                else:
+                    raw_response_metadata = getattr(response, "response_metadata", None)
+                    response_metadata = raw_response_metadata if isinstance(raw_response_metadata, dict) else {}
+                    raw_usage = response_metadata.get("token_usage") if isinstance(response_metadata, dict) else None
+                    usage = raw_usage if isinstance(raw_usage, dict) else {}
+                    prompt_tokens = usage.get("prompt_tokens", 0) or 0
+                    completion_tokens = usage.get("completion_tokens", 0) or 0
+                    total_tokens = usage.get("total_tokens", 0) or 0
 
                 self.last_token_usage = TokenUsage(
                     prompt_tokens=prompt_tokens,
@@ -475,16 +536,18 @@ class OpenAICompatibleProvider(LLMProvider):
                     total_tokens=total_tokens,
                     duration_ms=duration_ms,
                 )
+                raw_response_metadata = getattr(response, "response_metadata", None)
+                response_metadata = raw_response_metadata if isinstance(raw_response_metadata, dict) else {}
                 response_text = redact_sensitive_text(str(getattr(response, "content", "")))
                 response_payload = {
                     "content": response_text,
                     "content_preview": response_text[:2000],
                     "content_length": len(response_text),
                     "usage": self.last_token_usage.to_dict(),
-                    "response_metadata": getattr(response, "response_metadata", None) or {},
+                    "response_metadata": response_metadata,
                     "finish_reason": (
-                        (getattr(response, "response_metadata", None) or {}).get("finish_reason")
-                        or (getattr(response, "response_metadata", None) or {}).get("stop_reason")
+                        response_metadata.get("finish_reason")
+                        or response_metadata.get("stop_reason")
                     ),
                     "attempt_number": attempt_number,
                     "duration_ms": duration_ms,
@@ -695,6 +758,7 @@ class OpenAICompatibleProvider(LLMProvider):
         max_tokens: int | None = None,
         max_retries: int | None = None,
         request_timeout_seconds: int | None = None,
+        agent_id: str = "unknown",
     ) -> str:
         """Invoke LLM and return raw text."""
         lc_messages = self._to_lc_messages(messages)
@@ -710,13 +774,30 @@ class OpenAICompatibleProvider(LLMProvider):
                 lc_messages,
                 max_retries=max_retries,
                 request_timeout_seconds=request_timeout_seconds,
+                trace_call_type="text",
+                trace_agent_id=agent_id,
                 **kwargs,
             )
             if self.last_call_trace is not None:
                 self.last_call_trace.setdefault("request", {})
                 self.last_call_trace["request"].update({
                     "call_type": "text",
+                    "agent_id": agent_id,
                 })
+            # v6.8.5: Detect truncation — finish_reason=length means the model
+            # hit max_tokens before completing the response.  Returning the
+            # truncated content silently causes downstream data loss (e.g. the
+            # polisher losing 35% of a chapter).  Raise so callers can fall back
+            # to passthrough / retry instead of accepting broken output.
+            if self.last_call_trace is not None:
+                resp_finish = (
+                    self.last_call_trace.get("response", {}).get("finish_reason")
+                )
+                if resp_finish == "length":
+                    raise LLMError(
+                        f"[{agent_id}] LLM 输出被截断 (finish_reason=length)，"
+                        f"content_length={len(response.content)}"
+                    )
             return response.content
         except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
             raise

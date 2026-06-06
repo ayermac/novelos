@@ -7,6 +7,7 @@ import { get } from '../../../lib/api'
 vi.mock('../../../lib/api', () => ({
   get: vi.fn().mockResolvedValue({ ok: true, data: null }),
   post: vi.fn().mockResolvedValue({ ok: true, data: null }),
+  apiUrl: (path: string) => `http://localhost:8765/api${path}`,
 }))
 
 // Mock react-router-dom

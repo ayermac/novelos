@@ -191,23 +191,26 @@ def evaluate_chapter_seam(
 
     time_markers = _unique(_TIME_PATTERN.findall(source_text))
     location_markers = _unique(_LOCATION_PATTERN.findall(source_text))
+    salient_locations = [
+        loc for loc in location_markers
+        if _is_explicit_appointment_location(loc, source_text, has_time_constraint=bool(time_markers))
+    ] if location_markers else []
+    salient_location_acknowledged = any(
+        _location_acknowledged(loc, opening) for loc in salient_locations[:3]
+    )
     quoted_hooks = [
         quote
         for quote in _QUOTE_PATTERN.findall(source_text)
         if any(token in quote for token in ("后", "明天", "今晚", "旧", "区", "见", "等", "来", "期待"))
     ][:3]
 
-    if time_markers and not any(marker in opening for marker in time_markers):
+    if time_markers and not any(marker in opening for marker in time_markers) and not salient_location_acknowledged:
         marker = time_markers[0]
         blocking.append(f"章间衔接断裂：上一章结尾存在明确时间节点“{marker}”，本章开头未承接。")
         suggestions.append(f"在本章开头交代“{marker}”是否已到、跳过了多久，或为什么暂时不赴约。")
 
-    if location_markers:
-        salient_locations = [
-            loc for loc in location_markers
-            if _is_explicit_appointment_location(loc, source_text, has_time_constraint=bool(time_markers))
-        ]
-        if salient_locations and not any(loc in opening for loc in salient_locations[:3]):
+    if salient_locations:
+        if not salient_location_acknowledged:
             loc = salient_locations[0]
             blocking.append(f"章间衔接断裂：上一章结尾指向地点“{loc}”，本章开头未交代。")
             suggestions.append(f"在开头补充与“{loc}”相关的行动、转场或延期说明。")
@@ -411,6 +414,59 @@ def _is_explicit_appointment_location(
     window = source_text[max(0, idx - 40): idx + len(loc) + 40]
     appointment_markers = ("三天后", "明天", "今晚", "今夜", "次日", "后天", "等你", "期待", "约定", "赴约", "见面")
     return any(marker in window for marker in appointment_markers)
+
+
+def _location_acknowledged(location: str, opening: str) -> bool:
+    """Return True when the opening plainly continues the same place.
+
+    Previous-ending extraction can capture owner/time qualifiers as part of a
+    place, e.g. "赵家今晚在云澜预订的宴厅". The next chapter may naturally write
+    "云澜宴会厅" instead; that should count as a bridge, not a hard seam break.
+    """
+    loc = str(location or "").strip()
+    text = str(opening or "").strip()
+    if not loc or not text:
+        return False
+    if loc in text:
+        return True
+
+    normalized_loc = _normalize_location_phrase(loc)
+    normalized_opening = _normalize_location_phrase(text)
+    if normalized_loc and normalized_loc in normalized_opening:
+        return True
+
+    venue_tokens = ("会馆", "宴会厅", "宴厅", "主位", "厅")
+    if "云澜" in loc and "云澜" in text:
+        return any(token in loc for token in venue_tokens) and any(token in text for token in venue_tokens)
+
+    return False
+
+
+def _normalize_location_phrase(text: str) -> str:
+    normalized = str(text or "")
+    replacements = {
+        "宴厅": "宴会厅",
+        "今晚": "",
+        "今夜": "",
+        "当晚": "",
+        "明天": "",
+        "赵家": "",
+        "苏家": "",
+        "林辰": "",
+        "预订的": "",
+        "预定的": "",
+        "订的": "",
+        "预约的": "",
+        "那间": "",
+        "这间": "",
+        "那座": "",
+        "这座": "",
+        "的": "",
+        "在": "",
+    }
+    for before, after in replacements.items():
+        normalized = normalized.replace(before, after)
+    return re.sub(r"\s+", "", normalized)
 
 
 def _tail(text: str, limit: int) -> str:

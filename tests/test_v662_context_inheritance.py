@@ -147,6 +147,56 @@ class TestTimelineExtraction:
         texts = [it.text for it in items]
         assert any("三天后" in t for t in texts)
 
+    def test_historical_timeline_events_do_not_become_current_hard_constraints(self, seeded_repo):
+        seeded_repo.create_story_fact(
+            "test_proj",
+            "chapter_1.departure_time",
+            "timeline_event",
+            json.dumps("晚上十点零五分", ensure_ascii=False),
+            subject="林默",
+            attribute="离开公司时间",
+            source_chapter=1,
+            source_agent="memory_curator",
+        )
+        seeded_repo.create_story_fact(
+            "test_proj",
+            "chapter_1.security_order",
+            "time_constraint",
+            json.dumps("今晚绝不能让林默进入会场", ensure_ascii=False),
+            subject="保安",
+            attribute="旧命令",
+            source_chapter=1,
+            source_agent="memory_curator",
+        )
+        seeded_repo.create_story_fact(
+            "test_proj",
+            "chapter_1.future_deadline",
+            "deadline",
+            json.dumps("三天后交付账本", ensure_ascii=False),
+            subject="黑影",
+            attribute="期限",
+            source_chapter=1,
+            source_agent="memory_curator",
+        )
+        seeded_repo.create_story_fact(
+            "test_proj",
+            "chapter_3.current_location",
+            "status",
+            json.dumps("旧工业区仓库内", ensure_ascii=False),
+            subject="林默",
+            attribute="当前位置",
+            source_chapter=3,
+            source_agent="memory_curator",
+        )
+
+        items = extract_timeline_constraints("test_proj", 4, seeded_repo)
+        texts = [it.text for it in items]
+
+        assert not any("离开公司时间" in t for t in texts)
+        assert not any("晚上十点零五分" in t for t in texts)
+        assert not any("旧命令" in t for t in texts)
+        assert any("三天后" in t for t in texts)
+
     def test_extract_from_plot_holes(self, seeded_repo):
         seeded_repo.create_plot_hole(
             "test_proj",

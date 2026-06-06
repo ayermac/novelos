@@ -43,11 +43,21 @@ Reorder the checks so `run_status` takes priority over `chapter_status`:
 
 ### Affected Files
 
+**Round 1 — Backend recovery state priority:**
+
 | File | Function | Change |
 |---|---|---|
 | `novel_factory/workflow/state_integrity.py` | `_derive_recovery_capability()` | Add blocked/failed/stale-running checks before terminal status block |
 | `novel_factory/workflow/state_integrity.py` | `derive_workflow_recovery_state()` | Detect stale running via `_run_is_recent()` and pass `running_stale` flag |
 | `novel_factory/api/routes/workflow_timeline.py` | `_build_recovery()` | Add blocked/failed check before terminal status block |
+
+**Round 2 — Publish CTA must respect recovery priority:**
+
+| File | Change |
+|---|---|
+| `frontend/src/components/project/AuthorAgentPanel.tsx` | Added `workflowNeedsRecovery` boolean; hide publish cards for `reviewed`/`awaiting_publish` when workflow is broken, show "需要先恢复运行" with recovery link |
+| `frontend/src/components/project/AuthorWritingSurface.tsx` | Added `workflowNeedsRecovery` boolean; hide header "确认发布" button when workflow is broken |
+| `novel_factory/api/routes/run.py` | Added backend guard in `publish_chapter` returning `WORKFLOW_RECOVERY_REQUIRED` when latest run is blocked/failed/stale-running |
 
 ---
 
@@ -69,6 +79,8 @@ Reorder the checks so `run_status` takes priority over `chapter_status`:
 
 ## Acceptance Criteria
 
+### Round 1 — Workflow panel recovery priority
+
 1. `blocked + awaiting_publish` → shows reset button, NOT publish
 2. `blocked + reviewed` → shows reset button, NOT publish
 3. `blocked + published` → shows reset button, NOT publish
@@ -79,18 +91,34 @@ Reorder the checks so `run_status` takes priority over `chapter_status`:
 8. `None + awaiting_publish` → shows publish button (unchanged)
 9. All existing tests continue to pass (1841+)
 
+### Round 2 — All publish CTAs respect recovery priority
+
+10. Header publish button hidden when `run_status=blocked` + `reviewed`
+11. Header publish button hidden when `run_status=running` + `is_stale` + `reviewed`
+12. Agent panel publish card hidden when `run_status=blocked` + `awaiting_publish`, shows "需要先恢复运行"
+13. Agent panel publish card hidden when `run_status=failed` + `reviewed`, shows "需要先恢复运行"
+14. `POST /api/publish/chapter` returns `WORKFLOW_RECOVERY_REQUIRED` when latest run is `blocked`
+15. `POST /api/publish/chapter` returns `WORKFLOW_RECOVERY_REQUIRED` when latest run is `failed`
+16. `POST /api/publish/chapter` returns `WORKFLOW_RECOVERY_REQUIRED` when latest run is stale-running (>2h)
+17. `POST /api/publish/chapter` allows publish when latest run is `completed` or recent-running
+
 ---
 
 ## Tests
 
-New test file: `tests/test_v676_workflow_recovery_cta_priority.py`
+**Backend:**
+- `tests/test_v676_workflow_recovery_cta_priority.py` — 9 tests for recovery state derivation
+- `tests/test_v676_publish_guard.py` — 6 tests for publish endpoint guard (blocked/failed/stale-running/completed/no-run)
 
-9 tests covering all acceptance criteria above.
+**Frontend:**
+- `frontend/src/components/project/__tests__/v676-recovery-cta-priority.test.tsx` — 9 tests:
+  - 4 workflow panel recovery CTA (blocked/failed/stale-running/completed + awaiting_publish)
+  - 2 header publish button (blocked/stale-running + reviewed)
+  - 3 agent panel publish card (blocked + awaiting_publish, failed + reviewed, completed + reviewed)
 
 ---
 
 ## Out of Scope
 
-- Frontend component-level tests for recovery panel rendering (P2 follow-up)
 - Changing the `blocking` chapter_status handling (already correct)
 - Modifying checkpoint staleness detection logic

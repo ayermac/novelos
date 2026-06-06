@@ -157,6 +157,11 @@ export default function AuthorAgentPanel({
     )
   )
   const isStaleRunning = effectiveRunStatus === 'running' && effectiveElapsed !== null && effectiveElapsed >= STUCK_RUN_THRESHOLD_MINUTES
+  const workflowNeedsRecovery = Boolean(
+    effectiveRunStatus === 'blocked' ||
+    effectiveRunStatus === 'failed' ||
+    (effectiveRunStatus === 'running' && (timeline?.is_stale || isStaleRunning))
+  )
   const isRunningAnotherChapter = Boolean(
     isProjectWorkflowRunning && runningWorkflowChapter && runningWorkflowChapter !== currentChapter
   )
@@ -165,7 +170,7 @@ export default function AuthorAgentPanel({
   const needsRecovery = status === 'blocking' || status === 'revision'
   const canShowPrimaryAction = activeTab !== 'workflow'
   const canDirectGenerate = canShowPrimaryAction && !isWorkflowActive && !hasPreservedPlannedContent && !needsRecovery
-  const recoveryRunId = runDetail?.run_id
+  const recoveryRunId = timeline?.run_id || runDetail?.run_id
   const showRecoveryShortcut = activeTab !== 'workflow' && Boolean(recoveryRunId) && (isStaleRunning || needsRecovery)
 
   return (
@@ -175,7 +180,7 @@ export default function AuthorAgentPanel({
       </div>
       <div className="author-agent-body">
         {/* Next recommended action */}
-        {isReviewedReal && onPublish && (
+        {isReviewedReal && onPublish && !workflowNeedsRecovery && (
           <div className="author-agent-next-action">
             <div className="action-label">{memoryCuratorRunning ? '记忆提取中' : '等待人工发布'}</div>
             <div className="action-desc">
@@ -192,6 +197,25 @@ export default function AuthorAgentPanel({
             >
               <CheckCircle2 size={12} /> 确认发布
             </LoadingButton>
+          </div>
+        )}
+
+        {isReviewedReal && workflowNeedsRecovery && (
+          <div className="author-agent-next-action">
+            <div className="action-label">需要先恢复运行</div>
+            <div className="action-desc">
+              工作流存在异常（{effectiveRunStatus === 'blocked' ? '阻塞' : effectiveRunStatus === 'failed' ? '失败' : '运行超时'}），需先处理恢复，再决定发布。
+            </div>
+            {recoveryRunId && (
+              <button
+                className="btn btn-secondary btn-sm"
+                type="button"
+                onClick={() => onViewWorkflow(recoveryRunId)}
+                style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
+              >
+                <Eye size={12} /> 打开工作流恢复
+              </button>
+            )}
           </div>
         )}
 
@@ -279,12 +303,31 @@ export default function AuthorAgentPanel({
           </div>
         )}
 
-        {status === 'awaiting_publish' && (
+        {status === 'awaiting_publish' && !workflowNeedsRecovery && (
           <div className="author-agent-next-action">
             <div className="action-label">{memoryCuratorRunning ? '记忆提取中' : '等待发布'}</div>
             <div className="action-desc">
               {memoryCuratorRunning ? '记忆提取完成后才能发布。' : '本章已完成全部流程，等待最终发布。'}
             </div>
+          </div>
+        )}
+
+        {status === 'awaiting_publish' && workflowNeedsRecovery && (
+          <div className="author-agent-next-action">
+            <div className="action-label">需要先恢复运行</div>
+            <div className="action-desc">
+              工作流存在异常（{effectiveRunStatus === 'blocked' ? '阻塞' : effectiveRunStatus === 'failed' ? '失败' : '运行超时'}），需先处理恢复，再决定发布。
+            </div>
+            {recoveryRunId && (
+              <button
+                className="btn btn-secondary btn-sm"
+                type="button"
+                onClick={() => onViewWorkflow(recoveryRunId)}
+                style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
+              >
+                <Eye size={12} /> 打开工作流恢复
+              </button>
+            )}
           </div>
         )}
 

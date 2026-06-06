@@ -19,6 +19,23 @@ def test_version_regression_guard():
     assert reject is True
 
 
+def test_version_regression_guard_allows_system_compression():
+    guard = VersionRegressionGuard()
+    current = "x" * 4119
+    compressed = "y" * 3255
+
+    reject, reason = guard.should_reject_new_draft(
+        current,
+        compressed,
+        3000,
+        editor_suggestions=[],
+        allow_system_compression=True,
+    )
+
+    assert reject is False
+    assert reason == ""
+
+
 def test_deadloop_detector():
     class FakeRepo:
         def get_chapter(self, *a): return {"status": "revision"}

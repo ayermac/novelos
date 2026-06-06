@@ -31,3 +31,12 @@ novel_factory = ["db/schema/*.sql", "db/migrations/*.sql", "config/*.yaml", "*.y
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-n auto"
+markers = [
+    "unit: Pure unit tests, no DB or external dependencies",
+    "integration: Tests requiring DB or cross-module interaction",
+    "slow: Tests taking >10s (full suite, real LLM, long workflows)",
+    "llm: Tests that call or mock LLM providers",
+    "frontend: Tests that build or check frontend assets",
+    "workflow: Tests covering LangGraph workflow execution",
+    "skill: Tests for the Skill system (registry, hooks, individual skills)",
+]

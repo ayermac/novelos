@@ -17,7 +17,13 @@ from ..workflow.execution_events import (
 )
 from ..models.schemas import PolisherOutput
 from ..models.state import ChapterStatus, FactoryState
-from ..validators.chapter_checker import validate_chapter_output, check_word_count_quality_gate, derive_word_target
+from ..validators.chapter_checker import (
+    validate_chapter_output,
+    check_word_count_quality_gate,
+    check_word_count_upper_gate,
+    count_words,
+    derive_word_target,
+)
 from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_critical_violation
 from ..validators.fact_lock import check_fact_integrity, extract_fact_lock
 from ..skills.registry import SkillRegistry
@@ -26,7 +32,7 @@ from ..agent_runtime.chapter_text import default_chapter_title, ensure_chapter_h
 from ..agent_runtime.revision_context import normalize_revision_review, revision_feedback_block
 from ..agent_runtime.skill_hooks import run_agent_skills
 from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
-from ..llm.openai_compatible import OutputValidationError
+from ..llm.openai_compatible import LLMError, OutputValidationError
 from ..llm.provider import is_configured_live_provider
 from ..quality.feedback_bridge import build_compact_feedback, format_polisher_context
 
@@ -85,6 +91,12 @@ class PolisherAgent(BaseAgent):
         """
         super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
+
+
+    @staticmethod
+    def _config_max_tokens(llm, fallback: int = 4096) -> int:
+        """Read max_tokens from LLM config, with fallback."""
+        return int(getattr(getattr(llm, "config", None), "max_tokens", fallback) or fallback)
 
     def _load_revision_review(
         self,
@@ -195,6 +207,21 @@ class PolisherAgent(BaseAgent):
             if draft_block:
                 parts.append(draft_block)
 
+        chapter = self._get_chapter_info(state)
+        current_content = (chapter or {}).get("content") or ""
+        if current_content and (
+            state.get("_revision_review")
+            or state.get("chapter_status") == ChapterStatus.REVISION.value
+            or ((chapter or {}).get("status") == ChapterStatus.REVISION.value)
+        ):
+            current_wc = count_words(current_content)
+            upper_bound = max(current_wc + 400, int(current_wc * 1.12))
+            parts.append(
+                "【返修润色边界】\n"
+                f"当前稿约 {current_wc} 字符。返修润色必须以当前稿为底稿做局部语言修正，"
+                f"不要扩写新场景；除非 Editor 明确要求扩写，润色后总篇幅不要超过 {upper_bound} 字符。"
+            )
+
         # v6.4.2: Inject quality-diagnosis-derived writing reminders
         parts.append(
             "【润色写作提醒】\n"
@@ -281,6 +308,40 @@ class PolisherAgent(BaseAgent):
         current_status = state.get("chapter_status", "")
         revision_review = self._load_revision_review(state, chapter)
         in_revision_chain = current_status == ChapterStatus.REVISION.value or bool(revision_review)
+
+        # v6.8.2: Validate revision context exists when in revision mode.
+        # v6.8.3: Only fail-fast for real Editor rejections, NOT for quality gate
+        # internal repairs which temporarily set chapter_status=REVISION.
+        if current_status == ChapterStatus.REVISION.value and not revision_review:
+            gate = state.get("quality_gate") or {}
+            is_quality_gate_retry = bool(
+                gate.get("word_count_fail")
+                or gate.get("death_penalty_fail")
+                or gate.get("scene_beat_coverage_fail")
+                or gate.get("version_regression")
+            )
+            if not is_quality_gate_retry:
+                logger.error(
+                    "Polisher: revision context missing for %s ch%d",
+                    project_id, chapter_number,
+                )
+                return {
+                    "error": "Polisher: 返修上下文缺失，无法加载 Editor 审核意见",
+                    "chapter_status": state.get("chapter_status"),
+                    "requires_human": True,
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "polisher",
+                        "message": "返修上下文缺失，需要人工确认后重新触发",
+                        "context_missing": True,
+                    },
+                }
+            else:
+                logger.info(
+                    "Polisher: revision context missing for %s ch%d but quality gate retry — continuing without review",
+                    project_id, chapter_number,
+                )
+
         if in_revision_chain:
             if revision_review:
                 issues = revision_review.get("issues") or []
@@ -297,8 +358,12 @@ class PolisherAgent(BaseAgent):
                     },
                 })
 
+        # v6.8.5: Include death penalty list so polisher avoids banned words
+        from ..validators.death_penalty import format_death_penalty_for_prompt
+        dp_prompt = format_death_penalty_for_prompt()
+        polisher_system = f"{POLISHER_SYSTEM_PROMPT}\n\n{dp_prompt}" if dp_prompt else POLISHER_SYSTEM_PROMPT
         messages = [
-            {"role": "system", "content": POLISHER_SYSTEM_PROMPT},
+            {"role": "system", "content": polisher_system},
             {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n\n{context}\n\n请润色以上草稿，注意不要改变任何剧情事实。"},
         ]
 
@@ -429,6 +494,95 @@ class PolisherAgent(BaseAgent):
                 },
             }
 
+        upper_gate_passed, upper_gate_msg = check_word_count_upper_gate(
+            polished_content, word_target, "polisher"
+        )
+        if not upper_gate_passed:
+            compressed_content = self._try_compress_overlong_polish(
+                state=state,
+                content=polished_content,
+                word_target=word_target,
+                upper_gate_msg=upper_gate_msg,
+            )
+            if compressed_content:
+                compressed_content = ensure_chapter_heading(
+                    compressed_content, chapter_title, chapter_number
+                )
+                if fact_lock:
+                    integrity = check_fact_integrity(original_content, compressed_content, fact_lock)
+                    if integrity.risk != "none":
+                        missing = [f.content for f in integrity.missing_facts]
+                        changed = [f.content for f in integrity.changed_facts]
+                        logger.error(
+                            "Polisher: compressed output fact lock verification FAILED — "
+                            "missing=%s changed=%s risk=%s",
+                            missing, changed, integrity.risk,
+                        )
+                        return {
+                            "error": (
+                                f"Polisher: fact lock verification failed after compression "
+                                f"(risk={integrity.risk}, "
+                                f"missing={missing}, changed={changed})"
+                            ),
+                            "chapter_status": state.get("chapter_status"),
+                        }
+                polished_content = compressed_content
+                upper_gate_passed, upper_gate_msg = check_word_count_upper_gate(
+                    polished_content, word_target, "polisher"
+                )
+                exec_events.append({
+                    "event_type": "word_count_compressed",
+                    "message": "润色稿超出字数上限，已自动压缩后继续",
+                    "status": "info",
+                    "payload": {"agent": "polisher", "word_target": word_target},
+                })
+
+            if not upper_gate_passed:
+                logger.warning("Polisher: word count upper gate failed: %s", upper_gate_msg)
+                from ..validators.chapter_checker import count_words
+                actual_wc = count_words(polished_content)
+                return {
+                    "error": f"字数质量门未通过: {upper_gate_msg}",
+                    "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "polisher",
+                        "word_count_fail": True,
+                        "message": upper_gate_msg,
+                        "actual_word_count": actual_wc,
+                        "word_target": word_target,
+                        "agent": "polisher",
+                        "workflow_run_id": state.get("workflow_run_id"),
+                        # v6.7.8: internal compression failure does not consume
+                        # chapter-level revision retries.
+                        "internal_repair": True,
+                        "consume_revision_retry": False,
+                        "repair_scope": "internal_word_count_compression",
+                    },
+                }
+
+        lower_gate_passed, lower_gate_msg = check_word_count_quality_gate(
+            polished_content, word_target, "polisher"
+        )
+        if not lower_gate_passed:
+            logger.warning("Polisher: word count quality gate failed after compression: %s", lower_gate_msg)
+            from ..validators.chapter_checker import count_words
+            actual_wc = count_words(polished_content)
+            return {
+                "error": f"字数质量门未通过: {lower_gate_msg}",
+                "chapter_status": state.get("chapter_status"),
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": "polisher",
+                    "word_count_fail": True,
+                    "message": lower_gate_msg,
+                    "actual_word_count": actual_wc,
+                    "word_target": word_target,
+                    "agent": "polisher",
+                    "workflow_run_id": state.get("workflow_run_id"),
+                },
+            }
+
         # Apply skills from config (before_save stage)
         if self.skill_registry:
             project_skill_overrides = self._get_project_skill_overrides(project_id)
@@ -506,16 +660,64 @@ class PolisherAgent(BaseAgent):
             },
         })
 
+        # v6.8.5: Check for excessive word count drift even on first polish.
+        # If the polished draft is >20% shorter than the original without any
+        # compression request, reject it and keep the original.
+        if not in_revision_chain and original_content and polished_wc < original_wc * 0.8:
+            # Check if word_count_compressed event exists (system compression)
+            system_compressed = any(
+                ev.get("event_type") == "word_count_compressed"
+                for ev in exec_events
+            )
+            if not system_compressed:
+                shrink_pct = (original_wc - polished_wc) / original_wc * 100
+                reason = f"润色稿字数异常缩减：{original_wc} → {polished_wc} 字（-{shrink_pct:.1f}%），超过 20% 阈值"
+                logger.warning("Polisher: first polish excessive shrink: %s", reason)
+                self.repo.save_artifact(
+                    project_id,
+                    chapter_number,
+                    "polisher",
+                    "rejected_regression",
+                    content_json={"content": polished_content, "rejection_reason": reason},
+                )
+                exec_events.append({
+                    "event_type": "quality_gate_retry",
+                    "message": reason,
+                    "status": "warning",
+                    "payload": {
+                        "revision_target": "polisher",
+                        "retry_count": 0,
+                        "quality_gate": {
+                            "pass": False,
+                            "revision_target": "polisher",
+                            "version_regression": True,
+                            "message": reason,
+                        },
+                    },
+                })
+                # Keep original content, return as passthrough
+                return {
+                    "chapter_status": ChapterStatus.POLISHED.value,
+                    "current_stage": "polished",
+                    "_revision_review": state.get("_revision_review"),
+                    "_exec_events": exec_events,
+                }
+
         # v6.6.0: Protect the current draft from a regressing revision pass.
         if in_revision_chain and original_content:
             from ..quality.version_regression_guard import VersionRegressionGuard
 
             revision_review = revision_review or {}
+            system_compressed = any(
+                ev.get("event_type") == "word_count_compressed"
+                for ev in exec_events
+            )
             reject, reason = VersionRegressionGuard.should_reject_new_draft(
                 original_content,
                 polished_content,
                 word_target,
                 editor_suggestions=revision_review.get("suggestions", []),
+                allow_system_compression=system_compressed,
             )
             if reject:
                 self.repo.save_artifact(
@@ -555,8 +757,23 @@ class PolisherAgent(BaseAgent):
             expected_status=expected_status,
         )
         if not ok:
-            logger.error("Polisher: status advance %s→polished failed (stale state)", expected_status)
-            return {"error": "Polisher: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
+            # v6.8.1: Check if chapter is already at or past POLISHED (recovery run)
+            current_status = self.repo.get_chapter_status(project_id, chapter_number)
+            _STATUS_ORDER = {
+                "idea": 0, "outlined": 1, "planned": 2, "scripted": 3,
+                "drafted": 4, "polished": 5, "review": 6, "reviewed": 7,
+                "revision": 8, "published": 9, "blocking": 10,
+            }
+            current_order = _STATUS_ORDER.get(current_status, -1)
+            polished_order = _STATUS_ORDER.get("polished", 5)
+            if current_order >= polished_order:
+                logger.info(
+                    "Polisher: chapter already at '%s' (order %d >= %d), skipping status advance (recovery run)",
+                    current_status, current_order, polished_order,
+                )
+            else:
+                logger.error("Polisher: status advance %s→polished failed (stale state)", expected_status)
+                return {"error": "Polisher: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
 
         # Save polished content (only after status advance succeeds)
         try:
@@ -697,14 +914,20 @@ class PolisherAgent(BaseAgent):
         if state.get("llm_mode") == "real" and len(content) > 2800:
             return self._try_segmented_plain_text_polish(state, context, exec_events=exec_events)
 
+        # v6.8.5: Include death penalty list so polisher avoids banned words
+        from ..validators.death_penalty import format_death_penalty_for_prompt as _dp_prompt
+        dp_text = _dp_prompt()
+        system_content = (
+            "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
+            "不要输出 JSON、字段名、Markdown、解释或摘要。"
+            "必须保留剧情事实、关键事件、伏笔和角色动机。"
+        )
+        if dp_text:
+            system_content = f"{system_content}\n\n{dp_text}"
         messages = [
             {
                 "role": "system",
-                "content": (
-                    "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
-                    "不要输出 JSON、字段名、Markdown、解释或摘要。"
-                    "必须保留剧情事实、关键事件、伏笔和角色动机。"
-                ),
+                "content": system_content,
             },
             {
                 "role": "user",
@@ -714,7 +937,7 @@ class PolisherAgent(BaseAgent):
                 ),
             },
         ]
-        max_tokens = int(getattr(getattr(self.llm, "config", None), "max_tokens", 4096) or 4096)
+        max_tokens = self._config_max_tokens(self.llm)
         content = self._invoke_text_for_polisher(
             messages,
             temperature=0.65,
@@ -756,14 +979,20 @@ class PolisherAgent(BaseAgent):
         # If only one chunk, process directly without recursion
         if total_chunks <= 1:
             chunk = chunks[0] if chunks else content
+            # v6.8.5: Include death penalty list
+            from ..validators.death_penalty import format_death_penalty_for_prompt as _dp_seg
+            _dp_txt = _dp_seg()
+            _sys = (
+                "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
+                "不要输出 JSON、字段名、Markdown、解释或摘要。"
+                "必须保留剧情事实、关键事件、伏笔和角色动机。"
+            )
+            if _dp_txt:
+                _sys = f"{_sys}\n\n{_dp_txt}"
             messages = [
                 {
                     "role": "system",
-                    "content": (
-                        "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
-                        "不要输出 JSON、字段名、Markdown、解释或摘要。"
-                        "必须保留剧情事实、关键事件、伏笔和角色动机。"
-                    ),
+                    "content": _sys,
                 },
                 {
                     "role": "user",
@@ -773,7 +1002,7 @@ class PolisherAgent(BaseAgent):
                     ),
                 },
             ]
-            max_tokens = int(getattr(getattr(self.llm, "config", None), "max_tokens", 4096) or 4096)
+            max_tokens = self._config_max_tokens(self.llm)
             polished = self._invoke_text_for_polisher(
                 messages,
                 temperature=0.65,
@@ -807,14 +1036,20 @@ class PolisherAgent(BaseAgent):
             if idx == total_chunks - 1:
                 segment_instruction += " 这是最后一段。"
 
+            # v6.8.5: Include death penalty list per segment
+            from ..validators.death_penalty import format_death_penalty_for_prompt as _dp_mc
+            _dp_mc_txt = _dp_mc()
+            _sys_mc = (
+                "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
+                "不要输出 JSON、字段名、Markdown、解释或摘要。"
+                "必须保留剧情事实、关键事件、伏笔和角色动机。"
+            )
+            if _dp_mc_txt:
+                _sys_mc = f"{_sys_mc}\n\n{_dp_mc_txt}"
             messages = [
                 {
                     "role": "system",
-                    "content": (
-                        "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
-                        "不要输出 JSON、字段名、Markdown、解释或摘要。"
-                        "必须保留剧情事实、关键事件、伏笔和角色动机。"
-                    ),
+                    "content": _sys_mc,
                 },
                 {
                     "role": "user",
@@ -828,29 +1063,49 @@ class PolisherAgent(BaseAgent):
                 },
             ]
 
-            if exec_events is not None:
-                exec_events.append({
-                    "event_type": EVENT_SEGMENT_STARTED,
-                    "message": f"Polisher 开始润色第 {segment_num}/{total_chunks} 段",
-                    "status": "info",
-                    "payload": {
-                        "segment_index": segment_num,
-                        "total_segments": total_chunks,
-                    },
-                })
+            # v6.8.0: Skip segment_started logging (reduces noise)
 
             try:
-                polished = self._invoke_text_for_polisher(
-                    messages,
-                    temperature=0.65,
-                    max_tokens=4096,
-                    max_retries=None,
-                    request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
-                ).strip()
+                # v6.8.5: Truncation retry for segmented polisher
+                config_max = self._config_max_tokens(self.llm)
+                try:
+                    polished = self._invoke_text_for_polisher(
+                        messages,
+                        temperature=0.65,
+                        max_tokens=config_max,
+                        max_retries=None,
+                        request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
+                    ).strip()
+                except LLMError as trunc_err:
+                    if "finish_reason=length" not in str(trunc_err):
+                        raise
+                    seg_retry_max = min(8192, int(config_max * 1.5))
+                    logger.warning(
+                        "Polisher segment %d: truncation (max_tokens=%d), retrying with %d",
+                        segment_num, config_max, seg_retry_max,
+                    )
+                    polished = self._invoke_text_for_polisher(
+                        messages,
+                        temperature=0.65,
+                        max_tokens=seg_retry_max,
+                        max_retries=None,
+                        request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
+                    ).strip()
                 polished = self._coerce_plain_text_content(polished)
                 if not polished:
                     raise OutputValidationError(
                         f"Polisher 分段润色第 {segment_num} 段返回空内容"
+                    )
+                # v6.8.5: Detect per-segment truncation by checking word count
+                # ratio.  A >40% loss signals finish_reason=length or severe
+                # content degradation that must not silently propagate.
+                from ..validators.chapter_checker import count_words as _seg_wc
+                seg_in_wc = _seg_wc(chunk)
+                seg_out_wc = _seg_wc(polished)
+                if seg_in_wc > 100 and seg_out_wc < seg_in_wc * 0.6:
+                    raise OutputValidationError(
+                        f"Polisher 分段润色第 {segment_num} 段字数异常缩减: "
+                        f"{seg_in_wc} → {seg_out_wc} (loss > 40%)"
                     )
             except Exception as e:
                 if exec_events is not None:
@@ -867,16 +1122,7 @@ class PolisherAgent(BaseAgent):
 
             segment_outputs.append(polished)
 
-            if exec_events is not None:
-                exec_events.append({
-                    "event_type": EVENT_SEGMENT_COMPLETED,
-                    "message": f"Polisher 完成第 {segment_num}/{total_chunks} 段 ({len(polished)} 字)",
-                    "status": "info",
-                    "payload": {
-                        "segment_index": segment_num,
-                        "segment_length": len(polished),
-                    },
-                })
+            # v6.8.0: Skip segment_completed logging (reduces noise)
 
         merged_content = "\n\n".join(segment_outputs)
         return PolisherOutput(
@@ -888,6 +1134,60 @@ class PolisherAgent(BaseAgent):
             deferred_quality_findings=[],
             quality_risk_note=None,
         )
+
+    def _try_compress_overlong_polish(
+        self,
+        state: FactoryState,
+        content: str,
+        word_target: int,
+        upper_gate_msg: str,
+    ) -> str | None:
+        """Ask the model once to compress an overlong polished chapter."""
+        if state.get("llm_mode") != "real":
+            return None
+
+        config_max = self._config_max_tokens(self.llm)
+        maximum_allowed = max(word_target + 1200, int(word_target * 1.6))
+        chapter_number = state["chapter_number"]
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是网文工厂的润色编辑。请只输出压缩后的完整正文纯文本，"
+                    "不要输出 JSON、字段名、Markdown、解释或摘要。"
+                    "必须保留剧情事实、关键事件、伏笔、角色动机和章末钩子；"
+                    "只删除重复铺陈、冗余心理解释、重复环境描写和同义反复，不新增事件。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"第{chapter_number}章润色稿超过字数上限：{upper_gate_msg}。\n"
+                    f"请将正文压缩到 {word_target} 到 {maximum_allowed} 字符之间，"
+                    "保持小说正文完整、自然、有章末钩子，不要改成摘要。\n\n"
+                    f"【当前正文】\n{content}"
+                ),
+            },
+        ]
+
+        try:
+            compressed = self._invoke_text_for_polisher(
+                messages,
+                temperature=0.45,
+                max_tokens=max(2048, min(config_max, int(maximum_allowed * 1.25))),
+                max_retries=None,
+                request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
+            ).strip()
+            compressed = self._coerce_plain_text_content(compressed)
+            if not compressed:
+                return None
+            lower_passed, _ = check_word_count_quality_gate(compressed, word_target, "polisher")
+            upper_passed, _ = check_word_count_upper_gate(compressed, word_target, "polisher")
+            if lower_passed and upper_passed:
+                return compressed
+        except Exception as e:
+            logger.warning("Polisher: compress-overlong retry failed: %s", e)
+        return None
 
     def _invoke_text_for_polisher(
         self,

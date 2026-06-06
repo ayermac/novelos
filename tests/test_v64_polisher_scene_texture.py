@@ -278,8 +278,17 @@ class TestPolisherSelfCheckWarnings:
         from novel_factory.agents.polisher import PolisherAgent
         from novel_factory.llm.provider import LLMProvider
 
-        # Ensure content is long enough to pass word gate
-        while len(content) < 2200:
+        conn = repo._conn()
+        conn.execute(
+            "UPDATE instructions SET word_target=? WHERE project_id=? AND chapter_number=?",
+            (4000, "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        # Ensure content is long enough for the lower gate without tripping
+        # the upper gate; these tests isolate advisory warning behavior.
+        while len(content) < 3400:
             content = content + "\n" + content
 
         class StubLLM(LLMProvider):

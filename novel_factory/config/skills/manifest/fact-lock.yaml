@@ -1,0 +1,66 @@
+id: fact-lock
+name: Fact Lock Guard
+version: "1.0.0"
+kind: validator
+class_name: FactLockSkill
+description: "检查润色后关键事实是否被保留"
+enabled: true
+builtin: true
+allowed_agents:
+  - polisher
+  - editor
+  - manual
+allowed_stages:
+  - before_save
+  - before_review
+  - manual
+permissions:
+  read_context: false
+  read_chapter: false
+  transform_text: false
+  validate_text: true
+  write_quality_report: false
+  write_skill_run: true
+  write_chapter_content: false
+  update_chapter_status: false
+  send_agent_message: false
+  call_llm: false
+  call_network: false
+input_schema:
+  type: object
+  required:
+    - text
+  properties:
+    text:
+      type: string
+    original_text:
+      type: string
+    polished_text:
+      type: string
+    fact_lock_items:
+      type: array
+      items:
+        type: string
+output_schema:
+  type: object
+  required:
+    - passed
+    - risk_level
+  properties:
+    passed:
+      type: boolean
+    risk_level:
+      type: string
+    changed_facts:
+      type: array
+      items:
+        type: string
+    issues:
+      type: array
+      items:
+        type: string
+failure_policy:
+  on_error: warn
+  max_retries: 0
+  timeout_seconds: null
+  blocking_threshold: null

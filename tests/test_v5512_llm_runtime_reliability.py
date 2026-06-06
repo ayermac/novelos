@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import tempfile
 import json
+import time
 
 import pytest
 from fastapi.testclient import TestClient
@@ -75,6 +76,42 @@ def test_llm_provider_retries_rate_limit_with_exponential_backoff():
     assert provider.last_call_trace is not None
     assert provider.last_call_trace["request"]["messages"][0]["content"] == "return json"
     assert provider.last_call_trace["response"]["usage"]["total_tokens"] == 15
+
+
+def test_llm_provider_ignores_malformed_proxy_environment_for_client_init(monkeypatch):
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost,::1,127.0.0.0/8,::1/128")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost,::1,127.0.0.0/8,::1/128")
+    config = LLMConfig(
+        base_url="https://api.openai.com/v1",
+        api_key="test-key",
+        model="gpt-4",
+    )
+
+    provider = OpenAICompatibleProvider(config)
+
+    assert provider.client is not None
+
+
+def test_llm_provider_enforces_hard_timeout_when_sdk_hangs():
+    class _HangingClient:
+        def invoke(self, _messages, **_kwargs):
+            time.sleep(2)
+            return _FakeResponse()
+
+    config = LLMConfig(
+        api_key="test-key",
+        request_timeout_seconds=1,
+        retry_attempts=1,
+        retry_min_seconds=0,
+        retry_max_seconds=0,
+    )
+    provider = OpenAICompatibleProvider(config)
+    provider._client = _HangingClient()  # type: ignore[assignment]
+
+    with pytest.raises(Exception) as exc:
+        provider.invoke_json([{"role": "user", "content": "return json"}])
+
+    assert "超时" in str(exc.value)
 
 
 def test_llm_provider_call_trace_redacts_sensitive_request_and_response():
@@ -259,6 +296,76 @@ def test_llm_provider_text_call_can_override_timeout_without_mutating_config():
     assert provider.built_timeouts == [300]
     assert provider.client_instances[-1].calls == 1
     assert provider.config.request_timeout_seconds == 60
+
+
+def test_llm_provider_text_call_tolerates_none_response_metadata():
+    class _TextResponse:
+        content = "ok"
+        usage_metadata = {}
+        response_metadata = None
+
+    class _Client:
+        def invoke(self, _messages, **_kwargs):
+            return _TextResponse()
+
+    provider = OpenAICompatibleProvider(LLMConfig(api_key="test-key"))
+    provider._client = _Client()  # type: ignore[assignment]
+
+    text = provider.invoke_text([{"role": "user", "content": "write"}])
+
+    assert text == "ok"
+    assert provider.last_token_usage is not None
+    assert provider.last_token_usage.total_tokens == 0
+    assert provider.last_call_trace is not None
+    assert provider.last_call_trace["response"]["response_metadata"] == {}
+
+
+def test_llm_provider_text_call_tolerates_none_token_usage():
+    class _TextResponse:
+        content = "ok"
+        usage_metadata = {}
+        response_metadata = {"token_usage": None, "finish_reason": "stop"}
+
+    class _Client:
+        def invoke(self, _messages, **_kwargs):
+            return _TextResponse()
+
+    provider = OpenAICompatibleProvider(LLMConfig(api_key="test-key"))
+    provider._client = _Client()  # type: ignore[assignment]
+
+    text = provider.invoke_text([{"role": "user", "content": "write"}], agent_id="author")
+
+    assert text == "ok"
+    assert provider.last_token_usage is not None
+    assert provider.last_token_usage.total_tokens == 0
+    assert provider.last_call_trace is not None
+    assert provider.last_call_trace["request"]["call_type"] == "text"
+    assert provider.last_call_trace["request"]["agent_id"] == "author"
+
+
+def test_llm_provider_text_call_falls_back_on_none_shape_error(monkeypatch):
+    class _Client:
+        def invoke(self, _messages, **_kwargs):
+            raise AttributeError("'NoneType' object has no attribute 'get'")
+
+    provider = OpenAICompatibleProvider(LLMConfig(api_key="test-key"))
+    provider._client = _Client()  # type: ignore[assignment]
+
+    def _fake_http_fallback(_messages, **_kwargs):
+        return {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": None,
+        }
+
+    monkeypatch.setattr(provider, "_invoke_http_chat_completion", _fake_http_fallback)
+
+    text = provider.invoke_text([{"role": "user", "content": "write"}], agent_id="author")
+
+    assert text == "ok"
+    assert provider.last_call_trace is not None
+    assert provider.last_call_trace["request"]["call_type"] == "text"
+    assert provider.last_call_trace["request"]["agent_id"] == "author"
+    assert provider.last_call_trace["request"]["transport_fallback"] == "http"
 
 
 def test_llm_provider_respects_configured_min_interval(monkeypatch):

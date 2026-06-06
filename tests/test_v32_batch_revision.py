@@ -100,6 +100,31 @@ def run_cli(args: list[str]) -> tuple[int, str, str]:
     return result.returncode, result.stdout, result.stderr
 
 
+
+def _save_revision_review(repo, project_id, chapter_number):
+    """Save a review so Author/Polisher DB fallback can load revision context."""
+    ch = repo.get_chapter(project_id, chapter_number)
+    if ch:
+        repo.save_review(
+            project_id=project_id, chapter_id=ch["id"],
+            passed=False, score=75,
+            setting_score=20, logic_score=20, poison_score=15, text_score=10, pacing_score=10,
+            issues=["需返修"], suggestions=["优化"],
+            revision_target="author",
+        )
+
+
+def _save_all_revision_reviews(repo, project_id):
+    """Save reviews for all chapters so batch revision Author/Polisher can load context."""
+    for ch in repo.get_chapters(project_id):
+        repo.save_review(
+            project_id=project_id, chapter_id=ch["id"],
+            passed=False, score=75,
+            setting_score=20, logic_score=20, poison_score=15, text_score=10, pacing_score=10,
+            issues=["需返修"], suggestions=["优化"],
+            revision_target="author",
+        )
+
 class TestBatchReviewRequestChanges:
     """Test batch review with request_changes decision."""
 
@@ -212,6 +237,7 @@ class TestRerunChapter:
 
         # Run revision
         revision_run_id = plan_result["data"]["revision_run_id"]
+        _save_all_revision_reviews(repo, "demo")
         run_result = dispatcher.run_batch_revision(revision_run_id)
 
         # Check that only chapter 2 was affected
@@ -249,6 +275,7 @@ class TestResumeToStatus:
 
         # Run revision
         revision_run_id = plan_result["data"]["revision_run_id"]
+        _save_all_revision_reviews(repo, "demo")
         run_result = dispatcher.run_batch_revision(revision_run_id)
 
         # Check that revision was executed
@@ -293,6 +320,7 @@ class TestRerunTail:
 
         # Run revision
         revision_run_id = plan_result["data"]["revision_run_id"]
+        _save_all_revision_reviews(repo, "demo")
         run_result = dispatcher.run_batch_revision(revision_run_id)
 
         assert run_result["ok"]
@@ -362,6 +390,7 @@ class TestRevisionStatusQuery:
         plan_result = dispatcher.create_batch_revision_plan(run_id, plan_json)
         revision_run_id = plan_result["data"]["revision_run_id"]
 
+        _save_all_revision_reviews(repo, "demo")
         run_result = dispatcher.run_batch_revision(revision_run_id)
 
         # Query status
@@ -405,6 +434,7 @@ class TestRevisionFailureHandling:
         revision_run_id = plan_result["data"]["revision_run_id"]
 
         # Run revision (should fail because chapter is in blocking state)
+        _save_all_revision_reviews(repo, "demo")
         run_result = dispatcher.run_batch_revision(revision_run_id)
 
         # Check that revision run failed
@@ -521,6 +551,7 @@ class TestItemWriteFailureRunning:
             return original(item_id, status=status, **kwargs)
 
         with patch.object(repo, "update_batch_revision_item", side_effect=fake_update_item):
+            _save_all_revision_reviews(repo, "demo")
             result = dispatcher.run_batch_revision(revision_run_id)
 
         assert result["ok"] is False
@@ -565,6 +596,7 @@ class TestItemWriteFailureCompleted:
             return original(item_id, status=status, **kwargs)
 
         with patch.object(repo, "update_batch_revision_item", side_effect=fake_update_item):
+            _save_all_revision_reviews(repo, "demo")
             result = dispatcher.run_batch_revision(revision_run_id)
 
         assert result["ok"] is False
@@ -613,6 +645,7 @@ class TestRunWriteFailureCompleted:
             return original(run_id, status=status, **kwargs)
 
         with patch.object(repo, "update_batch_revision_run", side_effect=fake_update_run):
+            _save_all_revision_reviews(repo, "demo")
             result = dispatcher.run_batch_revision(revision_run_id)
 
         assert result["ok"] is False
@@ -658,6 +691,7 @@ class TestRunWriteFailureFailed:
             return original(run_id, status=status, **kwargs)
 
         with patch.object(repo, "update_batch_revision_run", side_effect=fake_update_run):
+            _save_all_revision_reviews(repo, "demo")
             result = dispatcher.run_batch_revision(revision_run_id)
 
         assert result["ok"] is False
@@ -691,6 +725,7 @@ class TestRerunChapterBehavioral:
         plan_result = dispatcher.create_batch_revision_plan(run_id, plan_json)
         revision_run_id = plan_result["data"]["revision_run_id"]
 
+        _save_all_revision_reviews(repo, "demo")
         run_result = dispatcher.run_batch_revision(revision_run_id)
         assert run_result["ok"]
 

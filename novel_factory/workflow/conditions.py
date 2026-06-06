@@ -97,7 +97,46 @@ def hydrate_revision_state(state: FactoryState, repo: Any) -> FactoryState:
             "suggestions": review.get("suggestions"),
         }
 
+    # v6.8.2: Hydrate retry_count from DB as source of truth. Do this even
+    # when state already has a non-zero value because resumed graph state may
+    # lag behind task-table retry accounting.
+    try:
+        retry_count = repo.get_chapter_retry_count(project_id, int(chapter_number))
+        hydrated["retry_count"] = retry_count
+    except Exception:
+        logger.debug(
+            "hydrate_revision_state: failed to load retry_count for %s/%s",
+            project_id, chapter_number,
+            exc_info=True,
+        )
+
+
     return hydrated
+
+
+# v6.8.5: Quality Gate 独立节点路由
+def route_by_quality_gate(state: FactoryState) -> str:
+    """quality_gate 节点后路由：通过则继续 LLM 审校，失败则跳过 LLM 直接返修。
+
+    v6.8.5: 确定性检查失败时跳过 Editor LLM 调用，节省 token 和时间。
+    """
+    if state.get("requires_human") or state.get("error"):
+        return "human_review"
+
+    gate = state.get("quality_gate", {}) or {}
+    passed = gate.get("passed", False)
+
+    if passed:
+        return "editor"  # 继续 LLM 审校
+
+    # 确定性检查失败，跳过 LLM 审校
+    retry_count = state.get("retry_count", 0)
+    max_retries = state.get("max_retries", 3)
+
+    if retry_count >= max_retries:
+        return "human_review"
+
+    return "revision_router"  # 直接返修
 
 
 def route_by_chapter_status(state: FactoryState) -> str:

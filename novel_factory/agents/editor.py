@@ -36,6 +36,10 @@ from ..agent_runtime.revision_context import normalize_revision_review
 from ..agent_runtime.skill_hooks import run_agent_skills
 from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
 from ..quality.chapter_seam import build_chapter_seam_context, evaluate_chapter_seam
+from ..quality.continuity_gate import (
+    evaluate_chapter_continuity,
+    SEVERITY_BLOCKING,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +65,10 @@ EDITOR_SYSTEM_PROMPT = """你是网文工厂的质检（Editor），是读者毒
 - 不要泛泛评价（如"写得不错"），要给出可操作的修改方向
 
 评分规则：
-- 总分 >= 90 且无单项不及格 → 通过 (pass=true)
-- 80-89 → 退回润色或局部返修
-- 60-79 → 退回 Author 重写关键问题
-- < 60 → 严重失败
+- 总分 >= 85 且无 blocking/priority 问题 → 通过 (pass=true)
+- 80-84 如只有 advisory 问题 → 通过并给发布前建议；如存在明确高优先级问题 → 退回返修
+- 78-79 只有在存在具体、可执行的高优先级问题时才退回；不要为了轻微风格瑕疵卡在 79
+- < 78 → 退回 Author/Polisher 修复关键问题
 
 死刑红线：发现 AI 烂词(冷笑、嘴角微扬等) → 总分=50
 
@@ -76,6 +80,9 @@ EDITOR_SYSTEM_PROMPT = """你是网文工厂的质检（Editor），是读者毒
 - suggestions: 修改建议列表
 - revision_target: 退回目标 ("author"/"polisher"/"planner"/null)
 - state_card: 如果通过，提取本章状态卡数据
+
+示例（注意布尔值不加引号，null不加引号）：
+{"pass":true,"score":85,"scores":{"setting":24,"logic":23,"poison":18,"text":12,"pacing":8},"issues":["问题描述"],"suggestions":["修改建议"],"revision_target":null,"state_card":{}}
 
 revision_target 规则：
 - 剧情、逻辑、设定、伏笔问题 → "author"
@@ -239,6 +246,11 @@ class EditorAgent(BaseAgent):
         if style_ctx:
             parts.append(style_ctx)
 
+        # v6.8.1: Style-aware prompt injection (webnovel excitement, suspense, romance)
+        style_prompt = self._get_style_prompt_injection(project_id, "editor")
+        if style_prompt:
+            parts.append(style_prompt)
+
         # v6.6.1: Inject deterministic quality diagnosis feedback
         quality_feedback = self._build_quality_feedback(state)
         if quality_feedback:
@@ -379,39 +391,85 @@ class EditorAgent(BaseAgent):
 
         return issues, suggestions
 
-    def _fallback_rule_review(self, content: str, reason: str) -> EditorOutput:
-        """Fallback review when live editor LLM cannot return a usable result."""
+    def _fallback_rule_review(
+        self, content: str, reason: str, *,
+        project_id: str = "",
+        chapter_number: int = 0,
+    ) -> EditorOutput:
+        """Fallback review when live editor LLM cannot return a usable result.
+
+        v6.7.9: Degraded fallback — can no longer give 88/excellent.
+        Maximum score is 70 with a clear warning that this is a rule-based
+        fallback, not a full editorial review.
+        """
         dp_result = check_death_penalty_structured(content)
         has_content = bool(content.strip())
-        passed = has_content and not dp_result.has_critical
-        score = 88 if passed else 60
+
+        # v6.7.9: Run continuity gate even in fallback
+        continuity_result = None
+        if project_id and chapter_number:
+            try:
+                continuity_result = evaluate_chapter_continuity(
+                    self.repo, project_id, chapter_number, content,
+                )
+            except Exception:
+                logger.warning("Editor fallback: continuity gate failed", exc_info=True)
+
+        continuity_blocking = continuity_result is not None and continuity_result.should_block_publish
+
+        # v6.7.9: Fallback can never auto-pass if continuity blocks
+        passed = has_content and not dp_result.has_critical and not continuity_blocking
+        # v6.8.2: Raise fallback ceiling to 78 (just below pass threshold)
+        score = 78 if passed else 60
+
         issues = []
         if not has_content:
             issues.append("正文为空")
         if dp_result.has_critical:
             issues.extend([f"CRITICAL 死刑红线: {v}" for v in dp_result.violations])
-        if reason:
-            issues.append(f"AI 审核降级为规则检查: {reason}")
+
+        # v6.7.9: Mandatory degraded-review warning
+        issues.append(
+            "AI 审核不可用，本结果仅为规则兜底，不代表完整审校通过。"
+            f"降级原因: {reason}"
+        )
+
+        if continuity_blocking and continuity_result:
+            for ci in continuity_result.issues:
+                if ci not in issues:
+                    issues.append(f"[连续性阻断] {ci}")
 
         # v6.4.4: Advisory quality signals even in fallback
         advisory_issues, advisory_suggestions = self._run_advisory_quality_check(content)
         issues = issues + advisory_issues
 
+        suggestions = ["请人工复核后再继续。"] + advisory_suggestions
+        if continuity_result:
+            suggestions = continuity_result.suggestions + suggestions
+
         return EditorOutput(
             pass_=passed,
             score=score,
             scores={
-                "setting": 22 if passed else 15,
-                "logic": 22 if passed else 15,
-                "poison": 18 if passed else 10,
-                "text": 13 if passed else 10,
-                "pacing": 13 if passed else 10,
+                "setting": 18 if passed else 12,
+                "logic": 18 if passed else 12,
+                "poison": 14 if passed else 10,
+                "text": 10 if passed else 8,
+                "pacing": 10 if passed else 8,
             },
             issues=issues,
-            suggestions=advisory_suggestions if passed else (["请人工检查正文后再继续。"] + advisory_suggestions),
-            revision_target=None if passed else "polisher",
+            suggestions=suggestions,
+            # v6.8.5-fix: 使用 determine_revision_target() 而非硬编码，
+            # 确保 fallback 路径也能正确路由作者级问题（时间逻辑、冲突、对话比例等）
+            revision_target=None if passed else determine_revision_target(
+                issues=issues,
+                death_penalty=dp_result.has_critical,
+                seam_blocking_count=1 if continuity_blocking else 0,
+            ),
             state_card={
                 "summary": "AI 审核不可用，已完成规则兜底检查；请人工发布前复核。",
+                "degraded_review": True,
+                "fallback_type": "rule_review",
             } if passed else {},
         )
 
@@ -464,7 +522,7 @@ class EditorAgent(BaseAgent):
         ]
 
         try:
-            invoke_kwargs = {"max_tokens": 700} if use_compact_review else {}
+            invoke_kwargs = {}
             raw = self._invoke_json(
                 messages,
                 schema=EditorOutput,
@@ -476,11 +534,20 @@ class EditorAgent(BaseAgent):
             if not use_compact_review:
                 raise
             logger.warning("Editor: LLM review degraded to rule-based fallback: %s", e)
-            output = self._fallback_rule_review(inputs.content, str(e))
+            output = self._fallback_rule_review(
+                inputs.content, str(e),
+                project_id=inputs.project_id,
+                chapter_number=inputs.chapter_number,
+            )
             exec_events.append({
                 "event_type": "fallback_used",
                 "message": f"LLM 审核降级为规则兜底：{str(e)[:100]}",
-                "payload": {"fallback_type": "rule_review", "reason": str(e)[:200]},
+                "payload": {
+                    "fallback_type": "rule_review",
+                    "reason": str(e)[:200],
+                    "degraded_review": True,
+                    "blocks_auto_publish": not output.pass_,
+                },
             })
 
         return output, exec_events
@@ -633,9 +700,19 @@ class EditorAgent(BaseAgent):
 
         # Classify issues for revision_target (overrides LLM self-report)
         # But NOT if a specific gate (word count, seam) already set a target
+        # v6.7.9: Exclude advisory/warning continuity issues from target
+        # classification — they are structural/continuity signals, not prose
+        # or plot issues that should reroute to author/polisher.
         if not output.pass_ and output.issues:
             pre_classify_target = output.revision_target
-            classify_result = classify_issues(output.issues, output.revision_target)
+            classifyable_issues = [
+                i for i in output.issues
+                if not i.startswith("[连续性建议]") and not i.startswith("[连续性警告]")
+            ]
+            classify_result = classify_issues(
+                classifyable_issues if classifyable_issues else output.issues,
+                output.revision_target,
+            )
             gate_forced_target = bool(word_gate_details) or seam_result.blocking_count > 0
             # Override the LLM's self-reported target when issue semantics are clearer.
             # Preserve targets set by hard gates such as word count and chapter seam.
@@ -699,6 +776,7 @@ class EditorAgent(BaseAgent):
                     llm_revision_target=output.revision_target,
                     quality_priority_count=quality_result.priority_count,
                     seam_blocking_count=seam_result.blocking_count,
+                    retry_count=inputs.retry_count,
                 )
             strategy_note = f"[v6.6策略] {strategy_decision.reason}"
             if strategy_note not in output.issues:
@@ -713,6 +791,131 @@ class EditorAgent(BaseAgent):
             policy_input=policy_input,
             word_gate_details=word_gate_details,
         )
+
+    def _apply_style_weight_adjustment(
+        self,
+        inputs: EditorInputs,
+        output: EditorOutput,
+    ) -> None:
+        """v6.8.1: Adjust dimension scores based on style profile.
+
+        In excitement mode (high), pacing weight increases from 15→30,
+        and other weights decrease proportionally. The LLM scores are
+        post-processed so that pacing carries more weight in the final total.
+        """
+        try:
+            from ..quality.style_detector import detect_style_from_text, get_editor_weight_multiplier
+            project = self.repo.get_project(inputs.project_id)
+            if not project:
+                return
+            text = " ".join(filter(None, [
+                project.get("name", ""),  # 项目名称
+                project.get("genre", ""),  # 类型
+                project.get("description", ""),  # 项目描述
+            ]))
+            if not text.strip():
+                return
+            profile = detect_style_from_text(text)
+            multipliers = get_editor_weight_multiplier(profile)
+
+            # Only adjust if multipliers differ from identity
+            if all(abs(v - 1.0) < 0.01 for v in multipliers.values()):
+                return
+
+            # Apply multipliers to each dimension score (cap at max)
+            max_scores = {"setting": 25, "logic": 25, "poison": 20, "text": 15, "pacing": 15}
+            adjusted_scores = {}
+            weighted_sum = 0.0
+            for dim in ("setting", "logic", "poison", "text", "pacing"):
+                raw = getattr(output.scores, dim, 0) if hasattr(output.scores, dim) else output.scores.get(dim, 0)
+                mult = multipliers.get(dim, 1.0)
+                adjusted = min(round(raw * mult), max_scores.get(dim, 25))
+                adjusted_scores[dim] = adjusted
+                weighted_sum += adjusted
+
+            # Recalculate total score (normalized to 100)
+            # Default total max = 25+25+20+15+15 = 100
+            # With multipliers, the weighted max = sum(max * mult)
+            weighted_max = sum(max_scores[dim] * multipliers.get(dim, 1.0) for dim in max_scores)
+            if weighted_max > 0:
+                new_total = round(weighted_sum / weighted_max * 100)
+            else:
+                new_total = output.score
+
+            # Update scores and total
+            for dim, val in adjusted_scores.items():
+                if hasattr(output.scores, dim):
+                    setattr(output.scores, dim, val)
+                elif isinstance(output.scores, dict):
+                    output.scores[dim] = val
+            output.score = new_total
+
+            logger.info(
+                "Editor: style weight adjustment applied (excitement_level=%s, new_score=%d)",
+                profile.excitement_level, new_total,
+            )
+        except Exception:
+            logger.warning("Editor: style weight adjustment failed", exc_info=True)
+
+    def _run_continuity_gate(
+        self,
+        inputs: EditorInputs,
+        output: EditorOutput,
+    ) -> Any:
+        """Run deterministic narrative continuity gate (v6.7.9).
+
+        Blocking continuity issues override pass_/score and force revision.
+        Warning/advisory issues are appended to issues/suggestions but do NOT
+        mutate score or pass_ unless the issue is blocking.
+        """
+        from ..quality.continuity_gate import evaluate_chapter_continuity, SEVERITY_BLOCKING, SEVERITY_WARNING
+
+        try:
+            result = evaluate_chapter_continuity(
+                self.repo,
+                inputs.project_id,
+                inputs.chapter_number,
+                inputs.content,
+                title=inputs.chapter.get("title") if inputs.chapter else None,
+            )
+        except Exception:
+            logger.warning("Editor: continuity gate execution failed", exc_info=True)
+            return None
+
+        if result.should_block_publish or result.severity == SEVERITY_BLOCKING:
+            output.pass_ = False
+            output.score = min(output.score, 70)
+            output.revision_target = output.revision_target or "author"
+            for issue in result.issues[:3]:
+                note = f"[连续性阻断] {issue}"
+                if note not in output.issues:
+                    output.issues.append(note)
+            for suggestion in result.suggestions[:3]:
+                note = f"[连续性修复] {suggestion}"
+                if note not in output.suggestions:
+                    output.suggestions.append(note)
+        elif result.severity == SEVERITY_WARNING:
+            # Warning: inject into issues for visibility but do NOT force
+            # score/pass changes; let the Editor strategy decide.
+            for issue in result.issues[:2]:
+                note = f"[连续性警告] {issue}"
+                if note not in output.issues:
+                    output.issues.append(note)
+            for suggestion in result.suggestions[:2]:
+                note = f"[连续性建议] {suggestion}"
+                if note not in output.suggestions:
+                    output.suggestions.append(note)
+        elif result.issues:
+            # Advisory only: these are informational signals that do not indicate
+            # a defect. Placing them in suggestions (not issues) ensures they
+            # don't trigger issue classification or revision routing, but remain
+            # visible to human reviewers.
+            for issue in result.issues[:2]:
+                note = f"[连续性建议] {issue}"
+                if note not in output.suggestions:
+                    output.suggestions.append(note)
+
+        return result
 
     def _run_before_review_skills(self, inputs: EditorInputs, output: EditorOutput) -> None:
         """Run before_review skill hooks and append findings to output."""
@@ -1002,6 +1205,7 @@ class EditorAgent(BaseAgent):
             "requires_human": False,
             "quality_gate": {
                 "pass": True,
+                "passed": True,  # v6.8.5: 兼容 quality_gate_node 的字段名
                 "score": output.score,
                 "revision_target": None,
                 **strategy_result.word_gate_details,
@@ -1299,7 +1503,13 @@ class EditorAgent(BaseAgent):
             "正文把同一角色写成另一个身份、名字、阵营或状态）。\n"
             "2. 事实未被章节提及 = 不算违规，不要报告。\n"
             "3. 伏笔未兑现 = 不算违规。\n"
-            "4. 严格输出 JSON，无额外说明。\n\n"
+            "4. 状态型事实（恐惧、被围住、瘫软、狼狈、被控制等）与后续行为/对话"
+            "的搭配不算矛盾。例如事实为\"赵宏明.状态=被安保围住，极度恐惧\"，"
+            "正文写\"赵宏明强撑着威胁对方\"或\"赵宏明虚张声势地大喊\"属于"
+            "合理的人物反应（恐惧中的强撑/挣扎/伪装），不应标记为矛盾。"
+            "只有当正文明确写出角色自由行动、主动命令安保、或完全忽略被围状态时"
+            "（如\"赵宏明从容指挥安保\"、\"赵宏明大步离开\"），才构成矛盾。\n"
+            "5. 严格输出 JSON，无额外说明。\n\n"
             '输出格式：{"violations": [{"fact_key": "...", "fact_statement": "...", '
             '"violation_text": "章节中矛盾段落(30-80字)", "severity": "blocking"|"warning"}]}'
         )
@@ -1321,6 +1531,62 @@ class EditorAgent(BaseAgent):
             logger.warning("Editor: story_facts compliance check failed: %s", e)
             return result
 
+        # v6.7.8: Deterministic status-fact filter.
+        # Status-type facts (fear, surrounded, paralyzed, bedraggled, controlled, etc.)
+        # combined with actions/dialogue that are *consistent* with that status
+        # (struggling, bluffing, speaking under duress) should never be blocking.
+        #
+        # P1-2: A hard-contradiction guard prevents downgrading when the text
+        # also contains phrases that are unambiguously incompatible with the
+        # status (e.g. "从容指挥安保" while fact says "被围住").
+        _STATUS_FACT_KEYWORDS = (
+            "恐惧", "害怕", "惊恐", "被围", "围住", "包围", "瘫软", "瘫倒",
+            "狼狈", "被控制", "被困", "被擒", "被缚", "被押", "动弹不得",
+            "无法动弹", "极度恐惧", "瑟瑟发抖", "浑身发抖", "双腿发软",
+            "遍体鳞伤", "精疲力竭", "奄奄一息", "伤痕累累",
+        )
+        _CONSISTENT_ACTION_KEYWORDS = (
+            "强撑", "虚张声势", "硬撑", "挣扎", "颤抖", "哆嗦", "勉强",
+            "嘴硬", "色厉内荏", "外强中干", "装作", "假装", "强装",
+            "鼓起勇气", "壮着胆子", "硬着头皮", "故作", "强自",
+            "强行维持", "摇摇欲坠", "声音粗重", "声音干涩", "声音发颤",
+            "强作镇定", "故作镇定", "咬牙撑住", "强打精神", "苦撑",
+            "外厉内荏", "有气无力", "气若游丝",
+        )
+        # Hard-contradiction phrases: if the violation text contains any of
+        # these, the downgrade is blocked regardless of consistent-action hits.
+        _HARD_CONTRADICTION_PHRASES = (
+            "从容指挥", "从容离开", "大步离开", "大步走出", "大步走开",
+            "自由离开", "自由行动", "调动安保", "解除包围", "指挥安保",
+            "下令放行", "转身离去", "起身离去", "扬长而去", "拂袖而去",
+            "泰然自若", "若无其事", "面不改色", "镇定自若", "气定神闲",
+            "安然无恙", "毫发无伤", "从容不迫",
+        )
+
+        def _is_status_fact_consistent(violation: dict) -> bool:
+            """Return True if the violation is a status-fact vs consistent-action.
+
+            Returns False (no downgrade) when:
+            - The fact is not a status-type fact, OR
+            - The text contains a hard-contradiction phrase, OR
+            - The text does not contain any consistent-action keyword.
+            """
+            fact_stmt = str(violation.get("fact_statement") or violation.get("fact_key") or "")
+            violation_text = str(violation.get("violation_text") or "")
+            has_status = any(kw in fact_stmt for kw in _STATUS_FACT_KEYWORDS)
+            if not has_status:
+                return False
+            # Hard-contradiction guard: explicit incompatible behavior blocks downgrade.
+            if any(kw in violation_text for kw in _HARD_CONTRADICTION_PHRASES):
+                return False
+            has_consistent_action = any(kw in violation_text for kw in _CONSISTENT_ACTION_KEYWORDS)
+            return has_consistent_action
+
+        for v in violations:
+            if v.get("severity") == "blocking" and _is_status_fact_consistent(v):
+                v["severity"] = "warning"
+                v["_downgrade_reason"] = "status_fact_with_consistent_action"
+
         blocking = [v for v in violations if v.get("severity") == "blocking"]
         result.checked = True
         result.violations = violations
@@ -1329,20 +1595,70 @@ class EditorAgent(BaseAgent):
         return result
 
     def _execute(self, state: FactoryState) -> dict[str, Any]:
-        """Execute editor review — refactored to clear pipeline steps."""
+        """Execute editor review — v6.8.5 simplified pipeline.
+
+        v6.8.5: Deterministic quality checks (death_penalty, word_count, seam,
+        continuity, quality_diagnosis) are now handled by the upstream
+        quality_gate_node. Editor focuses on LLM-based review and final
+        strategy decision.
+        """
         # Step 1: Load inputs
         inputs = self._load_editor_inputs(state)
 
         # Step 2: Call LLM
         output, exec_events = self._call_editor_llm(inputs, state)
 
-        # Step 3: Quality diagnosis
-        quality_result = self._run_quality_diagnosis(inputs, output)
+        # Step 2.5: Style-aware weight adjustment (v6.8.1)
+        self._apply_style_weight_adjustment(inputs, output)
 
-        # Step 4: Chapter seam check
-        seam_result = self._run_chapter_seam_check(inputs, output)
+        # v6.8.5: Read quality_gate results from state (set by upstream quality_gate_node)
+        quality_gate = state.get("quality_gate", {}) or {}
 
-        # Step 4.5: Story facts compliance check (v6.6.14)
+        # v6.8.5: Validate quality_gate presence
+        if not quality_gate:
+            logger.warning(
+                "Editor: quality_gate missing from state, using defaults. "
+                "This may indicate upstream quality_gate_node did not run. "
+                "project_id=%s, chapter_number=%s",
+                inputs.project_id, inputs.chapter_number,
+            )
+        elif not quality_gate.get("checks_run"):
+            logger.warning(
+                "Editor: quality_gate present but checks_run empty, quality_gate_node may have failed. "
+                "project_id=%s, chapter_number=%s",
+                inputs.project_id, inputs.chapter_number,
+            )
+
+        # Build quality_result from quality_gate state
+        quality_result = QualityDiagnosisResult(
+            priority_count=len(quality_gate.get("priority_issues", [])),
+            advisory_count=len(quality_gate.get("advisory_issues", [])),
+            advisory_only=not quality_gate.get("priority_issues"),
+        )
+
+        # Build seam_result from quality_gate state
+        seam_diagnostics = quality_gate.get("diagnostics", {}).get("chapter_seam", {})
+        seam_result = SeamCheckResult(
+            passed=seam_diagnostics.get("passed", True),
+            blocking_count=len(quality_gate.get("blocking_issues", [])) if "章间衔接" in str(quality_gate.get("blocking_issues", [])) else 0,
+            advisory_count=len(seam_diagnostics.get("advisory_issues", [])),
+        )
+
+        # Inject quality_gate issues into output for strategy
+        if quality_gate.get("blocking_issues"):
+            for issue in quality_gate["blocking_issues"]:
+                if issue not in output.issues:
+                    output.issues.append(issue)
+        if quality_gate.get("priority_issues"):
+            for issue in quality_gate["priority_issues"][:3]:
+                if issue not in output.issues:
+                    output.issues.append(issue)
+        if quality_gate.get("advisory_issues"):
+            for issue in quality_gate["advisory_issues"][:2]:
+                if issue not in output.suggestions:
+                    output.suggestions.append(issue)
+
+        # Step 4.5: Story facts compliance check (v6.6.14) — still runs in Editor (LLM-based)
         compliance_result = self._run_story_facts_compliance(inputs)
         if compliance_result.blocking_violation_count >= FACTS_COMPLIANCE_BLOCK_THRESHOLD:
             for v in compliance_result.violations:

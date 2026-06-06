@@ -123,11 +123,77 @@ skills:
     description: "检测功能化对白、对白占比异常、缺少摩擦/潜台词"
     config: {}
 
+  # v6.8.0: Skillized Quality Gates
+  continuity-gate:
+    enabled: true
+    manifest: config/skills/manifest/continuity-gate.yaml
+    type: validator
+    class: ContinuityGateSkill
+    description: "确定性叙事连续性门控：时间回退、跨章锚点、标题质量、事件重播检测"
+    config: {}
+
+  chapter-seam:
+    enabled: true
+    manifest: config/skills/manifest/chapter-seam.yaml
+    type: validator
+    class: ChapterSeamSkill
+    description: "确定性章节衔接检查：时间/地点/钩子断裂检测"
+    config: {}
+
+  death-penalty:
+    enabled: true
+    manifest: config/skills/manifest/death-penalty.yaml
+    type: validator
+    class: DeathPenaltySkill
+    description: "检测AI死刑红线短语（AI cliches）"
+    config: {}
+
+  word-count-gate:
+    enabled: true
+    manifest: config/skills/manifest/word-count-gate.yaml
+    type: validator
+    class: WordCountGateSkill
+    description: "字数上下界检查"
+    config: {}
+
+  fact-lock:
+    enabled: true
+    manifest: config/skills/manifest/fact-lock.yaml
+    type: validator
+    class: FactLockSkill
+    description: "检查润色后关键事实是否被保留"
+    config: {}
+
+  foreshadowing-debt:
+    enabled: true
+    manifest: config/skills/manifest/foreshadowing-debt.yaml
+    type: validator
+    class: ForeshadowingDebtSkill
+    description: "检查伏笔债务：已埋未兑现、已过期、指令未覆盖"
+    config: {}
+
+  opening-hook-checker:
+    enabled: true
+    manifest: config/skills/manifest/opening-hook-checker.yaml
+    type: validator
+    class: OpeningHookChecker
+    description: "检查前 200 字是否有开局钩子"
+    config: {}
+
+  excitement-density-checker:
+    enabled: true
+    manifest: config/skills/manifest/excitement-density-checker.yaml
+    type: validator
+    class: ExcitementDensityChecker
+    description: "检查全文爽点分布和压抑占比"
+    config: {}
+
 # Agent挂载配置
 agent_skills:
   planner:
     after_llm:
       - chapter-objective-checker
+      - foreshadowing-debt
 
   screenwriter:
     after_llm:
@@ -136,12 +202,18 @@ agent_skills:
   author:
     after_llm:
       - event-coverage-checker
+      - death-penalty
+      - word-count-gate
+      - opening-hook-checker
+      - excitement-density-checker  # v6.8.5: 爽点密度预防性检查
 
   polisher:
     after_llm:
       - humanizer-zh
     before_save:
       - ai-style-detector
+      - fact-lock
+      - death-penalty
 
   editor:
     before_review:
@@ -152,6 +224,13 @@ agent_skills:
       - info-dump-detector
       - scene-texture
       - dialogue-naturalness
+      - continuity-gate
+      - chapter-seam
+      - death-penalty
+      - word-count-gate
+      - foreshadowing-debt
+      - opening-hook-checker
+      - excitement-density-checker
 
   memory_curator:
     after_extract:

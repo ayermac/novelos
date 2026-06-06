@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from difflib import SequenceMatcher
 from typing import Any
 
 from ..agent_runtime.segmented_generation import chunk_items
@@ -31,7 +32,7 @@ from ..validators.death_penalty import (
     sanitize_death_penalty_text,
 )
 from ..validators.plot_verifier import check_plot_coverage
-from ..llm.openai_compatible import OutputValidationError, TokenUsage
+from ..llm.openai_compatible import LLMError, OutputValidationError, TokenUsage
 from ..llm.provider import is_configured_live_provider
 from ..skills.registry import SkillRegistry
 from ..agent_runtime.base import BaseAgent
@@ -68,6 +69,20 @@ Drafting Contract（v6.4.1）：
 - 遵守 ChapterBrief 的 forbidden_moves（禁止动作）
 - 实现 ChapterBrief 的 chapter_goal（章节目标）和 protagonist_agency（主角能动性）
 
+【主角中心法则】（v6.8.5）：
+- 每个场景必须以主角视角展开，禁止切换到配角视角或旁观者视角。
+- 主角必须在场景中有主动行为（决策、行动、反应），不得沦为旁观者或背景板。
+- 配角存在感不得超过主角的 30%，禁止大段配角独白或配角视角叙述。
+- 主角的内心活动、目标、动机必须清晰展现，读者必须知道主角在想什么、要什么。
+- 冲突必须围绕主角展开，主角必须是冲突的核心参与者或解决者。
+
+【爽文节奏法则】（v6.8.5）：
+- 每 500 字必须有一个"爽点"或"爽点预期"（打脸、逆袭、认可、小胜利、技能展示）。
+- 压抑段落 ≤ 200 字，必须紧接反转或小胜利，禁止连续 500 字以上的纯压抑叙述。
+- 开局 200 字内必须建立"逆袭预期"：让读者看到主角的潜力、资源或机遇。
+- 章末必须指向"即将翻盘"而非"更多困境"，禁止以"主角陷入更大危机"结尾。
+- 打脸场景要"爽"：对比鲜明、反应夸张、旁观者震惊、主角淡定或从容。
+
 铁律：
 1. 禁止自己编造数值，必须从状态卡抄
 2. 禁止创建伏笔、角色或世界观规则
@@ -90,6 +105,11 @@ class AuthorAgent(BaseAgent):
     def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, **kwargs):
         super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
         self.skill_registry = skill_registry
+
+    @staticmethod
+    def _config_max_tokens(llm, fallback: int = 6144) -> int:
+        """Read max_tokens from LLM config, with fallback."""
+        return int(getattr(getattr(llm, "config", None), "max_tokens", fallback) or fallback)
 
     def _load_revision_review(
         self,
@@ -175,6 +195,11 @@ class AuthorAgent(BaseAgent):
         if style_ctx:
             parts.append(style_ctx)
 
+        # v6.8.1: Style-aware prompt injection (webnovel excitement, suspense, romance)
+        style_prompt = self._get_style_prompt_injection(project_id, "author")
+        if style_prompt:
+            parts.append(style_prompt)
+
         repair_context = self._build_death_penalty_repair_context(state)
         if repair_context:
             parts.append(repair_context)
@@ -248,6 +273,40 @@ class AuthorAgent(BaseAgent):
         is_revision = chapter and chapter.get("status") == ChapterStatus.REVISION.value
         revision_review = self._load_revision_review(state, chapter) if is_revision else None
 
+        # v6.8.2: Validate revision context exists when in revision mode.
+        # v6.8.3: Only fail-fast for real Editor rejections, NOT for quality gate
+        # internal repairs (word_count_fail, death_penalty_fail, etc.) which
+        # temporarily set chapter_status=REVISION without creating a review.
+        if is_revision and not revision_review:
+            gate = state.get("quality_gate") or {}
+            is_quality_gate_retry = bool(
+                gate.get("word_count_fail")
+                or gate.get("death_penalty_fail")
+                or gate.get("scene_beat_coverage_fail")
+                or gate.get("version_regression")
+            )
+            if not is_quality_gate_retry:
+                logger.error(
+                    "Author: revision context missing for %s ch%d",
+                    project_id, chapter_number,
+                )
+                return {
+                    "error": "Author: 返修上下文缺失，无法加载 Editor 审核意见",
+                    "chapter_status": state.get("chapter_status"),
+                    "requires_human": True,
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "author",
+                        "message": "返修上下文缺失，需要人工确认后重新触发",
+                        "context_missing": True,
+                    },
+                }
+            else:
+                logger.info(
+                    "Author: revision context missing for %s ch%d but quality gate retry — continuing without review",
+                    project_id, chapter_number,
+                )
+
         # v6.1.1: Emit revision context loaded event
         if is_revision:
             if revision_review:
@@ -273,7 +332,33 @@ class AuthorAgent(BaseAgent):
         ]
 
         if self._should_use_plain_text_primary(state):
-            output = self._try_plain_text_draft(state, task_desc, context, exec_events=exec_events)
+            try:
+                output = self._try_plain_text_draft(state, task_desc, context, exec_events=exec_events)
+            except Exception as e:
+                gate = state.get("quality_gate") or {}
+                if gate.get("internal_repair") and not gate.get("consume_revision_retry", True):
+                    repair_scope = gate.get("repair_scope") or "internal_word_count_compression"
+                    message = f"内部修复({repair_scope})调用失败: {e}"
+                    logger.warning("Author: %s", message)
+                    return {
+                        "error": message,
+                        "chapter_status": state.get("chapter_status"),
+                        "quality_gate": {
+                            **gate,
+                            "pass": False,
+                            "revision_target": gate.get("revision_target") or "author",
+                            "agent": gate.get("agent") or "author",
+                            "word_count_fail": gate.get("word_count_fail", True),
+                            "message": message,
+                            "workflow_run_id": state.get("workflow_run_id"),
+                            "internal_repair": True,
+                            "consume_revision_retry": False,
+                            "repair_scope": repair_scope,
+                            "internal_repair_failed": True,
+                        },
+                        "_exec_events": exec_events,
+                    }
+                raise
             exec_events.append({
                 "event_type": "long_form_generation",
                 "message": "使用长文直写模式生成，避免长章节 JSON 截断",
@@ -330,6 +415,9 @@ class AuthorAgent(BaseAgent):
             wc_passed, wc_msg = check_word_count_quality_gate(body_content, wt, "author")
             if not wc_passed:
                 issues.append({"type": "word_count", "message": wc_msg})
+            upper_passed, upper_msg = check_word_count_upper_gate(body_content, wt, "author")
+            if not upper_passed:
+                issues.append({"type": "word_count_overflow", "message": upper_msg})
 
             # v6.4.1: Show-don't-tell heuristic (warning only)
             # Scan only narrative text, excluding dialogue lines
@@ -380,14 +468,67 @@ class AuthorAgent(BaseAgent):
             dialogues = re.findall(r'[""“”「『]([^""”」』]+)[""”」』]', out.content)
             dialogue_chars = sum(len(d) for d in dialogues)
             dialogue_ratio = dialogue_chars / max(len(out.content), 1)
-            if dialogue_ratio < 0.05:
+            # v6.8.5: 阈值从 5% 提升到 10%，与 Editor 和 Prompt 规则保持一致
+            # v6.8.5-fix: 保持 warning 级别，依赖 editor_strategy.determine_revision_target()
+            # 中的路由关键词修复确保 LOW_DIALOGUE_RATIO 返修路由到 Author 而非 Polisher
+            if dialogue_ratio < 0.10:
                 warnings_list.append(
-                    f"dialogue: 对白占比 {dialogue_ratio*100:.1f}%，"
-                    "建议增加有冲突或潜台词的角色对话"
+                    f"dialogue: 对白占比 {dialogue_ratio*100:.1f}%（低于 10%），"
+                    "必须增加有冲突或潜台词的角色对话"
                 )
 
+            # v6.8.5: Exposition paragraph detection (warning only)
+            # Split by double newlines to get paragraphs, check for pure exposition
+            paragraphs = [p.strip() for p in re.split(r'\n\s*\n', out.content) if p.strip()]
+            exposition_count = 0
+            for para in paragraphs:
+                if len(para) < 50:
+                    continue
+                has_dialogue = bool(re.search(r'[""「『].*?[""」』]', para))
+                has_action = bool(re.search(r'[走跑跳拿放推拉打踢砍刺冲撞闪躲握抓扔抛甩]|站起|坐下|转身|回头|低头|抬头|靠近|后退|推开|抓住', para))
+                has_sensory = bool(re.search(r'[光影视声响味香臭冷热湿风雨雷温度颜色]|听到|看到|闻到|感到|摸到', para))
+                if not has_dialogue and not has_action and not has_sensory:
+                    exposition_count += 1
+            if exposition_count > 3:
+                warnings_list.append(
+                    f"exposition: 检测到 {exposition_count} 处纯说明段落（无对白/动作/感官），"
+                    "建议将设定解释融入角色行为或对话中"
+                )
+
+            # v6.8.5: Ending hook strength check (warning only)
+            last_200 = out.content[-200:] if len(out.content) > 200 else out.content
+            hook_markers = [
+                r'[？\?]',  # 疑问句
+                r'难道|莫非|竟然|居然',  # 意外
+                r'必须|不得不|只能|只有',  # 抉择
+                r'突然|忽然|骤然|猛然',  # 转折
+                r'可是|但是|然而|只是',  # 转折
+                r'如果|要是|倘若|万一',  # 假设悬念
+                r'不能|不可|不准|不许',  # 禁令悬念
+            ]
+            hook_count = sum(1 for m in hook_markers if re.search(m, last_200))
+            has_unfinished_action = bool(re.search(r'[走跑冲跳]|靠近|推开|抓住|拔出|打开|按下|转身', last_200))
+            if hook_count == 0 and not has_unfinished_action:
+                warnings_list.append(
+                    "ending_hook: 章末200字缺乏悬念标记（问句/转折/抉择/未完成动作），"
+                    "建议在结尾增加悬念或未完成的动作"
+                )
+
+            # v6.8.5: Title integration check (warning only)
+            title_text = out.title or ""
+            if title_text:
+                # Extract meaningful keywords from title (2+ chars, skip common words)
+                title_keywords = [kw for kw in re.findall(r'[一-鿿]{2,}', title_text)
+                                  if kw not in ('章节', '第章', '章', '卷', '篇', '部', '上', '下', '前', '后')]
+                missing_keywords = [kw for kw in title_keywords if kw not in out.content]
+                if missing_keywords and len(missing_keywords) == len(title_keywords):
+                    warnings_list.append(
+                        f"title_integration: 标题关键词 {missing_keywords} 未在正文中出现，"
+                        "建议通过角色对话或场景描写自然融入标题元素"
+                    )
+
             repairable = any(
-                i["type"] in ("word_count", "death_penalty", "scene_beat_coverage")
+                i["type"] in ("word_count", "word_count_overflow", "death_penalty", "scene_beat_coverage")
                 for i in issues
             )
             return SelfCheckResult(
@@ -407,6 +548,11 @@ class AuthorAgent(BaseAgent):
                 expanded = self._try_expand_short_output(state, out, wc_msg)
                 if expanded is not None:
                     return {"output": expanded}
+            upper_passed, upper_msg = check_word_count_upper_gate(body_content, wt, "author")
+            if not upper_passed:
+                compressed = self._try_compress_overlong_output(state, out, upper_msg)
+                if compressed is not None:
+                    return {"output": compressed}
             scene_coverage_issues = [
                 issue for issue in check.issues
                 if issue.get("type") == "scene_beat_coverage"
@@ -425,7 +571,11 @@ class AuthorAgent(BaseAgent):
                     new_data = out.model_dump()
                     new_data["content"] = sanitized
                     return {"output": AuthorOutput(**normalize_declared_word_count(new_data))}
-            return None
+            # v6.8.0: Return original output instead of None.
+            # None signals "repair failed" to self_check, triggering an error.
+            # Returning the original lets the loop continue — the issue will
+            # be surfaced to Editor for judgment.
+            return {"output": out}
 
         loop_result = loop.run(_generate_wrap, _self_check_wrap, _repair_wrap)
         output = loop_result["output"]
@@ -433,22 +583,24 @@ class AuthorAgent(BaseAgent):
         autonomy = loop_result.get("_autonomy", {})
         final_scene_coverage_issues = self._scene_beat_coverage_issues(state, output.content)
         if final_scene_coverage_issues:
-            message = "Author 未完成场景 beat 覆盖，正文未写到章末钩子"
-            return {
-                "error": message,
-                "chapter_status": state.get("chapter_status"),
-                "quality_gate": {
-                    "pass": False,
-                    "revision_target": "author",
-                    "scene_beat_coverage_fail": True,
-                    "message": message,
-                    "issues": [i.get("message", "") for i in final_scene_coverage_issues],
-                    "agent": "author",
-                    "workflow_run_id": state.get("workflow_run_id"),
+            # v6.8.0: Downgrade to warning after loop exhaustion.
+            # The repair loop already injected specific beat issues into the
+            # retry prompt — if the model still can't cover all beats, forcing
+            # another workflow-level retry won't help. Let Editor judge instead.
+            missing = [i.get("message", "") for i in final_scene_coverage_issues]
+            logger.warning(
+                "Author: scene beat coverage incomplete after repair attempts: %s",
+                "; ".join(missing[:3]),
+            )
+            exec_events.append({
+                "event_type": "scene_beat_coverage_warning",
+                "message": f"场景 beat 覆盖不完整（{len(missing)} 项），已降级为警告",
+                "status": "warning",
+                "payload": {
+                    "issues": missing,
+                    "downgraded": True,
                 },
-                "_trace": trace,
-                "_autonomy": autonomy,
-            }
+            })
         self_check_data = trace.get("self_check", {}) if isinstance(trace, dict) else {}
         sc_passed = self_check_data.get("passed", True)
         sc_issues = self_check_data.get("issues", [])
@@ -474,7 +626,7 @@ class AuthorAgent(BaseAgent):
             # failures are handled below by hard validation / quality gates so
             # workflow routing can consume retry attempts instead of jumping
             # straight to human blocking.
-            if issue_types and issue_types.issubset({"death_penalty", "word_count"}):
+            if issue_types and issue_types.issubset({"death_penalty", "word_count", "word_count_overflow"}):
                 pass
             else:
                 reason = autonomy.get("reason") or "Author 自检未通过"
@@ -525,7 +677,7 @@ class AuthorAgent(BaseAgent):
             "message": f"保存产物：章节初稿 ({_count_words(body_content)} 字)",
             "payload": {"artifact_type": "draft", "word_count": _count_words(body_content)},
         })
-        run_agent_skills(
+        after_llm_hook = run_agent_skills(
             repo=self.repo,
             skill_registry=self.skill_registry,
             project_id=project_id,
@@ -539,7 +691,49 @@ class AuthorAgent(BaseAgent):
             },
             project_overrides=self._get_project_skill_overrides(project_id),
             skill_type_hint="validator",
+            honor_manifest_failure_policy=True,
         )
+        
+        # v6.8.5: Check if any validator skill failed with blocking policy
+        if not after_llm_hook.ok:
+            blocking_error = after_llm_hook.blocking_error
+            logger.warning("Author: after_llm skill hook failed: %s", blocking_error)
+            exec_events.append({
+                "event_type": "skill_blocked",
+                "message": f"执笔稿被 Skill 阻断：{blocking_error}",
+                "status": "blocking",
+                "payload": {"stage": "after_llm", "blocking_error": blocking_error},
+            })
+            # Find the specific skill that failed for revision targeting
+            revision_target = "author"
+            for skill_item in after_llm_hook.skill_results:
+                if not skill_item.get("ok"):
+                    skill_id = skill_item.get("skill_id", "")
+                    if "excitement" in skill_id:
+                        revision_target = "author"
+                        break
+                    elif "death" in skill_id:
+                        revision_target = "author"
+                        break
+                    elif "event" in skill_id:
+                        revision_target = "author"
+                        break
+            
+            return {
+                "error": f"执笔稿质量检查未通过: {blocking_error}",
+                "chapter_status": state.get("chapter_status"),
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": revision_target,
+                    "skill_fail": True,
+                    "message": blocking_error,
+                    "agent": "author",
+                    "workflow_run_id": state.get("workflow_run_id"),
+                    "skill_results": after_llm_hook.skill_results,
+                },
+                "_trace": trace,
+                "_autonomy": autonomy,
+            }
 
         # v5.3.0: Word count quality gate (final guard after self-check loop)
         word_target = self._get_word_target(state)
@@ -571,25 +765,75 @@ class AuthorAgent(BaseAgent):
             body_content, word_target, "author"
         )
         if not upper_gate_passed:
-            logger.warning("Author: word count upper gate failed: %s", upper_gate_msg)
-            from ..validators.chapter_checker import count_words
-            actual_wc = count_words(body_content)
-            return {
-                "error": f"字数质量门未通过: {upper_gate_msg}",
-                "chapter_status": state.get("chapter_status"),
-                "quality_gate": {
-                    "pass": False,
-                    "revision_target": "author",
-                    "word_count_fail": True,
-                    "message": upper_gate_msg,
-                    "actual_word_count": actual_wc,
-                    "word_target": word_target,
-                    "agent": "author",
-                    "workflow_run_id": state.get("workflow_run_id"),
-                },
-                "_trace": trace,
-                "_autonomy": autonomy,
-            }
+            compressed = self._try_compress_overlong_output(state, output, upper_gate_msg)
+            if compressed is not None:
+                output = compressed
+                self.validate_output(output.model_dump())
+                body_content = strip_chapter_heading(output.content, chapter_number, output.title)
+                word_gate_passed, word_gate_msg = check_word_count_quality_gate(
+                    body_content, word_target, "author"
+                )
+                upper_gate_passed, upper_gate_msg = check_word_count_upper_gate(
+                    body_content, word_target, "author"
+                )
+                if word_gate_passed and upper_gate_passed:
+                    exec_events.append({
+                        "event_type": "word_count_compressed",
+                        "message": "执笔稿超出字数上限，已自动压缩后继续",
+                        "status": "info",
+                        "payload": {"agent": "author", "word_target": word_target},
+                    })
+
+            if not word_gate_passed:
+                logger.warning("Author: word count quality gate failed after compression: %s", word_gate_msg)
+                from ..validators.chapter_checker import count_words
+                actual_wc = count_words(body_content)
+                return {
+                    "error": f"字数质量门未通过: {word_gate_msg}",
+                    "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "author",
+                        "word_count_fail": True,
+                        "message": word_gate_msg,
+                        "actual_word_count": actual_wc,
+                        "word_target": word_target,
+                        "agent": "author",
+                        "workflow_run_id": state.get("workflow_run_id"),
+                        # v6.7.8: internal compression failure does not consume
+                        # chapter-level revision retries.
+                        "internal_repair": True,
+                        "consume_revision_retry": False,
+                        "repair_scope": "internal_word_count_compression",
+                    },
+                    "_trace": trace,
+                    "_autonomy": autonomy,
+                }
+            if not upper_gate_passed:
+                logger.warning("Author: word count upper gate failed: %s", upper_gate_msg)
+                from ..validators.chapter_checker import count_words
+                actual_wc = count_words(body_content)
+                return {
+                    "error": f"字数质量门未通过: {upper_gate_msg}",
+                    "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "author",
+                        "word_count_fail": True,
+                        "message": upper_gate_msg,
+                        "actual_word_count": actual_wc,
+                        "word_target": word_target,
+                        "agent": "author",
+                        "workflow_run_id": state.get("workflow_run_id"),
+                        # v6.7.8: internal compression failure does not consume
+                        # chapter-level revision retries.
+                        "internal_repair": True,
+                        "consume_revision_retry": False,
+                        "repair_scope": "internal_word_count_compression",
+                    },
+                    "_trace": trace,
+                    "_autonomy": autonomy,
+                }
 
         # v6.1.1: Emit revision diff event for revision chapters
         if is_revision and chapter:
@@ -601,29 +845,116 @@ class AuthorAgent(BaseAgent):
             revised_wc = _cw(revised_body)
             wc_delta = revised_wc - original_wc
             low_change = abs(wc_delta) < 20 and original_body.strip() == revised_body.strip()
+            expansion_limit = max(500, int(original_wc * 0.15))
+            expansion_tolerance = max(80, int(original_wc * 0.03))
+            overexpanded = (
+                original_wc > 0
+                and wc_delta > expansion_limit + expansion_tolerance
+                and not self._revision_requests_compression(revision_review or {})
+            )
             exec_events.append({
                 "event_type": "revision_diff_generated",
                 "message": f"返修改动：{original_wc} → {revised_wc} 字（{'内容几乎未变' if low_change else f'变化 {wc_delta:+d} 字'}）",
-                "status": "warning" if low_change else "info",
+                "status": "warning" if (low_change or overexpanded) else "info",
                 "payload": {
                     "original_word_count": original_wc,
                     "revised_word_count": revised_wc,
                     "word_count_delta": wc_delta,
                     "low_change_warning": low_change,
+                    "overexpanded_warning": overexpanded,
+                    "expansion_limit": expansion_limit,
+                    "expansion_tolerance": expansion_tolerance,
                 },
             })
+            if overexpanded:
+                reason = (
+                    f"返修稿异常膨胀：{original_wc} → {revised_wc} 字，"
+                    f"增长 {wc_delta} 字，超过允许增长 {expansion_limit} 字；"
+                    "Editor 未要求扩写，已保留上一版本"
+                )
+                self.repo.save_artifact(
+                    project_id,
+                    chapter_number,
+                    "author",
+                    "rejected_regression",
+                    content_json={
+                        "title": output.title,
+                        "content": output.content,
+                        "rejection_reason": reason,
+                        "revision_source_review_id": (revision_review or {}).get("review_id"),
+                        "original_word_count": original_wc,
+                        "revised_word_count": revised_wc,
+                        "word_count_delta": wc_delta,
+                    },
+                    workflow_run_id=state.get("workflow_run_id"),
+                )
+                return {
+                    "error": f"返修稿退化，已保留上一版本：{reason}",
+                    "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "author",
+                        "version_regression": True,
+                        "revision_overexpanded": True,
+                        "consume_revision_retry": False,
+                        "message": reason,
+                    },
+                    "_revision_review": revision_review,
+                    "_exec_events": exec_events,
+                }
 
         # v6.6.0: Do not let a revision candidate overwrite a stronger
         # existing draft when it clearly regresses.
         if is_revision and chapter and chapter.get("content"):
+            reject, reason = self._should_reject_revision_continuity_regression(
+                current_content=chapter.get("content", "") or "",
+                candidate_content=output.content,
+                chapter_number=chapter_number,
+                current_title=chapter.get("title"),
+                candidate_title=output.title,
+                revision_review=revision_review or {},
+            )
+            if reject:
+                self.repo.save_artifact(
+                    project_id,
+                    chapter_number,
+                    "author",
+                    "rejected_regression",
+                    content_json={
+                        "title": output.title,
+                        "content": output.content,
+                        "rejection_reason": reason,
+                        "revision_source_review_id": (revision_review or {}).get("review_id"),
+                    },
+                    workflow_run_id=state.get("workflow_run_id"),
+                )
+                return {
+                    "error": f"返修稿退化，已保留上一版本：{reason}",
+                    "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "author",
+                        "version_regression": True,
+                        "revision_continuity_regression": True,
+                        "message": reason,
+                    },
+                    "_revision_review": revision_review,
+                    "_exec_events": exec_events,
+                }
+
             from ..quality.version_regression_guard import VersionRegressionGuard
 
             revision_review = revision_review or {}
+            system_compressed = any(
+                ev.get("event_type") == "word_count_compressed"
+                for ev in exec_events
+            )
             reject, reason = VersionRegressionGuard.should_reject_new_draft(
                 chapter.get("content", "") or "",
                 output.content,
                 self._get_word_target(state),
                 editor_suggestions=revision_review.get("suggestions", []),
+                allow_system_compression=system_compressed,
             )
             if reject:
                 self.repo.save_artifact(
@@ -660,8 +991,24 @@ class AuthorAgent(BaseAgent):
             expected_status=expected_status,
         )
         if not ok:
-            logger.error(f"Author: status advance {expected_status}→drafted failed (stale state)")
-            return {"error": "Author: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
+            # v6.8.1: Check if chapter is already at or past DRAFTED (recovery run)
+            # If so, skip status advance — the chapter was already advanced in a previous run
+            current_status = self.repo.get_chapter_status(project_id, chapter_number)
+            _STATUS_ORDER = {
+                "idea": 0, "outlined": 1, "planned": 2, "scripted": 3,
+                "drafted": 4, "polished": 5, "review": 6, "reviewed": 7,
+                "revision": 8, "published": 9, "blocking": 10,
+            }
+            current_order = _STATUS_ORDER.get(current_status, -1)
+            drafted_order = _STATUS_ORDER.get("drafted", 4)
+            if current_order >= drafted_order:
+                logger.info(
+                    "Author: chapter already at '%s' (order %d >= %d), skipping status advance (recovery run)",
+                    current_status, current_order, drafted_order,
+                )
+            else:
+                logger.error(f"Author: status advance {expected_status}→drafted failed (stale state)")
+                return {"error": "Author: stale state, status advance failed", "chapter_status": state.get("chapter_status")}
 
         # Save chapter content (only after status advance succeeds)
         try:
@@ -713,6 +1060,77 @@ class AuthorAgent(BaseAgent):
             "_autonomy": autonomy,
             "_exec_events": exec_events,
         }
+
+    @staticmethod
+    def _should_reject_revision_continuity_regression(
+        *,
+        current_content: str,
+        candidate_content: str,
+        chapter_number: int,
+        current_title: str | None,
+        candidate_title: str | None,
+        revision_review: dict[str, Any] | None,
+    ) -> tuple[bool, str]:
+        """Reject revision drafts that reintroduce an explicitly flagged bad opening."""
+        review_text = "\n".join(
+            str(item)
+            for item in [
+                *((revision_review or {}).get("issues") or []),
+                *((revision_review or {}).get("suggestions") or []),
+            ]
+        )
+        if not any(marker in review_text for marker in ("章首", "开头", "章间衔接", "时空断裂", "直接从")):
+            return False, ""
+
+        current_body = strip_chapter_heading(current_content, chapter_number, current_title).strip()
+        candidate_body = strip_chapter_heading(candidate_content, chapter_number, candidate_title).strip()
+        if not current_body or not candidate_body:
+            return False, ""
+
+        candidate_opening = candidate_body[:900]
+        current_opening = current_body[:900]
+
+        required_anchor_groups: list[tuple[str, ...]] = []
+        if "宴会厅" in review_text and "主位" in review_text:
+            required_anchor_groups.append(("宴会厅", "主位"))
+        if "云澜" in review_text and "会馆" in review_text and "主位" in review_text:
+            required_anchor_groups.append(("云澜", "主位"))
+
+        stale_opening_terms: list[str] = []
+        if any(marker in review_text for marker in ("出租车", "倒叙", "离开公司", "时空断裂")):
+            stale_opening_terms.extend([
+                "离开公司",
+                "公司走廊",
+                "叫了车",
+                "车上",
+                "下车步行",
+                "会馆正门",
+                "黑西装保安",
+                "内部包场",
+            ])
+
+        misses_required_anchor = bool(required_anchor_groups) and not any(
+            all(term in candidate_opening for term in group)
+            for group in required_anchor_groups
+        )
+        reintroduces_stale_opening = any(term in candidate_opening for term in stale_opening_terms)
+
+        if misses_required_anchor and reintroduces_stale_opening:
+            return (
+                True,
+                "返修稿开头重新回到 Editor 已指出的旧时空线，未按退回意见从当前场景接笔",
+            )
+
+        if required_anchor_groups and any(
+            all(term in current_opening for term in group)
+            for group in required_anchor_groups
+        ) and misses_required_anchor:
+            return (
+                True,
+                "返修稿丢失当前保留稿的章首连续性锚点，疑似使用了旧稿作为底稿",
+            )
+
+        return False, ""
 
     def validate_output(self, output: dict) -> None:
         AuthorOutput(**output)
@@ -779,6 +1197,60 @@ class AuthorAgent(BaseAgent):
             logger.warning("Author: expand-short-output retry failed: %s", e)
             return None
 
+    def _try_compress_overlong_output(
+        self,
+        state: FactoryState,
+        output: AuthorOutput,
+        upper_gate_msg: str,
+    ) -> AuthorOutput | None:
+        """Ask the LLM once to compress an overlong complete draft."""
+        if state.get("llm_mode") != "real":
+            return None
+
+        instruction = self._get_instruction(state)
+        project = self.repo.get_project(state["project_id"])
+        word_target = derive_word_target(instruction, project)
+        minimum_required = int(word_target * 0.85)
+        maximum_allowed = max(word_target + 1200, int(word_target * 1.6))
+
+        messages = [
+            {"role": "system", "content": AUTHOR_SYSTEM_PROMPT},
+            {
+                "role": "user",
+                "content": (
+                    f"第{state['chapter_number']}章正文超过字数硬闸门：{upper_gate_msg}。\n"
+                    f"请压缩正文到 {minimum_required} 到 {maximum_allowed} 字符之间，"
+                    "必须保留已实现关键事件、伏笔、事实、角色动机和章末钩子。"
+                    "只删除重复铺陈、冗余心理解释、重复环境描写和同义反复，"
+                    "不要新增事件，不要改成摘要。\n"
+                    "必须返回完整 JSON，字段仍为 title/content/word_count/"
+                    "implemented_events/used_plot_refs。word_count 可填写估算值，"
+                    "系统会以 content 实际长度为准。\n\n"
+                    f"【当前标题】\n{output.title}\n\n"
+                    f"【当前正文】\n{output.content}\n\n"
+                    f"【已实现事件】\n{json.dumps(output.implemented_events, ensure_ascii=False)}\n"
+                    f"【已使用伏笔】\n{json.dumps(output.used_plot_refs, ensure_ascii=False)}"
+                ),
+            },
+        ]
+
+        try:
+            raw = self._invoke_json(messages, schema=AuthorOutput)
+            compressed = AuthorOutput(**normalize_declared_word_count(raw))
+            compressed = self._sanitize_output(compressed, state)
+            self.validate_output(compressed.model_dump())
+            body_content = strip_chapter_heading(
+                compressed.content, state["chapter_number"], compressed.title
+            )
+            lower_passed, _ = check_word_count_quality_gate(body_content, word_target, "author")
+            upper_passed, _ = check_word_count_upper_gate(body_content, word_target, "author")
+            coverage_issues = self._scene_beat_coverage_issues(state, compressed.content)
+            if lower_passed and upper_passed and not coverage_issues:
+                return compressed
+        except Exception as e:
+            logger.warning("Author: compress-overlong-output retry failed: %s", e)
+        return None
+
     _SCENE_TERM_STOPWORDS = {
         "场景", "目标", "冲突", "转折", "钩子", "正文", "本章", "章节", "最后",
         "开始", "完成", "进行", "出现", "继续", "形成", "展示", "建立", "推动",
@@ -799,6 +1271,35 @@ class AuthorAgent(BaseAgent):
             if token and token not in terms:
                 terms.append(token)
         return terms
+
+    @staticmethod
+    def _is_generic_ending_hook(text: Any) -> bool:
+        """Return true for planner placeholder hooks with no concrete content.
+
+        These hooks describe the function of an ending ("leave a new clue")
+        rather than a literal story element. Requiring their exact terms in the
+        tail creates false retry loops; concrete final scene beat checks still
+        enforce that the chapter lands on a real hook.
+        """
+        raw = re.sub(r"[\s，。！？、；：,.!?;:]+", "", str(text or ""))
+        if not raw:
+            return False
+        generic_hooks = {
+            "悬念",
+            "新悬念",
+            "留下悬念",
+            "留下新悬念",
+            "留下线索",
+            "留下新线索",
+            "留下新的线索",
+            "留下未解线索",
+            "留下新的未解线索",
+            "新的未解线索",
+            "留下一条新线索",
+            "留下可继续追踪的钩子",
+            "留下新的可追踪线索",
+        }
+        return raw in generic_hooks
 
     def _scene_beat_coverage_issues(
         self,
@@ -845,8 +1346,13 @@ class AuthorAgent(BaseAgent):
             })
 
         instruction = self._get_instruction(state) or {}
-        ending_terms = self._scene_terms(instruction.get("ending_hook", ""))
-        if ending_terms and not any(term in tail for term in ending_terms[:8]):
+        ending_hook = instruction.get("ending_hook", "")
+        ending_terms = self._scene_terms(ending_hook)
+        if (
+            ending_terms
+            and not self._is_generic_ending_hook(ending_hook)
+            and not any(term in tail for term in ending_terms[:8])
+        ):
             issues.append({
                 "type": "scene_beat_coverage",
                 "message": f"正文尾段缺少章节 ending_hook: {', '.join(ending_terms[:5])}",
@@ -866,6 +1372,12 @@ class AuthorAgent(BaseAgent):
         if state.get("llm_mode") != "real":
             return None
 
+        appended = self._try_append_scene_beat_tail(
+            state, output, coverage_issues, fallback_context,
+        )
+        if appended is not None:
+            return appended
+
         instruction = self._get_instruction(state) or {}
         word_target = self._get_word_target(state)
         current_body_len = count_words(strip_chapter_heading(output.content, state["chapter_number"], output.title))
@@ -875,7 +1387,8 @@ class AuthorAgent(BaseAgent):
         issue_lines = "\n".join(
             f"- {issue.get('message', '')}" for issue in coverage_issues
         )
-        prose_max_tokens = max(2048, min(6144, int(word_target * 2.0)))
+        config_max = self._config_max_tokens(self.llm)
+        prose_max_tokens = max(2048, min(config_max, int(word_target * 2.0)))
         per_call_retries = None
 
         messages = [
@@ -926,9 +1439,98 @@ class AuthorAgent(BaseAgent):
             )
             repaired = self._sanitize_output(repaired, state)
             self.validate_output(repaired.model_dump())
+            if self._scene_beat_coverage_issues(state, repaired.content):
+                return None
             return repaired
         except Exception as e:
             logger.warning("Author: scene-beat coverage repair failed: %s", e)
+            return None
+
+    def _try_append_scene_beat_tail(
+        self,
+        state: FactoryState,
+        output: AuthorOutput,
+        coverage_issues: list[dict[str, Any]],
+        fallback_context: str,
+    ) -> AuthorOutput | None:
+        """Append a missing final beat tail before falling back to full rewrite."""
+        instruction = self._get_instruction(state) or {}
+        beats = self._get_scene_beats(state)
+        if not beats:
+            return None
+
+        chapter_number = state["chapter_number"]
+        current_body = strip_chapter_heading(output.content, chapter_number, output.title)
+        current_tail = current_body[-900:] if len(current_body) > 900 else current_body
+        final_beats = beats[-min(3, len(beats)):]
+        beat_lines = "\n".join(
+            f"{beat.get('sequence', '?')}. 目标: {beat.get('scene_goal', '')} | "
+            f"冲突: {beat.get('conflict', '')} | 转折: {beat.get('turn', '')} | "
+            f"钩子: {beat.get('hook', '')}"
+            for beat in final_beats
+        )
+        issue_lines = "\n".join(
+            f"- {issue.get('message', '')}" for issue in coverage_issues
+        )
+        compact_context = self._build_plain_text_context(state, fallback_context)
+        tail_target = max(450, min(1200, int(self._get_word_target(state) * 0.35)))
+        prose_max_tokens = max(1024, min(3072, int(tail_target * 1.8) + 512))
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是网文工厂的执笔。现在只补写章节结尾续写段落。"
+                    "只输出可直接接在当前正文后的纯正文，不要标题、解释、清单、JSON 或 Markdown。"
+                    "必须自然承接当前尾段，补齐最后 scene beat，并以章节 ending_hook 收束。"
+                    "禁止复述已写正文，禁止从开头重写。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"第{chapter_number}章当前正文没有写到章末，缺口如下：\n{issue_lines}\n\n"
+                    f"请续写约 {tail_target} 字符，只补结尾，不要重写前文。\n\n"
+                    f"{compact_context}\n\n"
+                    f"【必须落地的最后 scene beat】\n{beat_lines}\n\n"
+                    f"【章节 ending_hook】\n{instruction.get('ending_hook', '')}\n\n"
+                    f"【当前正文尾段】\n{current_tail}\n\n"
+                    "请输出可直接追加到正文末尾的续写正文。"
+                ),
+            },
+        ]
+
+        try:
+            tail = self._invoke_text_for_author(
+                messages,
+                temperature=0.66,
+                max_tokens=prose_max_tokens,
+                max_retries=None,
+                request_timeout_seconds=(
+                    AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                    if is_configured_live_provider(self.llm)
+                    else None
+                ),
+            )
+            tail = self._coerce_plain_text_content(tail)
+            if not tail:
+                return None
+
+            merged = self._merge_segment_outputs([output.content, tail])
+            repaired = AuthorOutput(
+                title=self._derive_title(state, instruction, merged),
+                content=merged,
+                word_count=len(merged),
+                implemented_events=output.implemented_events or self._instruction_items(instruction.get("key_events", "")),
+                used_plot_refs=output.used_plot_refs or self._instruction_items(instruction.get("plots_to_plant", "")),
+            )
+            repaired = self._sanitize_output(repaired, state)
+            self.validate_output(repaired.model_dump())
+            if self._scene_beat_coverage_issues(state, repaired.content):
+                return None
+            return repaired
+        except Exception as e:
+            logger.warning("Author: scene-beat tail append repair failed: %s", e)
             return None
 
     @staticmethod
@@ -936,7 +1538,57 @@ class AuthorAgent(BaseAgent):
         suggestions = (revision_review or {}).get("suggestions") or []
         issues = (revision_review or {}).get("issues") or []
         text = "\n".join(str(item) for item in [*suggestions, *issues])
-        return any(word in text for word in ("压缩", "缩短", "精简", "删减篇幅"))
+        keywords = [
+            "压缩", "缩短", "精简", "删减", "去掉", "减少",
+            "过长", "冗余", "啰嗦", "拖沓", "重复",
+            "字数过多", "篇幅过大", "超出", "超标",
+        ]
+        return any(kw in text for kw in keywords)
+
+    @staticmethod
+    def _revision_blocking_priority_block(revision_review: dict[str, Any] | None) -> str:
+        """Extract hard revision issues that must dominate the rewrite plan."""
+        if not revision_review:
+            return ""
+        issues = (revision_review or {}).get("issues") or []
+        suggestions = (revision_review or {}).get("suggestions") or []
+        hard_markers = (
+            "不可违背事实",
+            "Hard Constraints",
+            "硬约束",
+            "时间线",
+            "章间衔接",
+            "连续性阻断",
+            "连续性修复",
+            "关键情节缺失",
+            "必须",
+            "直接违反",
+            "硬冲突",
+            "标题与正文脱节",
+        )
+        priority_items = [
+            str(item).strip()
+            for item in issues
+            if str(item).strip() and any(marker in str(item) for marker in hard_markers)
+        ][:6]
+        if not priority_items:
+            return ""
+
+        suggestion_items = [
+            str(item).strip()
+            for item in suggestions
+            if str(item).strip() and any(marker in str(item) for marker in hard_markers)
+        ][:4]
+        lines = [
+            "【返修硬阻断优先级】",
+            "必须先修复以下硬阻断问题，再考虑语言润色、感官细节或节奏微调；不得只做语言润色。",
+            "若退回问题涉及不可违背事实、Hard Constraints、时间线或章间衔接，必须直接改写相关剧情事实和场景顺序。",
+            "硬阻断问题:",
+            *[f"- {item}" for item in priority_items],
+        ]
+        if suggestion_items:
+            lines.extend(["硬阻断修复建议:", *[f"- {item}" for item in suggestion_items]])
+        return "\n".join(lines)
 
     def _try_repair_revision_length_regression(
         self,
@@ -1078,6 +1730,7 @@ class AuthorAgent(BaseAgent):
             f"最多不要超过 {max(word_target + 250, minimum_required + 250)} 字符。"
         )
         revision_source_section = ""
+        revision_priority_section = ""
         if task_desc == "返修":
             existing_chapter = self._get_chapter_info(state) or {}
             existing_body = strip_chapter_heading(
@@ -1095,17 +1748,23 @@ class AuthorAgent(BaseAgent):
                     f"{existing_body.strip()}\n"
                 )
             revision_review = normalize_revision_review(state.get("_revision_review")) or {}
+            revision_priority_section = self._revision_blocking_priority_block(revision_review)
             compress_requested = self._revision_requests_compression(revision_review)
             if existing_len > 0 and not compress_requested:
                 minimum_required = max(minimum_required, int(existing_len * 0.9))
                 effective_target = max(word_target, existing_len)
-                upper_bound = max(effective_target + 700, int(existing_len * 1.08))
+                expansion_limit = max(500, int(existing_len * 0.15))
+                upper_bound = existing_len + expansion_limit
                 length_guard_note = (
-                    f"当前保留稿约 {existing_len} 字符，Editor 未要求压缩；"
+                    f"【返修篇幅边界】当前保留稿约 {existing_len} 字符，Editor 未要求压缩；"
+                    "这次是补丁式返修，不是重新扩写。"
                     f"返修必须保留完整篇幅，不要主动压缩。正文至少 {minimum_required} 字符，"
-                    f"建议接近 {effective_target} 字符，合理上限 {upper_bound} 字符。"
+                    f"返修后总篇幅应基本持平，建议接近 {effective_target} 字符，合理上限 {upper_bound} 字符。"
+                    f"最大允许新增 {expansion_limit} 字符，超过此新增上限会被系统拒绝；"
+                    "只替换或压缩退回问题涉及的句段，新增句子必须同步删除等量冗余说明。"
                 )
-        prose_max_tokens = max(1024, min(6144, int(effective_target * 1.5)))
+        config_max = self._config_max_tokens(self.llm)
+        prose_max_tokens = max(1024, min(config_max, int(effective_target * 1.5)))
         compact_context = self._build_plain_text_context(state, context)
         per_call_retries = None
 
@@ -1119,6 +1778,17 @@ class AuthorAgent(BaseAgent):
                     "禁止写成剧情摘要或设定说明；以场景为单位推进。"
                     "情绪通过动作、神态、对话展现，禁止直白情绪词。"
                     "对白要有冲突或潜台词，避免功能化问答。"
+                    "\n【反说明段落规则】"
+                    "禁止连续超过100字的纯说明/旁白段落。每段说明后必须紧跟角色动作、对白或环境反馈。"
+                    "设定、背景、能力解释必须融入角色行为或对话中，不得独立成段。"
+                    "检测标准：如果一段文字没有对白引号、没有动作动词、没有感官描写，就是说明段落——必须改写。"
+                    "\n【章末钩子规则】"
+                    "最后200字必须包含以下至少一种：悬念问句、未完成的动作、角色的艰难抉择、意外信息揭露、冲突升级。"
+                    "禁止以'总结本章'、'归纳意义'、'主角反思'结尾。必须让读者想翻下一页。"
+                    "\n【对白比例规则】"
+                    "对白占比至少10%。每500字至少有一段角色对话。对话必须有冲突、潜台词或信息交换，禁止功能化问答。"
+                    "\n【标题整合规则】"
+                    "章节标题的关键词必须在正文中至少出现一次，通过角色对话、内心活动或场景描写自然融入。"
                 ),
             },
             {
@@ -1126,6 +1796,7 @@ class AuthorAgent(BaseAgent):
                 "content": (
                     f"项目ID: {project_id}\n章节号: {chapter_number}\n任务: {task_desc}\n"
                     f"{length_guard_note}\n\n"
+                    f"{revision_priority_section}\n\n"
                     f"{compact_context}\n\n"
                     f"{revision_source_section}\n"
                     f"请直接写第{chapter_number}章正文。"
@@ -1133,17 +1804,50 @@ class AuthorAgent(BaseAgent):
             },
         ]
 
-        content = self._invoke_text_for_author(
-            messages,
-            temperature=0.7,
-            max_tokens=prose_max_tokens,
-            max_retries=per_call_retries,
-            request_timeout_seconds=(
-                AUTHOR_LONG_FORM_TIMEOUT_SECONDS
-                if is_configured_live_provider(self.llm)
-                else None
-            ),
-        ).strip()
+        # v6.8.5: Truncation retry — if finish_reason=length, retry with 1.5x
+        # max_tokens (capped at 8192) to give the model enough room.
+        try:
+            content = self._invoke_text_for_author(
+                messages,
+                temperature=0.7,
+                max_tokens=prose_max_tokens,
+                max_retries=per_call_retries,
+                request_timeout_seconds=(
+                    AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                    if is_configured_live_provider(self.llm)
+                    else None
+                ),
+            ).strip()
+        except LLMError as e:
+            if "finish_reason=length" not in str(e):
+                raise
+            config_max = self._config_max_tokens(self.llm)
+            retry_max = min(config_max, int(prose_max_tokens * 1.5))
+            logger.warning(
+                "Author: truncation detected (max_tokens=%d), retrying with max_tokens=%d",
+                prose_max_tokens, retry_max,
+            )
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": "truncation_retry",
+                    "message": f"Author 输出被截断，使用 max_tokens={retry_max} 重试",
+                    "status": "warning",
+                    "payload": {
+                        "original_max_tokens": prose_max_tokens,
+                        "retry_max_tokens": retry_max,
+                    },
+                })
+            content = self._invoke_text_for_author(
+                messages,
+                temperature=0.7,
+                max_tokens=retry_max,
+                max_retries=per_call_retries,
+                request_timeout_seconds=(
+                    AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                    if is_configured_live_provider(self.llm)
+                    else None
+                ),
+            ).strip()
         content = self._coerce_plain_text_content(content)
         if not content:
             retry_messages = [
@@ -1199,11 +1903,13 @@ class AuthorAgent(BaseAgent):
         chunks = list(chunk_items(beats, size=3))
         total_chunks = len(chunks)
         total_segment_beats = max(1, sum(len(chunk) for chunk in chunks))
+        chapter_upper_bound = max(effective_target + 800, int(effective_target * 1.35))
         per_call_retries = None
 
         compact_context = self._build_plain_text_context(state, context)
 
         revision_source_section = ""
+        revision_priority_section = ""
         if task_desc == "返修":
             existing_chapter = self._get_chapter_info(state) or {}
             existing_body = strip_chapter_heading(
@@ -1220,11 +1926,23 @@ class AuthorAgent(BaseAgent):
                     f"{existing_body.strip()}\n"
                 )
             revision_review = normalize_revision_review(state.get("_revision_review")) or {}
+            revision_priority_section = self._revision_blocking_priority_block(revision_review)
             compress_requested = self._revision_requests_compression(revision_review)
             existing_len = count_words(existing_body)
             if existing_len > 0 and not compress_requested:
                 minimum_required = max(minimum_required, int(existing_len * 0.9))
                 effective_target = max(word_target, existing_len)
+                expansion_limit = max(500, int(existing_len * 0.15))
+                chapter_upper_bound = existing_len + expansion_limit
+                revision_source_section += (
+                    f"\n【返修篇幅边界】当前保留稿约 {existing_len} 字符。"
+                    "Editor 未要求压缩时，这次是补丁式返修，不是重新扩写；返修后总篇幅应基本持平。"
+                    f"建议不低于 {int(existing_len * 0.9)} 字符，"
+                    f"也不要超过 {chapter_upper_bound} 字符。"
+                    f"最大允许新增 {expansion_limit} 字符，超过此新增上限会被系统拒绝。"
+                    "禁止通过整段新增解释、重复心理描写或无关打斗来凑修改；"
+                    "新增句子必须同步删除等量冗余说明。\n"
+                )
 
         segment_outputs: list[str] = []
 
@@ -1234,9 +1952,9 @@ class AuthorAgent(BaseAgent):
             segment_target = max(1, int(round(effective_target * segment_weight)))
             segment_minimum = max(1, int(round(minimum_required * segment_weight)))
             segment_upper_bound = max(
-                segment_target + 250,
-                segment_minimum + 250,
-                int(segment_target * 1.6),
+                segment_target + 150,
+                segment_minimum + 150,
+                int(round(chapter_upper_bound * segment_weight)),
             )
             beat_lines = "\n".join(
                 f"  {b['sequence']}. 目标: {b.get('scene_goal', '')} | 冲突: {b.get('conflict', '')} "
@@ -1257,7 +1975,8 @@ class AuthorAgent(BaseAgent):
             if idx == total_chunks - 1:
                 segment_note += "\n这是最后一段，必须写到章末钩子，不要停在半途。"
 
-            prose_max_tokens = max(1024, min(4096, int(segment_target * 1.5) + 512))
+            config_max = self._config_max_tokens(self.llm)
+            prose_max_tokens = max(1024, min(config_max, int(segment_target * 1.5) + 512))
 
             messages = [
                 {
@@ -1269,6 +1988,16 @@ class AuthorAgent(BaseAgent):
                         "禁止写成剧情摘要或设定说明；以场景为单位推进。"
                         "情绪通过动作、神态、对话展现，禁止直白情绪词。"
                         "对白要有冲突或潜台词，避免功能化问答。"
+                        "\n【反说明段落规则】"
+                        "禁止连续超过100字的纯说明/旁白段落。每段说明后必须紧跟角色动作、对白或环境反馈。"
+                        "设定、背景、能力解释必须融入角色行为或对话中，不得独立成段。"
+                        "\n【章末钩子规则】"
+                        "最后200字必须包含以下至少一种：悬念问句、未完成的动作、角色的艰难抉择、意外信息揭露、冲突升级。"
+                        "禁止以'总结本章'、'归纳意义'、'主角反思'结尾。必须让读者想翻下一页。"
+                        "\n【对白比例规则】"
+                        "对白占比至少10%。每500字至少有一段角色对话。对话必须有冲突、潜台词或信息交换，禁止功能化问答。"
+                        "\n【标题整合规则】"
+                        "章节标题的关键词必须在正文中至少出现一次，通过角色对话、内心活动或场景描写自然融入。"
                     ),
                 },
                 {
@@ -1278,6 +2007,7 @@ class AuthorAgent(BaseAgent):
                         f"本段正文至少 {segment_minimum} 字符，建议接近 {segment_target} 字符；"
                         f"最多不要超过 {segment_upper_bound} 字符。"
                         f"整章合并后目标约 {effective_target} 字符。\n\n"
+                        f"{revision_priority_section}\n\n"
                         f"{compact_context}\n\n"
                         f"{segment_note}\n\n"
                         f"{revision_source_section}\n"
@@ -1286,30 +2016,42 @@ class AuthorAgent(BaseAgent):
                 },
             ]
 
-            if exec_events is not None:
-                exec_events.append({
-                    "event_type": EVENT_SEGMENT_STARTED,
-                    "message": f"Author 开始生成第 {segment_num}/{total_chunks} 段",
-                    "status": "info",
-                    "payload": {
-                        "segment_index": segment_num,
-                        "total_segments": total_chunks,
-                        "beats": [b.get("sequence") for b in beat_chunk],
-                    },
-                })
+            # v6.8.0: Skip segment_started logging (reduces noise)
 
             try:
-                content = self._invoke_text_for_author(
-                    messages,
-                    temperature=0.7,
-                    max_tokens=prose_max_tokens,
-                    max_retries=per_call_retries,
-                    request_timeout_seconds=(
-                        AUTHOR_LONG_FORM_TIMEOUT_SECONDS
-                        if is_configured_live_provider(self.llm)
-                        else None
-                    ),
-                ).strip()
+                # v6.8.5: Truncation retry for segmented path
+                try:
+                    content = self._invoke_text_for_author(
+                        messages,
+                        temperature=0.7,
+                        max_tokens=prose_max_tokens,
+                        max_retries=per_call_retries,
+                        request_timeout_seconds=(
+                            AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                            if is_configured_live_provider(self.llm)
+                            else None
+                        ),
+                    ).strip()
+                except LLMError as trunc_err:
+                    if "finish_reason=length" not in str(trunc_err):
+                        raise
+                    config_max = self._config_max_tokens(self.llm)
+                    seg_retry_max = min(config_max, int(prose_max_tokens * 1.5))
+                    logger.warning(
+                        "Author segment %d: truncation (max_tokens=%d), retrying with %d",
+                        segment_num, prose_max_tokens, seg_retry_max,
+                    )
+                    content = self._invoke_text_for_author(
+                        messages,
+                        temperature=0.7,
+                        max_tokens=seg_retry_max,
+                        max_retries=per_call_retries,
+                        request_timeout_seconds=(
+                            AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                            if is_configured_live_provider(self.llm)
+                            else None
+                        ),
+                    ).strip()
                 content = self._coerce_plain_text_content(content)
                 if not content:
                     retry_messages = [
@@ -1359,18 +2101,34 @@ class AuthorAgent(BaseAgent):
 
             segment_outputs.append(content)
 
-            if exec_events is not None:
-                exec_events.append({
-                    "event_type": EVENT_SEGMENT_COMPLETED,
-                    "message": f"Author 完成第 {segment_num}/{total_chunks} 段 ({len(content)} 字)",
-                    "status": "info",
-                    "payload": {
-                        "segment_index": segment_num,
-                        "segment_length": len(content),
-                    },
-                })
+            # v6.8.0: Skip segment_completed logging
 
-        merged_content = "\n\n".join(segment_outputs)
+            # v6.8.2: Track cumulative budget and adjust remaining segments
+            if idx < total_chunks - 1:  # Not the last segment
+                accumulated_wc = sum(count_words(seg) for seg in segment_outputs)
+                remaining_budget = max(0, chapter_upper_bound - accumulated_wc)
+                
+                if remaining_budget < segment_target:
+                    logger.warning(
+                        "Author segmented revision: approaching upper bound "
+                        "(%d accumulated, %d remaining, next target %d)",
+                        accumulated_wc, remaining_budget, segment_target,
+                    )
+                    # Note: Next segment's target will be calculated in next iteration
+                    # This warning helps track budget exhaustion (reduces noise)
+
+        merged_content = self._merge_segment_outputs(segment_outputs)
+        merged_content = self._repair_final_segment_if_needed(
+            state=state,
+            merged_content=merged_content,
+            segment_outputs=segment_outputs,
+            chunks=chunks,
+            compact_context=compact_context,
+            instruction=instruction,
+            chapter_number=chapter_number,
+            task_desc=task_desc,
+            exec_events=exec_events,
+        )
         title = self._derive_title(state, instruction, merged_content)
         return AuthorOutput(
             title=title,
@@ -1379,6 +2137,164 @@ class AuthorAgent(BaseAgent):
             implemented_events=self._instruction_items(instruction.get("key_events", "")),
             used_plot_refs=self._instruction_items(instruction.get("plots_to_plant", "")),
         )
+
+    def _repair_final_segment_if_needed(
+        self,
+        *,
+        state: FactoryState,
+        merged_content: str,
+        segment_outputs: list[str],
+        chunks: list[list[dict[str, Any]]],
+        compact_context: str,
+        instruction: dict[str, Any],
+        chapter_number: int,
+        task_desc: str,
+        exec_events: list[dict] | None,
+    ) -> str:
+        """Retry only the final author segment when it misses the chapter hook."""
+        issues = self._scene_beat_coverage_issues(state, merged_content)
+        if not issues or not segment_outputs or not chunks:
+            return merged_content
+
+        final_chunk = chunks[-1]
+        prior_segments = segment_outputs[:-1]
+        prior_content = self._merge_segment_outputs(prior_segments)
+        prior_tail = prior_content[-900:] if len(prior_content) > 900 else prior_content
+        issue_lines = "\n".join(f"- {issue.get('message', '')}" for issue in issues)
+        beat_lines = "\n".join(
+            f"  {beat.get('sequence', '?')}. 目标: {beat.get('scene_goal', '')} | "
+            f"冲突: {beat.get('conflict', '')} | 转折: {beat.get('turn', '')} | "
+            f"钩子: {beat.get('hook', '')}"
+            for beat in final_chunk
+        )
+        final_target = max(650, len(segment_outputs[-1]))
+        prose_max_tokens = max(1536, min(4096, int(final_target * 1.7) + 512))
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是网文工厂的执笔。现在只重写本章最后一段正文。"
+                    "只输出可直接接在前文后的纯正文，不要标题、解释、清单、JSON 或 Markdown。"
+                    "必须自然承接前文，完整覆盖给定最后 scene beat，并以章节 ending_hook 收束。"
+                    "禁止复述前文，禁止停在中途动作、选择或对话上。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"项目ID: {state['project_id']}\n章节号: {chapter_number}\n任务: {task_desc}\n"
+                    f"上一版最后分段没有写到章末，问题如下：\n{issue_lines}\n\n"
+                    f"请重写最后分段，至少 {final_target} 字符，必须写到最后一句。\n\n"
+                    f"{compact_context}\n\n"
+                    f"【前文尾段，仅用于承接，禁止重复】\n{prior_tail}\n\n"
+                    f"【最后分段必须覆盖的 scene beat】\n{beat_lines}\n\n"
+                    f"【章节 ending_hook，必须自然写入章末】\n{instruction.get('ending_hook', '')}\n\n"
+                    "请只输出修复后的最后分段正文。"
+                ),
+            },
+        ]
+
+        if exec_events is not None:
+            exec_events.append({
+                "event_type": "segment_repair_started",
+                "message": "Author 最后分段未覆盖章末钩子，开始定向重写最后分段",
+                "status": "warning",
+                "payload": {"issues": [issue.get("message", "") for issue in issues]},
+            })
+
+        try:
+            repaired_tail = self._invoke_text_for_author(
+                messages,
+                temperature=0.68,
+                max_tokens=prose_max_tokens,
+                max_retries=None,
+                request_timeout_seconds=(
+                    AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                    if is_configured_live_provider(self.llm)
+                    else None
+                ),
+            )
+            repaired_tail = self._coerce_plain_text_content(repaired_tail)
+        except Exception as e:
+            logger.warning("Author: final segment targeted repair failed: %s", e)
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": "segment_repair_failed",
+                    "message": f"Author 最后分段定向重写失败: {e}",
+                    "status": "error",
+                    "payload": {"error": str(e)[:200]},
+                })
+            return merged_content
+
+        if not repaired_tail:
+            return merged_content
+
+        candidate = self._merge_segment_outputs([*prior_segments, repaired_tail])
+        remaining = self._scene_beat_coverage_issues(state, candidate)
+        if remaining:
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": "segment_repair_failed",
+                    "message": "Author 最后分段定向重写后仍未覆盖章末钩子",
+                    "status": "warning",
+                    "payload": {"issues": [issue.get("message", "") for issue in remaining]},
+                })
+            return merged_content
+
+        if exec_events is not None:
+            exec_events.append({
+                "event_type": "segment_repair_completed",
+                "message": f"Author 最后分段定向重写完成 ({len(repaired_tail)} 字)",
+                "status": "info",
+                "payload": {"segment_length": len(repaired_tail)},
+            })
+        return candidate
+
+    @classmethod
+    def _merge_segment_outputs(cls, segments: list[str]) -> str:
+        """Merge segmented prose without duplicating boundary overlap."""
+        merged = ""
+        for segment in segments:
+            cleaned = str(segment or "").strip()
+            if not cleaned:
+                continue
+            if not merged:
+                merged = cleaned
+                continue
+            cleaned = cls._trim_segment_boundary_overlap(merged, cleaned)
+            if cleaned:
+                merged = f"{merged.rstrip()}\n\n{cleaned.lstrip()}"
+        return merged.strip()
+
+    @staticmethod
+    def _trim_segment_boundary_overlap(previous: str, current: str) -> str:
+        """Trim text the model repeated from the previous segment boundary."""
+        prev = str(previous or "").rstrip()
+        cur = str(current or "").lstrip()
+        if not prev or not cur:
+            return cur
+
+        max_overlap = min(len(prev), len(cur), 1200)
+        for size in range(max_overlap, 11, -1):
+            if prev[-size:] == cur[:size]:
+                return cur[size:].lstrip()
+
+        prev_parts = [p.strip() for p in re.split(r"\n+", prev) if p.strip()]
+        cur_parts = [p.strip() for p in re.split(r"\n+", cur) if p.strip()]
+        while prev_parts and cur_parts:
+            prev_tail = prev_parts[-1]
+            cur_head = cur_parts[0]
+            if min(len(prev_tail), len(cur_head)) < 12:
+                break
+            if max(len(prev_tail), len(cur_head)) > 500:
+                break
+            similarity = SequenceMatcher(None, prev_tail, cur_head).ratio()
+            if prev_tail == cur_head or similarity >= 0.9:
+                cur_parts.pop(0)
+                continue
+            break
+        return "\n".join(cur_parts).lstrip() if cur_parts else ""
 
     def _should_use_plain_text_primary(self, state: FactoryState) -> bool:
         """Use prose-first authoring for live providers.
@@ -1399,7 +2315,14 @@ class AuthorAgent(BaseAgent):
     ) -> str:
         """Invoke text generation with per-call retry control when supported."""
         if max_retries is None and request_timeout_seconds is None:
-            return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
+            try:
+                return self.llm.invoke_text(
+                    messages, temperature=temperature, max_tokens=max_tokens, agent_id=self.agent_id
+                )
+            except TypeError as exc:
+                if "agent_id" not in str(exc):
+                    raise
+                return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
         try:
             return self.llm.invoke_text(
                 messages,
@@ -1407,10 +2330,11 @@ class AuthorAgent(BaseAgent):
                 max_tokens=max_tokens,
                 max_retries=max_retries,
                 request_timeout_seconds=request_timeout_seconds,
+                agent_id=self.agent_id,
             )
         except TypeError as exc:
             exc_text = str(exc)
-            if "max_retries" not in exc_text and "request_timeout_seconds" not in exc_text:
+            if "max_retries" not in exc_text and "request_timeout_seconds" not in exc_text and "agent_id" not in exc_text:
                 raise
             try:
                 return self.llm.invoke_text(
@@ -1418,11 +2342,23 @@ class AuthorAgent(BaseAgent):
                     temperature=temperature,
                     max_tokens=max_tokens,
                     max_retries=max_retries,
+                    agent_id=self.agent_id,
                 )
             except TypeError as retry_exc:
-                if "max_retries" not in str(retry_exc):
+                retry_text = str(retry_exc)
+                if "max_retries" not in retry_text and "agent_id" not in retry_text:
                     raise
-                return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
+                try:
+                    return self.llm.invoke_text(
+                        messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        request_timeout_seconds=request_timeout_seconds,
+                    )
+                except TypeError as final_exc:
+                    if "request_timeout_seconds" not in str(final_exc):
+                        raise
+                    return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
 
     def _build_plain_text_context(self, state: FactoryState, fallback_context: str) -> str:
         """Build a compact prompt for direct prose generation.

@@ -488,6 +488,55 @@ class WorkflowRepositoryMixin:
         finally:
             conn.close()
 
+    def get_chapter_internal_repair_count(
+        self,
+        project_id: str,
+        chapter_number: int,
+        workflow_run_id: str | None = None,
+        agent_id: str | None = None,
+    ) -> int:
+        """Get internal repair attempts since the last manual reset for a chapter.
+
+        v6.7.8: Internal repairs (e.g. auto-compression) use task_type='internal_repair'
+        and do not consume chapter-level retries, but still need their own cap to prevent
+        infinite retry loops when the agent's compression keeps failing.
+
+        When *workflow_run_id* is supplied the count is scoped to that run so
+        that author internal repairs in run A do not exhaust polisher's budget
+        in run B.
+
+        When *agent_id* is supplied the count is also scoped to that revision
+        target, so author and polisher internal repair budgets remain isolated
+        within the same run.
+        """
+        conn = self._conn()
+        try:
+            clauses = [
+                "project_id=?",
+                "chapter_number=?",
+                "task_type='internal_repair'",
+            ]
+            params: list[object] = [project_id, chapter_number]
+            if workflow_run_id:
+                clauses.append("workflow_run_id=?")
+                params.append(workflow_run_id)
+            if agent_id:
+                clauses.append("agent_id=?")
+                params.append(agent_id)
+            params.extend([project_id, chapter_number])
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM task_status "
+                f"WHERE {' AND '.join(clauses)} "
+                "AND id > COALESCE(( "
+                "  SELECT MAX(id) FROM task_status "
+                "  WHERE project_id=? AND chapter_number=? AND task_type='reset' "
+                "), 0)",
+                tuple(params),
+            ).fetchone()
+            return row["cnt"] if row else 0
+        finally:
+            conn.close()
+
     def get_latest_chapter_reset_marker(
         self,
         project_id: str,

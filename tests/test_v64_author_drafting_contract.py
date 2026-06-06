@@ -775,6 +775,7 @@ class TestAuthorLiveCallBudget:
                     base_url="https://example.test/v1",
                     api_key="sk-test",
                     model="revision-author-model",
+                    max_tokens=8192,
                 )
                 self.calls = []
 
@@ -828,8 +829,81 @@ class TestAuthorLiveCallBudget:
         assert "【当前保留稿 / 必须在此基础上返修】" in prompt
         assert "旧稿内容，场景仍在推进。" in prompt
         assert "禁止脱离该底稿另起炉灶重写短版" in prompt
+        assert "返修篇幅边界" in prompt
+        assert "返修后总篇幅应基本持平" in prompt
         assert "最多不要超过 3250 字符" not in prompt
         assert llm.calls[-1]["max_tokens"] > 4096
+
+    def test_revision_plain_text_prompt_prioritizes_blocking_review_issues(self, repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.config.settings import LLMConfig
+        from novel_factory.llm.provider import LLMProvider
+
+        class LiveLikeLLM(LLMProvider):
+            def __init__(self):
+                self.config = LLMConfig(
+                    base_url="https://example.test/v1",
+                    api_key="sk-test",
+                    model="revision-author-model",
+                )
+                self.calls = []
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None, max_retries=None):
+                return {}
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ):
+                self.calls.append({"messages": messages})
+                return "他把时间线重新压回日落前，完成医院签到后才转入下一场。" * 80
+
+        repo.save_chapter_content("test_proj", 1, "第1章 测试\n\n" + ("旧稿写成任务超时。" * 160), "第一章 测试")
+        repo.update_chapter_status("test_proj", 1, "revision")
+
+        llm = LiveLikeLLM()
+        agent = AuthorAgent(repo, llm)
+        output = agent._try_plain_text_draft(
+            {
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "revision",
+                "llm_mode": "real",
+                "_revision_review": {
+                    "score": 65,
+                    "revision_target": "author",
+                    "issues": [
+                        "不可违背事实冲突：Hard Constraints明确要求必须在日落前完成医院签到任务，但正文写成超时未完成",
+                        "[章间衔接] 章间衔接断裂：上一章结尾存在明确时间节点“今晚”，本章开头未承接。",
+                        "对白口语化不足",
+                    ],
+                    "suggestions": [
+                        "修正任务逻辑：确保林辰在日落前完成医院签到",
+                        "增加口语化标记",
+                    ],
+                },
+            },
+            "返修",
+            agent.build_context({
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "revision",
+            }),
+        )
+
+        prompt = llm.calls[-1]["messages"][1]["content"]
+        assert output.content
+        assert "【返修硬阻断优先级】" in prompt
+        assert "必须先修复以下硬阻断问题" in prompt
+        assert "不可违背事实冲突" in prompt
+        assert "Hard Constraints" in prompt
+        assert "章间衔接断裂" in prompt
+        assert "日落前完成医院签到" in prompt
+        assert "不得只做语言润色" in prompt
 
     def test_revision_length_regression_repair_merges_candidate_with_current_draft(self, repo):
         from novel_factory.agents.author import AuthorAgent
@@ -905,3 +979,106 @@ class TestAuthorLiveCallBudget:
         assert "不要另起炉灶重写短版" in prompt
         assert "旧稿主体继续推进。" in prompt
         assert "短返修稿补了章末钩子。" in prompt
+
+    def test_revision_diff_flags_overexpanded_candidate(self, repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.llm.stub_provider import StubLLM
+        from novel_factory.models.schemas import AuthorOutput
+        from novel_factory.validators.chapter_checker import count_words
+
+        current = "第1章 测试\n\n" + ("旧稿主体继续推进。" * 260)
+        candidate = "第1章 测试\n\n" + ("旧稿主体继续推进，新增解释不断膨胀。" * 185)
+        repo.save_chapter_content("test_proj", 1, current, "第一章 测试")
+        repo.update_chapter_status("test_proj", 1, "revision")
+
+        class OverexpandingAuthor(AuthorAgent):
+            def _try_plain_text_draft(self, state, task_desc, context, exec_events=None):
+                return AuthorOutput(
+                    title="第一章 测试",
+                    content=candidate,
+                    word_count=count_words(candidate),
+                    implemented_events=["事件1", "事件2"],
+                    used_plot_refs=[],
+                )
+
+        result = OverexpandingAuthor(repo, StubLLM()).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "revision",
+            "llm_mode": "stub",
+            "_revision_review": {
+                "issues": ["章末钩子不足"],
+                "suggestions": ["补足章末钩子"],
+                "revision_target": "author",
+            },
+        })
+
+        diff_events = [
+            event for event in result.get("_exec_events", [])
+            if event.get("event_type") == "revision_diff_generated"
+        ]
+        assert diff_events
+        assert diff_events[-1]["status"] == "warning"
+        assert diff_events[-1]["payload"]["overexpanded_warning"] is True
+        assert diff_events[-1]["payload"]["expansion_tolerance"] >= 80
+        assert result["quality_gate"]["revision_overexpanded"] is True
+        assert result["quality_gate"]["version_regression"] is True
+
+        chapter = repo.get_chapter("test_proj", 1)
+        assert "新增解释不断膨胀" not in (chapter.get("content") or "")
+
+        artifacts = repo.get_artifacts_for_chapter("test_proj", 1)
+        assert any(
+            artifact["agent_id"] == "author"
+            and artifact["artifact_type"] == "rejected_regression"
+            for artifact in artifacts
+        )
+
+    def test_revision_plain_text_prompt_includes_hard_expansion_delta(self, repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.llm.provider import LLMProvider
+
+        current = "第1章 测试\n\n" + ("旧稿主体继续推进。" * 260)
+        repo.save_chapter_content("test_proj", 1, current, "第一章 测试")
+        repo.update_chapter_status("test_proj", 1, "revision")
+
+        class CaptureTextLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.calls = []
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None, agent_id="unknown") -> dict:
+                return {}
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None, **kwargs) -> str:
+                self.calls.append({"messages": messages, "kwargs": kwargs})
+                return "旧稿主体继续推进。" * 260
+
+        llm = CaptureTextLLM()
+        agent = AuthorAgent(repo, llm)
+        agent._try_plain_text_draft(
+            {
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "revision",
+                "llm_mode": "real",
+                "_revision_review": {
+                    "score": 78,
+                    "revision_target": "author",
+                    "issues": ["时间显示逻辑仍有微瑕", "部分段落说明性较强"],
+                    "suggestions": ["只修正时间歧义和说明段"],
+                },
+            },
+            "返修",
+            agent.build_context({
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "revision",
+            }),
+        )
+
+        prompt = llm.calls[-1]["messages"][1]["content"]
+        assert "最大允许新增" in prompt
+        assert "超过此新增上限会被系统拒绝" in prompt
+        assert "补丁式返修" in prompt

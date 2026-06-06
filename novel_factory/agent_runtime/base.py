@@ -352,6 +352,31 @@ class BaseAgent:
             logger.debug("Title contract build failed for %s", project_id, exc_info=True)
             return ""
 
+    def _get_style_prompt_injection(self, project_id: str, agent_id: str) -> str:
+        """v6.8.1: Return style-aware prompt injection for this agent.
+
+        Detects style from project metadata (title, genre, premise) and returns
+        agent-specific style instructions. Returns "" if no style applies or
+        on any error (never blocks the main flow).
+        """
+        try:
+            from ..quality.style_detector import detect_style_from_text, get_style_prompt_injection
+            project = self.repo.get_project(project_id)
+            if not project:
+                return ""
+            text = " ".join(filter(None, [
+                project.get("name", ""),  # 项目名称
+                project.get("genre", ""),  # 类型
+                project.get("description", ""),  # 项目描述
+            ]))
+            if not text.strip():
+                return ""
+            profile = detect_style_from_text(text)
+            return get_style_prompt_injection(profile, agent_id)
+        except Exception:
+            logger.debug("Style prompt injection failed for %s/%s", project_id, agent_id, exc_info=True)
+            return ""
+
     def _get_project_skill_overrides(self, project_id: str) -> dict[str, Any]:
         """Helper: get project-specific skill override document.
 

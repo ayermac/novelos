@@ -49,6 +49,14 @@ class TestCheckpointHelpers:
             checkpointer = get_sqlite_checkpointer(db_path)
             assert checkpointer is not None
 
+    def test_visible_checkpoint_node_hides_langgraph_branch_nodes(self):
+        """Internal LangGraph loop/branch checkpoints should not be user-facing nodes."""
+        from novel_factory.workflow.checkpoint import _visible_checkpoint_node
+
+        assert _visible_checkpoint_node("loop") is None
+        assert _visible_checkpoint_node("branch:to:polisher") is None
+        assert _visible_checkpoint_node("polisher") == "polisher"
+
 
 class TestCheckpointPersistence:
     """Test checkpoint persistence and recovery."""

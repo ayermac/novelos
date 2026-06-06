@@ -63,7 +63,7 @@ def test_state_matrix_running_resumable_checkpoint():
 
 
 def test_state_matrix_running_stale_checkpoint():
-    """Test running run with stale checkpoint (old timestamp)."""
+    """Test stale running run recommends mark_stuck before rerun/reset."""
     now = datetime.utcnow() + timedelta(hours=8)
     # Run started 5 hours ago (beyond STALE_RUNNING_RUN_SECONDS = 2 hours)
     started_at = (now - timedelta(hours=5)).strftime("%Y-%m-%d %H:%M:%S")
@@ -82,8 +82,8 @@ def test_state_matrix_running_stale_checkpoint():
 
     assert result["chapter_status"] == "drafted"
     assert result["run_status"] == "running"
-    # v6.7.6: Stale running runs require manual intervention
     assert result["recovery_capability"] == RecoveryCapability.MANUAL_INTERVENTION_REQUIRED.value
+    assert result["recommended_action"] == "mark_stuck"
     assert "mark_stuck" in result["safe_actions"]
 
 
@@ -103,7 +103,7 @@ def test_state_matrix_failed_with_checkpoint():
     assert result["chapter_status"] == "drafted"
     assert result["run_status"] == "failed"
     assert result["recovery_capability"] == RecoveryCapability.CLEAR_CHECKPOINT_AND_RERUN.value
-    # v6.7.6: Failed runs use "reset" action (not "rerun")
+    assert result["recommended_action"] == "reset"
     assert "reset" in result["safe_actions"]
     assert result["checkpoint_status"] == CheckpointState.STALE.value
 

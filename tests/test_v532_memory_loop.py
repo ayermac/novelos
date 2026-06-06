@@ -926,6 +926,46 @@ class TestMemoryApplyCanonical:
         assert created["name"] == "外环值守"
         assert "追踪手段" in created["description"]
 
+    def test_apply_character_update_creates_code_named_character_without_target_id(self, client, project_id):
+        """Character.update patches should infer code-style names such as LC-01 from evidence."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=17,
+            summary="编号角色推断创建测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="characters",
+            operation="update",
+            target_id=None,
+            after_json=json.dumps({
+                "description": "LC-01状态从唤醒中变为完全苏醒，形态和威胁描述明确。",
+            }, ensure_ascii=False),
+            confidence=0.95,
+            evidence_text="LC-01完全苏醒中，形态为不定型庞然巨影，释放两点稳定幽绿光芒。",
+            rationale="LC-01状态从唤醒中变为完全苏醒，需要新角色档案。",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["data"]["status"] == "applied"
+        result = body["data"]["results"][0]
+        assert result["success"] is True
+        assert result["operation"] == "create"
+
+        created = repo.get_character(project_id, result["created_id"])
+        assert created["name"] == "LC-01"
+        assert "完全苏醒" in created["description"]
+
     def test_apply_character_update_does_not_match_object_name_in_description(self, client, project_id):
         """A mentioned object character must not be mistaken for the update target."""
         from novel_factory.db.repository import Repository
@@ -1494,6 +1534,43 @@ class TestMemoryStructuredFieldNormalization:
         qin = next((f for f in factions if f["name"] == "秦家"), None)
         assert qin is not None
         assert "敌对" in qin["relationship_with_protagonist"]
+
+    def test_apply_misclassified_faction_update_without_name_becomes_story_fact(self, client, project_id):
+        """Faction updates without any faction identity should not fail when evidence is a story fact."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=16, summary="Misclassified faction")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="factions",
+            operation="update",
+            target_id=None,
+            after_json=json.dumps({
+                "description": "赵倩与林辰的关系在本章出现决定性转折，需要更新关系描述。",
+            }, ensure_ascii=False),
+            rationale="赵倩与林辰的关系在本章出现决定性转折。",
+            evidence_text="赵倩于17:50发出最后通牒，林辰屏幕上又弹出一条新的预览。",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id, "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+
+        items = repo.list_memory_items(batch["id"])
+        assert items[0]["status"] == "applied"
+        assert items[0]["error_message"] in (None, "")
+
+        facts = repo.list_story_facts(project_id)
+        fact = next((f for f in facts if f["fact_key"] == "chapter_16.relationship_shift"), None)
+        assert fact is not None
+        assert fact["subject"] == "赵倩与林辰"
 
     def test_apply_outline_update_without_target_id_creates_new_outline(self, client, project_id):
         """Outline update patches without target_id should upsert instead of failing as unsupported."""

@@ -28,6 +28,221 @@ Key changes:
 - **CLI 命令**: `novelos contract show/approve`
 - **166 新增测试**: 覆盖 rhythm_budget、editor_lenses、genesis_contract、chapter_brief、creative_ledgers、e2e 工作流
 
+## v6.8.4 - SSE Streaming & Workflow Observability
+
+Date: 2026-06-02
+
+Key changes:
+
+- **Backend heartbeat**: 15s SSE heartbeat comments to prevent proxy timeout during long LLM calls
+- **Frontend auto-reconnect**: Both useWorkflowStream and useSSEStream now auto-reconnect with
+  exponential backoff (MAX_RETRIES=10, delay 1s→16s), since_id replay, event dedup, and heartbeat
+  timeout detection (30s)
+- **Race condition fix**: SSE endpoint waits up to 5s for run creation when no run_id provided
+- **Error logging**: 3 silent `except:pass` blocks replaced with `logger.warning`
+- **blocked vs failed**: Frontend correctly distinguishes blocked (human_review) from failed states
+- **Terminal state completeness**: Added cancelled to terminal state set
+- **Phase 7 deferred**: Quality gate node refactor deferred to v6.9 (architectural change)
+
+Verification:
+- TypeScript: typecheck passes
+- Backend: 18 regression tests pass
+- Version alignment: 6.8.4 (python)
+
+Fixes:
+- SSE connections dropping silently during long LLM calls
+- No auto-reconnect after network interruptions
+- Race condition when SSE connects before run is created
+- Silent exception swallowing hiding real errors
+- blocked status treated as error in frontend
+## v6.8.3 - Plot Hole Resolution Integrity
+
+Date: 2026-06-01
+
+Fixes a systemic bug where plot hole (伏笔) resolution status was never persisted:
+a `resolve` patch was silently overwritten by a same-batch `update` patch carrying
+a stale status="planted", leaving every plot stuck in `planted` (0 resolved across
+6 published chapters in burn-in project; PH-002 showed resolved_chapter=4 but
+status=planted).
+
+Key changes:
+
+- **Terminal status protection** (`db/repositories/plot_hole.py`): `update_plot_hole`
+  gains `protect_terminal` (default True) — a non-terminal update cannot revert a
+  resolved/abandoned plot. Last line of defense.
+- **Update patches stripped of status** (`api/routes/memory_updates.py`): plain
+  `update` ops pop status/resolved_chapter; only resolve/deprecate change status.
+  resolve uses assignment (not setdefault) so a stray status cannot weaken it.
+- **Operation-priority ordering**: `_order_items_for_apply` stable-sorts create/update
+  before resolve/deprecate in both apply paths (defense-in-depth).
+- **Planner structured plot fields** (`agents/planner.py`): injects pending plot codes
+  into context; self-check warns when a due plot is missing from plots_to_resolve.
+- **Deterministic reconciliation** (`workflow/reconciliation.py`):
+  `reconcile_plot_resolution` auto-resolves plots that are BOTH in instruction's
+  plots_to_resolve AND literally present in chapter prose; wired into
+  memory_curator_node, emits plot_resolution_reconciled event.
+- **Data repair migration** (`035_v6_8_3_plot_hole_status_repair.sql`): idempotent —
+  resolved_chapter-set-but-non-terminal -> resolved; legacy 'validated' -> 'planted'.
+- **Repository status guard**: create/update_plot_hole normalize illegal status to
+  'planted' with a warning.
+
+Verification:
+- v6.8.3 tests: 27 new (integrity 9 + reconciliation 10 + migration 8)
+- Version alignment: 6.8.3 (python)
+
+## v6.8.2 - Revision Reliability Hardening
+
+Date: 2026-05-31
+
+Key changes:
+
+- **Revision context hardening**: Force-load Editor review in revision_router_node; validate context in Author/Polisher; hydrate retry_count from DB
+- **Tighter length control**: Reduce expansion threshold (18%/700 → 12%/400); expand compression keyword detection (4 → 12 keywords); add cumulative budget tracking for segmented revision
+- **Plateau guard tuning**: Raise threshold (78/retry>0 → 79/retry>=2) to prevent premature pass on marginal quality
+- **Internal repair observability**: Log repair count and escalation events with progress indicators
+- **Editor fallback relaxation**: Raise fallback ceiling (70 → 78) to reduce unnecessary revision loops
+- **Scene beat semantic alignment**: Mark Author's scene beat warnings as advisory in Editor classification
+
+Verification:
+- Targeted revision/workflow regression tests: 125/125 passing
+- Syntax validation: All imports successful
+- Version alignment: 6.8.2 (python + frontend package)
+
+Fixes:
+- Revision context loss causing blind revision attempts
+- Revision length drift due to wide thresholds
+- Premature plateau pass on 78-79 scores
+- Opaque internal repair escalation
+- Overly conservative Editor fallback
+- Inconsistent scene beat coverage semantics
+
+
+
+
+## v6.8.1 - Webnovel Excitement Awareness
+
+Date: 2026-05-30
+
+Key changes:
+
+- **Style detection module** (`novel_factory/quality/style_detector.py`): Deterministic style detection from project metadata (title, genre, premise). Supports webnovel_excitement, suspense, romance, general styles.
+- **Style-aware prompt injection**: Planner/Screenwriter/Author/Editor inject style-specific instructions via `BaseAgent._get_style_prompt_injection()`
+- **Editor weight adjustment**: `_apply_style_weight_adjustment()` — pacing weight 15→30 in webnovel_excitement mode
+- **Opening Hook Checker Skill**: Detects narrative hooks in first 200 chars. Mounted to editor.before_review, author.after_llm
+- **Excitement Density Checker Skill**: Checks full-text excitement distribution and depression ratio. Mounted to editor.before_review
+- **Stale state recovery fix**: Author/Screenwriter/Polisher skip status advance when chapter is already at or past the target status (recovery runs)
+
+Verification:
+- v6.8.1 style detector tests: 41/41 passing
+- Agent tests: 44/44 passing
+- Version alignment: 6.8.1 (python + frontend + desktop)
+
+## v6.8.0 - Skillized Quality Gates (Phase 1)
+
+Date: 2026-05-29
+
+Key changes:
+
+- **5 new Phase 1 Skills**: Register existing deterministic quality modules as standard Skills.
+  - `continuity-gate`: Narrative continuity gate (time regression, cross-chapter anchors, title integrity, event replay)
+  - `chapter-seam`: Chapter-to-chapter seam break detection (time/location/hook discontinuity)
+  - `death-penalty`: AI cliche / death-penalty phrase detector
+  - `word-count-gate`: Word count upper/lower bound validation
+  - `fact-lock`: Fact integrity checker for polished text
+- Each Skill has: class file (`skills/*_skill.py`), manifest YAML (`config/skills/manifest/`), registration in `base.py` BUILTIN_SKILLS + `skills.yaml`
+- All Skills are pure functions (no LLM, no repo, no side effects)
+- 19 new unit tests in `test_v680_skillized_quality_gates.py`
+- Phase 1 does NOT change Editor/Author/Polisher call paths — skills are registered but not yet mounted to agents
+
+Verification:
+- v6.8.0 skill tests: 19/19 passing
+- Version alignment: 6.8.0 (python + frontend + desktop)
+- Regression: pending full suite
+
+## v6.7.9 - Narrative Continuity Gate
+
+Date: 2026-05-29
+
+Key changes:
+
+- **Narrative Continuity Hard Gate (`novel_factory/quality/continuity_gate.py`)**: New deterministic module that blocks chapters with obvious narrative continuity defects before they reach (or leave) the publish pipeline.
+  - `evaluate_chapter_continuity(repo, project_id, chapter_number, content, title)` checks:
+    - Chapter-internal time regression (e.g., "两小时前" back to a completed old scene without a flashback frame) → **blocking**
+    - Cross-chapter time-anchor conflicts (e.g., previous chapter sets "明日午时", current chapter is already next-day morning but still says "明日") → **blocking**
+    - Truncated/malformed titles (ending with "无/的/与/和/了" or too short) → **warning**
+    - Title-content keyword mismatch → **warning**
+    - Replay of already-completed plot events across chapters → **blocking**
+  - `evaluate_publish_continuity(repo, project_id, chapter_number)` reads chapter from DB and delegates to the above.
+  - All logic is generic — no hardcoded project, chapter, character, or location names.
+- **Editor fallback review de-powered**: `_fallback_rule_review` can no longer give 88/excellent.
+  - Maximum score is **70** (down from 88).
+  - Issues list always contains: "AI 审核不可用，本结果仅为规则兜底，不代表完整审校通过。"
+  - If continuity gate finds blocking issues, fallback forces `pass_=False` and `revision_target="author"`.
+  - `fallback_used` event payload now includes `degraded_review: true` and `blocks_auto_publish`.
+- **Editor normal flow integrates continuity gate**: After chapter seam check and story facts compliance, `_run_continuity_gate` runs. Blocking issues:
+  - Force `pass_=False`
+  - Cap score at 70
+  - Set `revision_target="author"`
+  - Inject `[连续性阻断]` / `[连续性修复]` notes into issues/suggestions
+- **Publish endpoint hard gate**: `POST /publish/chapter` now runs `evaluate_publish_continuity` **before** publishing. If blocking, returns `CONTINUITY_GATE_BLOCKED` error with issues and suggestions. UI can still show "awaiting_publish", but confirm-publish is rejected.
+- **Publisher node hard gate**: `publisher_node` in `nodes.py` also runs the continuity gate before `repo.publish_chapter()`.
+- **Regression tests updated**: Existing fallback tests (`test_agents.py`, `test_v64_editor_quality_gates.py`) now assert score ≤ 70 and `fallback_used` event presence instead of expecting auto-pass.
+- **Version alignment**: Runtime, frontend, and desktop updated to `6.7.9`.
+
+Verification:
+- v6.7.9 dedicated tests: 12/12 passing (time regression, flashback framing, cross-chapter anchors, title checks, fallback de-power, publish blocking, generic logic)
+- v6.7.8 regression tests: 16/16 passing
+- Regression tests (test_agents.py, test_v64_editor_quality_gates.py, test_v61_acceptance_fixes.py): 104/104 passing
+- Full test suite: running
+
+## v6.7.8 - Revision Retry Accounting & Continuity Semantics
+
+Date: 2026-05-29
+
+Key changes:
+
+- **Internal compression no longer consumes chapter-level retries**: Author and Polisher internal word-count auto-compression failures (when `_try_compress_overlong_output`/`_try_compress_overlong_polish` fails) are now marked with `consume_revision_retry: false` in the quality gate. The `_handle_retryable_quality_gate` function checks this field and uses `internal_repair` task type instead of `revise`, preserving the chapter-level retry counter.
+- **Internal repair attempt cap with per-run isolation**: New `get_chapter_internal_repair_count(workflow_run_id)` repository method and `MAX_INTERNAL_REPAIR_ATTEMPTS = 2` constant in `nodes.py`. Count is scoped to `workflow_run_id` so old runs and cross-agent repairs don't pollute each other's budget. After the cap is reached within a run, internal repairs are escalated to chapter-level retries (consuming `retry_count`), preventing infinite agent loops.
+- **Distinct event types for internal repairs vs chapter retries**: Internal repairs emit `internal_repair_attempt` events (with `repair_scope` payload) instead of `quality_gate_retry`. This eliminates UI/audit confusion between agent-internal compression attempts and genuine chapter-level revision retries.
+- **Deterministic status-fact filter with hard-contradiction guard**: Editor's `_run_story_facts_compliance` includes a deterministic post-LLM filter that downgrades `blocking` violations to `warning` when the fact is a status-type description (恐惧/被围住/瘫软/狼狈/被控制等) and the violation text contains consistent-action keywords (强撑/虚张声势/挣扎/颤抖/嘴硬/色厉内荏等). A hard-contradiction guard (`_HARD_CONTRADICTION_PHRASES`) prevents downgrading when the text also contains unambiguously incompatible behavior (从容指挥安保/大步离开/自由离开/调动安保/etc.), fixing the false-negative risk.
+- **Expanded keyword coverage**: Added real-log trigger phrases (强行维持/摇摇欲坠/声音粗重/声音干涩/声音发颤/强作镇定/咬牙撑住/etc.) to the consistent-action keyword list.
+- **Refined LLM compliance prompt**: The editor's story facts compliance system prompt now explicitly instructs the LLM that status-type facts combined with subsequent actions/dialogue are not contradictions, and only explicit behavioral contradictions (freely commanding security, walking away unimpeded) should be flagged.
+- **Version alignment**: Runtime, frontend, and desktop updated to `6.7.8`.
+
+Verification:
+- v6.7.8 dedicated tests: 16/16 passing (8 retry accounting + cap isolation, 5 status-fact production tests, 3 version alignment)
+- Full test suite: 2953/2953 passing (1 skipped)
+- Version alignment tests: all passing
+- Linter: 0 errors
+
+## v6.7.7 - Genesis Generation Progress Streaming
+
+Date: 2026-05-27
+
+Key changes:
+
+- **Async Genesis generation with SSE progress streaming**: New `POST /api/projects/{project_id}/genesis/generate/start` endpoint starts async generation and returns `run_id` + `stream_url`. New `GET /api/projects/{project_id}/genesis/generate/stream/{run_id}` SSE endpoint streams real-time progress events.
+- **Segment-level progress events**: Foundation, cast, plot segments emit `segment_started`/`segment_completed`. Instructions segment emits per-chunk `chapter_start`/`chapter_end`. Repair and quality report phases also emit events.
+- **Stub mode progress simulation**: Stub mode simulates the same progress events with short delays for local demos and testing.
+- **Frontend EventSource integration**: GenesisModule.tsx now prefers the streaming start endpoint, connects via EventSource, and displays step-by-step progress (foundation → cast → plot → instructions → repair → quality). Falls back to polling when EventSource is unavailable or disconnected.
+- **First-run and resumed progress visibility fix**: The frontend now creates a local `running` Genesis record immediately after async start, reconnects streams for already-running Genesis runs loaded from latest status, shows default phase labels before the first SSE event, and normalizes `/api/...` stream URLs before EventSource connection.
+- **Interrupted Genesis recovery**: Reconnecting to a `running` Genesis row without a live in-process progress queue now marks the run failed and reports an interruption instead of showing fake progress after a desktop restart.
+- **Author final beat stability**: Real-mode segmented Author generation now retries only the final segment when the draft misses the last scene beat or chapter hook, preserving agent-authored prose without using synthetic pass-through text.
+- **Backward compatibility preserved**: Existing synchronous `POST /genesis/generate` and path-style `POST /projects/{id}/genesis/generate` endpoints remain fully functional.
+- **Comprehensive tests**: 16 backend tests covering start endpoint, SSE streaming, interrupted run recovery, full flow integration, error cases, and backward compatibility.
+- **Version alignment**: Runtime, frontend, and desktop updated to `6.7.7`.
+
+Verification:
+- v6.7.7 backend tests: 16/16 passing
+- v6.7.7 frontend regression tests: 3/3 passing
+- Author targeted regression tests: 28/28 passing
+- Existing genesis tests: 24/24 passing (no regression)
+- Frontend vitest: 328/328 passing
+- TypeScript typecheck: passing
+- Frontend lint: passing
+- Frontend build: passing
+- Full backend regression: 2920 passed, 1 skipped
+
 ## v6.7.6 - Workflow Recovery CTA Priority Fix
 
 Date: 2026-05-27
@@ -38,12 +253,15 @@ Key changes:
 - **Stale running run detection**: When `run_status` is `running` but the run has exceeded the stale threshold (>2 hours), the UI now shows "标记卡住" (mark_stuck) instead of "确认发布". This prevents publish from masking a stuck workflow.
 - **State integrity fix**: `_derive_recovery_capability()` in `state_integrity.py` now checks `run_status` before `chapter_status` terminal statuses.
 - **Timeline API fix**: `_build_recovery()` in `workflow_timeline.py` now checks `run_status` before terminal statuses.
-- **Comprehensive tests**: 9 new tests covering blocked/failed/stale-running with terminal chapter statuses.
+- **Publish CTA respects recovery priority (round 2)**: All publish CTAs (header button, AI agent panel) now hide when workflow is broken (`blocked`, `failed`, or stale-running). Shows "需要先恢复运行" with workflow recovery link instead.
+- **Backend publish guard**: `POST /api/publish/chapter` now returns `WORKFLOW_RECOVERY_REQUIRED` when latest run is `blocked`, `failed`, or stale-running. Prevents publish via API when workflow needs recovery.
+- **Comprehensive tests**: 15 backend tests (9 recovery state + 6 publish guard) and 9 frontend tests covering all recovery CTA priority scenarios.
 - **Version alignment**: Runtime, frontend, and desktop updated to `6.7.6`.
 
 Verification:
-- v6.7.6 tests: 9/9 passing
-- Full test suite: 1841 passed, 1 pre-existing failure (unrelated)
+- v6.7.6 backend tests: 15/15 passing
+- v6.7.6 frontend tests: 9/9 passing
+- TypeScript typecheck: passing
 - Frontend typecheck/build: passing
 
 ## v6.7.5 - Chapter Title Generation

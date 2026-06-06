@@ -410,6 +410,49 @@ class TestScreenwriterAgent:
 
 
 class TestAuthorAgent:
+    def test_author_internal_repair_text_failure_returns_quality_gate(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        class FailingTextLLM(LLMProvider):
+            config = object()
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None, agent_id="unknown") -> dict:
+                return {}
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None, **kwargs) -> str:
+                raise Exception("LLM 调用失败: 'NoneType' object has no attribute 'get'")
+
+        seeded_repo.update_chapter_status("test_proj", 1, "revision")
+        agent = AuthorAgent(seeded_repo, FailingTextLLM())
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "revision",
+            "llm_mode": "real",
+            "workflow_run_id": "run-internal-repair-failure",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "author",
+                "word_count_fail": True,
+                "message": "字数超标",
+                "internal_repair": True,
+                "consume_revision_retry": False,
+                "repair_scope": "internal_word_count_compression",
+            },
+        })
+
+        gate = result.get("quality_gate") or {}
+        assert "内部修复(internal_word_count_compression)调用失败" in result.get("error", "")
+        assert gate.get("internal_repair_failed") is True
+        assert gate.get("internal_repair") is True
+        assert gate.get("consume_revision_retry") is False
+        assert gate.get("repair_scope") == "internal_word_count_compression"
+
     def test_author_context_derives_missing_word_target(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
 
@@ -507,6 +550,76 @@ class TestAuthorAgent:
         assert issues
         assert any("scene beat" in issue["message"] for issue in issues)
 
+    def test_author_final_scene_beat_guard_converges_instead_of_retrying(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        class MissingHookLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.text_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("real author path should use plain text")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                if self.text_calls >= 3:
+                    return (
+                        "林默没有再看结算倒影，白塔私信出现。"
+                        "未知联系人逼近的压迫感从屏幕背后渗出来。"
+                        "周砚白发来坐标，光标停在一行新字上：聊聊十二年前的事。"
+                    ) * 2
+                return (
+                    "林默进入车站，定位住户，触发隔离。"
+                    "他救出住户后，灵体停止追击，许知夏追问选择。"
+                    "任务结算界面三段式展示，失败名单滚动出现。"
+                    "但是正文停在屏幕闪烁处，没有写到最后的私信。"
+                ) * 3
+
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "进入车站", "conflict": "门禁失效", "turn": "发现异常", "hook": "下探站台"},
+            {"sequence": 2, "scene_goal": "定位住户", "conflict": "数据被遮蔽", "turn": "数据被篡改", "hook": "系统建议忽略"},
+            {"sequence": 3, "scene_goal": "触发隔离", "conflict": "警报响起", "turn": "系统记录违规", "hook": "住户醒来"},
+            {"sequence": 4, "scene_goal": "任务结算界面三段式展示", "conflict": "结算异常", "turn": "失败名单滚动出现", "hook": "周砚白名字浮现"},
+            {"sequence": 5, "scene_goal": "白塔私信出现", "conflict": "未知联系人逼近", "turn": "周砚白发来坐标", "hook": "聊聊十二年前的事"},
+        ])
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET ending_hook=?, word_target=? WHERE project_id=? AND chapter_number=?",
+            ("周砚白发来坐标，聊聊十二年前的事", 120, "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, MissingHookLLM())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result.get("error") != "Author 未完成场景 beat 覆盖，正文未写到章末钩子"
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        assert agent.llm.text_calls == 3
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "白塔私信出现" in chapter["content"]
+        assert "周砚白发来坐标" in chapter["content"]
+        assert "聊聊十二年前的事" in chapter["content"]
+
     def test_author_scene_beat_coverage_passes_when_ending_lands(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
 
@@ -527,6 +640,40 @@ class TestAuthorAgent:
             "随后白塔私信出现，周砚白发来坐标，邀请他聊聊十二年前的事。"
             "林默回头确认救出住户，灵体停止追击，许知夏追问选择。悬念没有消失。"
         )
+        issues = agent._scene_beat_coverage_issues({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+        }, content)
+
+        assert issues == []
+
+    def test_author_scene_beat_coverage_skips_literal_check_for_generic_ending_hook(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "进入图书馆", "turn": "古籍异常", "hook": "玉佩发热"},
+            {"sequence": 2, "scene_goal": "林清雪试探", "turn": "看见灰气", "hook": "医院异常伤者"},
+            {"sequence": 3, "scene_goal": "叔叔来电", "turn": "提到城西", "hook": "书房地图"},
+            {"sequence": 4, "scene_goal": "夜探旧巷", "turn": "罗盘指针锁定韩立", "hook": "黑影说出空灵根和韩家祭器"},
+        ])
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET ending_hook=? WHERE project_id=? AND chapter_number=?",
+            ("留下新的未解线索", "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        content = (
+            "韩立白天查完古籍，夜里绕进旧巷。"
+            + ("雨声贴着墙根往下淌。" * 80)
+            + "韩立夜探旧巷时，巷口的黑影抬起罗盘，罗盘指针锁定韩立胸前。"
+            "他贴身的玉佩烫得像一枚火炭。黑影压低声音："
+            "黑影说出空灵根和韩家祭器，果然都在这里。"
+        )
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
         issues = agent._scene_beat_coverage_issues({
             "project_id": "test_proj",
             "chapter_number": 1,
@@ -609,6 +756,139 @@ class TestAuthorAgent:
         }, content)
 
         assert issues == []
+
+    def test_author_scene_beat_repair_appends_missing_tail_before_full_rewrite(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.models.schemas import AuthorOutput
+
+        class TailRepairLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.text_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("tail repair should use plain text")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                assert "只补结尾" in messages[-1]["content"]
+                return (
+                    "林默没有再看结算倒影，白塔私信在屏幕边缘弹出。"
+                    "周砚白发来坐标，光标停在一行新字上：聊聊十二年前的事。"
+                    "他终于明白，失败名单不是结算，而是下一道门。"
+                )
+
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "进入车站", "turn": "发现异常", "hook": "下探站台"},
+            {"sequence": 2, "scene_goal": "定位住户", "turn": "数据被篡改", "hook": "系统建议忽略"},
+            {"sequence": 3, "scene_goal": "触发隔离", "turn": "系统记录违规", "hook": "住户醒来"},
+            {"sequence": 4, "scene_goal": "救出住户", "turn": "灵体停止追击", "hook": "许知夏追问选择"},
+            {"sequence": 5, "scene_goal": "任务结算界面三段式展示", "turn": "失败名单滚动出现", "hook": "周砚白名字浮现"},
+            {"sequence": 6, "scene_goal": "白塔私信出现", "turn": "周砚白发来坐标", "hook": "聊聊十二年前的事"},
+        ])
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET ending_hook=? WHERE project_id=? AND chapter_number=?",
+            ("周砚白发来坐标，聊聊十二年前的事", "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, TailRepairLLM())
+        state = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "llm_mode": "real",
+        }
+        output = AuthorOutput(
+            title="第1章 车站",
+            content=(
+                "林默进入车站，定位住户，触发隔离。"
+                "他救出住户后，灵体停止追击，许知夏追问选择。"
+                "任务结算界面三段式展示，失败名单滚动出现，但正文停在屏幕闪烁处。"
+            ),
+            word_count=0,
+            implemented_events=["事件1"],
+            used_plot_refs=["P001"],
+        )
+        issues = agent._scene_beat_coverage_issues(state, output.content)
+        assert issues
+
+        repaired = agent._try_repair_scene_beat_coverage(state, output, issues, "fallback context")
+
+        assert repaired is not None
+        assert "正文停在屏幕闪烁处" in repaired.content
+        assert "白塔私信在屏幕边缘弹出" in repaired.content
+        assert agent.llm.text_calls == 1
+        assert agent._scene_beat_coverage_issues(state, repaired.content) == []
+
+    def test_author_scene_beat_repair_does_not_fake_pass_when_llm_misses_hook(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.models.schemas import AuthorOutput
+
+        class BadTailLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.text_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("scene beat repair should use plain text")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                return "林默抬起头，风从站台尽头吹来，但这一段仍然没有写到指定钩子。"
+
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "进入车站", "turn": "发现异常", "hook": "下探站台"},
+            {"sequence": 2, "scene_goal": "定位住户", "turn": "数据被篡改", "hook": "系统建议忽略"},
+            {"sequence": 3, "scene_goal": "任务结算界面三段式展示", "turn": "失败名单滚动出现", "hook": "周砚白名字浮现"},
+            {"sequence": 4, "scene_goal": "白塔私信出现", "turn": "周砚白发来坐标", "hook": "聊聊十二年前的事"},
+        ])
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET ending_hook=? WHERE project_id=? AND chapter_number=?",
+            ("周砚白发来坐标，聊聊十二年前的事", "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        agent = AuthorAgent(seeded_repo, BadTailLLM())
+        state = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "llm_mode": "real",
+        }
+        output = AuthorOutput(
+            title="第1章 车站",
+            content="林默进入车站，定位住户，触发隔离。正文停在屏幕闪烁处。",
+            word_count=0,
+            implemented_events=["事件1"],
+            used_plot_refs=["P001"],
+        )
+        issues = agent._scene_beat_coverage_issues(state, output.content)
+        assert issues
+
+        repaired = agent._try_repair_scene_beat_coverage(state, output, issues, "fallback context")
+
+        assert repaired is None
 
     def test_author_context_is_capped_but_preserves_head_and_tail(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent, AUTHOR_CONTEXT_CHAR_LIMIT
@@ -739,7 +1019,7 @@ class TestAuthorAgent:
     def test_author_rejects_overlong_draft_before_save(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
 
-        overlong_content = "这是一段明显超出章节目标的正文。" * 260
+        overlong_content = "这是一段明显超出章节目标的正文。" * 320
         stub = StubLLMProvider([{
             "title": "第一章 测试",
             "content": overlong_content,
@@ -769,6 +1049,104 @@ class TestAuthorAgent:
         assert "字数超标" in result["quality_gate"]["message"]
         chapter = seeded_repo.get_chapter("test_proj", 1)
         assert not chapter.get("content")
+
+    def test_author_compresses_overlong_real_draft_before_save(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        overlong_content = "这是一段明显超出章节目标的正文。" * 320
+        compressed_content = "压缩后的正文保留关键事件、伏笔和章末钩子。" * 130
+
+        class CompressingAuthorLLM(StubLLMProvider):
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                if self._call_count == 0:
+                    self._call_count += 1
+                    return {
+                        "title": "第一章 测试",
+                        "content": overlong_content,
+                        "word_count": len(overlong_content),
+                        "implemented_events": ["事件1"],
+                        "used_plot_refs": ["P001"],
+                    }
+                self._call_count += 1
+                return {
+                    "title": "第一章 测试",
+                    "content": compressed_content,
+                    "word_count": len(compressed_content),
+                    "implemented_events": ["事件1"],
+                    "used_plot_refs": ["P001"],
+                }
+
+        agent = AuthorAgent(seeded_repo, CompressingAuthorLLM())
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "压缩后的正文" in chapter["content"]
+        assert "明显超出章节目标" not in chapter["content"]
+
+    def test_author_overlong_real_draft_uses_quality_gate_when_compression_fails(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        overlong_content = "这是一段明显超出章节目标的正文。" * 320
+        still_overlong_content = "压缩后仍然明显超出章节目标的正文。" * 320
+
+        class FailingCompressionAuthorLLM(StubLLMProvider):
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                if self._call_count == 0:
+                    self._call_count += 1
+                    return {
+                        "title": "第一章 测试",
+                        "content": overlong_content,
+                        "word_count": len(overlong_content),
+                        "implemented_events": ["事件1"],
+                        "used_plot_refs": ["P001"],
+                    }
+                self._call_count += 1
+                return {
+                    "title": "第一章 测试",
+                    "content": still_overlong_content,
+                    "word_count": len(still_overlong_content),
+                    "implemented_events": ["事件1"],
+                    "used_plot_refs": ["P001"],
+                }
+
+        agent = AuthorAgent(seeded_repo, FailingCompressionAuthorLLM())
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "开场", "conflict": "冲突"},
+        ])
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == "scripted"
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert result["quality_gate"]["revision_target"] == "author"
+        assert "字数超标" in result["quality_gate"]["message"]
+        assert result["quality_gate"].get("self_check_fail") is not True
+        assert "repair_fn returned None" not in result["error"]
 
     def test_author_long_target_uses_quality_gate_instead_of_fixed_8000_cap(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
@@ -1111,6 +1489,69 @@ class TestAuthorAgent:
         chapter = seeded_repo.get_chapter("test_proj", 1)
         assert chapter["content"] == f"第一章 测试\n\n{long_content}"
 
+    def test_author_revision_rejects_stale_opening_when_seam_was_flagged(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        current_body = (
+            "宴会厅主位旁，林辰按住震动的手机，抬眼看向赵宏明。"
+            "周老和李博士已经落座，苏婉清立在椅侧，所有宾客都屏住呼吸。"
+            "林辰一句话压住场面，直接处理赵家的最后挣扎。"
+        ) * 80
+        stale_body = (
+            "手机屏幕的冷光映着林辰的侧脸。他整理好数据报表，穿过公司走廊离开公司。"
+            "初春晚风扑面，他叫了车，定位会馆正门。车上，他闭着眼。"
+            "下车步行后，两名黑西装保安拦在门前，说今晚内部包场。"
+            "随后故事才重新进入宴会厅。"
+        ) * 26
+
+        class StaleOpeningLLM(LLMProvider):
+            config = object()
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("live author revision should use plain text primary")
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
+                return stale_body
+
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        seeded_repo.save_chapter_content("test_proj", 1, current_body, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, ChapterStatus.REVISION.value)
+        seeded_repo.save_review(
+            "test_proj",
+            chapter["id"],
+            passed=False,
+            score=50,
+            issues=[
+                "章首硬性时空断裂：上一章结尾林辰已端坐宴会厅主位，本章首段却倒退回离开公司的出租车中。",
+            ],
+            suggestions=[
+                "彻底删除章首出租车倒叙，直接从宴会厅主位接笔。",
+            ],
+            revision_target="author",
+        )
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "接住宴会厅主位", "conflict": "赵家挣扎"},
+        ])
+
+        agent = AuthorAgent(seeded_repo, StaleOpeningLLM())
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": ChapterStatus.REVISION.value,
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"]["revision_continuity_regression"] is True
+        assert "旧时空线" in result["quality_gate"]["message"]
+        chapter_after = seeded_repo.get_chapter("test_proj", 1)
+        assert "宴会厅主位旁" in chapter_after["content"]
+        assert "公司走廊离开公司" not in chapter_after["content"]
+
     def test_author_real_mode_plain_text_fallback_when_json_invalid(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
         from novel_factory.llm.openai_compatible import OutputValidationError
@@ -1249,6 +1690,74 @@ class TestAuthorAgent:
         assert result["chapter_status"] == ChapterStatus.DRAFTED.value
         assert llm.text_calls == 2
 
+    def test_author_segmented_plain_text_merges_overlapping_segment_tail_once(self, seeded_repo, monkeypatch):
+        """Later author segments may restate the previous tail; merge must not duplicate it."""
+        from novel_factory.agents.author import AuthorAgent
+
+        repeated_tail = "他听见身后钢门震动，外环值守正在逼近。"
+        first_segment = f"陆澈压低手电，蓝光照见舱壁上的盐痕。\n{repeated_tail}"
+        second_segment = f"{repeated_tail}\n过渡舱深处传来低频轰鸣，神秘人留下的铜牌在地面翻转。"
+
+        class OverlapSegmentLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.text_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("segmented plain text path should not call JSON")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                return first_segment if self.text_calls == 1 else second_segment
+
+        agent = AuthorAgent(seeded_repo, OverlapSegmentLLM())
+        monkeypatch.setattr(agent, "_get_instruction", lambda state: {})
+        monkeypatch.setattr(agent, "_get_word_target", lambda state: 300)
+        monkeypatch.setattr(agent, "_build_plain_text_context", lambda state, context: "压缩上下文")
+        monkeypatch.setattr(agent, "_derive_title", lambda state, instruction, content: "第1章 过渡舱")
+        monkeypatch.setattr(agent, "_get_scene_beats", lambda state: [
+            {"sequence": i, "scene_goal": f"目标{i}", "conflict": "冲突", "turn": "转折", "hook": "钩子"}
+            for i in range(1, 7)
+        ])
+
+        output = agent._try_segmented_plain_text_draft(
+            {
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "scripted",
+                "retry_count": 0,
+                "max_retries": 3,
+                "requires_human": False,
+                "error": None,
+                "llm_mode": "real",
+            },
+            "创作",
+            "完整上下文",
+        )
+
+        assert output.content.count(repeated_tail) == 1
+        assert "过渡舱深处传来低频轰鸣" in output.content
+
+    def test_author_segmented_plain_text_trims_near_duplicate_boundary_paragraph(self):
+        """Boundary merge also removes lightly revised duplicate paragraphs."""
+        from novel_factory.agents.author import AuthorAgent
+
+        previous = "陆澈压低手电，蓝光照见舱壁上的盐痕。\n他听见身后钢门震动，外环值守正在逼近。"
+        current = "他听见身后钢门震动，外环值守已在逼近。\n过渡舱深处传来低频轰鸣。"
+
+        merged = AuthorAgent._merge_segment_outputs([previous, current])
+
+        assert "过渡舱深处传来低频轰鸣" in merged
+        assert merged.count("他听见身后钢门震动") == 1
+
 
 class TestPolisherAgent:
     def test_polisher_polishes_content(self, seeded_repo):
@@ -1335,6 +1844,133 @@ class TestPolisherAgent:
         assert llm.json_calls == 0
         assert llm.text_calls == 1
         assert llm.last_timeout == 300
+
+    def test_polisher_rejects_overlong_output_before_save(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        base_content = "草稿正文。" * 900
+        overlong_content = "润色后正文明显过长。" * 900
+        seeded_repo.save_chapter_content("test_proj", 1, base_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET word_target=? WHERE project_id=? AND chapter_number=?",
+            (3000, "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        stub = StubLLMProvider([{
+            "content": overlong_content,
+            "fact_change_risk": "none",
+            "changed_scope": ["sentence"],
+            "summary": "润色完成",
+        }])
+
+        result = PolisherAgent(seeded_repo, stub).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        assert result["chapter_status"] == "drafted"
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert result["quality_gate"]["revision_target"] == "polisher"
+        assert "字数超标" in result["quality_gate"]["message"]
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["content"].startswith("草稿正文。")
+        assert "润色后正文明显过长" not in chapter["content"]
+
+    def test_polisher_compresses_overlong_real_output_before_save(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        base_content = "草稿正文。" * 900
+        overlong_content = "润色后正文明显过长。" * 900
+        compressed_content = "压缩后的润色正文仍保留关键事件和章末钩子。" * 130
+        seeded_repo.save_chapter_content("test_proj", 1, base_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET word_target=? WHERE project_id=? AND chapter_number=?",
+            (3000, "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        class CompressingPolisherLLM(StubLLMProvider):
+            config = type("Config", (), {"max_tokens": 4096})()
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None, **kwargs) -> str:
+                if self._call_count == 0:
+                    self._call_count += 1
+                    return overlong_content
+                self._call_count += 1
+                return compressed_content
+
+        result = PolisherAgent(seeded_repo, CompressingPolisherLLM()).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == ChapterStatus.POLISHED.value
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "压缩后的润色正文" in chapter["content"]
+        assert "润色后正文明显过长" not in chapter["content"]
+
+    def test_polisher_keeps_quality_gate_when_compression_still_overlong(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        base_content = "草稿正文。" * 900
+        overlong_content = "润色后正文明显过长。" * 900
+        still_overlong_content = "压缩后仍然明显过长。" * 900
+        seeded_repo.save_chapter_content("test_proj", 1, base_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET word_target=? WHERE project_id=? AND chapter_number=?",
+            (3000, "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        class FailingCompressionPolisherLLM(StubLLMProvider):
+            config = type("Config", (), {"max_tokens": 4096})()
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None, **kwargs) -> str:
+                if self._call_count == 0:
+                    self._call_count += 1
+                    return overlong_content
+                self._call_count += 1
+                return still_overlong_content
+
+        result = PolisherAgent(seeded_repo, FailingCompressionPolisherLLM()).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == "drafted"
+        assert result["quality_gate"]["word_count_fail"] is True
+        assert result["quality_gate"]["revision_target"] == "polisher"
+        assert "字数超标" in result["quality_gate"]["message"]
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert chapter["content"].startswith("草稿正文。")
+        assert "压缩后仍然明显过长" not in chapter["content"]
 
     def test_polisher_v6_context_preserves_complete_current_draft_when_aux_context_is_large(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent
@@ -1574,6 +2210,85 @@ class TestEditorAgent:
         }])
         agent = EditorAgent(seeded_repo, stub)
 
+        # v6.8.5: Quality gate checks are now in quality_gate_node, not Editor.
+        # The Editor receives quality_gate results from state and should pass through.
+        # For this test, we need to simulate quality_gate results in state.
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 2,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "quality_gate": {
+                "passed": False,
+                "score": 79,
+                "blocking_issues": ["[章间衔接] 章间衔接检查失败"],
+                "priority_issues": [],
+                "advisory_issues": [],
+                "revision_target": "author",
+            },
+        })
+
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"]["pass"] is False
+        assert result["quality_gate"]["revision_target"] == "author"
+        review = seeded_repo.get_latest_review("test_proj", 2)
+        assert review is not None
+        assert review["pass"] == 0
+        assert review["revision_target"] == "author"
+        assert "章间衔接" in review["issues"]
+
+    def test_editor_accepts_same_venue_seam_with_natural_rewording(self, seeded_repo):
+        from novel_factory.agents.editor import EditorAgent
+
+        previous = (
+            "苏婉清看向林辰，声音不高：'还有几位老朋友，听说您在这儿，已经到楼下了。'"
+            "她侧身示意，赵家今晚在云澜预订的宴厅里，所有人都屏住了呼吸。"
+        )
+        seeded_repo.save_chapter_content("test_proj", 1, previous, "第一章 测试")
+        seeded_repo.save_chapter_state(
+            "test_proj",
+            1,
+            {
+                "新增事实": ["赵家今晚在云澜预订的宴厅被苏婉清接管"],
+                "悬念": ["几位老朋友已到云澜楼下"],
+            },
+            "第1章状态卡",
+        )
+
+        opening = (
+            "林辰推开云澜宴会厅那扇沉重的鎏金双开门时，里面正好一静。"
+            "他径直走到正中央那张主位前坐下，苏婉清立在侧后方半步。"
+            "赵天宇和柳梦瑶周围的人群像退潮般让开，压低声音议论着楼下刚到的客人。"
+        )
+        current = "第二章 旧友压场\n" + opening * 35
+        conn = seeded_repo._conn()
+        conn.execute(
+            "INSERT INTO chapters (project_id, chapter_number, title, status, content, word_count) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            ("test_proj", 2, "第二章 旧友压场", "polished", current, len(current)),
+        )
+        conn.execute(
+            "INSERT INTO instructions (project_id, chapter_number, objective, key_events, ending_hook, word_target, status) "
+            "VALUES (?, ?, ?, ?, ?, ?, 'active')",
+            ("test_proj", 2, "揭晓老朋友身份", '["老朋友登场"]', "新的反扑", 2500),
+        )
+        conn.commit()
+        conn.close()
+
+        stub = StubLLMProvider([{
+            "pass": True,
+            "score": 92,
+            "scores": {"setting": 23, "logic": 23, "poison": 18, "text": 14, "pacing": 14},
+            "issues": [],
+            "suggestions": [],
+            "revision_target": None,
+            "state_card": {"新增事实": ["林辰在云澜宴会厅等老朋友登场"]},
+        }])
+        agent = EditorAgent(seeded_repo, stub)
+
         result = agent.run({
             "project_id": "test_proj",
             "chapter_number": 2,
@@ -1584,15 +2299,9 @@ class TestEditorAgent:
             "error": None,
         })
 
-        assert result["chapter_status"] == ChapterStatus.REVISION.value
-        assert result["quality_gate"]["pass"] is False
-        assert result["quality_gate"]["revision_target"] == "author"
-        assert result["quality_gate"]["chapter_seam_fail"] is True
-        review = seeded_repo.get_latest_review("test_proj", 2)
-        assert review is not None
-        assert review["pass"] == 0
-        assert review["revision_target"] == "author"
-        assert "章间衔接" in review["issues"]
+        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
+        assert result["quality_gate"]["pass"] is True
+        assert "chapter_seam_fail" not in result["quality_gate"]
 
     def test_editor_fail_routes_to_revision(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent
@@ -1681,7 +2390,7 @@ class TestEditorAgent:
 
         stub = StubLLMProvider([{
             "pass": True,
-            "score": 70,
+            "score": 78,
             "scores": {"setting": 16, "logic": 14, "poison": 14, "text": 13, "pacing": 13},
             "issues": [],
             "suggestions": [],
@@ -1702,7 +2411,7 @@ class TestEditorAgent:
 
         assert result["chapter_status"] == ChapterStatus.REVISION.value
         assert result["quality_gate"]["pass"] is False
-        assert result["quality_gate"]["score"] == 70
+        assert result["quality_gate"]["score"] == 78
         assert result["quality_gate"]["revision_target"] == "polisher"
 
         review = seeded_repo.get_latest_review("test_proj", 1)
@@ -1784,8 +2493,10 @@ class TestEditorAgent:
 
         result = agent.run(state)
 
-        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
-        assert result["quality_gate"]["pass"] is True
+        # v6.7.9: Fallback can no longer auto-pass (score capped at 78)
+        assert result["quality_gate"]["score"] <= 78
+        exec_events = result.get("_exec_events", [])
+        assert any(ev.get("event_type") == "fallback_used" for ev in exec_events)
         assert llm.json_calls == 1
 
     def test_editor_real_mode_generic_llm_error_degrades_to_rule_review(self, seeded_repo):
@@ -1820,9 +2531,10 @@ class TestEditorAgent:
         })
 
         assert "error" not in result
-        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
-        assert result["quality_gate"]["pass"] is True
-        assert any(ev["event_type"] == "fallback_used" for ev in result["_exec_events"])
+        # v6.7.9: Fallback can no longer auto-pass (score capped at 78)
+        assert result["quality_gate"]["score"] <= 78
+        exec_events = result.get("_exec_events", [])
+        assert any(ev.get("event_type") == "fallback_used" for ev in exec_events)
 
     def test_editor_word_gate_reports_target_details(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent

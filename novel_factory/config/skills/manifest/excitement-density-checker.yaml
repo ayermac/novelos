@@ -1,0 +1,95 @@
+id: excitement-density-checker
+name: Excitement Density Checker
+version: "1.0.0"
+kind: validator
+class_name: ExcitementDensityChecker
+description: "检测章节全文爽点分布密度（每 500/1000 字是否有爽点，压抑段落占比）"
+enabled: true
+builtin: true
+allowed_agents:
+  - editor
+  - qualityhub
+  - manual
+allowed_stages:
+  - before_review
+  - advisory
+  - diagnose
+  - final_gate
+  - manual
+permissions:
+  read_context: false
+  read_chapter: false
+  transform_text: false
+  validate_text: true
+  write_quality_report: false
+  write_skill_run: true
+  write_chapter_content: false
+  update_chapter_status: false
+  send_agent_message: false
+  call_llm: false
+  call_network: false
+input_schema:
+  type: object
+  required:
+    - text
+  properties:
+    text:
+      type: string
+      description: "章节正文内容"
+    content:
+      type: string
+      description: "备用文本字段（兼容）"
+    style_profile:
+      type: object
+      description: "风格配置（可选，用于调整阈值）"
+output_schema:
+  type: object
+  required:
+    - passed
+    - density_score
+    - excitement_map
+    - findings
+  properties:
+    passed:
+      type: boolean
+      description: "是否通过爽点密度检查"
+    density_score:
+      type: integer
+      minimum: 0
+      maximum: 100
+      description: "爽点密度评分"
+    excitement_map:
+      type: array
+      items:
+        type: object
+      description: "每段爽点分布详情"
+    excitement_count:
+      type: integer
+      minimum: 0
+      description: "爽点标记总数"
+    depression_count:
+      type: integer
+      minimum: 0
+      description: "压抑标记总数"
+    depression_ratio:
+      type: number
+      minimum: 0
+      maximum: 1
+      description: "压抑内容占比"
+    max_consecutive_depression:
+      type: integer
+      minimum: 0
+      description: "最大连续压抑段落数"
+    findings:
+      type: array
+      items:
+        type: object
+config_schema:
+  type: object
+  properties: {}
+default_config: {}
+failure_policy:
+  on_error: block
+  max_retries: 1
+  timeout_seconds: 30
+  blocking_threshold: 50

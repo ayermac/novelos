@@ -4,7 +4,7 @@ import EmptyState from '../EmptyState'
 import SkillVisibilityPanel from './SkillVisibilityPanel'
 import { tLlmMode } from '../../lib/i18n'
 import { FormField, Select, TextInput, NumberInput, LoadingButton, InlineMessage, SkeletonStack, useToast } from '../ui'
-import { get, post, put } from '../../lib/api'
+import { get, post, put, patch } from '../../lib/api'
 import { useAppDialog } from '../AppDialogContext'
 import { CheckCircle2, KeyRound, Plus, RefreshCw, Router, Server, Trash2, Wifi } from 'lucide-react'
 import './SettingsConsoleSections.css'
@@ -21,6 +21,7 @@ interface LlmProfile {
   base_url_source?: string
   api_key_source?: string
   temperature?: number
+  max_tokens?: number
 }
 
 interface AgentRoute {
@@ -61,6 +62,7 @@ interface DesktopProfile {
   api_key_configured: boolean
   api_key_source: string
   temperature?: number
+  max_tokens?: number
   timeout?: number
   request_timeout_seconds?: number
 }
@@ -84,6 +86,7 @@ interface LlmTemplateForm {
   model: string
   api_key_env: string
   temperature: number
+  max_tokens: number
   request_timeout_seconds: number
 }
 
@@ -132,18 +135,20 @@ const TEMPLATE_PROVIDER_OPTIONS = [
   { value: 'anthropic', label: 'Anthropic' },
 ]
 
-const PROVIDER_PRESETS: Record<string, Pick<LlmTemplateForm, 'provider' | 'base_url' | 'model' | 'api_key_env'>> = {
+const PROVIDER_PRESETS: Record<string, Pick<LlmTemplateForm, 'provider' | 'base_url' | 'model' | 'api_key_env' | 'max_tokens'>> = {
   default: {
     provider: 'openai_compatible',
     base_url: 'https://api.openai.com/v1',
     model: 'gpt-4o-mini',
     api_key_env: 'OPENAI_API_KEY',
+    max_tokens: 4096,
   },
   author: {
     provider: 'openai_compatible',
     base_url: 'https://api.openai.com/v1',
     model: 'gpt-4o',
     api_key_env: 'OPENAI_API_KEY',
+    max_tokens: 4096,
   },
 }
 
@@ -415,6 +420,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
             model: profile.model || '',
             api_key_env: profile.api_key_env || 'OPENAI_API_KEY',
             temperature: profile.temperature ?? 0.7,
+            max_tokens: profile.max_tokens ?? 4096,
             request_timeout_seconds: profile.request_timeout_seconds ?? profile.timeout ?? 60,
           }))
         : [{
@@ -422,6 +428,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
             name: 'default',
             ...PROVIDER_PRESETS.default,
             temperature: 0.7,
+            max_tokens: 4096,
             request_timeout_seconds: 300,
           }]
       const defaultName = cfg.default_llm || nextTemplates[0]?.name || 'default'
@@ -485,6 +492,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
         name,
         ...(PROVIDER_PRESETS[name] || PROVIDER_PRESETS.default),
         temperature: 0.7,
+        max_tokens: 4096,
         request_timeout_seconds: name === 'author' ? 300 : 180,
       },
     ])
@@ -526,6 +534,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
         base_url: template.base_url.trim(),
         api_key_env: template.api_key_env.trim(),
         temperature: template.temperature,
+        max_tokens: normalizePositiveInt(Number(template.max_tokens), 4096),
         request_timeout_seconds: normalizePositiveInt(Number(template.request_timeout_seconds), 300),
       },
     ]))
@@ -990,6 +999,18 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
                             })}
                           />
                         </FormField>
+                        <FormField label="max_tokens">
+                          <NumberInput
+                            aria-label={`${template.name} max_tokens`}
+                            min="256"
+                            max="65536"
+                            step="1024"
+                            value={template.max_tokens}
+                            onChange={(e) => updateTemplate(template.id, {
+                              max_tokens: normalizePositiveInt(Number(e.target.value), template.max_tokens),
+                            })}
+                          />
+                        </FormField>
                       </div>
 
                       <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 12 }}>
@@ -1122,28 +1143,119 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
 }
 
 function ReadonlyLlmSnapshot({ data }: { data: SettingsData }) {
+  const { showToast } = useToast()
+  const [editingProfile, setEditingProfile] = useState<string | null>(null)
+  const [editValues, setEditValues] = useState<Record<string, { max_tokens: number; temperature: number }>>({})
+  const [saving, setSaving] = useState<string | null>(null)
+
+  const startEdit = (profile: LlmProfile) => {
+    setEditingProfile(profile.name)
+    setEditValues((prev) => ({
+      ...prev,
+      [profile.name]: {
+        max_tokens: profile.max_tokens ?? 4096,
+        temperature: profile.temperature ?? 0.7,
+      },
+    }))
+  }
+
+  const saveProfile = async (profileName: string) => {
+    const values = editValues[profileName]
+    if (!values) return
+    setSaving(profileName)
+    const res = await patch(`/settings/llm-profiles/${profileName}`, values)
+    setSaving(null)
+    if (res.ok) {
+      // Optimistic update: reflect saved values in the local data prop
+      if (data?.llm_profiles) {
+        const updated = data.llm_profiles.map((p) =>
+          p.name === profileName ? { ...p, ...values } : p
+        )
+        data.llm_profiles = updated
+      }
+      showToast({ tone: 'success', title: '已保存', message: `${profileName} 的 max_tokens 已更新。` })
+      setEditingProfile(null)
+    } else {
+      showToast({ tone: 'danger', title: '保存失败', message: res.error?.message || '更新失败' })
+    }
+  }
+
   return (
-    <SectionCard title="当前 API 进程配置" subtitle={`默认: ${data.default_llm || '未设置'}`}>
+    <SectionCard title="LLM 档案配置" subtitle={`默认: ${data.default_llm || '未设置'} · 点击编辑 max_tokens 等参数`}>
       <div style={{ padding: 'var(--space-5)' }}>
         {data.llm_profiles.length > 0 ? (
           <div style={{ display: 'grid', gap: 10 }}>
-            {data.llm_profiles.map((profile) => (
-              <div
-                key={profile.name}
-                style={{
-                  display: 'grid',
-                  gridTemplateColumns: '160px minmax(0, 1fr) 120px',
-                  gap: 12,
-                  padding: 12,
-                  borderRadius: 'var(--radius-md)',
-                  border: '1px solid var(--border-color)',
-                }}
-              >
-                <strong>{profile.name}</strong>
-                <span style={{ color: 'var(--text-secondary)', wordBreak: 'break-all' }}>{profile.resolved_base_url || '-'}</span>
-                <span>{profile.model}</span>
-              </div>
-            ))}
+            {data.llm_profiles.map((profile) => {
+              const isEditing = editingProfile === profile.name
+              const values = editValues[profile.name] || { max_tokens: profile.max_tokens ?? 4096, temperature: profile.temperature ?? 0.7 }
+              return (
+                <div
+                  key={profile.name}
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: '140px minmax(0, 1fr) 100px 80px 90px',
+                    gap: 12,
+                    padding: 12,
+                    borderRadius: 'var(--radius-md)',
+                    border: '1px solid var(--border-color)',
+                    alignItems: 'center',
+                  }}
+                >
+                  <strong>{profile.name}</strong>
+                  <span style={{ color: 'var(--text-secondary)', fontSize: 13, wordBreak: 'break-all' }}>{profile.model}</span>
+                  {isEditing ? (
+                    <NumberInput
+                      aria-label={`${profile.name} max_tokens`}
+                      min={256}
+                      max={65536}
+                      step={1024}
+                      value={values.max_tokens}
+                      onChange={(e) => setEditValues((prev) => ({
+                        ...prev,
+                        [profile.name]: { ...values, max_tokens: Number(e.target.value) },
+                      }))}
+                    />
+                  ) : (
+                    <span style={{ fontSize: 13 }}>max: {profile.max_tokens ?? 4096}</span>
+                  )}
+                  {isEditing ? (
+                    <NumberInput
+                      aria-label={`${profile.name} temperature`}
+                      min={0}
+                      max={2}
+                      step={0.05}
+                      value={values.temperature}
+                      onChange={(e) => setEditValues((prev) => ({
+                        ...prev,
+                        [profile.name]: { ...values, temperature: Number(e.target.value) },
+                      }))}
+                    />
+                  ) : (
+                    <span style={{ fontSize: 13 }}>temp: {profile.temperature ?? 0.7}</span>
+                  )}
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    {isEditing ? (
+                      <>
+                        <LoadingButton
+                          className="btn btn-primary"
+                          loading={saving === profile.name}
+                          onClick={() => saveProfile(profile.name)}
+                        >
+                          保存
+                        </LoadingButton>
+                        <button className="btn btn-secondary" type="button" onClick={() => setEditingProfile(null)}>
+                          取消
+                        </button>
+                      </>
+                    ) : (
+                      <button className="btn btn-secondary" type="button" onClick={() => startEdit(profile)}>
+                        编辑
+                      </button>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
           </div>
         ) : (
           <EmptyState title="暂无 LLM 档案" hint="请在桌面客户端中创建 LLM 模板。" />

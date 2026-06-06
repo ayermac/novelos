@@ -22,6 +22,7 @@ class VersionRegressionGuard:
         editor_suggestions: list[str] | None = None,
         current_score: float | None = None,
         new_score: float | None = None,
+        allow_system_compression: bool = False,
     ) -> tuple[bool, str]:
         """
         判断是否应该拒绝新稿覆盖当前正文。
@@ -41,13 +42,18 @@ class VersionRegressionGuard:
             return True, f"新稿未满足字数硬门（当前 {current_wc}，新稿 {new_wc}，目标 {word_target}）"
 
         # 规则2: 新稿显著变短且 Editor 未明确要求压缩
+        #
+        # Internal hard-gate repair is also an explicit compression request.
+        # Without this exception, an author/polisher draft can be compressed to
+        # satisfy the canonical word-count gate and then immediately rejected as
+        # a version regression, creating a retry loop.
         if current_wc > 0:
             shrink_ratio = (current_wc - new_wc) / current_wc
             compress_requested = any(
                 "压缩" in s or "缩短" in s or "精简" in s
                 for s in (editor_suggestions or [])
             )
-            if shrink_ratio > 0.15 and not compress_requested:
+            if shrink_ratio > 0.15 and not compress_requested and not allow_system_compression:
                 return True, f"新稿比当前短 {shrink_ratio:.1%}，且 Editor 未要求压缩"
 
         # 规则3: deterministic score 显著下降

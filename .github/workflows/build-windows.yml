@@ -1,0 +1,83 @@
+name: Build Windows Installer
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag or ref to build (leave empty for current HEAD)"
+        required: false
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install Python dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pyinstaller
+          pip install -e .
+
+      - name: Build sidecar (PyInstaller)
+        run: pyinstaller --clean packaging/pyinstaller/novelos-sidecar.spec
+
+      - name: Copy sidecar to Electron resources
+        shell: bash
+        run: |
+          DEST="desktop/resources/sidecar/win32-x64"
+          mkdir -p "$DEST"
+          cp -r dist/novelos-sidecar/* "$DEST/"
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Build frontend
+        run: npm run build
+        working-directory: frontend
+
+      - name: Install desktop dependencies
+        run: npm ci
+        working-directory: desktop
+
+      - name: Build desktop TypeScript
+        run: npm run build
+        working-directory: desktop
+
+      - name: Build Windows installer
+        run: npx electron-builder --win --x64
+        working-directory: desktop
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: novelos-windows-installer
+          path: desktop/release/*.exe
+          retention-days: 30
+
+      - name: Create GitHub Release (on tag push)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: desktop/release/*.exe
+          draft: true

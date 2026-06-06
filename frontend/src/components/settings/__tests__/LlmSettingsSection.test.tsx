@@ -177,14 +177,15 @@ describe('LlmSettingsSection', () => {
     })
   })
 
-  it('saves template timeout settings without template max token settings', async () => {
+  it('saves template timeout and max_tokens settings', async () => {
     setupDesktop()
     vi.mocked(put).mockResolvedValue({ ok: true, data: { saved: true, restart_required: true } })
 
     renderSection()
 
     await screen.findByText('模型配置')
-    expect(screen.queryByLabelText('author max_tokens')).not.toBeInTheDocument()
+    // v6.8.3: max_tokens input is now visible and editable
+    expect(screen.getByLabelText('author max_tokens')).toBeInTheDocument()
     fireEvent.change(screen.getByLabelText('author request_timeout_seconds'), {
       target: { value: '360' },
     })
@@ -195,7 +196,7 @@ describe('LlmSettingsSection', () => {
     })
     const payload = vi.mocked(put).mock.calls[0][1] as { llm_profiles: Record<string, Record<string, unknown>> }
     expect(payload.llm_profiles.author.request_timeout_seconds).toBe(360)
-    expect(payload.llm_profiles.author).not.toHaveProperty('max_tokens')
+    expect(payload.llm_profiles.author).toHaveProperty('max_tokens')
   })
 
   it('saves api keys in a separate key storage section', async () => {

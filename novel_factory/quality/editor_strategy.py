@@ -87,6 +87,29 @@ _ADVISORY_MARKERS = (
     "章间衔接建议",
 )
 
+_SOFT_SUGGESTION_MARKERS = (
+    "建议",
+    "略显",
+    "稍显",
+    "可通过",
+    "可让",
+    "可插入",
+    "可增加",
+    "可增删",
+    "避免读者混淆",
+    "易被误读",
+    "微瑕",
+    "说明性较强",
+    "缺乏动作穿插",
+    "可更紧凑",
+    "易造成读者误判",
+    "仍易造成",
+    "感官碎片",
+    "感官细节",
+    "打破均匀节奏",
+    "模拟真实录音卡顿",
+)
+
 
 def _has_hard_issue_text(issues: list[str]) -> bool:
     return any(
@@ -134,11 +157,19 @@ def count_issue_types(issues: list[str] | str | None) -> tuple[int, int, int]:
     advisory = 0
     for issue in _normalize_issue_items(issues):
         text = str(issue)
+        
+        # v6.8.2: Recognize Author's scene beat coverage warning as advisory
+        if "场景 beat 覆盖不完整" in text and "已降级为警告" in text:
+            advisory += 1
+            continue
+        
+        
         is_blocking = any(m in text for m in _HARD_ISSUE_MARKERS)
         is_advisory = any(m in text for m in _ADVISORY_MARKERS)
+        is_soft_suggestion = any(m in text for m in _SOFT_SUGGESTION_MARKERS)
         if is_blocking:
             blocking += 1
-        elif is_advisory:
+        elif is_advisory or is_soft_suggestion:
             advisory += 1
         else:
             # Issues that are neither blocking markers nor advisory
@@ -258,6 +289,31 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
             recommended_action="必须返修或人工介入",
         )
 
+    # Effective priority = LLM priority + quality priority + seam blocking
+    effective_priority = p.priority_issue_count + p.quality_priority_count + p.seam_blocking_count
+    advisory_signal_count = p.advisory_issue_count + p.quality_advisory_count + p.seam_advisory_count
+
+    # Near-miss plateau guard: after at least one retry, a borderline
+    # review with no actionable priority/blocking issue should not loop
+    # forever or escalate at the final retry only because the score is
+    # still in the 75-79 band.
+    # Concrete priority issues still route to revision/human_review normally.
+    _near_miss_threshold = 75
+    if (
+        p.score >= _near_miss_threshold
+        and p.retry_count >= 1
+        and effective_priority == 0
+        and advisory_signal_count > 0
+    ):
+        return EditorDecision(
+            pass_=True,
+            revision_needed=False,
+            category="advisory",
+            decision_type="advisory_pass",
+            reason=f"分数 {p.score:.0f} 且已返修 {p.retry_count} 次，未发现可执行高优先级问题，转为 advisory pass",
+            recommended_action="进入 awaiting_publish with warnings，不再自动返修",
+        )
+
     # Rule 2: Max retries reached
     if p.retry_count >= p.max_retries:
         return EditorDecision(
@@ -268,15 +324,9 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
             recommended_action="停止自动返修，进入人工审核",
         )
 
-    # Effective priority = LLM priority + quality priority + seam blocking
-    effective_priority = p.priority_issue_count + p.quality_priority_count + p.seam_blocking_count
-
     # Rule 3: score >= 85
     if p.score >= 85:
-        has_only_advisory = (
-            p.advisory_issue_count + p.quality_advisory_count + p.seam_advisory_count > 0
-        )
-        if has_only_advisory and effective_priority == 0:
+        if advisory_signal_count > 0 and effective_priority == 0:
             return EditorDecision(
                 pass_=True,
                 revision_needed=False,
@@ -413,16 +463,20 @@ def determine_revision_target(
     llm_revision_target: str | None = None,
     quality_priority_count: int = 0,
     seam_blocking_count: int = 0,
+    retry_count: int = 0,
 ) -> str:
     """Determine revision target based on issue semantics.
 
-    Rules (v6.6.8):
+    Rules (v6.8.5):
     - death penalty / continuity / plot logic -> author (or planner for instruction-level)
     - prose/style/advisory polish -> polisher
     - missing scene/content -> author
     - unknown -> polisher (non-empty default)
     - advisory_pass should NOT set revision_target
     - human_review preserves revision_target_hint but doesn't trigger auto revision
+    - v6.8.5: after retry_count >= 1, style-oriented issues that were
+      previously always routed to author are re-routed to polisher to break
+      the author-only doom loop (e.g. low dialogue ratio, exposition).
     """
     if death_penalty:
         return "author"
@@ -435,9 +489,23 @@ def determine_revision_target(
         if any(kw in str(issue) for kw in planner_keywords):
             return "planner"
 
+    # v6.8.5: Style-oriented issues that are partly polisher-addressable.
+    # After at least one author retry, route these to polisher instead.
+    # On the first attempt (retry_count == 0), keep the original behavior of
+    # routing to author so the author gets a chance to fix content first.
+    # v6.8.5-fix: 仅保留 Polisher 可修的纯文风问题；对话/冲突/时间逻辑等
+    # 内容级别问题始终路由到 Author，不在此列表中
+    _style_overlapping_keywords = (
+        "info dump", "旁白式", "直白情绪",
+    )
+    if retry_count >= 1:
+        for issue in issues:
+            if any(kw in str(issue) for kw in _style_overlapping_keywords):
+                return "polisher"
+
     # Check if issues contain author-level problems
     author_keywords = (
-        "逻辑漏洞", "剧情", "伏笔", "设定", "info dump", "旁白式", "直白情绪",
+        "逻辑漏洞", "剧情", "伏笔", "设定",
         "[CRITICAL]", "[DIALOGUE]", "[HOOK]",
         "LOW_DIALOGUE_RATIO", "对白占比", "对白仅占", "对白过低",
         "缺少角色言行", "角色对话", "动作场景呈现",
@@ -447,6 +515,11 @@ def determine_revision_target(
         "没有后续动作/决定/结果", "无法得知", "严重破坏阅读完整性",
         "章末钩子缺失", "钩子缺失", "被截断",
         "人物动机", "动机表达", "目标、阻力",
+        "info dump", "旁白式", "直白情绪",
+        # v6.8.5: 内容缺失问题，Author 增加内容，Polisher 无法修复
+        "对话比例较低", "章末钩子强度不足",
+        # v6.8.5-fix: 时间逻辑、关键事件、冲突强度是 Author 内容问题
+        "时间逻辑", "关键事件", "硬约束冲突", "执行偏差",
     )
     for issue in issues:
         if any(kw in str(issue) for kw in author_keywords):

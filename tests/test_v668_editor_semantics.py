@@ -396,6 +396,72 @@ class TestRevisionTargetSemantics:
         from novel_factory.quality.editor_strategy import determine_revision_target
         assert determine_revision_target() == "polisher"
 
+    def test_time_logic_routes_to_author_even_after_retry(self):
+        """v6.8.5-fix: 时间逻辑问题必须路由到 Author，不能走 Polisher 死循环。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["时间逻辑不一致，第二幕和第三幕的时间线存在矛盾"],
+            retry_count=2,
+        ) == "author"
+
+    def test_key_event_routes_to_author_even_after_retry(self):
+        """v6.8.5-fix: 关键事件执行偏差必须路由到 Author。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["关键事件执行偏差：缺少场景 beat 覆盖"],
+            retry_count=1,
+        ) == "author"
+
+    def test_conflict_strength_routes_to_author_even_after_retry(self):
+        """v6.8.5-fix: 冲突强度不足是内容问题，Polisher 无法修复。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["冲突强度不足，缺乏面对面的张力场景"],
+            retry_count=2,
+        ) == "author"
+
+    def test_low_dialogue_routes_to_author_even_after_retry(self):
+        """v6.8.5-fix: 对话比例过低是内容缺失，Polisher 无法添加对话。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["[LOW_DIALOGUE_RATIO] 对白占比2.8%严重偏低"],
+            retry_count=2,
+        ) == "author"
+
+    def test_dialogue_ratio_low_routes_to_author_even_after_retry(self):
+        """v6.8.5-fix: 对话比例较低路由到 Author。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["对话比例较低，需要增加角色对话"],
+            retry_count=1,
+        ) == "author"
+
+    def test_hard_constraint_routes_to_author(self):
+        """v6.8.5-fix: 硬约束冲突路由到 Author。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["硬约束冲突：设定中角色不能飞行但文中出现飞行场景"],
+            retry_count=0,
+        ) == "author"
+
+    def test_seam_blocking_routes_to_author(self):
+        """v6.8.5-fix: 连续性阻断路由到 Author（通过 seam_blocking_count）。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["[连续性阻断] 章中时空回退"],
+            seam_blocking_count=1,
+        ) == "author"
+
+    def test_advisory_with_author_keyword_routes_to_author(self):
+        """v6.8.5-fix: fallback 中 advisory issues 包含作者级关键词时路由到 Author。"""
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=[
+                "AI 审核不可用，本结果仅为规则兜底。",
+                "[EXPOSITION_PARAGRAPH] 10处旁白式陈述",
+            ],
+        ) == "author"
+
 
 # ── C. count_issue_types tests ──────────────────────────────────
 
@@ -450,6 +516,43 @@ class TestCountIssueTypes:
         assert b == 0
         assert p == 0
         assert a == 3
+
+    def test_soft_editor_suggestions_are_advisory(self):
+        from novel_factory.quality.editor_strategy import count_issue_types
+        issues = [
+            "电磁脉冲'折返'一词略显主动，虽用通感解释但仍易被误读为控制，建议强化被动感应描写",
+            "录音笔中'B-7'重复播放三次略显机械，建议第二次播放时让林辰因剧痛或噪音漏听半句",
+            "章末系统倒计时与LC-01倒计时并存，建议通过颜色/字体差异明确区分，避免读者混淆两个独立计时",
+            "[v6.4质量信号] EXPOSITION_PARAGRAPH: 检测到 5 处纯说明段落（无动作/对白）",
+            "[质量诊断建议] 人物动机表达不够清晰",
+            "[v6.6策略] 分数 < 80，需要自动返修",
+        ]
+
+        b, p, a = count_issue_types(issues)
+
+        assert b == 0
+        assert p == 0
+        assert a == 6
+
+    def test_latest_soft_editor_suggestions_are_advisory(self):
+        from novel_factory.quality.editor_strategy import count_issue_types
+        issues = [
+            "时间显示逻辑仍有微瑕：手机17:45与赵倩首条短信并置，虽下条短信澄清，但仍可能造成读者瞬间误判",
+            "电磁脉冲爆发段落存在连续状态描述，可插入更多瞬时感官碎片（如耳鸣持续时间、牙齿震颤）以打破均匀节奏",
+            "父亲录音内容的破折号使用略显规整，可增删标点模拟真实录音卡顿",
+            "[v6.4质量信号] EXPOSITION_PARAGRAPH: 检测到 5 处纯说明段落（无动作/对白）",
+            "[质量诊断建议] 章末钩子强度不足（45.0 < 50）",
+            "[质量诊断建议] 对话比例较低（7.9% < 10.0%）",
+            "[质量诊断建议] 场景描写较少，可增加感官细节",
+            "[质量诊断建议] 人物动机表达不够清晰",
+            "[v6.6策略] 分数 < 80，需要自动返修",
+        ]
+
+        b, p, a = count_issue_types(issues)
+
+        assert b == 0
+        assert p == 0
+        assert a == len(issues)
 
 
 # ── D. Legacy backward compatibility ────────────────────────────
@@ -527,6 +630,95 @@ class TestScore80to84Boundary:
         d = classify_editor_result(p)
         assert d.pass_ is False
         assert d.category == "revision"
+
+    def test_79_after_retry_without_priority_is_advisory_pass(self):
+        """Near-miss reviews should not loop forever when no concrete priority issue remains."""
+        from novel_factory.quality.editor_strategy import EditorPolicyInput, classify_editor_result
+        p = EditorPolicyInput(score=79, pass_=False, advisory_issue_count=2, retry_count=2, max_retries=3)
+        d = classify_editor_result(p)
+        assert d.pass_ is True
+        assert d.category == "advisory"
+        assert d.decision_type == "advisory_pass"
+        assert d.revision_needed is False
+
+    def test_79_after_retry_with_priority_still_revises(self):
+        """Concrete priority issues at 79 must still route to revision."""
+        from novel_factory.quality.editor_strategy import EditorPolicyInput, classify_editor_result
+        p = EditorPolicyInput(score=79, pass_=False, priority_issue_count=1, retry_count=1, max_retries=3)
+        d = classify_editor_result(p)
+        assert d.pass_ is False
+        assert d.category == "revision"
+        assert d.revision_needed is True
+
+    def test_79_after_max_retry_without_priority_avoids_human_review_plateau(self):
+        """The plateau guard should run before max-retry escalation for advisory-only 79."""
+        from novel_factory.quality.editor_strategy import EditorPolicyInput, classify_editor_result
+        p = EditorPolicyInput(score=79, pass_=False, advisory_issue_count=1, retry_count=3, max_retries=3)
+        d = classify_editor_result(p)
+        assert d.pass_ is True
+        assert d.category == "advisory"
+        assert d.decision_type == "advisory_pass"
+
+    def test_79_after_max_retry_with_priority_goes_human_review(self):
+        """Max retry escalation still applies when 79 has concrete priority issues."""
+        from novel_factory.quality.editor_strategy import EditorPolicyInput, classify_editor_result
+        p = EditorPolicyInput(score=79, pass_=False, priority_issue_count=1, retry_count=3, max_retries=3)
+        d = classify_editor_result(p)
+        assert d.pass_ is False
+        assert d.category == "human_review"
+
+    def test_77_after_retries_with_soft_advisory_issues_avoids_human_review_plateau(self):
+        from novel_factory.quality.editor_strategy import build_policy_input, classify_editor_result
+        issues = [
+            "电磁脉冲'折返'一词略显主动，虽用通感解释但仍易被误读为控制，建议强化被动感应描写",
+            "录音笔中'B-7'重复播放三次略显机械，建议第二次播放时让林辰因剧痛或噪音漏听半句",
+            "章末系统倒计时与LC-01倒计时并存，建议通过颜色/字体差异明确区分，避免读者混淆两个独立计时",
+            "[v6.4质量信号] EXPOSITION_PARAGRAPH: 检测到 5 处纯说明段落（无动作/对白）",
+            "[质量诊断建议] 人物动机表达不够清晰",
+            "[v6.6策略] 分数 < 80，需要自动返修",
+        ]
+        p = build_policy_input(
+            score=77,
+            pass_=False,
+            issues=issues,
+            retry_count=3,
+            max_retries=3,
+        )
+
+        d = classify_editor_result(p)
+
+        assert p.blocking_issue_count == 0
+        assert p.priority_issue_count == 0
+        assert d.pass_ is True
+        assert d.category == "advisory"
+        assert d.decision_type == "advisory_pass"
+
+    def test_79_after_retries_with_latest_soft_advisory_issues_avoids_author_loop(self):
+        from novel_factory.quality.editor_strategy import build_policy_input, classify_editor_result
+        issues = [
+            "时间显示逻辑仍有微瑕：手机17:45与赵倩首条短信并置，虽下条短信澄清，但仍可能造成读者瞬间误判",
+            "电磁脉冲爆发段落存在连续状态描述，可插入更多瞬时感官碎片（如耳鸣持续时间、牙齿震颤）以打破均匀节奏",
+            "父亲录音内容的破折号使用略显规整，可增删标点模拟真实录音卡顿",
+            "[v6.4质量信号] EXPOSITION_PARAGRAPH: 检测到 5 处纯说明段落（无动作/对白）",
+            "[质量诊断建议] 章末钩子强度不足（45.0 < 50）",
+            "[质量诊断建议] 对话比例较低（7.9% < 10.0%）",
+            "[质量诊断建议] 场景描写较少，可增加感官细节",
+            "[质量诊断建议] 人物动机表达不够清晰",
+            "[v6.6策略] 分数 < 80，需要自动返修",
+        ]
+        p = build_policy_input(
+            score=79,
+            pass_=False,
+            issues=issues,
+            retry_count=1,
+            max_retries=3,
+        )
+
+        d = classify_editor_result(p)
+
+        assert p.priority_issue_count == 0
+        assert d.pass_ is True
+        assert d.decision_type == "advisory_pass"
 
     def test_quality_advisory_alone_no_revision(self):
         """quality_advisory_count alone must NOT cause revision for score >= 80."""

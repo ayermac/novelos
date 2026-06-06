@@ -1,7 +1,65 @@
-import { useState, useEffect, useCallback } from 'react'
-import { get, post } from '../../lib/api'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import { get, post, apiUrl } from '../../lib/api'
 import { Sparkles, CheckCircle2, XCircle, Loader2, RotateCcw } from 'lucide-react'
 import { FormField, NumberInput, TextArea, TextInput } from '../ui'
+
+// v6.7.7: Genesis progress streaming types
+interface GenesisProgressStep {
+  id: string
+  segment: string
+  label: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  startedAt?: number
+  completedAt?: number
+}
+
+interface GenesisProgressState {
+  active: boolean
+  runId: string | null
+  streamUrl: string | null
+  steps: GenesisProgressStep[]
+  currentLabel: string
+  error: string | null
+  completed: boolean
+  completedData: Record<string, unknown> | null
+}
+
+const GENESIS_SEGMENT_ORDER = ['foundation', 'cast', 'plot', 'instructions', 'repair', 'quality_report']
+const GENESIS_SEGMENT_LABELS: Record<string, string> = {
+  foundation: '正在生成基础设定',
+  cast: '正在生成角色与势力',
+  plot: '正在生成剧情大纲',
+  instructions: '正在生成章节指令',
+  repair: '正在校验设定完整性',
+  quality_report: '正在评估草案质量',
+}
+
+function progressStepStatusFor(segment: string, activeSegment: string, activeStatus: GenesisProgressStep['status']) {
+  const stepIndex = GENESIS_SEGMENT_ORDER.indexOf(segment)
+  const activeIndex = GENESIS_SEGMENT_ORDER.indexOf(activeSegment)
+  if (stepIndex < 0 || activeIndex < 0) return 'pending'
+  if (stepIndex < activeIndex) return 'completed'
+  if (stepIndex === activeIndex) return activeStatus
+  return 'pending'
+}
+
+function createInitialProgress(): GenesisProgressState {
+  return {
+    active: false,
+    runId: null,
+    streamUrl: null,
+    steps: GENESIS_SEGMENT_ORDER.map((seg) => ({
+      id: seg,
+      segment: seg,
+      label: GENESIS_SEGMENT_LABELS[seg] || seg,
+      status: 'pending',
+    })),
+    currentLabel: GENESIS_SEGMENT_LABELS.foundation,
+    error: null,
+    completed: false,
+    completedData: null,
+  }
+}
 
 interface GenesisRun {
   id: string
@@ -126,6 +184,10 @@ export default function GenesisModule({ projectId, project }: Props) {
   const projectTitle = (project?.name || form.title).trim()
   const projectGenre = (project?.genre || form.genre).trim()
 
+  // v6.7.7: Genesis progress streaming state
+  const [progress, setProgress] = useState<GenesisProgressState>(createInitialProgress)
+  const eventSourceRef = useRef<EventSource | null>(null)
+
   const loadGenesis = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true)
     const res = await get(`/projects/${projectId}/genesis/latest`)
@@ -168,6 +230,165 @@ export default function GenesisModule({ projectId, project }: Props) {
     return Object.keys(errors).length === 0
   }
 
+  // v6.7.7: Connect to SSE stream for genesis progress
+  const connectProgressStream = useCallback((streamUrl: string, _runId: string) => {
+    if (typeof EventSource === 'undefined') {
+      // Fallback: EventSource not supported, use polling
+      setProgress((prev) => ({ ...prev, active: false }))
+      return
+    }
+
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+      eventSourceRef.current = null
+    }
+
+    const es = new EventSource(apiUrl(streamUrl.replace(/^\/api/, '')))
+    eventSourceRef.current = es
+
+    es.onopen = () => {
+      setProgress((prev) => ({ ...prev, active: true }))
+    }
+
+    const handleSegmentEvent = (eventType: string) => (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data)
+        const segment = data.segment as string
+        const label = data.label as string || ''
+
+        if (eventType === 'segment_started') {
+          setProgress((prev) => ({
+            ...prev,
+            currentLabel: label,
+            steps: prev.steps.map((s) =>
+              ({
+                ...s,
+                status: progressStepStatusFor(s.segment, segment, 'running'),
+                label: s.segment === segment ? label : s.label,
+                startedAt: s.segment === segment ? Date.now() : s.startedAt,
+              })
+            ),
+          }))
+        } else if (eventType === 'segment_completed') {
+          setProgress((prev) => ({
+            ...prev,
+            steps: prev.steps.map((s) =>
+              ({
+                ...s,
+                status: progressStepStatusFor(s.segment, segment, 'completed'),
+                label: s.segment === segment ? label : s.label,
+                completedAt: s.segment === segment ? Date.now() : s.completedAt,
+              })
+            ),
+          }))
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
+    const handleChapterEvent = (eventType: string) => (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data)
+        const label = data.label as string || ''
+        if (eventType === 'chapter_start') {
+          setProgress((prev) => ({
+            ...prev,
+            currentLabel: label,
+            steps: prev.steps.map((s) =>
+              ({
+                ...s,
+                status: progressStepStatusFor(s.segment, 'instructions', 'running'),
+                label: s.segment === 'instructions' ? label : s.label,
+              })
+            ),
+          }))
+        } else if (eventType === 'chapter_end') {
+          setProgress((prev) => ({
+            ...prev,
+            currentLabel: label,
+          }))
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
+    es.addEventListener('genesis_started', () => {
+      setProgress((prev) => ({ ...prev, active: true, error: null }))
+    })
+
+    es.addEventListener('segment_started', handleSegmentEvent('segment_started'))
+    es.addEventListener('segment_completed', handleSegmentEvent('segment_completed'))
+    es.addEventListener('chapter_start', handleChapterEvent('chapter_start'))
+    es.addEventListener('chapter_end', handleChapterEvent('chapter_end'))
+
+    es.addEventListener('genesis_completed', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data)
+        const genesisRun = data.genesis_run as GenesisRun
+        setProgress((prev) => ({
+          ...prev,
+          completed: true,
+          completedData: data,
+          steps: prev.steps.map((s) => ({ ...s, status: 'completed' })),
+        }))
+        if (genesisRun) {
+          setGenesis(genesisRun)
+        }
+        setShowForm(false)
+      } catch { /* ignore */ }
+      es.close()
+      eventSourceRef.current = null
+      setGenerating(false)
+    })
+
+    es.addEventListener('genesis_failed', (e: MessageEvent) => {
+      try {
+        const data = JSON.parse(e.data)
+        setProgress((prev) => ({
+          ...prev,
+          error: data.error || '生成失败',
+          active: false,
+        }))
+        setErrorMsg(data.error || '生成失败')
+      } catch { /* ignore */ }
+      es.close()
+      eventSourceRef.current = null
+      setGenerating(false)
+      // Reload to get the failed genesis run
+      void loadGenesis(false)
+    })
+
+    es.onerror = () => {
+      // Fallback: close EventSource and rely on polling
+      es.close()
+      eventSourceRef.current = null
+      setProgress((prev) => ({ ...prev, active: false }))
+    }
+  }, [loadGenesis])
+
+  useEffect(() => {
+    if (genesis?.status !== 'running' || !genesis.id) return undefined
+    if (progress.runId === genesis.id && eventSourceRef.current) return undefined
+    const streamUrl = `/api/projects/${projectId}/genesis/generate/stream/${genesis.id}`
+    setProgress((prev) => ({
+      ...prev,
+      active: true,
+      runId: genesis.id,
+      streamUrl,
+      error: null,
+    }))
+    connectProgressStream(streamUrl, genesis.id)
+    return undefined
+  }, [connectProgressStream, genesis?.id, genesis?.status, progress.runId, projectId])
+
+  // Cleanup EventSource on unmount
+  useEffect(() => {
+    return () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close()
+        eventSourceRef.current = null
+      }
+    }
+  }, [])
+
   const handleGenerate = async () => {
     if (!validateForm()) {
       setErrorMsg('请先补齐创世设定的必要信息')
@@ -175,20 +396,55 @@ export default function GenesisModule({ projectId, project }: Props) {
     }
     setGenerating(true)
     setErrorMsg('')
-    const res = await post('/genesis/generate', {
+    setProgress(createInitialProgress())
+
+    // v6.7.7: Try the streaming start endpoint first
+    const startRes = await post(`/projects/${projectId}/genesis/generate/start`, {
       ...form,
       title: projectTitle,
       genre: projectGenre,
       premise: form.premise.trim(),
       project_id: projectId,
     })
-    if (res.ok) {
-      setGenesis(res.data as GenesisRun)
+
+    if (startRes.ok && startRes.data) {
+      const { run_id, stream_url } = startRes.data as { run_id: string; stream_url: string; status: string }
+      const now = new Date().toISOString()
+      setGenesis({
+        id: run_id,
+        project_id: projectId,
+        status: 'running',
+        input_json: '',
+        draft_json: null,
+        error_message: null,
+        created_at: now,
+        updated_at: now,
+      })
       setShowForm(false)
+      setProgress((prev) => ({
+        ...prev,
+        active: true,
+        runId: run_id,
+        streamUrl: stream_url,
+      }))
     } else {
-      setErrorMsg(res.error?.message || '生成失败')
+      // Fallback: use the synchronous endpoint
+      setProgress(createInitialProgress())
+      const res = await post('/genesis/generate', {
+        ...form,
+        title: projectTitle,
+        genre: projectGenre,
+        premise: form.premise.trim(),
+        project_id: projectId,
+      })
+      if (res.ok) {
+        setGenesis(res.data as GenesisRun)
+        setShowForm(false)
+      } else {
+        setErrorMsg(res.error?.message || '生成失败')
+      }
+      setGenerating(false)
     }
-    setGenerating(false)
   }
 
   const handleApprove = async () => {
@@ -490,10 +746,42 @@ export default function GenesisModule({ projectId, project }: Props) {
             </div>
           )}
 
-          {/* Running */}
+          {/* Running — v6.7.7: Show progress steps when streaming is active */}
           {genesis.status === 'running' && (
             <div className="genesis-running">
-              <Loader2 size={20} className="spin" /> AI 正在生成项目设定，请稍候...
+              {progress.active || progress.runId === genesis.id ? (
+                <div className="genesis-progress">
+                  <div className="genesis-progress-header">
+                    <Loader2 size={18} className="spin" />
+                    <span>{progress.currentLabel || '正在生成项目设定...'}</span>
+                  </div>
+                  <div className="genesis-progress-steps">
+                    {progress.steps.map((step) => (
+                      <div key={step.id} className={`genesis-progress-step step-${step.status}`}>
+                        {step.status === 'completed' ? (
+                          <CheckCircle2 size={14} />
+                        ) : step.status === 'running' ? (
+                          <Loader2 size={14} className="spin" />
+                        ) : step.status === 'failed' ? (
+                          <XCircle size={14} />
+                        ) : (
+                          <span className="step-dot" />
+                        )}
+                        <span>{step.label}</span>
+                      </div>
+                    ))}
+                  </div>
+                  {progress.error && (
+                    <div className="genesis-error" style={{ marginTop: 8 }}>
+                      <XCircle size={14} /> {progress.error}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <>
+                  <Loader2 size={20} className="spin" /> AI 正在生成项目设定，请稍候...
+                </>
+              )}
             </div>
           )}
 
@@ -862,6 +1150,50 @@ export default function GenesisModule({ projectId, project }: Props) {
           justify-content: center;
           color: var(--text-secondary, #6b7280);
           font-size: 14px;
+        }
+        /* v6.7.7: Genesis progress streaming styles */
+        .genesis-progress {
+          width: 100%;
+        }
+        .genesis-progress-header {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          margin-bottom: 12px;
+          font-weight: 500;
+          color: var(--primary, #3b82f6);
+        }
+        .genesis-progress-steps {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding-left: 4px;
+        }
+        .genesis-progress-step {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 13px;
+          color: var(--text-muted, #9ca3af);
+          transition: color 0.2s;
+        }
+        .genesis-progress-step.step-running {
+          color: var(--primary, #3b82f6);
+          font-weight: 500;
+        }
+        .genesis-progress-step.step-completed {
+          color: var(--success, #10b981);
+        }
+        .genesis-progress-step.step-failed {
+          color: var(--danger, #ef4444);
+        }
+        .genesis-progress-step .step-dot {
+          display: inline-block;
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          border: 2px solid var(--border, #d1d5db);
+          flex-shrink: 0;
         }
         .genesis-draft {
           background: var(--bg-primary, #fff);
