@@ -107,46 +107,8 @@ class TestV690FullStubWorkflow:
         finally:
             conn.close()
 
-    def test_chapter1_editor_lens_reports_persisted(self, tmp_path):
-        """Editor lens reports must be persisted in database after workflow completes."""
-        db_path = tmp_path / "e2e.db"
-
-        _run_cli(db_path, "seed-demo", "--project-id", "e2e", "--json", timeout=30)
-        _run_cli(
-            db_path,
-            "--llm-mode", "stub",
-            "run-chapter", "--project-id", "e2e",
-            "--chapter", "1", "--json",
-        )
-
-        from novel_factory.db.connection import get_connection
-
-        conn = get_connection(str(db_path))
-        try:
-            rows = conn.execute(
-                "SELECT lens_type, report_data FROM editor_lens_reports "
-                "WHERE project_id=? AND chapter_number=?",
-                ("e2e", 1),
-            ).fetchall()
-            assert len(rows) > 0, "No editor lens reports found for chapter 1"
-
-            lens_types = {row["lens_type"] for row in rows}
-            # Should have at least some of the 7 lens types
-            assert len(lens_types) >= 1, (
-                f"Expected multiple lens types, got: {lens_types}"
-            )
-
-            # Each report should have valid JSON
-            for row in rows:
-                report_data = json.loads(row["report_data"])
-                assert "passed" in report_data or "score" in report_data, (
-                    f"Report data missing expected fields: {report_data.keys()}"
-                )
-        finally:
-            conn.close()
-
     def test_chapter1_quality_gate_present(self, tmp_path):
-        """Quality gate must be present in state after editor_lenses completes."""
+        """Quality gate must be present in state after editor completes."""
         db_path = tmp_path / "e2e.db"
 
         _run_cli(db_path, "seed-demo", "--project-id", "e2e", "--json", timeout=30)
@@ -171,7 +133,7 @@ class TestV690FullStubWorkflow:
         assert detail["run_id"] == run_id
 
     def test_chapter1_editor_reports_api(self, tmp_path):
-        """GET editor-reports API must return lens reports after workflow."""
+        """GET editor-reports API must return review data after workflow."""
         db_path = tmp_path / "e2e.db"
 
         _run_cli(db_path, "seed-demo", "--project-id", "e2e", "--json", timeout=30)
@@ -192,8 +154,12 @@ class TestV690FullStubWorkflow:
         body = response.json()
         assert body["ok"] is True
         data = body["data"]
-        assert data["total_reports"] > 0, "No editor reports returned from API"
-        assert len(data["lens_reports"]) > 0, "Empty lens_reports list"
+        assert "review" in data, "API response missing review field"
+        # In stub mode the editor may produce a review record
+        # (editor returns quality_gate and may or may not persist a review
+        # depending on content; just verify the shape is correct)
+        assert data.get("project_id") == "e2e"
+        assert data.get("chapter_number") == 1
 
     def test_chapter1_editor_reports_summary_api(self, tmp_path):
         """GET editor-reports/summary API must return chapter summaries."""
@@ -342,67 +308,7 @@ class TestV690CreativeLedgerPersistence:
 
 
 class TestV690WorkflowTimeline:
-    """Test that workflow timeline includes editor_lenses and creative_ledger_curator nodes."""
-
-    def test_timeline_includes_editor_lenses_node(self, tmp_path):
-        """Workflow timeline must include the editor_lenses node."""
-        db_path = tmp_path / "e2e.db"
-
-        _run_cli(db_path, "seed-demo", "--project-id", "e2e", "--json", timeout=30)
-        _run_cli(
-            db_path,
-            "--llm-mode", "stub",
-            "run-chapter", "--project-id", "e2e",
-            "--chapter", "1", "--json",
-        )
-
-        from fastapi.testclient import TestClient
-        from novel_factory.api_app import create_api_app
-
-        client = TestClient(create_api_app(db_path=str(db_path), llm_mode="stub"))
-        response = client.get("/api/projects/e2e/chapters/1/workflow-timeline")
-        assert response.status_code == 200
-
-        payload = response.json()["data"]
-        assert payload["nodes"], "Workflow timeline returned no nodes"
-
-        node_names = {n["node_name"] for n in payload["nodes"]}
-        assert "editor_lenses" in node_names, (
-            f"editor_lenses node missing from timeline. Found: {node_names}"
-        )
-
-    def test_timeline_editor_lenses_node_succeeded(self, tmp_path):
-        """editor_lenses node must show a terminal status after full workflow."""
-        db_path = tmp_path / "e2e.db"
-
-        _run_cli(db_path, "seed-demo", "--project-id", "e2e", "--json", timeout=30)
-        _run_cli(
-            db_path,
-            "--llm-mode", "stub",
-            "run-chapter", "--project-id", "e2e",
-            "--chapter", "1", "--json",
-        )
-
-        from fastapi.testclient import TestClient
-        from novel_factory.api_app import create_api_app
-
-        client = TestClient(create_api_app(db_path=str(db_path), llm_mode="stub"))
-        response = client.get("/api/projects/e2e/chapters/1/workflow-timeline")
-        assert response.status_code == 200
-
-        payload = response.json()["data"]
-        editor_lenses_node = None
-        for node in payload["nodes"]:
-            if node["node_name"] == "editor_lenses":
-                editor_lenses_node = node
-                break
-
-        assert editor_lenses_node is not None, "editor_lenses node not found"
-        # In stub mode with empty content, editor_lenses may report "skipped"
-        # (fast-path through empty content) or "succeeded"
-        assert editor_lenses_node["node_status"] in ("succeeded", "skipped"), (
-            f"editor_lenses expected 'succeeded' or 'skipped', got '{editor_lenses_node['node_status']}'"
-        )
+    """Test that workflow timeline includes creative_ledger_curator node."""
 
     def test_timeline_includes_creative_ledger_curator(self, tmp_path):
         """Workflow timeline must include creative_ledger_curator node."""
@@ -438,17 +344,7 @@ class TestV690WorkflowTimeline:
 class TestV690CanonicalNodes:
     """Test CANONICAL_WORKFLOW_NODES includes v6.9.0 nodes."""
 
-    def test_editor_lenses_in_canonical_nodes(self):
-        """editor_lenses must be in CANONICAL_WORKFLOW_NODES."""
-        from novel_factory.workflow.graph import get_canonical_workflow_nodes
-
-        nodes = get_canonical_workflow_nodes()
-        node_names = [n["node_name"] for n in nodes]
-        assert "editor_lenses" in node_names, (
-            f"editor_lenses not in canonical nodes: {node_names}"
-        )
-
-    def test_editor_in_canonical_nodes_for_legacy(self):
+    def test_editor_in_canonical_nodes(self):
         """editor node must remain in CANONICAL_WORKFLOW_NODES for legacy compatibility."""
         from novel_factory.workflow.graph import get_canonical_workflow_nodes
 
@@ -469,29 +365,29 @@ class TestV690CanonicalNodes:
 
 
 # ══════════════════════════════════════════════════════════════════════
-# Test 6: Routing changes (polished → editor_lenses)
+# Test 6: Routing changes (polished/review → editor)
 # ══════════════════════════════════════════════════════════════════════
 
 
 class TestV690RoutingChanges:
-    """Test that routing correctly sends polished/review chapters to editor_lenses."""
+    """Test that routing correctly sends polished/review chapters to editor."""
 
-    def test_polished_routes_to_editor_lenses(self):
-        """POLISHED status must route to editor_lenses (not editor)."""
+    def test_polished_routes_to_editor(self):
+        """POLISHED status must route to editor."""
         from novel_factory.workflow.conditions import route_by_chapter_status
 
         result = route_by_chapter_status({"chapter_status": "polished"})
-        assert result == "editor_lenses", (
-            f"Expected 'editor_lenses', got '{result}'"
+        assert result == "editor", (
+            f"Expected 'editor', got '{result}'"
         )
 
-    def test_review_routes_to_editor_lenses(self):
-        """REVIEW status must route to editor_lenses (not editor)."""
+    def test_review_routes_to_editor(self):
+        """REVIEW status must route to editor."""
         from novel_factory.workflow.conditions import route_by_chapter_status
 
         result = route_by_chapter_status({"chapter_status": "review"})
-        assert result == "editor_lenses", (
-            f"Expected 'editor_lenses', got '{result}'"
+        assert result == "editor", (
+            f"Expected 'editor', got '{result}'"
         )
 
     def test_planned_routes_to_planner(self):

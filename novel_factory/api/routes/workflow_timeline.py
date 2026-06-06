@@ -37,7 +37,6 @@ NODE_LABELS: dict[str, str] = {
     "author": "执笔",
     "polisher": "润色",
     "editor": "审核",
-    "editor_lenses": "专项审核",  # v6.9.0
     "memory_curator": "记忆整理",
     "publisher": "发布",
     "publish": "发布",

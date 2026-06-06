@@ -1,6 +1,8 @@
-"""Editor lens reports API endpoints.
+"""Editor reports API endpoints.
 
-v6.9.0: Provides access to specialized editor lens reports for chapters.
+Returns editor review data from the legacy Editor agent (reviews table).
+v6.9.0-rollout: Removed editor_lenses dependency; now surfaces the single
+editor review record per chapter.
 """
 
 from __future__ import annotations
@@ -18,10 +20,10 @@ async def get_editor_reports(
     project_id: str,
     chapter_number: int,
 ) -> EnvelopeResponse:
-    """Get editor lens reports for a chapter.
+    """Get editor review report for a chapter.
 
-    Returns all lens reports (type, continuity, commercial, pacing, character, mystery, style)
-    and the aggregated chief editor result.
+    Returns the latest editor review (score, issues, suggestions) produced by
+    the Editor agent.  This replaces the previous lens-based report structure.
 
     Args:
         project_id: Project identifier
@@ -32,71 +34,20 @@ async def get_editor_reports(
     try:
         repo = get_repo(request)
 
-        # Get all editor lens reports for this chapter
-        reports = repo.get_editor_lens_reports(project_id, chapter_number)
-
-        # Get the aggregated result from the latest workflow run
-        aggregated = None
-        for report in reports:
-            report_data = report.get("report_data", {})
-            if isinstance(report_data, str):
-                import json
-                report_data = json.loads(report_data)
-
-            # Build aggregated from individual reports if not already set
-            if aggregated is None:
-                aggregated = {
-                    "project_id": project_id,
-                    "chapter_number": chapter_number,
-                    "lens_reports": [],
-                }
-
-            aggregated["lens_reports"].append({
-                "lens_type": report.get("lens_type"),
-                "passed": report_data.get("passed", False),
-                "score": report_data.get("score", 0.0),
-                "findings": report_data.get("findings", []),
-                "summary": report_data.get("summary", ""),
-                "created_at": report.get("created_at"),
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if not chapter:
+            return envelope_response({
+                "project_id": project_id,
+                "chapter_number": chapter_number,
+                "review": None,
             })
 
-        # If we have reports, compute the chief editor summary
-        if aggregated and aggregated.get("lens_reports"):
-            from ...agents.editor_lenses.chief_editor import ChiefEditor
+        review = repo.get_latest_review(project_id, chapter["id"])
 
-            # Convert to EditorLensReport objects
-            from ...models.chapter_contracts import EditorLensReport
-            lens_reports = []
-            for lr in aggregated["lens_reports"]:
-                findings = []
-                for f in lr.get("findings", []):
-                    from ...models.chapter_contracts import EditorLensFinding
-                    findings.append(EditorLensFinding(
-                        severity=f.get("severity", "info"),
-                        code=f.get("code", ""),
-                        message=f.get("message", ""),
-                        suggestion=f.get("suggestion", ""),
-                    ))
-                lens_reports.append(EditorLensReport(
-                    lens_type=lr["lens_type"],
-                    passed=lr["passed"],
-                    score=lr["score"],
-                    findings=findings,
-                    summary=lr.get("summary", ""),
-                ))
-
-            # Aggregate
-            chief = ChiefEditor()
-            result = chief.aggregate(lens_reports)
-            aggregated["aggregated"] = result
-            aggregated["total_reports"] = len(reports)
-
-        return envelope_response(aggregated or {
+        return envelope_response({
             "project_id": project_id,
             "chapter_number": chapter_number,
-            "lens_reports": [],
-            "aggregated": None,
-            "total_reports": 0,
+            "review": review,
         })
 
     except Exception as e:
@@ -109,9 +60,9 @@ async def get_editor_reports_summary(
     project_id: str,
     limit: int = 20,
 ) -> EnvelopeResponse:
-    """Get summary of editor lens reports for a project.
+    """Get summary of editor reviews for a project.
 
-    Returns aggregated scores for recent chapters.
+    Returns review scores for recent chapters.
 
     Args:
         project_id: Project identifier
@@ -122,57 +73,24 @@ async def get_editor_reports_summary(
     try:
         repo = get_repo(request)
 
-        # Get chapters for this project
         chapters = repo.list_chapters(project_id)
 
-        # Get editor lens reports for recent chapters
         summaries = []
         for ch in chapters[-limit:]:
             chapter_number = ch.get("chapter_number", 0)
-            reports = repo.get_editor_lens_reports(project_id, chapter_number)
+            chapter_id = ch.get("id")
 
-            if not reports:
-                continue
+            review = None
+            if chapter_id:
+                review = repo.get_latest_review(project_id, chapter_id)
 
-            # Compute aggregated score for this chapter
-            from ...agents.editor_lenses.chief_editor import ChiefEditor
-            from ...models.chapter_contracts import EditorLensReport, EditorLensFinding
-
-            lens_reports = []
-            for report in reports:
-                report_data = report.get("report_data", {})
-                if isinstance(report_data, str):
-                    import json
-                    report_data = json.loads(report_data)
-
-                findings = []
-                for f in report_data.get("findings", []):
-                    findings.append(EditorLensFinding(
-                        severity=f.get("severity", "info"),
-                        code=f.get("code", ""),
-                        message=f.get("message", ""),
-                        suggestion=f.get("suggestion", ""),
-                    ))
-
-                lens_reports.append(EditorLensReport(
-                    lens_type=report.get("lens_type", "unknown"),
-                    passed=report_data.get("passed", False),
-                    score=report_data.get("score", 0.0),
-                    findings=findings,
-                    summary=report_data.get("summary", ""),
-                ))
-
-            if lens_reports:
-                chief = ChiefEditor()
-                result = chief.aggregate(lens_reports)
+            if review:
                 summaries.append({
                     "chapter_number": chapter_number,
                     "status": ch.get("status", ""),
-                    "passed": result["passed"],
-                    "score": result["score"],
-                    "blocking_count": result["blocking_count"],
-                    "warning_count": result["warning_count"],
-                    "lens_count": len(lens_reports),
+                    "passed": bool(review.get("pass", 0)),
+                    "score": review.get("score", 0),
+                    "issues_count": len(review.get("issues") or []),
                 })
 
         return envelope_response({

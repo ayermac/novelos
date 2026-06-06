@@ -86,27 +86,4 @@ class RhythmBudgetResult(BaseModel):
     llm_signals: RhythmBudgetLLMSignals = Field(default_factory=RhythmBudgetLLMSignals)
 
 
-# ── Editor Lens Report ──────────────────────────────────────────
 
-
-class EditorLensFinding(BaseModel):
-    """A single finding from an editor lens."""
-
-    severity: str = "info"  # blocking, warning, info
-    code: str = ""
-    message: str = ""
-    suggestion: str = ""
-
-
-class EditorLensReport(BaseModel):
-    """Structured report from a specialized editor lens.
-
-    Each lens (type, commercial, pacing, character, mystery, style, continuity)
-    produces one of these. Chief Editor aggregates them into a final decision.
-    """
-
-    lens_type: str = ""  # 'type', 'commercial', 'pacing', 'character', 'mystery', 'style', 'continuity'
-    passed: bool = True
-    score: float = 0.0
-    findings: list[EditorLensFinding] = Field(default_factory=list)
-    summary: str = ""

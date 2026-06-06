@@ -239,7 +239,6 @@ class TestWorkflowTimelineApi:
             "polisher": "creative_agent",
             "quality_gate": "quality",  # v6.8.5: 新增质检门禁节点
             "editor": "creative_agent",
-            "editor_lenses": "creative_agent",  # v6.9.0
             "memory_curator": "support_agent",
             "publisher": "terminal",
             "creative_ledger_curator": "support_agent",  # v6.9.0
