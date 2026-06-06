@@ -8,7 +8,7 @@ export type ProjectModule =
   | 'overview' | 'chapters' | 'worldview' | 'characters'
   | 'factions' | 'outline' | 'plots' | 'instructions'
   | 'style' | 'review' | 'runs' | 'settings' | 'genesis'
-  | 'memory' | 'facts'
+  | 'memory' | 'facts' | 'creative-contracts'
 
 interface ModuleTab {
   key: ProjectModule
@@ -31,6 +31,7 @@ const MODULE_TABS: ModuleTab[] = [
   { key: 'facts', label: '事实账本', icon: <ScrollText size={16} /> },
   { key: 'style', label: '风格规范', icon: <Palette size={16} /> },
   { key: 'runs', label: '运行记录', icon: <History size={16} /> },
+  { key: 'creative-contracts', label: '创作合同', icon: <FileText size={16} /> },
   { key: 'settings', label: '项目设置', icon: <Settings size={16} /> },
 ]
 

@@ -59,7 +59,7 @@ novelos api --host 127.0.0.1 --port 8765 --db-path acceptance_novel_factory.db -
 # Start API server (real mode)
 novelos api --host 127.0.0.1 --port 8765 --db-path acceptance_novel_factory.db --config config/local.yaml --llm-mode real
 
-# Run full test suite
+# Run full test suite (parallel via pytest-xdist)
 python3 -m pytest -q
 
 # Run specific test file

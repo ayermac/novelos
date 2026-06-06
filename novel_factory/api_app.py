@@ -104,6 +104,10 @@ def create_api_app(
         agent_ops_router,
         desktop_router,
         quality_diagnosis_router,
+        creative_contracts_router,  # v6.9.0
+        chapter_briefs_router,  # v6.9.0
+        ledgers_router,  # v6.9.0
+        editor_reports_router,  # v6.9.0
     )
 
     app.include_router(health_router, prefix="/api", tags=["health"])
@@ -136,6 +140,10 @@ def create_api_app(
     app.include_router(agent_ops_router, prefix="/api", tags=["agent-ops"])
     app.include_router(desktop_router, prefix="/api", tags=["desktop"])
     app.include_router(quality_diagnosis_router, prefix="/api", tags=["quality-diagnosis"])
+    app.include_router(creative_contracts_router, prefix="/api", tags=["creative-contracts"])  # v6.9.0
+    app.include_router(chapter_briefs_router, prefix="/api", tags=["chapter-briefs"])  # v6.9.0
+    app.include_router(ledgers_router, prefix="/api", tags=["ledgers"])  # v6.9.0
+    app.include_router(editor_reports_router, prefix="/api", tags=["editor-reports"])  # v6.9.0
 
     # Exception handler - never exposes traceback or secrets
     @app.exception_handler(Exception)

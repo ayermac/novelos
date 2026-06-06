@@ -17,6 +17,7 @@ const PROJECT_MODULES = new Set<ProjectModule>([
   'genesis',
   'memory',
   'facts',
+  'creative-contracts',
 ])
 
 function isValidChapter(chapterNumber: number): boolean {

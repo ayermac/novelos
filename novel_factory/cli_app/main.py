@@ -118,6 +118,11 @@ from .commands.style_sample import (
     cmd_style_sample_propose,
 )
 from .commands.api import cmd_api
+from .commands.contract import (
+    cmd_contract_show,
+    cmd_contract_approve,
+    cmd_contract_generate,
+)
 
 
 # ── Argument parser ──────────────────────────────────────────────
@@ -733,6 +738,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Disable per-request access logs for long-running local validation",
     )
     api_parser.set_defaults(func=cmd_api)
+
+    # v6.9.0: contract commands
+    contract_parser = subparsers.add_parser("contract", help="Creative contract operations")
+    contract_subparsers = contract_parser.add_subparsers(dest="contract_command", help="Contract subcommands")
+
+    contract_show = contract_subparsers.add_parser("show", help="Show creative contracts for a project")
+    contract_show.add_argument("--project-id", required=True, help="Project ID")
+    contract_show.add_argument("--json", action="store_true", help="Output in JSON format")
+    contract_show.set_defaults(func=cmd_contract_show)
+
+    contract_approve = contract_subparsers.add_parser("approve", help="Approve the genre contract")
+    contract_approve.add_argument("--project-id", required=True, help="Project ID")
+    contract_approve.add_argument("--json", action="store_true", help="Output in JSON format")
+    contract_approve.set_defaults(func=cmd_contract_approve)
+
+    contract_generate = contract_subparsers.add_parser("generate", help="Generate creative contracts")
+    contract_generate.add_argument("--project-id", required=True, help="Project ID")
+    contract_generate.add_argument("--idea", required=True, help="User creative idea/premise")
+    contract_generate.add_argument("--profile", default="generic", help="Genre profile ID (default: generic)")
+    contract_generate.add_argument("--llm-mode", choices=["stub", "real"], default=None, help="LLM mode (default: stub)")
+    contract_generate.add_argument("--json", action="store_true", help="Output in JSON format")
+    contract_generate.set_defaults(func=cmd_contract_generate)
 
     # Legacy aliases: 'init' → 'init-db', 'run' → 'run-chapter'
     init_compat = subparsers.add_parser("init", help="Initialize the database (legacy alias for init-db)")

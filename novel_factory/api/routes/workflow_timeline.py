@@ -31,13 +31,17 @@ NODE_LABELS: dict[str, str] = {
     "health_check": "预检",
     "task_discovery": "任务识别",
     "planner": "规划",
+    "brief_validation": "规划校验",  # v6.9.0
+    "rhythm_budget_preflight": "节奏预检",  # v6.9.0
     "screenwriter": "编剧",
     "author": "执笔",
     "polisher": "润色",
     "editor": "审核",
+    "editor_lenses": "专项审核",  # v6.9.0
     "memory_curator": "记忆整理",
     "publisher": "发布",
     "publish": "发布",
+    "creative_ledger_curator": "创作台账",  # v6.9.0
     "awaiting_publish": "等待发布",
     "archive": "归档",
     "revision_router": "返修路由",

@@ -1,0 +1,61 @@
+# 都市签到/系统流/战神归来/打脸流
+# Profile ID: urban_sign_in_power_fantasy
+
+profile_id: urban_sign_in_power_fantasy
+
+default_reader_expectations:
+  - "主角拥有金手指（系统/签到/传承/重生记忆）"
+  - "频繁打脸反派，爽点密集"
+  - "实力碾压，但前期扮猪吃虎"
+  - "都市背景，涉及商战/医术/武道等元素"
+  - "多女主或红颜知己围绕"
+
+default_payoff_loop: "主角遭遇挑衅/看不起 → 触发系统/展示隐藏实力 → 反派震惊/打脸 → 获得奖励/地位提升"
+
+opening_requirements:
+  - "第一章必须展示主角的'金手指'或核心能力来源"
+  - "前三章必须有一次'打脸'或'实力展示'的高潮"
+  - "早期建立核心冲突（如家族恩怨、身份秘密、复仇目标）"
+
+chapter_rhythm_defaults:
+  minor_payoff_frequency: 1  # 每章至少一个小爽点
+  visible_upgrade_frequency: 3  # 每3章一次明显提升
+  public_reversal_frequency: 5  # 每5章一次公开打脸/逆转
+  max_consecutive_pressure: 2  # 最多连续2章低谷/压抑
+  scene_count_target: 3  # 每章目标场景数
+
+common_poison_points:
+  - "圣母心：主角对敌人过度仁慈，错失良机"
+  - "降智反派：反派智商下线，只会无脑挑衅"
+  - "拖节奏回忆：大段回忆杀打断爽感节奏"
+  - "工具人女主：女性角色只负责崇拜主角，无独立人格"
+  - "实力崩坏：战力体系不一致，越级挑战无代价"
+
+style_noise_patterns:
+  - "过度使用'震惊''不可思议''怎么可能'等感叹词"
+  - "重复描写路人甲的震惊反应来水字数"
+  - "系统面板信息过多，打断叙事节奏"
+  - "对话过于现代化，与背景设定不符"
+
+editor_weight_profile:
+  poison_detection: 30  # 毒点检测权重最高
+  pacing: 25  # 节奏把控
+  character_agency: 20  # 主角能动性
+  setting_consistency: 15  # 设定一致性
+  text_quality: 10  # 文笔质量（相对不重要）
+
+profile_specific_rules:
+  must_have_tropes:
+    - "扮猪吃虎"
+    - "实力碾压"
+    - "打脸反派"
+    - "系统/签到/金手指"
+  avoid_patterns:
+    - "圣母心"
+    - "降智反派"
+    - "拖节奏回忆"
+    - "主角长期被动挨打"
+  style_constraints:
+    - "对话占比可适当提高，增强代入感"
+    - "动作场面描写要简洁有力"
+    - "系统提示信息控制在每章2-3次以内"

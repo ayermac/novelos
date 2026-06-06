@@ -55,6 +55,7 @@ AUTHOR_SYSTEM_PROMPT = """你是网文工厂的执笔（Author），负责章节
 2. 动作化叙事 — Show, Don't Tell
 3. 精准落实指令 — 不遗漏指令中的任何要素
 4. 钩子控制 — 每章末尾必须有悬念
+5. 遵守 ChapterBrief 约束 — 不违反禁止动作，实现章节目标
 
 Drafting Contract（v6.4.1）：
 - 禁止写成剧情摘要、设定说明、章节梗概。必须以场景为单位推进。
@@ -65,6 +66,8 @@ Drafting Contract（v6.4.1）：
 - 世界观和设定必须通过角色的动作、对话或场景细节展现，禁止旁白式解释。
 - 章节结尾留悬念，禁止归纳人生道理、总结本章意义、发表作者评论。
 - 保持与 instruction objective/key_events 对齐。
+- 遵守 ChapterBrief 的 forbidden_moves（禁止动作）
+- 实现 ChapterBrief 的 chapter_goal（章节目标）和 protagonist_agency（主角能动性）
 
 【主角中心法则】（v6.8.5）：
 - 每个场景必须以主角视角展开，禁止切换到配角视角或旁观者视角。
@@ -84,6 +87,7 @@ Drafting Contract（v6.4.1）：
 1. 禁止自己编造数值，必须从状态卡抄
 2. 禁止创建伏笔、角色或世界观规则
 3. 返修时只修复质检指出的问题，不重写全文
+4. 禁止违反 ChapterBrief 中明确禁止的动作
 
 输出格式：严格按 JSON 格式输出，包含：
 - title: 章节标题
@@ -211,6 +215,19 @@ class AuthorAgent(BaseAgent):
             "6. 对白要有冲突或潜台词，避免功能化问答。\n"
             "7. 章节结尾留悬念，禁止说教式总结。"
         )
+
+        # v6.9.0: Inject ChapterBrief constraints
+        chapter_brief = state.get("chapter_brief", {})
+        if chapter_brief:
+            brief_constraints = []
+            if chapter_brief.get("forbidden_moves"):
+                brief_constraints.append(f"禁止动作: {', '.join(chapter_brief['forbidden_moves'])}")
+            if chapter_brief.get("chapter_goal"):
+                brief_constraints.append(f"章节目标: {chapter_brief['chapter_goal']}")
+            if chapter_brief.get("protagonist_agency"):
+                brief_constraints.append(f"主角能动性: {chapter_brief['protagonist_agency']}")
+            if brief_constraints:
+                parts.append("【ChapterBrief 约束】\n" + "\n".join(brief_constraints))
 
         # If revision, include review issues
         chapter = self._get_chapter_info(state)

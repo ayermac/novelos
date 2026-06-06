@@ -30,6 +30,10 @@ from .agent_memory import router as agent_memory_router
 from .agent_ops import router as agent_ops_router
 from .desktop import router as desktop_router
 from .quality_diagnosis import router as quality_diagnosis_router
+from .creative_contracts import router as creative_contracts_router
+from .chapter_briefs import router as chapter_briefs_router
+from .ledgers import router as ledgers_router
+from .editor_reports import router as editor_reports_router  # v6.9.0
 
 __all__ = [
     "health_router",
@@ -62,4 +66,8 @@ __all__ = [
     "agent_ops_router",
     "desktop_router",
     "quality_diagnosis_router",
+    "creative_contracts_router",
+    "chapter_briefs_router",
+    "ledgers_router",
+    "editor_reports_router",  # v6.9.0
 ]

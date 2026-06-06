@@ -37,6 +37,7 @@ from .repositories.story_fact import StoryFactRepositoryMixin
 from .repositories.auto_run import AutoRunRepositoryMixin
 from .repositories.agent_memory_mixin import AgentMemoryRepositoryMixin
 from .repositories.execution_event import ExecutionEventRepositoryMixin
+from .repositories.creative_contracts import CreativeContractsRepositoryMixin
 
 # Backward-compatible re-exports
 from ..validators.chapter_checker import count_words  # noqa: F401
@@ -71,6 +72,7 @@ class Repository(
     StoryFactRepositoryMixin,
     AutoRunRepositoryMixin,
     AgentMemoryRepositoryMixin,
+    CreativeContractsRepositoryMixin,
     BaseRepository,
 ):
     """Backward-compatible repository facade combining all domain mixins."""

@@ -1,7 +1,7 @@
 {
   "name": "novelos-desktop",
-  "version": "6.8.5",
-  "description": "Novelos Desktop Client — v6.7.8 Revision Retry Accounting & Continuity Semantics",
+  "version": "6.9.0",
+  "description": "Novelos Desktop Client — v6.9.0 Creative Factory Capability Upgrade",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",

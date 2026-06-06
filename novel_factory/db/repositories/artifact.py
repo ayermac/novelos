@@ -129,6 +129,32 @@ class ArtifactRepositoryMixin:
         finally:
             conn.close()
 
+    def get_artifact(
+        self,
+        project_id: str,
+        chapter_number: int,
+        agent_id: str,
+        artifact_type: str,
+    ) -> dict | None:
+        """Get the most recent artifact matching project/chapter/agent/type.
+
+        Returns the full artifact record including ``content_json``.
+        Returns ``None`` when no match is found.
+        """
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT id, chapter_number, agent_id, artifact_type, created_at, "
+                "       content_json, content_hash, workflow_run_id "
+                "FROM agent_artifacts "
+                "WHERE project_id=? AND chapter_number=? AND agent_id=? AND artifact_type=? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (project_id, chapter_number, agent_id, artifact_type),
+            ).fetchone()
+            return row_to_dict(row)
+        finally:
+            conn.close()
+
     def list_artifacts(
         self, project_id: str, limit: int = 50
     ) -> list[dict]:

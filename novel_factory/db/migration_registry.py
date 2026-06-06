@@ -463,6 +463,19 @@ MIGRATION_REGISTRY: list[MigrationEntry] = [
         description="Repair legacy plot hole status (resolved_chapter set but non-terminal; 'validated' -> 'planted')",
         custom_detector=_plot_hole_status_repaired,
     ),
+
+    # ── 036 ──
+    MigrationEntry(
+        migration_id="036_v6_9_creative_contracts",
+        sql_filename="036_v6_9_creative_contracts.sql",
+        description="v6.9.0 creative contracts — project_creative_contracts, chapter_briefs, creative_ledger_snapshots, editor_lens_reports",
+        requirements=(
+            _T("project_creative_contracts"),
+            _T("chapter_briefs"),
+            _T("creative_ledger_snapshots"),
+            _T("editor_lens_reports"),
+        ),
+    ),
 ]
 
 

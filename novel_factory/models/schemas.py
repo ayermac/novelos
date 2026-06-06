@@ -14,12 +14,32 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 class ChapterBrief(BaseModel):
     """Planner output: chapter brief / writing instruction."""
 
-    objective: str
+    # Traditional fields (for backward compatibility)
+    objective: str = ""
     required_events: list[str] = Field(default_factory=list)
     plots_to_plant: list[str] = Field(default_factory=list)
     plots_to_resolve: list[str] = Field(default_factory=list)
     ending_hook: str = ""
     constraints: list[str] = Field(default_factory=list)
+    
+    # Tier 1 fields (required)
+    chapter_goal: str = ""
+    reader_payoff: str = ""
+    protagonist_agency: str = ""
+    forbidden_moves: list[str] = Field(default_factory=list)
+    
+    # Tier 2 fields (optional)
+    pressure_budget: str = ""
+    payoff_budget: str = ""
+    upgrade_or_skill_use: str = ""
+    character_arc_moves: list[str] = Field(default_factory=list)
+    mystery_actions: list[str] = Field(default_factory=list)
+    conflict_actions: list[str] = Field(default_factory=list)
+    ledger_debts_to_pay: list[str] = Field(default_factory=list)
+    new_debts_allowed: bool = True
+    scene_count_target: int = 3
+    opening_hook: str = ""
+    quality_threshold_overrides: dict = Field(default_factory=dict)
 
 
 class PlannerOutput(BaseModel):
@@ -42,6 +62,23 @@ class PlannerOutput(BaseModel):
             "plots_to_resolve",
             "ending_hook",
             "constraints",
+            # Tier 1 fields
+            "chapter_goal",
+            "reader_payoff",
+            "protagonist_agency",
+            "forbidden_moves",
+            # Tier 2 fields
+            "pressure_budget",
+            "payoff_budget",
+            "upgrade_or_skill_use",
+            "character_arc_moves",
+            "mystery_actions",
+            "conflict_actions",
+            "ledger_debts_to_pay",
+            "new_debts_allowed",
+            "scene_count_target",
+            "opening_hook",
+            "quality_threshold_overrides",
         }
         if not any(key in data for key in brief_keys):
             return data

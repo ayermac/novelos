@@ -1,0 +1,61 @@
+# 修仙/玄幻/升级流
+# Profile ID: cultivation_upgrade
+
+profile_id: cultivation_upgrade
+
+default_reader_expectations:
+  - "清晰的境界体系和升级路线"
+  - "主角有独特优势（体质/功法/传承/悟性）"
+  - "宗门/家族/势力背景丰富"
+  - "升级过程有挑战和代价，非无脑突破"
+  - "世界观宏大，有探索空间"
+
+default_payoff_loop: "遭遇瓶颈/强敌 → 寻找机缘/修炼 → 突破境界/获得新能力 → 展示新实力 → 引起关注/新的挑战"
+
+opening_requirements:
+  - "第一章展示主角的修炼资质或特殊体质"
+  - "前三章明确境界体系和当前实力定位"
+  - "早期建立升级目标（如复仇、寻找亲人、拯救宗门）"
+
+chapter_rhythm_defaults:
+  minor_payoff_frequency: 1  # 每章至少一点修炼进展或小战斗胜利
+  visible_upgrade_frequency: 5  # 每5章一次明显提升（功法/装备/境界小突破）
+  public_reversal_frequency: 8  # 每8章一次公开战斗/碾压
+  max_consecutive_pressure: 3  # 修炼瓶颈/低谷期可稍长
+  scene_count_target: 3  # 每章目标场景数
+
+common_poison_points:
+  - "境界崩坏：越级挑战无代价，战力体系混乱"
+  - "机缘巧合：突破全靠奇遇，缺乏修炼过程"
+  - "宗门工具人：宗门只负责提供敌人和资源，无独立剧情"
+  - "升级注水：大量修炼描写无实际剧情推进"
+  - "地图膨胀：世界扩展过快，前期设定被废弃"
+
+style_noise_patterns:
+  - "突破时大段描写天地异象，雷同重复"
+  - "战斗描写套路化（'怎么可能''这不可能'）"
+  - "境界描述过多，打断叙事节奏"
+  - "旁白解说世界观设定，缺乏场景展示"
+
+editor_weight_profile:
+  power_system_consistency: 30  # 力量体系一致性
+  upgrade_progression: 25  # 升级节奏
+  world_building: 20  # 世界观
+  character_agency: 15  # 主角能动性
+  text_quality: 10  # 文笔
+
+profile_specific_rules:
+  must_have_tropes:
+    - "境界体系"
+    - "修炼突破"
+    - "战斗展示"
+    - "机缘获取"
+  avoid_patterns:
+    - "无代价越级"
+    - "境界崩坏"
+    - "升级注水"
+    - "地图废弃"
+  style_constraints:
+    - "战斗描写注重招式交锋和心理博弈，减少感叹词"
+    - "突破描写简洁有力，控制在300字以内"
+    - "境界说明融入对话或行动中，减少旁白解说"

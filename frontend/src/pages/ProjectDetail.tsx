@@ -17,6 +17,7 @@ import PlotHolesModule from '../components/project/PlotHolesModule'
 import InstructionsModule from '../components/project/InstructionsModule'
 import ProjectOverviewModule from '../components/project/ProjectOverviewModule'
 import ProjectSettingsModule from '../components/project/ProjectSettingsModule'
+import CreativeContractsModule from '../components/project/CreativeContractsModule'
 import GenesisModule from '../components/project/GenesisModule'
 import MemoryUpdatesModule from '../components/project/MemoryUpdatesModule'
 import FactLedgerModule from '../components/project/FactLedgerModule'
@@ -856,6 +857,8 @@ function ModuleRouter({
       return <ReviewModule projectId={projectId} />
     case 'runs':
       return <RunsModule projectId={projectId} />
+    case 'creative-contracts':
+      return <CreativeContractsModule projectId={projectId} />
     case 'settings':
       return <ProjectSettingsModule projectId={projectId} onSaved={onWorkspaceChange} />
     default:

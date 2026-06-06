@@ -147,6 +147,7 @@ def route_by_chapter_status(state: FactoryState) -> str:
     to prevent stale state from reaching Agent write nodes.
 
     v5.3.0: Planner 必经 - planned status without instruction routes to planner.
+    v6.9.0: POLISHED/REVIEW routes to editor_lenses instead of editor.
     """
     # Safety gate: upstream error or human flag always takes priority
     if state.get("requires_human") or state.get("error"):
@@ -160,8 +161,8 @@ def route_by_chapter_status(state: FactoryState) -> str:
         ChapterStatus.PLANNED.value: "screenwriter",  # Default, but see v5.3.0 check below
         ChapterStatus.SCRIPTED.value: "author",
         ChapterStatus.DRAFTED.value: "polisher",
-        ChapterStatus.POLISHED.value: "editor",
-        ChapterStatus.REVIEW.value: "editor",
+        ChapterStatus.POLISHED.value: "editor_lenses",  # v6.9.0: use editor_lenses
+        ChapterStatus.REVIEW.value: "editor_lenses",  # v6.9.0: use editor_lenses
         ChapterStatus.REVIEWED.value: "publisher",
         ChapterStatus.PUBLISHED.value: "archive",  # Terminal: already published
         ChapterStatus.BLOCKING.value: "human_review",
@@ -265,6 +266,52 @@ def route_after_memory_curator(state: FactoryState) -> str:
     return "publish"
 
 
+def route_after_brief_validation(state: FactoryState) -> str:
+    """Route after brief validation: if Tier 1 fields are missing, go back to planner.
+    
+    v6.9.0: Brief validation checks Tier 1 fields are present.
+    If missing, routes back to planner for revision.
+    If valid, proceeds to rhythm budget preflight.
+    """
+    if state.get("requires_human") or state.get("error"):
+        return "human_review"
+    
+    # Check if brief validation passed
+    if state.get("brief_validated"):
+        return "rhythm_budget_preflight"
+    
+    # Check for revision reason
+    revision_reason = state.get("revision_reason", "")
+    if "missing_tier1_fields" in revision_reason or "missing_chapter_brief" in revision_reason:
+        return "planner"
+    
+    # Default: proceed to rhythm budget
+    return "rhythm_budget_preflight"
+
+
+def route_after_rhythm_budget(state: FactoryState) -> str:
+    """Route after rhythm budget preflight: if blocking issues, go back to planner.
+    
+    v6.9.0: Rhythm budget checks pacing and narrative metrics.
+    If blocking issues detected, routes back to planner for brief revision.
+    If passed, proceeds to screenwriter.
+    """
+    if state.get("requires_human") or state.get("error"):
+        return "human_review"
+    
+    # Check if rhythm budget passed
+    if state.get("rhythm_budget_passed"):
+        return "screenwriter"
+    
+    # Check for rhythm budget blocking
+    revision_reason = state.get("revision_reason", "")
+    if "rhythm_budget_blocked" in revision_reason:
+        return "planner"
+    
+    # Default: proceed to screenwriter
+    return "screenwriter"
+
+
 def route_by_revision_type(state: FactoryState) -> str:
     """Route revision to the appropriate agent based on revision_target."""
     status = state.get("chapter_status", "")
@@ -275,8 +322,8 @@ def route_by_revision_type(state: FactoryState) -> str:
             ChapterStatus.PLANNED.value: "planner",
             ChapterStatus.SCRIPTED.value: "author",
             ChapterStatus.DRAFTED.value: "polisher",
-            ChapterStatus.POLISHED.value: "editor",
-            ChapterStatus.REVIEW.value: "editor",
+            ChapterStatus.POLISHED.value: "editor_lenses",  # v6.9.0
+            ChapterStatus.REVIEW.value: "editor_lenses",  # v6.9.0
             ChapterStatus.REVIEWED.value: "publisher",
             ChapterStatus.PUBLISHED.value: "archive",
             ChapterStatus.BLOCKING.value: "human_review",

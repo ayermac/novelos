@@ -232,19 +232,23 @@ class TestWorkflowTimelineApi:
             "health_check": "system",
             "task_discovery": "system",
             "planner": "creative_agent",
+            "brief_validation": "system",  # v6.9.0
+            "rhythm_budget_preflight": "system",  # v6.9.0
             "screenwriter": "creative_agent",
             "author": "creative_agent",
             "polisher": "creative_agent",
             "quality_gate": "quality",  # v6.8.5: 新增质检门禁节点
             "editor": "creative_agent",
+            "editor_lenses": "creative_agent",  # v6.9.0
             "memory_curator": "support_agent",
             "publisher": "terminal",
+            "creative_ledger_curator": "support_agent",  # v6.9.0
             "awaiting_publish": "terminal",
             "archive": "terminal",
             "revision_router": "router",
             "human_review": "terminal",
         }
-        assert list(nodes.keys())[:14] == list(expected_groups.keys())
+        assert list(nodes.keys())[:18] == list(expected_groups.keys())
         for node_name, group in expected_groups.items():
             assert nodes[node_name]["node_group"] == group
             assert nodes[node_name]["node_type"] == group

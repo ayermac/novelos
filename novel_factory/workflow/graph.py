@@ -19,7 +19,9 @@ from ..llm.provider import LLMProvider
 from ..models.state import FactoryState
 from .conditions import (
     route_after_agent,
+    route_after_brief_validation,
     route_after_memory_curator,
+    route_after_rhythm_budget,
     route_by_chapter_status,
     route_by_quality_gate,
     route_by_revision_type,
@@ -34,13 +36,17 @@ CANONICAL_WORKFLOW_NODES: tuple[dict[str, str], ...] = (
     {"node_name": "health_check", "label": "预检", "node_group": "system", "node_type": "system"},
     {"node_name": "task_discovery", "label": "任务识别", "node_group": "system", "node_type": "system"},
     {"node_name": "planner", "label": "规划", "node_group": "creative_agent", "node_type": "creative_agent"},
+    {"node_name": "brief_validation", "label": "规划校验", "node_group": "system", "node_type": "system"},  # v6.9.0
+    {"node_name": "rhythm_budget_preflight", "label": "节奏预检", "node_group": "system", "node_type": "system"},  # v6.9.0
     {"node_name": "screenwriter", "label": "编剧", "node_group": "creative_agent", "node_type": "creative_agent"},
     {"node_name": "author", "label": "执笔", "node_group": "creative_agent", "node_type": "creative_agent"},
     {"node_name": "polisher", "label": "润色", "node_group": "creative_agent", "node_type": "creative_agent"},
     {"node_name": "quality_gate", "label": "质检门禁", "node_group": "quality", "node_type": "quality"},  # v6.8.5
     {"node_name": "editor", "label": "审核", "node_group": "creative_agent", "node_type": "creative_agent"},
+    {"node_name": "editor_lenses", "label": "专项审核", "node_group": "creative_agent", "node_type": "creative_agent"},  # v6.9.0
     {"node_name": "memory_curator", "label": "记忆整理", "node_group": "support_agent", "node_type": "support_agent"},
     {"node_name": "publisher", "label": "发布", "node_group": "terminal", "node_type": "terminal"},
+    {"node_name": "creative_ledger_curator", "label": "创作台账", "node_group": "support_agent", "node_type": "support_agent"},  # v6.9.0
     {"node_name": "awaiting_publish", "label": "等待发布", "node_group": "terminal", "node_type": "terminal"},
     {"node_name": "archive", "label": "归档", "node_group": "terminal", "node_type": "terminal"},
     {"node_name": "revision_router", "label": "返修路由", "node_group": "router", "node_type": "router"},
@@ -96,14 +102,18 @@ def build_graph(
         graph.add_node("health_check", lambda s: nodes.health_check_node(s, repo))
         graph.add_node("task_discovery", lambda s: nodes.task_discovery_node(s, repo))
         graph.add_node("planner", runners["planner"])
+        graph.add_node("brief_validation", lambda s: nodes.brief_validation_node(s))
+        graph.add_node("rhythm_budget_preflight", lambda s: nodes.rhythm_budget_preflight_node(s, repo))
         graph.add_node("screenwriter", runners["screenwriter"])
         graph.add_node("author", runners["author"])
         graph.add_node("polisher", runners["polisher"])
         graph.add_node("quality_gate", lambda s: nodes.quality_gate_node(s, repo, skill_registry))  # v6.8.5
         graph.add_node("editor", runners["editor"])
+        graph.add_node("editor_lenses", lambda s: nodes.editor_lenses_node(s, repo))  # v6.9.0
         graph.add_node("memory_curator", runners["memory_curator"])
         graph.add_node("publisher", lambda s: nodes.publisher_node(s, repo))
         graph.add_node("awaiting_publish", lambda s: nodes.awaiting_publish_node(s, repo))  # v5.3.0
+        graph.add_node("creative_ledger_curator", lambda s: nodes.creative_ledger_curator_node(s, repo))
         graph.add_node("revision_router", lambda s: nodes.revision_router_node(s, repo))
         graph.add_node("human_review", lambda s: nodes.human_review_node(s, repo))
         graph.add_node("archive", lambda s: nodes.archive_node(s, repo))
@@ -120,6 +130,14 @@ def build_graph(
         graph.add_node(
             "planner",
             lambda s: nodes.planner_node(s, repo, llm, skill_registry),
+        )
+        graph.add_node(
+            "brief_validation",
+            lambda s: nodes.brief_validation_node(s),
+        )
+        graph.add_node(
+            "rhythm_budget_preflight",
+            lambda s: nodes.rhythm_budget_preflight_node(s, repo),
         )
         graph.add_node(
             "screenwriter",
@@ -142,6 +160,10 @@ def build_graph(
             lambda s: nodes.editor_node(s, repo, llm),
         )
         graph.add_node(
+            "editor_lenses",
+            lambda s: nodes.editor_lenses_node(s, repo),
+        )  # v6.9.0
+        graph.add_node(
             "memory_curator",
             lambda s: nodes.memory_curator_node(s, repo, llm, skill_registry),
         )
@@ -153,6 +175,10 @@ def build_graph(
             "awaiting_publish",
             lambda s: nodes.awaiting_publish_node(s, repo),
         )  # v5.3.0
+        graph.add_node(
+            "creative_ledger_curator",
+            lambda s: nodes.creative_ledger_curator_node(s, repo),
+        )
         graph.add_node("revision_router", lambda s: nodes.revision_router_node(s, repo))
         graph.add_node(
             "human_review",
@@ -187,10 +213,25 @@ def build_graph(
 
     # Linear happy path, with a safety stop after each agent. Agent nodes set
     # requires_human on errors, so never flow into the next precondition blindly.
+    # v6.9.0: After planner, go to brief validation before screenwriter
     graph.add_conditional_edges(
         "planner",
         route_after_agent,
-        {"next": "screenwriter", "human_review": "human_review", "revision_router": "revision_router"},
+        {"next": "brief_validation", "human_review": "human_review", "revision_router": "revision_router"},
+    )
+    
+    # v6.9.0: Brief validation - check Tier 1 fields, route back to planner if missing
+    graph.add_conditional_edges(
+        "brief_validation",
+        route_after_brief_validation,
+        {"rhythm_budget_preflight": "rhythm_budget_preflight", "planner": "planner", "human_review": "human_review"},
+    )
+    
+    # v6.9.0: Rhythm budget preflight - check rhythm metrics before screenwriter
+    graph.add_conditional_edges(
+        "rhythm_budget_preflight",
+        route_after_rhythm_budget,
+        {"screenwriter": "screenwriter", "planner": "planner", "human_review": "human_review"},
     )
     graph.add_conditional_edges(
         "screenwriter",
@@ -202,25 +243,37 @@ def build_graph(
         route_after_agent,
         {"next": "polisher", "human_review": "human_review", "revision_router": "revision_router"},
     )
+    # v6.9.0: polisher → editor_lenses (replaces polisher → editor)
     graph.add_conditional_edges(
         "polisher",
         route_after_agent,
         {"next": "quality_gate", "human_review": "human_review", "revision_router": "revision_router"},
     )
 
-    # v6.8.5: After quality_gate: pass → editor, fail → revision_router or human
+    # v6.8.5: After quality_gate: pass → editor_lenses, fail → revision_router or human
     graph.add_conditional_edges(
         "quality_gate",
         route_by_quality_gate,
         {
-            "editor": "editor",
+            "editor": "editor_lenses",  # v6.9.0: quality gate passes to editor_lenses
             "revision_router": "revision_router",
             "human_review": "human_review",
         },
     )
 
-    # After editor: pass → memory_curator, fail → revise or human
-    # v5.3.2: Memory curator extracts facts before publish decision
+    # v6.9.0: After editor_lenses: pass → memory_curator, fail → revise or human
+    # Uses same route_by_review_result logic as old editor node
+    graph.add_conditional_edges(
+        "editor_lenses",
+        route_by_review_result,
+        {
+            "memory_curator": "memory_curator",  # v5.3.2: fact extraction
+            "revise": "revision_router",
+            "human_review": "human_review",
+        },
+    )
+
+    # Keep legacy editor node for revision_router fallback
     graph.add_conditional_edges(
         "editor",
         route_by_review_result,
@@ -257,8 +310,9 @@ def build_graph(
         },
     )
 
-    # Terminal nodes
-    graph.add_edge("publisher", "archive")
+    # v6.9.0: After publisher, update creative ledgers before archive
+    graph.add_edge("publisher", "creative_ledger_curator")
+    graph.add_edge("creative_ledger_curator", "archive")
     graph.add_edge("archive", END)
     graph.add_edge("awaiting_publish", END)  # v5.3.0: Real mode terminal
     graph.add_edge("human_review", END)

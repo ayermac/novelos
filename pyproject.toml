@@ -30,6 +30,7 @@ novel_factory = ["db/schema/*.sql", "db/migrations/*.sql", "config/*.yaml", "*.y
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-n auto"
 markers = [
     "unit: Pure unit tests, no DB or external dependencies",
     "integration: Tests requiring DB or cross-module interaction",

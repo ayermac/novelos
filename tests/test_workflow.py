@@ -29,8 +29,8 @@ class TestRouteByChapterStatus:
             ("planned", "screenwriter"),
             ("scripted", "author"),
             ("drafted", "polisher"),
-            ("polished", "editor"),
-            ("review", "editor"),
+            ("polished", "editor_lenses"),  # v6.9.0: use editor_lenses
+            ("review", "editor_lenses"),  # v6.9.0: use editor_lenses
             ("reviewed", "publisher"),
             ("blocking", "human_review"),
             ("idea", "planner"),
@@ -102,13 +102,13 @@ class TestRouteByChapterStatus:
         }
         assert route_by_chapter_status(state) == "polisher"
 
-    def test_polished_with_stale_revision_gate_routes_to_editor(self):
-        """If checkpoint says revision but DB says polished, must go to editor."""
+    def test_polished_with_stale_revision_gate_routes_to_editor_lenses(self):
+        """If checkpoint says revision but DB says polished, must go to editor_lenses."""
         state = {
             "chapter_status": "polished",
             "quality_gate": {"revision_target": "planner"},  # stale gate from old run
         }
-        assert route_by_chapter_status(state) == "editor"
+        assert route_by_chapter_status(state) == "editor_lenses"
 
 
 class TestFreshRunCheckpointCleanup:
@@ -389,8 +389,8 @@ class TestRouteByRevisionType:
             (ChapterStatus.PLANNED.value, "planner"),
             (ChapterStatus.SCRIPTED.value, "author"),
             (ChapterStatus.DRAFTED.value, "polisher"),
-            (ChapterStatus.POLISHED.value, "editor"),
-            (ChapterStatus.REVIEW.value, "editor"),
+            (ChapterStatus.POLISHED.value, "editor_lenses"),  # v6.9.0
+            (ChapterStatus.REVIEW.value, "editor_lenses"),  # v6.9.0
             (ChapterStatus.REVIEWED.value, "publisher"),
             (ChapterStatus.PUBLISHED.value, "archive"),
             (ChapterStatus.BLOCKING.value, "human_review"),
@@ -416,7 +416,7 @@ class TestRouteByRevisionType:
             "chapter_status": ChapterStatus.POLISHED.value,
             "quality_gate": {"revision_target": "planner"},
         }
-        assert route_by_revision_type(state) == "editor"
+        assert route_by_revision_type(state) == "editor_lenses"
 
 
 class TestRevisionStateHydration:

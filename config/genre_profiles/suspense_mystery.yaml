@@ -1,0 +1,61 @@
+# 悬疑推理/刑侦/探案
+# Profile ID: suspense_mystery
+
+profile_id: suspense_mystery
+
+default_reader_expectations:
+  - "逻辑严密，线索前后呼应"
+  - "悬念层层递进，保持紧张感"
+  - "主角具备专业推理能力（刑警/侦探/法医等）"
+  - "案件背后有深层动机和社会背景"
+  - "结局反转合理，不靠隐瞒信息"
+
+default_payoff_loop: "发现新线索 → 推理分析 → 排除嫌疑人 → 接近真相 → 遭遇阻碍/新谜团 → 突破关键点 → 真相大白"
+
+opening_requirements:
+  - "第一章必须呈现核心案件或谜团"
+  - "前三章建立主角的专业背景和推理风格"
+  - "早期埋下至少一条贯穿全案的关键线索"
+
+chapter_rhythm_defaults:
+  minor_payoff_frequency: 1  # 每章至少推进一个线索点
+  visible_upgrade_frequency: 4  # 每4章一次重大突破
+  public_reversal_frequency: 6  # 每6章一次推理逆转
+  max_consecutive_pressure: 3  # 悬疑允许较长压力铺垫
+  scene_count_target: 2  # 每章目标场景数（场景可更长）
+
+common_poison_points:
+  - "线索断裂：关键线索凭空出现，无前文铺垫"
+  - "降智推理：主角推理过程漏洞百出，读者早于主角猜到真相"
+  - "凶手巧合：凶手靠巧合脱罪或犯案，削弱推理价值"
+  - "信息倾泻：结局时大段解释前因后果，缺乏过程感"
+  - "节奏拖沓：调查过程重复，缺乏新信息推进"
+
+style_noise_patterns:
+  - "过多环境描写，拖慢节奏"
+  - "对话中重复已知信息"
+  - "心理描写过于冗长，缺乏行动推进"
+  - "专业术语堆砌但无实际作用"
+
+editor_weight_profile:
+  logic_consistency: 35  # 逻辑一致性最高
+  mystery_structure: 25  # 谜题结构
+  pacing: 20  # 节奏
+  character_depth: 15  # 角色深度
+  text_quality: 5  # 文笔
+
+profile_specific_rules:
+  must_have_tropes:
+    - "核心谜团"
+    - "线索伏笔"
+    - "推理过程"
+    - "结局反转"
+  avoid_patterns:
+    - "凭空出现的线索"
+    - "巧合脱罪"
+    - "信息倾泻式结局"
+    - "主角全知全能"
+  style_constraints:
+    - "环境描写服务于氛围营造，不超过段落1/3"
+    - "对话应传递信息或推进关系，避免寒暄"
+    - "推理过程需向读者公开关键线索，保持公平性"
