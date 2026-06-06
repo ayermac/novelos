@@ -2181,6 +2181,10 @@ def editor_lenses_node(state: FactoryState, repo: Repository) -> dict:
         _logger.warning("EditorLenses: missing identifiers")
         return {"error": "Missing project_id or chapter_number"}
 
+    # v6.9.0: Emit node lifecycle events so the timeline UI shows the lens stage.
+    _update_run_node(state, repo, "editor_lenses")
+    _log_node_event(state, repo, "editor_lenses", "started", status="running")
+
     # Get chapter content
     chapter = repo.get_chapter(project_id, chapter_number)
     content = (chapter or {}).get("content", "")
@@ -2193,10 +2197,20 @@ def editor_lenses_node(state: FactoryState, repo: Repository) -> dict:
         ok = repo.update_chapter_status(project_id, chapter_number, chapter_status)
         if not ok:
             _logger.error("EditorLenses: stale state, status advance to %s failed", chapter_status)
+            _log_node_event(
+                state, repo, "editor_lenses", "failed",
+                status="failed",
+                error_message=f"专项审核失败：章节状态推进到 {chapter_status} 失败",
+            )
             return {
                 "error": f"EditorLenses: stale state, status advance to {chapter_status} failed",
                 "chapter_status": ChapterStatus.POLISHED.value,
             }
+        _log_node_event(
+            state, repo, "editor_lenses", "completed",
+            status="completed",
+            error_message="无内容可审核，自动通过",
+        )
         return {
             "quality_gate": {
                 "pass": True,
@@ -2301,7 +2315,7 @@ def editor_lenses_node(state: FactoryState, repo: Repository) -> dict:
         if should_skip_lens(lens.lens_type, project_id, chapter_number, repo):
             _logger.info("EditorLenses: skipping %s (fast-path)", lens.lens_type)
             # Create a passing report for skipped lens
-            from ...models.chapter_contracts import EditorLensReport
+            from ..models.chapter_contracts import EditorLensReport
             report = EditorLensReport(
                 lens_type=lens.lens_type,
                 passed=True,
@@ -2331,9 +2345,22 @@ def editor_lenses_node(state: FactoryState, repo: Repository) -> dict:
         result["warning_count"],
     )
 
+    # v6.9.0: Emit an aggregated summary so the timeline UI shows lens result.
+    _log_node_event(
+        state, repo, "editor_lenses",
+        "completed" if result["passed"] else "failed",
+        status="info" if result["passed"] else "warning",
+        error_message=(
+            f"专项审核{'通过' if result['passed'] else '未通过'}："
+            f"评分 {result['score']:.1f}，"
+            f"阻塞 {result['blocking_count']} 项，提醒 {result['warning_count']} 项"
+        ),
+    )
+
     # Build quality_gate compatible output
     quality_gate = {
         "pass": result["passed"],
+        "passed": result["passed"],  # v6.9.0: publisher_node expects "passed"
         "score": result["score"],
         "revision_target": result.get("revision_target"),
         "lens_details": result["lens_details"],
@@ -2345,20 +2372,95 @@ def editor_lenses_node(state: FactoryState, repo: Repository) -> dict:
     if result["passed"]:
         chapter_status = ChapterStatus.REVIEWED.value
     else:
-        chapter_status = ChapterStatus.REVIEW.value
+        chapter_status = ChapterStatus.REVISION.value
 
     # Persist chapter status change to database (like editor_node does)
     ok = repo.update_chapter_status(project_id, chapter_number, chapter_status)
     if not ok:
         _logger.error("EditorLenses: stale state, status advance to %s failed", chapter_status)
+        _log_node_event(
+            state, repo, "editor_lenses", "failed",
+            status="failed",
+            error_message=f"专项审核失败：章节状态推进到 {chapter_status} 失败（state stale）",
+        )
         return {
             "error": f"EditorLenses: stale state, status advance to {chapter_status} failed",
             "chapter_status": ChapterStatus.POLISHED.value,  # rollback
             "quality_gate": quality_gate,
         }
 
-    return {
+    updates: dict[str, Any] = {
         "quality_gate": quality_gate,
         "chapter_status": chapter_status,
         "editor_lenses_result": result,
     }
+
+    # v6.9.0-fix: Always save a review so the workbench UI can display the
+    # quality score. Previously only failing reviews were persisted, causing
+    # "待评估" in the UI for passing chapters.
+    try:
+        chapter = repo.get_chapter(project_id, chapter_number)
+        if chapter:
+            findings = result.get("findings") or []
+            issues = [f.get("message", str(f)) for f in findings] if findings else []
+            suggestions = []
+            for lens in result.get("lens_details") or []:
+                for finding in lens.get("findings") or []:
+                    if finding.get("suggestion"):
+                        suggestions.append(finding["suggestion"])
+
+            # For passing reviews with no findings, still save a synthetic
+            # advisory note so the review record is not empty.
+            if result["passed"] and not issues:
+                issues = [result.get("summary", "专项审核通过")]
+
+            review_id = repo.save_review(
+                project_id=project_id,
+                chapter_id=chapter["id"],
+                passed=bool(result["passed"]),
+                score=int(result.get("score", 0)),
+                issues=issues,
+                suggestions=suggestions,
+                revision_target=result.get("revision_target"),
+            )
+            _logger.info(
+                "EditorLenses: saved review (id=%s) for %s ch%d passed=%s score=%s",
+                review_id, project_id, chapter_number,
+                result["passed"], result.get("score"),
+            )
+    except Exception:
+        _logger.warning(
+            "EditorLenses: failed to save review for %s ch%d",
+            project_id, chapter_number, exc_info=True,
+        )
+
+    # v6.9.0: When editor_lenses fails, include _revision_review in state
+    # so polisher/author have revision context. Without this, polisher sees
+    # chapter_status=REVISION but no _revision_review and no quality gate
+    # retry flags → "返修上下文缺失".
+    if not result["passed"]:
+        try:
+            chapter = repo.get_chapter(project_id, chapter_number)
+            if chapter:
+                findings = result.get("findings") or []
+                issues = [f.get("message", str(f)) for f in findings] if findings else [result.get("summary", "专项审核未通过")]
+                suggestions = []
+                for lens in result.get("lens_details") or []:
+                    for finding in lens.get("findings") or []:
+                        if finding.get("suggestion"):
+                            suggestions.append(finding["suggestion"])
+
+                updates["_revision_review"] = {
+                    "review_id": None,  # filled by save_review above, but we don't have it here
+                    "score": result.get("score"),
+                    "revision_target": result.get("revision_target"),
+                    "issues": issues,
+                    "suggestions": suggestions,
+                }
+        except Exception:
+            _logger.warning(
+                "EditorLenses: failed to build _revision_review for %s ch%d",
+                project_id, chapter_number, exc_info=True,
+            )
+
+    return updates

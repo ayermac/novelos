@@ -1764,7 +1764,8 @@ class AuthorAgent(BaseAgent):
                     "只替换或压缩退回问题涉及的句段，新增句子必须同步删除等量冗余说明。"
                 )
         config_max = self._config_max_tokens(self.llm)
-        prose_max_tokens = max(1024, min(config_max, int(effective_target * 1.5)))
+        # v6.9.0: Chinese text needs ~2-2.5 tokens per character, use 2.5x
+        prose_max_tokens = max(1024, min(config_max, int(effective_target * 2.5)))
         compact_context = self._build_plain_text_context(state, context)
         per_call_retries = None
 
@@ -1976,7 +1977,8 @@ class AuthorAgent(BaseAgent):
                 segment_note += "\n这是最后一段，必须写到章末钩子，不要停在半途。"
 
             config_max = self._config_max_tokens(self.llm)
-            prose_max_tokens = max(1024, min(config_max, int(segment_target * 1.5) + 512))
+            # v6.9.0: Chinese text needs ~2-2.5 tokens per character, use 2.5x + 1024
+            prose_max_tokens = max(1024, min(config_max, int(segment_target * 2.5) + 1024))
 
             messages = [
                 {

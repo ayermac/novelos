@@ -564,10 +564,10 @@ async def reset_run_chapter(
             return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
         current_status = chapter.get("status", "")
-        if current_status not in ("blocking", "revision", "planned"):
+        if current_status not in ("blocking", "revision", "planned", "review"):
             return error_response(
                 "INVALID_STATUS",
-                f"章节状态为 '{current_status}'，仅 'blocking'、'revision' 或 'planned' 状态可恢复",
+                f"章节状态为 '{current_status}'，仅 'blocking'、'revision'、'planned' 或 'review' 状态可恢复",
                 details={"current_status": current_status},
             )
 
@@ -1398,7 +1398,7 @@ def _build_recovery_state(
     retry_count = repo.get_chapter_retry_count(project_id, chapter_number)
     stuck_info = _detect_stuck_run(repo, run_data, timeout_minutes)
     can_mark_stuck = bool(stuck_info.get("stuck", False)) and chapter_status != "unknown"
-    can_reset = chapter_status in ("blocking", "revision", "planned")
+    can_reset = chapter_status in ("blocking", "revision", "planned", "review")
     retry_target = _node_retry_target(run_data.get("current_node"))
     can_retry_node = bool(retry_target and chapter_status in ("blocking", "revision"))
     reason = None

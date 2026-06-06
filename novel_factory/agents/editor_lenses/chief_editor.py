@@ -87,6 +87,11 @@ class ChiefEditor:
         # Compute final score
         final_score = total_weighted_score / total_weight if total_weight > 0 else 0.0
 
+        # Count info-level findings for cap logic
+        info_count = sum(
+            1 for f in all_findings if f.get("severity") == "info"
+        )
+
         # Determine pass/fail
         # Blocking findings always fail
         has_blocking = blocking_count > 0
@@ -94,6 +99,20 @@ class ChiefEditor:
         score_pass = final_score >= 70.0
 
         passed = not has_blocking and score_pass
+
+        # v6.9.0-fix: Cap passing scores to avoid meaningless 100 from
+        # rule-only lenses that found zero issues. Purely rule-based
+        # review cannot claim perfection.
+        if passed and final_score >= 95.0:
+            if warning_count > 0:
+                final_score = min(final_score, 88.0)
+            elif info_count > 0:
+                final_score = min(final_score, 92.0)
+            else:
+                final_score = min(final_score, 92.0)
+        # Ensure floor for passed chapters
+        if passed:
+            final_score = max(final_score, 75.0)
 
         # Determine revision target if failed
         revision_target = None

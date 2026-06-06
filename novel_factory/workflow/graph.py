@@ -204,6 +204,7 @@ def build_graph(
             "author": "author",
             "polisher": "polisher",
             "editor": "editor",
+            "editor_lenses": "editor_lenses",  # v6.9.0
             "publisher": "publisher",
             "archive": "archive",          # Terminal: already published
             "human_review": "human_review",
@@ -304,6 +305,7 @@ def build_graph(
             "polisher": "polisher",
             "planner": "planner",
             "editor": "editor",
+            "editor_lenses": "editor_lenses",  # v6.9.0
             "publisher": "publisher",
             "archive": "archive",
             "human_review": "human_review",

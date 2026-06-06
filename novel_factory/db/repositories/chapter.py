@@ -711,7 +711,7 @@ class ChapterRepositoryMixin:
                 "UPDATE chapters SET status='planned', "
                 "updated_at=datetime('now','+8 hours') "
                 "WHERE project_id=? AND chapter_number=? "
-                "AND status IN ('blocking', 'revision')",
+                "AND status IN ('blocking', 'revision', 'review')",
                 (project_id, chapter_number),
             )
             reset = cursor.rowcount > 0
