@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from ..db.repository import Repository
 from ..llm.provider import LLMProvider
+from ..llm.openai_compatible import ContentFilterError, OutputValidationError
 from ..models.state import ChapterStatus, FactoryState
 from .conditions import hydrate_revision_state, revision_target_from_state
 from ..agents.planner import PlannerAgent
@@ -939,7 +940,112 @@ def create_node_runners(
             agent_id=agent_name,
             status="running",
         )
-        result = _handle_retryable_quality_gate(state, repo, agent.run(state))
+
+        # v6.10.0: Per-node timeout guard to prevent indefinite blocking.
+        # Uses a thread executor with wall-clock timeout so that even if the
+        # agent's internal LLM calls hang, the workflow node will fail fast
+        # and surface a clear error instead of blocking the whole pipeline.
+        import concurrent.futures
+        node_timeout = getattr(getattr(settings, "workflow", None), "node_timeout_seconds", 300) or 300
+
+        try:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(agent.run, state)
+                try:
+                    agent_result = future.result(timeout=node_timeout)
+                except concurrent.futures.TimeoutError:
+                    logger.error(
+                        "Agent '%s' node timed out after %ds for %s ch%d",
+                        agent_name, node_timeout,
+                        state.get("project_id", ""), state.get("chapter_number", 0),
+                    )
+                    _log_node_event(
+                        state, repo, agent_name, "failed", status="failed",
+                        error_message=f"节点执行超时（>{node_timeout}秒），需要人工介入",
+                    )
+                    log_execution_event(
+                        repo, state, agent_name, EVENT_LLM_FAILED,
+                        message=f"节点执行超时（>{node_timeout}秒），需要人工介入",
+                        agent_id=agent_name, status="error",
+                        payload={"timeout_seconds": node_timeout},
+                    )
+                    _finalize_run(state, repo, "blocked", f"节点 {agent_name} 执行超时（>{node_timeout}秒）")
+                    return {
+                        "error": f"节点 {agent_name} 执行超时（>{node_timeout}秒），需要人工介入",
+                        "chapter_status": status_before,
+                        "requires_human": True,
+                    }
+        except ContentFilterError as e:
+            # v6.10.0: Content filter rejections are non-retryable.
+            # The LLM provider rejected the request due to safety concerns.
+            logger.error(
+                "Agent '%s' content filter rejected: %s",
+                agent_name, e,
+            )
+            _log_node_event(
+                state, repo, agent_name, "failed", status="failed",
+                error_message=f"LLM 内容审核拒绝：{e}",
+            )
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_FAILED,
+                message=f"LLM 内容审核拒绝：{e}",
+                agent_id=agent_name, status="error",
+                payload={"error_type": "content_filter"},
+            )
+            _finalize_run(state, repo, "blocked", f"节点 {agent_name} LLM 内容审核拒绝")
+            return {
+                "error": f"LLM 内容审核拒绝：{e}",
+                "chapter_status": status_before,
+                "requires_human": True,
+            }
+        except OutputValidationError as e:
+            # v6.10.0: JSON parse failures after retries are non-retryable.
+            # The LLM produced malformed output that cannot be parsed.
+            logger.error(
+                "Agent '%s' output validation failed: %s",
+                agent_name, e,
+            )
+            _log_node_event(
+                state, repo, agent_name, "failed", status="failed",
+                error_message=f"LLM 输出校验失败：{e}",
+            )
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_FAILED,
+                message=f"LLM 输出校验失败：{e}",
+                agent_id=agent_name, status="error",
+                payload={"error_type": "output_validation"},
+            )
+            _finalize_run(state, repo, "blocked", f"节点 {agent_name} LLM 输出校验失败")
+            return {
+                "error": f"LLM 输出校验失败：{e}",
+                "chapter_status": status_before,
+                "requires_human": True,
+            }
+        except Exception as e:
+            # v6.10.0: Catch-all for unexpected agent execution errors.
+            # Ensures the workflow blocks gracefully instead of crashing.
+            logger.error(
+                "Agent '%s' unexpected error: %s",
+                agent_name, e, exc_info=True,
+            )
+            safe_error = str(e)[:500]
+            _log_node_event(
+                state, repo, agent_name, "failed", status="failed",
+                error_message=f"Agent 执行异常：{safe_error}",
+            )
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_FAILED,
+                message=f"Agent 执行异常：{safe_error}",
+                agent_id=agent_name, status="error",
+                payload={"error_type": "unexpected", "error_class": type(e).__name__},
+            )
+            _finalize_run(state, repo, "blocked", f"节点 {agent_name} 执行异常：{safe_error}")
+            return {
+                "error": f"节点 {agent_name} 执行异常：{safe_error}",
+                "chapter_status": status_before,
+                "requires_human": True,
+            }
+        result = _handle_retryable_quality_gate(state, repo, agent_result)
         if memory_context_audit:
             result.setdefault("memory_context_audit", memory_context_audit)
         agent_latency_ms = int((time.perf_counter() - agent_started_at) * 1000)

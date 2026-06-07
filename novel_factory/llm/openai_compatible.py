@@ -34,37 +34,27 @@ logger = logging.getLogger(__name__)
 # Custom exceptions with Chinese messages
 class LLMError(Exception):
     """Base LLM error with Chinese message."""
-    pass
-
 
 class InvalidAPIKeyError(LLMError):
     """API Key 无效或已过期."""
-    pass
-
 
 class InsufficientBalanceError(LLMError):
     """API 余额不足."""
-    pass
-
 
 class LLMTimeoutError(LLMError):
     """LLM 响应超时."""
-    pass
-
 
 class RateLimitError(LLMError):
     """API 请求频率超限."""
-    pass
-
 
 class LLMConnectionError(LLMError):
     """LLM 网络连接暂时失败."""
-    pass
-
 
 class OutputValidationError(LLMError):
     """LLM 输出校验失败."""
-    pass
+
+class ContentFilterError(LLMError):
+    """LLM 内容审核拒绝 — 请求被安全过滤器拦截."""
 
 
 class TokenUsage:
@@ -249,6 +239,20 @@ class OpenAICompatibleProvider(LLMProvider):
             return json.dumps(content, ensure_ascii=False)
         return str(content)
 
+    @staticmethod
+    def _check_content_filter(finish_reason: str | None, content: str | None) -> None:
+        """Raise ContentFilterError if the response was rejected by safety filters."""
+        if finish_reason == "content_filter":
+            raise ContentFilterError("LLM 内容审核拒绝 (finish_reason=content_filter)")
+        if content:
+            cl = content.lower()
+            if any(m in cl for m in (
+                "the request was rejected because it was considered high risk",
+                "content_policy_violation", "content was blocked",
+                "safety filter", "this content may violate",
+            )):
+                raise ContentFilterError("LLM 内容审核拒绝：响应包含审核拦截标记")
+
     def _response_from_http_payload(self, payload: Any) -> _NormalizedChatResponse:
         if payload is None:
             return _NormalizedChatResponse("")
@@ -272,6 +276,7 @@ class OpenAICompatibleProvider(LLMProvider):
         )
         total_tokens = int(usage.get("total_tokens") or (prompt_tokens + completion_tokens))
         finish_reason = first_choice.get("finish_reason") if isinstance(first_choice, dict) else None
+        self._check_content_filter(finish_reason, content)
 
         return _NormalizedChatResponse(
             content=content,
@@ -369,23 +374,11 @@ class OpenAICompatibleProvider(LLMProvider):
             raise LLMTimeoutError(
                 f"LLM 响应超时（>{timeout}秒），请稍后重试"
             ) from error
-        elif any(
-            marker in error_str
-            for marker in (
-                "connection",
-                "connect",
-                "network",
-                "temporarily",
-                "reset by peer",
-                "remote protocol",
-                "decompress",
-                "incorrect header check",
-                "ssl",
-                "tls",
-                "read error",
-                "write error",
-            )
-        ):
+        elif any(m in error_str for m in (
+            "connection", "connect", "network", "temporarily", "reset by peer",
+            "remote protocol", "decompress", "incorrect header check",
+            "ssl", "tls", "read error", "write error",
+        )):
             raise LLMConnectionError(f"LLM 网络连接失败，请稍后重试: {safe_error}") from error
         else:
             raise LLMError(f"LLM 调用失败: {safe_error}") from error
@@ -397,12 +390,7 @@ class OpenAICompatibleProvider(LLMProvider):
         timeout_seconds: int,
         **kwargs,
     ) -> Any:
-        """Invoke the SDK client with a wall-clock timeout guard.
-
-        Some OpenAI-compatible SDK paths can outlive their configured HTTPX
-        timeout in desktop environments. Keep workflow runs bounded even when
-        the underlying transport fails to return.
-        """
+        """Invoke the SDK client with a wall-clock timeout guard."""
         if timeout_seconds <= 0:
             return client.invoke(lc_messages, **kwargs)
 

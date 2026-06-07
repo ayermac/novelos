@@ -1034,8 +1034,15 @@ async def workflow_stream_sse(
     async def event_generator():
         last_event_id = since_id or 0
 
-        # Replay existing events
-        if replay and run_id_str:
+        # v6.10.0: Check if real-time event queue is available.
+        # If so, skip DB replay — the queue's subscribe() will replay
+        # existing events, avoiding duplicates.
+        from ...workflow.event_queue import get_event_queue_manager
+        live_queue = get_event_queue_manager().get(run_id_str) if run_id_str else None
+
+        # Replay existing events from DB only when no live queue is available
+        # (e.g. reconnecting to a completed run or legacy path).
+        if replay and run_id_str and not (live_queue and not live_queue.is_done):
             try:
                 existing = repo.get_workflow_execution_events(run_id_str)
                 for ev in existing:
@@ -1072,9 +1079,8 @@ async def workflow_stream_sse(
         heartbeat_counter = 0
         start = time.time()
 
-        # v6.10.0: Try real-time event queue first, fallback to DB polling
-        from ...workflow.event_queue import get_event_queue_manager
-        event_queue = get_event_queue_manager().get(run_id_str) if run_id_str else None
+        # Reuse the live_queue variable computed above; fall back to DB polling
+        event_queue = live_queue
 
         if event_queue and not event_queue.is_done:
             # Real-time mode: subscribe to event queue

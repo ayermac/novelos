@@ -58,6 +58,7 @@ class WorkflowConfig(BaseModel):
 
     task_timeout_minutes: int = 30
     checkpoint_enabled: bool = True
+    node_timeout_seconds: int = 300  # v6.10.0: Per-node execution timeout (5 minutes)
 
 
 class RuntimeBudgetConfig(BaseModel):
