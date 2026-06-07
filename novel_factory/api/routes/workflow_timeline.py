@@ -979,15 +979,15 @@ async def get_workflow_timeline(
 
 
 def _normalize_timestamp(ts: str | None) -> str | None:
-    """Normalize timestamp to ISO 8601 format with timezone."""
+    """Normalize timestamp to ISO 8601 format with UTC+8 timezone."""
     if not ts:
         return None
     if "T" in ts and ("+" in ts or "Z" in ts or ts.endswith("00:00")):
         return ts
     try:
-        from datetime import datetime, timezone
+        from datetime import datetime, timezone, timedelta
         dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
-        return dt.replace(tzinfo=timezone.utc).isoformat()
+        return dt.replace(tzinfo=timezone(timedelta(hours=8))).isoformat()
     except (ValueError, TypeError):
         return ts
 
