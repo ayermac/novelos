@@ -746,6 +746,18 @@ class PolisherAgent(BaseAgent):
                     "_exec_events": exec_events,
                 }
 
+        # v6.10.3: If polisher is in revision chain but falls back to passthrough
+        # (e.g. model content_filter), do not waste editor tokens on unchanged
+        # content and do not consume a revision retry. Route directly to human_review
+        # since the model cannot execute the revision.
+        if in_revision_chain and passthrough_mode:
+            return {
+                "error": "Polisher 返修失败：模型输出不可用，无法执行返修润色",
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": True,
+                "_exec_events": exec_events,
+            }
+
         current_status = state.get("chapter_status")
         expected_status = (
             ChapterStatus.REVISION.value

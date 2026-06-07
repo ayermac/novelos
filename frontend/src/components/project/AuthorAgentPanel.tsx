@@ -397,7 +397,7 @@ export default function AuthorAgentPanel({
         </div>
 
         {/* Error */}
-        {genError && (
+        {genError && workflowStatus !== 'blocked' && (
           <div style={{ marginTop: 8 }}>
             <InlineMessage variant="danger">
               <div style={{ fontWeight: 500, marginBottom: 2 }}>生成失败</div>
@@ -406,9 +406,15 @@ export default function AuthorAgentPanel({
           </div>
         )}
 
-        {runDetail?.error_message && (workflowStatus === 'failed' || workflowStatus === 'blocked') && (
+        {runDetail?.error_message && workflowStatus === 'failed' && (
           <div style={{ marginTop: 8 }}>
             <InlineMessage variant="danger">{runDetail.error_message}</InlineMessage>
+          </div>
+        )}
+
+        {runDetail?.error_message && workflowStatus === 'blocked' && (
+          <div style={{ marginTop: 8 }}>
+            <InlineMessage variant="warning">{runDetail.error_message}</InlineMessage>
           </div>
         )}
 
