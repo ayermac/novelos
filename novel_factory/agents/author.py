@@ -1765,7 +1765,7 @@ class AuthorAgent(BaseAgent):
         """
         beats = self._get_scene_beats(state)
         if state.get("llm_mode") == "real" and task_desc != "返修" and len(beats) >= 4:
-            return self._try_segmented_plain_text_draft(state, task_desc, context, exec_events=exec_events)
+            return self._try_segmented_plain_text_draft(state, task_desc, context, exec_events=exec_events, on_chunk=on_chunk)
 
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
@@ -1897,6 +1897,7 @@ class AuthorAgent(BaseAgent):
                     if is_configured_live_provider(self.llm)
                     else None
                 ),
+                on_chunk=on_chunk or self.on_text_chunk,
             ).strip()
         content = self._coerce_plain_text_content(content)
         if not content:
@@ -1921,6 +1922,7 @@ class AuthorAgent(BaseAgent):
                     if is_configured_live_provider(self.llm)
                     else None
                 ),
+                on_chunk=on_chunk or self.on_text_chunk,
             ).strip()
             content = self._coerce_plain_text_content(content)
         if not content:
@@ -1941,6 +1943,7 @@ class AuthorAgent(BaseAgent):
         task_desc: str,
         context: str,
         exec_events: list[dict] | None = None,
+        on_chunk: Any | None = None,
     ) -> AuthorOutput:
         """Generate prose by scene-beat segments for long chapters in real mode."""
         project_id = state["project_id"]
@@ -2082,6 +2085,7 @@ class AuthorAgent(BaseAgent):
                             if is_configured_live_provider(self.llm)
                             else None
                         ),
+                        on_chunk=on_chunk or self.on_text_chunk,
                     ).strip()
                 except LLMError as trunc_err:
                     if "finish_reason=length" not in str(trunc_err):
@@ -2102,6 +2106,7 @@ class AuthorAgent(BaseAgent):
                             if is_configured_live_provider(self.llm)
                             else None
                         ),
+                        on_chunk=on_chunk or self.on_text_chunk,
                     ).strip()
                 content = self._coerce_plain_text_content(content)
                 if not content:
@@ -2126,6 +2131,7 @@ class AuthorAgent(BaseAgent):
                             if is_configured_live_provider(self.llm)
                             else None
                         ),
+                        on_chunk=on_chunk or self.on_text_chunk,
                     ).strip()
                     content = self._coerce_plain_text_content(content)
             except Exception as e:
