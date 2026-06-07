@@ -108,6 +108,12 @@ function isKnowledgeEvent(ev: WorkflowExecutionEvent): boolean {
 function isNoiseEvent(ev: WorkflowExecutionEvent): boolean {
   // Filter out low-value events that clutter the timeline
   if (ev.event_type === 'node_message' && ev.message?.includes('跳过该节点')) return true
+  // v6.10.1: Filter node_message that duplicates node_started/node_completed
+  if (ev.event_type === 'node_message') {
+    const msg = ev.message || ''
+    if (msg.includes('开始') || msg.toLowerCase().includes('started')) return true
+    if (msg.includes('完成') || msg.toLowerCase().includes('completed')) return true
+  }
   // text_chunk events are rendered separately as streaming text
   if (ev.event_type === 'text_chunk') return true
   return false

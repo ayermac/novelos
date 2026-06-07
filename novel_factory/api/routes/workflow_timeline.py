@@ -530,12 +530,12 @@ def _build_node_timeline(
         else:
             status = "pending"
 
-        started_at = started_ev.get("created_at") if started_ev else None
+        started_at = _normalize_timestamp(started_ev.get("created_at")) if started_ev else None
         completed_at = None
         if status in {"completed", "warning"} and completed_ev:
-            completed_at = completed_ev.get("created_at")
+            completed_at = _normalize_timestamp(completed_ev.get("created_at"))
         elif status == "failed" and failed_ev:
-            completed_at = failed_ev.get("created_at")
+            completed_at = _normalize_timestamp(failed_ev.get("created_at"))
 
         duration_ms = None
         if started_at and completed_at:
@@ -680,8 +680,44 @@ def _embed_execution_events_in_nodes(
     nodes: list[dict],
     exec_events: list[dict],
 ) -> list[dict]:
-    """Embed execution events and evidence into timeline nodes."""
-    grouped = _group_execution_events_by_node(exec_events)
+    """Embed execution events and evidence into timeline nodes.
+
+    v6.10.0: Filter redundant node_message events and normalize timestamps.
+    """
+    # Filter noise: node_message that duplicates node_started/node_completed
+    node_started_set: set[str] = set()
+    node_completed_set: set[str] = set()
+    for ev in exec_events:
+        et = ev.get("event_type", "")
+        node = ev.get("node_name", "")
+        if et == "node_started":
+            node_started_set.add(node)
+        elif et == "node_completed":
+            node_completed_set.add(node)
+
+    filtered_events = []
+    for ev in exec_events:
+        et = ev.get("event_type", "")
+        node = ev.get("node_name", "")
+        msg = ev.get("message", "")
+
+        # Skip node_message for started/completed (redundant with node_started/node_completed)
+        if et == "node_message":
+            if node in node_started_set and ("开始" in msg or "started" in msg.lower()):
+                continue
+            if node in node_completed_set and ("完成" in msg or "completed" in msg.lower()):
+                continue
+            # Skip "跳过该节点" messages
+            if "跳过该节点" in msg:
+                continue
+
+        # Skip task_log (run_detail noise)
+        if et == "task_log":
+            continue
+
+        filtered_events.append(ev)
+
+    grouped = _group_execution_events_by_node(filtered_events)
     for node in nodes:
         node_name = node.get("node_name", "")
         node_exec = grouped.get(node_name, [])
@@ -695,7 +731,7 @@ def _embed_execution_events_in_nodes(
                     "payload": ev.get("payload", {}),
                     "token_count": ev.get("token_count"),
                     "latency_ms": ev.get("latency_ms"),
-                    "created_at": ev.get("created_at"),
+                    "created_at": _normalize_timestamp(ev.get("created_at")),
                 }
                 for ev in node_exec
             ]
@@ -925,7 +961,7 @@ async def get_workflow_timeline(
             "run_status": run_status,
             "chapter_status": chapter.get("status"),
             "current_node": current_node,
-            "started_at": started_at,
+            "started_at": _normalize_timestamp(started_at),
             "elapsed_minutes": stale_info.get("elapsed_minutes"),
             "is_stale": stale_info.get("is_stale", False),
             "memory_curator_running": memory_curator_running,

@@ -281,8 +281,12 @@ function buildWorkflowLogRows(
     rows.push({ ...row, sortIndex: sortIndex++ })
   }
 
+  // v6.10.1: Track nodes with timeline events for task_log filtering
+  const nodesWithTimelineEvents = new Set<string>()
+
   for (const node of timeline?.nodes || []) {
     if (node.started_at) {
+      nodesWithTimelineEvents.add(node.node_name)
       pushRow({
         id: `node-start:${node.node_name}:${node.started_at}`,
         source: 'timeline',
@@ -310,7 +314,11 @@ function buildWorkflowLogRows(
         latencyMs: node.duration_ms,
       })
     }
+    // v6.10.1: Filter node_message events that duplicate node_started/node_completed
     for (const message of node.messages || []) {
+      if (node.started_at && (message.includes('开始') || message.toLowerCase().includes('started'))) continue
+      if (node.completed_at && (message.includes('完成') || message.toLowerCase().includes('completed'))) continue
+      if (message.includes('跳过该节点')) continue
       const level = logLevelFromStatus(node.status)
       pushRow({
         id: `node-message:${node.node_name}:${message}`,
@@ -391,19 +399,23 @@ function buildWorkflowLogRows(
   }
 
   for (const step of runDetail?.steps || []) {
-    for (const log of step.logs || []) {
-      const level = log.level || 'info'
-      pushRow({
-        id: `step-log:${step.key}:${log.timestamp || ''}:${log.message}`,
-        source: 'run_detail',
-        timestamp: log.timestamp,
-        node: step.key,
-        nodeLabel: step.label || tWorkflowNodeLabel(step.key),
-        category: logCategoryFromEvent('task_log', level),
-        level,
-        eventType: 'task_log',
-        message: log.message,
-      })
+    // v6.10.1: Skip task_log when timeline events already cover this node
+    const hasTimelineCoverage = nodesWithTimelineEvents.has(step.key)
+    if (!hasTimelineCoverage) {
+      for (const log of step.logs || []) {
+        const level = log.level || 'info'
+        pushRow({
+          id: `step-log:${step.key}:${log.timestamp || ''}:${log.message}`,
+          source: 'run_detail',
+          timestamp: log.timestamp,
+          node: step.key,
+          nodeLabel: step.label || tWorkflowNodeLabel(step.key),
+          category: logCategoryFromEvent('task_log', level),
+          level,
+          eventType: 'task_log',
+          message: log.message,
+        })
+      }
     }
     if (step.error_message) {
       pushRow({
