@@ -1,11 +1,11 @@
 /**
  * SSE Stream Hook for real-time chapter generation progress.
  *
- * v5.2 Phase C: Provides EventSource integration with graceful degradation.
+ * v6.10.0: Unified SSE with reconnection, last-event-id resume, dedup.
  */
 
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { apiUrl } from '../lib/api';
+import { apiUrl, type WorkflowExecutionEvent } from '../lib/api';
 
 export interface PreflightWarning {
   code: string;
@@ -59,6 +59,7 @@ export interface StepStatus {
   started_at?: string;
   completed_at?: string;
   logs?: WorkflowNodeLog[];
+  events?: WorkflowExecutionEvent[];
 }
 
 export interface WorkflowNodeLog {
@@ -132,47 +133,44 @@ export function useSSEStream(
   const [preflightWarnings, setPreflightWarnings] = useState<PreflightWarning[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [isReconnecting, setIsReconnecting] = useState(false);
-  const retryCountRef = useRef(0);
-  const lastEventIdRef = useRef<number>(0);
-  const storedUrlRef = useRef<string | null>(null);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const eventSourceRef = useRef<EventSource | null>(null);
+  const retryCountRef = useRef(0);
+  const lastEventIdRef = useRef<number>(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const streamUrlRef = useRef<string | null>(null);
+  const runIdRef = useRef<string | null>(null);
+  const isStoppedRef = useRef(false);
 
-  const stopStream = useCallback(() => {
+  const cleanup = useCallback(() => {
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
       eventSourceRef.current = null;
     }
-    if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+  }, []);
+
+  const stopStream = useCallback(() => {
+    isStoppedRef.current = true;
+    cleanup();
     setIsStreaming(false);
     setIsConnected(false);
     setIsReconnecting(false);
-  }, []);
+    streamUrlRef.current = null;
+    runIdRef.current = null;
+  }, [cleanup]);
 
-  const triggerReconnect = useCallback((url: string) => {
-    if (retryCountRef.current >= MAX_RETRIES) {
-      setError("重连失败，请刷新页面");
-      setIsStreaming(false);
-      setIsReconnecting(false);
-      return;
-    }
-    setIsReconnecting(true);
-    setError(null);
-    const delay = Math.min(INITIAL_DELAY_MS * Math.pow(2, retryCountRef.current), MAX_DELAY_MS);
-    retryCountRef.current++;
-    reconnectTimerRef.current = setTimeout(() => {
-      const reconnectUrl = url + (lastEventIdRef.current ? `&since_id=${lastEventIdRef.current}` : "");
-      connectSSE(reconnectUrl);
-    }, delay);
-  }, []);
-
-  const connectSSE = useCallback((url: string) => {
-    if (typeof EventSource === "undefined") {
-      setError("浏览器不支持 SSE");
+  const connectAndListen = useCallback((url: string) => {
+    if (typeof EventSource === 'undefined') {
+      setError('浏览器不支持 SSE');
       setIsStreaming(false);
       return;
     }
+
+    cleanup();
 
     const eventSource = new EventSource(url);
     eventSourceRef.current = eventSource;
@@ -180,98 +178,221 @@ export function useSSEStream(
     eventSource.onopen = () => {
       setIsConnected(true);
       setIsReconnecting(false);
+      setError(null);
       retryCountRef.current = 0;
     };
 
-    eventSource.addEventListener("workflow_event", ((e: MessageEvent) => {
+    // Unified workflow_event handler
+    eventSource.addEventListener('workflow_event', ((e: MessageEvent) => {
       try {
-        const event = JSON.parse((e as MessageEvent<string>).data);
+        const event = JSON.parse((e as MessageEvent<string>).data) as WorkflowStreamEvent;
         if (event.id) lastEventIdRef.current = event.id;
+
         const agentKey = normalizeAgentKey(event.node_name || event.agent_id);
         if (!agentKey) return;
-        setSteps((prev) => ({
-          ...prev,
-          [agentKey]: {
-            ...prev[agentKey],
-            status: workflowEventStepStatus(event),
-            started_at: prev[agentKey]?.started_at || event.created_at || new Date().toISOString(),
-            completed_at: event.event_type === "evidence_verified"
-              ? event.created_at || new Date().toISOString()
-              : prev[agentKey]?.completed_at,
-            duration_ms: event.latency_ms ?? prev[agentKey]?.duration_ms,
-            logs: appendStepLog(prev[agentKey], {
-              timestamp: event.created_at || new Date().toISOString(),
-              level: workflowEventLevel(event),
-              message: event.message || "节点运行中。",
-            }),
-          },
-        }));
+
+        const execEvent: WorkflowExecutionEvent = {
+          id: event.id,
+          node_name: event.node_name,
+          agent_id: event.agent_id,
+          event_type: event.event_type || 'unknown',
+          status: event.status,
+          message: event.message,
+          payload: event.payload,
+          token_count: event.token_count ?? null,
+          latency_ms: event.latency_ms ?? null,
+          created_at: event.created_at,
+        };
+
+        setSteps((prev) => {
+          const prevEvents = prev[agentKey]?.events || [];
+          const nextEvents = [...prevEvents, execEvent];
+          const isTextChunk = event.event_type === 'text_chunk';
+          return {
+            ...prev,
+            [agentKey]: {
+              ...prev[agentKey],
+              status: workflowEventStepStatus(event),
+              started_at: prev[agentKey]?.started_at || event.created_at || new Date().toISOString(),
+              completed_at: event.event_type === 'evidence_verified'
+                ? event.created_at || new Date().toISOString()
+                : prev[agentKey]?.completed_at,
+              duration_ms: event.latency_ms ?? prev[agentKey]?.duration_ms,
+              events: nextEvents,
+              logs: isTextChunk
+                ? (prev[agentKey]?.logs || [])
+                : appendStepLog(prev[agentKey], {
+                    timestamp: event.created_at || new Date().toISOString(),
+                    level: workflowEventLevel(event),
+                    message: event.message || '节点运行中。',
+                  }),
+            },
+          };
+        });
       } catch (err) {
-        console.error("Failed to parse workflow event:", err);
+        console.error('Failed to parse workflow event:', err);
       }
     }) as EventListener);
 
-    eventSource.addEventListener("workflow_done", ((e: MessageEvent) => {
-      let status = "completed";
+    // Unified workflow_done handler
+    eventSource.addEventListener('workflow_done', ((e: MessageEvent) => {
+      let status = 'completed';
       try {
         const done = JSON.parse((e as MessageEvent<string>).data) as { status?: string; run_id?: string };
         status = done.status || status;
       } catch {
-        // Ignore
+        // Ignore malformed done event
       }
+
+      cleanup();
       setIsStreaming(false);
       setIsConnected(false);
       setIsReconnecting(false);
-      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
-      eventSource.close();
-      if (status === "failed") {
-        const message = "章节生成失败";
-        onError?.(message, { type: "run_error", error: message });
+
+      if (status === 'failed') {
+        onError?.('章节生成失败', { type: 'run_error', error: '章节生成失败', run_id: runIdRef.current || undefined });
         return;
       }
-      // v6.8.4 Phase 5: blocked is NOT an error — it is a valid terminal state
-      if (status === "blocked") {
-        onComplete?.({ type: "run_complete" } as SSEEvent);
+      if (status === 'blocked') {
+        onComplete?.({ type: 'run_complete', run_id: runIdRef.current || undefined } as SSEEvent);
         return;
       }
-      onComplete?.({ type: "run_complete" });
+      onComplete?.({ type: 'run_complete', run_id: runIdRef.current || undefined });
     }) as EventListener);
 
-    eventSource.onmessage = () => {
-      // Legacy message handler - reset heartbeat on any message
-    };
+    // Legacy message handler (for backward compat)
+    eventSource.onmessage = ((e: MessageEvent<string>) => {
+      try {
+        const event: SSEEvent = JSON.parse(e.data);
+        setEvents((prev) => [...prev, event]);
 
+        if (event.type === 'preflight_warnings' && event.warnings) {
+          setPreflightWarnings(event.warnings);
+          return;
+        }
+
+        const agentKey = normalizeAgentKey(event.agent);
+        if (!agentKey && event.type !== 'run_complete' && event.type !== 'run_error') return;
+
+        switch (event.type) {
+          case 'step_start':
+            setSteps((prev) => ({
+              ...prev,
+              [agentKey]: {
+                ...prev[agentKey],
+                status: 'running',
+                started_at: event.timestamp || new Date().toISOString(),
+                logs: appendStepLog(prev[agentKey], {
+                  timestamp: event.timestamp || new Date().toISOString(),
+                  level: 'info',
+                  message: event.message || '节点已开始处理。',
+                }),
+              },
+            }));
+            break;
+
+          case 'step_complete':
+            setSteps((prev) => ({
+              ...prev,
+              [agentKey]: {
+                ...prev[agentKey],
+                status: 'completed',
+                duration_ms: event.duration_ms,
+                completed_at: event.timestamp || new Date().toISOString(),
+                logs: appendStepLog(prev[agentKey], {
+                  timestamp: event.timestamp || new Date().toISOString(),
+                  level: 'success',
+                  message: event.message || `节点处理完成${event.duration_ms ? `，耗时 ${event.duration_ms}ms` : ''}。`,
+                }),
+              },
+            }));
+            break;
+
+          case 'step_log':
+            setSteps((prev) => ({
+              ...prev,
+              [agentKey]: {
+                ...prev[agentKey],
+                status: prev[agentKey]?.status || 'running',
+                logs: appendStepLog(prev[agentKey], {
+                  timestamp: event.timestamp || new Date().toISOString(),
+                  level: event.level || 'info',
+                  message: event.message || '节点运行中。',
+                }),
+              },
+            }));
+            break;
+
+          case 'run_complete':
+            cleanup();
+            setIsStreaming(false);
+            setIsConnected(false);
+            onComplete?.(event);
+            break;
+
+          case 'run_error':
+            setError(event.error || '未知错误');
+            cleanup();
+            setIsStreaming(false);
+            setIsConnected(false);
+            onError?.(event.error || '未知错误', event);
+            break;
+        }
+      } catch (err) {
+        console.error('Failed to parse SSE event:', err);
+      }
+    }) as unknown as EventListener;
+
+    // Error handler with reconnection
     eventSource.onerror = () => {
       setIsConnected(false);
       eventSource.close();
       eventSourceRef.current = null;
-      // Auto-reconnect instead of permanent disconnect
-      if (storedUrlRef.current) {
-        triggerReconnect(storedUrlRef.current);
+
+      if (isStoppedRef.current) return;
+
+      // Auto-reconnect with exponential backoff
+      if (retryCountRef.current >= MAX_RETRIES) {
+        setError('连接断开，请刷新页面查看进度');
+        setIsStreaming(false);
+        setIsReconnecting(false);
+        return;
       }
+
+      setIsReconnecting(true);
+      const delay = Math.min(INITIAL_DELAY_MS * Math.pow(2, retryCountRef.current), MAX_DELAY_MS);
+      retryCountRef.current++;
+
+      reconnectTimerRef.current = setTimeout(() => {
+        if (isStoppedRef.current) return;
+        const baseUrl = streamUrlRef.current;
+        if (!baseUrl) return;
+        const resumeUrl = lastEventIdRef.current
+          ? `${baseUrl}&since_id=${lastEventIdRef.current}`
+          : baseUrl;
+        connectAndListen(resumeUrl);
+      }, delay);
     };
-  }, [triggerReconnect, onComplete, onError]);
+  }, [cleanup, onComplete, onError]);
 
   const startStream = useCallback((projectId: string, chapter: number) => {
+    isStoppedRef.current = false;
     setSteps({});
     setEvents([]);
     setPreflightWarnings([]);
     setError(null);
     setIsStreaming(true);
+    retryCountRef.current = 0;
+    lastEventIdRef.current = 0;
 
-    if (typeof EventSource === 'undefined') {
-      setError('浏览器不支持 SSE，请使用现代浏览器');
-      setIsStreaming(false);
-      return;
-    }
-
-    const launchAndObserve = async () => {
+    const launchAndConnect = async () => {
       const response = await fetch(apiUrl('/run/chapter/start'), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ project_id: projectId, chapter }),
       });
       const launch = await response.json();
+
       if (!launch.ok || !launch.data?.run_id) {
         const event: SSEEvent = {
           type: 'run_error',
@@ -288,199 +409,28 @@ export function useSSEStream(
       }
 
       const data = launch.data as LaunchResponse;
-      const runId = data.run_id;
+      runIdRef.current = data.run_id;
       onLaunch?.(data);
-      const url = apiUrl(`/projects/${encodeURIComponent(projectId)}/chapters/${chapter}/workflow-stream?run_id=${encodeURIComponent(runId)}`);
-      const eventSource = new EventSource(url);
-      eventSourceRef.current = eventSource;
 
-      eventSource.onopen = () => setIsConnected(true);
-
-      const handleLegacyMessage = (e: MessageEvent<string>) => {
-      try {
-        const event: SSEEvent = JSON.parse(e.data);
-        setEvents((prev) => [...prev, event]);
-
-        // v6.7.3: Handle preflight warnings from SSE stream
-        if (event.type === 'preflight_warnings' && event.warnings) {
-          setPreflightWarnings(event.warnings);
-          return;
-        }
-
-        switch (event.type) {
-          case 'step_start':
-            setSteps((prev) => ({
-              ...prev,
-              [normalizeAgentKey(event.agent)]: {
-                ...prev[normalizeAgentKey(event.agent)],
-                status: 'running',
-                started_at: event.timestamp || new Date().toISOString(),
-                logs: appendStepLog(prev[normalizeAgentKey(event.agent)], {
-                  timestamp: event.timestamp || new Date().toISOString(),
-                  level: 'info',
-                  message: event.message || '节点已开始处理，正在等待模型或工具返回。',
-                }),
-              },
-            }));
-            break;
-
-          case 'step_complete':
-            setSteps((prev) => ({
-              ...prev,
-              [normalizeAgentKey(event.agent)]: {
-                ...prev[normalizeAgentKey(event.agent)],
-                status: 'completed',
-                duration_ms: event.duration_ms,
-                completed_at: event.timestamp || new Date().toISOString(),
-                logs: appendStepLog(prev[normalizeAgentKey(event.agent)], {
-                  timestamp: event.timestamp || new Date().toISOString(),
-                  level: 'success',
-                  message: event.message || `节点处理完成${event.duration_ms ? `，耗时 ${event.duration_ms}ms` : ''}。`,
-                }),
-              },
-            }));
-            break;
-
-          case 'step_log':
-            setSteps((prev) => {
-              const agentKey = normalizeAgentKey(event.agent);
-              if (!agentKey) return prev;
-              return {
-                ...prev,
-                [agentKey]: {
-                  ...prev[agentKey],
-                  status: prev[agentKey]?.status || 'running',
-                  logs: appendStepLog(prev[agentKey], {
-                    timestamp: event.timestamp || new Date().toISOString(),
-                    level: event.level || 'info',
-                    message: event.message || '节点运行中。',
-                  }),
-                },
-              };
-            });
-            break;
-
-          case 'run_complete':
-            setIsStreaming(false);
-            eventSource.close();
-            onComplete?.(event);
-            break;
-
-          case 'run_error':
-            setError(event.error || '未知错误');
-            setSteps((prev) => {
-              const agentKey = normalizeAgentKey(event.agent);
-              if (agentKey) {
-                return {
-                  ...prev,
-                  [agentKey]: {
-                    ...prev[agentKey],
-                    status: 'failed',
-                    logs: appendStepLog(prev[agentKey], {
-                      timestamp: event.timestamp || new Date().toISOString(),
-                      level: 'error',
-                      message: event.error || '节点运行失败。',
-                    }),
-                  },
-                };
-              }
-              const runningKey = Object.entries(prev).find(([, step]) => step.status === 'running')?.[0];
-              if (!runningKey) return prev;
-              return {
-                ...prev,
-                [runningKey]: {
-                  ...prev[runningKey],
-                  status: 'failed',
-                  logs: appendStepLog(prev[runningKey], {
-                    timestamp: event.timestamp || new Date().toISOString(),
-                    level: 'error',
-                    message: event.error || '节点运行失败。',
-                  }),
-                },
-              };
-            });
-            setIsStreaming(false);
-            eventSource.close();
-            onError?.(event.error || '未知错误', event);
-            break;
-        }
-      } catch (err) {
-        console.error('Failed to parse SSE event:', err);
-      }
-      };
-
-      eventSource.onmessage = handleLegacyMessage;
-
-      eventSource.addEventListener('workflow_event', (e) => {
-        try {
-          const event = JSON.parse((e as MessageEvent<string>).data) as WorkflowStreamEvent;
-          const agentKey = normalizeAgentKey(event.node_name || event.agent_id);
-          if (!agentKey) return;
-          setSteps((prev) => ({
-            ...prev,
-            [agentKey]: {
-              ...prev[agentKey],
-              status: workflowEventStepStatus(event),
-              started_at: prev[agentKey]?.started_at || event.created_at || new Date().toISOString(),
-              completed_at: event.event_type === 'evidence_verified'
-                ? event.created_at || new Date().toISOString()
-                : prev[agentKey]?.completed_at,
-              duration_ms: event.latency_ms ?? prev[agentKey]?.duration_ms,
-              logs: appendStepLog(prev[agentKey], {
-                timestamp: event.created_at || new Date().toISOString(),
-                level: workflowEventLevel(event),
-                message: event.message || '节点运行中。',
-              }),
-            },
-          }));
-        } catch (err) {
-          console.error('Failed to parse workflow event:', err);
-        }
-      });
-
-      eventSource.addEventListener('workflow_done', (e) => {
-        let status = 'completed';
-        try {
-          const done = JSON.parse((e as MessageEvent<string>).data) as { status?: string; run_id?: string };
-          status = done.status || status;
-        } catch {
-          // Ignore malformed done event and still close the observer.
-        }
-        setIsStreaming(false);
-        setIsConnected(false);
-        eventSource.close();
-        if (status === 'failed' || status === 'blocked') {
-          const message = status === 'blocked' ? '章节生成被阻塞，需要人工处理' : '章节生成失败';
-          onError?.(message, { type: 'run_error', error: message, run_id: runId });
-          return;
-        }
-        onComplete?.({ type: 'run_complete', run_id: runId });
-      });
-
-      eventSource.onerror = () => {
-        const message = '直播连接断开，工作流仍在后台运行，可刷新查看进度';
-        setError(message);
-        setIsConnected(false);
-        setIsStreaming(false);
-        eventSource.close();
-      };
+      const url = apiUrl(`/projects/${encodeURIComponent(projectId)}/chapters/${chapter}/workflow-stream?run_id=${encodeURIComponent(data.run_id)}`);
+      streamUrlRef.current = url;
+      connectAndListen(url);
     };
 
-    launchAndObserve().catch((err) => {
+    launchAndConnect().catch((err) => {
       const message = err instanceof Error ? err.message : '启动章节生成失败';
       setError(message);
       setIsStreaming(false);
       onError?.(message);
     });
-  }, [onComplete, onError, onLaunch]);
+  }, [connectAndListen, onError, onLaunch]);
 
   useEffect(() => {
     return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
+      isStoppedRef.current = true;
+      cleanup();
     };
-  }, []);
+  }, [cleanup]);
 
   return { isConnected, isStreaming, isReconnecting, steps, events, preflightWarnings, error, startStream, stopStream };
 }

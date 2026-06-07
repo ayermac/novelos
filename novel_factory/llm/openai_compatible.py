@@ -13,7 +13,7 @@ from typing import Any
 
 import httpx
 from langchain_core.language_models.chat_models import BaseChatModel
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_openai import ChatOpenAI
 from tenacity import (
     Retrying,
@@ -25,6 +25,7 @@ from tenacity import (
 
 from ..config.settings import LLMConfig
 from .provider import LLMProvider
+from .types import ToolCall, ToolCallResponse
 from ..security.redaction import redact_sensitive_text
 
 logger = logging.getLogger(__name__)
@@ -150,7 +151,7 @@ class OpenAICompatibleProvider(LLMProvider):
             max_retries=0,
         )
 
-    def _to_lc_messages(self, messages: list[dict[str, str]]) -> list:
+    def _to_lc_messages(self, messages: list[dict[str, Any]]) -> list:
         """Convert dict messages to LangChain message objects."""
         result = []
         for msg in messages:
@@ -158,6 +159,25 @@ class OpenAICompatibleProvider(LLMProvider):
             content = msg.get("content", "")
             if role == "system":
                 result.append(SystemMessage(content=content))
+            elif role == "assistant":
+                tool_calls = msg.get("tool_calls")
+                if tool_calls:
+                    # Convert ToolCall objects to LC format (name, args, id)
+                    lc_tool_calls = []
+                    for tc in tool_calls:
+                        if isinstance(tc, dict):
+                            lc_tool_calls.append(tc)
+                        else:
+                            lc_tool_calls.append({
+                                "name": tc.name,
+                                "args": getattr(tc, "arguments", {}),
+                                "id": getattr(tc, "id", ""),
+                            })
+                    result.append(AIMessage(content=content or "", tool_calls=lc_tool_calls))
+                else:
+                    result.append(AIMessage(content=content or ""))
+            elif role == "tool":
+                result.append(ToolMessage(content=content or "", tool_call_id=msg.get("tool_call_id", "")))
             else:
                 result.append(HumanMessage(content=content))
         return result
@@ -805,6 +825,50 @@ class OpenAICompatibleProvider(LLMProvider):
             raise
         except Exception as e:
             self._handle_api_error(e, timeout_seconds=request_timeout_seconds)
+
+    def invoke_text_stream(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        agent_id: str = "unknown",
+        on_chunk: Any = None,
+        **kwargs: Any,
+    ) -> str:
+        """v6.10.0: Invoke LLM with streaming, calling on_chunk for each token."""
+        from .openai_streaming import stream_text
+        try:
+            content, pt, ct, dm = stream_text(
+                self.client, self._to_lc_messages, messages,
+                temperature=temperature, max_tokens=max_tokens, agent_id=agent_id, on_chunk=on_chunk,
+            )
+            self.last_token_usage = TokenUsage(prompt_tokens=pt, completion_tokens=ct, total_tokens=pt + ct, duration_ms=dm)
+            return content
+        except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
+            raise
+        except LLMError:
+            raise
+        except Exception as e:
+            self._handle_api_error(e)
+
+    def invoke_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[Any],
+        tool_choice: str = "auto",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """v6.10.0: Invoke LLM with function/tool calling support."""
+        from .openai_streaming import call_with_tools
+        try:
+            return call_with_tools(
+                self.client, self._to_lc_messages, messages, tools,
+                tool_choice=tool_choice, temperature=temperature, max_tokens=max_tokens,
+            )
+        except Exception as e:
+            self._handle_api_error(e)
 
     @staticmethod
     def _extract_json(text: str) -> str:

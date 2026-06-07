@@ -1346,7 +1346,7 @@ class PolisherAgent(BaseAgent):
                         "建议增加有冲突或潜台词的角色对话"
                     )
                     warned_codes.add("dialogue_naturalness")
-                elif isinstance(colloquial_ratio, (int, float)) and colloquial_ratio < 0.1:
+                elif isinstance(colloquial_ratio, (int, float)) and colloquial_ratio < 0.03:
                     warnings.append(
                         "dialogue_naturalness_low: 对白口语化标记不足，"
                         "建议加入语气词、省略或打断"

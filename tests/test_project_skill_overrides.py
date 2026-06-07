@@ -249,6 +249,7 @@ class TestProjectSkillOverridesRuntime:
                 "stage": "before_review",
                 "payload": {
                     "text": content,
+                    "content": content,
                     "chapter_number": 1,
                     "style_bible": {"forbidden_expressions": []},
                 },

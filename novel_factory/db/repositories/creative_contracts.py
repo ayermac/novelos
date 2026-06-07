@@ -224,3 +224,71 @@ class CreativeContractsRepositoryMixin:
         finally:
             conn.close()
 
+    # ── Editor Lens Reports ─────────────────────────────────────────
+
+    def upsert_editor_lens_report(
+        self,
+        project_id: str,
+        chapter_number: int,
+        lens_type: str,
+        report_data: dict,
+        workflow_run_id: str | None = None,
+    ) -> dict:
+        """Insert or update an editor lens report."""
+        conn = self._conn()
+        try:
+            now = datetime.now(timezone.utc).isoformat()
+            conn.execute(
+                """INSERT INTO editor_lens_reports
+                   (project_id, chapter_number, lens_type, report_data, workflow_run_id, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(project_id, chapter_number, lens_type, workflow_run_id) DO UPDATE SET
+                   report_data=excluded.report_data""",
+                (
+                    project_id,
+                    chapter_number,
+                    lens_type,
+                    json.dumps(report_data, ensure_ascii=False),
+                    workflow_run_id,
+                    now,
+                ),
+            )
+            conn.commit()
+            row = conn.execute(
+                "SELECT * FROM editor_lens_reports WHERE project_id=? AND chapter_number=? AND lens_type=? ORDER BY created_at DESC LIMIT 1",
+                (project_id, chapter_number, lens_type),
+            ).fetchone()
+            return row_to_dict(row)
+        finally:
+            conn.close()
+
+    def list_recent_lens_reports(
+        self,
+        project_id: str,
+        lens_type: str,
+        before_chapter: int | None = None,
+        limit: int = 5,
+    ) -> list[dict]:
+        """List recent editor lens reports for a project, optionally before a chapter."""
+        conn = self._conn()
+        try:
+            if before_chapter is not None:
+                rows = conn.execute(
+                    """SELECT * FROM editor_lens_reports
+                       WHERE project_id=? AND lens_type=? AND chapter_number < ?
+                       ORDER BY chapter_number DESC, created_at DESC
+                       LIMIT ?""",
+                    (project_id, lens_type, before_chapter, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT * FROM editor_lens_reports
+                       WHERE project_id=? AND lens_type=?
+                       ORDER BY chapter_number DESC, created_at DESC
+                       LIMIT ?""",
+                    (project_id, lens_type, limit),
+                ).fetchall()
+            return [row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+

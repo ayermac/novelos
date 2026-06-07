@@ -630,6 +630,12 @@ def run_with_graph(
     # (will be populated by health_check_node)
     state["workflow_run_id"] = workflow_run_id or ""
 
+    # v6.10.0: Create event queue for real-time SSE streaming
+    from .event_queue import get_event_queue_manager
+    event_queue = None
+    if workflow_run_id:
+        event_queue = get_event_queue_manager().get_or_create(workflow_run_id)
+
     # Derive checkpoint DB path from the main repository DB so checkpoints
     # always follow the data they belong to — never in the repo root.
     checkpoint_db_path = derive_checkpoint_db_path(repo.db_path)
@@ -649,6 +655,9 @@ def run_with_graph(
         logger.exception("LangGraph execution failed for project=%s chapter=%s", project_id, chapter_number)
         safe_error = redact_sensitive_text(str(e))
         _mark_run_failed(repo, state.get("workflow_run_id"), safe_error)
+        # v6.10.0: Mark event queue as done
+        if event_queue:
+            event_queue.mark_done("failed")
         return {
             "run_id": state.get("workflow_run_id", ""),
             "chapter_status": current_status,
@@ -667,6 +676,9 @@ def run_with_graph(
             result_state,
             result_state.get("current_node"),
         )
+        # v6.10.0: Mark event queue as done
+        if event_queue:
+            event_queue.mark_done("failed")
         return {
             "run_id": result_state.get("workflow_run_id", ""),
             "chapter_status": result_state.get("chapter_status"),
@@ -842,6 +854,7 @@ def run_with_graph_stream(
     # Track timing per agent
     agent_start_times: dict[str, float] = {}
     current_agent: str | None = None
+    event_queue = None  # v6.10.0: Lazy-initialized event queue
 
     # Derive checkpoint DB path from the main repository DB so checkpoints
     # always follow the data they belong to — never in the repo root.
@@ -867,6 +880,12 @@ def run_with_graph_stream(
                     # set by health_check/internal nodes are preserved.
                     if isinstance(node_output, dict):
                         state.update(node_output)
+
+                    # v6.10.0: Create event queue when run_id becomes available
+                    run_id_val = state.get("workflow_run_id", "")
+                    if run_id_val and event_queue is None:
+                        from .event_queue import get_event_queue_manager
+                        event_queue = get_event_queue_manager().get_or_create(run_id_val)
 
                     # Skip internal nodes for SSE events
                     if node_name in ("health_check", "task_discovery", "revision_router", "archive"):
@@ -912,6 +931,9 @@ def run_with_graph_stream(
                 state,
                 current_agent,
             )
+            # v6.10.0: Mark event queue as done
+            if event_queue:
+                event_queue.mark_done("failed")
             yield {
                 "type": "run_error",
                 "run_id": state.get("workflow_run_id", ""),
@@ -925,6 +947,10 @@ def run_with_graph_stream(
                 "duration_ms": state.get("duration_ms", 0),
             }
             return
+
+        # v6.10.0: Mark event queue as done
+        if event_queue:
+            event_queue.mark_done("completed")
 
         # Emit run_complete only after a coherent terminal graph outcome.
         yield {
@@ -942,6 +968,9 @@ def run_with_graph_stream(
         logger.exception("LangGraph streaming failed for project=%s chapter=%s", project_id, chapter_number)
         safe_error = redact_sensitive_text(str(e))
         _mark_run_failed(repo, state.get("workflow_run_id"), safe_error)
+        # v6.10.0: Mark event queue as done
+        if event_queue:
+            event_queue.mark_done("failed")
         yield {
             "type": "run_error",
             "run_id": state.get("workflow_run_id", ""),

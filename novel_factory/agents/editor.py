@@ -804,7 +804,10 @@ class EditorAgent(BaseAgent):
         strategy_decision = classify_editor_result(policy_input)
 
         # LLM says fail, but policy says advisory — override without losing the input snapshot.
-        if not output.pass_ and strategy_decision.category == "advisory":
+        # v6.10.0: Only override when the LLM score is borderline (>= 75),
+        # indicating potential over-harshness.  A clear LLM fail (< 75)
+        # should not be overturned by high skill scores alone.
+        if not output.pass_ and strategy_decision.category == "advisory" and output.score >= 75:
             strategy_decision = post_process_llm_decision(
                 output.pass_,
                 output.score,
@@ -825,7 +828,11 @@ class EditorAgent(BaseAgent):
                 editor_weights=editor_weights,
             )
 
-        if strategy_decision.pass_ and not output.pass_:
+        # v6.10.0: Only override a clear LLM rejection when the score is
+        # borderline (>= 75), indicating potential over-harshness.  A score
+        # below 75 is a genuine fail and should not be overturned by skill
+        # aggregation alone.
+        if strategy_decision.pass_ and not output.pass_ and output.score >= 75:
             logger.info("Editor strategy accepted advisory review: %s", strategy_decision.reason)
             output.pass_ = True
             output.revision_target = None
@@ -1008,7 +1015,7 @@ class EditorAgent(BaseAgent):
         if not self.skill_registry:
             return {}
 
-        skill_payload: dict[str, Any] = {"text": inputs.content, "chapter_number": inputs.chapter_number}
+        skill_payload: dict[str, Any] = {"text": inputs.content, "content": inputs.content, "chapter_number": inputs.chapter_number}
         try:
             bible_record = self.repo.get_style_bible(inputs.project_id)
             if bible_record:
@@ -1076,15 +1083,27 @@ class EditorAgent(BaseAgent):
 
             # v6.9.1: Unified parsing — no special-case branches per skill_id
             findings = parse_skill_findings(result["data"])
-            if not findings:
-                continue
 
-            findings = sort_findings_by_severity(findings)
-
-            # Collect skill score if available
+            # v6.10.0: Record skill score even when no findings are present.
+            # A clean skill run (score=100, no findings) is still a valid data
+            # point for aggregation.  Without this, only skills that emit
+            # warnings/blockings contribute, skewing the aggregate downward.
             skill_score = result["data"].get("score")
             if skill_score is not None:
                 skill_scores[skill_id] = float(skill_score)
+            elif not findings:
+                continue
+            else:
+                # Infer score from findings severity
+                findings = sort_findings_by_severity(findings)
+                has_blocking = any(f.severity in ("blocking", "critical") for f in findings)
+                has_warning = any(f.severity == "warning" for f in findings)
+                if has_blocking:
+                    skill_scores[skill_id] = 0.0
+                elif has_warning:
+                    skill_scores[skill_id] = 70.0
+                else:
+                    skill_scores[skill_id] = 100.0
 
             # Count blocking and warning findings
             for finding in findings:

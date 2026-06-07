@@ -32,6 +32,11 @@ class ExecutionEventRepositoryMixin:
         """Create a workflow execution event. Returns event id."""
         conn = self._conn()
         try:
+            # v6.10.0: Truncate message to prevent DB bloat from accidental
+            # large text storage (e.g. full chapter content in a single event).
+            safe_message = message
+            if safe_message and len(safe_message) > 1000:
+                safe_message = safe_message[:997] + "..."
             payload_json = json.dumps(payload, ensure_ascii=False) if payload else None
             artifact_refs_json = (
                 json.dumps(artifact_refs, ensure_ascii=False) if artifact_refs else None
@@ -44,7 +49,7 @@ class ExecutionEventRepositoryMixin:
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     run_id, project_id, chapter_number, node_name, agent_id,
-                    event_type, status, message, payload_json, artifact_refs_json,
+                    event_type, status, safe_message, payload_json, artifact_refs_json,
                     token_count, latency_ms,
                 ),
             )

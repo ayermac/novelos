@@ -16,7 +16,6 @@ BUILTIN_SKILLS = {
     "HumanizerZhSkill": None,  # Will be imported lazily
     "AIStyleDetectorSkill": None,
     "NarrativeQualityScorer": None,
-    "ImportedInstructionSkill": None,  # v3.8: imported skill handler
     "StyleBibleCheckerSkill": None,  # v4.0: style bible checker
     "ChapterObjectiveCheckerSkill": None,
     "SceneConflictCheckerSkill": None,
@@ -56,9 +55,6 @@ def _get_skill_class(class_name: str):
     elif class_name == "NarrativeQualityScorer":
         from .narrative_quality_scorer import NarrativeQualityScorer
         return NarrativeQualityScorer
-    elif class_name == "ImportedInstructionSkill":
-        from .import_bridge import ImportedInstructionSkill
-        return ImportedInstructionSkill
     elif class_name == "StyleBibleCheckerSkill":
         from .style_bible_checker import StyleBibleCheckerSkill
         return StyleBibleCheckerSkill

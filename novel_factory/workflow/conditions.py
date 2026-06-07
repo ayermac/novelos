@@ -282,9 +282,9 @@ def route_after_brief_validation(state: FactoryState) -> str:
     
     # Check for revision reason
     revision_reason = state.get("revision_reason", "")
-    if "missing_tier1_fields" in revision_reason or "missing_chapter_brief" in revision_reason:
+    if "missing_tier1_fields" in revision_reason or "missing_chapter_brief" in revision_reason or "missing_planner_output" in revision_reason:
         return "planner"
-    
+
     # Default: proceed to rhythm budget
     return "rhythm_budget_preflight"
 

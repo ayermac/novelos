@@ -67,7 +67,16 @@ class CharacterVoiceChecker(ValidatorSkill):
                 "message": "章节中未检测到对话",
                 "suggestion": "考虑增加对话以丰富角色互动",
             })
-            return 100, findings
+            return {
+                "ok": True,
+                "error": None,
+                "data": {
+                    "passed": True,
+                    "score": 100,
+                    "findings": findings,
+                    "summary": "章节中未检测到对话",
+                },
+            }
 
         # 2. 检查角色口吻一致性
         voice_score, voice_findings = self._check_voice_consistency(dialogues, characters)
@@ -158,8 +167,8 @@ class CharacterVoiceChecker(ValidatorSkill):
                     findings.append({
                         "severity": "warning",
                         "code": "INCONSISTENT_VOICE",
-                        "message": f"角色"{speaker}"口吻不一致",
-                        "suggestion": f"保持角色"{speaker}"的语气风格统一",
+                        "message": f'角色"{speaker}"口吻不一致',
+                        "suggestion": f'保持角色"{speaker}"的语气风格统一',
                     })
                     return 70, findings
 
@@ -186,8 +195,8 @@ class CharacterVoiceChecker(ValidatorSkill):
                 findings.append({
                     "severity": "info",
                     "code": "LOW_CHARACTER_PRESENCE",
-                    "message": f"角色"{name}"出场次数较少（{count}次）",
-                    "suggestion": f"考虑增加"{name}"的戏份或删除该角色",
+                    "message": f'角色"{name}"出场次数较少（{count}次）',
+                    "suggestion": f'考虑增加"{name}"的戏份或删除该角色',
                 })
                 return 85, findings
 

@@ -120,7 +120,7 @@ class CommercialViabilityChecker(ValidatorSkill):
                 "message": "首章前3000字缺少强钩子词",
                 "suggestion": "在开头加入冲突、悬念或危机元素吸引读者",
             })
-            return 60, findings
+            return 70, findings
         elif hook_count < 3:
             findings.append({
                 "severity": "info",

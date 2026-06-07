@@ -69,7 +69,11 @@ class InfoDumpDetector(ValidatorSkill):
             sentences = [s.strip() for s in re.split(r'[。！？]', para) if s.strip()]
             if len(sentences) >= 3:
                 # Heuristic: 3+ consecutive sentences without dialogue or action verbs
-                action_verbs = ["走", "跑", "站", "坐", "看", "听", "说", "拿", "推", "拉", "打", "踢", "跳", "爬"]
+                action_verbs = [
+                    "走", "跑", "站", "坐", "看", "听", "说", "拿", "推", "拉", "打", "踢", "跳", "爬",
+                    "击", "撞", "错", "绕", "靠", "玩", "翻", "抬", "扫", "问", "开", "回答",
+                    "移动", "后退", "前进", "转身", "侧头", "攥紧", "逼近", "弥漫", "回荡",
+                ]
                 action_count = sum(1 for s in sentences for v in action_verbs if v in s)
                 if action_count < len(sentences) * 0.3:
                     dump_paragraphs += 1

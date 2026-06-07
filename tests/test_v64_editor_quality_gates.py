@@ -324,7 +324,7 @@ class TestEditorAdvisoryIntegration:
             "state_card": {},
         }])
 
-        agent = EditorAgent(repo, stub, skill_registry=skill_registry or SkillRegistry())
+        agent = EditorAgent(repo, stub, skill_registry=skill_registry if skill_registry is not None else SkillRegistry())
         state: FactoryState = {
             "project_id": "test_proj",
             "chapter_number": 1,

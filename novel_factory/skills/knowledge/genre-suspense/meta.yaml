@@ -1,0 +1,20 @@
+skill_id: genre-suspense
+name: 悬疑写作规范
+description: |
+  悬疑/推理/惊悚题材的核心写作规范：线索布局、误导设计、揭示节奏、
+  真相反转、氛围营造。适用于悬疑、推理、惊悚等类型。
+tags:
+  - genre:suspense
+  - mystery
+  - thriller
+  - writing
+applicable_agents:
+  - planner
+  - screenwriter
+  - author
+  - editor
+applicable_genres:
+  - suspense
+  - mystery
+  - thriller
+version: "1.0"

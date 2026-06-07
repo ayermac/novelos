@@ -941,6 +941,21 @@ async def get_workflow_timeline(
 
 # ── v6.1: SSE Streaming Endpoint ───────────────────────────────
 
+
+def _normalize_timestamp(ts: str | None) -> str | None:
+    """Normalize timestamp to ISO 8601 format with timezone."""
+    if not ts:
+        return None
+    if "T" in ts and ("+" in ts or "Z" in ts or ts.endswith("00:00")):
+        return ts
+    try:
+        from datetime import datetime, timezone
+        dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+        return dt.replace(tzinfo=timezone.utc).isoformat()
+    except (ValueError, TypeError):
+        return ts
+
+
 @router.get("/projects/{project_id}/chapters/{chapter_number}/workflow-stream")
 async def workflow_stream_sse(
     request: Request,
@@ -1002,7 +1017,7 @@ async def workflow_stream_sse(
                         "payload": ev.get("payload", {}),
                         "token_count": ev.get("token_count"),
                         "latency_ms": ev.get("latency_ms"),
-                        "created_at": ev.get("created_at"),
+                        "created_at": _normalize_timestamp(ev.get("created_at")),
                     }
                     yield f"event: workflow_event\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
             except Exception as e:
@@ -1020,53 +1035,94 @@ async def workflow_stream_sse(
         heartbeat_interval = 10  # send heartbeat every ~15s (10 * 1.5s)
         heartbeat_counter = 0
         start = time.time()
-        while time.time() - start < max_poll_seconds:
-            # Check if client disconnected
-            if await request.is_disconnected():
-                break
 
-            # v6.8.4 Phase 1: Send heartbeat to prevent proxy timeout
-            heartbeat_counter += 1
-            if heartbeat_counter >= heartbeat_interval:
-                heartbeat_counter = 0
-                yield ":heartbeat\n\n"
+        # v6.10.0: Try real-time event queue first, fallback to DB polling
+        from ...workflow.event_queue import get_event_queue_manager
+        event_queue = get_event_queue_manager().get(run_id_str) if run_id_str else None
 
+        if event_queue and not event_queue.is_done:
+            # Real-time mode: subscribe to event queue
+            q = event_queue.subscribe()
             try:
-                new_events = repo.get_workflow_execution_events_since(
-                    run_id_str, since_id=last_event_id,
-                )
-                for ev in new_events:
-                    last_event_id = ev.get("id", 0)
+                while time.time() - start < max_poll_seconds:
+                    if await request.is_disconnected():
+                        break
+
+                    try:
+                        event = await asyncio.wait_for(q.get(), timeout=15.0)
+                    except asyncio.TimeoutError:
+                        # Send heartbeat
+                        yield ":heartbeat\n\n"
+                        continue
+
+                    if isinstance(event, dict) and event.get("type") == "done":
+                        done_payload = {"run_id": run_id_str, "status": event.get("status", "done")}
+                        yield f"event: workflow_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+                        return
+
+                    # Push event to client
                     payload = {
-                        "id": ev.get("id"),
+                        "id": event.get("id"),
                         "run_id": run_id_str,
-                        "node_name": ev.get("node_name"),
-                        "agent_id": ev.get("agent_id"),
-                        "event_type": ev.get("event_type"),
-                        "status": ev.get("status"),
-                        "message": ev.get("message"),
-                        "payload": ev.get("payload", {}),
-                        "token_count": ev.get("token_count"),
-                        "latency_ms": ev.get("latency_ms"),
-                        "created_at": ev.get("created_at"),
+                        "node_name": event.get("node_name"),
+                        "agent_id": event.get("agent_id"),
+                        "event_type": event.get("event_type"),
+                        "status": event.get("status"),
+                        "message": event.get("message"),
+                        "payload": event.get("payload", {}),
+                        "token_count": event.get("token_count"),
+                        "latency_ms": event.get("latency_ms"),
+                        "created_at": _normalize_timestamp(event.get("created_at")),
                     }
                     yield f"event: workflow_event\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
-            except Exception as e:
-                logger.warning("SSE event_generator error: %s", e, exc_info=True)
+            finally:
+                event_queue.unsubscribe(q)
+        else:
+            # Fallback: DB polling mode (legacy)
+            while time.time() - start < max_poll_seconds:
+                if await request.is_disconnected():
+                    break
 
-            # Check if run has completed
-            try:
-                current_run = _get_workflow_run_by_id(
-                    repo, project_id, chapter_number, run_id_str,
-                )
-                if current_run and current_run.get("status") in ("completed", "failed", "blocked", "cancelled"):
-                    done_payload = {"run_id": run_id_str, "status": current_run["status"]}
-                    yield f"event: workflow_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
-                    return
-            except Exception as e:
-                logger.warning("SSE event_generator error: %s", e, exc_info=True)
+                heartbeat_counter += 1
+                if heartbeat_counter >= heartbeat_interval:
+                    heartbeat_counter = 0
+                    yield ":heartbeat\n\n"
 
-            await asyncio.sleep(poll_interval)
+                try:
+                    new_events = repo.get_workflow_execution_events_since(
+                        run_id_str, since_id=last_event_id,
+                    )
+                    for ev in new_events:
+                        last_event_id = ev.get("id", 0)
+                        payload = {
+                            "id": ev.get("id"),
+                            "run_id": run_id_str,
+                            "node_name": ev.get("node_name"),
+                            "agent_id": ev.get("agent_id"),
+                            "event_type": ev.get("event_type"),
+                            "status": ev.get("status"),
+                            "message": ev.get("message"),
+                            "payload": ev.get("payload", {}),
+                            "token_count": ev.get("token_count"),
+                            "latency_ms": ev.get("latency_ms"),
+                            "created_at": ev.get("created_at"),
+                        }
+                        yield f"event: workflow_event\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
+                except Exception as e:
+                    logger.warning("SSE event_generator error: %s", e, exc_info=True)
+
+                try:
+                    current_run = _get_workflow_run_by_id(
+                        repo, project_id, chapter_number, run_id_str,
+                    )
+                    if current_run and current_run.get("status") in ("completed", "failed", "blocked", "cancelled"):
+                        done_payload = {"run_id": run_id_str, "status": current_run["status"]}
+                        yield f"event: workflow_done\ndata: {json.dumps(done_payload, ensure_ascii=False)}\n\n"
+                        return
+                except Exception as e:
+                    logger.warning("SSE run status check error: %s", e, exc_info=True)
+
+                await asyncio.sleep(poll_interval)
 
         # Timeout - emit done
         done_payload = {"run_id": run_id_str, "status": "timeout"}

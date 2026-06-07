@@ -1,0 +1,24 @@
+skill_id: style-consistency
+name: 风格一致性指南
+description: |
+  写作风格的定义、检测和维护：用词偏好、句式特征、叙事视角、
+  情感基调。确保全书风格统一，避免章节间风格跳跃。
+tags:
+  - style
+  - consistency
+  - voice
+  - tone
+applicable_agents:
+  - author
+  - polisher
+  - editor
+applicable_genres:
+  - xuanhuan
+  - urban
+  - xianxia
+  - system
+  - game
+  - fantasy
+  - romance
+  - suspense
+version: "1.0"

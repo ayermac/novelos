@@ -7,6 +7,7 @@ import re
 
 from .provider import LLMProvider
 from .openai_compatible import TokenUsage
+from .types import ToolCall, ToolCallResponse
 
 # Per-chapter content templates — keyed by chapter number for variety
 _STORY_TEMPLATES = {
@@ -542,3 +543,57 @@ class StubLLM(LLMProvider):
             "error": None,
         }
         return "{}"
+
+    def invoke_text_stream(
+        self,
+        messages,
+        temperature=None,
+        max_tokens=None,
+        agent_id="unknown",
+        on_chunk=None,
+        **kwargs,
+    ) -> str:
+        """Stub 模式：返回确定性内容，通过 on_chunk 回调模拟流式。"""
+        self.last_token_usage = TokenUsage(
+            prompt_tokens=50,
+            completion_tokens=100,
+            total_tokens=150,
+            duration_ms=30,
+        )
+        content = "这是 stub 模式的流式输出示例文本。"
+        if on_chunk:
+            # Simulate streaming in chunks
+            words = content.split("，")
+            for i, word in enumerate(words):
+                on_chunk(word + ("，" if i < len(words) - 1 else ""))
+        return content
+
+    def invoke_with_tools(
+        self,
+        messages,
+        tools,
+        tool_choice="auto",
+        temperature=None,
+        max_tokens=None,
+        **kwargs,
+    ) -> ToolCallResponse:
+        """Stub 模式：调用所有提供的 tools，返回 tool_calls."""
+        self.last_token_usage = TokenUsage(
+            prompt_tokens=50,
+            completion_tokens=50,
+            total_tokens=100,
+            duration_ms=20,
+        )
+        tool_calls = []
+        for tool in tools:
+            tool_calls.append(ToolCall(
+                id=f"stub_{tool.name}",
+                name=tool.name,
+                arguments={},
+            ))
+        return ToolCallResponse(
+            content=None,
+            tool_calls=tool_calls,
+            total_tokens=100,
+            rounds_used=1,
+        )

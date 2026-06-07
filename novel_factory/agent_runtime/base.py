@@ -40,12 +40,18 @@ class BaseAgent:
         skill_registry: Any | None = None,
         tool_registry: Any | None = None,
         trace_store: Any | None = None,
+        knowledge_manager: Any | None = None,
+        agent_config: dict[str, Any] | None = None,
+        on_text_chunk: Any | None = None,
     ) -> None:
         self.repo = repo
         self.llm = llm
         self.skill_registry = skill_registry
         self.tool_registry = tool_registry
         self.trace_store = trace_store
+        self.knowledge_manager = knowledge_manager
+        self.agent_config = agent_config or {}
+        self.on_text_chunk = on_text_chunk  # v6.10.0: Streaming callback
         self._role_profile: Any | None = None
         self._load_role_profile()
 
@@ -58,6 +64,141 @@ class BaseAgent:
                 logger.debug("Loaded role profile for %s", self.agent_id)
         except Exception:
             logger.debug("Role profile load failed for %s", self.agent_id, exc_info=True)
+
+    # ── v6.10.0: Agentic mode properties ─────────────────────
+
+    @property
+    def use_agentic_mode(self) -> bool:
+        """是否启用 agentic 模式（从配置读取）."""
+        return self.agent_config.get("agentic_mode", False)
+
+    @property
+    def max_tool_rounds(self) -> int:
+        """最大 tool calling 轮次."""
+        return self.agent_config.get("max_tool_rounds", 3)
+
+    def _get_project_genre(self, project_id: str) -> str | None:
+        """从项目配置获取 genre."""
+        if not self.repo:
+            return None
+        try:
+            project = self.repo.get_project(project_id)
+            return project.genre if project else None
+        except Exception:
+            return None
+
+    def _get_knowledge_context(self, agent_id: str, genre: str | None = None) -> str:
+        """获取所有相关知识 Skill 内容（非 agentic 模式用）."""
+        if not self.knowledge_manager:
+            return ""
+        skills = self.knowledge_manager.get_for_agent(agent_id, genre)
+        if not skills:
+            return ""
+        parts = [f"## {s.name}\n\n{s.content}" for s in skills]
+        return "\n\n---\n\n".join(parts)
+
+    def _invoke_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[Any],
+        tool_executor: Any,
+        max_tool_rounds: int | None = None,
+        exec_events: list[dict[str, Any]] | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """带 tool calling 的 LLM 调用循环.
+
+        1. 调用 LLM (with tools)
+        2. 如果 LLM 返回 tool_calls → 执行工具 → 结果加入 messages → 回到 1
+        3. 如果 LLM 返回文本响应 → 结束
+        """
+        from ..llm.types import AgentToolResponse
+
+        rounds = max_tool_rounds or self.max_tool_rounds
+        messages = list(messages)
+        total_tokens = 0
+        tool_results: list[dict[str, Any]] = []
+
+        for round_num in range(rounds):
+            # Log function call round start
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": "function_call_started",
+                    "message": f"Function Calling 第 {round_num + 1} 轮",
+                    "status": "info",
+                    "payload": {"round": round_num + 1, "max_rounds": rounds, "tool_count": len(tools)},
+                })
+
+            response = self.llm.invoke_with_tools(
+                messages=messages,
+                tools=tools,
+                **kwargs,
+            )
+            total_tokens += response.total_tokens
+
+            if not response.tool_calls:
+                # LLM returned text, no more tool calls
+                if exec_events is not None:
+                    exec_events.append({
+                        "event_type": "function_call_completed",
+                        "message": f"Function Calling 完成：{round_num + 1} 轮，{total_tokens} tokens",
+                        "status": "success",
+                        "payload": {"rounds_used": round_num + 1, "total_tokens": total_tokens},
+                    })
+                return AgentToolResponse(
+                    content=response.content,
+                    tool_results=tool_results,
+                    total_tokens=total_tokens,
+                    rounds_used=round_num + 1,
+                )
+
+            # Execute tool calls
+            messages.append({
+                "role": "assistant",
+                "tool_calls": [
+                    {"id": tc.id, "name": tc.name, "arguments": tc.arguments}
+                    for tc in response.tool_calls
+                ],
+            })
+
+            for tc in response.tool_calls:
+                result = tool_executor(tc.name, tc.arguments)
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result.content,
+                })
+                tool_results.append({"skill_id": tc.name, "content_length": len(result.content)})
+
+                # Log each tool call result
+                if exec_events is not None:
+                    exec_events.append({
+                        "event_type": "knowledge_tool_result",
+                        "message": f"知识工具 {tc.name} 返回 {len(result.content)} 字符",
+                        "status": "info",
+                        "payload": {
+                            "skill_id": tc.name,
+                            "tool_call_id": tc.id,
+                            "content_length": len(result.content),
+                            "round": round_num + 1,
+                        },
+                    })
+
+        # Max rounds exceeded
+        if exec_events is not None:
+            exec_events.append({
+                "event_type": "function_call_completed",
+                "message": f"Function Calling 达到最大轮次：{rounds} 轮，{total_tokens} tokens",
+                "status": "warning",
+                "payload": {"rounds_used": rounds, "total_tokens": total_tokens, "exceeded": True},
+            })
+        return AgentToolResponse(
+            content=None,
+            tool_results=tool_results,
+            exceeded_rounds=True,
+            total_tokens=total_tokens,
+            rounds_used=rounds,
+        )
 
     def _invoke_json(self, messages: list[dict[str, str]], **kwargs: Any) -> dict[str, Any]:
         """Invoke LLM with JSON output, passing agent_id if the provider accepts it.

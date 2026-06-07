@@ -201,7 +201,7 @@ class ExcitementDensityChecker(ValidatorSkill):
         # Determine pass/fail
         findings: list[dict[str, Any]] = []
 
-        if depression_ratio >= 0.7:
+        if depression_ratio >= 0.7 and depression_count >= 3:
             findings.append({
                 "code": "HIGH_DEPRESSION_RATIO",
                 "message": f"压抑内容占比过高（{depression_ratio:.0%}），爽点不足",

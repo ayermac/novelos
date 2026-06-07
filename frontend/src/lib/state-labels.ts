@@ -118,6 +118,14 @@ export const EVENT_NARRATIVE: Record<string, string> = {
   revision_context_loaded: '读取返修依据',
   revision_diff_generated: '生成返修改动',
   revision_followup_verified: '返修复核',
+  // v6.10.0: Knowledge Skill and Function Calling
+  knowledge_injected: '知识注入',
+  knowledge_agentic: '知识咨询',
+  function_call_started: 'Function Calling 开始',
+  function_call_completed: 'Function Calling 完成',
+  knowledge_tool_result: '知识工具结果',
+  // v6.10.0: Streaming text
+  text_chunk: '正文生成中',
 }
 
 export function tEventNarrative(eventType: string | undefined | null): string {

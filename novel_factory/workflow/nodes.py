@@ -186,6 +186,28 @@ def _log_node_event(
             token_count=token_count,
             latency_ms=latency_ms,
         )
+
+        # v6.10.0: Push to real-time event queue
+        try:
+            from .event_queue import get_event_queue_manager
+            queue = get_event_queue_manager().get(run_id)
+            if queue:
+                # Skip generic started/completed node_message (redundant with node_started/node_completed)
+                if event_type not in ("started", "completed") or error_message:
+                    queue.push({
+                        "run_id": run_id,
+                        "node_name": node_name,
+                        "agent_id": node_name,
+                        "event_type": event_type,
+                        "status": status or "info",
+                        "message": message,
+                        "payload": {},
+                        "token_count": token_count,
+                        "latency_ms": latency_ms,
+                        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    })
+        except Exception:
+            pass  # Never block on queue push
     except Exception:
         logger.warning(
             "Failed to log node event for %s/%s node=%s event=%s",
@@ -711,6 +733,25 @@ def create_node_runners(
     effective_tool_registry = _ensure_tool_registry()
     effective_trace_store = _ensure_trace_store(repo)
 
+    # v6.10.0: Initialize KnowledgeManager and agentic config from settings
+    knowledge_manager = None
+    agentic_config = {}
+    try:
+        from ..skills.knowledge_manager import KnowledgeManager
+        from pathlib import Path
+        knowledge_dir = str(Path(__file__).resolve().parent.parent / "skills" / "knowledge")
+        knowledge_manager = KnowledgeManager(knowledge_dir=knowledge_dir)
+
+        agentic_settings = getattr(settings, "agentic", None)
+        if agentic_settings and getattr(agentic_settings, "enabled", False):
+            for agent_id, agent_cfg in agentic_settings.agents.items():
+                agentic_config[agent_id] = {
+                    "agentic_mode": agent_cfg.agentic_mode,
+                    "max_tool_rounds": agent_cfg.max_tool_rounds,
+                }
+    except Exception:
+        logger.debug("KnowledgeManager init failed (non-fatal)", exc_info=True)
+
     def _run_agent_node(
         agent_name: str,
         agent_cls: type,
@@ -837,6 +878,35 @@ def create_node_runners(
                 "tool_registry": effective_tool_registry,
                 "trace_store": effective_trace_store,
             }
+            # v6.10.0: Inject knowledge_manager and agent_config
+            if knowledge_manager is not None:
+                agent_kwargs["knowledge_manager"] = knowledge_manager
+            if agent_name in agentic_config:
+                agent_kwargs["agent_config"] = agentic_config[agent_name]
+            # v6.10.0: Inject streaming callback for author
+            if agent_name == "author":
+                # Queue may not exist yet; callback looks it up dynamically
+                def _make_chunk_pusher():
+                    def _push_chunk(chunk: str):
+                        try:
+                            rid = state.get("workflow_run_id", "")
+                            if rid:
+                                # Single path: log_execution_event handles both DB + EventQueue
+                                from .execution_events import log_execution_event
+                                log_execution_event(
+                                    repo=repo,
+                                    state=state,
+                                    node_name="author",
+                                    event_type="text_chunk",
+                                    message=chunk,
+                                    agent_id="author",
+                                    status="info",
+                                    payload={"chunk_length": len(chunk)},
+                                )
+                        except Exception:
+                            pass  # Never break on queue push
+                    return _push_chunk
+                agent_kwargs["on_text_chunk"] = _make_chunk_pusher()
             if agent_name == "memory_curator":
                 fallback_llm = llm_router.for_agent_fallback(agent_name)
                 agent_kwargs["fallback_llm"] = fallback_llm
@@ -1121,13 +1191,24 @@ def task_discovery_node(state: FactoryState, repo: Repository) -> dict[str, Any]
     return {"has_instruction": has_instruction}
 
 
-def _v6_agent_kwargs(repo: Repository, skill_registry: Any | None = None) -> dict[str, Any]:
+def _v6_agent_kwargs(
+    repo: Repository,
+    skill_registry: Any | None = None,
+    knowledge_manager: Any | None = None,
+    agent_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """v6.0: Build shared kwargs for core agent instantiation in legacy mode."""
-    return {
+    kwargs: dict[str, Any] = {
         "skill_registry": _ensure_skill_registry(skill_registry),
         "tool_registry": _ensure_tool_registry(),
         "trace_store": _ensure_trace_store(repo),
     }
+    # v6.10.0: Inject knowledge manager and agentic config
+    if knowledge_manager is not None:
+        kwargs["knowledge_manager"] = knowledge_manager
+    if agent_config is not None:
+        kwargs["agent_config"] = agent_config
+    return kwargs
 
 
 def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
@@ -1624,9 +1705,10 @@ def quality_gate_node(state: FactoryState, repo: Repository, skill_registry=None
     if passed:
         _log_node_event(state, repo, "quality_gate", "passed", status="completed")
     else:
+        # v6.10.0: quality_gate failure is a routing decision, not an error
         _log_node_event(
             state, repo, "quality_gate", "failed",
-            status="failed",
+            status="warning",
             error_message=f"Quality gate failed: {len(blocking_issues)} blocking issues",
         )
 
