@@ -275,7 +275,17 @@ function buildWorkflowLogRows(
   let sortIndex = 0
 
   const pushRow = (row: WorkflowLogRow) => {
-    const dedupe = `${row.timestamp || ''}:${row.node}:${row.eventType}:${row.message}:${row.tokenCount || ''}:${row.latencyMs || ''}`
+    // v6.10.2: Normalize eventType for cross-source deduplication
+    // timeline node_started ↔ live live_node_started, etc.
+    const normalizedEventType =
+      row.eventType === 'live_node_started'
+        ? 'node_started'
+        : row.eventType === 'live_node_completed'
+          ? 'node_completed'
+          : row.eventType === 'live_task_log'
+            ? 'task_log'
+            : row.eventType
+    const dedupe = `${row.node}:${normalizedEventType}:${row.message}`
     if (seen.has(dedupe)) return
     seen.add(dedupe)
     rows.push({ ...row, sortIndex: sortIndex++ })
@@ -761,6 +771,7 @@ export default function AuthorWritingSurface({
             isGenerationLocked={isRunningAnotherChapter}
             runningWorkflowChapter={runningWorkflowChapter}
             projectId={projectId}
+            sseSteps={sseSteps}
             onGenerate={onGenerate}
             onConfirmRegenerate={onConfirmRegenerate}
             onRefreshContent={onRefreshContent}
@@ -829,6 +840,7 @@ function ContentBody({
   isGenerationLocked,
   runningWorkflowChapter,
   projectId,
+  sseSteps,
   onGenerate,
   onConfirmRegenerate,
   onRefreshContent,
@@ -847,6 +859,7 @@ function ContentBody({
   isGenerationLocked?: boolean
   runningWorkflowChapter?: number | null
   projectId: string
+  sseSteps?: Record<string, StepStatus>
   onGenerate: () => void
   onConfirmRegenerate?: () => void
   onRefreshContent?: () => void
@@ -885,6 +898,13 @@ function ContentBody({
     }
   }
 
+  // v6.10.2: Collect streaming text chunks from author node for live preview
+  const authorEvents = sseSteps?.author?.events || []
+  const streamingText = authorEvents
+    .filter((ev) => ev.event_type === 'text_chunk')
+    .map((ev) => ev.message || '')
+    .join('')
+
   const handleEditorContentSaved = useCallback(() => {
     onRefreshContent?.()
   }, [onRefreshContent])
@@ -899,6 +919,41 @@ function ContentBody({
           <div>
             <div className="content-generation-title">正文生成中</div>
             <div className="content-generation-desc">完成后会自动刷新正文内容。</div>
+          </div>
+        </div>
+      )}
+
+      {/* v6.10.2: Live streaming text preview during author node */}
+      {isStreaming && streamingText.length > 0 && (
+        <div
+          style={{
+            padding: '16px 20px',
+            background: 'var(--wb-paper)',
+            border: '1px solid var(--wb-border)',
+            borderRadius: 8,
+            marginBottom: 16,
+            fontSize: 14,
+            lineHeight: 1.8,
+            color: 'var(--wb-text-dark)',
+            maxHeight: 320,
+            overflow: 'auto',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 12,
+              color: 'var(--wb-text-dark-muted)',
+              marginBottom: 8,
+              display: 'flex',
+              justifyContent: 'space-between',
+            }}
+          >
+            <span>实时预览</span>
+            <span>{streamingText.length} 字</span>
+          </div>
+          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {streamingText}
+            <span style={{ color: 'var(--primary)', animation: 'blink 1s step-end infinite' }}>|</span>
           </div>
         </div>
       )}
