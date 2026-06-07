@@ -1499,6 +1499,19 @@ def _parse_db_datetime(value: str | None) -> datetime | None:
         return None
 
 
+def _normalize_timestamp(ts: str | None) -> str | None:
+    """Normalize timestamp to ISO 8601 format with UTC+8 timezone."""
+    if not ts:
+        return None
+    if "T" in ts and ("+" in ts or "Z" in ts or ts.endswith("00:00")):
+        return ts
+    try:
+        dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+        return dt.replace(tzinfo=timezone(timedelta(hours=8))).isoformat()
+    except (ValueError, TypeError):
+        return ts
+
+
 def _elapsed_minutes_since(value: str | None) -> float | None:
     started = _parse_db_datetime(value)
     if not started:
@@ -1810,7 +1823,7 @@ def _build_steps_timeline(
                             else f"{task_label}已开始处理。"
                         )
                         task_logs[agent_id].append({
-                            "timestamp": r["started_at"],
+                            "timestamp": _normalize_timestamp(r["started_at"]),
                             "level": "info",
                             "message": started_message,
                         })
@@ -1821,13 +1834,13 @@ def _build_steps_timeline(
                             else f"{task_label}已完成。"
                         )
                         task_logs[agent_id].append({
-                            "timestamp": r["completed_at"],
+                            "timestamp": _normalize_timestamp(r["completed_at"]),
                             "level": "success",
                             "message": completed_message,
                         })
                     elif r["status"] == "failed":
                         task_logs[agent_id].append({
-                            "timestamp": r["completed_at"] or r["started_at"],
+                            "timestamp": _normalize_timestamp(r["completed_at"] or r["started_at"]),
                             "level": "error",
                             "message": r["error_message"] or f"{task_label}失败。",
                         })

@@ -285,6 +285,7 @@ function buildWorkflowLogRows(
   const nodesWithTimelineEvents = new Set<string>()
 
   for (const node of timeline?.nodes || []) {
+    nodesWithTimelineEvents.add(node.node_name)
     if (node.started_at) {
       nodesWithTimelineEvents.add(node.node_name)
       pushRow({
@@ -314,25 +315,28 @@ function buildWorkflowLogRows(
         latencyMs: node.duration_ms,
       })
     }
-    // v6.10.1: Filter node_message events that duplicate node_started/node_completed
-    for (const message of node.messages || []) {
-      if (node.started_at && (message.includes('开始') || message.toLowerCase().includes('started'))) continue
-      if (node.completed_at && (message.includes('完成') || message.toLowerCase().includes('completed'))) continue
-      if (message.includes('跳过该节点')) continue
-      const level = logLevelFromStatus(node.status)
-      pushRow({
-        id: `node-message:${node.node_name}:${message}`,
-        source: 'timeline',
-        timestamp: node.completed_at || node.started_at,
-        node: node.node_name,
-        nodeLabel: node.label || tWorkflowNodeLabel(node.node_name),
-        category: logCategoryFromEvent('node_message', level),
-        level,
-        eventType: 'node_message',
-        message,
-      })
+    // v6.10.1: Filter all node_message when node has execution events (redundant noise)
+    const hasExecutionEvents = (node.events || []).length > 0
+    if (!hasExecutionEvents) {
+      for (const message of node.messages || []) {
+        if (message.includes('跳过该节点')) continue
+        const level = logLevelFromStatus(node.status)
+        pushRow({
+          id: `node-message:${node.node_name}:${message}`,
+          source: 'timeline',
+          timestamp: node.completed_at || node.started_at,
+          node: node.node_name,
+          nodeLabel: node.label || tWorkflowNodeLabel(node.node_name),
+          category: logCategoryFromEvent('node_message', level),
+          level,
+          eventType: 'node_message',
+          message,
+        })
+      }
     }
     for (const event of node.events || []) {
+      // v6.10.1: Skip text_chunk (streaming chunks, not log-worthy)
+      if (event.event_type === 'text_chunk') continue
       const level = logLevelFromStatus(event.status)
       const eventType = event.event_type || 'execution_event'
       pushRow({
