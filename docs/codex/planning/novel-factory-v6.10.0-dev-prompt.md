@@ -1662,3 +1662,37 @@ v6.10.0 建立双层架构后，后续可以：
 4. **用户自定义知识**：用户上传自己的写作规范作为知识 Skill
 5. **全 Agent 启用 Agentic**：验证 Author 后扩展到 Planner/Screenwriter/Editor
 6. **知识 Skill 间引用**：一个知识 Skill 可以引用另一个（如"爽文规范"引用"节奏指南"）
+
+## 实施记录
+
+### 已完成的额外工作
+
+**实时事件队列（EventQueue）**:
+- 新增 `novel_factory/workflow/event_queue.py` — 线程安全内存队列
+- 替代 DB 轮询，SSE 端点优先使用 EventQueue，降级到 DB 轮询
+- `log_execution_event()` 同时写 DB 和 EventQueue
+
+**正文流式输出**:
+- 新增 `novel_factory/llm/openai_streaming.py` — 流式调用实现
+- `LLMProvider.invoke_text_stream()` 接口
+- Author Agent 通过 `on_text_chunk` 回调推送 `text_chunk` 事件
+- 前端 `WorkflowTimeline` 实时渲染流式文本
+
+**日志清理**:
+- EventQueue 过滤 `started`/`completed` 重复事件
+- timeline API 过滤 `node_message` 和 `task_log` 噪音
+- 时间戳统一为 ISO 8601 格式
+
+**legacy 清理**:
+- 删除 `skill_packages/` 整个目录
+- 删除 `import_bridge.py`、`import_models.py`、`openclaw_readiness.py`
+- 删除 `cli_app/commands/skill_import.py`
+- 清理 `skills/registry.py` 死代码
+- 删除 5 个失效测试文件
+
+**前端增强**:
+- `WorkflowTimeline` 事件分组（LLM 调用合并、Function Calling 合并）
+- 质量问题高亮（黄色）、知识事件高亮（绿色）
+- `text_chunk` 流式文本实时渲染
+- `useSSEStream` 重写（统一事件处理、断线重连）
+- 新增事件标签（5 个 v6.10.0 事件类型）
