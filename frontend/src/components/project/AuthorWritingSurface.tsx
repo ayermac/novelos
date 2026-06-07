@@ -623,11 +623,16 @@ export default function AuthorWritingSurface({
   onViewWorkflow,
   onRefreshContent,
 }: AuthorWritingSurfaceProps) {
-  const hasContent = (chapterDetail?.word_count || 0) > 0
+  const hasContent = (chapterDetail?.word_count || 0) > 0 || Boolean(chapterDetail?.content?.trim())
   const status = currentChapterRecord?.status || ''
   const isTerminal = TERMINAL_CHAPTER_STATUSES.has(status)
   const isReviewedReal = status === 'reviewed' && llmMode === 'real'
-  const hasPreservedPlannedContent = status === 'planned' && (currentChapterRecord?.word_count || chapterDetail?.word_count || 0) > 0
+  // v6.10.3: Match backend check - planned + (content or word_count)
+  const hasPreservedPlannedContent = status === 'planned' && (
+    (currentChapterRecord?.word_count || 0) > 0 ||
+    (chapterDetail?.word_count || 0) > 0 ||
+    Boolean(chapterDetail?.content?.trim())
+  )
   const persistedQualityScore = chapterDetail?.quality_score ?? currentChapterRecord?.quality_score ?? null
   const qualityScore = persistedQualityScore
   const statusLabel = tChapterStatus(status)

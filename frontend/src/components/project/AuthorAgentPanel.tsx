@@ -166,6 +166,7 @@ export default function AuthorAgentPanel({
     isProjectWorkflowRunning && runningWorkflowChapter && runningWorkflowChapter !== currentChapter
   )
   const isWorkflowActive = isStreaming || isWorkflowRunning || effectiveRunStatus === 'running' || isRunningAnotherChapter
+  // v6.10.3: Match backend check - planned + hasContent (word_count > 0)
   const hasPreservedPlannedContent = status === 'planned' && hasContent
   const needsRecovery = status === 'blocking' || status === 'revision'
   const canShowPrimaryAction = activeTab !== 'workflow'
