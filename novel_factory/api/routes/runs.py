@@ -564,10 +564,10 @@ async def reset_run_chapter(
             return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
         current_status = chapter.get("status", "")
-        if current_status not in ("blocking", "revision", "planned"):
+        if current_status not in ("blocking", "revision", "planned", "review"):
             return error_response(
                 "INVALID_STATUS",
-                f"章节状态为 '{current_status}'，仅 'blocking'、'revision' 或 'planned' 状态可恢复",
+                f"章节状态为 '{current_status}'，仅 'blocking'、'revision'、'planned' 或 'review' 状态可恢复",
                 details={"current_status": current_status},
             )
 
@@ -1398,7 +1398,7 @@ def _build_recovery_state(
     retry_count = repo.get_chapter_retry_count(project_id, chapter_number)
     stuck_info = _detect_stuck_run(repo, run_data, timeout_minutes)
     can_mark_stuck = bool(stuck_info.get("stuck", False)) and chapter_status != "unknown"
-    can_reset = chapter_status in ("blocking", "revision", "planned")
+    can_reset = chapter_status in ("blocking", "revision", "planned", "review")
     retry_target = _node_retry_target(run_data.get("current_node"))
     can_retry_node = bool(retry_target and chapter_status in ("blocking", "revision"))
     reason = None
@@ -1497,6 +1497,19 @@ def _parse_db_datetime(value: str | None) -> datetime | None:
         return datetime.fromisoformat(normalized).replace(tzinfo=timezone(timedelta(hours=8)))
     except Exception:
         return None
+
+
+def _normalize_timestamp(ts: str | None) -> str | None:
+    """Normalize timestamp to ISO 8601 format with UTC+8 timezone."""
+    if not ts:
+        return None
+    if "T" in ts and ("+" in ts or "Z" in ts or ts.endswith("00:00")):
+        return ts
+    try:
+        dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+        return dt.replace(tzinfo=timezone(timedelta(hours=8))).isoformat()
+    except (ValueError, TypeError):
+        return ts
 
 
 def _elapsed_minutes_since(value: str | None) -> float | None:
@@ -1810,7 +1823,7 @@ def _build_steps_timeline(
                             else f"{task_label}已开始处理。"
                         )
                         task_logs[agent_id].append({
-                            "timestamp": r["started_at"],
+                            "timestamp": _normalize_timestamp(r["started_at"]),
                             "level": "info",
                             "message": started_message,
                         })
@@ -1821,13 +1834,13 @@ def _build_steps_timeline(
                             else f"{task_label}已完成。"
                         )
                         task_logs[agent_id].append({
-                            "timestamp": r["completed_at"],
+                            "timestamp": _normalize_timestamp(r["completed_at"]),
                             "level": "success",
                             "message": completed_message,
                         })
                     elif r["status"] == "failed":
                         task_logs[agent_id].append({
-                            "timestamp": r["completed_at"] or r["started_at"],
+                            "timestamp": _normalize_timestamp(r["completed_at"] or r["started_at"]),
                             "level": "error",
                             "message": r["error_message"] or f"{task_label}失败。",
                         })

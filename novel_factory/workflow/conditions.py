@@ -147,7 +147,7 @@ def route_by_chapter_status(state: FactoryState) -> str:
     to prevent stale state from reaching Agent write nodes.
 
     v5.3.0: Planner 必经 - planned status without instruction routes to planner.
-    v6.9.0: POLISHED/REVIEW routes to editor_lenses instead of editor.
+    POLISHED/REVIEW routes to editor.
     """
     # Safety gate: upstream error or human flag always takes priority
     if state.get("requires_human") or state.get("error"):
@@ -161,8 +161,8 @@ def route_by_chapter_status(state: FactoryState) -> str:
         ChapterStatus.PLANNED.value: "screenwriter",  # Default, but see v5.3.0 check below
         ChapterStatus.SCRIPTED.value: "author",
         ChapterStatus.DRAFTED.value: "polisher",
-        ChapterStatus.POLISHED.value: "editor_lenses",  # v6.9.0: use editor_lenses
-        ChapterStatus.REVIEW.value: "editor_lenses",  # v6.9.0: use editor_lenses
+        ChapterStatus.POLISHED.value: "editor",
+        ChapterStatus.REVIEW.value: "editor",
         ChapterStatus.REVIEWED.value: "publisher",
         ChapterStatus.PUBLISHED.value: "archive",  # Terminal: already published
         ChapterStatus.BLOCKING.value: "human_review",
@@ -282,9 +282,9 @@ def route_after_brief_validation(state: FactoryState) -> str:
     
     # Check for revision reason
     revision_reason = state.get("revision_reason", "")
-    if "missing_tier1_fields" in revision_reason or "missing_chapter_brief" in revision_reason:
+    if "missing_tier1_fields" in revision_reason or "missing_chapter_brief" in revision_reason or "missing_planner_output" in revision_reason:
         return "planner"
-    
+
     # Default: proceed to rhythm budget
     return "rhythm_budget_preflight"
 
@@ -322,8 +322,8 @@ def route_by_revision_type(state: FactoryState) -> str:
             ChapterStatus.PLANNED.value: "planner",
             ChapterStatus.SCRIPTED.value: "author",
             ChapterStatus.DRAFTED.value: "polisher",
-            ChapterStatus.POLISHED.value: "editor_lenses",  # v6.9.0
-            ChapterStatus.REVIEW.value: "editor_lenses",  # v6.9.0
+            ChapterStatus.POLISHED.value: "editor",
+            ChapterStatus.REVIEW.value: "editor",
             ChapterStatus.REVIEWED.value: "publisher",
             ChapterStatus.PUBLISHED.value: "archive",
             ChapterStatus.BLOCKING.value: "human_review",

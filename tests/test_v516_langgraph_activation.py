@@ -173,8 +173,8 @@ class TestRoutingEquivalence:
             ("planned", "screenwriter", {"has_instruction": True}),  # has instruction
             ("scripted", "author"),
             ("drafted", "polisher"),
-            ("polished", "editor_lenses"),  # v6.9.0: use editor_lenses
-            ("review", "editor_lenses"),  # v6.9.0: use editor_lenses
+            ("polished", "editor"),
+            ("review", "editor"),
             ("reviewed", "publisher"),
             ("published", "archive"),       # v5.1.6 fix: published → archive (terminal)
             ("blocking", "human_review"),

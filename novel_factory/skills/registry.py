@@ -74,106 +74,13 @@ class SkillRegistry:
             self.skills_config = {}
             self.agent_skills = {}
 
-        # v3.8: Auto-discover imported skill packages
-        self._discover_imported_skills()
-
-    def _discover_imported_skills(self) -> None:
-        """Scan skill_packages/ for imported skills and register them.
-
-        Imported skills are added to skills_config with enabled=false so
-        they can be inspected via ``skills show/test``, but they are NOT
-        added to agent_skills (no auto-mount).
-        """
-        packages_dir = self.config_path.parent.parent / "skill_packages"
-        if not packages_dir.is_dir():
-            return
-
-        for pkg_dir in sorted(packages_dir.iterdir()):
-            if not pkg_dir.is_dir():
-                continue
-
-            manifest_path = pkg_dir / "manifest.yaml"
-            if not manifest_path.exists():
-                continue
-
-            try:
-                with open(manifest_path, "r", encoding="utf-8") as f:
-                    manifest_data = yaml.safe_load(f)
-            except Exception:
-                continue
-
-            # Only register imported_instruction skills
-            if not isinstance(manifest_data, dict):
-                continue
-            if manifest_data.get("kind") != "imported_instruction":
-                continue
-
-            skill_id = manifest_data.get("id")
-            if not skill_id or skill_id in self.skills_config:
-                continue
-
-            # Register with safe defaults
-            self.skills_config[skill_id] = {
-                "enabled": manifest_data.get("enabled", False),
-                "package": f"skill_packages/{pkg_dir.name}",
-                "type": manifest_data.get("kind", "context"),
-                "class": manifest_data.get("class_name", "ImportedInstructionSkill"),
-                "description": manifest_data.get("description", ""),
-                "config": {},
-                "_imported": True,  # marker for imported skills
-            }
-
-            logger.info(f"Auto-discovered imported skill: {skill_id}")
-    
+    # v6.10.0: Package loading removed — stubs for backward compatibility
     def _resolve_package_manifest_path(self, package_path: str) -> Optional[Path]:
-        """Resolve package manifest path with security validation.
-        
-        Args:
-            package_path: Package relative path (e.g., "skill_packages/humanizer_zh")
-            
-        Returns:
-            Resolved manifest path or None if invalid
-            
-        Security:
-            - Rejects absolute paths
-            - Rejects paths with ".." (directory traversal)
-            - Rejects paths outside repository
-        """
-        # Security: reject absolute paths
-        if Path(package_path).is_absolute():
-            logger.error(f"Package path must be relative: {package_path}")
-            return None
-        
-        # Security: reject directory traversal
-        if ".." in package_path:
-            logger.error(f"Package path contains directory traversal: {package_path}")
-            return None
-        
-        roots = [
-            self.config_path.parent.parent,
-            Path(__file__).parent.parent,
-        ]
-
-        for root in roots:
-            full_path = root / package_path / "manifest.yaml"
-
-            # Security: ensure path stays under the intended root
-            try:
-                full_path.resolve().relative_to(root.resolve())
-            except ValueError:
-                logger.error(f"Package path outside repository: {package_path}")
-                continue
-
-            if full_path.exists():
-                return full_path
-
-        logger.warning(
-            "Package manifest not found for %s under roots: %s",
-            package_path,
-            [str(root) for root in roots],
-        )
         return None
-    
+
+    def _load_skill_from_package(self, package_path: str, class_name: str, skill_id: str) -> Optional[type]:
+        return None
+
     def get_manifest(self, skill_id: str) -> Optional[SkillManifest]:
         """Get manifest for a skill.
 
@@ -346,65 +253,6 @@ class SkillRegistry:
             return {}
         entry = skills.get(skill_id, {})
         return entry if isinstance(entry, dict) else {}
-    
-    def _load_skill_from_package(
-        self, 
-        package_path: str, 
-        entry_class: str
-    ) -> Optional[type]:
-        """Load skill class from package handler.
-        
-        Args:
-            package_path: Package relative path (e.g., "skill_packages/humanizer_zh")
-            entry_class: Entry class name (e.g., "HumanizerZhSkill")
-            
-        Returns:
-            Skill class or None if failed
-            
-        Security:
-            - Only allows loading from novel_factory.skill_packages.*
-            - Validates package path is within repository
-        """
-        # Security: validate package path
-        manifest_path = self._resolve_package_manifest_path(package_path)
-        if not manifest_path:
-            logger.error(f"Invalid package path: {package_path}")
-            return None
-        
-        # Extract package name from path
-        # e.g., "skill_packages/humanizer_zh" -> "humanizer_zh"
-        package_name = Path(package_path).name
-        
-        # Construct module path
-        # e.g., "novel_factory.skill_packages.humanizer_zh.handler"
-        module_path = f"novel_factory.skill_packages.{package_name}.handler"
-        
-        try:
-            import importlib
-            module = importlib.import_module(module_path)
-            
-            # Get entry class from module
-            if not hasattr(module, entry_class):
-                logger.error(f"Module {module_path} has no class {entry_class}")
-                return None
-            
-            skill_class = getattr(module, entry_class)
-            
-            # Validate it's a BaseSkill subclass
-            from .base import BaseSkill
-            if not issubclass(skill_class, BaseSkill):
-                logger.error(f"Class {entry_class} is not a BaseSkill subclass")
-                return None
-            
-            logger.info(f"Loaded skill class {entry_class} from {module_path}")
-            return skill_class
-            
-        except ImportError as e:
-            logger.error(f"Failed to import module {module_path}: {e}")
-            return None
-        except Exception as e:
-            logger.error(f"Failed to load skill from package {package_path}: {e}")
-            return None
     
     def run_skill(
         self,
@@ -706,40 +554,6 @@ class SkillRegistry:
         except Exception as e:
             logger.error(f"Failed to save skill config: {e}")
             raise
-
-    def can_register_imported_skill(self, skill_id: str, force: bool = False) -> tuple[bool, str]:
-        """Check whether an imported skill config entry can be registered."""
-        existing = self.skills_config.get(skill_id)
-        if not existing:
-            return True, ""
-        if not force:
-            return False, f"Skill '{skill_id}' already exists"
-        if not existing.get("_imported") and existing.get("class") != "ImportedInstructionSkill":
-            return False, f"Skill '{skill_id}' exists and is not an imported skill"
-        return True, ""
-
-    def register_imported_skill(
-        self,
-        skill_id: str,
-        package_path: str,
-        description: str = "",
-        force: bool = False,
-    ) -> tuple[bool, str]:
-        """Register an imported package skill as disabled and unmounted."""
-        ok, msg = self.can_register_imported_skill(skill_id, force=force)
-        if not ok:
-            return ok, msg
-
-        self.skills_config[skill_id] = {
-            "enabled": False,
-            "package": package_path,
-            "type": "context",
-            "class": "ImportedInstructionSkill",
-            "description": description or "Imported instruction skill",
-            "config": {},
-            "_imported": True,
-        }
-        return True, ""
 
     def set_skill_enabled(self, skill_id: str, enabled: bool) -> tuple[bool, str]:
         """Set a skill's enabled flag without changing mounts."""

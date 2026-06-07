@@ -35,23 +35,31 @@ class ContinuityGateSkill(ValidatorSkill):
             return {
                 "ok": False,
                 "error": "缺少 content 字段",
-                "data": {"passed": False, "severity": "blocking", "issues": ["正文为空"], "suggestions": [], "should_block_publish": True},
+                "data": {
+                    "passed": False,
+                    "score": 0,
+                    "findings": [{"severity": "blocking", "code": "EMPTY_CONTENT", "message": "正文为空", "suggestion": "请提供章节正文"}],
+                    "summary": "正文为空，无法进行连续性检查",
+                },
             }
 
         if not repo or not project_id or not chapter_number:
             # Can only run title check without repo
             from ..quality.continuity_gate import _check_title
             issues, suggestions, evidence = _check_title(title, content)
+            findings = []
+            for issue in issues:
+                findings.append({"severity": "warning", "code": "TITLE_ISSUE", "message": issue, "suggestion": ""})
+            for suggestion in suggestions:
+                findings.append({"severity": "info", "code": "TITLE_SUGGESTION", "message": "", "suggestion": suggestion})
             return {
                 "ok": True,
                 "error": None,
                 "data": {
                     "passed": not issues,
-                    "severity": "warning" if issues else "pass",
-                    "issues": issues,
-                    "suggestions": suggestions,
-                    "should_block_publish": False,
-                    "evidence": evidence,
+                    "score": 100 if not issues else 80,
+                    "findings": findings,
+                    "summary": f"标题检查完成，发现 {len(issues)} 个问题" if issues else "标题检查通过",
                 },
             }
 
@@ -59,14 +67,35 @@ class ContinuityGateSkill(ValidatorSkill):
             result = evaluate_chapter_continuity(
                 repo, project_id, chapter_number, content, title=title,
             )
+            # Convert to unified schema
+            findings = []
+            for issue in result.issues:
+                severity = "blocking" if result.severity == "blocking" else "warning"
+                findings.append({"severity": severity, "code": "CONTINUITY_ISSUE", "message": issue, "suggestion": ""})
+            for suggestion in result.suggestions:
+                findings.append({"severity": "info", "code": "CONTINUITY_SUGGESTION", "message": "", "suggestion": suggestion})
+            
+            score = 100 if result.passed else (60 if result.severity == "blocking" else 80)
+            summary = f"连续性检查{'通过' if result.passed else '未通过'}，发现 {len(result.issues)} 个问题"
+            
             return {
                 "ok": result.passed,
                 "error": "; ".join(result.issues) if not result.passed else None,
-                "data": result.to_dict(),
+                "data": {
+                    "passed": result.passed,
+                    "score": score,
+                    "findings": findings,
+                    "summary": summary,
+                },
             }
         except Exception as e:
             return {
                 "ok": False,
                 "error": f"连续性检查异常: {e}",
-                "data": {"passed": False, "severity": "blocking", "issues": [str(e)], "suggestions": [], "should_block_publish": True},
+                "data": {
+                    "passed": False,
+                    "score": 0,
+                    "findings": [{"severity": "blocking", "code": "CONTINUITY_ERROR", "message": str(e), "suggestion": "请检查章节数据完整性"}],
+                    "summary": f"连续性检查异常: {e}",
+                },
             }

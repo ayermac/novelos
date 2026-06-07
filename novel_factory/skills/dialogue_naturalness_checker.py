@@ -42,13 +42,15 @@ class DialogueNaturalnessChecker(ValidatorSkill):
         dialogue_ratio = dialogue_chars / total_chars
 
         # 1. Ratio check
+        # v6.10.0: Raised floor for low-dialogue scenes (e.g. action/combat)
+        # so that a single outlier skill cannot single-handedly fail a review.
         ratio_score = 0.0
         if 0.1 <= dialogue_ratio <= 0.5:
             ratio_score = 50
         elif dialogue_ratio > 0.05:
-            ratio_score = 30
+            ratio_score = 35
         else:
-            ratio_score = 10
+            ratio_score = 30
 
         # 2. Colloquial marker check
         colloquial_count = 0

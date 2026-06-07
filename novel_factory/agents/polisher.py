@@ -746,6 +746,18 @@ class PolisherAgent(BaseAgent):
                     "_exec_events": exec_events,
                 }
 
+        # v6.10.3: If polisher is in revision chain but falls back to passthrough
+        # (e.g. model content_filter), do not waste editor tokens on unchanged
+        # content and do not consume a revision retry. Route directly to human_review
+        # since the model cannot execute the revision.
+        if in_revision_chain and passthrough_mode:
+            return {
+                "error": "Polisher 返修失败：模型输出不可用，无法执行返修润色",
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": True,
+                "_exec_events": exec_events,
+            }
+
         current_status = state.get("chapter_status")
         expected_status = (
             ChapterStatus.REVISION.value
@@ -921,6 +933,8 @@ class PolisherAgent(BaseAgent):
             "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
             "不要输出 JSON、字段名、Markdown、解释或摘要。"
             "必须保留剧情事实、关键事件、伏笔和角色动机。"
+            "润色时只改善语言和节奏，不要扩写情节或增加新场景；"
+            "润色后总字数不得超过原稿字数的 110%。"
         )
         if dp_text:
             system_content = f"{system_content}\n\n{dp_text}"
@@ -986,6 +1000,8 @@ class PolisherAgent(BaseAgent):
                 "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
                 "不要输出 JSON、字段名、Markdown、解释或摘要。"
                 "必须保留剧情事实、关键事件、伏笔和角色动机。"
+                "润色时只改善语言和节奏，不要扩写情节或增加新场景；"
+                "润色后总字数不得超过原稿字数的 110%。"
             )
             if _dp_txt:
                 _sys = f"{_sys}\n\n{_dp_txt}"
@@ -1030,6 +1046,7 @@ class PolisherAgent(BaseAgent):
             segment_instruction = (
                 f"【分段润色】本段为第{segment_num}/{total_chunks}段，"
                 f"请润色以下段落，保持剧情事实不变。"
+                f"注意：润色后本段字数不得超过原段落字数的 110%，不要扩写。"
             )
             if idx > 0:
                 segment_instruction += " 请确保与上文衔接自然。"
@@ -1043,6 +1060,8 @@ class PolisherAgent(BaseAgent):
                 "你是网文工厂的润色编辑。请只输出润色后的完整正文纯文本，"
                 "不要输出 JSON、字段名、Markdown、解释或摘要。"
                 "必须保留剧情事实、关键事件、伏笔和角色动机。"
+                "润色时只改善语言和节奏，不要扩写情节或增加新场景；"
+                "润色后的本段字数不得超过原段落字数的 110%。"
             )
             if _dp_mc_txt:
                 _sys_mc = f"{_sys_mc}\n\n{_dp_mc_txt}"
@@ -1125,6 +1144,31 @@ class PolisherAgent(BaseAgent):
             # v6.8.0: Skip segment_completed logging (reduces noise)
 
         merged_content = "\n\n".join(segment_outputs)
+
+        # v6.9.0: Post-merge word-count guard against cumulative segment bloat.
+        # Each segment may expand slightly; when concatenated the total can
+        # exceed the safe upper bound. If that happens, discard the bloated
+        # output and keep the original draft so the chapter does not enter a
+        # compression → retry loop.
+        from ..validators.chapter_checker import count_words as _total_wc
+        original_wc = _total_wc(content)
+        merged_wc = _total_wc(merged_content)
+        if merged_wc > original_wc * 1.25:
+            logger.warning(
+                "Polisher segmented merge over-expanded: %d -> %d (+%.0f%%), "
+                "falling back to original draft",
+                original_wc, merged_wc, (merged_wc / original_wc - 1) * 100,
+            )
+            return PolisherOutput(
+                content=content,
+                fact_change_risk="none",
+                changed_scope=["passthrough"],
+                summary=f"分段润色总字数异常膨胀({original_wc}->{merged_wc})，保留原稿",
+                fixed_quality_findings=[],
+                deferred_quality_findings=[],
+                quality_risk_note=None,
+            )
+
         return PolisherOutput(
             content=merged_content,
             fact_change_risk="none",
@@ -1174,7 +1218,8 @@ class PolisherAgent(BaseAgent):
             compressed = self._invoke_text_for_polisher(
                 messages,
                 temperature=0.45,
-                max_tokens=max(2048, min(config_max, int(maximum_allowed * 1.25))),
+                # v6.9.0: Chinese text needs ~2-2.5 tokens per character, use 2.5x
+                max_tokens=max(2048, min(config_max, int(maximum_allowed * 2.5))),
                 max_retries=None,
                 request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
             ).strip()
@@ -1313,7 +1358,7 @@ class PolisherAgent(BaseAgent):
                         "建议增加有冲突或潜台词的角色对话"
                     )
                     warned_codes.add("dialogue_naturalness")
-                elif isinstance(colloquial_ratio, (int, float)) and colloquial_ratio < 0.1:
+                elif isinstance(colloquial_ratio, (int, float)) and colloquial_ratio < 0.03:
                     warnings.append(
                         "dialogue_naturalness_low: 对白口语化标记不足，"
                         "建议加入语气词、省略或打断"

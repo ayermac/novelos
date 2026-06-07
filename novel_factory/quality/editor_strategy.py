@@ -42,6 +42,8 @@ class EditorPolicyInput:
 
     This is the single source of truth for classify_editor_result().
     No policy-relevant field may be missing.
+
+    v6.9.1: Added skill aggregation fields for multi-skill scoring.
     """
     score: float
     pass_: bool
@@ -55,6 +57,12 @@ class EditorPolicyInput:
     seam_advisory_count: int = 0
     retry_count: int = 0
     max_retries: int = 3
+    # v6.9.1: Skill aggregation fields
+    skill_weighted_score: float = 0.0
+    blocking_skill_count: int = 0
+    warning_skill_count: int = 0
+    skill_scores: dict[str, float] = field(default_factory=dict)
+    editor_weights: dict[str, float] = field(default_factory=dict)
 
 
 # ── Hard issue markers ──────────────────────────────────────────────
@@ -179,6 +187,39 @@ def count_issue_types(issues: list[str] | str | None) -> tuple[int, int, int]:
     return blocking, priority, advisory
 
 
+def aggregate_skill_scores(
+    skill_scores: dict[str, float],
+    editor_weights: dict[str, float] | None = None,
+) -> float:
+    """Aggregate skill scores with genre-based weighting.
+
+    v6.9.1: Calculates weighted average of skill scores.
+
+    Args:
+        skill_scores: Dict mapping skill_id to score (0-100).
+        editor_weights: Optional genre-based weights. If None, all weights are 1.0.
+
+    Returns:
+        Weighted average score (0-100).
+    """
+    if not skill_scores:
+        return 0.0
+
+    weights = editor_weights or {}
+    total_weighted = 0.0
+    total_weight = 0.0
+
+    for skill_id, score in skill_scores.items():
+        weight = weights.get(skill_id, 1.0)
+        total_weighted += score * weight
+        total_weight += weight
+
+    if total_weight == 0:
+        return 0.0
+
+    return total_weighted / total_weight
+
+
 def build_policy_input(
     *,
     score: float,
@@ -194,16 +235,23 @@ def build_policy_input(
     seam_advisory_count: int = 0,
     retry_count: int = 0,
     max_retries: int = 3,
+    skill_weighted_score: float = 0.0,
+    blocking_skill_count: int = 0,
+    warning_skill_count: int = 0,
+    skill_scores: dict[str, float] | None = None,
+    editor_weights: dict[str, float] | None = None,
 ) -> EditorPolicyInput:
     """Build EditorPolicyInput from the raw editor state.
 
     This helper counts issue types and merges all inputs into the
     single policy input dataclass.
+
+    v6.9.1: Added skill aggregation parameters.
     """
     blocking_count, priority_count, advisory_count = count_issue_types(issues)
 
     # Merge hard gates
-    effective_blocking = blocking_count + (1 if has_death_penalty else 0) + (1 if has_hard_word_fail else 0) + (1 if has_blocking else 0) + seam_blocking_count
+    effective_blocking = blocking_count + (1 if has_death_penalty else 0) + (1 if has_hard_word_fail else 0) + (1 if has_blocking else 0) + seam_blocking_count + blocking_skill_count
 
     return EditorPolicyInput(
         score=score,
@@ -218,6 +266,11 @@ def build_policy_input(
         seam_advisory_count=seam_advisory_count,
         retry_count=retry_count,
         max_retries=max_retries,
+        skill_weighted_score=skill_weighted_score,
+        blocking_skill_count=blocking_skill_count,
+        warning_skill_count=warning_skill_count,
+        skill_scores=skill_scores or {},
+        editor_weights=editor_weights or {},
     )
 
 
@@ -278,20 +331,44 @@ def classify_editor_result(
 
 
 def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
-    """Internal: classify from EditorPolicyInput."""
-    # Rule 1: Hard blocking
-    if p.death_penalty or p.blocking_issue_count > 0:
+    """Internal: classify from EditorPolicyInput.
+
+    v6.9.1: Added skill-based scoring rules.
+    """
+    # Rule 1: Hard blocking (including skill blocking)
+    if p.death_penalty or p.blocking_issue_count > 0 or p.blocking_skill_count > 0:
+        blocking_reason = []
+        if p.death_penalty:
+            blocking_reason.append("death penalty")
+        if p.blocking_issue_count > 0:
+            blocking_reason.append(f"{p.blocking_issue_count} blocking issues")
+        if p.blocking_skill_count > 0:
+            blocking_reason.append(f"{p.blocking_skill_count} blocking skills")
         return EditorDecision(
             pass_=False,
             revision_needed=True,
             category="blocking",
-            reason="存在 blocking issue（death penalty / hard word fail / 硬冲突）",
+            reason=f"存在 blocking 问题（{', '.join(blocking_reason)}）",
             recommended_action="必须返修或人工介入",
+        )
+
+    # Rule 1.5: Skill weighted score check
+    # Use skill_weighted_score if available, otherwise fall back to LLM score
+    effective_score = p.skill_weighted_score if p.skill_weighted_score > 0 else p.score
+
+    # Rule 1.6: Low skill weighted score
+    if p.skill_weighted_score > 0 and p.skill_weighted_score < 70:
+        return EditorDecision(
+            pass_=False,
+            revision_needed=True,
+            category="revision",
+            reason=f"skill加权分数 {p.skill_weighted_score:.0f} < 70，需要返修",
+            recommended_action="路由回对应 Agent 返修",
         )
 
     # Effective priority = LLM priority + quality priority + seam blocking
     effective_priority = p.priority_issue_count + p.quality_priority_count + p.seam_blocking_count
-    advisory_signal_count = p.advisory_issue_count + p.quality_advisory_count + p.seam_advisory_count
+    advisory_signal_count = p.advisory_issue_count + p.quality_advisory_count + p.seam_advisory_count + p.warning_skill_count
 
     # Near-miss plateau guard: after at least one retry, a borderline
     # review with no actionable priority/blocking issue should not loop
@@ -324,15 +401,15 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
             recommended_action="停止自动返修，进入人工审核",
         )
 
-    # Rule 3: score >= 85
-    if p.score >= 85:
+    # Rule 3: score >= 85 (using effective_score which considers skill weighted score)
+    if effective_score >= 85:
         if advisory_signal_count > 0 and effective_priority == 0:
             return EditorDecision(
                 pass_=True,
                 revision_needed=False,
                 category="advisory",
                 decision_type="advisory_pass",
-                reason="审核分 >= 85，所有问题（含诊断）均为 advisory",
+                reason=f"审核分 {effective_score:.0f} >= 85，所有问题（含诊断）均为 advisory",
                 recommended_action="进入 awaiting_publish with warnings，不自动返修",
             )
         return EditorDecision(
@@ -340,12 +417,12 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
             revision_needed=False,
             category="advisory",
             decision_type="advisory_pass",
-            reason="分数 >= 85 且无 blocking issues",
+            reason=f"分数 {effective_score:.0f} >= 85 且无 blocking issues",
             recommended_action="进入 awaiting_publish 或 human_review（带 warning）",
         )
 
     # Rule 4 & 5: score 80-84
-    if p.score >= 80:
+    if effective_score >= 80:
         if effective_priority == 0:
             # Advisory only — advisory_pass, NOT auto revision
             return EditorDecision(
@@ -353,7 +430,7 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
                 revision_needed=False,
                 category="advisory",
                 decision_type="advisory_pass",
-                reason="分数 80-84，advisory issues / quality diagnosis 可接受",
+                reason=f"分数 {effective_score:.0f} 80-84，advisory issues / quality diagnosis 可接受",
                 recommended_action="推荐 human_review 或 awaiting_publish with warnings",
             )
         # Has priority issues -> revision
@@ -361,7 +438,7 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
             pass_=False,
             revision_needed=True,
             category="revision",
-            reason="分数 80-84 但存在高优先级问题，需要返修",
+            reason=f"分数 {effective_score:.0f} 80-84 但存在高优先级问题，需要返修",
             recommended_action="路由回对应 Agent 返修",
         )
 
@@ -370,7 +447,7 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
         pass_=False,
         revision_needed=True,
         category="revision",
-        reason="分数 < 80，需要自动返修",
+        reason=f"分数 {effective_score:.0f} < 80，需要自动返修",
         recommended_action="路由回对应 Agent 返修",
     )
 
@@ -419,11 +496,18 @@ def post_process_llm_decision(
     seam_advisory_count: int = 0,
     retry_count: int = 0,
     max_retries: int = 3,
+    skill_weighted_score: float = 0.0,
+    blocking_skill_count: int = 0,
+    warning_skill_count: int = 0,
+    skill_scores: dict[str, float] | None = None,
+    editor_weights: dict[str, float] | None = None,
 ) -> EditorDecision:
     """Post-process LLM's pass/fail decision with deterministic policy.
 
     Corrects LLM over-harshness (advisory-only flagged as fail)
     and enforces hard blocking rules.
+
+    v6.9.1: Added skill aggregation parameters.
     """
     policy_input = build_policy_input(
         score=score,
@@ -439,6 +523,11 @@ def post_process_llm_decision(
         seam_advisory_count=seam_advisory_count,
         retry_count=retry_count,
         max_retries=max_retries,
+        skill_weighted_score=skill_weighted_score,
+        blocking_skill_count=blocking_skill_count,
+        warning_skill_count=warning_skill_count,
+        skill_scores=skill_scores,
+        editor_weights=editor_weights,
     )
     decision = classify_editor_result(policy_input)
 

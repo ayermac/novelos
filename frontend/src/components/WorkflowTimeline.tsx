@@ -51,6 +51,8 @@ interface Props {
 const EVENT_TYPE_LABELS: Record<string, string> = {
   context_loaded: '上下文加载',
   llm_started: 'LLM 调用开始',
+  llm_request_detail: 'LLM 请求参数',
+  llm_response_detail: 'LLM 响应详情',
   llm_completed: 'LLM 调用完成',
   llm_failed: 'LLM 调用失败',
   long_form_generation: '长文生成模式',
@@ -63,6 +65,14 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   revision_context_loaded: '返修依据',
   revision_diff_generated: '返修改动',
   revision_followup_verified: '返修复核',
+  // v6.10.0: Knowledge Skill and Function Calling
+  knowledge_injected: '知识注入',
+  knowledge_agentic: '知识咨询',
+  function_call_started: 'Function Calling',
+  function_call_completed: 'Function Calling 完成',
+  knowledge_tool_result: '知识工具调用',
+  // v6.10.0: Streaming text
+  text_chunk: '正文生成中',
 }
 
 function eventLabel(eventType: string): string {
@@ -81,6 +91,89 @@ function safePayload(ev: WorkflowExecutionEvent): Record<string, unknown> {
     return ev.payload as Record<string, unknown>
   }
   return {}
+}
+
+// v6.10.0: Event classification for visual hierarchy
+function isQualityIssue(ev: WorkflowExecutionEvent): boolean {
+  if (ev.status === 'error' || ev.status === 'warning') return true
+  const type = ev.event_type
+  return type === 'self_check_completed' || type === 'scene_beat_coverage_warning' || type === 'screenwriter_inheritance_check'
+}
+
+function isKnowledgeEvent(ev: WorkflowExecutionEvent): boolean {
+  const type = ev.event_type
+  return type === 'knowledge_injected' || type === 'knowledge_agentic' || type === 'function_call_started' || type === 'function_call_completed' || type === 'knowledge_tool_result'
+}
+
+function isNoiseEvent(ev: WorkflowExecutionEvent): boolean {
+  // Filter out low-value events that clutter the timeline
+  if (ev.event_type === 'node_message' && ev.message?.includes('跳过该节点')) return true
+  // v6.10.1: Filter node_message that duplicates node_started/node_completed
+  if (ev.event_type === 'node_message') {
+    const msg = ev.message || ''
+    if (msg.includes('开始') || msg.toLowerCase().includes('started')) return true
+    if (msg.includes('完成') || msg.toLowerCase().includes('completed')) return true
+  }
+  // text_chunk events are rendered separately as streaming text
+  if (ev.event_type === 'text_chunk') return true
+  return false
+}
+
+// v6.10.0: Group consecutive LLM detail events into a collapsible block
+function groupEvents(events: WorkflowExecutionEvent[]): Array<{
+  type: 'single' | 'llm_group' | 'function_call_group'
+  events: WorkflowExecutionEvent[]
+}> {
+  const groups: Array<{ type: 'single' | 'llm_group' | 'function_call_group'; events: WorkflowExecutionEvent[] }> = []
+  let i = 0
+
+  while (i < events.length) {
+    const ev = events[i]
+
+    // Group LLM request detail + response detail + completed into one block
+    if (ev.event_type === 'llm_request_detail' || ev.event_type === 'llm_started') {
+      const llmGroup: WorkflowExecutionEvent[] = [ev]
+      i++
+      while (i < events.length) {
+        const next = events[i]
+        if (next.event_type === 'llm_request_detail' || next.event_type === 'llm_response_detail' || next.event_type === 'llm_completed' || next.event_type === 'llm_failed') {
+          llmGroup.push(next)
+          i++
+        } else {
+          break
+        }
+      }
+      if (llmGroup.length > 1) {
+        groups.push({ type: 'llm_group', events: llmGroup })
+      } else {
+        groups.push({ type: 'single', events: llmGroup })
+      }
+      continue
+    }
+
+    // Group function calling events
+    if (ev.event_type === 'function_call_started') {
+      const fcGroup: WorkflowExecutionEvent[] = [ev]
+      i++
+      while (i < events.length) {
+        const next = events[i]
+        if (next.event_type === 'knowledge_tool_result' || next.event_type === 'function_call_completed') {
+          fcGroup.push(next)
+          i++
+          if (next.event_type === 'function_call_completed') break
+        } else {
+          break
+        }
+      }
+      groups.push({ type: 'function_call_group', events: fcGroup })
+      continue
+    }
+
+    groups.push({ type: 'single', events: [ev] })
+    i++
+  }
+
+  return groups
 }
 
 function stepStatusIcon(step: Step): string {
@@ -279,33 +372,125 @@ export default function WorkflowTimeline({ steps, compact = false, preflightWarn
                           <span className="evidence-badge evidence-pass">证据校验通过</span>
                         )}
                       </div>
-                      {step.events!.map((ev, idx) => {
-                        const payload = safePayload(ev)
-                        const isLowChange = payload.low_change_warning === true
-                        const hasMeta = (ev.latency_ms != null && ev.latency_ms > 0) || (ev.token_count != null && ev.token_count > 0)
-                        return (
-                          <div key={ev.id || `ev-${idx}`} className={`exec-event exec-event-${ev.status || 'info'}${isLowChange ? ' exec-event-low-change' : ''}`}>
-                            <span className="exec-event-dot" />
-                            <span className="exec-event-main">
-                              <span className="exec-event-type">{eventLabel(ev.event_type)}</span>
-                              <span className="exec-event-msg">{eventMessage(ev)}</span>
-                              {isLowChange && (
-                                <span className="exec-event-warn-tag">内容几乎未变</span>
-                              )}
-                            </span>
-                            {hasMeta && (
-                              <span className="exec-event-metas">
-                                {ev.token_count != null && ev.token_count > 0 && (
-                                  <span className="exec-event-meta">{ev.token_count} tokens</span>
+                      {(() => {
+                        // Filter noise and group events
+                        const filtered = step.events!.filter((ev) => !isNoiseEvent(ev))
+                        const grouped = groupEvents(filtered)
+
+                        return grouped.map((group, gIdx) => {
+                          if (group.type === 'llm_group') {
+                            // Collapsed LLM group: show summary
+                            const request = group.events.find((e) => e.event_type === 'llm_request_detail')
+                            const response = group.events.find((e) => e.event_type === 'llm_response_detail')
+                            const failed = group.events.find((e) => e.event_type === 'llm_failed')
+                            const reqPayload = request ? safePayload(request) : {}
+                            const resPayload = response ? safePayload(response) : {}
+                            const usage = (resPayload.usage || {}) as Record<string, unknown>
+
+                            return (
+                              <div key={`llm-${gIdx}`} className="exec-event exec-event-info exec-event-llm-group">
+                                <span className="exec-event-dot" />
+                                <span className="exec-event-main">
+                                  <span className="exec-event-type">LLM 调用</span>
+                                  <span className="exec-event-msg">
+                                    {reqPayload.model ? `${reqPayload.model}` : ''}
+                                    {reqPayload.call_type ? ` (${reqPayload.call_type})` : ''}
+                                    {usage.total_tokens ? ` · ${usage.total_tokens} tokens` : ''}
+                                    {usage.duration_ms ? ` · ${((usage.duration_ms as number) / 1000).toFixed(1)}s` : ''}
+                                  </span>
+                                  {failed && <span className="exec-event-warn-tag">失败</span>}
+                                </span>
+                              </div>
+                            )
+                          }
+
+                          if (group.type === 'function_call_group') {
+                            // Function calling group
+                            const completed = group.events.find((e) => e.event_type === 'function_call_completed')
+                            const toolResults = group.events.filter((e) => e.event_type === 'knowledge_tool_result')
+                            const completePayload = completed ? safePayload(completed) : {}
+
+                            return (
+                              <div key={`fc-${gIdx}`} className="exec-event exec-event-knowledge exec-event-fc-group">
+                                <span className="exec-event-dot" />
+                                <span className="exec-event-main">
+                                  <span className="exec-event-type">知识咨询</span>
+                                  <span className="exec-event-msg">
+                                    {toolResults.length} 个工具 · {String(completePayload.rounds_used || '?')} 轮
+                                    {completePayload.total_tokens ? ` · ${String(completePayload.total_tokens)} tokens` : ''}
+                                  </span>
+                                </span>
+                                <div className="exec-event-fc-tools">
+                                  {toolResults.map((tr, tIdx) => {
+                                    const trPayload = safePayload(tr)
+                                    return (
+                                      <div key={tIdx} className="exec-event-fc-tool">
+                                        <span className="exec-event-fc-tool-name">{String(trPayload.skill_id || '')}</span>
+                                        <span className="exec-event-fc-tool-size">{String(trPayload.content_length || 0)} 字符</span>
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            )
+                          }
+
+                          // Single event
+                          const ev = group.events[0]
+                          const payload = safePayload(ev)
+                          const isLowChange = payload.low_change_warning === true
+                          const hasMeta = (ev.latency_ms != null && ev.latency_ms > 0) || (ev.token_count != null && ev.token_count > 0)
+                          const isQuality = isQualityIssue(ev)
+                          const isKnowledge = isKnowledgeEvent(ev)
+
+                          return (
+                            <div
+                              key={ev.id || `ev-${gIdx}`}
+                              className={`exec-event exec-event-${ev.status || 'info'}${isLowChange ? ' exec-event-low-change' : ''}${isQuality ? ' exec-event-quality' : ''}${isKnowledge ? ' exec-event-knowledge' : ''}`}
+                            >
+                              <span className="exec-event-dot" />
+                              <span className="exec-event-main">
+                                <span className="exec-event-type">{eventLabel(ev.event_type)}</span>
+                                <span className="exec-event-msg">{eventMessage(ev)}</span>
+                                {isLowChange && (
+                                  <span className="exec-event-warn-tag">内容几乎未变</span>
                                 )}
-                                {ev.latency_ms != null && ev.latency_ms > 0 && (
-                                  <span className="exec-event-meta">{(ev.latency_ms / 1000).toFixed(1)}s</span>
+                                {isQuality && ev.status === 'warning' && (
+                                  <span className="exec-event-warn-tag">需关注</span>
                                 )}
                               </span>
-                            )}
+                              {hasMeta && (
+                                <span className="exec-event-metas">
+                                  {ev.token_count != null && ev.token_count > 0 && (
+                                    <span className="exec-event-meta">{ev.token_count} tokens</span>
+                                  )}
+                                  {ev.latency_ms != null && ev.latency_ms > 0 && (
+                                    <span className="exec-event-meta">{(ev.latency_ms / 1000).toFixed(1)}s</span>
+                                  )}
+                                </span>
+                              )}
+                            </div>
+                          )
+                        })
+                      })()}
+                      {/* v6.10.0: Streaming text display */}
+                      {(() => {
+                        const textChunks = step.events!.filter((ev) => ev.event_type === 'text_chunk')
+                        if (textChunks.length === 0) return null
+                        const streamingText = textChunks.map((ev) => ev.message || '').join('')
+                        return (
+                          <div className="exec-event-streaming-text">
+                            <div className="exec-event-streaming-header">
+                              <span className="exec-event-type">实时生成</span>
+                              <span className="exec-event-meta">{streamingText.length} 字</span>
+                            </div>
+                            <div className="exec-event-streaming-content">
+                              {streamingText.slice(-500)}
+                              {step.status === 'running' && <span className="streaming-cursor">|</span>}
+                            </div>
                           </div>
                         )
-                      })}
+                      })()}
                     </div>
                   )}
                   {isExpanded && hasArtifacts && (
@@ -613,6 +798,96 @@ export default function WorkflowTimeline({ steps, compact = false, preflightWarn
           color: var(--text-muted);
           font-variant-numeric: tabular-nums;
           white-space: nowrap;
+        }
+        /* v6.10.0: LLM group style */
+        .wf-timeline .exec-event-llm-group {
+          padding: 4px 6px;
+          background: color-mix(in srgb, var(--primary) 6%, transparent);
+          border-radius: 4px;
+          margin: 2px -6px;
+        }
+        /* v6.10.0: Quality issue highlight */
+        .wf-timeline .exec-event-quality {
+          padding: 4px 6px;
+          background: color-mix(in srgb, var(--warning) 8%, transparent);
+          border-radius: 4px;
+          margin: 2px -6px;
+        }
+        .wf-timeline .exec-event-quality.exec-event-error {
+          background: color-mix(in srgb, var(--danger) 8%, transparent);
+        }
+        /* v6.10.0: Knowledge event style */
+        .wf-timeline .exec-event-knowledge {
+          padding: 4px 6px;
+          background: color-mix(in srgb, var(--success) 8%, transparent);
+          border-radius: 4px;
+          margin: 2px -6px;
+        }
+        .wf-timeline .exec-event-knowledge .exec-event-type {
+          color: var(--success);
+          background: color-mix(in srgb, var(--success) 14%, transparent);
+        }
+        /* v6.10.0: Function calling group */
+        .wf-timeline .exec-event-fc-group {
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 4px;
+        }
+        .wf-timeline .exec-event-fc-tools {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 4px;
+          padding-left: 12px;
+          margin-top: 2px;
+        }
+        .wf-timeline .exec-event-fc-tool {
+          display: flex;
+          align-items: center;
+          gap: 4px;
+          padding: 1px 6px;
+          background: color-mix(in srgb, var(--success) 12%, transparent);
+          border-radius: 3px;
+          font-size: 11px;
+        }
+        .wf-timeline .exec-event-fc-tool-name {
+          font-weight: 500;
+          color: var(--success);
+        }
+        .wf-timeline .exec-event-fc-tool-size {
+          color: var(--text-muted);
+          font-size: 10px;
+        }
+        /* v6.10.0: Streaming text display */
+        .wf-timeline .exec-event-streaming-text {
+          padding: 8px 10px;
+          background: color-mix(in srgb, var(--primary) 5%, transparent);
+          border: 1px solid color-mix(in srgb, var(--primary) 15%, transparent);
+          border-radius: 6px;
+          margin-top: 6px;
+        }
+        .wf-timeline .exec-event-streaming-header {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          margin-bottom: 6px;
+        }
+        .wf-timeline .exec-event-streaming-content {
+          font-size: 12px;
+          line-height: 1.8;
+          color: var(--text-primary);
+          white-space: pre-wrap;
+          max-height: 300px;
+          overflow-y: auto;
+          font-family: 'Georgia', 'Noto Serif SC', serif;
+        }
+        .wf-timeline .streaming-cursor {
+          animation: blink 1s step-end infinite;
+          color: var(--primary);
+          font-weight: bold;
+        }
+        @keyframes blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0; }
         }
         .wf-timeline .artifacts-summary {
           padding: 10px 12px;

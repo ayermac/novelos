@@ -26,7 +26,6 @@ def create_api_app(
     config_path: str | None = None,
     llm_mode: str = "stub",
     skills_config_path: str | None = None,
-    openclaw_root_path: str | None = None,
 ) -> FastAPI:
     """Create and configure the API application.
 
@@ -35,7 +34,6 @@ def create_api_app(
         config_path: Path to config YAML file
         llm_mode: LLM mode ('stub' or 'real'), defaults to 'stub'
         skills_config_path: Path to skills YAML config file
-        openclaw_root_path: Path to local OpenClaw legacy workspace
 
     Returns:
         Configured FastAPI application
@@ -53,7 +51,6 @@ def create_api_app(
     app.state.config_path = config_path
     app.state.llm_mode = llm_mode
     app.state.skills_config_path = skills_config_path
-    app.state.openclaw_root_path = openclaw_root_path
 
     # Auto-initialize database on startup
     @app.on_event("startup")
@@ -144,6 +141,14 @@ def create_api_app(
     app.include_router(chapter_briefs_router, prefix="/api", tags=["chapter-briefs"])  # v6.9.0
     app.include_router(ledgers_router, prefix="/api", tags=["ledgers"])  # v6.9.0
     app.include_router(editor_reports_router, prefix="/api", tags=["editor-reports"])  # v6.9.0
+
+    # v6.10.0: Knowledge Skill API
+    from .api.routes.knowledge import router as knowledge_router
+    from .skills.knowledge_manager import KnowledgeManager
+
+    knowledge_dir = str(Path(__file__).resolve().parent / "skills" / "knowledge")
+    app.state.knowledge_manager = KnowledgeManager(knowledge_dir=knowledge_dir)
+    app.include_router(knowledge_router, prefix="/api", tags=["knowledge"])
 
     # Exception handler - never exposes traceback or secrets
     @app.exception_handler(Exception)

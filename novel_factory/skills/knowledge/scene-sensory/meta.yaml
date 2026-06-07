@@ -1,0 +1,25 @@
+skill_id: scene-sensory
+name: 场景与感官描写指南
+description: |
+  场景描写的五感技巧：视觉、听觉、嗅觉、触觉、味觉的运用。
+  环境氛围营造、空间感构建、场景与情绪的呼应。
+tags:
+  - scene
+  - sensory
+  - description
+  - atmosphere
+applicable_agents:
+  - screenwriter
+  - author
+  - polisher
+  - editor
+applicable_genres:
+  - xuanhuan
+  - urban
+  - xianxia
+  - system
+  - game
+  - fantasy
+  - romance
+  - suspense
+version: "1.0"

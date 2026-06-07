@@ -1,0 +1,15 @@
+# v6.10.0 知识 Skill 注册表
+# 列出所有可用的知识 Skill ID，KnowledgeManager 按此加载
+
+skills:
+  - webnovel-excitement
+  - character-building
+  - dialogue-naturalness
+  - pacing-rhythm
+  - ai-style-avoidance
+  - show-dont-tell
+  - scene-sensory
+  - foreshadowing-management
+  - worldbuilding
+  - style-consistency
+  - genre-suspense

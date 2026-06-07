@@ -30,24 +30,49 @@ class DeathPenaltySkill(ValidatorSkill):
             return {
                 "ok": True,
                 "error": None,
-                "data": {"has_critical": False, "violations": [], "score": 100, "issues": []},
+                "data": {
+                    "passed": True,
+                    "score": 100,
+                    "findings": [],
+                    "summary": "无正文内容，跳过死刑红线检查",
+                },
             }
 
         try:
             result = check_death_penalty_structured(text)
-            issues = [f"CRITICAL 死刑红线: {v}" for v in result.violations] if result.has_critical else []
+            findings = []
+            for violation in result.violations:
+                findings.append({
+                    "severity": "blocking",
+                    "code": "DEATH_PENALTY",
+                    "message": f"死刑红线: {violation}",
+                    "suggestion": "请删除或重写包含AI烂词的内容",
+                })
+            
+            passed = not result.has_critical
+            score = 100 if passed else 0
+            summary = f"死刑红线检查{'通过' if passed else '未通过'}，发现 {len(findings)} 个违规"
+            
             return {
-                "ok": not result.has_critical,
-                "error": "; ".join(issues) if issues else None,
+                "ok": passed,
+                "error": "; ".join([f["message"] for f in findings]) if not passed else None,
                 "data": {
+                    "passed": passed,
+                    "score": score,
+                    "findings": findings,
+                    "summary": summary,
                     "has_critical": result.has_critical,
                     "violations": result.violations,
-                    "issues": issues,
                 },
             }
         except Exception as e:
             return {
                 "ok": False,
                 "error": f"死刑红线检查异常: {e}",
-                "data": {"has_critical": True, "violations": [str(e)], "issues": [str(e)]},
+                "data": {
+                    "passed": False,
+                    "score": 0,
+                    "findings": [{"severity": "blocking", "code": "DEATH_PENALTY_ERROR", "message": str(e), "suggestion": "请检查文本内容"}],
+                    "summary": f"死刑红线检查异常: {e}",
+                },
             }

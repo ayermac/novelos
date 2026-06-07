@@ -91,10 +91,27 @@ class StyleBibleCheckerSkill(ValidatorSkill):
 
         report = self._check(text, bible)
 
+        # Convert to unified schema with findings
+        findings = []
+        for issue in report.issues:
+            severity = issue.severity if issue.severity in ("blocking", "warning") else "info"
+            findings.append({
+                "severity": severity,
+                "code": issue.rule_type.upper() if hasattr(issue, 'rule_type') else "STYLE_ISSUE",
+                "message": issue.description if hasattr(issue, 'description') else str(issue),
+                "suggestion": "",
+            })
+
+        # Return unified schema with backward-compatible issues field
+        data = report.model_dump()
+        data["findings"] = findings
+        data["passed"] = report.blocking_issues == 0
+        data["summary"] = f"Style check: {report.total_issues} issues ({report.blocking_issues} blocking, {report.warning_issues} warning)"
+
         return {
             "ok": True,
             "error": None,
-            "data": report.model_dump(),
+            "data": data,
         }
 
     def _check(self, text: str, bible: StyleBible) -> StyleCheckReport:

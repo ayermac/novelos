@@ -1611,8 +1611,9 @@ class TestAuthorAgent:
 
             def invoke_text(self, messages, temperature=None, max_tokens=None) -> str:
                 self.text_calls += 1
+                # v6.9.0: Chinese text coefficient increased from 1.5x to 2.5x
                 assert max_tokens >= 2500
-                assert max_tokens <= 4096
+                assert max_tokens <= 8192
                 return "真实正文内容" * 380
 
         llm = LiveLikeTextLLM()

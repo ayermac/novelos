@@ -186,6 +186,28 @@ def _log_node_event(
             token_count=token_count,
             latency_ms=latency_ms,
         )
+
+        # v6.10.0: Push to real-time event queue
+        try:
+            from .event_queue import get_event_queue_manager
+            queue = get_event_queue_manager().get(run_id)
+            if queue:
+                # Skip generic started/completed node_message (redundant with node_started/node_completed)
+                if event_type not in ("started", "completed") or error_message:
+                    queue.push({
+                        "run_id": run_id,
+                        "node_name": node_name,
+                        "agent_id": node_name,
+                        "event_type": event_type,
+                        "status": status or "info",
+                        "message": message,
+                        "payload": {},
+                        "token_count": token_count,
+                        "latency_ms": latency_ms,
+                        "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                    })
+        except Exception:
+            pass  # Never block on queue push
     except Exception:
         logger.warning(
             "Failed to log node event for %s/%s node=%s event=%s",
@@ -711,6 +733,25 @@ def create_node_runners(
     effective_tool_registry = _ensure_tool_registry()
     effective_trace_store = _ensure_trace_store(repo)
 
+    # v6.10.0: Initialize KnowledgeManager and agentic config from settings
+    knowledge_manager = None
+    agentic_config = {}
+    try:
+        from ..skills.knowledge_manager import KnowledgeManager
+        from pathlib import Path
+        knowledge_dir = str(Path(__file__).resolve().parent.parent / "skills" / "knowledge")
+        knowledge_manager = KnowledgeManager(knowledge_dir=knowledge_dir)
+
+        agentic_settings = getattr(settings, "agentic", None)
+        if agentic_settings and getattr(agentic_settings, "enabled", False):
+            for agent_id, agent_cfg in agentic_settings.agents.items():
+                agentic_config[agent_id] = {
+                    "agentic_mode": agent_cfg.agentic_mode,
+                    "max_tool_rounds": agent_cfg.max_tool_rounds,
+                }
+    except Exception:
+        logger.debug("KnowledgeManager init failed (non-fatal)", exc_info=True)
+
     def _run_agent_node(
         agent_name: str,
         agent_cls: type,
@@ -837,6 +878,35 @@ def create_node_runners(
                 "tool_registry": effective_tool_registry,
                 "trace_store": effective_trace_store,
             }
+            # v6.10.0: Inject knowledge_manager and agent_config
+            if knowledge_manager is not None:
+                agent_kwargs["knowledge_manager"] = knowledge_manager
+            if agent_name in agentic_config:
+                agent_kwargs["agent_config"] = agentic_config[agent_name]
+            # v6.10.0: Inject streaming callback for author
+            if agent_name == "author":
+                # Queue may not exist yet; callback looks it up dynamically
+                def _make_chunk_pusher():
+                    def _push_chunk(chunk: str):
+                        try:
+                            rid = state.get("workflow_run_id", "")
+                            if rid:
+                                # Single path: log_execution_event handles both DB + EventQueue
+                                from .execution_events import log_execution_event
+                                log_execution_event(
+                                    repo=repo,
+                                    state=state,
+                                    node_name="author",
+                                    event_type="text_chunk",
+                                    message=chunk,
+                                    agent_id="author",
+                                    status="info",
+                                    payload={"chunk_length": len(chunk)},
+                                )
+                        except Exception:
+                            pass  # Never break on queue push
+                    return _push_chunk
+                agent_kwargs["on_text_chunk"] = _make_chunk_pusher()
             if agent_name == "memory_curator":
                 fallback_llm = llm_router.for_agent_fallback(agent_name)
                 agent_kwargs["fallback_llm"] = fallback_llm
@@ -1121,13 +1191,24 @@ def task_discovery_node(state: FactoryState, repo: Repository) -> dict[str, Any]
     return {"has_instruction": has_instruction}
 
 
-def _v6_agent_kwargs(repo: Repository, skill_registry: Any | None = None) -> dict[str, Any]:
+def _v6_agent_kwargs(
+    repo: Repository,
+    skill_registry: Any | None = None,
+    knowledge_manager: Any | None = None,
+    agent_config: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """v6.0: Build shared kwargs for core agent instantiation in legacy mode."""
-    return {
+    kwargs: dict[str, Any] = {
         "skill_registry": _ensure_skill_registry(skill_registry),
         "tool_registry": _ensure_tool_registry(),
         "trace_store": _ensure_trace_store(repo),
     }
+    # v6.10.0: Inject knowledge manager and agentic config
+    if knowledge_manager is not None:
+        kwargs["knowledge_manager"] = knowledge_manager
+    if agent_config is not None:
+        kwargs["agent_config"] = agent_config
+    return kwargs
 
 
 def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_registry=None) -> dict[str, Any]:
@@ -1624,9 +1705,10 @@ def quality_gate_node(state: FactoryState, repo: Repository, skill_registry=None
     if passed:
         _log_node_event(state, repo, "quality_gate", "passed", status="completed")
     else:
+        # v6.10.0: quality_gate failure is a routing decision, not an error
         _log_node_event(
             state, repo, "quality_gate", "failed",
-            status="failed",
+            status="warning",
             error_message=f"Quality gate failed: {len(blocking_issues)} blocking issues",
         )
 
@@ -2162,203 +2244,3 @@ def creative_ledger_curator_node(state: FactoryState, repo: Repository) -> dict:
     return result
 
 
-# ── Editor Lenses Node (v6.9.0) ────────────────────────────────────
-
-
-def editor_lenses_node(state: FactoryState, repo: Repository) -> dict:
-    """Run all specialized editor lenses and aggregate with chief editor.
-
-    Replaces the single editor_node for v6.9.0 workflow.
-    Runs 7 lenses (type, continuity, commercial, pacing, character, mystery, style)
-    then aggregates with ChiefEditor for final pass/fail decision.
-    """
-    _logger = logging.getLogger(__name__)
-
-    project_id = state.get("project_id", "")
-    chapter_number = state.get("chapter_number", 0)
-
-    if not project_id or not chapter_number:
-        _logger.warning("EditorLenses: missing identifiers")
-        return {"error": "Missing project_id or chapter_number"}
-
-    # Get chapter content
-    chapter = repo.get_chapter(project_id, chapter_number)
-    content = (chapter or {}).get("content", "")
-    if not content:
-        # v6.9.0: In stub mode or when content is missing, return a passing result
-        # rather than blocking the workflow. The lenses would have nothing to check.
-        _logger.warning("EditorLenses: no chapter content found, returning passing result")
-        chapter_status = ChapterStatus.REVIEWED.value
-        # Persist the status change
-        ok = repo.update_chapter_status(project_id, chapter_number, chapter_status)
-        if not ok:
-            _logger.error("EditorLenses: stale state, status advance to %s failed", chapter_status)
-            return {
-                "error": f"EditorLenses: stale state, status advance to {chapter_status} failed",
-                "chapter_status": ChapterStatus.POLISHED.value,
-            }
-        return {
-            "quality_gate": {
-                "pass": True,
-                "score": 100.0,
-                "revision_target": None,
-                "lens_details": [],
-                "findings": [],
-                "summary": "无内容可审核",
-            },
-            "chapter_status": chapter_status,
-            "editor_lenses_result": {"passed": True, "score": 100.0},
-        }
-
-    # Build context for lenses
-    from ..agents.editor_lenses import (
-        TypeEditorLens,
-        ContinuityEditorLens,
-        CommercialEditorLens,
-        PacingEditorLens,
-        CharacterEditorLens,
-        MysteryEditorLens,
-        StyleEditorLens,
-        ChiefEditor,
-    )
-    from ..quality.editor_lens_scheduler import should_skip_lens, persist_lens_report
-
-    # Load genre contract
-    genre_contract = {}
-    try:
-        contract_data = repo.get_creative_contract(project_id, "genre_contract")
-        if contract_data:
-            import json
-            genre_contract = json.loads(contract_data.get("contract_data", "{}"))
-    except Exception:
-        _logger.warning("EditorLenses: failed to load genre_contract", exc_info=True)
-
-    # Load launch profile
-    launch_profile = {}
-    try:
-        profile_data = repo.get_creative_contract(project_id, "launch_profile")
-        if profile_data:
-            import json
-            launch_profile = json.loads(profile_data.get("contract_data", "{}"))
-    except Exception:
-        _logger.warning("EditorLenses: failed to load launch_profile", exc_info=True)
-
-    # Load chapter brief
-    chapter_brief = state.get("chapter_brief", {})
-    if not chapter_brief:
-        try:
-            brief_artifact = repo.get_artifact(project_id, chapter_number, "planner", "chapter_brief")
-            if brief_artifact:
-                import json
-                chapter_brief = json.loads(brief_artifact.get("content_json", "{}"))
-        except Exception:
-            _logger.warning("EditorLenses: failed to load chapter_brief artifact", exc_info=True)
-
-    # Load ledger context
-    ledger_context = {}
-    try:
-        from ..context.ledger_context import load_ledgers_for_planner
-        ledger_context = load_ledgers_for_planner(repo, project_id, chapter_number)
-    except Exception:
-        _logger.warning("EditorLenses: failed to load ledger_context", exc_info=True)
-
-    # Get previous chapters for continuity
-    previous_chapters = []
-    try:
-        for i in range(max(1, chapter_number - 5), chapter_number):
-            ch = repo.get_chapter(project_id, i)
-            if ch:
-                previous_chapters.append(ch)
-    except Exception:
-        _logger.warning("EditorLenses: failed to load previous chapters", exc_info=True)
-
-    # Build context dict for lenses
-    lens_context = {
-        "project_id": project_id,
-        "chapter_number": chapter_number,
-        "genre_contract": genre_contract,
-        "launch_profile": launch_profile,
-        "chapter_brief": chapter_brief,
-        "ledger_context": ledger_context,
-        "previous_chapters": previous_chapters,
-        "workflow_run_id": state.get("workflow_run_id"),
-    }
-
-    # Run all lenses
-    lenses = [
-        TypeEditorLens(),
-        ContinuityEditorLens(),
-        CommercialEditorLens(),
-        PacingEditorLens(),
-        CharacterEditorLens(),
-        MysteryEditorLens(),
-        StyleEditorLens(),
-    ]
-
-    lens_reports = []
-    for lens in lenses:
-        # Check fast-path skip
-        if should_skip_lens(lens.lens_type, project_id, chapter_number, repo):
-            _logger.info("EditorLenses: skipping %s (fast-path)", lens.lens_type)
-            # Create a passing report for skipped lens
-            from ...models.chapter_contracts import EditorLensReport
-            report = EditorLensReport(
-                lens_type=lens.lens_type,
-                passed=True,
-                score=100.0,
-                summary=f"快速跳过: 连续 {3} 章无违规",
-            )
-        else:
-            report = lens.evaluate(content, lens_context)
-
-        lens_reports.append(report)
-        # Persist report for future skip decisions
-        persist_lens_report(
-            project_id, chapter_number, lens.lens_type, report, repo,
-            workflow_run_id=state.get("workflow_run_id"),
-        )
-
-    # Aggregate with chief editor
-    genre_weights = (genre_contract or {}).get("editor_weights", {})
-    chief = ChiefEditor()
-    result = chief.aggregate(lens_reports, genre_weights, chapter_brief)
-
-    _logger.info(
-        "EditorLenses: %s score=%.1f blocking=%d warning=%d",
-        "PASS" if result["passed"] else "FAIL",
-        result["score"],
-        result["blocking_count"],
-        result["warning_count"],
-    )
-
-    # Build quality_gate compatible output
-    quality_gate = {
-        "pass": result["passed"],
-        "score": result["score"],
-        "revision_target": result.get("revision_target"),
-        "lens_details": result["lens_details"],
-        "findings": result["findings"],
-        "summary": result["summary"],
-    }
-
-    # Determine chapter status based on result
-    if result["passed"]:
-        chapter_status = ChapterStatus.REVIEWED.value
-    else:
-        chapter_status = ChapterStatus.REVIEW.value
-
-    # Persist chapter status change to database (like editor_node does)
-    ok = repo.update_chapter_status(project_id, chapter_number, chapter_status)
-    if not ok:
-        _logger.error("EditorLenses: stale state, status advance to %s failed", chapter_status)
-        return {
-            "error": f"EditorLenses: stale state, status advance to {chapter_status} failed",
-            "chapter_status": ChapterStatus.POLISHED.value,  # rollback
-            "quality_gate": quality_gate,
-        }
-
-    return {
-        "quality_gate": quality_gate,
-        "chapter_status": chapter_status,
-        "editor_lenses_result": result,
-    }

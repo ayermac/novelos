@@ -71,6 +71,32 @@ class RuntimeBudgetConfig(BaseModel):
     auto_run_token_limit: int = 0
 
 
+# ── v6.10.0: Agentic mode configuration ──────────────────────
+
+
+class AgenticAgentConfig(BaseModel):
+    """单个 Agent 的 Agentic 配置."""
+
+    agentic_mode: bool = False
+    max_tool_rounds: int = 3
+
+
+class AgenticConfig(BaseModel):
+    """全局 Agentic 配置（v6.10.0 知识 Skill + Function Calling）."""
+
+    enabled: bool = False
+    agents: dict[str, AgenticAgentConfig] = Field(
+        default_factory=lambda: {
+            "planner": AgenticAgentConfig(),
+            "screenwriter": AgenticAgentConfig(),
+            "author": AgenticAgentConfig(),
+            "polisher": AgenticAgentConfig(),
+            "editor": AgenticAgentConfig(),
+            "memory_curator": AgenticAgentConfig(),
+        }
+    )
+
+
 class Settings(BaseModel):
     """Root settings object."""
 
@@ -85,6 +111,9 @@ class Settings(BaseModel):
     llm_profiles: dict[str, LLMProfile] = Field(default_factory=dict)
     agent_llm: dict[str, str] = Field(default_factory=dict)
     agent_llm_fallback: dict[str, str] = Field(default_factory=dict)
+
+    # v6.10.0: Agentic mode
+    agentic: AgenticConfig = Field(default_factory=AgenticConfig)
 
 
 # ── Loaders ────────────────────────────────────────────────────

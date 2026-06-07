@@ -57,8 +57,8 @@ a = Analysis(
         (str(pkg_root / "config" / "genre_strategies" / "*.yaml"), "novel_factory/config/genre_strategies"),
         (str(pkg_root / "config" / "skills" / "manifest" / "*.yaml"), "novel_factory/config/skills/manifest"),
         (str(pkg_root / "agent_runtime" / "roles" / "*.yaml"), "novel_factory/agent_runtime/roles"),
-        # Recursive directories (skill_packages has no __init__.py but PyInstaller can copy it)
-        (str(pkg_root / "skill_packages"), "novel_factory/skill_packages"),
+        # v6.10.0: Knowledge Skills (Markdown domain knowledge)
+        (str(pkg_root / "skills" / "knowledge"), "novel_factory/skills/knowledge"),
     ],
     hiddenimports=[
         "uvicorn",

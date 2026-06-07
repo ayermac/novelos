@@ -6,9 +6,9 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 Novelos is an AI-powered novel production workbench for long-form fiction projects. It combines a FastAPI backend, LangGraph chapter workflow, SQLite project storage, a React author workspace, and CLI tools for chapter generation, review, style, project context, and operational checks.
 
-Current baseline: **v6.7.1 Auto Arc Continuation**, with **full pytest passing**, frontend typecheck/lint/build/vitest passing.
+Current baseline: **v6.10.0 Skill Knowledge & LLM Function Calling**, with **full pytest passing**, frontend typecheck/lint/build/vitest passing.
 
-Runtime version source: `novel_factory/version.py` (`__version__ = "6.7.1"`).
+Runtime version source: `novel_factory/version.py` (`__version__ = "6.10.0"`).
 
 ## Architecture
 
@@ -21,10 +21,33 @@ novel_factory/llm/     Stub and OpenAI-compatible LLM providers
 novel_factory/cli_app/ CLI command implementation
 novel_factory/agents/  AI agent role implementations (planner, screenwriter, author, polisher, editor, memory_curator)
 novel_factory/agent_runtime/ Shared agent runtime infrastructure (BaseAgent, role profiles, contracts, self-check, skill hooks)
+novel_factory/skills/  Skill system (Code Skills + Knowledge Skills)
 novel_factory/models/  Pydantic models and state definitions
 novel_factory/config/  Configuration loading and validation
 tests/                 Python regression and version acceptance tests
 docs/codex/            Product specs, roadmap, and version history
+```
+
+### Skill System (v6.10.0 Dual-Layer)
+
+```text
+novel_factory/skills/
+├── knowledge/              Knowledge Skills (Markdown domain knowledge)
+│   ├── _index.yaml         Registry
+│   ├── webnovel-excitement/
+│   ├── character-building/
+│   ├── dialogue-naturalness/
+│   ├── pacing-rhythm/
+│   ├── ai-style-avoidance/
+│   ├── show-dont-tell/
+│   ├── scene-sensory/
+│   ├── foreshadowing-management/
+│   ├── worldbuilding/
+│   ├── style-consistency/
+│   └── genre-suspense/
+├── knowledge_manager.py    KnowledgeManager (load/query/CRUD)
+├── *.py                    Code Skills (Python validators)
+└── registry.py             SkillRegistry (Code Skill loading)
 ```
 
 The main production path is LangGraph-based. `Dispatcher` and `dispatch/` are retained as compatibility paths for older CLI capabilities and historical workflows.

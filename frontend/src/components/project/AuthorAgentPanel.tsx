@@ -166,6 +166,7 @@ export default function AuthorAgentPanel({
     isProjectWorkflowRunning && runningWorkflowChapter && runningWorkflowChapter !== currentChapter
   )
   const isWorkflowActive = isStreaming || isWorkflowRunning || effectiveRunStatus === 'running' || isRunningAnotherChapter
+  // v6.10.3: Match backend check - planned + hasContent (word_count > 0)
   const hasPreservedPlannedContent = status === 'planned' && hasContent
   const needsRecovery = status === 'blocking' || status === 'revision'
   const canShowPrimaryAction = activeTab !== 'workflow'
@@ -397,7 +398,7 @@ export default function AuthorAgentPanel({
         </div>
 
         {/* Error */}
-        {genError && (
+        {genError && workflowStatus !== 'blocked' && (
           <div style={{ marginTop: 8 }}>
             <InlineMessage variant="danger">
               <div style={{ fontWeight: 500, marginBottom: 2 }}>生成失败</div>
@@ -406,9 +407,15 @@ export default function AuthorAgentPanel({
           </div>
         )}
 
-        {runDetail?.error_message && (workflowStatus === 'failed' || workflowStatus === 'blocked') && (
+        {runDetail?.error_message && workflowStatus === 'failed' && (
           <div style={{ marginTop: 8 }}>
             <InlineMessage variant="danger">{runDetail.error_message}</InlineMessage>
+          </div>
+        )}
+
+        {runDetail?.error_message && workflowStatus === 'blocked' && (
+          <div style={{ marginTop: 8 }}>
+            <InlineMessage variant="warning">{runDetail.error_message}</InlineMessage>
           </div>
         )}
 

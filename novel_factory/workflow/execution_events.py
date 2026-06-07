@@ -39,6 +39,12 @@ EVENT_QUALITY_DIAGNOSED = "quality_diagnosed"
 EVENT_SEGMENT_STARTED = "segment_started"
 EVENT_SEGMENT_COMPLETED = "segment_completed"
 EVENT_SEGMENT_FAILED = "segment_failed"
+# v6.10.0: Knowledge Skill and Function Calling events
+EVENT_KNOWLEDGE_INJECTED = "knowledge_injected"
+EVENT_KNOWLEDGE_AGENTIC = "knowledge_agentic"
+EVENT_FUNCTION_CALL_STARTED = "function_call_started"
+EVENT_FUNCTION_CALL_COMPLETED = "function_call_completed"
+EVENT_KNOWLEDGE_TOOL_RESULT = "knowledge_tool_result"
 
 EVIDENCE_STATUS_PASS = "pass"
 EVIDENCE_STATUS_FAIL = "fail"
@@ -70,7 +76,7 @@ def log_execution_event(
     if not run_id or not project_id or not chapter_number:
         return None
     try:
-        return repo.create_workflow_execution_event(
+        event_id = repo.create_workflow_execution_event(
             run_id=run_id,
             project_id=project_id,
             chapter_number=chapter_number,
@@ -84,6 +90,30 @@ def log_execution_event(
             token_count=token_count,
             latency_ms=latency_ms,
         )
+
+        # v6.10.0: Push to real-time event queue (bypasses DB polling)
+        try:
+            from datetime import datetime, timezone
+            from .event_queue import get_event_queue_manager
+            queue = get_event_queue_manager().get(run_id)
+            if queue:
+                queue.push({
+                    "id": event_id,
+                    "run_id": run_id,
+                    "node_name": node_name,
+                    "agent_id": agent_id or node_name,
+                    "event_type": event_type,
+                    "status": status,
+                    "message": message,
+                    "payload": payload or {},
+                    "token_count": token_count,
+                    "latency_ms": latency_ms,
+                    "created_at": datetime.now(timezone.utc).isoformat(),
+                })
+        except Exception:
+            pass  # Never block on queue push
+
+        return event_id
     except Exception:
         logger.warning(
             "Failed to log execution event for %s/%s node=%s event=%s",

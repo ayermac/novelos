@@ -58,6 +58,58 @@ class LLMProvider(ABC):
         """
         ...
 
+    def invoke_with_tools(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[Any],
+        tool_choice: str = "auto",
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        **kwargs: Any,
+    ) -> Any:
+        """Invoke the LLM with tool/function calling support (v6.10.0).
+
+        Args:
+            messages: Chat messages.
+            tools: List of ToolDefinition objects.
+            tool_choice: "auto", "none", or "required".
+            temperature: Override default temperature.
+            max_tokens: Override default max tokens.
+
+        Returns:
+            ToolCallResponse with content and/or tool_calls.
+        """
+        raise NotImplementedError(
+            f"{self.__class__.__name__} does not support invoke_with_tools()"
+        )
+
+    def invoke_text_stream(
+        self,
+        messages: list[dict[str, str]],
+        temperature: float | None = None,
+        max_tokens: int | None = None,
+        agent_id: str = "unknown",
+        on_chunk: Any = None,
+        **kwargs: Any,
+    ) -> str:
+        """v6.10.0: Invoke LLM with streaming, calling on_chunk for each token.
+
+        Args:
+            messages: Chat messages.
+            temperature: Override default temperature.
+            max_tokens: Override default max tokens.
+            agent_id: Agent name for diagnostics.
+            on_chunk: Callback(chunk_text: str) called for each streaming chunk.
+
+        Returns:
+            Complete text response (accumulated from all chunks).
+        """
+        # Default fallback: call non-streaming and invoke on_chunk once
+        result = self.invoke_text(messages, temperature=temperature, max_tokens=max_tokens, agent_id=agent_id)
+        if on_chunk:
+            on_chunk(result)
+        return result
+
 
 def is_configured_live_provider(provider: Any) -> bool:
     """Return true for real provider instances that expose runtime config.

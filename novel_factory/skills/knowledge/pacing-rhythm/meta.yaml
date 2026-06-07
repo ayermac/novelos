@@ -1,0 +1,25 @@
+skill_id: pacing-rhythm
+name: 节奏与张力指南
+description: |
+  叙事节奏的核心规范：章节节奏模板、张力曲线设计、信息释放节奏、
+  场景切换技巧、读者情绪管理。帮助 LLM 控制叙事的快慢和张弛。
+tags:
+  - pacing
+  - rhythm
+  - tension
+  - writing
+applicable_agents:
+  - planner
+  - screenwriter
+  - author
+  - editor
+applicable_genres:
+  - xuanhuan
+  - urban
+  - xianxia
+  - system
+  - game
+  - fantasy
+  - romance
+  - suspense
+version: "1.0"

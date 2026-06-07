@@ -316,6 +316,7 @@ export default function ProjectDetail() {
     setGenerating(false)
     setGeneratingChapter(null)
     streamingChapterRef.current = null
+    setGenError('')
     setGenErrorDetails(null)
     if (event.run_id && completedChapter === visibleChapter) {
       loadRunDetail(event.run_id)

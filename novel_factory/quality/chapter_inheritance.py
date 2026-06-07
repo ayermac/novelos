@@ -76,14 +76,17 @@ def validate_chapter_inheritance(
             f"上一章悬念未明显处理: {', '.join(s[:40] for s in unhandled_suspense[:2])}"
         )
 
-    # 2. Timeline constraints
+    # 2. Timeline constraints (advisory only — keyword matching is crude)
     unhandled_timeline: list[str] = []
     for it in context_bundle.timeline_constraints:
         keywords = _extract_keywords(it.text)
-        if keywords and not any(kw in payload_text for kw in keywords):
-            unhandled_timeline.append(it.text)
+        if keywords:
+            matched = sum(1 for kw in keywords if kw in payload_text)
+            # Only warn if NONE of the keywords match (not just some)
+            if matched == 0:
+                unhandled_timeline.append(it.text)
     if unhandled_timeline:
-        result.warnings.append(
+        result.advisory_issues.append(
             f"时间线约束未明显处理: {', '.join(t[:40] for t in unhandled_timeline[:2])}"
         )
 

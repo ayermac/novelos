@@ -275,14 +275,42 @@ function buildWorkflowLogRows(
   let sortIndex = 0
 
   const pushRow = (row: WorkflowLogRow) => {
-    const dedupe = `${row.timestamp || ''}:${row.node}:${row.eventType}:${row.message}:${row.tokenCount || ''}:${row.latencyMs || ''}`
+    // v6.10.3: Normalize eventType for cross-source deduplication
+    // timeline node_started ↔ live live_node_started
+    // timeline agent events (context_loaded, llm_started, artifact_saved, etc.)
+    //   ↔ live live_task_log
+    const EXECUTION_EVENT_TYPES = new Set([
+      'live_task_log', 'node_message', 'context_loaded', 'llm_started',
+      'llm_request_detail', 'llm_response_detail', 'llm_completed',
+      'artifact_saved', 'skill_completed', 'fallback_used',
+      'revision_context_loaded', 'revision_diff_generated',
+      'segment_repair_started', 'segment_repair_completed',
+      'long_form_generation', 'self_check_completed', 'diff_generated',
+      'word_count_compressed', 'knowledge_injected',
+      'quality_gate_retry', 'internal_repair_attempt',
+      'internal_repair_escalated', 'polisher_warnings',
+    ])
+    const normalizedEventType =
+      row.eventType === 'live_node_started'
+        ? 'node_started'
+        : row.eventType === 'live_node_completed'
+          ? 'node_completed'
+          : EXECUTION_EVENT_TYPES.has(row.eventType)
+            ? 'task_log'
+            : row.eventType
+    const dedupe = `${row.node}:${normalizedEventType}:${row.message}`
     if (seen.has(dedupe)) return
     seen.add(dedupe)
     rows.push({ ...row, sortIndex: sortIndex++ })
   }
 
+  // v6.10.1: Track nodes with timeline events for task_log filtering
+  const nodesWithTimelineEvents = new Set<string>()
+
   for (const node of timeline?.nodes || []) {
+    nodesWithTimelineEvents.add(node.node_name)
     if (node.started_at) {
+      nodesWithTimelineEvents.add(node.node_name)
       pushRow({
         id: `node-start:${node.node_name}:${node.started_at}`,
         source: 'timeline',
@@ -310,21 +338,28 @@ function buildWorkflowLogRows(
         latencyMs: node.duration_ms,
       })
     }
-    for (const message of node.messages || []) {
-      const level = logLevelFromStatus(node.status)
-      pushRow({
-        id: `node-message:${node.node_name}:${message}`,
-        source: 'timeline',
-        timestamp: node.completed_at || node.started_at,
-        node: node.node_name,
-        nodeLabel: node.label || tWorkflowNodeLabel(node.node_name),
-        category: logCategoryFromEvent('node_message', level),
-        level,
-        eventType: 'node_message',
-        message,
-      })
+    // v6.10.1: Filter all node_message when node has execution events (redundant noise)
+    const hasExecutionEvents = (node.events || []).length > 0
+    if (!hasExecutionEvents) {
+      for (const message of node.messages || []) {
+        if (message.includes('跳过该节点')) continue
+        const level = logLevelFromStatus(node.status)
+        pushRow({
+          id: `node-message:${node.node_name}:${message}`,
+          source: 'timeline',
+          timestamp: node.completed_at || node.started_at,
+          node: node.node_name,
+          nodeLabel: node.label || tWorkflowNodeLabel(node.node_name),
+          category: logCategoryFromEvent('node_message', level),
+          level,
+          eventType: 'node_message',
+          message,
+        })
+      }
     }
     for (const event of node.events || []) {
+      // v6.10.1: Skip text_chunk (streaming chunks, not log-worthy)
+      if (event.event_type === 'text_chunk') continue
       const level = logLevelFromStatus(event.status)
       const eventType = event.event_type || 'execution_event'
       pushRow({
@@ -391,19 +426,23 @@ function buildWorkflowLogRows(
   }
 
   for (const step of runDetail?.steps || []) {
-    for (const log of step.logs || []) {
-      const level = log.level || 'info'
-      pushRow({
-        id: `step-log:${step.key}:${log.timestamp || ''}:${log.message}`,
-        source: 'run_detail',
-        timestamp: log.timestamp,
-        node: step.key,
-        nodeLabel: step.label || tWorkflowNodeLabel(step.key),
-        category: logCategoryFromEvent('task_log', level),
-        level,
-        eventType: 'task_log',
-        message: log.message,
-      })
+    // v6.10.1: Skip task_log when timeline events already cover this node
+    const hasTimelineCoverage = nodesWithTimelineEvents.has(step.key)
+    if (!hasTimelineCoverage) {
+      for (const log of step.logs || []) {
+        const level = log.level || 'info'
+        pushRow({
+          id: `step-log:${step.key}:${log.timestamp || ''}:${log.message}`,
+          source: 'run_detail',
+          timestamp: log.timestamp,
+          node: step.key,
+          nodeLabel: step.label || tWorkflowNodeLabel(step.key),
+          category: logCategoryFromEvent('task_log', level),
+          level,
+          eventType: 'task_log',
+          message: log.message,
+        })
+      }
     }
     if (step.error_message) {
       pushRow({
@@ -584,11 +623,16 @@ export default function AuthorWritingSurface({
   onViewWorkflow,
   onRefreshContent,
 }: AuthorWritingSurfaceProps) {
-  const hasContent = (chapterDetail?.word_count || 0) > 0
+  const hasContent = (chapterDetail?.word_count || 0) > 0 || Boolean(chapterDetail?.content?.trim())
   const status = currentChapterRecord?.status || ''
   const isTerminal = TERMINAL_CHAPTER_STATUSES.has(status)
   const isReviewedReal = status === 'reviewed' && llmMode === 'real'
-  const hasPreservedPlannedContent = status === 'planned' && (currentChapterRecord?.word_count || chapterDetail?.word_count || 0) > 0
+  // v6.10.3: Match backend check - planned + (content or word_count)
+  const hasPreservedPlannedContent = status === 'planned' && (
+    (currentChapterRecord?.word_count || 0) > 0 ||
+    (chapterDetail?.word_count || 0) > 0 ||
+    Boolean(chapterDetail?.content?.trim())
+  )
   const persistedQualityScore = chapterDetail?.quality_score ?? currentChapterRecord?.quality_score ?? null
   const qualityScore = persistedQualityScore
   const statusLabel = tChapterStatus(status)
@@ -745,6 +789,7 @@ export default function AuthorWritingSurface({
             isGenerationLocked={isRunningAnotherChapter}
             runningWorkflowChapter={runningWorkflowChapter}
             projectId={projectId}
+            sseSteps={sseSteps}
             onGenerate={onGenerate}
             onConfirmRegenerate={onConfirmRegenerate}
             onRefreshContent={onRefreshContent}
@@ -813,6 +858,7 @@ function ContentBody({
   isGenerationLocked,
   runningWorkflowChapter,
   projectId,
+  sseSteps,
   onGenerate,
   onConfirmRegenerate,
   onRefreshContent,
@@ -831,6 +877,7 @@ function ContentBody({
   isGenerationLocked?: boolean
   runningWorkflowChapter?: number | null
   projectId: string
+  sseSteps?: Record<string, StepStatus>
   onGenerate: () => void
   onConfirmRegenerate?: () => void
   onRefreshContent?: () => void
@@ -869,6 +916,13 @@ function ContentBody({
     }
   }
 
+  // v6.10.2: Collect streaming text chunks from author node for live preview
+  const authorEvents = sseSteps?.author?.events || []
+  const streamingText = authorEvents
+    .filter((ev) => ev.event_type === 'text_chunk')
+    .map((ev) => ev.message || '')
+    .join('')
+
   const handleEditorContentSaved = useCallback(() => {
     onRefreshContent?.()
   }, [onRefreshContent])
@@ -883,6 +937,41 @@ function ContentBody({
           <div>
             <div className="content-generation-title">正文生成中</div>
             <div className="content-generation-desc">完成后会自动刷新正文内容。</div>
+          </div>
+        </div>
+      )}
+
+      {/* v6.10.2: Live streaming text preview during author node */}
+      {isStreaming && streamingText.length > 0 && (
+        <div
+          style={{
+            padding: '16px 20px',
+            background: 'var(--wb-paper)',
+            border: '1px solid var(--wb-border)',
+            borderRadius: 8,
+            marginBottom: 16,
+            fontSize: 14,
+            lineHeight: 1.8,
+            color: 'var(--wb-text-dark)',
+            maxHeight: 320,
+            overflow: 'auto',
+          }}
+        >
+          <div
+            style={{
+              fontSize: 12,
+              color: 'var(--wb-text-dark-muted)',
+              marginBottom: 8,
+              display: 'flex',
+              justifyContent: 'space-between',
+            }}
+          >
+            <span>实时预览</span>
+            <span>{streamingText.length} 字</span>
+          </div>
+          <div style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
+            {streamingText}
+            <span style={{ color: 'var(--primary)', animation: 'blink 1s step-end infinite' }}>|</span>
           </div>
         </div>
       )}

@@ -331,9 +331,56 @@ class AuthorAgent(BaseAgent):
             {"role": "user", "content": f"项目ID: {project_id}\n章节号: {chapter_number}\n任务: {task_desc}\n\n{context}\n\n请{task_desc}第{chapter_number}章。"},
         ]
 
+        # v6.10.0: 知识层（双模式）
+        genre = self._get_project_genre(project_id) if self.knowledge_manager else None
+
+        if self.knowledge_manager and self.use_agentic_mode:
+            # Agentic 模式：LLM 主动咨询知识 Skill
+            knowledge_skills = self.knowledge_manager.get_for_agent(self.agent_id, genre)
+            if knowledge_skills:
+                tool_definitions = self.knowledge_manager.to_tool_definitions(knowledge_skills)
+                agentic_response = self._invoke_with_tools(
+                    messages=messages,
+                    tools=tool_definitions,
+                    tool_executor=self.knowledge_manager.execute_tool,
+                    max_tool_rounds=self.max_tool_rounds,
+                    exec_events=exec_events,
+                )
+                # 将 agentic 结果注入 messages 作为上下文
+                if agentic_response.content:
+                    messages.append({
+                        "role": "system",
+                        "content": f"写作参考（来自知识咨询）:\n{agentic_response.content}",
+                    })
+                exec_events.append({
+                    "event_type": "knowledge_agentic",
+                    "message": "Agentic 模式：LLM 主动咨询知识",
+                    "status": "info",
+                    "payload": {
+                        "genre": genre,
+                        "rounds_used": agentic_response.rounds_used,
+                        "total_tokens": agentic_response.total_tokens,
+                    },
+                })
+
+        elif self.knowledge_manager:
+            # 默认模式：知识内容注入 prompt
+            knowledge_context = self._get_knowledge_context(self.agent_id, genre)
+            if knowledge_context:
+                messages.append({
+                    "role": "system",
+                    "content": f"写作规范参考（请在创作时遵循以下规范）:\n\n{knowledge_context}",
+                })
+                exec_events.append({
+                    "event_type": "knowledge_injected",
+                    "message": "已注入写作规范知识",
+                    "status": "info",
+                    "payload": {"genre": genre},
+                })
+
         if self._should_use_plain_text_primary(state):
             try:
-                output = self._try_plain_text_draft(state, task_desc, context, exec_events=exec_events)
+                output = self._try_plain_text_draft(state, task_desc, context, exec_events=exec_events, on_chunk=self.on_text_chunk)
             except Exception as e:
                 gate = state.get("quality_gate") or {}
                 if gate.get("internal_repair") and not gate.get("consume_revision_retry", True):
@@ -375,7 +422,7 @@ class AuthorAgent(BaseAgent):
                 logger.warning(
                     "Author: structured JSON output failed; retrying with plain-text drafting fallback"
                 )
-                output = self._try_plain_text_draft(state, task_desc, context)
+                output = self._try_plain_text_draft(state, task_desc, context, on_chunk=self.on_text_chunk)
                 exec_events.append({
                     "event_type": "fallback_used",
                     "message": "JSON 输出失败，降级为纯正文兜底生成",
@@ -609,7 +656,7 @@ class AuthorAgent(BaseAgent):
             "event_type": "self_check_completed",
             "message": f"自检{'通过' if sc_passed else f'未通过 ({len(sc_issues)} 个问题)'}"
             f"{'，' + str(len(sc_warnings)) + ' 个警告' if sc_warnings else ''}",
-            "status": "info" if sc_passed else "warning",
+            "status": "info" if sc_passed or len(sc_issues) <= 1 else "warning",
             "payload": {
                 "passed": sc_passed,
                 "issue_count": len(sc_issues),
@@ -1707,6 +1754,7 @@ class AuthorAgent(BaseAgent):
         task_desc: str,
         context: str,
         exec_events: list[dict] | None = None,
+        on_chunk: Any | None = None,
     ) -> AuthorOutput:
         """Generate prose directly when real models fail long-form JSON output.
 
@@ -1717,7 +1765,7 @@ class AuthorAgent(BaseAgent):
         """
         beats = self._get_scene_beats(state)
         if state.get("llm_mode") == "real" and task_desc != "返修" and len(beats) >= 4:
-            return self._try_segmented_plain_text_draft(state, task_desc, context, exec_events=exec_events)
+            return self._try_segmented_plain_text_draft(state, task_desc, context, exec_events=exec_events, on_chunk=on_chunk)
 
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
@@ -1764,7 +1812,8 @@ class AuthorAgent(BaseAgent):
                     "只替换或压缩退回问题涉及的句段，新增句子必须同步删除等量冗余说明。"
                 )
         config_max = self._config_max_tokens(self.llm)
-        prose_max_tokens = max(1024, min(config_max, int(effective_target * 1.5)))
+        # v6.9.0: Chinese text needs ~2-2.5 tokens per character, use 2.5x
+        prose_max_tokens = max(1024, min(config_max, int(effective_target * 2.5)))
         compact_context = self._build_plain_text_context(state, context)
         per_call_retries = None
 
@@ -1817,6 +1866,7 @@ class AuthorAgent(BaseAgent):
                     if is_configured_live_provider(self.llm)
                     else None
                 ),
+                on_chunk=on_chunk or self.on_text_chunk,
             ).strip()
         except LLMError as e:
             if "finish_reason=length" not in str(e):
@@ -1847,6 +1897,7 @@ class AuthorAgent(BaseAgent):
                     if is_configured_live_provider(self.llm)
                     else None
                 ),
+                on_chunk=on_chunk or self.on_text_chunk,
             ).strip()
         content = self._coerce_plain_text_content(content)
         if not content:
@@ -1871,6 +1922,7 @@ class AuthorAgent(BaseAgent):
                     if is_configured_live_provider(self.llm)
                     else None
                 ),
+                on_chunk=on_chunk or self.on_text_chunk,
             ).strip()
             content = self._coerce_plain_text_content(content)
         if not content:
@@ -1891,6 +1943,7 @@ class AuthorAgent(BaseAgent):
         task_desc: str,
         context: str,
         exec_events: list[dict] | None = None,
+        on_chunk: Any | None = None,
     ) -> AuthorOutput:
         """Generate prose by scene-beat segments for long chapters in real mode."""
         project_id = state["project_id"]
@@ -1976,7 +2029,8 @@ class AuthorAgent(BaseAgent):
                 segment_note += "\n这是最后一段，必须写到章末钩子，不要停在半途。"
 
             config_max = self._config_max_tokens(self.llm)
-            prose_max_tokens = max(1024, min(config_max, int(segment_target * 1.5) + 512))
+            # v6.9.0: Chinese text needs ~2-2.5 tokens per character, use 2.5x + 1024
+            prose_max_tokens = max(1024, min(config_max, int(segment_target * 2.5) + 1024))
 
             messages = [
                 {
@@ -2031,6 +2085,7 @@ class AuthorAgent(BaseAgent):
                             if is_configured_live_provider(self.llm)
                             else None
                         ),
+                        on_chunk=on_chunk or self.on_text_chunk,
                     ).strip()
                 except LLMError as trunc_err:
                     if "finish_reason=length" not in str(trunc_err):
@@ -2051,6 +2106,7 @@ class AuthorAgent(BaseAgent):
                             if is_configured_live_provider(self.llm)
                             else None
                         ),
+                        on_chunk=on_chunk or self.on_text_chunk,
                     ).strip()
                 content = self._coerce_plain_text_content(content)
                 if not content:
@@ -2075,6 +2131,7 @@ class AuthorAgent(BaseAgent):
                             if is_configured_live_provider(self.llm)
                             else None
                         ),
+                        on_chunk=on_chunk or self.on_text_chunk,
                     ).strip()
                     content = self._coerce_plain_text_content(content)
             except Exception as e:
@@ -2312,8 +2369,23 @@ class AuthorAgent(BaseAgent):
         max_tokens: int,
         max_retries: int | None,
         request_timeout_seconds: int | None = None,
+        on_chunk: Any | None = None,
     ) -> str:
         """Invoke text generation with per-call retry control when supported."""
+        # v6.10.0: Use streaming if callback provided
+        if on_chunk is not None:
+            try:
+                return self.llm.invoke_text_stream(
+                    messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    agent_id=self.agent_id,
+                    on_chunk=on_chunk,
+                )
+            except TypeError:
+                # Provider doesn't support streaming, fall back
+                pass
+
         if max_retries is None and request_timeout_seconds is None:
             try:
                 return self.llm.invoke_text(

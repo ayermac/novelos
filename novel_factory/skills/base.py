@@ -7,6 +7,7 @@ Skills return unified envelope: {ok: bool, error: str|null, data: dict}
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -15,7 +16,6 @@ BUILTIN_SKILLS = {
     "HumanizerZhSkill": None,  # Will be imported lazily
     "AIStyleDetectorSkill": None,
     "NarrativeQualityScorer": None,
-    "ImportedInstructionSkill": None,  # v3.8: imported skill handler
     "StyleBibleCheckerSkill": None,  # v4.0: style bible checker
     "ChapterObjectiveCheckerSkill": None,
     "SceneConflictCheckerSkill": None,
@@ -33,6 +33,10 @@ BUILTIN_SKILLS = {
     "ForeshadowingDebtSkill": None,  # v6.8.0
     "OpeningHookChecker": None,  # v6.8.1
     "ExcitementDensityChecker": None,  # v6.8.1
+    "CommercialViabilityChecker": None,  # v6.9.1
+    "PacingProfileChecker": None,  # v6.9.1
+    "CharacterVoiceChecker": None,  # v6.9.1
+    "MysteryIntegrityChecker": None,  # v6.9.1
 }
 
 
@@ -51,9 +55,6 @@ def _get_skill_class(class_name: str):
     elif class_name == "NarrativeQualityScorer":
         from .narrative_quality_scorer import NarrativeQualityScorer
         return NarrativeQualityScorer
-    elif class_name == "ImportedInstructionSkill":
-        from .import_bridge import ImportedInstructionSkill
-        return ImportedInstructionSkill
     elif class_name == "StyleBibleCheckerSkill":
         from .style_bible_checker import StyleBibleCheckerSkill
         return StyleBibleCheckerSkill
@@ -105,6 +106,18 @@ def _get_skill_class(class_name: str):
     elif class_name == "ExcitementDensityChecker":
         from .excitement_density_checker import ExcitementDensityChecker
         return ExcitementDensityChecker
+    elif class_name == "CommercialViabilityChecker":
+        from .commercial_viability_checker import CommercialViabilityChecker
+        return CommercialViabilityChecker
+    elif class_name == "PacingProfileChecker":
+        from .pacing_profile_checker import PacingProfileChecker
+        return PacingProfileChecker
+    elif class_name == "CharacterVoiceChecker":
+        from .character_voice_checker import CharacterVoiceChecker
+        return CharacterVoiceChecker
+    elif class_name == "MysteryIntegrityChecker":
+        from .mystery_integrity_checker import MysteryIntegrityChecker
+        return MysteryIntegrityChecker
 
     return None
 
@@ -253,3 +266,85 @@ class ReportSkill(BaseSkill):
         Returns report data to be saved.
         """
         pass
+
+
+# ── v6.9.1: Unified Skill Finding schema ──────────────────────────────
+
+
+@dataclass
+class SkillFinding:
+    """Structured finding returned by a Skill.
+
+    Every skill that performs validation/analysis should emit findings
+    in this format.  ``parse_skill_findings()`` converts raw dicts into
+    this dataclass for uniform downstream processing.
+    """
+
+    severity: str = "info"      # blocking | warning | info
+    code: str = ""              # e.g. "AI_TRACE", "SEAM_BLOCKING"
+    message: str = ""           # human-readable description
+    suggestion: str = ""        # actionable fix advice
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "severity": self.severity,
+            "code": self.code,
+            "message": self.message,
+            "suggestion": self.suggestion,
+        }
+
+
+def parse_skill_findings(data: dict[str, Any]) -> list[SkillFinding]:
+    """Extract a list of ``SkillFinding`` from a skill's ``data`` dict.
+
+    Accepts keys ``findings``, ``issues``, and ``warnings`` with varying
+    formats and normalises them into the canonical ``SkillFinding`` shape.
+    Non-conforming entries are silently skipped so callers don't break on
+    unexpected skill output.
+    """
+    raw_findings: list[Any] = []
+
+    # Primary key used by new skills
+    for f in (data.get("findings") or []):
+        if isinstance(f, dict):
+            raw_findings.append(f)
+        elif isinstance(f, str):
+            raw_findings.append({"message": f, "severity": "info"})
+
+    # Legacy keys from older skills / QualityHub
+    for key, default_severity in [("issues", "blocking"), ("warnings", "warning")]:
+        for f in (data.get(key) or []):
+            if isinstance(f, dict):
+                raw_findings.append(f)
+            elif isinstance(f, str):
+                raw_findings.append({"message": f, "severity": default_severity})
+
+    result: list[SkillFinding] = []
+    for f in raw_findings:
+        message = str(f.get("message", f.get("text", "")))
+        if not message:
+            continue
+        result.append(SkillFinding(
+            severity=str(f.get("severity", "info")),
+            code=str(f.get("code", "")),
+            message=message,
+            suggestion=str(f.get("suggestion", "")),
+        ))
+
+    return result
+
+
+# Severity ordering for sorting: lower number = higher priority
+SEVERITY_ORDER: dict[str, int] = {
+    "blocking": 0,
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "warning": 3,
+    "info": 4,
+}
+
+
+def sort_findings_by_severity(findings: list[SkillFinding]) -> list[SkillFinding]:
+    """Sort findings by severity (blocking first)."""
+    return sorted(findings, key=lambda f: SEVERITY_ORDER.get(f.severity, 5))

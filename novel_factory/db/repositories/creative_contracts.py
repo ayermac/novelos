@@ -226,30 +226,6 @@ class CreativeContractsRepositoryMixin:
 
     # ── Editor Lens Reports ─────────────────────────────────────────
 
-    def get_editor_lens_report(
-        self,
-        project_id: str,
-        chapter_number: int,
-        lens_type: str,
-        workflow_run_id: str | None = None,
-    ) -> dict | None:
-        """Get an editor lens report."""
-        conn = self._conn()
-        try:
-            if workflow_run_id:
-                row = conn.execute(
-                    "SELECT * FROM editor_lens_reports WHERE project_id=? AND chapter_number=? AND lens_type=? AND workflow_run_id=?",
-                    (project_id, chapter_number, lens_type, workflow_run_id),
-                ).fetchone()
-            else:
-                row = conn.execute(
-                    "SELECT * FROM editor_lens_reports WHERE project_id=? AND chapter_number=? AND lens_type=? ORDER BY created_at DESC LIMIT 1",
-                    (project_id, chapter_number, lens_type),
-                ).fetchone()
-            return row_to_dict(row)
-        finally:
-            conn.close()
-
     def upsert_editor_lens_report(
         self,
         project_id: str,
@@ -278,23 +254,11 @@ class CreativeContractsRepositoryMixin:
                 ),
             )
             conn.commit()
-            return self.get_editor_lens_report(project_id, chapter_number, lens_type, workflow_run_id)
-        finally:
-            conn.close()
-
-    def list_editor_lens_reports(
-        self,
-        project_id: str,
-        chapter_number: int,
-    ) -> list[dict]:
-        """List all editor lens reports for a chapter."""
-        conn = self._conn()
-        try:
-            rows = conn.execute(
-                "SELECT * FROM editor_lens_reports WHERE project_id=? AND chapter_number=? ORDER BY lens_type",
-                (project_id, chapter_number),
-            ).fetchall()
-            return [row_to_dict(r) for r in rows]
+            row = conn.execute(
+                "SELECT * FROM editor_lens_reports WHERE project_id=? AND chapter_number=? AND lens_type=? ORDER BY created_at DESC LIMIT 1",
+                (project_id, chapter_number, lens_type),
+            ).fetchone()
+            return row_to_dict(row)
         finally:
             conn.close()
 
@@ -302,24 +266,29 @@ class CreativeContractsRepositoryMixin:
         self,
         project_id: str,
         lens_type: str,
-        before_chapter: int,
-        limit: int,
+        before_chapter: int | None = None,
+        limit: int = 5,
     ) -> list[dict]:
-        """List recent lens reports for a lens type, excluding the current chapter.
-
-        Returns reports for chapters in (before_chapter - limit, before_chapter),
-        ordered by chapter_number DESC. Used by the scheduler to decide whether
-        a lens has been consistently passing and can be skipped.
-        """
+        """List recent editor lens reports for a project, optionally before a chapter."""
         conn = self._conn()
         try:
-            rows = conn.execute(
-                """SELECT * FROM editor_lens_reports
-                   WHERE project_id = ? AND lens_type = ?
-                   AND chapter_number < ? AND chapter_number >= ?
-                   ORDER BY chapter_number DESC LIMIT ?""",
-                (project_id, lens_type, before_chapter, before_chapter - limit, limit),
-            ).fetchall()
+            if before_chapter is not None:
+                rows = conn.execute(
+                    """SELECT * FROM editor_lens_reports
+                       WHERE project_id=? AND lens_type=? AND chapter_number < ?
+                       ORDER BY chapter_number DESC, created_at DESC
+                       LIMIT ?""",
+                    (project_id, lens_type, before_chapter, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT * FROM editor_lens_reports
+                       WHERE project_id=? AND lens_type=?
+                       ORDER BY chapter_number DESC, created_at DESC
+                       LIMIT ?""",
+                    (project_id, lens_type, limit),
+                ).fetchall()
             return [row_to_dict(r) for r in rows]
         finally:
             conn.close()
+
