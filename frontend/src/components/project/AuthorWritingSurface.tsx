@@ -275,14 +275,27 @@ function buildWorkflowLogRows(
   let sortIndex = 0
 
   const pushRow = (row: WorkflowLogRow) => {
-    // v6.10.2: Normalize eventType for cross-source deduplication
-    // timeline node_started ↔ live live_node_started, etc.
+    // v6.10.3: Normalize eventType for cross-source deduplication
+    // timeline node_started ↔ live live_node_started
+    // timeline agent events (context_loaded, llm_started, artifact_saved, etc.)
+    //   ↔ live live_task_log
+    const EXECUTION_EVENT_TYPES = new Set([
+      'live_task_log', 'node_message', 'context_loaded', 'llm_started',
+      'llm_request_detail', 'llm_response_detail', 'llm_completed',
+      'artifact_saved', 'skill_completed', 'fallback_used',
+      'revision_context_loaded', 'revision_diff_generated',
+      'segment_repair_started', 'segment_repair_completed',
+      'long_form_generation', 'self_check_completed', 'diff_generated',
+      'word_count_compressed', 'knowledge_injected',
+      'quality_gate_retry', 'internal_repair_attempt',
+      'internal_repair_escalated', 'polisher_warnings',
+    ])
     const normalizedEventType =
       row.eventType === 'live_node_started'
         ? 'node_started'
         : row.eventType === 'live_node_completed'
           ? 'node_completed'
-          : row.eventType === 'live_task_log'
+          : EXECUTION_EVENT_TYPES.has(row.eventType)
             ? 'task_log'
             : row.eventType
     const dedupe = `${row.node}:${normalizedEventType}:${row.message}`
