@@ -141,13 +141,21 @@ function mergeWorkflowEvents(
   liveEvents: WorkflowExecutionEvent[],
 ): WorkflowExecutionEvent[] {
   const merged: WorkflowExecutionEvent[] = []
-  const seen = new Set<string>()
+  const seenIds = new Set<string>()
+  const seenContent = new Set<string>()
   for (const event of [...existingEvents, ...liveEvents]) {
-    const key = event.id != null
-      ? `id:${event.id}`
-      : `${event.node_name || ''}:${event.event_type}:${event.status || ''}:${event.created_at || ''}:${event.message || ''}`
-    if (seen.has(key)) continue
-    seen.add(key)
+    // v6.10.4: Two-layer dedup
+    // 1. By id (when both sources provide ids)
+    if (event.id != null) {
+      const idKey = `id:${event.id}`
+      if (seenIds.has(idKey)) continue
+      seenIds.add(idKey)
+    }
+    // 2. By content signature (catches duplicate events with different ids,
+    //    e.g. when timeline is refetched while liveEvents still hold pre-refresh data)
+    const contentKey = `${event.node_name || ''}:${event.event_type}:${event.status || ''}:${event.message || ''}:${event.created_at || ''}`
+    if (seenContent.has(contentKey)) continue
+    seenContent.add(contentKey)
     merged.push(event)
   }
   return merged
