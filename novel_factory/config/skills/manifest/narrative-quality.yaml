@@ -83,10 +83,10 @@ config_schema:
 default_config:
   pass_score: 75
 failure_policy:
-  on_error: block
+  on_error: warn
   max_retries: 0
   timeout_seconds: null
-  blocking_threshold: 75
+  blocking_threshold: null
 layer: code
 category: quality
 severity_default: advisory

@@ -137,7 +137,9 @@ class TestLoadManifest:
         assert "polisher" in manifest.allowed_agents
         assert "after_llm" in manifest.allowed_stages
         assert manifest.permissions.transform_text is True
-        assert manifest.failure_policy.on_error == "block"
+        assert manifest.severity_default == "advisory"
+        assert manifest.failure_policy.on_error == "warn"
+        assert "ai-style-avoidance" in manifest.knowledge_skill_ids
 
     def test_load_ai_style_detector_manifest(self):
         """Test loading ai-style-detector manifest."""
@@ -162,6 +164,9 @@ class TestLoadManifest:
         assert manifest.class_name == "NarrativeQualityScorer"
         assert "editor" in manifest.allowed_agents
         assert "qualityhub" in manifest.allowed_agents
+        assert manifest.severity_default == "advisory"
+        assert manifest.failure_policy.on_error == "warn"
+        assert manifest.failure_policy.blocking_threshold is None
 
     @pytest.mark.parametrize(
         ("manifest_path", "skill_id", "class_name"),

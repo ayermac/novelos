@@ -76,7 +76,7 @@ default_config:
   max_change_ratio: 0.35
   fail_on_fact_risk: true
 failure_policy:
-  on_error: block
+  on_error: warn
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null

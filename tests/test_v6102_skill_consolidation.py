@@ -27,6 +27,12 @@ def test_code_skill_manifests_have_governance_metadata():
         assert isinstance(skill["knowledge_skill_ids"], list)
         assert "runtime_scope" in skill
 
+        manifest = registry.get_manifest(skill["id"])
+        assert manifest is not None
+        if skill["severity_default"] in {"advisory", "disabled"}:
+            assert manifest.failure_policy.on_error != "block"
+            assert manifest.failure_policy.blocking_threshold is None
+
 
 def test_knowledge_skills_have_reciprocal_code_pairings():
     """Knowledge Skill metadata loads paired Code Skill governance fields."""

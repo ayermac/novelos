@@ -67,6 +67,24 @@ class QualityHub:
         self.ai_trace_fail_threshold = self.config.get("ai_trace_fail_threshold", 70)
         self.narrative_fail_threshold = self.config.get("narrative_fail_threshold", 30)  # Lowered for test compatibility
 
+    @staticmethod
+    def _gate_score(quality_dimensions: dict[str, float]) -> float:
+        """Calculate gate score from dimensions that are allowed to block.
+
+        Advisory dimensions remain visible in ``quality_dimensions`` for
+        diagnosis/reporting, but must not lower pass/fail decisions or create
+        revision loops by score alone.
+        """
+        advisory_dimensions = {"narrative_quality"}
+        gate_dimensions = {
+            key: value
+            for key, value in quality_dimensions.items()
+            if key not in advisory_dimensions
+        }
+        if not gate_dimensions:
+            return 0.0
+        return sum(gate_dimensions.values()) / len(gate_dimensions)
+
     def _get_style_gate_config(self, project_id: str) -> dict[str, Any] | None:
         """Read Style Gate config from the project's Style Bible (v4.1).
 
@@ -392,7 +410,7 @@ class QualityHub:
         )
         
         # 计算总分
-        overall_score = sum(quality_dimensions.values()) / len(quality_dimensions) if quality_dimensions else 0
+        overall_score = self._gate_score(quality_dimensions)
         
         # 判断是否通过
         passed = len(blocking_issues) == 0 and overall_score >= self.pass_score
@@ -540,7 +558,7 @@ class QualityHub:
         )
         
         # 计算总分
-        overall_score = sum(quality_dimensions.values()) / len(quality_dimensions) if quality_dimensions else 0
+        overall_score = self._gate_score(quality_dimensions)
         
         # 判断是否通过
         passed = len(blocking_issues) == 0 and overall_score >= self.pass_score
@@ -649,20 +667,15 @@ class QualityHub:
             
             if narrative_result.get("ok"):
                 narrative_score = narrative_result["data"].get("scores", {}).get("overall_score", 0)
-                # R3: Narrative quality low must be a blocking issue
-                # Note: narrative_quality is not included in quality_dimensions to avoid double penalty
-                # It only affects blocking_issues
+                quality_dimensions["narrative_quality"] = narrative_score
                 if narrative_score < self.narrative_fail_threshold:
-                    blocking_issues.append({
+                    warnings.append({
                         "type": "narrative_quality_low",
-                        "severity": "high",
+                        "severity": "advisory",
                         "message": f"叙事质量评分过低: {narrative_score} < {self.narrative_fail_threshold}",
                         "narrative_score": narrative_score,
                         "revision_target": "author",
                     })
-                else:
-                    # Only add to quality_dimensions if not blocking
-                    quality_dimensions["narrative_quality"] = narrative_score
         
         # 3. Editor review结果（从reviews表读取最新review）
         #
@@ -705,7 +718,7 @@ class QualityHub:
         )
         
         # 计算总分
-        overall_score = sum(quality_dimensions.values()) / len(quality_dimensions) if quality_dimensions else 0
+        overall_score = self._gate_score(quality_dimensions)
         
         # 判断是否通过
         passed = len(blocking_issues) == 0 and overall_score >= self.pass_score
@@ -719,9 +732,6 @@ class QualityHub:
                     revision_target = "polisher"
                     break
                 elif issue["type"] == "editor_rejected":
-                    revision_target = "author"
-                    break
-                elif issue["type"] == "narrative_quality_low":
                     revision_target = "author"
                     break
                 elif issue["type"] == "style_gate_blocked":

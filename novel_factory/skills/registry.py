@@ -723,6 +723,22 @@ class SkillRegistry:
                     f"Skill '{manifest.id}' runtime_scope agents not in allowed_agents: "
                     f"{sorted(unknown_agents)}"
                 )
+        if (
+            manifest.severity_default in ("advisory", "disabled")
+            and manifest.failure_policy.on_error == "block"
+        ):
+            errors.append(
+                f"Skill '{manifest.id}' severity_default={manifest.severity_default} "
+                "cannot use failure_policy.on_error=block"
+            )
+        if (
+            manifest.severity_default in ("advisory", "disabled")
+            and manifest.failure_policy.blocking_threshold is not None
+        ):
+            errors.append(
+                f"Skill '{manifest.id}' severity_default={manifest.severity_default} "
+                "cannot use failure_policy.blocking_threshold"
+            )
         for knowledge_id in manifest.knowledge_skill_ids:
             if not isinstance(knowledge_id, str) or not knowledge_id.strip():
                 errors.append(f"Skill '{manifest.id}' has invalid knowledge_skill_ids entry")
