@@ -2260,6 +2260,39 @@ class TestPolisherAgent:
         assert "模型内容过滤" not in chapter["content"]
         assert "机场负责人低声回报进度" in chapter["content"]
 
+    def test_polisher_blocks_excessive_expansion_drift(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        base = "林逸按下确认键，机场负责人低声回报进度，苏家撤资电话接连响起。"
+        original = base * 90
+        expanded = original + ("赵家探子又补了一段新动作和新线索，现场多出额外势力试探。" * 35)
+        seeded_repo.save_chapter_content("test_proj", 1, original, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+
+        stub = StubLLMProvider([{
+            "content": expanded,
+            "fact_change_risk": "none",
+            "changed_scope": ["sentence", "scene_texture"],
+            "summary": "润色扩写",
+        }])
+
+        result = PolisherAgent(seeded_repo, stub).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "workflow_run_id": "run-expansion-drift",
+        })
+
+        assert "error" in result
+        assert result["quality_gate"]["expansion_drift_fail"] is True
+        assert result["quality_gate"]["consume_revision_retry"] is False
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "赵家探子又补了一段" not in chapter["content"]
+
     def test_polisher_rejects_fact_change(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent
 

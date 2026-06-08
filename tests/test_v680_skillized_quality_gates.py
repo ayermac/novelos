@@ -219,6 +219,19 @@ def test_fact_lock_with_items(skill_registry):
     assert "risk_level" in result["data"]
 
 
+def test_fact_lock_detects_removed_original_fact(skill_registry):
+    """FactLockSkill fails when polishing removes a locked original fact."""
+    skill = skill_registry.get_skill("fact-lock")
+    result = skill.run({
+        "original_text": "黑金至尊卡已解锁，机场负责人安排专车。",
+        "polished_text": "机场负责人安排专车。",
+        "fact_lock_items": ["黑金至尊卡已解锁"],
+    })
+    assert result["ok"] is False
+    assert result["data"]["risk_level"] == "high"
+    assert "黑金至尊卡已解锁" in result["error"]
+
+
 # ── H. ForeshadowingDebtSkill ───────────────────────────────────
 
 

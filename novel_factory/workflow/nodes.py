@@ -484,6 +484,9 @@ def _handle_retryable_quality_gate(
         or gate.get("death_penalty_fail")
         or gate.get("scene_beat_coverage_fail")
         or gate.get("version_regression")
+        or gate.get("low_change_fail")
+        or gate.get("expansion_drift_fail")
+        or gate.get("fact_lock_fail")
     )
     if not result.get("error") or not retryable_gate:
         return result
@@ -1845,10 +1848,12 @@ def quality_gate_node(state: FactoryState, repo: Repository, skill_registry=None
         _log_node_event(state, repo, "quality_gate", "passed", status="completed")
     else:
         # v6.10.0: quality_gate failure is a routing decision, not an error
+        first_issue = str(blocking_issues[0]) if blocking_issues else ""
+        detail_suffix = f"，首个阻断: {first_issue[:160]}" if first_issue else ""
         _log_node_event(
             state, repo, "quality_gate", "failed",
             status="warning",
-            error_message=f"Quality gate failed: {len(blocking_issues)} blocking issues",
+            error_message=f"Quality gate failed: {len(blocking_issues)} blocking issues{detail_suffix}",
         )
 
     # 记录检查器错误警告
@@ -2381,4 +2386,3 @@ def creative_ledger_curator_node(state: FactoryState, repo: Repository) -> dict:
         result = {"ledger_update_result": {"status": "error", "error": str(e)}}
 
     return result
-
