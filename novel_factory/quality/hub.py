@@ -796,6 +796,11 @@ class QualityHub:
             "dialogue_count": len(dialogues),
         }
 
+        system_mechanics = self._diagnose_system_mechanics(text, paragraphs)
+        dimensions["system_mechanics"] = system_mechanics["score"]
+        metrics.update(system_mechanics["metrics"])
+        findings.extend(system_mechanics["findings"])
+
         # -- Death Penalty --
         dp_result = check_death_penalty_structured(text)
         dp_score = 0 if dp_result.has_critical else (50 if dp_result.violations else 100)
@@ -985,4 +990,94 @@ class QualityHub:
             "dimensions": dimensions,
             "findings": findings,
             "metrics": metrics,
+        }
+
+    @staticmethod
+    def _diagnose_system_mechanics(text: str, paragraphs: list[str]) -> dict[str, Any]:
+        """Detect webnovel system-panel overload and thin causality chains.
+
+        This catches issues surfaced by real chapters where the prose passes
+        broad narrative checks but too much of the payoff is carried by
+        bracketed system notices instead of observable scene reactions.
+        """
+        if not text.strip():
+            return {
+                "score": 100.0,
+                "findings": [],
+                "metrics": {
+                    "system_panel_count": 0,
+                    "system_panel_ratio": 0.0,
+                    "system_term_density": 0.0,
+                },
+            }
+
+        panel_pattern = r"【[^】]{2,120}】"
+        panels = re.findall(panel_pattern, text)
+        system_terms = [
+            "签到", "奖励", "权限", "面板", "宿主", "检测", "任务", "失败名单",
+            "风控", "托管", "封存", "资产", "预热", "解锁", "生效",
+        ]
+        causality_terms = [
+            "负责人", "经理", "电话", "通知", "上级", "指令", "监控", "扫码",
+            "权限等级", "系统提示", "风控指令", "关联资本", "项目链",
+        ]
+        impact_terms = [
+            "千亿", "至尊", "总统套房", "撤资", "封层", "华鼎", "帝豪",
+            "机场高层", "专车", "资产权限",
+        ]
+
+        panel_chars = sum(len(panel) for panel in panels)
+        panel_ratio = panel_chars / max(len(text), 1)
+        term_count = sum(text.count(term) for term in system_terms)
+        term_density = term_count / max(len(text), 1) * 1000
+        impact_count = sum(text.count(term) for term in impact_terms)
+        causality_count = sum(text.count(term) for term in causality_terms)
+
+        findings: list[dict[str, Any]] = []
+        score = 100.0
+
+        if len(panels) >= 5 and panel_ratio > 0.08:
+            score -= min(35, (len(panels) - 4) * 5 + 10)
+            findings.append({
+                "severity": "medium",
+                "code": "SYSTEM_MECHANICS_DENSE_PANEL",
+                "message": (
+                    f"系统播报偏密：检测到 {len(panels)} 条系统面板，"
+                    f"约占正文 {panel_ratio*100:.1f}%"
+                ),
+                "evidence": panels[:3],
+                "suggestion": "减少连续【系统】提示，把奖励结果转成角色动作、旁观者反应或外部电话反馈。",
+            })
+
+        if term_density > 7:
+            score -= min(25, (term_density - 7) * 2)
+            findings.append({
+                "severity": "medium",
+                "code": "SYSTEM_MECHANICS_TERM_DENSITY",
+                "message": f"系统机制词密度偏高：{term_density:.1f}/千字",
+                "evidence": {"system_term_count": term_count},
+                "suggestion": "降低权限/托管/风控等机制词堆叠，用具体场景结果承接爽点。",
+            })
+
+        if impact_count >= 5 and causality_count < max(2, impact_count // 3):
+            score -= 20
+            findings.append({
+                "severity": "high",
+                "code": "SYSTEM_MECHANICS_CAUSALITY_THIN",
+                "message": "高影响奖励连续出现，但现实因果链支撑不足",
+                "evidence": {
+                    "impact_count": impact_count,
+                    "causality_count": causality_count,
+                },
+                "suggestion": "补足扫码、上级指令、资本风控电话、负责人反应等外部触发链。",
+            })
+
+        return {
+            "score": round(max(0.0, score), 1),
+            "findings": findings,
+            "metrics": {
+                "system_panel_count": len(panels),
+                "system_panel_ratio": round(panel_ratio, 3),
+                "system_term_density": round(term_density, 1),
+            },
         }

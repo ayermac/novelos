@@ -2222,6 +2222,44 @@ class TestPolisherAgent:
         assert "返修润色无效" in result["error"]
         assert any(ev["event_type"] == "quality_gate_retry" for ev in result["_exec_events"])
 
+    def test_polisher_marks_all_segment_failures_as_degraded(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        class FilteringPolisherLLM(LLMProvider):
+            config = type("Config", (), {"max_tokens": 4096})()
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("real polisher should use text path")
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None, **kwargs) -> str:
+                return "模型内容过滤，无法润色。" * 6
+
+        draft = (
+            "林逸按下终端确认键，屏幕蓝光映在指节上。安保人员挡住手机镜头，机场负责人低声回报进度。" * 70
+            + "\n\n"
+            + "苏家电话一通接一通打进来，华鼎项目链的风控通知同步弹出，现场所有人都听见了对讲机里的停顿。" * 10
+        )
+        seeded_repo.save_chapter_content("test_proj", 1, draft, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+
+        result = PolisherAgent(seeded_repo, FilteringPolisherLLM()).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == ChapterStatus.POLISHED.value
+        assert any(ev["event_type"] == "polisher_degraded" for ev in result["_exec_events"])
+        assert any(ev["event_type"] == "segment_failed" for ev in result["_exec_events"])
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "模型内容过滤" not in chapter["content"]
+        assert "机场负责人低声回报进度" in chapter["content"]
+
     def test_polisher_rejects_fact_change(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent
 

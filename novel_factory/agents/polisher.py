@@ -1085,6 +1085,7 @@ class PolisherAgent(BaseAgent):
             )
 
         segment_outputs: list[str] = []
+        failed_segments = 0
 
         for idx, chunk in enumerate(chunks):
             segment_num = idx + 1
@@ -1190,6 +1191,7 @@ class PolisherAgent(BaseAgent):
                     "Polisher segment %d/%d failed (%s), using original chunk as fallback",
                     segment_num, total_chunks, e,
                 )
+                failed_segments += 1
                 segment_outputs.append(chunk)
                 continue
 
@@ -1223,14 +1225,43 @@ class PolisherAgent(BaseAgent):
                 quality_risk_note=None,
             )
 
+        if failed_segments >= total_chunks:
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": "polisher_degraded",
+                    "message": "Polisher 所有分段润色均失败，已保留执笔稿进入后续审核",
+                    "status": "warning",
+                    "payload": {
+                        "failed_segments": failed_segments,
+                        "total_segments": total_chunks,
+                        "degraded_reason": "all_segments_failed",
+                    },
+                })
+            return PolisherOutput(
+                content=content,
+                fact_change_risk="none",
+                changed_scope=["passthrough"],
+                summary=f"分段润色全部失败（{failed_segments}/{total_chunks}），保留原稿",
+                fixed_quality_findings=[],
+                deferred_quality_findings=["polisher_all_segments_failed"],
+                quality_risk_note="polisher_all_segments_failed",
+            )
+
         return PolisherOutput(
             content=merged_content,
             fact_change_risk="none",
             changed_scope=["sentence", "dialogue", "rhythm", "scene_texture"],
-            summary=f"分段润色完成（共{total_chunks}段）",
+            summary=(
+                f"分段润色完成（共{total_chunks}段，失败回退{failed_segments}段）"
+                if failed_segments else f"分段润色完成（共{total_chunks}段）"
+            ),
             fixed_quality_findings=[],
-            deferred_quality_findings=[],
-            quality_risk_note=None,
+            deferred_quality_findings=(
+                ["polisher_partial_segment_fallback"] if failed_segments else []
+            ),
+            quality_risk_note=(
+                "polisher_partial_segment_fallback" if failed_segments else None
+            ),
         )
 
     def _try_compress_overlong_polish(
