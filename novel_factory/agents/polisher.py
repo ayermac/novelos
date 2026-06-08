@@ -750,7 +750,12 @@ class PolisherAgent(BaseAgent):
         # plot facts.  Broad word-count gates allow useful polish expansion;
         # this local drift guard blocks unsafe relative expansion before
         # Editor later reports fact-lock violations after a retry loop.
-        if original_content and original_wc > 0 and polished_wc > original_wc:
+        if (
+            state.get("llm_mode") != "stub"
+            and original_content
+            and original_wc > 0
+            and polished_wc > original_wc
+        ):
             system_compressed = any(
                 ev.get("event_type") == "word_count_compressed"
                 for ev in exec_events

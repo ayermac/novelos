@@ -16,8 +16,14 @@ router = APIRouter(prefix="/knowledge-skills", tags=["knowledge"])
 
 class KnowledgeSkillMeta(BaseModel):
     skill_id: str
+    namespace: str = "knowledge"
+    qualified_id: str = ""
     name: str
     description: str
+    enabled: bool = True
+    priority: int = 50
+    token_budget: int = 1200
+    injection_mode: str = "auto"
     tags: list[str] = Field(default_factory=list)
     applicable_agents: list[str] = Field(default_factory=list)
     applicable_genres: list[str] = Field(default_factory=list)
@@ -37,6 +43,10 @@ class KnowledgeSkillCreate(BaseModel):
     tags: list[str] = Field(default_factory=list)
     applicable_agents: list[str] = Field(default_factory=list)
     applicable_genres: list[str] = Field(default_factory=list)
+    enabled: bool = True
+    priority: int = 50
+    token_budget: int = 1200
+    injection_mode: str = "auto"
 
 
 class KnowledgeSkillUpdate(BaseModel):
@@ -46,6 +56,19 @@ class KnowledgeSkillUpdate(BaseModel):
     tags: list[str] | None = None
     applicable_agents: list[str] | None = None
     applicable_genres: list[str] | None = None
+    enabled: bool | None = None
+    priority: int | None = None
+    token_budget: int | None = None
+    injection_mode: str | None = None
+
+
+class KnowledgeSkillSelectionPreview(BaseModel):
+    agent_id: str
+    genre: str | None = None
+    token_budget: int | None = None
+    target: str = "prompt"
+    quality_signals: list[str] = Field(default_factory=list)
+    project_overrides: dict[str, Any] = Field(default_factory=dict)
 
 
 # ── Dependency ────────────────────────────────────────────────
@@ -59,6 +82,28 @@ def _get_km(request: Any) -> Any:
     return km
 
 
+def _skill_to_dict(skill: Any, *, include_content: bool = False) -> dict[str, Any]:
+    data = {
+        "skill_id": skill.skill_id,
+        "namespace": getattr(skill, "namespace", "knowledge"),
+        "qualified_id": getattr(skill, "qualified_id", f"knowledge:{skill.skill_id}"),
+        "name": skill.name,
+        "description": skill.description,
+        "enabled": getattr(skill, "enabled", True),
+        "priority": getattr(skill, "priority", 50),
+        "token_budget": getattr(skill, "token_budget", 1200),
+        "injection_mode": getattr(skill, "injection_mode", "auto"),
+        "tags": skill.tags,
+        "applicable_agents": skill.applicable_agents,
+        "applicable_genres": skill.applicable_genres,
+        "version": skill.version,
+        "source": skill.source,
+    }
+    if include_content:
+        data["content"] = skill.content
+    return data
+
+
 # ── Endpoints ─────────────────────────────────────────────────
 
 
@@ -66,19 +111,37 @@ def _get_km(request: Any) -> Any:
 async def list_knowledge_skills(request: Any) -> list[dict[str, Any]]:
     """List all knowledge skills."""
     km = _get_km(request)
-    return [
-        {
-            "skill_id": s.skill_id,
-            "name": s.name,
-            "description": s.description,
-            "tags": s.tags,
-            "applicable_agents": s.applicable_agents,
-            "applicable_genres": s.applicable_genres,
-            "version": s.version,
-            "source": s.source,
-        }
-        for s in km.list_all()
-    ]
+    return [_skill_to_dict(s) for s in km.list_all()]
+
+
+@router.get("/agent/{agent_id}", response_model=list[KnowledgeSkillMeta])
+async def get_knowledge_skills_for_agent(
+    request: Any, agent_id: str, genre: str | None = None
+) -> list[dict[str, Any]]:
+    """Get knowledge skills available for a specific agent."""
+    km = _get_km(request)
+    skills = km.get_for_agent(agent_id, genre=genre)
+    return [_skill_to_dict(s) for s in skills]
+
+
+@router.post("/select")
+async def preview_knowledge_selection(
+    request: Any,
+    body: KnowledgeSkillSelectionPreview,
+) -> dict[str, Any]:
+    """Preview Knowledge Skill selection with budget and reasons."""
+    km = _get_km(request)
+    selection = km.select_for_agent(
+        body.agent_id,
+        genre=body.genre,
+        project_overrides=body.project_overrides,
+        token_budget=body.token_budget,
+        target=body.target,
+        quality_signals=body.quality_signals,
+    )
+    payload = selection.to_audit_payload(agent=body.agent_id, genre=body.genre)
+    payload["skills"] = [_skill_to_dict(s) for s in selection.skills]
+    return payload
 
 
 @router.get("/{skill_id}", response_model=KnowledgeSkillDetail)
@@ -88,17 +151,7 @@ async def get_knowledge_skill(request: Any, skill_id: str) -> dict[str, Any]:
     skill = km.get(skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail=f"Knowledge skill '{skill_id}' not found")
-    return {
-        "skill_id": skill.skill_id,
-        "name": skill.name,
-        "description": skill.description,
-        "content": skill.content,
-        "tags": skill.tags,
-        "applicable_agents": skill.applicable_agents,
-        "applicable_genres": skill.applicable_genres,
-        "version": skill.version,
-        "source": skill.source,
-    }
+    return _skill_to_dict(skill, include_content=True)
 
 
 @router.post("", response_model=KnowledgeSkillDetail, status_code=201)
@@ -117,18 +170,12 @@ async def create_knowledge_skill(request: Any, body: KnowledgeSkillCreate) -> di
         tags=body.tags,
         applicable_agents=body.applicable_agents,
         applicable_genres=body.applicable_genres,
+        enabled=body.enabled,
+        priority=body.priority,
+        token_budget=body.token_budget,
+        injection_mode=body.injection_mode,
     )
-    return {
-        "skill_id": skill.skill_id,
-        "name": skill.name,
-        "description": skill.description,
-        "content": skill.content,
-        "tags": skill.tags,
-        "applicable_agents": skill.applicable_agents,
-        "applicable_genres": skill.applicable_genres,
-        "version": skill.version,
-        "source": skill.source,
-    }
+    return _skill_to_dict(skill, include_content=True)
 
 
 @router.put("/{skill_id}", response_model=KnowledgeSkillDetail)
@@ -145,20 +192,14 @@ async def update_knowledge_skill(
         tags=body.tags,
         applicable_agents=body.applicable_agents,
         applicable_genres=body.applicable_genres,
+        enabled=body.enabled,
+        priority=body.priority,
+        token_budget=body.token_budget,
+        injection_mode=body.injection_mode,
     )
     if not skill:
         raise HTTPException(status_code=404, detail=f"Knowledge skill '{skill_id}' not found")
-    return {
-        "skill_id": skill.skill_id,
-        "name": skill.name,
-        "description": skill.description,
-        "content": skill.content,
-        "tags": skill.tags,
-        "applicable_agents": skill.applicable_agents,
-        "applicable_genres": skill.applicable_genres,
-        "version": skill.version,
-        "source": skill.source,
-    }
+    return _skill_to_dict(skill, include_content=True)
 
 
 @router.delete("/{skill_id}")
@@ -168,25 +209,3 @@ async def delete_knowledge_skill(request: Any, skill_id: str) -> Response:
     if not km.delete_skill(skill_id):
         raise HTTPException(status_code=404, detail=f"Knowledge skill '{skill_id}' not found")
     return Response(status_code=204)
-
-
-@router.get("/agent/{agent_id}", response_model=list[KnowledgeSkillMeta])
-async def get_knowledge_skills_for_agent(
-    request: Any, agent_id: str, genre: str | None = None
-) -> list[dict[str, Any]]:
-    """Get knowledge skills available for a specific agent."""
-    km = _get_km(request)
-    skills = km.get_for_agent(agent_id, genre=genre)
-    return [
-        {
-            "skill_id": s.skill_id,
-            "name": s.name,
-            "description": s.description,
-            "tags": s.tags,
-            "applicable_agents": s.applicable_agents,
-            "applicable_genres": s.applicable_genres,
-            "version": s.version,
-            "source": s.source,
-        }
-        for s in skills
-    ]

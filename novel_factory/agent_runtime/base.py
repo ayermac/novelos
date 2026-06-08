@@ -87,11 +87,62 @@ class BaseAgent:
         except Exception:
             return None
 
-    def _get_knowledge_context(self, agent_id: str, genre: str | None = None) -> str:
-        """获取所有相关知识 Skill 内容（非 agentic 模式用）."""
+    def _select_knowledge(
+        self,
+        agent_id: str,
+        genre: str | None = None,
+        project_overrides: dict[str, Any] | None = None,
+        target: str = "prompt",
+        token_budget: int | None = None,
+        quality_signals: list[str] | None = None,
+    ) -> Any | None:
+        """Select Knowledge Skills with v6.10.1 audit metadata."""
         if not self.knowledge_manager:
+            return None
+        if hasattr(self.knowledge_manager, "select_for_agent"):
+            return self.knowledge_manager.select_for_agent(
+                agent_id,
+                genre=genre,
+                project_overrides=project_overrides,
+                target=target,
+                token_budget=token_budget,
+                quality_signals=quality_signals,
+            )
+        skills = self.knowledge_manager.get_for_agent(agent_id, genre, project_overrides)
+        return type("KnowledgeSelectionCompat", (), {
+            "skills": skills,
+            "selection_reason": {s.skill_id: ["agent_match"] for s in skills},
+            "estimated_tokens": sum(max(1, len(s.content) // 4) for s in skills),
+            "token_budget": 0,
+            "trimmed_skill_ids": [],
+            "to_audit_payload": lambda _self, agent, genre=None: {
+                "agent": agent,
+                "genre": genre,
+                "skill_ids": [getattr(s, "qualified_id", f"knowledge:{s.skill_id}") for s in skills],
+                "versions": {s.skill_id: s.version for s in skills},
+                "estimated_tokens": sum(max(1, len(s.content) // 4) for s in skills),
+                "token_budget": 0,
+                "selection_reason": {s.skill_id: ["agent_match"] for s in skills},
+                "trimmed_skill_ids": [],
+            },
+        })()
+
+    def _get_knowledge_context(
+        self,
+        agent_id: str,
+        genre: str | None = None,
+        project_overrides: dict[str, Any] | None = None,
+    ) -> str:
+        """获取所有相关知识 Skill 内容（非 agentic 模式用）."""
+        selection = self._select_knowledge(
+            agent_id,
+            genre=genre,
+            project_overrides=project_overrides,
+            target="prompt",
+        )
+        if not selection:
             return ""
-        skills = self.knowledge_manager.get_for_agent(agent_id, genre)
+        skills = selection.skills
         if not skills:
             return ""
         parts = [f"## {s.name}\n\n{s.content}" for s in skills]

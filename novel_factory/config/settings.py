@@ -103,6 +103,32 @@ class AgenticConfig(BaseModel):
     )
 
 
+class KnowledgeAgentConfig(BaseModel):
+    """Per-agent Knowledge Skill strategy."""
+
+    token_budget: int = 2400
+    agentic_mode: bool = False
+    max_tool_rounds: int = 3
+
+
+class KnowledgeConfig(BaseModel):
+    """Knowledge Skill governance configuration."""
+
+    enabled: bool = True
+    default_injection_mode: str = "auto"
+    default_token_budget: int = 2400
+    agents: dict[str, KnowledgeAgentConfig] = Field(
+        default_factory=lambda: {
+            "planner": KnowledgeAgentConfig(token_budget=1800),
+            "screenwriter": KnowledgeAgentConfig(token_budget=2200),
+            "author": KnowledgeAgentConfig(token_budget=3000),
+            "polisher": KnowledgeAgentConfig(token_budget=2200),
+            "editor": KnowledgeAgentConfig(token_budget=2200),
+            "memory_curator": KnowledgeAgentConfig(token_budget=1200),
+        }
+    )
+
+
 class Settings(BaseModel):
     """Root settings object."""
 
@@ -120,6 +146,9 @@ class Settings(BaseModel):
 
     # v6.10.0: Agentic mode
     agentic: AgenticConfig = Field(default_factory=AgenticConfig)
+
+    # v6.10.1: Knowledge Skill governance
+    knowledge: KnowledgeConfig = Field(default_factory=KnowledgeConfig)
 
 
 # ── Loaders ────────────────────────────────────────────────────

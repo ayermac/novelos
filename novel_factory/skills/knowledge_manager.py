@@ -27,11 +27,50 @@ class KnowledgeSkill:
     name: str
     description: str
     content: str
+    namespace: str = "knowledge"
     tags: list[str] = field(default_factory=list)
     applicable_agents: list[str] = field(default_factory=list)
     applicable_genres: list[str] = field(default_factory=list)
+    enabled: bool = True
+    priority: int = 50
+    token_budget: int = 1200
+    injection_mode: str = "auto"  # auto | always | agentic_only | disabled
     version: str = "1.0"
     source: str = "builtin"
+
+    @property
+    def qualified_id(self) -> str:
+        """Return namespaced id for UI/logs."""
+        return f"{self.namespace}:{self.skill_id}"
+
+    @property
+    def estimated_tokens(self) -> int:
+        """Cheap deterministic token estimate for budget selection."""
+        return max(1, len(self.content) // 4)
+
+
+@dataclass
+class KnowledgeSelection:
+    """Result of selecting knowledge skills for an agent invocation."""
+
+    skills: list[KnowledgeSkill] = field(default_factory=list)
+    selection_reason: dict[str, list[str]] = field(default_factory=dict)
+    estimated_tokens: int = 0
+    token_budget: int = 0
+    trimmed_skill_ids: list[str] = field(default_factory=list)
+
+    def to_audit_payload(self, *, agent: str, genre: str | None = None) -> dict[str, Any]:
+        """Serialize selection for timeline/audit events."""
+        return {
+            "agent": agent,
+            "genre": genre,
+            "skill_ids": [s.qualified_id for s in self.skills],
+            "versions": {s.skill_id: s.version for s in self.skills},
+            "estimated_tokens": self.estimated_tokens,
+            "token_budget": self.token_budget,
+            "selection_reason": self.selection_reason,
+            "trimmed_skill_ids": self.trimmed_skill_ids,
+        }
 
 
 class KnowledgeManager:
@@ -94,10 +133,16 @@ class KnowledgeManager:
                     skill_id=skill_id,
                     name=meta.get("name", skill_id),
                     description=meta.get("description", ""),
+                    namespace=meta.get("namespace", "knowledge"),
                     tags=meta.get("tags", []),
                     applicable_agents=meta.get("applicable_agents", []),
                     applicable_genres=meta.get("applicable_genres", []),
+                    enabled=bool(meta.get("enabled", True)),
+                    priority=int(meta.get("priority", 50) or 50),
+                    token_budget=int(meta.get("token_budget", 1200) or 1200),
+                    injection_mode=meta.get("injection_mode", "auto") or "auto",
                     version=meta.get("version", "1.0"),
+                    source=meta.get("source", "builtin"),
                     content=content,
                 )
                 logger.info("Loaded knowledge skill: %s", skill_id)
@@ -121,33 +166,185 @@ class KnowledgeManager:
         project_overrides: dict[str, Any] | None = None,
     ) -> list[KnowledgeSkill]:
         """获取指定 Agent 可用的知识 Skill（支持 genre 和项目覆盖过滤）."""
+        return self.select_for_agent(
+            agent_id,
+            genre=genre,
+            project_overrides=project_overrides,
+            token_budget=10**9,
+        ).skills
+
+    def select_for_agent(
+        self,
+        agent_id: str,
+        genre: str | None = None,
+        project_overrides: dict[str, Any] | None = None,
+        token_budget: int | None = None,
+        target: str = "prompt",
+        quality_signals: list[str] | None = None,
+    ) -> KnowledgeSelection:
+        """Select knowledge skills for an agent with budget and audit reasons.
+
+        Args:
+            agent_id: Agent id such as ``author``.
+            genre: Optional project genre.
+            project_overrides: Project-level override document.
+            token_budget: Hard budget for selected knowledge.
+            target: ``prompt`` or ``agentic``.
+            quality_signals: Optional quality issue codes to bias selection.
+        """
         with self._lock:
             skills = list(self._skills.values())
 
-        results: list[KnowledgeSkill] = []
+        quality_signals = quality_signals or []
+        budget = max(
+            0,
+            int(
+                token_budget
+                if token_budget is not None
+                else self._default_token_budget(project_overrides) or 2400
+            ),
+        )
+        candidates: list[tuple[KnowledgeSkill, list[str]]] = []
         for skill in skills:
-            # 项目级覆盖
-            if project_overrides:
-                ks_overrides = project_overrides.get("knowledge_skills", {})
-                disabled = ks_overrides.get("disabled", [])
-                if skill.skill_id in disabled:
-                    continue
-
-                enabled = ks_overrides.get("enabled", [])
-                if enabled and skill.skill_id not in enabled:
-                    continue
-
-            # Agent 过滤
-            if agent_id not in skill.applicable_agents:
+            effective = self._apply_project_override(skill, project_overrides)
+            if not effective.enabled or effective.injection_mode == "disabled":
                 continue
 
-            # Genre 过滤
-            if genre and skill.applicable_genres:
-                if genre not in skill.applicable_genres:
+            if agent_id not in effective.applicable_agents:
+                continue
+
+            if genre and effective.applicable_genres:
+                if genre not in effective.applicable_genres:
                     continue
 
-            results.append(skill)
-        return results
+            if target == "prompt" and effective.injection_mode == "agentic_only":
+                continue
+
+            reasons = ["agent_match"]
+            if genre and effective.applicable_genres:
+                reasons.append(f"genre_match:{genre}")
+            if effective.injection_mode == "always":
+                reasons.append("injection_mode:always")
+            for signal in quality_signals:
+                if self._signal_matches_skill(signal, effective):
+                    reasons.append(f"quality_signal:{signal}")
+            candidates.append((effective, reasons))
+
+        candidates.sort(
+            key=lambda item: (
+                0 if item[0].injection_mode == "always" else 1,
+                -item[0].priority,
+                item[0].skill_id,
+            )
+        )
+
+        selected: list[KnowledgeSkill] = []
+        reasons_by_id: dict[str, list[str]] = {}
+        trimmed: list[str] = []
+        used = 0
+        for skill, reasons in candidates:
+            estimate = min(skill.estimated_tokens, max(1, skill.token_budget))
+            if used + estimate > budget:
+                trimmed.append(skill.skill_id)
+                continue
+            selected.append(skill)
+            reasons_by_id[skill.skill_id] = reasons
+            used += estimate
+
+        return KnowledgeSelection(
+            skills=selected,
+            selection_reason=reasons_by_id,
+            estimated_tokens=used,
+            token_budget=budget,
+            trimmed_skill_ids=trimmed,
+        )
+
+    @staticmethod
+    def _default_token_budget(project_overrides: dict[str, Any] | None) -> int | None:
+        if not isinstance(project_overrides, dict):
+            return None
+        ks_overrides = project_overrides.get("knowledge_skills", {})
+        if not isinstance(ks_overrides, dict):
+            return None
+        value = ks_overrides.get("token_budget") or ks_overrides.get("default_token_budget")
+        try:
+            return int(value) if value is not None else None
+        except (TypeError, ValueError):
+            return None
+
+    def _apply_project_override(
+        self,
+        skill: KnowledgeSkill,
+        project_overrides: dict[str, Any] | None,
+    ) -> KnowledgeSkill:
+        """Return an effective skill copy with project overrides applied."""
+        if not isinstance(project_overrides, dict):
+            return skill
+        ks_overrides = project_overrides.get("knowledge_skills", {})
+        if not isinstance(ks_overrides, dict):
+            return skill
+
+        disabled = set(ks_overrides.get("disabled", []) or [])
+        enabled_list = ks_overrides.get("enabled", []) or []
+        enabled_set = set(enabled_list) if isinstance(enabled_list, list) else set()
+        per_skill = ks_overrides.get("overrides", {})
+        if not isinstance(per_skill, dict):
+            per_skill = {}
+        entry = per_skill.get(skill.skill_id, {})
+        if not isinstance(entry, dict):
+            entry = {}
+
+        effective = KnowledgeSkill(
+            skill_id=skill.skill_id,
+            name=skill.name,
+            description=skill.description,
+            content=skill.content,
+            namespace=skill.namespace,
+            tags=list(skill.tags),
+            applicable_agents=list(skill.applicable_agents),
+            applicable_genres=list(skill.applicable_genres),
+            enabled=skill.enabled,
+            priority=skill.priority,
+            token_budget=skill.token_budget,
+            injection_mode=skill.injection_mode,
+            version=skill.version,
+            source=skill.source,
+        )
+
+        if skill.skill_id in disabled or skill.qualified_id in disabled:
+            effective.enabled = False
+        if enabled_set and skill.skill_id not in enabled_set and skill.qualified_id not in enabled_set:
+            effective.enabled = False
+        if "enabled" in entry:
+            effective.enabled = bool(entry.get("enabled"))
+        if "priority" in entry:
+            try:
+                effective.priority = int(entry["priority"])
+            except (TypeError, ValueError):
+                pass
+        if "token_budget" in entry:
+            try:
+                effective.token_budget = int(entry["token_budget"])
+            except (TypeError, ValueError):
+                pass
+        if entry.get("injection_mode"):
+            effective.injection_mode = str(entry["injection_mode"])
+        return effective
+
+    @staticmethod
+    def _signal_matches_skill(signal: str, skill: KnowledgeSkill) -> bool:
+        signal_text = str(signal).lower()
+        haystack = " ".join([skill.skill_id, skill.name, *skill.tags]).lower()
+        signal_map = {
+            "straight_emotion": ["show-dont-tell", "ai-style", "naturalness"],
+            "low_colloquial": ["dialogue", "naturalness"],
+            "exposition": ["info", "worldbuilding", "scene"],
+            "system_mechanics": ["webnovel", "worldbuilding", "pacing"],
+        }
+        for key, needles in signal_map.items():
+            if key in signal_text:
+                return any(needle in haystack for needle in needles)
+        return signal_text in haystack
 
     def to_tool_definitions(self, skills: list[KnowledgeSkill]) -> list[ToolDefinition]:
         """将知识 Skill 转换为 LLM Tool 定义."""
@@ -173,7 +370,12 @@ class KnowledgeManager:
 
         return ToolResult(
             content=skill.content,
-            metadata={"skill_id": skill_id, "name": skill.name},
+            metadata={
+                "skill_id": skill_id,
+                "qualified_id": skill.qualified_id,
+                "name": skill.name,
+                "version": skill.version,
+            },
         )
 
     def create_skill(
@@ -185,6 +387,11 @@ class KnowledgeManager:
         tags: list[str] | None = None,
         applicable_agents: list[str] | None = None,
         applicable_genres: list[str] | None = None,
+        enabled: bool = True,
+        priority: int = 50,
+        token_budget: int = 1200,
+        injection_mode: str = "auto",
+        source: str = "user",
     ) -> KnowledgeSkill:
         """创建新的知识 Skill（写入文件系统）."""
         with self._lock:
@@ -195,10 +402,16 @@ class KnowledgeManager:
             "skill_id": skill_id,
             "name": name,
             "description": description,
+            "namespace": "knowledge",
+            "enabled": enabled,
+            "priority": priority,
+            "token_budget": token_budget,
+            "injection_mode": injection_mode,
             "tags": tags or [],
             "applicable_agents": applicable_agents or [],
             "applicable_genres": applicable_genres or [],
             "version": "1.0",
+            "source": source,
         }
 
         with open(os.path.join(skill_dir, "meta.yaml"), "w", encoding="utf-8") as f:
@@ -224,9 +437,15 @@ class KnowledgeManager:
             name=name,
             description=description,
             content=content,
+            namespace="knowledge",
             tags=tags or [],
             applicable_agents=applicable_agents or [],
             applicable_genres=applicable_genres or [],
+            enabled=enabled,
+            priority=priority,
+            token_budget=token_budget,
+            injection_mode=injection_mode,
+            source=source,
         )
         self._skills[skill_id] = skill
         logger.info("Created knowledge skill: %s", skill_id)
@@ -241,6 +460,10 @@ class KnowledgeManager:
         tags: list[str] | None = None,
         applicable_agents: list[str] | None = None,
         applicable_genres: list[str] | None = None,
+        enabled: bool | None = None,
+        priority: int | None = None,
+        token_budget: int | None = None,
+        injection_mode: str | None = None,
     ) -> KnowledgeSkill | None:
         """更新知识 Skill."""
         with self._lock:
@@ -262,16 +485,30 @@ class KnowledgeManager:
             skill.applicable_agents = applicable_agents
         if applicable_genres is not None:
             skill.applicable_genres = applicable_genres
+        if enabled is not None:
+            skill.enabled = enabled
+        if priority is not None:
+            skill.priority = priority
+        if token_budget is not None:
+            skill.token_budget = token_budget
+        if injection_mode is not None:
+            skill.injection_mode = injection_mode
 
         # 写入 meta.yaml
         meta = {
             "skill_id": skill.skill_id,
+            "namespace": skill.namespace,
             "name": skill.name,
             "description": skill.description,
+            "enabled": skill.enabled,
+            "priority": skill.priority,
+            "token_budget": skill.token_budget,
+            "injection_mode": skill.injection_mode,
             "tags": skill.tags,
             "applicable_agents": skill.applicable_agents,
             "applicable_genres": skill.applicable_genres,
             "version": skill.version,
+            "source": skill.source,
         }
         with open(os.path.join(skill_dir, "meta.yaml"), "w", encoding="utf-8") as f:
             yaml.dump(meta, f, allow_unicode=True, default_flow_style=False)

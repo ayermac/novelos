@@ -757,19 +757,30 @@ def create_node_runners(
     effective_tool_registry = _ensure_tool_registry()
     effective_trace_store = _ensure_trace_store(repo)
 
-    # v6.10.0: Initialize KnowledgeManager and agentic config from settings
+    # v6.10.0/v6.10.1: Initialize KnowledgeManager and knowledge/agentic config.
     knowledge_manager = None
     agentic_config = {}
     try:
         from ..skills.knowledge_manager import KnowledgeManager
         from pathlib import Path
         knowledge_dir = str(Path(__file__).resolve().parent.parent / "skills" / "knowledge")
-        knowledge_manager = KnowledgeManager(knowledge_dir=knowledge_dir)
+        knowledge_settings = getattr(settings, "knowledge", None)
+        if not knowledge_settings or getattr(knowledge_settings, "enabled", True):
+            knowledge_manager = KnowledgeManager(knowledge_dir=knowledge_dir)
+
+        if knowledge_settings and getattr(knowledge_settings, "enabled", True):
+            for agent_id, agent_cfg in getattr(knowledge_settings, "agents", {}).items():
+                agentic_config[agent_id] = {
+                    "agentic_mode": getattr(agent_cfg, "agentic_mode", False),
+                    "max_tool_rounds": getattr(agent_cfg, "max_tool_rounds", 3),
+                    "knowledge_token_budget": getattr(agent_cfg, "token_budget", None),
+                }
 
         agentic_settings = getattr(settings, "agentic", None)
         if agentic_settings and getattr(agentic_settings, "enabled", False):
             for agent_id, agent_cfg in agentic_settings.agents.items():
                 agentic_config[agent_id] = {
+                    **agentic_config.get(agent_id, {}),
                     "agentic_mode": agent_cfg.agentic_mode,
                     "max_tool_rounds": agent_cfg.max_tool_rounds,
                 }

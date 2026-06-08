@@ -333,10 +333,18 @@ class AuthorAgent(BaseAgent):
 
         # v6.10.0: 知识层（双模式）
         genre = self._get_project_genre(project_id) if self.knowledge_manager else None
+        project_skill_overrides = self._get_project_skill_overrides(project_id)
 
         if self.knowledge_manager and self.use_agentic_mode:
             # Agentic 模式：LLM 主动咨询知识 Skill
-            knowledge_skills = self.knowledge_manager.get_for_agent(self.agent_id, genre)
+            knowledge_selection = self._select_knowledge(
+                self.agent_id,
+                genre=genre,
+                project_overrides=project_skill_overrides,
+                target="agentic",
+                token_budget=self.agent_config.get("knowledge_token_budget"),
+            )
+            knowledge_skills = knowledge_selection.skills if knowledge_selection else []
             if knowledge_skills:
                 tool_definitions = self.knowledge_manager.to_tool_definitions(knowledge_skills)
                 agentic_response = self._invoke_with_tools(
@@ -360,22 +368,46 @@ class AuthorAgent(BaseAgent):
                         "genre": genre,
                         "rounds_used": agentic_response.rounds_used,
                         "total_tokens": agentic_response.total_tokens,
+                        "knowledge_selection": (
+                            knowledge_selection.to_audit_payload(agent=self.agent_id, genre=genre)
+                            if knowledge_selection else {}
+                        ),
                     },
                 })
 
         elif self.knowledge_manager:
             # 默认模式：知识内容注入 prompt
-            knowledge_context = self._get_knowledge_context(self.agent_id, genre)
-            if knowledge_context:
+            knowledge_selection = self._select_knowledge(
+                self.agent_id,
+                genre=genre,
+                project_overrides=project_skill_overrides,
+                target="prompt",
+                token_budget=self.agent_config.get("knowledge_token_budget"),
+            )
+            knowledge_skills = knowledge_selection.skills if knowledge_selection else []
+            if knowledge_skills:
+                knowledge_context = "\n\n---\n\n".join(
+                    f"## {s.name}\n\n{s.content}" for s in knowledge_skills
+                )
                 messages.append({
                     "role": "system",
                     "content": f"写作规范参考（请在创作时遵循以下规范）:\n\n{knowledge_context}",
                 })
+                if knowledge_selection and knowledge_selection.trimmed_skill_ids:
+                    exec_events.append({
+                        "event_type": "knowledge_budget_trimmed",
+                        "message": f"知识注入预算裁剪：{len(knowledge_selection.trimmed_skill_ids)} 个 Skill 未注入",
+                        "status": "warning",
+                        "payload": knowledge_selection.to_audit_payload(agent=self.agent_id, genre=genre),
+                    })
                 exec_events.append({
                     "event_type": "knowledge_injected",
-                    "message": "已注入写作规范知识",
+                    "message": f"已注入写作规范知识：{len(knowledge_skills)} 个 Skill",
                     "status": "info",
-                    "payload": {"genre": genre},
+                    "payload": (
+                        knowledge_selection.to_audit_payload(agent=self.agent_id, genre=genre)
+                        if knowledge_selection else {"genre": genre}
+                    ),
                 })
 
         if self._should_use_plain_text_primary(state):
