@@ -31,9 +31,14 @@ def _normalize_overrides(overrides: dict[str, Any] | None) -> dict[str, Any]:
     if not isinstance(agent_skills, dict):
         agent_skills = {}
 
+    knowledge_skills = overrides.get("knowledge_skills", {})
+    if not isinstance(knowledge_skills, dict):
+        knowledge_skills = {}
+
     normalized = dict(overrides)
     normalized["skills"] = skills
     normalized["agent_skills"] = agent_skills
+    normalized["knowledge_skills"] = knowledge_skills
     return normalized
 
 
@@ -55,13 +60,15 @@ async def get_project_skill_overrides(
         overrides = _normalize_overrides(data.get("overrides"))
         skills = overrides.get("skills", {})
         agent_skills = overrides.get("agent_skills", {})
+        knowledge_skills = overrides.get("knowledge_skills", {})
 
         return envelope_response({
             "project_id": project_id,
             "overrides": overrides,
             "skills_count": len(skills) if isinstance(skills, dict) else 0,
             "agent_count": len(agent_skills) if isinstance(agent_skills, dict) else 0,
-            "has_overrides": bool(skills or agent_skills),
+            "knowledge_skills_count": len(knowledge_skills) if isinstance(knowledge_skills, dict) else 0,
+            "has_overrides": bool(skills or agent_skills or knowledge_skills),
             "updated_at": data.get("updated_at", ""),
         })
     except Exception as e:
@@ -93,7 +100,12 @@ async def update_project_skill_overrides(
             "overrides": overrides,
             "skills_count": len(overrides.get("skills", {})),
             "agent_count": len(overrides.get("agent_skills", {})),
-            "has_overrides": bool(overrides.get("skills") or overrides.get("agent_skills")),
+            "knowledge_skills_count": len(overrides.get("knowledge_skills", {})),
+            "has_overrides": bool(
+                overrides.get("skills")
+                or overrides.get("agent_skills")
+                or overrides.get("knowledge_skills")
+            ),
         })
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"保存项目 Skill 覆盖失败: {str(e)}")
@@ -119,9 +131,10 @@ async def clear_project_skill_overrides(
 
         return envelope_response({
             "project_id": project_id,
-            "overrides": {"skills": {}, "agent_skills": {}},
+            "overrides": {"skills": {}, "agent_skills": {}, "knowledge_skills": {}},
             "skills_count": 0,
             "agent_count": 0,
+            "knowledge_skills_count": 0,
             "has_overrides": False,
         })
     except Exception as e:

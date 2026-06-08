@@ -72,6 +72,13 @@ class SkillPackage(BaseModel):
     fixtures: str = "tests/fixtures.yaml"
 
 
+class SkillRuntimeScope(BaseModel):
+    """Runtime governance scope for a skill."""
+
+    agents: list[str] = Field(default_factory=list)
+    chapters: Literal["all", "first_only", "genre_only"] = "all"
+
+
 class SkillManifest(BaseModel):
     """Manifest for a skill.
 
@@ -96,5 +103,12 @@ class SkillManifest(BaseModel):
     config_schema: dict[str, Any] = Field(default_factory=dict)
     default_config: dict[str, Any] = Field(default_factory=dict)
     failure_policy: FailurePolicy = Field(default_factory=FailurePolicy)
+    # v6.10.2: Skill governance metadata for Code/Knowledge layer binding.
+    layer: Literal["code"] = "code"
+    category: str = "general"
+    severity_default: Literal["blocking", "advisory", "disabled"] = "blocking"
+    knowledge_skill_ids: list[str] = Field(default_factory=list)
+    dedupe_group: str = ""
+    runtime_scope: SkillRuntimeScope = Field(default_factory=SkillRuntimeScope)
     # v2.3: Package metadata
     package: Optional[SkillPackage] = None

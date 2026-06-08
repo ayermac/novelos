@@ -1,19 +1,19 @@
 id: continuity-gate
 name: Narrative Continuity Gate
-version: "1.0.0"
+version: 1.0.0
 kind: validator
 class_name: ContinuityGateSkill
-description: "确定性叙事连续性门控：时间回退、跨章锚点、标题质量、事件重播检测"
+description: 确定性叙事连续性门控：时间回退、跨章锚点、标题质量、事件重播检测
 enabled: true
 builtin: true
 allowed_agents:
-  - editor
-  - publisher
-  - manual
+- editor
+- publisher
+- manual
 allowed_stages:
-  - before_review
-  - before_publish
-  - manual
+- before_review
+- before_publish
+- manual
 permissions:
   read_context: false
   read_chapter: false
@@ -29,7 +29,7 @@ permissions:
 input_schema:
   type: object
   required:
-    - content
+  - content
   properties:
     content:
       type: string
@@ -42,9 +42,9 @@ input_schema:
 output_schema:
   type: object
   required:
-    - passed
-    - severity
-    - issues
+  - passed
+  - severity
+  - issues
   properties:
     passed:
       type: boolean
@@ -65,3 +65,12 @@ failure_policy:
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null
+layer: code
+category: continuity
+severity_default: blocking
+knowledge_skill_ids: []
+dedupe_group: continuity
+runtime_scope:
+  agents:
+  - editor
+  chapters: all

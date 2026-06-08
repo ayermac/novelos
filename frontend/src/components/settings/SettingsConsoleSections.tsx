@@ -6,7 +6,7 @@ import { tLlmMode } from '../../lib/i18n'
 import { FormField, Select, TextInput, NumberInput, LoadingButton, InlineMessage, SkeletonStack, useToast } from '../ui'
 import { get, post, put, patch } from '../../lib/api'
 import { useAppDialog } from '../AppDialogContext'
-import { CheckCircle2, KeyRound, Plus, RefreshCw, Router, Server, Trash2, Wifi } from 'lucide-react'
+import { BookOpenCheck, CheckCircle2, KeyRound, Plus, RefreshCw, Router, Server, Trash2, Wifi } from 'lucide-react'
 import './SettingsConsoleSections.css'
 
 interface LlmProfile {
@@ -76,6 +76,20 @@ interface DesktopConfig {
   profiles: Record<string, DesktopProfile>
   agent_llm?: Record<string, string>
   agent_llm_fallback?: Record<string, string>
+  knowledge?: Partial<KnowledgeStrategyConfig>
+}
+
+interface KnowledgeAgentStrategy {
+  token_budget: number
+  agentic_mode: boolean
+  max_tool_rounds: number
+}
+
+interface KnowledgeStrategyConfig {
+  enabled: boolean
+  default_injection_mode: string
+  default_token_budget: number
+  agents: Record<string, KnowledgeAgentStrategy>
 }
 
 interface LlmTemplateForm {
@@ -157,6 +171,28 @@ const COMMON_API_KEY_ENVS = [
   'FREEMODEL_API_KEY',
 ] as const
 
+const KNOWLEDGE_INJECTION_MODES = [
+  { value: 'auto', label: 'auto：按 Agent / Genre / 质量信号自动选择' },
+  { value: 'always', label: 'always：优先注入关键知识' },
+  { value: 'agentic_only', label: 'agentic_only：只作为工具按需调用' },
+  { value: 'hybrid', label: 'hybrid：关键知识注入 + 工具补充' },
+  { value: 'disabled', label: 'disabled：不注入' },
+] as const
+
+const DEFAULT_KNOWLEDGE_CONFIG: KnowledgeStrategyConfig = {
+  enabled: true,
+  default_injection_mode: 'auto',
+  default_token_budget: 2400,
+  agents: {
+    planner: { token_budget: 1800, agentic_mode: false, max_tool_rounds: 3 },
+    screenwriter: { token_budget: 2200, agentic_mode: false, max_tool_rounds: 3 },
+    author: { token_budget: 3000, agentic_mode: false, max_tool_rounds: 3 },
+    polisher: { token_budget: 2200, agentic_mode: false, max_tool_rounds: 3 },
+    editor: { token_budget: 2200, agentic_mode: true, max_tool_rounds: 3 },
+    memory_curator: { token_budget: 1200, agentic_mode: false, max_tool_rounds: 3 },
+  },
+}
+
 let templateIdCounter = 0
 
 function createTemplateId(seed = 'template'): string {
@@ -168,6 +204,26 @@ function createTemplateId(seed = 'template'): string {
 function normalizePositiveInt(value: number, fallback: number): number {
   if (!Number.isFinite(value)) return fallback
   return Math.max(1, Math.round(value))
+}
+
+function normalizeKnowledgeConfig(raw?: Partial<KnowledgeStrategyConfig>): KnowledgeStrategyConfig {
+  const agents: Record<string, KnowledgeAgentStrategy> = { ...DEFAULT_KNOWLEDGE_CONFIG.agents }
+  Object.entries(raw?.agents || {}).forEach(([agent, cfg]) => {
+    agents[agent] = {
+      token_budget: normalizePositiveInt(Number(cfg?.token_budget), DEFAULT_KNOWLEDGE_CONFIG.agents[agent]?.token_budget || DEFAULT_KNOWLEDGE_CONFIG.default_token_budget),
+      agentic_mode: Boolean(cfg?.agentic_mode),
+      max_tool_rounds: Math.min(10, normalizePositiveInt(Number(cfg?.max_tool_rounds), 3)),
+    }
+  })
+
+  const mode = raw?.default_injection_mode || DEFAULT_KNOWLEDGE_CONFIG.default_injection_mode
+  const allowedModes = new Set(KNOWLEDGE_INJECTION_MODES.map((item) => item.value))
+  return {
+    enabled: raw?.enabled ?? DEFAULT_KNOWLEDGE_CONFIG.enabled,
+    default_injection_mode: allowedModes.has(mode as typeof KNOWLEDGE_INJECTION_MODES[number]['value']) ? mode : DEFAULT_KNOWLEDGE_CONFIG.default_injection_mode,
+    default_token_budget: normalizePositiveInt(Number(raw?.default_token_budget), DEFAULT_KNOWLEDGE_CONFIG.default_token_budget),
+    agents,
+  }
 }
 
 function isLocalSecureSecret(status?: ApiKeySecretStatus): boolean {
@@ -396,6 +452,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
   const [defaultTemplate, setDefaultTemplate] = useState(data.default_llm || 'default')
   const [agentRoutes, setAgentRoutes] = useState<Record<string, string>>({})
   const [agentFallbackRoutes, setAgentFallbackRoutes] = useState<Record<string, string>>({})
+  const [knowledgeConfig, setKnowledgeConfig] = useState<KnowledgeStrategyConfig>(DEFAULT_KNOWLEDGE_CONFIG)
   const [apiKeyDrafts, setApiKeyDrafts] = useState<Record<string, string>>({})
   const [customApiKeyEnvs, setCustomApiKeyEnvs] = useState<string[]>([])
   const [newApiKeyEnv, setNewApiKeyEnv] = useState('')
@@ -442,6 +499,7 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
         agent.id,
         cfg.agent_llm_fallback?.[agent.id] || '',
       ])))
+      setKnowledgeConfig(normalizeKnowledgeConfig(cfg.knowledge))
     } else {
       setInlineMsg({ variant: 'danger', text: res.error?.message || '读取桌面 LLM 配置失败' })
     }
@@ -553,6 +611,19 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
       llm_profiles: profiles,
       agent_llm: agentRoutes,
       agent_llm_fallback: fallbackRoutesToSave,
+      knowledge: {
+        enabled: knowledgeConfig.enabled,
+        default_injection_mode: knowledgeConfig.default_injection_mode,
+        default_token_budget: normalizePositiveInt(Number(knowledgeConfig.default_token_budget), DEFAULT_KNOWLEDGE_CONFIG.default_token_budget),
+        agents: Object.fromEntries(Object.entries(knowledgeConfig.agents).map(([agent, cfg]) => [
+          agent,
+          {
+            token_budget: normalizePositiveInt(Number(cfg.token_budget), DEFAULT_KNOWLEDGE_CONFIG.default_token_budget),
+            agentic_mode: Boolean(cfg.agentic_mode),
+            max_tool_rounds: Math.min(10, normalizePositiveInt(Number(cfg.max_tool_rounds), 3)),
+          },
+        ])),
+      },
     })
     setSaving(false)
     if (res.ok && res.data) {
@@ -1111,6 +1182,149 @@ export function LlmSettingsSection({ data }: { data: SettingsData }) {
                   </div>
                 ))}
               </div>
+            </div>
+          </div>
+
+          <div style={{
+            border: '1px solid var(--border-color)',
+            borderRadius: 'var(--radius-md)',
+            background: 'var(--bg-primary)',
+            padding: 16,
+            marginTop: 18,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+                <BookOpenCheck size={18} style={{ color: 'var(--ink-accent)', marginTop: 2 }} />
+                <div>
+                  <h4 style={{ margin: 0, fontSize: 16 }}>Knowledge Skill 调用策略</h4>
+                  <div style={{ color: 'var(--text-secondary)', fontSize: 13, marginTop: 3 }}>
+                    LLM 配置只维护知识调用方式；知识内容、适用范围和资产目录在「Skill 管理」维护。
+                  </div>
+                </div>
+              </div>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, fontWeight: 700 }}>
+                <input
+                  type="checkbox"
+                  checked={knowledgeConfig.enabled}
+                  onChange={(event) => setKnowledgeConfig((prev) => ({ ...prev, enabled: event.target.checked }))}
+                />
+                全局启用
+              </label>
+            </div>
+
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'minmax(220px, 0.5fr) minmax(180px, 0.3fr) minmax(0, 1fr)',
+              gap: 12,
+              alignItems: 'end',
+              marginBottom: 14,
+            }}>
+              <FormField label="默认注入模式">
+                <Select
+                  aria-label="Knowledge 默认注入模式"
+                  value={knowledgeConfig.default_injection_mode}
+                  onChange={(e) => setKnowledgeConfig((prev) => ({ ...prev, default_injection_mode: e.target.value }))}
+                >
+                  {KNOWLEDGE_INJECTION_MODES.map((mode) => (
+                    <option key={mode.value} value={mode.value}>{mode.label}</option>
+                  ))}
+                </Select>
+              </FormField>
+              <FormField label="默认 token budget">
+                <NumberInput
+                  aria-label="Knowledge 默认 token budget"
+                  min="0"
+                  step="100"
+                  value={knowledgeConfig.default_token_budget}
+                  onChange={(e) => setKnowledgeConfig((prev) => ({
+                    ...prev,
+                    default_token_budget: normalizePositiveInt(Number(e.target.value), DEFAULT_KNOWLEDGE_CONFIG.default_token_budget),
+                  }))}
+                />
+              </FormField>
+              <div style={{
+                padding: 12,
+                borderRadius: 'var(--radius-md)',
+                background: 'var(--bg-secondary)',
+                color: 'var(--text-secondary)',
+                fontSize: 12,
+                lineHeight: 1.6,
+              }}>
+                `prompt_injection` 稳定但占 token；`agentic_tools` 按需咨询但依赖模型工具调用；`hybrid` 适合后续逐步打开。
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gap: 10 }}>
+              {AGENT_OPTIONS.map((agent) => {
+                const strategy = knowledgeConfig.agents[agent.id] || {
+                  token_budget: DEFAULT_KNOWLEDGE_CONFIG.default_token_budget,
+                  agentic_mode: false,
+                  max_tool_rounds: 3,
+                }
+                const updateAgentStrategy = (patch: Partial<KnowledgeAgentStrategy>) => {
+                  setKnowledgeConfig((prev) => ({
+                    ...prev,
+                    agents: {
+                      ...prev.agents,
+                      [agent.id]: {
+                        ...(prev.agents[agent.id] || strategy),
+                        ...patch,
+                      },
+                    },
+                  }))
+                }
+                return (
+                  <div
+                    key={`knowledge-${agent.id}`}
+                    style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'minmax(180px, 1fr) 150px 150px 150px',
+                      gap: 10,
+                      alignItems: 'center',
+                      padding: '10px 0',
+                      borderTop: '1px solid var(--border-color)',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontWeight: 700 }}>{agent.label}</div>
+                      <div style={{ color: 'var(--text-secondary)', fontSize: 12, marginTop: 2 }}>{agent.id}</div>
+                    </div>
+                    <FormField label="token budget">
+                      <NumberInput
+                        aria-label={`${agent.id} Knowledge token budget`}
+                        min="0"
+                        step="100"
+                        value={strategy.token_budget}
+                        onChange={(e) => updateAgentStrategy({
+                          token_budget: normalizePositiveInt(Number(e.target.value), DEFAULT_KNOWLEDGE_CONFIG.default_token_budget),
+                        })}
+                      />
+                    </FormField>
+                    <FormField label="agentic tools">
+                      <Select
+                        aria-label={`${agent.id} Knowledge agentic mode`}
+                        value={strategy.agentic_mode ? 'true' : 'false'}
+                        onChange={(e) => updateAgentStrategy({ agentic_mode: e.target.value === 'true' })}
+                      >
+                        <option value="false">关闭</option>
+                        <option value="true">开启</option>
+                      </Select>
+                    </FormField>
+                    <FormField label="max tool rounds">
+                      <NumberInput
+                        aria-label={`${agent.id} Knowledge max tool rounds`}
+                        min="1"
+                        max="10"
+                        step="1"
+                        value={strategy.max_tool_rounds}
+                        onChange={(e) => updateAgentStrategy({
+                          max_tool_rounds: Math.min(10, normalizePositiveInt(Number(e.target.value), 3)),
+                        })}
+                      />
+                    </FormField>
+                  </div>
+                )
+              })}
             </div>
           </div>
 

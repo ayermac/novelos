@@ -43,7 +43,7 @@ DEFAULT_RULES: list[DeathPenaltyRule] = [
     ),
     DeathPenaltyRule(
         code="DP_EXPR_03A",
-        pattern=r"(嘴角|唇角)[^，。！？\n]{0,8}(抬|扬|勾|弯|翘|动)[^，。！？\n]{0,8}",
+        pattern=r'(嘴角|唇角)[^，。！？：:；;“”"「」『』\n]{0,8}(抬|扬|勾|弯|翘|动)[^，。！？：:；;“”"「」『』\n]{0,8}',
         match_type=PenaltyMatchType.REGEX,
         severity=PenaltySeverity.CRITICAL,
         category="ai_trace",
@@ -139,6 +139,17 @@ DEFAULT_RULES: list[DeathPenaltyRule] = [
         description="AI模板表达", alternatives=[],
     ),
 ]
+
+
+STATIC_DEATH_PENALTY_REPLACEMENTS: dict[str, str] = {
+    "笑意未达眼底": "眼神淡下来",
+    "不禁感慨": "停了停",
+}
+
+
+REGEX_DEATH_PENALTY_REPLACEMENTS: dict[str, str] = {
+    "DP_EXPR_03A": "停了一瞬",
+}
 
 
 def check_death_penalty(
@@ -238,20 +249,46 @@ def sanitize_death_penalty_text(
 
     sanitized = text
     replacements: list[dict[str, str]] = []
-    for rule in rules:
-        if rule.match_type not in (PenaltyMatchType.EXACT, PenaltyMatchType.SUBSTRING):
-            continue
-        if not rule.alternatives:
-            continue
-        if rule.pattern not in sanitized:
-            continue
-        replacement = rule.alternatives[0]
-        sanitized = sanitized.replace(rule.pattern, replacement)
-        replacements.append({
-            "code": rule.code,
-            "pattern": rule.pattern,
-            "replacement": replacement,
-        })
+    for _ in range(2):
+        changed = False
+        for rule in rules:
+            if rule.match_type in (PenaltyMatchType.EXACT, PenaltyMatchType.SUBSTRING):
+                replacement = (
+                    rule.alternatives[0]
+                    if rule.alternatives
+                    else STATIC_DEATH_PENALTY_REPLACEMENTS.get(rule.pattern)
+                )
+                if not replacement or rule.pattern not in sanitized:
+                    continue
+                sanitized = sanitized.replace(rule.pattern, replacement)
+                replacements.append({
+                    "code": rule.code,
+                    "pattern": rule.pattern,
+                    "replacement": replacement,
+                })
+                changed = True
+                continue
+
+            if rule.match_type == PenaltyMatchType.REGEX:
+                replacement = REGEX_DEATH_PENALTY_REPLACEMENTS.get(rule.code)
+                if not replacement:
+                    continue
+                try:
+                    matches = list(re.finditer(rule.pattern, sanitized))
+                except re.error:
+                    continue
+                if not matches:
+                    continue
+                sanitized = re.sub(rule.pattern, replacement, sanitized)
+                for match in matches:
+                    replacements.append({
+                        "code": rule.code,
+                        "pattern": match.group(0),
+                        "replacement": replacement,
+                    })
+                changed = True
+        if not changed:
+            break
 
     return sanitized, replacements
 

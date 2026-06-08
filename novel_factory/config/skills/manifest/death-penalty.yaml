@@ -1,21 +1,21 @@
 id: death-penalty
 name: Death Penalty Detector
-version: "1.0.0"
+version: 1.0.0
 kind: validator
 class_name: DeathPenaltySkill
-description: "检测AI死刑红线短语（AI cliches）"
+description: 检测AI死刑红线短语（AI cliches）
 enabled: true
 builtin: true
 allowed_agents:
-  - editor
-  - author
-  - polisher
-  - manual
+- editor
+- author
+- polisher
+- manual
 allowed_stages:
-  - after_llm
-  - before_save
-  - before_review
-  - manual
+- after_llm
+- before_save
+- before_review
+- manual
 permissions:
   read_context: false
   read_chapter: false
@@ -31,7 +31,7 @@ permissions:
 input_schema:
   type: object
   required:
-    - text
+  - text
   properties:
     text:
       type: string
@@ -40,8 +40,8 @@ input_schema:
 output_schema:
   type: object
   required:
-    - has_critical
-    - issues
+  - has_critical
+  - issues
   properties:
     has_critical:
       type: boolean
@@ -58,3 +58,15 @@ failure_policy:
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null
+layer: code
+category: style
+severity_default: blocking
+knowledge_skill_ids:
+- ai-style-avoidance
+dedupe_group: ai_style
+runtime_scope:
+  agents:
+  - author
+  - polisher
+  - editor
+  chapters: all

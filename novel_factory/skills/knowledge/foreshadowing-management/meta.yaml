@@ -1,25 +1,37 @@
 skill_id: foreshadowing-management
 name: 伏笔与悬念管理指南
-description: |
-  伏笔的埋设、追踪和回收技巧：伏笔类型、回收节奏、悬念层次、
+description: '伏笔的埋设、追踪和回收技巧：伏笔类型、回收节奏、悬念层次、
+
   伏笔债务管理。帮助 LLM 构建完整的叙事线索网络。
+
+  '
 tags:
-  - foreshadowing
-  - suspense
-  - plot
-  - narrative
+- foreshadowing
+- suspense
+- plot
+- narrative
 applicable_agents:
-  - planner
-  - screenwriter
-  - author
-  - editor
+- planner
+- screenwriter
+- author
+- editor
 applicable_genres:
-  - xuanhuan
-  - urban
-  - xianxia
-  - system
-  - game
-  - fantasy
-  - romance
-  - suspense
-version: "1.0"
+- xuanhuan
+- urban
+- xianxia
+- system
+- game
+- fantasy
+- romance
+- suspense
+version: '1.0'
+layer: knowledge
+category: foreshadowing
+paired_code_skill_ids:
+- foreshadowing-debt
+default_agents:
+- planner
+- screenwriter
+- author
+- editor
+editable: true

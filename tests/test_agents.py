@@ -1793,6 +1793,67 @@ class TestAuthorAgent:
         assert result["chapter_status"] == ChapterStatus.DRAFTED.value
         assert llm.text_calls == 2
 
+    def test_author_revision_empty_plain_text_uses_existing_draft_fallback(self, seeded_repo):
+        """Empty revision responses should keep the saved draft and apply a local patch."""
+        from novel_factory.agents.author import AuthorAgent
+
+        class AlwaysEmptyTextLLM(LLMProvider):
+            config = object()
+
+            def __init__(self):
+                self.text_calls = 0
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("real revision authoring should not use JSON primary")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                return "   "
+
+        existing_body = "黑色专车滑入帝豪酒店门廊，秦伯替他拉开车门。" + "现有正文继续推进。" * 260
+        seeded_repo.save_chapter_content("test_proj", 1, existing_body, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, ChapterStatus.REVISION.value)
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "承接帝豪酒店", "conflict": "系统提示未落地"},
+        ])
+
+        llm = AlwaysEmptyTextLLM()
+        agent = AuthorAgent(seeded_repo, llm)
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": ChapterStatus.REVISION.value,
+            "retry_count": 1,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "author",
+                "blocking_issues": ["章间衔接断裂：上一章结尾存在明确时间节点“今晚”，本章开头未承接。"],
+            },
+            "_revision_review": {
+                "issues": ["章间衔接断裂：上一章结尾存在明确时间节点“今晚”，本章开头未承接。"],
+                "suggestions": ["章首必须明确承接上一章时间/地点/行动钩子。"],
+            },
+        })
+
+        assert result.get("error") is None
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        assert llm.text_calls == 2
+        assert "Author 返修纯正文返回为空" in str(result["_exec_events"])
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "“今晚”和上一章留下的地点线没有被跳过" in chapter["content"]
+        assert "现有正文继续推进" in chapter["content"]
+
     def test_author_segmented_plain_text_merges_overlapping_segment_tail_once(self, seeded_repo, monkeypatch):
         """Later author segments may restate the previous tail; merge must not duplicate it."""
         from novel_factory.agents.author import AuthorAgent
@@ -2259,6 +2320,39 @@ class TestPolisherAgent:
         chapter = seeded_repo.get_chapter("test_proj", 1)
         assert "模型内容过滤" not in chapter["content"]
         assert "机场负责人低声回报进度" in chapter["content"]
+
+    def test_polisher_blocks_excessive_expansion_drift(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        base = "林逸按下确认键，机场负责人低声回报进度，苏家撤资电话接连响起。"
+        original = base * 90
+        expanded = original + ("赵家探子又补了一段新动作和新线索，现场多出额外势力试探。" * 35)
+        seeded_repo.save_chapter_content("test_proj", 1, original, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+
+        stub = StubLLMProvider([{
+            "content": expanded,
+            "fact_change_risk": "none",
+            "changed_scope": ["sentence", "scene_texture"],
+            "summary": "润色扩写",
+        }])
+
+        result = PolisherAgent(seeded_repo, stub).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "workflow_run_id": "run-expansion-drift",
+        })
+
+        assert "error" in result
+        assert result["quality_gate"]["expansion_drift_fail"] is True
+        assert result["quality_gate"]["consume_revision_retry"] is False
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "赵家探子又补了一段" not in chapter["content"]
 
     def test_polisher_rejects_fact_change(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent

@@ -37,6 +37,7 @@ class DesktopConfigPayload(BaseModel):
     agent_llm: dict[str, str] | None = None
     agent_llm_fallback: dict[str, str] | None = None
     agent_models: dict[str, str] | None = None
+    knowledge: dict[str, Any] | None = None
 
 
 class TestLlmRequest(BaseModel):
@@ -119,6 +120,9 @@ _NON_SECRET_TOKEN_FIELDS = {
     "completion_tokens",
     "total_tokens",
     "token_usage",
+    "default_token_budget",
+    "token_budget",
+    "knowledge_token_budget",
 }
 
 
@@ -149,6 +153,51 @@ def _contains_sensitive_key(value: Any) -> str | None:
             if found:
                 return found
     return None
+
+
+def _non_negative_int(value: Any, default: int = 0, maximum: int | None = None) -> int:
+    try:
+        number = max(0, int(value if value is not None else default))
+    except (TypeError, ValueError):
+        number = default
+    if maximum is not None:
+        number = min(maximum, number)
+    return number
+
+
+def _clean_knowledge_config(value: dict[str, Any]) -> dict[str, Any]:
+    """Whitelist safe Knowledge Skill strategy config fields."""
+    cleaned: dict[str, Any] = {}
+    if "enabled" in value:
+        cleaned["enabled"] = bool(value.get("enabled"))
+    if value.get("default_injection_mode") in {"auto", "always", "agentic_only", "disabled", "hybrid"}:
+        cleaned["default_injection_mode"] = value["default_injection_mode"]
+    if "default_token_budget" in value:
+        cleaned["default_token_budget"] = _non_negative_int(value.get("default_token_budget"))
+
+    agents = value.get("agents", {})
+    if isinstance(agents, dict):
+        cleaned_agents: dict[str, dict[str, Any]] = {}
+        for agent, cfg in agents.items():
+            if not isinstance(cfg, dict):
+                continue
+            agent_id = str(agent).strip()
+            if not agent_id:
+                continue
+            item: dict[str, Any] = {}
+            if "token_budget" in cfg:
+                item["token_budget"] = _non_negative_int(cfg.get("token_budget"))
+            if "agentic_mode" in cfg:
+                item["agentic_mode"] = bool(cfg.get("agentic_mode"))
+            if "max_tool_rounds" in cfg:
+                item["max_tool_rounds"] = max(
+                    1,
+                    _non_negative_int(cfg.get("max_tool_rounds"), default=3, maximum=10),
+                )
+            cleaned_agents[agent_id] = item
+        if cleaned_agents:
+            cleaned["agents"] = cleaned_agents
+    return cleaned
 
 
 @router.get("/desktop/runtime-info")
@@ -251,6 +300,7 @@ async def get_desktop_config(request: Request) -> EnvelopeResponse:
             "profiles": safe_profiles,
             "agent_llm": raw.get("agent_llm", {}) if isinstance(raw.get("agent_llm", {}), dict) else {},
             "agent_llm_fallback": raw.get("agent_llm_fallback", {}) if isinstance(raw.get("agent_llm_fallback", {}), dict) else {},
+            "knowledge": raw.get("knowledge", {}) if isinstance(raw.get("knowledge", {}), dict) else {},
             "raw_preview": _redacted_yaml_preview(raw),
         })
     except Exception as e:
@@ -495,6 +545,12 @@ async def update_desktop_config(request: Request) -> EnvelopeResponse:
                     agent_routes[agent] = profile_name
 
                 raw["agent_llm"] = agent_routes
+
+        if body.knowledge is not None:
+            cleaned_knowledge = _clean_knowledge_config(body.knowledge)
+            if raw.get("knowledge", {}) != cleaned_knowledge:
+                restart_required = True
+            raw["knowledge"] = cleaned_knowledge
 
         # Write back
         import yaml

@@ -1,15 +1,15 @@
 id: pacing-profile-check
 name: Pacing Profile Checker
-version: "1.0.0"
+version: 1.0.0
 kind: validator
 class_name: PacingProfileChecker
-description: "检测节奏配置：段落长短分布、高潮位置、场景多样性、对话/描写比例"
+description: 检测节奏配置：段落长短分布、高潮位置、场景多样性、对话/描写比例
 enabled: true
 builtin: true
 allowed_agents:
-  - editor
+- editor
 allowed_stages:
-  - before_review
+- before_review
 permissions:
   read_context: false
   read_chapter: false
@@ -25,17 +25,17 @@ permissions:
 input_schema:
   type: object
   required:
-    - content
+  - content
   properties:
     content:
       type: string
 output_schema:
   type: object
   required:
-    - passed
-    - score
-    - findings
-    - summary
+  - passed
+  - score
+  - findings
+  - summary
   properties:
     passed:
       type: boolean
@@ -61,3 +61,13 @@ failure_policy:
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null
+layer: code
+category: pacing
+severity_default: advisory
+knowledge_skill_ids:
+- pacing-rhythm
+dedupe_group: pacing
+runtime_scope:
+  agents:
+  - editor
+  chapters: all

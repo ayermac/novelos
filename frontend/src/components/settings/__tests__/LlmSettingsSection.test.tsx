@@ -97,6 +97,23 @@ const desktopConfig = {
   agent_llm_fallback: {
     memory_curator: 'memory_curator_fast',
   },
+  knowledge: {
+    enabled: true,
+    default_injection_mode: 'auto',
+    default_token_budget: 2600,
+    agents: {
+      author: {
+        token_budget: 3200,
+        agentic_mode: false,
+        max_tool_rounds: 3,
+      },
+      editor: {
+        token_budget: 1800,
+        agentic_mode: true,
+        max_tool_rounds: 4,
+      },
+    },
+  },
 }
 
 function setupDesktop() {
@@ -146,6 +163,9 @@ describe('LlmSettingsSection', () => {
     expect(screen.getByText('Agent 使用哪个模板')).toBeInTheDocument()
     expect(screen.getByLabelText('author LLM 模板')).toHaveValue('author')
     expect(screen.getByLabelText('memory_curator 备用 LLM 模板')).toHaveValue('memory_curator_fast')
+    expect(screen.getByText('Knowledge Skill 调用策略')).toBeInTheDocument()
+    expect(screen.getByLabelText('Knowledge 默认 token budget')).toHaveValue(2600)
+    expect(screen.getByLabelText('editor Knowledge agentic mode')).toHaveValue('true')
   })
 
   it('saves llm profiles and agent routes instead of raw route text', async () => {
@@ -172,6 +192,43 @@ describe('LlmSettingsSection', () => {
         }),
         agent_llm_fallback: expect.objectContaining({
           memory_curator: 'memory_curator_fast',
+        }),
+        knowledge: expect.objectContaining({
+          enabled: true,
+          default_injection_mode: 'auto',
+          default_token_budget: 2600,
+        }),
+      }))
+    })
+  })
+
+  it('saves knowledge skill strategy from llm settings', async () => {
+    setupDesktop()
+    vi.mocked(put).mockResolvedValue({ ok: true, data: { saved: true, restart_required: true } })
+
+    renderSection()
+
+    await screen.findByText('模型配置')
+    fireEvent.change(screen.getByLabelText('Knowledge 默认 token budget'), {
+      target: { value: '2800' },
+    })
+    await userEvent.selectOptions(screen.getByLabelText('author Knowledge agentic mode'), 'true')
+    fireEvent.change(screen.getByLabelText('author Knowledge max tool rounds'), {
+      target: { value: '5' },
+    })
+    await userEvent.click(screen.getByRole('button', { name: '保存模型配置' }))
+
+    await waitFor(() => {
+      expect(put).toHaveBeenCalledWith('/desktop/config', expect.objectContaining({
+        knowledge: expect.objectContaining({
+          default_token_budget: 2800,
+          agents: expect.objectContaining({
+            author: expect.objectContaining({
+              token_budget: 3200,
+              agentic_mode: true,
+              max_tool_rounds: 5,
+            }),
+          }),
         }),
       }))
     })

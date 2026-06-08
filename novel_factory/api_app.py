@@ -105,6 +105,7 @@ def create_api_app(
         chapter_briefs_router,  # v6.9.0
         ledgers_router,  # v6.9.0
         editor_reports_router,  # v6.9.0
+        skill_governance_router,  # v6.10.2
     )
 
     app.include_router(health_router, prefix="/api", tags=["health"])
@@ -141,6 +142,7 @@ def create_api_app(
     app.include_router(chapter_briefs_router, prefix="/api", tags=["chapter-briefs"])  # v6.9.0
     app.include_router(ledgers_router, prefix="/api", tags=["ledgers"])  # v6.9.0
     app.include_router(editor_reports_router, prefix="/api", tags=["editor-reports"])  # v6.9.0
+    app.include_router(skill_governance_router, prefix="/api", tags=["skill-governance"])  # v6.10.2
 
     # v6.10.0: Knowledge Skill API
     from .api.routes.knowledge import router as knowledge_router

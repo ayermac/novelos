@@ -1,17 +1,17 @@
 id: humanizer-zh
 name: Humanizer Chinese
-version: "2.1.0"
+version: 2.1.0
 kind: transform
 class_name: HumanizerZhSkill
-description: "去除中文文本中的AI生成痕迹，使其更自然"
+description: 去除中文文本中的AI生成痕迹，使其更自然
 enabled: true
 builtin: true
 allowed_agents:
-  - polisher
-  - manual
+- polisher
+- manual
 allowed_stages:
-  - after_llm
-  - manual
+- after_llm
+- manual
 permissions:
   read_context: false
   read_chapter: false
@@ -27,56 +27,66 @@ permissions:
 input_schema:
   type: object
   required:
-    - text
+  - text
   properties:
     text:
       type: string
-      description: "要处理的文本内容"
+      description: 要处理的文本内容
     fact_lock:
       type: array
-      description: "事实锁定列表"
+      description: 事实锁定列表
       items:
         type: object
 output_schema:
   type: object
   required:
-    - humanized_text
+  - humanized_text
   properties:
     humanized_text:
       type: string
-      description: "处理后的文本"
+      description: 处理后的文本
     changes:
       type: array
-      description: "修改列表"
+      description: 修改列表
       items:
         type: object
     risk_level:
       type: string
       enum:
-        - none
-        - low
-        - high
-      description: "风险等级"
+      - none
+      - low
+      - high
+      description: 风险等级
 config_schema:
   type: object
   properties:
     preserve_facts:
       type: boolean
-      description: "是否保留事实"
+      description: 是否保留事实
     max_change_ratio:
       type: number
-      description: "最大修改比例"
+      description: 最大修改比例
       minimum: 0
       maximum: 1
     fail_on_fact_risk:
       type: boolean
-      description: "事实风险时是否失败"
+      description: 事实风险时是否失败
 default_config:
   preserve_facts: true
   max_change_ratio: 0.35
   fail_on_fact_risk: true
 failure_policy:
-  on_error: block
+  on_error: warn
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null
+layer: code
+category: transform
+severity_default: advisory
+knowledge_skill_ids:
+- ai-style-avoidance
+dedupe_group: ai_style
+runtime_scope:
+  agents:
+  - polisher
+  chapters: all

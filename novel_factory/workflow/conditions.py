@@ -218,13 +218,14 @@ def route_by_review_result(state: FactoryState) -> str:
 
 def route_after_agent(state: FactoryState) -> str:
     """Continue to the next node unless the agent returned an error/human flag."""
-    if state.get("requires_human") or state.get("error"):
+    if state.get("requires_human"):
         return "human_review"
+
     gate = state.get("quality_gate", {}) or {}
     current_status = state.get("chapter_status", "")
-    # Only trust the quality_gate if the chapter is still in an upstream status.
-    # If the agent has already advanced the status (e.g. drafted, polished),
-    # the gate is stale from a previous failed attempt that was retried.
+    # v6.10.5: Retryable quality gates take priority over the generic error field.
+    # This prevents polisher internal retries (low_change_fail, expansion_drift_fail)
+    # from being misrouted to human_review when they still have revision budget.
     if (
         gate.get("pass") is False
         and (
@@ -232,6 +233,9 @@ def route_after_agent(state: FactoryState) -> str:
             or gate.get("death_penalty_fail")
             or gate.get("scene_beat_coverage_fail")
             or gate.get("version_regression")
+            or gate.get("low_change_fail")
+            or gate.get("expansion_drift_fail")
+            or gate.get("fact_lock_fail")
         )
         and current_status not in (
             ChapterStatus.DRAFTED.value,
@@ -240,6 +244,10 @@ def route_after_agent(state: FactoryState) -> str:
         )
     ):
         return "revision_router"
+
+    if state.get("error"):
+        return "human_review"
+
     return "next"
 
 

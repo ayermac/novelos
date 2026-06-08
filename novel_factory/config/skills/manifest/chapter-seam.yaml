@@ -1,17 +1,17 @@
 id: chapter-seam
 name: Chapter Seam Checker
-version: "1.0.0"
+version: 1.0.0
 kind: validator
 class_name: ChapterSeamSkill
-description: "确定性章节衔接检查：时间/地点/钩子断裂检测"
+description: 确定性章节衔接检查：时间/地点/钩子断裂检测
 enabled: true
 builtin: true
 allowed_agents:
-  - editor
-  - manual
+- editor
+- manual
 allowed_stages:
-  - before_review
-  - manual
+- before_review
+- manual
 permissions:
   read_context: false
   read_chapter: false
@@ -27,7 +27,7 @@ permissions:
 input_schema:
   type: object
   required:
-    - content
+  - content
   properties:
     content:
       type: string
@@ -38,8 +38,8 @@ input_schema:
 output_schema:
   type: object
   required:
-    - passed
-    - issues
+  - passed
+  - issues
   properties:
     passed:
       type: boolean
@@ -58,3 +58,12 @@ failure_policy:
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null
+layer: code
+category: continuity
+severity_default: blocking
+knowledge_skill_ids: []
+dedupe_group: continuity
+runtime_scope:
+  agents:
+  - editor
+  chapters: all

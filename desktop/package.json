@@ -1,7 +1,7 @@
 {
   "name": "novelos-desktop",
-  "version": "6.10.0",
-  "description": "Novelos Desktop Client — v6.10.0 Skill Knowledge & LLM Function Calling",
+  "version": "6.10.2",
+  "description": "Novelos Desktop Client — v6.10.1 Skill Engineering Standardization",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",

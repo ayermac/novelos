@@ -34,6 +34,7 @@ from .creative_contracts import router as creative_contracts_router
 from .chapter_briefs import router as chapter_briefs_router
 from .ledgers import router as ledgers_router
 from .editor_reports import router as editor_reports_router  # v6.9.0
+from .skill_governance import router as skill_governance_router  # v6.10.2
 
 __all__ = [
     "health_router",
@@ -70,4 +71,5 @@ __all__ = [
     "chapter_briefs_router",
     "ledgers_router",
     "editor_reports_router",  # v6.9.0
+    "skill_governance_router",  # v6.10.2
 ]

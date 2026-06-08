@@ -1,15 +1,15 @@
 id: commercial-viability-check
 name: Commercial Viability Checker
-version: "1.0.0"
+version: 1.0.0
 kind: validator
 class_name: CommercialViabilityChecker
-description: "检测商业可行性：首章钩子强度、付费点密度、追读吸引力、主角能动性"
+description: 检测商业可行性：首章钩子强度、付费点密度、追读吸引力、主角能动性
 enabled: true
 builtin: true
 allowed_agents:
-  - editor
+- editor
 allowed_stages:
-  - before_review
+- before_review
 permissions:
   read_context: false
   read_chapter: false
@@ -25,7 +25,7 @@ permissions:
 input_schema:
   type: object
   required:
-    - content
+  - content
   properties:
     content:
       type: string
@@ -36,10 +36,10 @@ input_schema:
 output_schema:
   type: object
   required:
-    - passed
-    - score
-    - findings
-    - summary
+  - passed
+  - score
+  - findings
+  - summary
   properties:
     passed:
       type: boolean
@@ -65,3 +65,13 @@ failure_policy:
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null
+layer: code
+category: commercial
+severity_default: advisory
+knowledge_skill_ids:
+- webnovel-excitement
+dedupe_group: webnovel_quality
+runtime_scope:
+  agents:
+  - editor
+  chapters: all

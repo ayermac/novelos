@@ -1,25 +1,37 @@
 skill_id: dialogue-naturalness
 name: 对白自然度规范
-description: |
-  对白写作的核心规范：对白功能性避免、潜台词设计、口吻区分、
+description: '对白写作的核心规范：对白功能性避免、潜台词设计、口吻区分、
+
   信息传递效率、对白节奏。帮助 LLM 写出自然、有层次的对话。
+
+  '
 tags:
-  - dialogue
-  - writing
-  - naturalness
-  - subtext
+- dialogue
+- writing
+- naturalness
+- subtext
 applicable_agents:
-  - screenwriter
-  - author
-  - polisher
-  - editor
+- screenwriter
+- author
+- polisher
+- editor
 applicable_genres:
-  - xuanhuan
-  - urban
-  - xianxia
-  - system
-  - game
-  - fantasy
-  - romance
-  - suspense
-version: "1.0"
+- xuanhuan
+- urban
+- xianxia
+- system
+- game
+- fantasy
+- romance
+- suspense
+version: '1.0'
+layer: knowledge
+category: prose
+paired_code_skill_ids:
+- dialogue-naturalness
+default_agents:
+- screenwriter
+- author
+- polisher
+- editor
+editable: true

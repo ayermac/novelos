@@ -22,11 +22,12 @@ class FactLockSkill(ValidatorSkill):
     version = "1.0.0"
 
     def run(self, payload: dict[str, Any]) -> dict[str, Any]:
-        from ..validators.fact_lock import check_fact_integrity, extract_fact_lock
+        from ..models.quality import FactLockItem
+        from ..validators.fact_lock import check_fact_integrity
 
         original = str(payload.get("original_text") or "")
         polished = str(payload.get("polished_text") or payload.get("text") or "")
-        fact_items = payload.get("fact_lock_items") or []
+        raw_fact_items = payload.get("fact_lock_items") or []
 
         if not polished:
             return {
@@ -35,12 +36,22 @@ class FactLockSkill(ValidatorSkill):
                 "data": {"passed": True, "risk_level": "none", "changed_facts": [], "issues": []},
             }
 
-        # If no explicit fact items, try to extract from original
-        if not fact_items and original:
-            try:
-                fact_items = extract_fact_lock(original)
-            except Exception:
-                fact_items = []
+        fact_items: list[FactLockItem] = []
+        for item in raw_fact_items:
+            if isinstance(item, FactLockItem):
+                fact_items.append(item)
+            elif isinstance(item, dict):
+                fact_items.append(FactLockItem(
+                    fact_type=str(item.get("fact_type") or "event"),
+                    content=str(item.get("content") or ""),
+                    source=str(item.get("source") or "skill_payload"),
+                ))
+            elif str(item).strip():
+                fact_items.append(FactLockItem(
+                    fact_type="event",
+                    content=str(item),
+                    source="skill_payload",
+                ))
 
         if not fact_items:
             return {
@@ -50,17 +61,19 @@ class FactLockSkill(ValidatorSkill):
             }
 
         try:
-            result = check_fact_integrity(polished, fact_items)
-            risk = getattr(result, "risk_level", "none")
-            changed = getattr(result, "changed_facts", [])
+            result = check_fact_integrity(original, polished, fact_items)
+            risk = getattr(result, "risk", "none")
+            missing = [getattr(f, "content", str(f)) for f in getattr(result, "missing_facts", [])]
+            changed = [getattr(f, "content", str(f)) for f in getattr(result, "changed_facts", [])]
             passed = risk == "none"
-            issues = [f"事实变更: {f}" for f in changed] if changed else []
+            issues = [f"事实缺失: {f}" for f in missing] + [f"事实变更: {f}" for f in changed]
             return {
                 "ok": passed,
                 "error": "; ".join(issues) if not passed else None,
                 "data": {
                     "passed": passed,
                     "risk_level": risk,
+                    "missing_facts": missing,
                     "changed_facts": changed,
                     "issues": issues,
                 },

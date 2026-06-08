@@ -1,24 +1,37 @@
 skill_id: ai-style-avoidance
 name: AI文风规避指南
-description: |
-  AI 写作的典型痕迹和规避方法：套话检测、模板化表达、情感堆砌、
+description: 'AI 写作的典型痕迹和规避方法：套话检测、模板化表达、情感堆砌、
+
   过度修饰、逻辑空洞。帮助 LLM 写出更自然、更像人类的文字。
+
+  '
 tags:
-  - ai-style
-  - writing
-  - naturalness
-  - polish
+- ai-style
+- writing
+- naturalness
+- polish
 applicable_agents:
-  - author
-  - polisher
-  - editor
+- author
+- polisher
+- editor
 applicable_genres:
-  - xuanhuan
-  - urban
-  - xianxia
-  - system
-  - game
-  - fantasy
-  - romance
-  - suspense
-version: "1.0"
+- xuanhuan
+- urban
+- xianxia
+- system
+- game
+- fantasy
+- romance
+- suspense
+version: '1.0'
+layer: knowledge
+category: style
+paired_code_skill_ids:
+- ai-style-detector
+- death-penalty
+- humanizer-zh
+default_agents:
+- author
+- polisher
+- editor
+editable: true

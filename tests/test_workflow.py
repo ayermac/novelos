@@ -10,6 +10,7 @@ from novel_factory.workflow.conditions import (
     normalize_revision_target,
     prepare_resume_after_human_review,
     route_by_chapter_status,
+    route_by_quality_gate,
     route_by_review_result,
     route_after_memory_curator,
     route_by_revision_type,
@@ -335,6 +336,55 @@ class TestRouteByReviewResult:
         }
         assert route_after_agent(state) == "revision_router"
 
+    def test_polisher_expansion_drift_after_agent_goes_to_revision(self):
+        state = {
+            "chapter_status": "revision",
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "polisher",
+                "expansion_drift_fail": True,
+            },
+        }
+        assert route_after_agent(state) == "revision_router"
+
+    def test_polisher_low_change_routes_to_revision_router(self):
+        """v6.10.5: Polisher low_change_fail must route to revision_router, not human_review."""
+        state = {
+            "chapter_status": "revision",
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "polisher",
+                "low_change_fail": True,
+            },
+        }
+        assert route_after_agent(state) == "revision_router"
+
+    def test_polisher_fact_lock_routes_to_revision_router(self):
+        """v6.10.5: Polisher fact_lock_fail must route to revision_router, not human_review."""
+        state = {
+            "chapter_status": "revision",
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "polisher",
+                "fact_lock_fail": True,
+            },
+        }
+        assert route_after_agent(state) == "revision_router"
+
+    def test_retryable_gate_takes_priority_over_error(self):
+        """v6.10.5: Retryable quality_gate must route to revision_router even when
+        the agent also sets an error field (polisher internal retries)."""
+        state = {
+            "chapter_status": "revision",
+            "error": "返修润色无效：修改幅度低于阈值",
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "polisher",
+                "low_change_fail": True,
+            },
+        }
+        assert route_after_agent(state) == "revision_router"
+
     def test_stale_quality_gate_ignored_when_status_advanced(self):
         """A stale quality_gate from a previous failed attempt must not cause
         route_after_agent to send a successful agent run back to revision_router.
@@ -353,6 +403,42 @@ class TestRouteByReviewResult:
     def test_max_retries_goes_to_human(self):
         state = {"quality_gate": {"pass": False}, "retry_count": 3, "max_retries": 3}
         assert route_by_review_result(state) == "human_review"
+
+
+class TestRouteByQualityGate:
+    """v6.10.5: Quality gate node routing tests."""
+
+    def test_fail_routes_to_revision_router(self):
+        state = {"quality_gate": {"passed": False}, "retry_count": 1, "max_retries": 3}
+        assert route_by_quality_gate(state) == "revision_router"
+
+    def test_pass_routes_to_editor(self):
+        state = {"quality_gate": {"passed": True}, "retry_count": 0, "max_retries": 3}
+        assert route_by_quality_gate(state) == "editor"
+
+    def test_max_retries_routes_to_human_review(self):
+        """v6.10.5: Even retryable gates must go to human_review when max retries reached."""
+        state = {
+            "quality_gate": {"passed": False, "word_count_fail": True},
+            "retry_count": 3,
+            "max_retries": 3,
+        }
+        assert route_by_quality_gate(state) == "human_review"
+
+    def test_error_takes_priority(self):
+        state = {
+            "quality_gate": {"passed": True},
+            "error": "some error",
+            "requires_human": False,
+        }
+        assert route_by_quality_gate(state) == "human_review"
+
+    def test_requires_human_takes_priority(self):
+        state = {
+            "quality_gate": {"passed": True},
+            "requires_human": True,
+        }
+        assert route_by_quality_gate(state) == "human_review"
 
 
 class TestRouteByRevisionType:
@@ -826,3 +912,77 @@ class TestWorkflowNodeRevisionHardening:
         assert updates["quality_gate"] == {"pass": False, "revision_target": "planner"}
         assert updates["_revision_review"]["review_id"] == 7
         assert updates["_revision_review"]["revision_target"] == "planner"
+
+    def test_revision_router_converts_quality_gate_failure_to_author_revision(self):
+        from novel_factory.workflow.conditions import route_by_revision_type
+        from novel_factory.workflow.nodes import revision_router_node
+
+        class Repo:
+            db_path = "quality-gate-revision.db"
+
+            def __init__(self):
+                self.status = ChapterStatus.POLISHED.value
+                self.tasks = []
+
+            def update_workflow_run(self, *args, **kwargs):
+                return True
+
+            def log_workflow_node_event(self, *args, **kwargs):
+                return 1
+
+            def get_chapter_retry_count(self, project_id, chapter_number):
+                return len(self.tasks)
+
+            def get_chapter_status(self, project_id, chapter_number):
+                return self.status
+
+            def update_chapter_status(self, project_id, chapter_number, status):
+                self.status = status
+
+            def start_task(self, project_id, chapter_number, task_type, agent_id, workflow_run_id=None):
+                self.tasks.append((task_type, agent_id, workflow_run_id))
+                return len(self.tasks)
+
+            def complete_task(self, task_id, success=True):
+                return True
+
+            def get_chapter(self, project_id, chapter_number):
+                return {"id": 42}
+
+            def get_latest_review(self, project_id, chapter_id):
+                return None
+
+        state = {
+            "workflow_run_id": "run-qg",
+            "project_id": "demo",
+            "chapter_number": 3,
+            "chapter_status": ChapterStatus.POLISHED.value,
+            "max_retries": 3,
+            "quality_gate": {
+                "passed": False,
+                "pass": False,
+                "score": 70,
+                "revision_target": "author",
+                "blocking_issues": [
+                    "章间衔接断裂：上一章结尾存在明确时间节点“今晚”，本章开头未承接。",
+                    "[连续性阻断] 标题与正文脱节：标题关键词「帝豪血衣令」未在正文中出现。",
+                ],
+                "priority_issues": [],
+                "advisory_issues": ["对白口语化标记不足"],
+                "checks_run": ["chapter_seam", "continuity_gate"],
+                "timestamp": "2026-06-08T09:35:29+00:00",
+            },
+        }
+
+        repo = Repo()
+        updates = revision_router_node(state, repo)
+        routed_state = {**state, **updates}
+
+        assert updates["chapter_status"] == ChapterStatus.REVISION.value
+        assert updates["retry_count"] == 1
+        assert repo.status == ChapterStatus.REVISION.value
+        assert repo.tasks == [("revise", "author", "run-qg")]
+        assert updates["_revision_review"]["source"] == "quality_gate"
+        assert "章间衔接断裂" in updates["_revision_review"]["issues"][0]
+        assert any("QualityGate 阻断项" in s for s in updates["_revision_review"]["suggestions"])
+        assert route_by_revision_type(routed_state) == "author"

@@ -1,21 +1,22 @@
 id: memory-patch-validator
 name: Memory Patch Validator
-version: "1.0.0"
+version: 1.0.0
 kind: validator
 type: validator
 class_name: MemoryPatchValidatorSkill
-description: "检查 Memory Curator 抽取出的 patch 是否包含合法 target_table、operation、data、confidence 和 evidence_text。"
+description: 检查 Memory Curator 抽取出的 patch 是否包含合法 target_table、operation、data、confidence
+  和 evidence_text。
 enabled: true
 builtin: true
 allowed_agents:
-  - memory_curator
-  - manual
+- memory_curator
+- manual
 allowed_stages:
-  - after_extract
-  - manual
+- after_extract
+- manual
 allowed_targets:
-  - agent: memory_curator
-    stage: after_extract
+- agent: memory_curator
+  stage: after_extract
 permissions:
   read_context: false
   read_chapter: false
@@ -31,7 +32,7 @@ permissions:
 input_schema:
   type: object
   required:
-    - patches
+  - patches
   properties:
     patches:
       type: array
@@ -40,10 +41,10 @@ input_schema:
 output_schema:
   type: object
   required:
-    - patch_count
-    - issues
-    - warnings
-    - blocking
+  - patch_count
+  - issues
+  - warnings
+  - blocking
   properties:
     patch_count:
       type: integer
@@ -62,3 +63,12 @@ failure_policy:
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null
+layer: code
+category: structure
+severity_default: blocking
+knowledge_skill_ids: []
+dedupe_group: structure_contract
+runtime_scope:
+  agents:
+  - memory_curator
+  chapters: all

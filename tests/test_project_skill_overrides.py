@@ -51,7 +51,12 @@ class TestProjectSkillOverridesApi:
             assert data["has_overrides"] is False
             assert data["skills_count"] == 0
             assert data["agent_count"] == 0
-            assert data["overrides"] == {"skills": {}, "agent_skills": {}}
+            assert data["knowledge_skills_count"] == 0
+            assert data["overrides"] == {
+                "skills": {},
+                "agent_skills": {},
+                "knowledge_skills": {},
+            }
         finally:
             client._tmpdir.cleanup()  # type: ignore[attr-defined]
 
@@ -81,6 +86,7 @@ class TestProjectSkillOverridesApi:
             assert put_data["has_overrides"] is True
             assert put_data["skills_count"] == 1
             assert put_data["agent_count"] == 1
+            assert put_data["knowledge_skills_count"] == 0
 
             get_data = client.get("/api/projects/override_proj/skill-overrides").json()["data"]
             assert get_data["overrides"] == {
@@ -95,13 +101,18 @@ class TestProjectSkillOverridesApi:
                         "before_review": ["style-bible-checker"],
                     }
                 },
+                "knowledge_skills": {},
             }
 
             delete_resp = client.delete("/api/projects/override_proj/skill-overrides")
             assert delete_resp.status_code == 200
             delete_data = delete_resp.json()["data"]
             assert delete_data["has_overrides"] is False
-            assert delete_data["overrides"] == {"skills": {}, "agent_skills": {}}
+            assert delete_data["overrides"] == {
+                "skills": {},
+                "agent_skills": {},
+                "knowledge_skills": {},
+            }
         finally:
             client._tmpdir.cleanup()  # type: ignore[attr-defined]
 

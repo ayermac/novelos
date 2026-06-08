@@ -1,26 +1,38 @@
 skill_id: character-building
 name: 角色塑造指南
-description: |
-  角色塑造的核心规范：主角魅力基因、反派层次设计、配角功能化避免、
+description: '角色塑造的核心规范：主角魅力基因、反派层次设计、配角功能化避免、
+
   角色口吻一致性、成长弧线设计。帮助 LLM 创造立体、有记忆点的角色。
+
+  '
 tags:
-  - character
-  - writing
-  - protagonist
-  - antagonist
+- character
+- writing
+- protagonist
+- antagonist
 applicable_agents:
-  - planner
-  - screenwriter
-  - author
-  - polisher
-  - editor
+- planner
+- screenwriter
+- author
+- polisher
+- editor
 applicable_genres:
-  - xuanhuan
-  - urban
-  - xianxia
-  - system
-  - game
-  - fantasy
-  - romance
-  - suspense
-version: "1.0"
+- xuanhuan
+- urban
+- xianxia
+- system
+- game
+- fantasy
+- romance
+- suspense
+version: '1.0'
+layer: knowledge
+category: character
+paired_code_skill_ids:
+- character-voice-check
+default_agents:
+- screenwriter
+- author
+- polisher
+- editor
+editable: true

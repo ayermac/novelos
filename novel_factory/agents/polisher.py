@@ -24,7 +24,12 @@ from ..validators.chapter_checker import (
     count_words,
     derive_word_target,
 )
-from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_critical_violation
+from ..validators.death_penalty import (
+    check_death_penalty,
+    check_death_penalty_structured,
+    has_critical_violation,
+    sanitize_death_penalty_text,
+)
 from ..validators.fact_lock import check_fact_integrity, extract_fact_lock
 from ..skills.registry import SkillRegistry
 from ..agent_runtime.base import BaseAgent
@@ -41,6 +46,8 @@ logger = logging.getLogger(__name__)
 POLISHER_LONG_FORM_TIMEOUT_SECONDS = 300
 POLISHER_CONTEXT_CHAR_LIMIT = 18000
 POLISHER_DRAFT_CHAR_LIMIT = 12000
+POLISHER_MAX_EXPANSION_RATIO = 0.12
+POLISHER_MAX_EXPANSION_WORDS = 250
 
 POLISHER_SYSTEM_PROMPT = """你是网文工厂的润色编辑（Polisher），负责将草稿改写成"像人写过"的小说段落。
 
@@ -398,6 +405,21 @@ class PolisherAgent(BaseAgent):
                 logger.error("Polisher LLM call failed: %s", e)
                 return {"error": f"Polisher failed: {e}", "chapter_status": state.get("chapter_status")}
 
+        if state.get("llm_mode") == "real":
+            sanitized_content, replacements = sanitize_death_penalty_text(output.content)
+            if replacements:
+                logger.info(
+                    "Polisher: sanitized death-penalty phrases before validation: %s",
+                    replacements,
+                )
+                output = output.model_copy(update={"content": sanitized_content})
+                exec_events.append({
+                    "event_type": "death_penalty_sanitized",
+                    "message": f"润色稿已自动替换 {len(replacements)} 处死刑红线表达",
+                    "status": "info",
+                    "payload": {"replacements": replacements[:10]},
+                })
+
         self.validate_output(output.model_dump())
 
         # Q8: Fact lock hard verification — BEFORE status advance
@@ -462,6 +484,21 @@ class PolisherAgent(BaseAgent):
                         f"missing={missing}, changed={changed})"
                     ),
                     "chapter_status": state.get("chapter_status"),
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "polisher",
+                        "fact_lock_fail": True,
+                        "message": (
+                            f"润色事实锁未通过: risk={integrity.risk}, "
+                            f"missing={missing}, changed={changed}"
+                        ),
+                        "missing_facts": missing,
+                        "changed_facts": changed,
+                        "agent": "polisher",
+                        "workflow_run_id": state.get("workflow_run_id"),
+                    },
+                    "_revision_review": revision_review,
+                    "_exec_events": exec_events,
                 }
 
         chapter_title = (chapter or {}).get("title") or default_chapter_title(chapter_number)
@@ -593,18 +630,37 @@ class PolisherAgent(BaseAgent):
                 chapter_number=chapter_number,
                 agent="polisher",
                 stage="before_save",
-                payload={"text": polished_content},
+                payload={
+                    "text": polished_content,
+                    "original_text": original_content,
+                    "polished_text": polished_content,
+                    "fact_lock_items": [f.content for f in fact_lock] if fact_lock else [],
+                },
                 project_overrides=project_skill_overrides,
                 skill_type_hint="validator",
-                fail_closed_ids=set(),
+                fail_closed_ids={"fact-lock"},
             )
             if not before_save_hook.ok:
                 exec_events.append({
                     "event_type": "skill_completed",
-                    "message": f"润色保存前检查降级为提醒：{before_save_hook.blocking_error}",
-                    "status": "warning",
+                    "message": f"润色保存前检查未通过：{before_save_hook.blocking_error}",
+                    "status": "error",
                     "payload": {"stage": "before_save", "blocking_error": before_save_hook.blocking_error},
                 })
+                return {
+                    "chapter_status": state.get("chapter_status"),
+                    "error": before_save_hook.blocking_error or "润色保存前检查未通过",
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "polisher",
+                        "fact_lock_fail": "fact-lock" in str(before_save_hook.blocking_error),
+                        "message": before_save_hook.blocking_error or "润色保存前检查未通过",
+                        "agent": "polisher",
+                        "workflow_run_id": state.get("workflow_run_id"),
+                    },
+                    "_revision_review": revision_review,
+                    "_exec_events": exec_events,
+                }
 
             # Check AI trace score from AIStyleDetector
             for skill_item in before_save_hook.skill_results:
@@ -686,12 +742,15 @@ class PolisherAgent(BaseAgent):
                         "revision_target": "polisher",
                         "low_change_fail": True,
                         "message": reason,
+                        "internal_repair": True,
+                        "consume_revision_retry": False,
+                        "repair_scope": "internal_polisher_low_change",
                     },
                 },
             })
             return {
-                "error": reason,
                 "chapter_status": state.get("chapter_status"),
+                "error": reason,
                 "quality_gate": {
                     "pass": False,
                     "revision_target": "polisher",
@@ -699,10 +758,93 @@ class PolisherAgent(BaseAgent):
                     "message": reason,
                     "agent": "polisher",
                     "workflow_run_id": state.get("workflow_run_id"),
+                    "internal_repair": True,
+                    "consume_revision_retry": False,
+                    "repair_scope": "internal_polisher_low_change",
                 },
                 "_revision_review": revision_review,
                 "_exec_events": exec_events,
             }
+
+        # v6.10.4: Prevent Polisher from adding enough material to mutate
+        # plot facts.  Broad word-count gates allow useful polish expansion;
+        # this local drift guard blocks unsafe relative expansion before
+        # Editor later reports fact-lock violations after a retry loop.
+        if (
+            state.get("llm_mode") != "stub"
+            and original_content
+            and original_wc > 0
+            and polished_wc > original_wc
+        ):
+            system_compressed = any(
+                ev.get("event_type") == "word_count_compressed"
+                for ev in exec_events
+            )
+            word_delta = polished_wc - original_wc
+            expansion_ratio = word_delta / original_wc
+            if (
+                not system_compressed
+                and expansion_ratio > POLISHER_MAX_EXPANSION_RATIO
+                and word_delta > POLISHER_MAX_EXPANSION_WORDS
+            ):
+                reason = (
+                    f"润色稿扩写漂移：{original_wc} → {polished_wc} 字"
+                    f"（+{word_delta}，+{expansion_ratio*100:.1f}%），"
+                    "超过 Polisher 安全扩写上限"
+                )
+                logger.warning("Polisher: expansion drift gate failed: %s", reason)
+                self.repo.save_artifact(
+                    project_id,
+                    chapter_number,
+                    "polisher",
+                    "rejected_expansion_drift",
+                    content_json={
+                        "content": polished_content,
+                        "rejection_reason": reason,
+                        "revision_source_review_id": revision_review.get("review_id") if revision_review else None,
+                    },
+                    workflow_run_id=state.get("workflow_run_id"),
+                )
+                exec_events.append({
+                    "event_type": "quality_gate_retry",
+                    "message": reason,
+                    "status": "warning",
+                    "payload": {
+                        "revision_target": "polisher",
+                        "quality_gate": {
+                            "pass": False,
+                            "revision_target": "polisher",
+                            "expansion_drift_fail": True,
+                            "message": reason,
+                            "original_word_count": original_wc,
+                            "polished_word_count": polished_wc,
+                            "word_count_delta": word_delta,
+                            "internal_repair": True,
+                            "consume_revision_retry": False,
+                            "repair_scope": "internal_polisher_expansion_drift",
+                        },
+                    },
+                })
+                return {
+                    "chapter_status": state.get("chapter_status"),
+                    "error": reason,
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "polisher",
+                        "expansion_drift_fail": True,
+                        "message": reason,
+                        "original_word_count": original_wc,
+                        "polished_word_count": polished_wc,
+                        "word_count_delta": word_delta,
+                        "agent": "polisher",
+                        "workflow_run_id": state.get("workflow_run_id"),
+                        "internal_repair": True,
+                        "consume_revision_retry": False,
+                        "repair_scope": "internal_polisher_expansion_drift",
+                    },
+                    "_revision_review": revision_review,
+                    "_exec_events": exec_events,
+                }
 
         # v6.8.5: Check for excessive word count drift even on first polish.
         # If the polished draft is >20% shorter than the original without any
@@ -778,8 +920,8 @@ class PolisherAgent(BaseAgent):
                     workflow_run_id=state.get("workflow_run_id"),
                 )
                 return {
-                    "error": f"返修稿退化，已保留上一版本：{reason}",
                     "chapter_status": state.get("chapter_status"),
+                    "error": reason,
                     "quality_gate": {
                         "pass": False,
                         "revision_target": "polisher",

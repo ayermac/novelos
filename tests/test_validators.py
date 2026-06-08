@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from novel_factory.validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_death_penalty
+from novel_factory.validators.death_penalty import (
+    check_death_penalty,
+    check_death_penalty_structured,
+    has_death_penalty,
+    sanitize_death_penalty_text,
+)
 from novel_factory.validators.chapter_checker import check_word_count, validate_chapter_output
 from novel_factory.validators.state_verifier import check_status_precondition, check_transition
 from novel_factory.validators.plot_verifier import check_plot_coverage
@@ -29,6 +34,23 @@ class TestDeathPenalty:
         assert any("嘴角" in violation for violation in result.violations)
         assert "嘴角忽然抬了一下" in result.violations
         assert result.details[0].get("matched_text")
+
+    def test_corner_motion_variant_does_not_swallow_dialogue_after_colon(self):
+        result = check_death_penalty_structured('嘴角微微一动："零点前，全部撤离。"')
+        assert result.has_critical is True
+        assert "嘴角微微一动" in result.violations
+        assert all("零点前" not in violation for violation in result.violations)
+
+    def test_sanitize_regex_death_penalty_variant(self):
+        sanitized, replacements = sanitize_death_penalty_text('嘴角微微一动："零点前，全部撤离。"')
+
+        assert replacements == [{
+            "code": "DP_EXPR_03A",
+            "pattern": "嘴角微微一动",
+            "replacement": "停了一瞬",
+        }]
+        assert sanitized == '停了一瞬："零点前，全部撤离。"'
+        assert check_death_penalty_structured(sanitized).has_critical is False
 
     def test_catch_smile_not_reaching_eyes_as_critical(self):
         result = check_death_penalty_structured("他唇角微弯，笑意未达眼底。")

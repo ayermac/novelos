@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import pytest
 
-from novel_factory.config.settings import AgenticConfig, AgenticAgentConfig, Settings
+from novel_factory.config.settings import (
+    AgenticAgentConfig,
+    AgenticConfig,
+    KnowledgeConfig,
+    Settings,
+)
 
 
 def test_agentic_agent_config_defaults():
@@ -47,6 +52,16 @@ def test_settings_has_agentic():
     assert settings.agentic.enabled is False
 
 
+def test_settings_has_knowledge_governance():
+    """v6.10.1: Settings model includes Knowledge Skill governance."""
+    settings = Settings()
+    assert hasattr(settings, "knowledge")
+    assert isinstance(settings.knowledge, KnowledgeConfig)
+    assert settings.knowledge.enabled is True
+    assert settings.knowledge.default_token_budget == 2400
+    assert settings.knowledge.agents["author"].token_budget == 3000
+
+
 def test_settings_has_memory_curator_node_timeout_override():
     """memory_curator gets a longer default node timeout."""
     settings = Settings()
@@ -64,18 +79,28 @@ def test_node_timeout_resolves_memory_curator_override():
 
 
 def test_settings_from_dict():
-    """Settings can be created from dict with agentic config."""
+    """Settings can be created from dict with agentic and knowledge config."""
     data = {
         "agentic": {
             "enabled": True,
             "agents": {
                 "author": {"agentic_mode": True, "max_tool_rounds": 3},
             },
+        },
+        "knowledge": {
+            "enabled": True,
+            "default_token_budget": 1800,
+            "agents": {
+                "editor": {"agentic_mode": True, "max_tool_rounds": 4, "token_budget": 1600},
+            },
         }
     }
     settings = Settings(**data)
     assert settings.agentic.enabled is True
     assert settings.agentic.agents["author"].agentic_mode is True
+    assert settings.knowledge.default_token_budget == 1800
+    assert settings.knowledge.agents["editor"].agentic_mode is True
+    assert settings.knowledge.agents["editor"].token_budget == 1600
 
 
 def test_base_agent_agentic_properties():

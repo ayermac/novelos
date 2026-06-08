@@ -1091,6 +1091,7 @@ class EditorAgent(BaseAgent):
         skill_scores: dict[str, float] = {}
         blocking_skill_count = 0
         warning_skill_count = 0
+        seen_blocking_groups: set[str] = set()
 
         for skill_item in before_review_hook.skill_results:
             skill_id = skill_item.get("skill_id", "")
@@ -1105,6 +1106,11 @@ class EditorAgent(BaseAgent):
 
             # v6.9.1: Unified parsing — no special-case branches per skill_id
             findings = parse_skill_findings(result["data"])
+            findings = self._govern_before_review_findings(
+                skill_id,
+                findings,
+                seen_blocking_groups,
+            )
 
             # v6.10.0: Record skill score even when no findings are present.
             # A clean skill run (score=100, no findings) is still a valid data
@@ -1112,7 +1118,7 @@ class EditorAgent(BaseAgent):
             # warnings/blockings contribute, skewing the aggregate downward.
             skill_score = result["data"].get("score")
             if skill_score is not None:
-                skill_scores[skill_id] = float(skill_score)
+                skill_scores[skill_id] = self._govern_before_review_score(skill_id, float(skill_score))
             elif not findings:
                 continue
             else:
@@ -1154,6 +1160,84 @@ class EditorAgent(BaseAgent):
             "blocking_skill_count": blocking_skill_count,
             "warning_skill_count": warning_skill_count,
         }
+
+    def _govern_before_review_score(self, skill_id: str, score: float) -> float:
+        """Apply v6.10.2 severity policy to Skill score aggregation.
+
+        Advisory skills may lower confidence, but they should not drive the
+        strategy layer's ``skill_weighted_score < 70`` hard revision rule by
+        themselves.  Clamp advisory scores to the warning band.
+        """
+        if not self.skill_registry:
+            return score
+
+        try:
+            manifest = self.skill_registry.get_manifest(skill_id)
+        except Exception:
+            manifest = None
+
+        severity_default = getattr(manifest, "severity_default", "blocking") if manifest else "blocking"
+        if severity_default == "advisory":
+            return max(score, 70.0)
+        if severity_default == "disabled":
+            return 100.0
+        return score
+
+    def _govern_before_review_findings(
+        self,
+        skill_id: str,
+        findings: list[SkillFinding],
+        seen_blocking_groups: set[str],
+    ) -> list[SkillFinding]:
+        """Apply v6.10.2 governance metadata to before_review findings.
+
+        Subjective/advisory skills should not create hard revision loops by
+        default.  Skills in the same ``dedupe_group`` can still report all
+        findings, but only the first blocking finding in that group remains
+        blocking for strategy counting.
+        """
+        if not findings or not self.skill_registry:
+            return findings
+
+        manifest = None
+        try:
+            manifest = self.skill_registry.get_manifest(skill_id)
+        except Exception:
+            manifest = None
+
+        severity_default = getattr(manifest, "severity_default", "blocking") if manifest else "blocking"
+        dedupe_group = getattr(manifest, "dedupe_group", "") if manifest else ""
+        group_key = dedupe_group or skill_id
+        knowledge_ids = list(getattr(manifest, "knowledge_skill_ids", []) or []) if manifest else []
+
+        governed: list[SkillFinding] = []
+        for finding in findings:
+            severity = finding.severity
+            if severity_default == "disabled":
+                severity = "info"
+            elif severity_default == "advisory" and severity in ("blocking", "critical", "high"):
+                severity = "warning"
+
+            if severity in ("blocking", "critical"):
+                if group_key in seen_blocking_groups:
+                    severity = "warning"
+                else:
+                    seen_blocking_groups.add(group_key)
+
+            suggestion = finding.suggestion
+            if knowledge_ids and suggestion:
+                knowledge_note = "、".join(f"knowledge:{item}" for item in knowledge_ids)
+                if knowledge_note not in suggestion:
+                    suggestion = f"{suggestion}（参考 {knowledge_note}）"
+
+            governed.append(SkillFinding(
+                severity=severity,
+                code=finding.code,
+                message=finding.message,
+                suggestion=suggestion,
+            ))
+
+        return governed
 
     def _run_final_gate(self, inputs: EditorInputs, output: EditorOutput) -> None:
         """Run QualityHub final_gate on passing reviews."""
