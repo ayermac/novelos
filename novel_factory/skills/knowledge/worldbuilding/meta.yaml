@@ -1,25 +1,37 @@
 skill_id: worldbuilding
 name: 世界观构建指南
-description: |
-  世界观设定的完整性、一致性和展示技巧：力量体系、社会结构、
+description: '世界观设定的完整性、一致性和展示技巧：力量体系、社会结构、
+
   历史背景、地理环境。如何自然地向读者展示世界观而不灌输。
+
+  '
 tags:
-  - worldbuilding
-  - setting
-  - system
-  - consistency
+- worldbuilding
+- setting
+- system
+- consistency
 applicable_agents:
-  - planner
-  - screenwriter
-  - author
-  - editor
+- planner
+- screenwriter
+- author
+- editor
 applicable_genres:
-  - xuanhuan
-  - urban
-  - xianxia
-  - system
-  - game
-  - fantasy
-  - romance
-  - suspense
-version: "1.0"
+- xuanhuan
+- urban
+- xianxia
+- system
+- game
+- fantasy
+- romance
+- suspense
+version: '1.0'
+layer: knowledge
+category: prose
+paired_code_skill_ids:
+- info-dump-detector
+default_agents:
+- planner
+- screenwriter
+- author
+- editor
+editable: true

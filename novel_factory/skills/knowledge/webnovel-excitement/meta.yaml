@@ -1,24 +1,38 @@
 skill_id: webnovel-excitement
 name: 网文爽感写作规范
-description: |
-  爽文题材的核心写作规范：钩子密度、节奏曲线、付费点设计、
+description: '爽文题材的核心写作规范：钩子密度、节奏曲线、付费点设计、
+
   读者情绪管理。适用于玄幻、都市、修仙等网文类型。
+
   帮助 LLM 在规划、写作、审核时理解爽文的核心要素。
+
+  '
 tags:
-  - genre:webnovel
-  - writing
-  - pacing
-  - hooks
+- genre:webnovel
+- writing
+- pacing
+- hooks
 applicable_agents:
-  - planner
-  - screenwriter
-  - author
-  - editor
+- planner
+- screenwriter
+- author
+- editor
 applicable_genres:
-  - xuanhuan
-  - urban
-  - xianxia
-  - system
-  - game
-  - fantasy
-version: "1.0"
+- xuanhuan
+- urban
+- xianxia
+- system
+- game
+- fantasy
+version: '1.0'
+layer: knowledge
+category: commercial
+paired_code_skill_ids:
+- excitement-density-checker
+- opening-hook-checker
+- commercial-viability-check
+default_agents:
+- screenwriter
+- author
+- editor
+editable: true

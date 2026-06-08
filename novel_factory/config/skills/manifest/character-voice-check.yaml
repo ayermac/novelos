@@ -1,15 +1,15 @@
 id: character-voice-check
 name: Character Voice Checker
-version: "1.0.0"
+version: 1.0.0
 kind: validator
 class_name: CharacterVoiceChecker
-description: "检测角色口吻一致性、工具人风险、角色出场均衡性"
+description: 检测角色口吻一致性、工具人风险、角色出场均衡性
 enabled: true
 builtin: true
 allowed_agents:
-  - editor
+- editor
 allowed_stages:
-  - before_review
+- before_review
 permissions:
   read_context: false
   read_chapter: false
@@ -25,7 +25,7 @@ permissions:
 input_schema:
   type: object
   required:
-    - content
+  - content
   properties:
     content:
       type: string
@@ -36,10 +36,10 @@ input_schema:
 output_schema:
   type: object
   required:
-    - passed
-    - score
-    - findings
-    - summary
+  - passed
+  - score
+  - findings
+  - summary
   properties:
     passed:
       type: boolean
@@ -65,3 +65,13 @@ failure_policy:
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null
+layer: code
+category: character
+severity_default: advisory
+knowledge_skill_ids:
+- character-building
+dedupe_group: character
+runtime_scope:
+  agents:
+  - editor
+  chapters: all

@@ -28,6 +28,11 @@ class KnowledgeSkillMeta(BaseModel):
     tags: list[str] = Field(default_factory=list)
     applicable_agents: list[str] = Field(default_factory=list)
     applicable_genres: list[str] = Field(default_factory=list)
+    layer: str = "knowledge"
+    category: str = "general"
+    paired_code_skill_ids: list[str] = Field(default_factory=list)
+    default_agents: list[str] = Field(default_factory=list)
+    editable: bool = True
     version: str = "1.0"
     source: str = "builtin"
 
@@ -97,6 +102,11 @@ def _skill_to_dict(skill: Any, *, include_content: bool = False) -> dict[str, An
         "tags": skill.tags,
         "applicable_agents": skill.applicable_agents,
         "applicable_genres": skill.applicable_genres,
+        "layer": getattr(skill, "layer", "knowledge"),
+        "category": getattr(skill, "category", "general"),
+        "paired_code_skill_ids": getattr(skill, "paired_code_skill_ids", []),
+        "default_agents": getattr(skill, "default_agents", []),
+        "editable": getattr(skill, "editable", True),
         "version": skill.version,
         "source": skill.source,
     }

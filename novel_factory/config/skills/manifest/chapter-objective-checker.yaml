@@ -1,21 +1,21 @@
 id: chapter-objective-checker
 name: Chapter Objective Checker
-version: "1.0.0"
+version: 1.0.0
 kind: validator
 type: validator
 class_name: ChapterObjectiveCheckerSkill
-description: "检查 Planner 章节目标是否具体、非空，并包含可执行事件或约束。"
+description: 检查 Planner 章节目标是否具体、非空，并包含可执行事件或约束。
 enabled: true
 builtin: true
 allowed_agents:
-  - planner
-  - manual
+- planner
+- manual
 allowed_stages:
-  - after_llm
-  - manual
+- after_llm
+- manual
 allowed_targets:
-  - agent: planner
-    stage: after_llm
+- agent: planner
+  stage: after_llm
 permissions:
   read_context: false
   read_chapter: false
@@ -31,7 +31,7 @@ permissions:
 input_schema:
   type: object
   required:
-    - objective
+  - objective
   properties:
     objective:
       type: string
@@ -46,9 +46,9 @@ input_schema:
 output_schema:
   type: object
   required:
-    - issues
-    - warnings
-    - blocking
+  - issues
+  - warnings
+  - blocking
   properties:
     score:
       type: number
@@ -67,3 +67,12 @@ failure_policy:
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null
+layer: code
+category: structure
+severity_default: blocking
+knowledge_skill_ids: []
+dedupe_group: structure_contract
+runtime_scope:
+  agents:
+  - planner
+  chapters: all

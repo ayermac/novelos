@@ -37,6 +37,11 @@ class KnowledgeSkill:
     injection_mode: str = "auto"  # auto | always | agentic_only | disabled
     version: str = "1.0"
     source: str = "builtin"
+    layer: str = "knowledge"
+    category: str = "general"
+    paired_code_skill_ids: list[str] = field(default_factory=list)
+    default_agents: list[str] = field(default_factory=list)
+    editable: bool = True
 
     @property
     def qualified_id(self) -> str:
@@ -143,6 +148,11 @@ class KnowledgeManager:
                     injection_mode=meta.get("injection_mode", "auto") or "auto",
                     version=meta.get("version", "1.0"),
                     source=meta.get("source", "builtin"),
+                    layer=meta.get("layer", "knowledge"),
+                    category=meta.get("category", "general"),
+                    paired_code_skill_ids=meta.get("paired_code_skill_ids", []),
+                    default_agents=meta.get("default_agents", meta.get("applicable_agents", [])),
+                    editable=bool(meta.get("editable", True)),
                     content=content,
                 )
                 logger.info("Loaded knowledge skill: %s", skill_id)
@@ -309,6 +319,11 @@ class KnowledgeManager:
             injection_mode=skill.injection_mode,
             version=skill.version,
             source=skill.source,
+            layer=skill.layer,
+            category=skill.category,
+            paired_code_skill_ids=list(skill.paired_code_skill_ids),
+            default_agents=list(skill.default_agents),
+            editable=skill.editable,
         )
 
         if skill.skill_id in disabled or skill.qualified_id in disabled:
@@ -403,6 +418,11 @@ class KnowledgeManager:
             "name": name,
             "description": description,
             "namespace": "knowledge",
+            "layer": "knowledge",
+            "category": "general",
+            "paired_code_skill_ids": [],
+            "default_agents": applicable_agents or [],
+            "editable": True,
             "enabled": enabled,
             "priority": priority,
             "token_budget": token_budget,
@@ -446,6 +466,11 @@ class KnowledgeManager:
             token_budget=token_budget,
             injection_mode=injection_mode,
             source=source,
+            layer="knowledge",
+            category="general",
+            paired_code_skill_ids=[],
+            default_agents=applicable_agents or [],
+            editable=True,
         )
         self._skills[skill_id] = skill
         logger.info("Created knowledge skill: %s", skill_id)
@@ -500,6 +525,11 @@ class KnowledgeManager:
             "namespace": skill.namespace,
             "name": skill.name,
             "description": skill.description,
+            "layer": skill.layer,
+            "category": skill.category,
+            "paired_code_skill_ids": skill.paired_code_skill_ids,
+            "default_agents": skill.default_agents,
+            "editable": skill.editable,
             "enabled": skill.enabled,
             "priority": skill.priority,
             "token_budget": skill.token_budget,

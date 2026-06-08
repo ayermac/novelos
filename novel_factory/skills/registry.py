@@ -476,6 +476,12 @@ class SkillRegistry:
                     "description": manifest.description,
                     "allowed_agents": manifest.allowed_agents,
                     "allowed_stages": manifest.allowed_stages,
+                    "layer": manifest.layer,
+                    "category": manifest.category,
+                    "severity_default": manifest.severity_default,
+                    "knowledge_skill_ids": manifest.knowledge_skill_ids,
+                    "dedupe_group": manifest.dedupe_group,
+                    "runtime_scope": manifest.runtime_scope.model_dump(),
                     "has_manifest": True,
                     "manifest": config.get("manifest"),
                 }
@@ -502,6 +508,12 @@ class SkillRegistry:
                     "class": config.get("class"),
                     "class_name": config.get("class"),  # v2.2 compatibility
                     "description": config.get("description", ""),
+                    "layer": "code",
+                    "category": "general",
+                    "severity_default": "blocking",
+                    "knowledge_skill_ids": [],
+                    "dedupe_group": "",
+                    "runtime_scope": {"agents": [], "chapters": "all"},
                     "has_manifest": False,
                     "manifest": config.get("manifest"),
                 }
@@ -683,11 +695,95 @@ class SkillRegistry:
                     f"Skill id '{skill_id}' does not match manifest id '{manifest.id}'"
                 )
 
+            self._validate_governance_metadata(manifest, errors, warnings)
+
+        self._validate_knowledge_pairings(errors, warnings)
+
         return {
             "ok": len(errors) == 0,
             "errors": errors,
             "warnings": warnings,
         }
+
+    def _validate_governance_metadata(
+        self,
+        manifest: SkillManifest,
+        errors: list[str],
+        warnings: list[str],
+    ) -> None:
+        """Validate v6.10.2 governance fields without making old manifests fatal."""
+        if manifest.layer != "code":
+            errors.append(f"Skill '{manifest.id}' manifest layer must be 'code'")
+        if not manifest.category:
+            errors.append(f"Skill '{manifest.id}' missing category")
+        if manifest.runtime_scope.agents:
+            unknown_agents = set(manifest.runtime_scope.agents) - set(manifest.allowed_agents)
+            if unknown_agents:
+                warnings.append(
+                    f"Skill '{manifest.id}' runtime_scope agents not in allowed_agents: "
+                    f"{sorted(unknown_agents)}"
+                )
+        for knowledge_id in manifest.knowledge_skill_ids:
+            if not isinstance(knowledge_id, str) or not knowledge_id.strip():
+                errors.append(f"Skill '{manifest.id}' has invalid knowledge_skill_ids entry")
+                continue
+            knowledge_meta = self._load_builtin_knowledge_metadata().get(knowledge_id)
+            if knowledge_meta is None:
+                errors.append(f"Skill '{manifest.id}' references unknown knowledge skill '{knowledge_id}'")
+                continue
+            paired = knowledge_meta.get("paired_code_skill_ids", [])
+            if manifest.id not in paired:
+                errors.append(
+                    f"Skill '{manifest.id}' references knowledge skill '{knowledge_id}' "
+                    "without reciprocal paired_code_skill_ids"
+                )
+
+    def _validate_knowledge_pairings(self, errors: list[str], warnings: list[str]) -> None:
+        """Validate Knowledge Skill pairings point to existing Code Skills."""
+        manifests_by_id: dict[str, SkillManifest] = {}
+        for skill_id in self.skills_config:
+            manifest = self.get_manifest(skill_id)
+            if manifest:
+                manifests_by_id[skill_id] = manifest
+
+        for knowledge_id, meta in self._load_builtin_knowledge_metadata().items():
+            paired = meta.get("paired_code_skill_ids", [])
+            if not isinstance(paired, list):
+                errors.append(f"Knowledge skill '{knowledge_id}' paired_code_skill_ids must be a list")
+                continue
+            for skill_id in paired:
+                manifest = manifests_by_id.get(str(skill_id))
+                if manifest is None:
+                    warnings.append(f"Knowledge skill '{knowledge_id}' references unloaded code skill '{skill_id}'")
+                    continue
+                if knowledge_id not in manifest.knowledge_skill_ids:
+                    errors.append(
+                        f"Knowledge skill '{knowledge_id}' references code skill '{skill_id}' "
+                        "without reciprocal knowledge_skill_ids"
+                    )
+
+    def _load_builtin_knowledge_metadata(self) -> dict[str, dict[str, Any]]:
+        """Load builtin Knowledge Skill metadata for governance validation."""
+        knowledge_dir = Path(__file__).parent / "knowledge"
+        index_path = knowledge_dir / "_index.yaml"
+        if not index_path.exists():
+            return {}
+        try:
+            index = yaml.safe_load(index_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            return {}
+
+        result: dict[str, dict[str, Any]] = {}
+        for skill_id in index.get("skills", []) or []:
+            meta_path = knowledge_dir / str(skill_id) / "meta.yaml"
+            if not meta_path.exists():
+                continue
+            try:
+                meta = yaml.safe_load(meta_path.read_text(encoding="utf-8")) or {}
+            except Exception:
+                continue
+            result[str(skill_id)] = meta if isinstance(meta, dict) else {}
+        return result
 
     def validate_skill_for_agent(
         self,

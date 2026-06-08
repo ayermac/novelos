@@ -1,19 +1,19 @@
 id: narrative-quality
 name: Narrative Quality Scorer
-version: "2.1.0"
+version: 2.1.0
 kind: validator
 class_name: NarrativeQualityScorer
-description: "评估文本的叙事质量"
+description: 评估文本的叙事质量
 enabled: true
 builtin: true
 allowed_agents:
-  - editor
-  - qualityhub
-  - manual
+- editor
+- qualityhub
+- manual
 allowed_stages:
-  - before_review
-  - final_gate
-  - manual
+- before_review
+- final_gate
+- manual
 permissions:
   read_context: false
   read_chapter: false
@@ -29,19 +29,19 @@ permissions:
 input_schema:
   type: object
   required:
-    - text
+  - text
   properties:
     text:
       type: string
-      description: "要评估的文本内容"
+      description: 要评估的文本内容
 output_schema:
   type: object
   required:
-    - scores
+  - scores
   properties:
     scores:
       type: object
-      description: "各维度评分"
+      description: 各维度评分
       properties:
         pacing:
           type: number
@@ -55,29 +55,29 @@ output_schema:
           type: number
     issues:
       type: array
-      description: "问题列表"
+      description: 问题列表
       items:
         type: object
     suggestions:
       type: array
-      description: "建议列表"
+      description: 建议列表
       items:
         type: string
     grade:
       type: string
       enum:
-        - A
-        - B
-        - C
-        - D
-        - F
-      description: "等级评定"
+      - A
+      - B
+      - C
+      - D
+      - F
+      description: 等级评定
 config_schema:
   type: object
   properties:
     pass_score:
       type: number
-      description: "及格分数"
+      description: 及格分数
       minimum: 0
       maximum: 100
 default_config:
@@ -87,3 +87,12 @@ failure_policy:
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: 75
+layer: code
+category: quality
+severity_default: advisory
+knowledge_skill_ids: []
+dedupe_group: quality_aggregate
+runtime_scope:
+  agents:
+  - editor
+  chapters: all

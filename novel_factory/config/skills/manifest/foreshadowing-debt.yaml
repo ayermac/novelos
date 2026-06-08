@@ -1,19 +1,19 @@
 id: foreshadowing-debt
 name: Foreshadowing Debt Checker
-version: "1.0.0"
+version: 1.0.0
 kind: validator
 class_name: ForeshadowingDebtSkill
-description: "检查伏笔债务：已埋未兑现、已过期、指令未覆盖"
+description: 检查伏笔债务：已埋未兑现、已过期、指令未覆盖
 enabled: true
 builtin: true
 allowed_agents:
-  - planner
-  - editor
-  - manual
+- planner
+- editor
+- manual
 allowed_stages:
-  - after_llm
-  - before_review
-  - manual
+- after_llm
+- before_review
+- manual
 permissions:
   read_context: false
   read_chapter: false
@@ -46,9 +46,9 @@ input_schema:
 output_schema:
   type: object
   required:
-    - debt
-    - issues
-    - blocking
+  - debt
+  - issues
+  - blocking
   properties:
     debt:
       type: array
@@ -77,3 +77,14 @@ failure_policy:
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null
+layer: code
+category: foreshadowing
+severity_default: blocking
+knowledge_skill_ids:
+- foreshadowing-management
+dedupe_group: foreshadowing
+runtime_scope:
+  agents:
+  - planner
+  - editor
+  chapters: all

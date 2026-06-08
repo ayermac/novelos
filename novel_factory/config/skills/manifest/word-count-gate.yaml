@@ -1,21 +1,21 @@
 id: word-count-gate
 name: Word Count Gate
-version: "1.0.0"
+version: 1.0.0
 kind: validator
 class_name: WordCountGateSkill
-description: "字数上下界检查"
+description: 字数上下界检查
 enabled: true
 builtin: true
 allowed_agents:
-  - editor
-  - author
-  - polisher
-  - manual
+- editor
+- author
+- polisher
+- manual
 allowed_stages:
-  - after_llm
-  - before_save
-  - before_review
-  - manual
+- after_llm
+- before_save
+- before_review
+- manual
 permissions:
   read_context: false
   read_chapter: false
@@ -31,7 +31,7 @@ permissions:
 input_schema:
   type: object
   required:
-    - text
+  - text
   properties:
     text:
       type: string
@@ -44,8 +44,8 @@ input_schema:
 output_schema:
   type: object
   required:
-    - passed
-    - word_count
+  - passed
+  - word_count
   properties:
     passed:
       type: boolean
@@ -66,3 +66,13 @@ failure_policy:
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null
+layer: code
+category: structure
+severity_default: blocking
+knowledge_skill_ids: []
+dedupe_group: length_contract
+runtime_scope:
+  agents:
+  - author
+  - editor
+  chapters: all

@@ -1,24 +1,35 @@
 skill_id: show-dont-tell
 name: 展示而非讲述指南
-description: |
-  "展示而非讲述"的核心技巧：用动作代替心理描写、用细节代替概括、
+description: '"展示而非讲述"的核心技巧：用动作代替心理描写、用细节代替概括、
+
   用对话代替叙述。帮助 LLM 写出更有画面感和沉浸感的文字。
+
+  '
 tags:
-  - show-dont-tell
-  - writing
-  - immersion
-  - description
+- show-dont-tell
+- writing
+- immersion
+- description
 applicable_agents:
-  - author
-  - polisher
-  - editor
+- author
+- polisher
+- editor
 applicable_genres:
-  - xuanhuan
-  - urban
-  - xianxia
-  - system
-  - game
-  - fantasy
-  - romance
-  - suspense
-version: "1.0"
+- xuanhuan
+- urban
+- xianxia
+- system
+- game
+- fantasy
+- romance
+- suspense
+version: '1.0'
+layer: knowledge
+category: prose
+paired_code_skill_ids:
+- show-dont-tell
+default_agents:
+- author
+- polisher
+- editor
+editable: true

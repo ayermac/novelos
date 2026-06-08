@@ -1,6 +1,6 @@
 {
   "name": "novelos-desktop",
-  "version": "6.10.1",
+  "version": "6.10.2",
   "description": "Novelos Desktop Client — v6.10.1 Skill Engineering Standardization",
   "main": "dist/main.js",
   "scripts": {

@@ -1,21 +1,21 @@
 id: info-dump-detector
 name: Info Dump Detector
-version: "1.0.0"
+version: 1.0.0
 kind: validator
 class_name: InfoDumpDetector
-description: "检测设定灌输、连续解释、说明腔段落"
+description: 检测设定灌输、连续解释、说明腔段落
 enabled: true
 builtin: true
 allowed_agents:
-  - editor
-  - qualityhub
-  - manual
+- editor
+- qualityhub
+- manual
 allowed_stages:
-  - diagnose
-  - advisory
-  - before_review
-  - final_gate
-  - manual
+- diagnose
+- advisory
+- before_review
+- final_gate
+- manual
 permissions:
   read_context: false
   read_chapter: false
@@ -31,25 +31,25 @@ permissions:
 input_schema:
   type: object
   required:
-    - text
+  - text
   properties:
     text:
       type: string
-      description: "要检测的文本内容"
+      description: 要检测的文本内容
     content:
       type: string
-      description: "备用文本字段（兼容）"
+      description: 备用文本字段（兼容）
 output_schema:
   type: object
   required:
-    - score
-    - findings
+  - score
+  - findings
   properties:
     score:
       type: number
       minimum: 0
       maximum: 100
-      description: "信息灌输风险评分，100 表示未检测到明显问题"
+      description: 信息灌输风险评分，100 表示未检测到明显问题
     lore_count:
       type: integer
       minimum: 0
@@ -72,3 +72,13 @@ failure_policy:
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null
+layer: code
+category: prose
+severity_default: advisory
+knowledge_skill_ids:
+- worldbuilding
+dedupe_group: prose_quality
+runtime_scope:
+  agents:
+  - editor
+  chapters: all

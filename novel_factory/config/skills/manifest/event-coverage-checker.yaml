@@ -1,21 +1,21 @@
 id: event-coverage-checker
 name: Event Coverage Checker
-version: "1.0.0"
+version: 1.0.0
 kind: validator
 type: validator
 class_name: EventCoverageCheckerSkill
-description: "检查 Author 正文和 implemented_events 是否覆盖 required_events。"
+description: 检查 Author 正文和 implemented_events 是否覆盖 required_events。
 enabled: true
 builtin: true
 allowed_agents:
-  - author
-  - manual
+- author
+- manual
 allowed_stages:
-  - after_llm
-  - manual
+- after_llm
+- manual
 allowed_targets:
-  - agent: author
-    stage: after_llm
+- agent: author
+  stage: after_llm
 permissions:
   read_context: false
   read_chapter: false
@@ -31,7 +31,7 @@ permissions:
 input_schema:
   type: object
   required:
-    - content
+  - content
   properties:
     content:
       type: string
@@ -46,11 +46,11 @@ input_schema:
 output_schema:
   type: object
   required:
-    - coverage
-    - missing_events
-    - issues
-    - warnings
-    - blocking
+  - coverage
+  - missing_events
+  - issues
+  - warnings
+  - blocking
   properties:
     coverage:
       type: number
@@ -73,3 +73,12 @@ failure_policy:
   max_retries: 0
   timeout_seconds: null
   blocking_threshold: null
+layer: code
+category: facts
+severity_default: blocking
+knowledge_skill_ids: []
+dedupe_group: facts_contract
+runtime_scope:
+  agents:
+  - author
+  chapters: all
