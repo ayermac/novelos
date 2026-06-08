@@ -204,7 +204,13 @@ def evaluate_chapter_seam(
         if any(token in quote for token in ("后", "明天", "今晚", "旧", "区", "见", "等", "来", "期待"))
     ][:3]
 
-    if time_markers and not any(marker in opening for marker in time_markers) and not salient_location_acknowledged:
+    time_anchor_acknowledged = _time_anchor_acknowledged(
+        time_markers,
+        source_text,
+        opening,
+    )
+
+    if time_markers and not time_anchor_acknowledged and not salient_location_acknowledged:
         marker = time_markers[0]
         blocking.append(f"章间衔接断裂：上一章结尾存在明确时间节点“{marker}”，本章开头未承接。")
         suggestions.append(f"在本章开头交代“{marker}”是否已到、跳过了多久，或为什么暂时不赴约。")
@@ -442,6 +448,41 @@ def _location_acknowledged(location: str, opening: str) -> bool:
     return False
 
 
+def _time_anchor_acknowledged(
+    time_markers: list[str],
+    source_text: str,
+    opening: str,
+) -> bool:
+    """Return True when the opening semantically bridges a prior time hook.
+
+    Authors often fix a seam by writing the immediate consequence rather than
+    repeating the exact relative-time word. For example, a previous ending says
+    "今晚开启第二次签到"; the next opening may write "系统提示尚未消退，车已抵达酒店".
+    Requiring the literal word "今晚" creates revision loops even when the
+    scene is clearly continuous.
+    """
+    text = str(opening or "").strip()
+    if not text:
+        return False
+    if any(marker and marker in text for marker in time_markers):
+        return True
+
+    transition_markers = (
+        "刚才", "方才", "刚刚", "片刻前", "不久前", "尚未", "还未", "仍",
+        "仍旧", "依旧", "已经", "随即", "随后", "此刻", "下一秒", "车窗",
+        "抵达", "驶入", "滑入", "停在", "入住", "套房", "酒店", "提示",
+        "灼热", "余温", "未散", "未退",
+    )
+    if not any(marker in text for marker in transition_markers):
+        return False
+
+    anchors = _anchor_keywords(source_text)
+    if not anchors:
+        return False
+    hits = [anchor for anchor in anchors if anchor in text]
+    return len(hits) >= 1
+
+
 def _normalize_location_phrase(text: str) -> str:
     normalized = str(text or "")
     replacements = {
@@ -467,6 +508,26 @@ def _normalize_location_phrase(text: str) -> str:
     for before, after in replacements.items():
         normalized = normalized.replace(before, after)
     return re.sub(r"\s+", "", normalized)
+
+
+def _anchor_keywords(text: str) -> list[str]:
+    raw_tokens = re.findall(r"[A-Za-z0-9Ωω]+|[\u4e00-\u9fff]{2,10}", str(text or ""))
+    stop = {
+        "本章", "上一章", "一个", "为何", "是否", "关系", "真实", "目的", "身份",
+        "今晚", "今夜", "当晚", "明天", "次日", "翌日", "第二天", "三日后",
+        "必须", "如果", "暂不", "处理", "明确", "交代", "原因", "禁止",
+        "开头", "结尾", "悬念", "地方", "时候", "已经", "没有",
+    }
+    tokens: list[str] = []
+    for token in raw_tokens:
+        if token in stop or len(token) < 3:
+            continue
+        tokens.append(token)
+        if re.search(r"[\u4e00-\u9fff]", token) and len(token) > 4:
+            tokens.append(token[:4])
+            tokens.append(token[-4:])
+            tokens.extend(token[index:index + 4] for index in range(0, len(token) - 3))
+    return _unique(tokens)
 
 
 def _tail(text: str, limit: int) -> str:
