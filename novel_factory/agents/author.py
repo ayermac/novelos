@@ -1637,6 +1637,9 @@ class AuthorAgent(BaseAgent):
             "硬约束",
             "时间线",
             "章间衔接",
+            "QualityGate",
+            "质量门",
+            "质检门禁",
             "连续性阻断",
             "连续性修复",
             "关键情节缺失",
@@ -1644,6 +1647,8 @@ class AuthorAgent(BaseAgent):
             "直接违反",
             "硬冲突",
             "标题与正文脱节",
+            "标题关键词",
+            "时空回退",
         )
         priority_items = [
             str(item).strip()
@@ -1662,11 +1667,22 @@ class AuthorAgent(BaseAgent):
             "【返修硬阻断优先级】",
             "必须先修复以下硬阻断问题，再考虑语言润色、感官细节或节奏微调；不得只做语言润色。",
             "若退回问题涉及不可违背事实、Hard Constraints、时间线或章间衔接，必须直接改写相关剧情事实和场景顺序。",
+            "若涉及 QualityGate / 质检门禁阻断，必须逐条消解，返修稿中不得再次出现同名阻断。",
+            "章间衔接问题：章首必须明确承接上一章最后的时间、地点、动作或系统提示，不允许直接跳到新场景。",
+            "时空回退问题：禁止用“十分钟前/刚才/回到前台”等方式回到已完成旧场景；如必须回忆，必须明确标注为短暂闪回且不重演旧事件。",
+            "标题正文问题：标题核心关键词必须以原词自然落入正文关键场景；做不到就改成正文真实发生过的标题。",
             "硬阻断问题:",
             *[f"- {item}" for item in priority_items],
         ]
         if suggestion_items:
             lines.extend(["硬阻断修复建议:", *[f"- {item}" for item in suggestion_items]])
+        lines.extend([
+            "返修完成前必须在内部自检，禁止把以下清单或回执写入正文：",
+            "- 章首已承接上一章钩子；",
+            "- 标题关键词已在正文出现或标题已改；",
+            "- 没有无标注时空回退；",
+            "- QualityGate 阻断项已逐条消解。",
+        ])
         return "\n".join(lines)
 
     def _try_repair_revision_length_regression(

@@ -62,3 +62,25 @@ def test_desktop_knowledge_config_cleaner_is_safe():
             }
         },
     }
+
+
+def test_author_revision_blocking_priority_mentions_quality_gate_contracts():
+    """Author revision prompt must make QualityGate blockers first-class constraints."""
+    from novel_factory.agents.author import AuthorAgent
+
+    block = AuthorAgent._revision_blocking_priority_block({
+        "issues": [
+            "QualityGate 阻断：章间衔接断裂：上一章结尾存在明确时间节点“今晚”，本章开头未承接。",
+            "[连续性阻断] 标题与正文脱节：标题关键词「帝豪血衣令」未在正文中出现。",
+            "[连续性阻断] 章中时空回退：正文出现“十分钟前”并回到已完成的旧场景。",
+        ],
+        "suggestions": [
+            "章首必须承接上一章钩子。",
+            "标题关键词必须以原词自然落入正文。",
+        ],
+    })
+
+    assert "QualityGate / 质检门禁阻断" in block
+    assert "章首必须明确承接上一章" in block
+    assert "禁止用“十分钟前/刚才/回到前台”" in block
+    assert "标题核心关键词必须以原词自然落入正文" in block

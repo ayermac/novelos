@@ -826,3 +826,77 @@ class TestWorkflowNodeRevisionHardening:
         assert updates["quality_gate"] == {"pass": False, "revision_target": "planner"}
         assert updates["_revision_review"]["review_id"] == 7
         assert updates["_revision_review"]["revision_target"] == "planner"
+
+    def test_revision_router_converts_quality_gate_failure_to_author_revision(self):
+        from novel_factory.workflow.conditions import route_by_revision_type
+        from novel_factory.workflow.nodes import revision_router_node
+
+        class Repo:
+            db_path = "quality-gate-revision.db"
+
+            def __init__(self):
+                self.status = ChapterStatus.POLISHED.value
+                self.tasks = []
+
+            def update_workflow_run(self, *args, **kwargs):
+                return True
+
+            def log_workflow_node_event(self, *args, **kwargs):
+                return 1
+
+            def get_chapter_retry_count(self, project_id, chapter_number):
+                return len(self.tasks)
+
+            def get_chapter_status(self, project_id, chapter_number):
+                return self.status
+
+            def update_chapter_status(self, project_id, chapter_number, status):
+                self.status = status
+
+            def start_task(self, project_id, chapter_number, task_type, agent_id, workflow_run_id=None):
+                self.tasks.append((task_type, agent_id, workflow_run_id))
+                return len(self.tasks)
+
+            def complete_task(self, task_id, success=True):
+                return True
+
+            def get_chapter(self, project_id, chapter_number):
+                return {"id": 42}
+
+            def get_latest_review(self, project_id, chapter_id):
+                return None
+
+        state = {
+            "workflow_run_id": "run-qg",
+            "project_id": "demo",
+            "chapter_number": 3,
+            "chapter_status": ChapterStatus.POLISHED.value,
+            "max_retries": 3,
+            "quality_gate": {
+                "passed": False,
+                "pass": False,
+                "score": 70,
+                "revision_target": "author",
+                "blocking_issues": [
+                    "章间衔接断裂：上一章结尾存在明确时间节点“今晚”，本章开头未承接。",
+                    "[连续性阻断] 标题与正文脱节：标题关键词「帝豪血衣令」未在正文中出现。",
+                ],
+                "priority_issues": [],
+                "advisory_issues": ["对白口语化标记不足"],
+                "checks_run": ["chapter_seam", "continuity_gate"],
+                "timestamp": "2026-06-08T09:35:29+00:00",
+            },
+        }
+
+        repo = Repo()
+        updates = revision_router_node(state, repo)
+        routed_state = {**state, **updates}
+
+        assert updates["chapter_status"] == ChapterStatus.REVISION.value
+        assert updates["retry_count"] == 1
+        assert repo.status == ChapterStatus.REVISION.value
+        assert repo.tasks == [("revise", "author", "run-qg")]
+        assert updates["_revision_review"]["source"] == "quality_gate"
+        assert "章间衔接断裂" in updates["_revision_review"]["issues"][0]
+        assert any("QualityGate 阻断项" in s for s in updates["_revision_review"]["suggestions"])
+        assert route_by_revision_type(routed_state) == "author"

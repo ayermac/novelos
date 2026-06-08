@@ -2112,6 +2112,17 @@ def revision_router_node(state: FactoryState, repo: Repository | None = None) ->
             if hydrated.get(key) != state.get(key)
         }
 
+        # v6.10.1: QualityGate can route directly to revision_router before
+        # Editor writes a review row. Convert deterministic gate findings into
+        # the same _revision_review contract Author/Polisher already consume.
+        if not updates.get("_revision_review") and not state.get("_revision_review"):
+            quality_gate_review = _revision_review_from_quality_gate(state)
+            if quality_gate_review:
+                updates["_revision_review"] = quality_gate_review
+
+        quality_gate_retry_updates = _prepare_quality_gate_revision_retry(state, repo)
+        updates.update(quality_gate_retry_updates)
+
         # v6.8.2: Force-load _revision_review from DB if still missing after hydration
         if not updates.get("_revision_review"):
             project_id = state.get("project_id")
@@ -2144,6 +2155,111 @@ def revision_router_node(state: FactoryState, repo: Repository | None = None) ->
         return updates
     # Pass through — routing is handled by conditional edges
     return {}
+
+
+def _prepare_quality_gate_revision_retry(state: FactoryState, repo: Repository) -> dict[str, Any]:
+    """Mark a failed deterministic QualityGate as a counted revision retry."""
+    gate = state.get("quality_gate") or {}
+    if not _is_deterministic_quality_gate_failure(gate):
+        return {}
+    gate_marker = gate.get("timestamp") or gate.get("message") or str(gate.get("blocking_issues", [])[:1])
+    if state.get("_quality_gate_revision_recorded_for") == gate_marker:
+        return {}
+
+    project_id = state.get("project_id")
+    chapter_number = state.get("chapter_number")
+    if not project_id or not chapter_number:
+        return {}
+
+    retry_count = repo.get_chapter_retry_count(project_id, int(chapter_number))
+    max_retries = state.get("max_retries", 3)
+    if retry_count >= max_retries:
+        return {
+            "requires_human": True,
+            "retry_count": retry_count,
+            "chapter_status": ChapterStatus.BLOCKING.value,
+            "error": (
+                f"QualityGate 阻断已达到最大返修次数 "
+                f"({retry_count}/{max_retries})，需要人工检查。"
+            ),
+        }
+
+    revision_target = revision_target_from_state(state)
+    current_status = repo.get_chapter_status(project_id, int(chapter_number))
+    if current_status not in (
+        ChapterStatus.BLOCKING.value,
+        ChapterStatus.PUBLISHED.value,
+        ChapterStatus.REVIEWED.value,
+    ):
+        repo.update_chapter_status(project_id, int(chapter_number), ChapterStatus.REVISION.value)
+
+    task_id = repo.start_task(
+        project_id,
+        int(chapter_number),
+        "revise",
+        revision_target,
+        workflow_run_id=state.get("workflow_run_id"),
+    )
+    repo.complete_task(task_id, success=True)
+
+    return {
+        "chapter_status": ChapterStatus.REVISION.value,
+        "current_stage": "revision",
+        "retry_count": retry_count + 1,
+        "_quality_gate_revision_recorded_for": gate_marker,
+    }
+
+
+def _is_deterministic_quality_gate_failure(gate: dict[str, Any]) -> bool:
+    return (
+        bool(gate)
+        and (gate.get("passed") is False or gate.get("pass") is False)
+        and bool(gate.get("blocking_issues"))
+        and bool(gate.get("checks_run"))
+    )
+
+
+def _revision_review_from_quality_gate(state: FactoryState) -> dict[str, Any] | None:
+    """Build revision feedback from a failed deterministic QualityGate result."""
+    gate = state.get("quality_gate") or {}
+    if gate.get("passed") is not False and gate.get("pass") is not False:
+        return None
+
+    blocking = [str(i).strip() for i in gate.get("blocking_issues", []) if str(i).strip()]
+    priority = [str(i).strip() for i in gate.get("priority_issues", []) if str(i).strip()]
+    advisory = [str(i).strip() for i in gate.get("advisory_issues", []) if str(i).strip()]
+    if not (blocking or priority or advisory):
+        return None
+
+    issues = blocking + priority
+    suggestions: list[str] = []
+    diagnostics = gate.get("diagnostics") or {}
+    for check_name in ("chapter_seam", "continuity_gate", "quality_diagnosis"):
+        check_diag = diagnostics.get(check_name) or {}
+        raw_suggestions = check_diag.get("suggestions") or check_diag.get("advisory_issues") or []
+        if isinstance(raw_suggestions, list):
+            suggestions.extend(str(item).strip() for item in raw_suggestions if str(item).strip())
+
+    suggestions.extend(advisory[:4])
+    if blocking:
+        suggestions.insert(
+            0,
+            "必须逐条消解 QualityGate 阻断项；返修后不得保留同名阻断、不得只做语言润色。",
+        )
+    if any("章间衔接" in item or "时间" in item for item in blocking):
+        suggestions.append("章首必须明确承接上一章时间/地点/行动钩子，避免突然跳场或无标注回退。")
+    if any("标题与正文脱节" in item or "标题关键词" in item for item in blocking):
+        suggestions.append("标题关键词必须以原词或自然对白形式出现在正文关键场景中；否则改标题。")
+
+    return {
+        "review_id": gate.get("review_id") or f"quality_gate:{state.get('workflow_run_id') or 'current'}",
+        "score": gate.get("score"),
+        "revision_target": gate.get("revision_target") or "author",
+        "issues": issues[:12],
+        "suggestions": suggestions[:12],
+        "source": "quality_gate",
+        "blocking_issue_count": len(blocking),
+    }
 
 
 def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
