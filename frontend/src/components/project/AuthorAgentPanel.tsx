@@ -4,6 +4,7 @@ import {
   Play,
   FileText,
   Eye,
+  DatabaseZap,
 } from 'lucide-react'
 import { StepStatus } from '../../hooks/useSSEStream'
 import { tWorkflowNodeLabel, tWorkflowNodeNarrative } from '../../lib/state-labels'
@@ -46,6 +47,15 @@ interface RunDetailData {
   error_message?: string | null
   total_tokens?: number | null
   duration_ms?: number | null
+  run_doctor?: RunDoctor
+}
+
+interface RunDoctor {
+  category?: string
+  severity?: 'info' | 'warning' | 'error' | string
+  summary?: string
+  next_action?: string
+  evidence?: Record<string, unknown>
 }
 
 const STUCK_RUN_THRESHOLD_MINUTES = 30
@@ -76,7 +86,9 @@ interface AuthorAgentPanelProps {
   onConfirmRegenerate?: () => void
   onPublish?: () => void
   onGenerateNext?: () => void
+  onBackfillMemory?: (runId: string, force?: boolean) => Promise<void> | void
   publishPending?: boolean
+  memoryBackfillPending?: boolean
   regeneratePending?: boolean
   onViewContent: () => void
   onViewWorkflow: (runId: string) => void
@@ -130,7 +142,9 @@ export default function AuthorAgentPanel({
   onConfirmRegenerate,
   onPublish,
   onGenerateNext,
+  onBackfillMemory,
   publishPending,
+  memoryBackfillPending,
   regeneratePending,
   onViewContent,
   onViewWorkflow,
@@ -172,6 +186,13 @@ export default function AuthorAgentPanel({
   const canShowPrimaryAction = activeTab !== 'workflow'
   const canDirectGenerate = canShowPrimaryAction && !isWorkflowActive && !hasPreservedPlannedContent && !needsRecovery
   const recoveryRunId = timeline?.run_id || runDetail?.run_id
+  const canBackfillMemoryFromAssistant = Boolean(
+    onBackfillMemory &&
+    recoveryRunId &&
+    (currentNode === 'memory_curator' || timeline?.current_node === 'memory_curator') &&
+    ['reviewed', 'awaiting_publish', 'published'].includes(status) &&
+    workflowNeedsRecovery
+  )
   const showRecoveryShortcut = activeTab !== 'workflow' && Boolean(recoveryRunId) && (isStaleRunning || needsRecovery)
 
   return (
@@ -208,14 +229,27 @@ export default function AuthorAgentPanel({
               工作流存在异常（{effectiveRunStatus === 'blocked' ? '阻塞' : effectiveRunStatus === 'failed' ? '失败' : '运行超时'}），需先处理恢复，再决定发布。
             </div>
             {recoveryRunId && (
-              <button
-                className="btn btn-secondary btn-sm"
-                type="button"
-                onClick={() => onViewWorkflow(recoveryRunId)}
-                style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
-              >
-                <Eye size={12} /> 打开工作流恢复
-              </button>
+              canBackfillMemoryFromAssistant ? (
+                <LoadingButton
+                  className="btn btn-primary btn-sm"
+                  variant="primary"
+                  loading={!!memoryBackfillPending}
+                  loadingText="补跑中..."
+                  onClick={() => onBackfillMemory?.(recoveryRunId)}
+                  style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
+                >
+                  <DatabaseZap size={12} /> 补跑记忆提取
+                </LoadingButton>
+              ) : (
+                <button
+                  className="btn btn-secondary btn-sm"
+                  type="button"
+                  onClick={() => onViewWorkflow(recoveryRunId)}
+                  style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
+                >
+                  <Eye size={12} /> 打开工作流恢复
+                </button>
+              )
             )}
           </div>
         )}
@@ -320,14 +354,27 @@ export default function AuthorAgentPanel({
               工作流存在异常（{effectiveRunStatus === 'blocked' ? '阻塞' : effectiveRunStatus === 'failed' ? '失败' : '运行超时'}），需先处理恢复，再决定发布。
             </div>
             {recoveryRunId && (
-              <button
-                className="btn btn-secondary btn-sm"
-                type="button"
-                onClick={() => onViewWorkflow(recoveryRunId)}
-                style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
-              >
-                <Eye size={12} /> 打开工作流恢复
-              </button>
+              canBackfillMemoryFromAssistant ? (
+                <LoadingButton
+                  className="btn btn-primary btn-sm"
+                  variant="primary"
+                  loading={!!memoryBackfillPending}
+                  loadingText="补跑中..."
+                  onClick={() => onBackfillMemory?.(recoveryRunId)}
+                  style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
+                >
+                  <DatabaseZap size={12} /> 补跑记忆提取
+                </LoadingButton>
+              ) : (
+                <button
+                  className="btn btn-secondary btn-sm"
+                  type="button"
+                  onClick={() => onViewWorkflow(recoveryRunId)}
+                  style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
+                >
+                  <Eye size={12} /> 打开工作流恢复
+                </button>
+              )
             )}
           </div>
         )}

@@ -28,7 +28,8 @@ It ships as an Electron desktop client with an embedded React workbench and a lo
 - **Genesis quality gate** with depth checks for character motivations, faction actions, plot hole design, and outline specificity to prevent shallow project initialization.
 - **Runtime hygiene and observability** with unified version source, sensitive information redaction in errors and logs, and structured health diagnostics.
 - **Quality diagnosis and revision support** for AI trace, pacing, dialogue, scene texture, info dumps, show-don't-tell, and editor gates.
-- **Run observability** with node events, artifacts, LLM latency/tokens, retry actions, recovery tools, and memory backfill.
+- **Run observability and diagnosis** with node events, artifacts, LLM latency/tokens, Run Doctor attribution, retry actions, recovery tools, and memory backfill.
+- **Publish safety guards** for continuity, memory readiness, and malformed or truncated chapter titles.
 - **Agent-level LLM routing** so different agents can use different model profiles.
 - **Local-first runtime** with SQLite, desktop logs, local config, and Electron `safeStorage` for API keys.
 

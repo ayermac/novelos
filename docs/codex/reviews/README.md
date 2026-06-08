@@ -12,3 +12,6 @@ Use review documents to capture:
 
 Do not use review files as the primary implementation spec. Approved scope belongs in `../specs/`; completion facts belong in `../reports/`.
 
+## Recent Reviews
+
+- `novel-factory-v6.10.3-review.md` — Workflow Diagnostics & Stability

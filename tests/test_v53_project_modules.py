@@ -395,6 +395,47 @@ class TestReviewModule:
         assert len(batches) == 1
         assert batches[0]["chapter_number"] == 1
 
+    def test_memory_backfill_releases_source_timeout_lock(self, test_client):
+        """A timed-out MemoryCurator run should not leave a lock that blocks manual backfill."""
+        client, db_path = test_client
+        repo = Repository(db_path)
+
+        resp = client.post("/api/onboarding/projects", json={
+            "project_id": "test-memory-timeout-lock-release",
+            "name": "Test Memory Timeout Lock Release",
+            "genre": "fantasy",
+            "target_words": 100000,
+            "total_chapters_planned": 50,
+        })
+        assert resp.status_code == 200
+        project_id = resp.json()["data"]["project"]["project_id"]
+
+        repo.save_chapter_content(project_id, 1, "林默夺回账册，并发现账册夹层里藏着铜钥匙。", "第一章")
+        repo.save_chapter_state(
+            project_id,
+            1,
+            {"new_facts": ["林默夺回账册，并发现账册夹层里藏着铜钥匙"]},
+            "第1章状态卡",
+        )
+        repo.update_chapter_status(project_id, 1, "reviewed")
+        run_id = repo.create_workflow_run(project_id, 1)
+        repo.update_workflow_run(
+            run_id,
+            status="blocked",
+            current_node="memory_curator",
+            error_message="节点 memory_curator 执行超时（>600秒）",
+        )
+        lock_result = repo.acquire_memory_curator_lock(project_id, 1, run_id=run_id)
+        assert lock_result["acquired"] is True
+
+        resp = client.post(f"/api/runs/{run_id}/memory/backfill", json={"confirm": True})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["ok"] is True
+        assert data["data"]["skipped"] is False
+        assert data["data"]["memory_items_count"] >= 1
+        assert repo.get_memory_curator_lock(project_id, 1) is None
+
     def test_run_detail_memory_backfill_returns_error_for_state_card_fallback(self, test_client, monkeypatch):
         """Run detail backfill should report fallback as incomplete, not success."""
         client, db_path = test_client

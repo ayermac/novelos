@@ -70,6 +70,15 @@ interface RunDetailData {
   error_message?: string | null
   total_tokens?: number | null
   duration_ms?: number | null
+  run_doctor?: RunDoctor
+}
+
+interface RunDoctor {
+  category?: string
+  severity?: 'info' | 'warning' | 'error' | string
+  summary?: string
+  next_action?: string
+  evidence?: Record<string, unknown>
 }
 
 export interface PreflightWarning {
@@ -110,11 +119,13 @@ interface AuthorWorkbenchProps {
   onPublish?: () => void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
   onRetryRunNode?: (runId: string) => Promise<void> | void
+  onBackfillMemory?: (runId: string, force?: boolean) => Promise<void> | void
   onWorkflowDone?: (runId: string, status: string | null) => void
   onResetRunRecoveryForChapter?: (chapterNumber: number) => Promise<void> | void
   publishPending?: boolean
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
+  memoryBackfillPending?: boolean
   regeneratePending?: boolean
   onGenerateChapter?: (chapterNumber: number) => void
   onGenerateNextFromChapter?: (chapterNumber: number) => void
@@ -158,11 +169,13 @@ export default function AuthorWorkbench({
   onPublish,
   onResetRunRecovery,
   onRetryRunNode,
+  onBackfillMemory,
   onWorkflowDone,
   onResetRunRecoveryForChapter,
   publishPending,
   markStuckPending,
   resetRecoveryPending,
+  memoryBackfillPending,
   regeneratePending,
   onGenerateChapter,
   onGenerateNextFromChapter,
@@ -219,10 +232,12 @@ export default function AuthorWorkbench({
         onPublish={onPublish}
         onResetRunRecovery={onResetRunRecovery}
         onRetryRunNode={onRetryRunNode}
+        onBackfillMemory={onBackfillMemory}
         onWorkflowDone={onWorkflowDone}
         publishPending={publishPending}
         markStuckPending={markStuckPending}
         resetRecoveryPending={resetRecoveryPending}
+        memoryBackfillPending={memoryBackfillPending}
         regeneratePending={regeneratePending}
         onTabChange={onTabChange}
         onViewContent={onViewContent}
@@ -247,7 +262,9 @@ export default function AuthorWorkbench({
         onConfirmRegenerate={onConfirmRegenerate}
         onPublish={onPublish}
         onGenerateNext={onGenerateNext}
+        onBackfillMemory={onBackfillMemory}
         publishPending={publishPending}
+        memoryBackfillPending={memoryBackfillPending}
         regeneratePending={regeneratePending}
         onViewContent={onViewContent}
         onViewWorkflow={onViewWorkflow}

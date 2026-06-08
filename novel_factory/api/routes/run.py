@@ -625,6 +625,36 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 },
             )
 
+        # v6.10.3: Publish-time title hard guard.
+        from ...quality.title_guard import validate_publish_title
+
+        title_guard = validate_publish_title(chapter.get("title"), chapter.get("content"))
+        if not title_guard.passed:
+            message = "标题检查未通过，发布被拒绝"
+            return error_response(
+                "TITLE_GUARD_BLOCKED",
+                message,
+                details={
+                    "issues": title_guard.issues,
+                    "suggestions": title_guard.suggestions,
+                    "evidence": title_guard.evidence,
+                    "domain_result": blocked(
+                        message,
+                        user_message="章节标题疑似缺失、截断或与正文脱节，请修复后再发布",
+                        next_action="edit_title",
+                        action_label="修改标题",
+                        details={
+                            "project_id": body.project_id,
+                            "chapter": body.chapter,
+                            "title_issues": title_guard.issues,
+                            "title_suggestions": title_guard.suggestions,
+                            "error_code": "TITLE_GUARD_BLOCKED",
+                        },
+                        flags={"publish_blocked": True, "title_blocking": True},
+                    ).to_dict(),
+                },
+            )
+
         # v6.7.6: Block publish when latest run is blocked/failed/stale-running
         latest_runs = repo.get_workflow_runs_for_project(
             body.project_id, chapter_number=body.chapter, limit=1

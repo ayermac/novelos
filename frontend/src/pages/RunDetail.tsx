@@ -60,6 +60,16 @@ interface RunDetail {
   }
   // v6.6.10: Unified domain result
   domain_result?: OperationResult
+  // v6.10.3: Failure attribution and next-action diagnosis
+  run_doctor?: RunDoctor
+}
+
+interface RunDoctor {
+  category?: string
+  severity?: 'info' | 'warning' | 'error' | string
+  summary?: string
+  next_action?: string
+  evidence?: Record<string, unknown>
 }
 
 interface RunRecovery {
@@ -132,6 +142,52 @@ interface MemoryBackfillResult {
   memory_curator_fallback?: string | null
   message?: string
   domain_result?: OperationResult
+}
+
+function runDoctorCategoryLabel(category?: string): string {
+  switch (category) {
+    case 'healthy':
+      return '未发现异常'
+    case 'model_output_failure':
+      return '模型输出失败'
+    case 'deterministic_quality_failure':
+      return '确定性质检失败'
+    case 'configuration_failure':
+      return '配置失败'
+    case 'runtime_timeout':
+      return '运行超时'
+    case 'memory_failure':
+      return '记忆整理失败'
+    case 'workflow_failure':
+      return '工作流失败'
+    case 'running':
+      return '运行中'
+    default:
+      return '待确认'
+  }
+}
+
+function runDoctorActionLabel(action?: string): string {
+  switch (action) {
+    case 'backfill_memory':
+      return '补跑记忆提取'
+    case 'revise_by_gate':
+      return '按门禁问题返修'
+    case 'retry_node_or_switch_model':
+      return '重试节点或切换模型'
+    case 'check_settings':
+      return '检查 LLM 设置'
+    case 'mark_stuck':
+      return '标记卡住运行'
+    case 'view_failed_node':
+      return '查看失败节点'
+    case 'wait_or_watch':
+      return '继续观察'
+    case 'none':
+      return '无需处理'
+    default:
+      return action || '查看运行详情'
+  }
 }
 
 export default function RunDetail() {
@@ -322,6 +378,20 @@ export default function RunDetail() {
           </div>
         )}
       </div>
+      {data.run_doctor && (
+        <div className={`alert alert-${data.run_doctor.severity === 'error' ? 'error' : data.run_doctor.severity === 'warning' ? 'warn' : 'info'}`} style={{ marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <strong>Run Doctor：</strong>
+            <span className={`badge ${severityBadgeClass(data.run_doctor.severity === 'error' ? 'error' : data.run_doctor.severity === 'warning' ? 'warning' : 'info')}`}>
+              {runDoctorCategoryLabel(data.run_doctor.category)}
+            </span>
+            <span>{data.run_doctor.summary || '暂无诊断摘要。'}</span>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 13 }}>
+            建议动作：{runDoctorActionLabel(data.run_doctor.next_action)}
+          </div>
+        </div>
+      )}
       <div className="card" style={{ marginBottom: '16px' }}>
         <div className="card-header"><h3>基本信息</h3></div>
         <div className="card-body">

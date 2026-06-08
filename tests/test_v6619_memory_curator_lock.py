@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 import pytest
@@ -125,6 +126,48 @@ def test_memory_curator_lock_recovers_stale_running_lock(tmp_path):
     assert first["acquired"] is True
     assert second["acquired"] is True
     assert second["lock"]["run_id"] == "fresh-run"
+
+
+def test_memory_curator_node_timeout_releases_source_lock(tmp_path, monkeypatch):
+    """A workflow-level MemoryCurator timeout should release its own chapter lock."""
+    from novel_factory.config.settings import load_settings
+    from novel_factory.workflow.nodes import create_node_runners
+
+    repo = _seed_repo(tmp_path)
+    run_id = repo.create_workflow_run("memory-lock-proj", 1)
+    repo.update_workflow_run(run_id, status="running", current_node="memory_curator")
+    lock = repo.acquire_memory_curator_lock("memory-lock-proj", 1, run_id=run_id)
+    assert lock["acquired"] is True
+
+    def slow_run(self, state):
+        time.sleep(2)
+        return {"memory_curator_processed": True}
+
+    class RouterStub:
+        def for_agent(self, agent_name):
+            return CountingMemoryProvider()
+
+        def for_agent_fallback(self, agent_name):
+            return CountingMemoryProvider()
+
+    settings = load_settings()
+    settings.workflow.node_timeout_overrides["memory_curator"] = 1
+    monkeypatch.setattr("novel_factory.workflow.nodes.MemoryCuratorAgent.run", slow_run)
+
+    result = create_node_runners(settings, repo, RouterStub())["memory_curator"]({
+        "project_id": "memory-lock-proj",
+        "chapter_number": 1,
+        "workflow_run_id": run_id,
+        "chapter_status": "reviewed",
+        "requires_human": False,
+        "error": None,
+        "steps": [],
+        "llm_mode": "real",
+    })
+
+    assert result["requires_human"] is True
+    assert "执行超时" in result["error"]
+    assert repo.get_memory_curator_lock("memory-lock-proj", 1) is None
 
 
 def test_memory_curator_agent_does_not_extract_when_lock_is_held(tmp_path):

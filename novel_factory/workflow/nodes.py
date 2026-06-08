@@ -1010,6 +1010,15 @@ def create_node_runners(
                     agent_id=agent_name, status="error",
                     payload={"timeout_seconds": node_timeout},
                 )
+                if agent_name == "memory_curator" and hasattr(repo, "release_memory_curator_lock"):
+                    try:
+                        repo.release_memory_curator_lock(
+                            state.get("project_id", ""),
+                            int(state.get("chapter_number", 0)),
+                            run_id=state.get("workflow_run_id"),
+                        )
+                    except Exception:
+                        logger.debug("Failed to release memory curator lock after node timeout", exc_info=True)
                 _finalize_run(state, repo, "blocked", f"节点 {agent_name} 执行超时（>{node_timeout}秒）")
                 return {
                     "error": f"节点 {agent_name} 执行超时（>{node_timeout}秒），需要人工介入",
@@ -1698,6 +1707,7 @@ def quality_gate_node(state: FactoryState, repo: Repository, skill_registry=None
     all_issue_codes = []
     score = 100.0  # 从满分开始扣分
     checker_errors = []  # 记录检查器错误
+    mandatory_checkers = {"death_penalty", "word_count_gate", "chapter_seam", "continuity_gate"}
 
     # ── 检查 1: Death Penalty（死刑红线）────────────────────────────
     try:
@@ -1832,6 +1842,25 @@ def quality_gate_node(state: FactoryState, repo: Repository, skill_registry=None
             diagnostics["quality_diagnosis"] = {"error": "check failed"}
 
     # ── 综合判定 ─────────────────────────────────────────────────
+    mandatory_checker_errors = [
+        item for item in checker_errors
+        if item.get("checker") in mandatory_checkers
+    ]
+    if mandatory_checker_errors:
+        blocking_issues.extend([
+            f"[门禁降级] 必需检查器 {item.get('checker')} 执行失败：{item.get('message') or item.get('error_type')}"
+            for item in mandatory_checker_errors
+        ])
+        all_issue_codes.append(IssueCode.QUALITY_STYLE_ISSUE)
+        diagnostics["checker_health"] = {
+            "mandatory_failed": mandatory_checker_errors,
+            "advisory_failed": [
+                item for item in checker_errors
+                if item.get("checker") not in mandatory_checkers
+            ],
+            "policy": "mandatory_checker_failure_blocks_quality_gate",
+        }
+
     has_blocking = len(blocking_issues) > 0
     passed = not has_blocking
 
@@ -1977,6 +2006,24 @@ def publisher_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
 
     project_id = state.get("project_id", "")
     chapter_number = state.get("chapter_number", 0)
+    chapter = repo.get_chapter(project_id, chapter_number)
+
+    if chapter:
+        from ..quality.title_guard import validate_publish_title
+
+        title_guard = validate_publish_title(chapter.get("title"), chapter.get("content"))
+        if not title_guard.passed:
+            error_msg = "发布前标题检查未通过：" + "; ".join(title_guard.issues[:3])
+            _log_node_event(
+                state, repo, "publisher", "failed",
+                status="failed", error_message=error_msg,
+            )
+            _finalize_run(state, repo, "failed", error_msg)
+            return {
+                "error": error_msg,
+                "requires_human": True,
+                "title_guard": title_guard.to_dict(),
+            }
 
     # v6.8.5: Reuse quality_gate results if available (continuity already checked)
     quality_gate = state.get("quality_gate", {}) or {}

@@ -334,6 +334,41 @@ def _build_recovery(
     # v6.7.6: Blocked/Failed run takes priority over terminal chapter status
     # When run is blocked, show recovery actions even if chapter is awaiting_publish
     run_status = run_data.get("status") if run_data else None
+    current_node = run_data.get("current_node") if run_data else None
+    if (
+        current_node == "memory_curator"
+        and chapter_status in terminal_statuses
+        and run_status in ("blocked", "failed")
+    ):
+        recommended_action = "backfill_memory"
+        reason = "记忆整理节点失败或超时，正文已到发布就绪状态，可补跑记忆提取后继续发布。"
+        safe_actions.extend([
+            {"key": "view_artifacts", "label": "查看产物", "safe": True},
+            {"key": "view_content", "label": "查看正文", "safe": True},
+            {
+                "key": "backfill_memory",
+                "label": "补跑记忆提取",
+                "safe": True,
+                "note": "只重跑 Memory Curator，不覆盖正文和审核结果",
+            },
+        ])
+        return _payload()
+
+    if (
+        current_node == "memory_curator"
+        and chapter_status in terminal_statuses
+        and run_status == "running"
+        and is_stale
+    ):
+        recommended_action = "mark_stuck"
+        reason = "记忆整理节点运行超时，先标记卡住运行，再补跑记忆提取。"
+        safe_actions.extend([
+            {"key": "view_artifacts", "label": "查看产物", "safe": True},
+            {"key": "view_content", "label": "查看正文", "safe": True},
+            {"key": "mark_stuck", "label": "标记为阻塞", "safe": True, "note": "释放旧运行后可补跑记忆"},
+        ])
+        return _payload()
+
     if run_status in ("blocked", "failed"):
         recommended_action = "reset_chapter"
         reason = "工作流被阻塞，可清除阻塞并重置。" if run_status == "blocked" else "工作流运行失败，可清除阻塞并重置。"

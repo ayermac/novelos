@@ -455,6 +455,14 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             memory_status=memory_status if memory_status else None,
         )
 
+        # v6.10.3: Run Doctor — classify run failures and suggest next action.
+        try:
+            from ...workflow.run_doctor import diagnose_run
+
+            run_doctor = diagnose_run(repo, run_data, chapter)
+        except Exception:
+            run_doctor = {}
+
         # v6.6.14: Fetch memory context audit from planner artifact
         memory_context_audit: dict = {}
         try:
@@ -501,6 +509,8 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             "memory_status": memory_status,
             # v6.6.10: Unified domain result
             "domain_result": domain_result.to_dict(),
+            # v6.10.3: Failure attribution and next-action diagnosis
+            "run_doctor": run_doctor,
             # v6.6.14: Memory context audit
             "memory_context_audit": memory_context_audit,
         })
@@ -953,6 +963,37 @@ async def backfill_run_memory(
                 lock = repo.get_memory_curator_lock(project_id, chapter_number)
             except Exception:
                 lock = None
+        if lock and str(lock.get("status") or "") == "running":
+            active_run_id = lock.get("run_id")
+            same_source_run = active_run_id and str(active_run_id) == str(run_id)
+            run_status = str(run_data.get("status") or "")
+            current_node = str(run_data.get("current_node") or "")
+            recoverable_memory_timeout = (
+                same_source_run
+                and current_node == "memory_curator"
+                and run_status in {"blocked", "failed"}
+            )
+            if (
+                not recoverable_memory_timeout
+                and same_source_run
+                and current_node == "memory_curator"
+                and run_status == "running"
+            ):
+                try:
+                    settings = _get_run_recovery_settings(request)
+                    recoverable_memory_timeout = bool(
+                        _detect_stuck_run(
+                            repo,
+                            run_data,
+                            settings.workflow.task_timeout_minutes,
+                        ).get("stuck")
+                    )
+                except Exception:
+                    recoverable_memory_timeout = False
+            if recoverable_memory_timeout and hasattr(repo, "release_memory_curator_lock"):
+                repo.release_memory_curator_lock(project_id, chapter_number, run_id=run_id)
+                lock = None
+
         if lock and str(lock.get("status") or "") == "running":
             active_run_id = lock.get("run_id")
             message = f"第 {chapter_number} 章记忆提取正在进行中，请等待完成后再重试。"

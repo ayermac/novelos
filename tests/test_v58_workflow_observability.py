@@ -219,6 +219,33 @@ class TestWorkflowTimelineApi:
         assert awaiting_node["label"] == "等待发布"
         assert awaiting_node["node_group"] == "terminal"
 
+    def test_memory_curator_blocked_terminal_run_recommends_backfill(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_memory_timeout", status="reviewed")
+        run_id = _seed_run(
+            repo,
+            "obs_memory_timeout",
+            status="blocked",
+            current_node="memory_curator",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id="obs_memory_timeout",
+            chapter_number=1,
+            node_name="memory_curator",
+            event_type="failed",
+            status="failed",
+            message="节点执行超时（>600秒），需要人工介入",
+        )
+
+        resp = client.get("/api/projects/obs_memory_timeout/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["recovery"]["recommended_action"] == "backfill_memory"
+        actions = {action["key"]: action for action in data["recovery"]["safe_actions"]}
+        assert "backfill_memory" in actions
+        assert actions["backfill_memory"]["label"] == "补跑记忆提取"
+
     def test_timeline_includes_complete_canonical_node_skeleton(self, tmp_path):
         client, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "obs_skeleton", status="planned")
