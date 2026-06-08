@@ -1138,7 +1138,16 @@ class PolisherAgent(BaseAgent):
                             "error": str(e)[:200],
                         },
                     })
-                raise
+                # v6.10.5: Partial polish — fall back to original chunk for
+                # failed segment instead of aborting the entire segmented polish.
+                # This avoids passthrough mode in revision chains, which would
+                # otherwise block at the v6.10.3 guard.
+                logger.warning(
+                    "Polisher segment %d/%d failed (%s), using original chunk as fallback",
+                    segment_num, total_chunks, e,
+                )
+                segment_outputs.append(chunk)
+                continue
 
             segment_outputs.append(polished)
 
