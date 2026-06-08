@@ -43,6 +43,41 @@ const skills = [
   },
 ]
 
+const knowledgeSkills = [
+  {
+    skill_id: 'dialogue-naturalness',
+    namespace: 'knowledge',
+    qualified_id: 'knowledge:dialogue-naturalness',
+    name: '对白自然度指南',
+    description: '用停顿、反问和打断增强对白口语感。',
+    enabled: true,
+    priority: 60,
+    token_budget: 900,
+    injection_mode: 'auto',
+    tags: ['dialogue', 'style'],
+    applicable_agents: ['author', 'polisher'],
+    applicable_genres: ['urban'],
+    version: '1.1',
+    source: 'builtin',
+  },
+  {
+    skill_id: 'ai-style-avoidance',
+    namespace: 'knowledge',
+    qualified_id: 'knowledge:ai-style-avoidance',
+    name: 'AI 痕迹规避',
+    description: '减少机械转折、空泛评价和模板化表达。',
+    enabled: true,
+    priority: 50,
+    token_budget: 700,
+    injection_mode: 'agentic_only',
+    tags: ['humanize'],
+    applicable_agents: ['polisher', 'editor'],
+    applicable_genres: [],
+    version: '1.0',
+    source: 'builtin',
+  },
+]
+
 const skillConfig = {
   agents: ['planner', 'screenwriter', 'author', 'polisher', 'editor', 'memory_curator'],
   stages: {
@@ -284,6 +319,7 @@ function mockApi() {
     if (path === '/skills') return { ok: true, data: { skills } }
     if (path === '/skills/agent-matrix') return { ok: true, data: agentMatrix }
     if (path === '/skills/config') return { ok: true, data: skillConfig }
+    if (path === '/knowledge-skills') return { ok: true, data: knowledgeSkills }
     return { ok: false, error: { code: 'NOT_FOUND', message: path } }
   })
   vi.mocked(post).mockImplementation(async (path: string, body?: unknown) => {
@@ -320,10 +356,27 @@ describe('SkillVisibilityPanel', () => {
   it('section navigation switches console views', async () => {
     render(<SkillVisibilityPanel />)
     expect(await screen.findByText('Skill 管理工作台')).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Code Skills/ })).toBeInTheDocument()
+    expect(screen.getByRole('tab', { name: /Knowledge Skills/ })).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Agent 编排/ }))
     expect(screen.getByText('Agent × Stage Orchestration')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /能力库/ }))
     expect(screen.getByText('Style Polisher')).toBeInTheDocument()
+  })
+
+  it('renders knowledge skills as a first-class skill layer', async () => {
+    render(<SkillVisibilityPanel />)
+    fireEvent.click(await screen.findByRole('tab', { name: /Knowledge Skills/ }))
+
+    expect(screen.getAllByText('Knowledge Skills').length).toBeGreaterThan(0)
+    expect(screen.getByText('knowledge:dialogue-naturalness')).toBeInTheDocument()
+    expect(screen.getByText('对白自然度指南')).toBeInTheDocument()
+    expect(screen.getByText('agentic_only')).toBeInTheDocument()
+    expect(screen.getByText('author')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('搜索 Knowledge Skill'), { target: { value: 'humanize' } })
+    expect(screen.getByText('AI 痕迹规避')).toBeInTheDocument()
+    expect(screen.queryByText('对白自然度指南')).not.toBeInTheDocument()
   })
 
   it('capability filters and search apply across id, package, description, and class', async () => {

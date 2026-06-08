@@ -163,8 +163,26 @@ interface SkillReviewResult {
   mountable_targets: SkillMount[]
 }
 
+interface KnowledgeSkillInfo {
+  skill_id: string
+  namespace?: string
+  qualified_id?: string
+  name: string
+  description: string
+  enabled: boolean
+  priority: number
+  token_budget: number
+  injection_mode: string
+  tags: string[]
+  applicable_agents: string[]
+  applicable_genres: string[]
+  version: string
+  source: string
+}
+
 type SkillConsoleView = 'overview' | 'enable' | 'mounts' | 'test' | 'catalog'
 type CapabilityFilter = 'all' | 'enabled' | 'disabled' | 'mounted' | 'unmounted' | 'risky' | 'legacy'
+type SkillLayer = 'code' | 'knowledge'
 
 const CAPABILITY_FILTERS: { key: CapabilityFilter; label: string }[] = [
   { key: 'all', label: '全部' },
@@ -233,6 +251,7 @@ function getRequestErrorMessage(error: unknown, fallback: string) {
 
 export default function SkillVisibilityPanel() {
   const [skills, setSkills] = useState<SkillInfo[]>([])
+  const [knowledgeSkills, setKnowledgeSkills] = useState<KnowledgeSkillInfo[]>([])
   const [agentMatrix, setAgentMatrix] = useState<AgentMatrix | null>(null)
   const [skillConfig, setSkillConfig] = useState<SkillConfig | null>(null)
   const [loading, setLoading] = useState(true)
@@ -264,6 +283,7 @@ export default function SkillVisibilityPanel() {
   const [reviewingSkill, setReviewingSkill] = useState<string | null>(null)
   const [skillReviewError, setSkillReviewError] = useState('')
   const [skillReviewResults, setSkillReviewResults] = useState<Record<string, SkillReviewResult>>({})
+  const [activeLayer, setActiveLayer] = useState<SkillLayer>('code')
   const [activeView, setActiveView] = useState<SkillConsoleView>('overview')
   const [skillSearch, setSkillSearch] = useState('')
   const [capabilityFilter, setCapabilityFilter] = useState<CapabilityFilter>('all')
@@ -273,10 +293,11 @@ export default function SkillVisibilityPanel() {
     setError('')
 
     try {
-      const [skillsRes, matrixRes, configRes] = await Promise.all([
+      const [skillsRes, matrixRes, configRes, knowledgeRes] = await Promise.all([
         get<{ skills: SkillInfo[] }>('/skills'),
         get<AgentMatrix>('/skills/agent-matrix'),
         get<SkillConfig>('/skills/config'),
+        get<KnowledgeSkillInfo[]>('/knowledge-skills'),
       ])
 
       if (skillsRes.ok && skillsRes.data) {
@@ -291,6 +312,10 @@ export default function SkillVisibilityPanel() {
 
       if (configRes.ok && configRes.data) {
         setSkillConfig(configRes.data)
+      }
+
+      if (knowledgeRes.ok && knowledgeRes.data) {
+        setKnowledgeSkills(knowledgeRes.data)
       }
     } catch (err) {
       setError(getRequestErrorMessage(err, '获取 Skill 信息失败'))
@@ -627,6 +652,9 @@ export default function SkillVisibilityPanel() {
   const validationIssueCount = validateResult && !validateResult.ok ? validateResult.errors.length : 0
   const matrixWarningCount = agentMatrix?.warnings.length ?? 0
   const warningCount = matrixWarningCount + enabledUnmounted.length + mountedDisabled.length + missingIds.size + validationIssueCount
+  const knowledgeEnabledCount = knowledgeSkills.filter((skill) => skill.enabled).length
+  const knowledgeDisabledCount = knowledgeSkills.length - knowledgeEnabledCount
+  const knowledgePromptCount = knowledgeSkills.filter((skill) => skill.injection_mode !== 'agentic_only' && skill.injection_mode !== 'disabled').length
 
   // Build available skills for each agent/stage from config
   const getAvailableSkillsForStage = (agent: string, stage: string) => {
@@ -653,6 +681,25 @@ export default function SkillVisibilityPanel() {
       skill.description || '',
     ].some((value) => value.toLowerCase().includes(normalizedSearch))
   }
+  const searchMatchesKnowledgeSkill = (skill: KnowledgeSkillInfo) => {
+    if (!normalizedSearch) return true
+    return [
+      skill.skill_id,
+      skill.qualified_id || '',
+      skill.name,
+      skill.description,
+      skill.source,
+      skill.injection_mode,
+      ...skill.tags,
+      ...skill.applicable_agents,
+      ...skill.applicable_genres,
+    ].some((value) => value.toLowerCase().includes(normalizedSearch))
+  }
+  const filteredKnowledgeSkills = knowledgeSkills.filter(searchMatchesKnowledgeSkill)
+  const knowledgeAgentCoverage = CORE_AGENT_IDS.map((agent) => ({
+    agent,
+    skills: knowledgeSkills.filter((skill) => skill.enabled && skill.applicable_agents.includes(agent)),
+  }))
   const capabilities = allCapabilityIds.map((id) => {
     const runtime = skillMountById.get(id)
     const config = configSkillById.get(id)
@@ -777,7 +824,7 @@ export default function SkillVisibilityPanel() {
         <div>
           <div className="skill-console-kicker"><SlidersHorizontal size={14} /> Skill Operations</div>
           <h3>Skill 管理工作台</h3>
-          <p>按启用、挂载、测试和目录分区管理创作技能，避免在一个长页面里处理所有配置。</p>
+          <p>Code Skills 管执行与门禁，Knowledge Skills 管写作知识与注入策略；两层分开维护，避免语义混淆。</p>
         </div>
         <div className="skill-console-actions">
           <button onClick={handleValidate} className="btn btn-secondary" disabled={validating}>
@@ -789,29 +836,160 @@ export default function SkillVisibilityPanel() {
         </div>
       </div>
 
-      <div className="skill-console-metrics">
-        <div className="skill-console-metric">
-          <span className="metric-icon"><Boxes size={16} /></span>
-          <span className="metric-label">已加载</span>
-          <strong>{skills.length}</strong>
-        </div>
-        <div className="skill-console-metric">
-          <span className="metric-icon success"><CheckCircle2 size={16} /></span>
-          <span className="metric-label">已启用</span>
-          <strong>{enabledCount}</strong>
-        </div>
-        <div className="skill-console-metric">
-          <span className="metric-icon info"><Workflow size={16} /></span>
-          <span className="metric-label">已挂载</span>
-          <strong>{mountedSkillCount}</strong>
-        </div>
-        <div className="skill-console-metric">
-          <span className="metric-icon muted"><Activity size={16} /></span>
-          <span className="metric-label">禁用</span>
-          <strong>{disabledCount}</strong>
-        </div>
+      <div className="skill-layer-tabs" role="tablist" aria-label="Skill 类型">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeLayer === 'code'}
+          className={`skill-layer-tab ${activeLayer === 'code' ? 'active' : ''}`}
+          onClick={() => setActiveLayer('code')}
+        >
+          <Boxes size={16} />
+          <span>
+            <strong>Code Skills</strong>
+            <small>Python validators / hooks / gates</small>
+          </span>
+          <em>{skills.length}</em>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeLayer === 'knowledge'}
+          className={`skill-layer-tab ${activeLayer === 'knowledge' ? 'active' : ''}`}
+          onClick={() => setActiveLayer('knowledge')}
+        >
+          <PackageCheck size={16} />
+          <span>
+            <strong>Knowledge Skills</strong>
+            <small>Markdown 写作知识 / prompt 注入 / agentic tools</small>
+          </span>
+          <em>{knowledgeSkills.length}</em>
+        </button>
       </div>
 
+      <div className="skill-console-metrics">
+        {activeLayer === 'code' ? (
+          <>
+            <div className="skill-console-metric">
+              <span className="metric-icon"><Boxes size={16} /></span>
+              <span className="metric-label">Code 已加载</span>
+              <strong>{skills.length}</strong>
+            </div>
+            <div className="skill-console-metric">
+              <span className="metric-icon success"><CheckCircle2 size={16} /></span>
+              <span className="metric-label">Code 已启用</span>
+              <strong>{enabledCount}</strong>
+            </div>
+            <div className="skill-console-metric">
+              <span className="metric-icon info"><Workflow size={16} /></span>
+              <span className="metric-label">Code 已挂载</span>
+              <strong>{mountedSkillCount}</strong>
+            </div>
+            <div className="skill-console-metric">
+              <span className="metric-icon muted"><Activity size={16} /></span>
+              <span className="metric-label">Code 禁用</span>
+              <strong>{disabledCount}</strong>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="skill-console-metric">
+              <span className="metric-icon"><PackageCheck size={16} /></span>
+              <span className="metric-label">Knowledge 已加载</span>
+              <strong>{knowledgeSkills.length}</strong>
+            </div>
+            <div className="skill-console-metric">
+              <span className="metric-icon success"><CheckCircle2 size={16} /></span>
+              <span className="metric-label">Knowledge 已启用</span>
+              <strong>{knowledgeEnabledCount}</strong>
+            </div>
+            <div className="skill-console-metric">
+              <span className="metric-icon info"><SlidersHorizontal size={16} /></span>
+              <span className="metric-label">Prompt 可注入</span>
+              <strong>{knowledgePromptCount}</strong>
+            </div>
+            <div className="skill-console-metric">
+              <span className="metric-icon muted"><Activity size={16} /></span>
+              <span className="metric-label">Knowledge 禁用</span>
+              <strong>{knowledgeDisabledCount}</strong>
+            </div>
+          </>
+        )}
+      </div>
+
+      {activeLayer === 'knowledge' && (
+        <div className="knowledge-skill-workbench">
+          <div className="skill-console-toolbar">
+            <div>
+              <strong>Knowledge Skills</strong>
+              <span>维护 Markdown 写作知识、适用 Agent/Genre、注入模式和 token budget。</span>
+            </div>
+            <label className="skill-search">
+              <Search size={14} />
+              <TextInput
+                aria-label="搜索 Knowledge Skill"
+                value={skillSearch}
+                onChange={(event) => setSkillSearch(event.target.value)}
+                placeholder="搜索 id、名称、tag、agent、genre 或注入模式"
+              />
+            </label>
+          </div>
+
+          <div className="knowledge-agent-strip" aria-label="Knowledge Skill agent coverage">
+            {knowledgeAgentCoverage.map((entry) => (
+              <div key={`knowledge-agent-${entry.agent}`} className={`knowledge-agent-chip ${entry.skills.length > 0 ? 'covered' : 'missing'}`}>
+                <strong>{entry.agent}</strong>
+                <span>{entry.skills.length} knowledge</span>
+              </div>
+            ))}
+          </div>
+
+          <div className="knowledge-skill-grid">
+            {filteredKnowledgeSkills.map((skill) => (
+              <article key={skill.skill_id} className={`knowledge-skill-card ${skill.enabled ? 'enabled' : 'disabled'}`}>
+                <div className="knowledge-skill-card-head">
+                  <div>
+                    <code>{skill.qualified_id || `knowledge:${skill.skill_id}`}</code>
+                    <h4>{skill.name}</h4>
+                  </div>
+                  <span className={`knowledge-mode mode-${skill.injection_mode}`}>
+                    {skill.injection_mode}
+                  </span>
+                </div>
+                <p>{skill.description || '暂无描述。'}</p>
+                <div className="knowledge-skill-meta">
+                  <span>{skill.enabled ? 'enabled' : 'disabled'}</span>
+                  <span>priority {skill.priority}</span>
+                  <span>{skill.token_budget} tokens</span>
+                  <span>{skill.source}</span>
+                  <span>v{skill.version}</span>
+                </div>
+                <div className="knowledge-skill-targets">
+                  <div>
+                    <strong>Agents</strong>
+                    <span>{skill.applicable_agents.length > 0 ? skill.applicable_agents.join(', ') : '未声明'}</span>
+                  </div>
+                  <div>
+                    <strong>Genres</strong>
+                    <span>{skill.applicable_genres.length > 0 ? skill.applicable_genres.join(', ') : '全部/未限定'}</span>
+                  </div>
+                </div>
+                {skill.tags.length > 0 && (
+                  <div className="knowledge-tags">
+                    {skill.tags.map((tag) => <span key={`${skill.skill_id}-${tag}`}>{tag}</span>)}
+                  </div>
+                )}
+              </article>
+            ))}
+          </div>
+
+          {filteredKnowledgeSkills.length === 0 && (
+            <div className="skill-empty-panel">没有匹配当前搜索条件的 Knowledge Skill。</div>
+          )}
+        </div>
+      )}
+
+      {activeLayer === 'code' && (
       <div className="skill-console-shell">
         <aside className="skill-console-nav" aria-label="Skill 管理分区">
           {consoleViews.map((view) => (
@@ -1522,6 +1700,7 @@ export default function SkillVisibilityPanel() {
       )}
         </main>
       </div>
+      )}
     </div>
   )
 }
