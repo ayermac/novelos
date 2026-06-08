@@ -840,19 +840,41 @@ class EditorAgent(BaseAgent):
                 f"[v6.6策略] {strategy_decision.reason}；保留为发布前建议，不进入自动返修。"
             ]
         elif not strategy_decision.pass_:
-            output.pass_ = False
-            if not output.revision_target:
-                output.revision_target = determine_revision_target(
-                    death_penalty=dp_result.has_critical,
-                    issues=output.issues,
-                    llm_revision_target=output.revision_target,
-                    quality_priority_count=quality_result.priority_count,
-                    seam_blocking_count=seam_result.blocking_count,
-                    retry_count=inputs.retry_count,
+            # v6.10.4: Protect LLM's explicit pass decision when the strategy
+            # failure is only due to score threshold (no hard blockers).
+            # Hard blockers (death_penalty, blocking issues, blocking skills)
+            # always override. Score-based revision should respect LLM's
+            # explicit pass judgment to avoid unnecessary revision loops.
+            has_hard_blockers = (
+                dp_result.has_critical
+                or bool(word_gate_details)
+                or seam_result.blocking_count > 0
+                or blocking_skill_count > 0
+            )
+            if output.pass_ and not has_hard_blockers:
+                # LLM said pass, no hard blockers — respect LLM decision
+                # but surface strategy concern as advisory suggestion
+                logger.info(
+                    "Editor strategy deferred to LLM pass: score=%s, reason=%s",
+                    output.score, strategy_decision.reason,
                 )
-            strategy_note = f"[v6.6策略] {strategy_decision.reason}"
-            if strategy_note not in output.issues:
-                output.issues.append(strategy_note)
+                strategy_note = f"[v6.6策略] {strategy_decision.reason}；LLM判定通过，保留为建议。"
+                if strategy_note not in output.suggestions:
+                    output.suggestions.append(strategy_note)
+            else:
+                output.pass_ = False
+                if not output.revision_target:
+                    output.revision_target = determine_revision_target(
+                        death_penalty=dp_result.has_critical,
+                        issues=output.issues,
+                        llm_revision_target=output.revision_target,
+                        quality_priority_count=quality_result.priority_count,
+                        seam_blocking_count=seam_result.blocking_count,
+                        retry_count=inputs.retry_count,
+                    )
+                strategy_note = f"[v6.6策略] {strategy_decision.reason}"
+                if strategy_note not in output.issues:
+                    output.issues.append(strategy_note)
 
         # advisory_pass must NOT set revision_target
         if strategy_decision.decision_type == "advisory_pass":

@@ -2380,7 +2380,12 @@ class TestEditorAgent:
         assert result["quality_gate"]["revision_target"] == "author"
         assert result["_revision_review"]["revision_target"] == "author"
 
-    def test_editor_low_score_llm_pass_is_forced_to_revision(self, seeded_repo):
+    def test_editor_low_score_llm_pass_no_hard_blockers_respects_llm(self, seeded_repo):
+        """v6.10.4: LLM pass=true + score < 80 + no hard blockers → pass respected.
+
+        Score-based revision alone should NOT override LLM's explicit pass judgment.
+        Strategy concern is downgraded to advisory suggestion.
+        """
         from novel_factory.agents.editor import EditorAgent
 
         base_content = "这是一段测试正文内容，用于验证 Editor Agent 的基本功能。每次修改都需要确保内容充实完整。"
@@ -2410,10 +2415,49 @@ class TestEditorAgent:
             "error": None,
         })
 
+        # v6.10.4: No hard blockers → LLM pass=true is respected
+        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
+        assert result["quality_gate"]["pass"] is True
+        assert result["quality_gate"]["score"] == 78
+
+    def test_editor_low_score_llm_pass_with_death_penalty_forced_to_revision(self, seeded_repo):
+        """v6.10.4: LLM pass=true + score < 80 + death penalty → hard blocker overrides LLM.
+
+        Death penalty in content text is a hard blocker that always overrides LLM pass.
+        """
+        from novel_factory.agents.editor import EditorAgent
+
+        # Content contains "冷笑" which triggers DP_EXPR_01 death penalty
+        base_content = "李明看着对手，嘴角露出冷笑。这是一段测试正文内容，用于验证 Editor Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 45
+
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "polished")
+
+        stub = StubLLMProvider([{
+            "pass": True,
+            "score": 78,
+            "scores": {"setting": 16, "logic": 14, "poison": 14, "text": 13, "pacing": 13},
+            "issues": [],
+            "suggestions": [],
+            "revision_target": None,
+            "state_card": {},
+        }])
+
+        agent = EditorAgent(seeded_repo, stub)
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        # Death penalty is a hard blocker → overrides LLM pass
         assert result["chapter_status"] == ChapterStatus.REVISION.value
         assert result["quality_gate"]["pass"] is False
-        assert result["quality_gate"]["score"] == 78
-        assert result["quality_gate"]["revision_target"] == "polisher"
 
         review = seeded_repo.get_latest_review("test_proj", 1)
         assert review is not None
