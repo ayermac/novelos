@@ -256,6 +256,7 @@ export default function SkillVisibilityPanel() {
   const [skillConfig, setSkillConfig] = useState<SkillConfig | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
+  const [knowledgeError, setKnowledgeError] = useState('')
   const [validating, setValidating] = useState(false)
   const [validateResult, setValidateResult] = useState<ValidateResult | null>(null)
 
@@ -291,6 +292,7 @@ export default function SkillVisibilityPanel() {
   const load = async () => {
     setLoading(true)
     setError('')
+    setKnowledgeError('')
 
     try {
       const [skillsRes, matrixRes, configRes, knowledgeRes] = await Promise.all([
@@ -316,6 +318,9 @@ export default function SkillVisibilityPanel() {
 
       if (knowledgeRes.ok && knowledgeRes.data) {
         setKnowledgeSkills(knowledgeRes.data)
+      } else {
+        setKnowledgeSkills([])
+        setKnowledgeError(knowledgeRes.error?.message || '获取 Knowledge Skill 列表失败')
       }
     } catch (err) {
       setError(getRequestErrorMessage(err, '获取 Skill 信息失败'))
@@ -943,6 +948,13 @@ export default function SkillVisibilityPanel() {
               </div>
             ))}
           </div>
+
+          {knowledgeError && (
+            <div className="skill-message danger">
+              {knowledgeError}
+              <button type="button" onClick={() => setKnowledgeError('')}>清除</button>
+            </div>
+          )}
 
           <div className="knowledge-skill-grid">
             {filteredKnowledgeSkills.map((skill) => (

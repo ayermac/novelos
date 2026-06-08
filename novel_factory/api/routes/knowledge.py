@@ -4,9 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
+
+from ..envelope import EnvelopeResponse, envelope_response
 
 router = APIRouter(prefix="/knowledge-skills", tags=["knowledge"])
 
@@ -74,7 +75,7 @@ class KnowledgeSkillSelectionPreview(BaseModel):
 # ── Dependency ────────────────────────────────────────────────
 
 
-def _get_km(request: Any) -> Any:
+def _get_km(request: Request) -> Any:
     """Get KnowledgeManager from app state."""
     km = getattr(request.app.state, "knowledge_manager", None)
     if not km:
@@ -107,28 +108,28 @@ def _skill_to_dict(skill: Any, *, include_content: bool = False) -> dict[str, An
 # ── Endpoints ─────────────────────────────────────────────────
 
 
-@router.get("", response_model=list[KnowledgeSkillMeta])
-async def list_knowledge_skills(request: Any) -> list[dict[str, Any]]:
+@router.get("", response_model=EnvelopeResponse)
+async def list_knowledge_skills(request: Request) -> EnvelopeResponse:
     """List all knowledge skills."""
     km = _get_km(request)
-    return [_skill_to_dict(s) for s in km.list_all()]
+    return envelope_response([_skill_to_dict(s) for s in km.list_all()])
 
 
-@router.get("/agent/{agent_id}", response_model=list[KnowledgeSkillMeta])
+@router.get("/agent/{agent_id}", response_model=EnvelopeResponse)
 async def get_knowledge_skills_for_agent(
-    request: Any, agent_id: str, genre: str | None = None
-) -> list[dict[str, Any]]:
+    request: Request, agent_id: str, genre: str | None = None
+) -> EnvelopeResponse:
     """Get knowledge skills available for a specific agent."""
     km = _get_km(request)
     skills = km.get_for_agent(agent_id, genre=genre)
-    return [_skill_to_dict(s) for s in skills]
+    return envelope_response([_skill_to_dict(s) for s in skills])
 
 
-@router.post("/select")
+@router.post("/select", response_model=EnvelopeResponse)
 async def preview_knowledge_selection(
-    request: Any,
+    request: Request,
     body: KnowledgeSkillSelectionPreview,
-) -> dict[str, Any]:
+) -> EnvelopeResponse:
     """Preview Knowledge Skill selection with budget and reasons."""
     km = _get_km(request)
     selection = km.select_for_agent(
@@ -141,21 +142,21 @@ async def preview_knowledge_selection(
     )
     payload = selection.to_audit_payload(agent=body.agent_id, genre=body.genre)
     payload["skills"] = [_skill_to_dict(s) for s in selection.skills]
-    return payload
+    return envelope_response(payload)
 
 
-@router.get("/{skill_id}", response_model=KnowledgeSkillDetail)
-async def get_knowledge_skill(request: Any, skill_id: str) -> dict[str, Any]:
+@router.get("/{skill_id}", response_model=EnvelopeResponse)
+async def get_knowledge_skill(request: Request, skill_id: str) -> EnvelopeResponse:
     """Get a single knowledge skill with content."""
     km = _get_km(request)
     skill = km.get(skill_id)
     if not skill:
         raise HTTPException(status_code=404, detail=f"Knowledge skill '{skill_id}' not found")
-    return _skill_to_dict(skill, include_content=True)
+    return envelope_response(_skill_to_dict(skill, include_content=True))
 
 
-@router.post("", response_model=KnowledgeSkillDetail, status_code=201)
-async def create_knowledge_skill(request: Any, body: KnowledgeSkillCreate) -> dict[str, Any]:
+@router.post("", response_model=EnvelopeResponse, status_code=201)
+async def create_knowledge_skill(request: Request, body: KnowledgeSkillCreate) -> EnvelopeResponse:
     """Create a new knowledge skill."""
     km = _get_km(request)
     existing = km.get(body.skill_id)
@@ -175,13 +176,13 @@ async def create_knowledge_skill(request: Any, body: KnowledgeSkillCreate) -> di
         token_budget=body.token_budget,
         injection_mode=body.injection_mode,
     )
-    return _skill_to_dict(skill, include_content=True)
+    return envelope_response(_skill_to_dict(skill, include_content=True))
 
 
-@router.put("/{skill_id}", response_model=KnowledgeSkillDetail)
+@router.put("/{skill_id}", response_model=EnvelopeResponse)
 async def update_knowledge_skill(
-    request: Any, skill_id: str, body: KnowledgeSkillUpdate
-) -> dict[str, Any]:
+    request: Request, skill_id: str, body: KnowledgeSkillUpdate
+) -> EnvelopeResponse:
     """Update a knowledge skill."""
     km = _get_km(request)
     skill = km.update_skill(
@@ -199,13 +200,13 @@ async def update_knowledge_skill(
     )
     if not skill:
         raise HTTPException(status_code=404, detail=f"Knowledge skill '{skill_id}' not found")
-    return _skill_to_dict(skill, include_content=True)
+    return envelope_response(_skill_to_dict(skill, include_content=True))
 
 
-@router.delete("/{skill_id}")
-async def delete_knowledge_skill(request: Any, skill_id: str) -> Response:
+@router.delete("/{skill_id}", response_model=EnvelopeResponse)
+async def delete_knowledge_skill(request: Request, skill_id: str) -> EnvelopeResponse:
     """Delete a knowledge skill."""
     km = _get_km(request)
     if not km.delete_skill(skill_id):
         raise HTTPException(status_code=404, detail=f"Knowledge skill '{skill_id}' not found")
-    return Response(status_code=204)
+    return envelope_response({"deleted": True, "skill_id": skill_id})
