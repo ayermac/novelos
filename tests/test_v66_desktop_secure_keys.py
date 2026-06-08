@@ -220,6 +220,47 @@ def test_desktop_config_put_allows_safe_token_limit_fields(tmp_path: Path, monke
     assert "配置写入拒绝包含敏感字段" not in response.text
 
 
+def test_desktop_config_put_allows_knowledge_token_budget_fields(tmp_path: Path, monkeypatch):
+    config_dir = tmp_path / "config"
+    config_dir.mkdir()
+    config_path = config_dir / "local.yaml"
+    config_path.write_text("llm_mode: stub\n", encoding="utf-8")
+    db_path = tmp_path / "test.db"
+    init_db(str(db_path))
+
+    monkeypatch.setenv("NOVELOS_DESKTOP", "1")
+    monkeypatch.setenv("NOVELOS_CONFIG_DIR", str(config_dir))
+
+    client = TestClient(create_api_app(db_path=str(db_path), config_path=str(config_path), llm_mode="stub"))
+
+    response = client.put("/api/desktop/config", json={
+        "knowledge": {
+            "enabled": True,
+            "default_injection_mode": "auto",
+            "default_token_budget": 3000,
+            "agents": {
+                "author": {
+                    "token_budget": 3000,
+                    "agentic_mode": False,
+                    "max_tool_rounds": 3,
+                },
+                "polisher": {
+                    "token_budget": 2600,
+                    "agentic_mode": False,
+                    "max_tool_rounds": 3,
+                },
+            },
+        },
+    })
+    body = response.json()
+
+    assert body["ok"] is True
+    saved = config_path.read_text(encoding="utf-8")
+    assert "default_token_budget: 3000" in saved
+    assert "token_budget: 2600" in saved
+    assert "配置写入拒绝包含敏感字段" not in response.text
+
+
 def test_desktop_config_put_rejects_nested_secret_field(tmp_path: Path, monkeypatch):
     config_dir = tmp_path / "config"
     config_dir.mkdir()

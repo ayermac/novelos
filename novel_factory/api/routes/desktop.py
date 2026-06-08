@@ -120,6 +120,9 @@ _NON_SECRET_TOKEN_FIELDS = {
     "completion_tokens",
     "total_tokens",
     "token_usage",
+    "default_token_budget",
+    "token_budget",
+    "knowledge_token_budget",
 }
 
 
