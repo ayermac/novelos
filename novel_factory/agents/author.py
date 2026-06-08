@@ -150,15 +150,15 @@ class AuthorAgent(BaseAgent):
         instruction = self._get_instruction(state)
         if instruction:
             word_target = self._get_word_target(state)
-            minimum_required = int(word_target * 0.85)
-            recommended_target = max(word_target, minimum_required + 500)
+            minimum_required, recommended_target, maximum_allowed = self._word_count_bounds(word_target)
             parts.append(f"【写作指令】\n"
                          f"目标: {instruction.get('objective', '')}\n"
                          f"关键事件: {instruction.get('key_events', '')}\n"
                          f"情绪基调: {instruction.get('emotion_tone', '')}\n"
                          f"章末钩子: {instruction.get('ending_hook', '')}\n"
                          f"字数要求: 正文 content 至少 {minimum_required} 字符，"
-                         f"建议写到 {recommended_target} 字符左右，低于硬要求会自动返修。")
+                         f"建议写到 {recommended_target} 字符左右，"
+                         f"硬上限 {maximum_allowed} 字符，低于或超过硬要求都会自动返修。")
 
         seam_context = build_chapter_seam_context(
             self.repo,
@@ -1771,11 +1771,11 @@ class AuthorAgent(BaseAgent):
         chapter_number = state["chapter_number"]
         instruction = self._get_instruction(state) or {}
         word_target = self._get_word_target(state)
-        minimum_required = int(word_target * 0.85)
+        minimum_required, _, maximum_allowed = self._word_count_bounds(word_target)
         effective_target = word_target
         length_guard_note = (
             f"正文至少 {minimum_required} 字符，建议接近 {word_target} 字符；"
-            f"最多不要超过 {max(word_target + 250, minimum_required + 250)} 字符。"
+            f"硬上限 {maximum_allowed} 字符，最多不要超过 {maximum_allowed} 字符。"
         )
         revision_source_section = ""
         revision_priority_section = ""
@@ -1950,13 +1950,13 @@ class AuthorAgent(BaseAgent):
         chapter_number = state["chapter_number"]
         instruction = self._get_instruction(state) or {}
         word_target = self._get_word_target(state)
-        minimum_required = int(word_target * 0.85)
+        minimum_required, _, maximum_allowed = self._word_count_bounds(word_target)
         effective_target = word_target
         beats = self._get_scene_beats(state)
         chunks = list(chunk_items(beats, size=3))
         total_chunks = len(chunks)
         total_segment_beats = max(1, sum(len(chunk) for chunk in chunks))
-        chapter_upper_bound = max(effective_target + 800, int(effective_target * 1.35))
+        chapter_upper_bound = maximum_allowed
         per_call_retries = None
 
         compact_context = self._build_plain_text_context(state, context)
@@ -2060,7 +2060,8 @@ class AuthorAgent(BaseAgent):
                         f"项目ID: {project_id}\n章节号: {chapter_number}\n任务: {task_desc}\n"
                         f"本段正文至少 {segment_minimum} 字符，建议接近 {segment_target} 字符；"
                         f"最多不要超过 {segment_upper_bound} 字符。"
-                        f"整章合并后目标约 {effective_target} 字符。\n\n"
+                        f"整章合并后目标约 {effective_target} 字符，硬上限 {chapter_upper_bound} 字符；"
+                        "超过硬上限会被系统拒绝，请优先保留情节推进，删除重复铺陈。\n\n"
                         f"{revision_priority_section}\n\n"
                         f"{compact_context}\n\n"
                         f"{segment_note}\n\n"
@@ -2381,6 +2382,7 @@ class AuthorAgent(BaseAgent):
                     max_tokens=max_tokens,
                     agent_id=self.agent_id,
                     on_chunk=on_chunk,
+                    request_timeout_seconds=request_timeout_seconds,
                 )
             except TypeError:
                 # Provider doesn't support streaming, fall back
@@ -2969,13 +2971,34 @@ class AuthorAgent(BaseAgent):
             return output
         return AuthorOutput(**normalize_declared_word_count(data))
 
+    @staticmethod
+    def _word_count_bounds(word_target: int) -> tuple[int, int, int]:
+        word_target = max(int(word_target or 2500), 1)
+        minimum_required = int(word_target * 0.85)
+        recommended_target = max(word_target, minimum_required + 500)
+        maximum_allowed = max(word_target + 1200, int(word_target * 1.6))
+        return minimum_required, recommended_target, maximum_allowed
+
     def _build_death_penalty_repair_context(self, state: FactoryState) -> str:
+        return self._build_quality_gate_repair_context(state)
+
+    def _build_quality_gate_repair_context(self, state: FactoryState) -> str:
         """Build repair context from the active gate and recent failed runs."""
         messages: list[str] = []
         gate = state.get("quality_gate", {}) or {}
         if gate.get("death_penalty_fail"):
             msg = gate.get("message") or "上一轮触发死刑红线"
             messages.append(str(msg))
+        if gate.get("word_count_fail"):
+            word_target = int(gate.get("word_target") or self._get_word_target(state))
+            actual = gate.get("actual_word_count")
+            minimum_required, recommended_target, maximum_allowed = self._word_count_bounds(word_target)
+            messages.append(
+                "上一轮触发字数硬闸门："
+                f"实际 {actual if actual is not None else '?'} 字符，目标 {word_target} 字符，"
+                f"本轮正文必须控制在 {minimum_required} 到 {maximum_allowed} 字符之间，"
+                f"建议接近 {recommended_target} 字符；不要重新扩写成长章。"
+            )
 
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
@@ -2996,7 +3019,8 @@ class AuthorAgent(BaseAgent):
         return (
             "【自动复盘：上一轮失败原因】\n"
             + "\n".join(f"- {msg}" for msg in messages[:3])
-            + "\n本轮必须彻底避开上述原词和同类模板表达；优先改成具体动作、物理反应或对话推进。"
+            + "\n本轮必须彻底修复上述质量门问题；红线表达改成具体动作、物理反应或对话推进，"
+            "字数问题按硬上限收束，优先删重复铺陈而不是新增解释。"
         )
 
     def _get_word_target(self, state: FactoryState) -> int:

@@ -660,6 +660,50 @@ class PolisherAgent(BaseAgent):
             },
         })
 
+        if in_revision_chain and low_change:
+            reason = f"返修润色无效：改动过小（{original_wc} → {polished_wc} 字），未执行审核退回意见"
+            logger.warning("Polisher: revision low-change gate failed: %s", reason)
+            self.repo.save_artifact(
+                project_id,
+                chapter_number,
+                "polisher",
+                "rejected_low_change_revision",
+                content_json={
+                    "content": polished_content,
+                    "rejection_reason": reason,
+                    "revision_source_review_id": revision_review.get("review_id"),
+                },
+                workflow_run_id=state.get("workflow_run_id"),
+            )
+            exec_events.append({
+                "event_type": "quality_gate_retry",
+                "message": reason,
+                "status": "warning",
+                "payload": {
+                    "revision_target": "polisher",
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "polisher",
+                        "low_change_fail": True,
+                        "message": reason,
+                    },
+                },
+            })
+            return {
+                "error": reason,
+                "chapter_status": state.get("chapter_status"),
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": "polisher",
+                    "low_change_fail": True,
+                    "message": reason,
+                    "agent": "polisher",
+                    "workflow_run_id": state.get("workflow_run_id"),
+                },
+                "_revision_review": revision_review,
+                "_exec_events": exec_events,
+            }
+
         # v6.8.5: Check for excessive word count drift even on first polish.
         # If the polished draft is >20% shorter than the original without any
         # compression request, reject it and keep the original.
@@ -958,6 +1002,7 @@ class PolisherAgent(BaseAgent):
             max_tokens=max_tokens,
             max_retries=None,
             request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
+            on_chunk=self.on_text_chunk,
         ).strip()
         content = self._coerce_plain_text_content(content)
         if not content:
@@ -1040,6 +1085,7 @@ class PolisherAgent(BaseAgent):
             )
 
         segment_outputs: list[str] = []
+        failed_segments = 0
 
         for idx, chunk in enumerate(chunks):
             segment_num = idx + 1
@@ -1137,7 +1183,17 @@ class PolisherAgent(BaseAgent):
                             "error": str(e)[:200],
                         },
                     })
-                raise
+                # v6.10.5: Partial polish — fall back to original chunk for
+                # failed segment instead of aborting the entire segmented polish.
+                # This avoids passthrough mode in revision chains, which would
+                # otherwise block at the v6.10.3 guard.
+                logger.warning(
+                    "Polisher segment %d/%d failed (%s), using original chunk as fallback",
+                    segment_num, total_chunks, e,
+                )
+                failed_segments += 1
+                segment_outputs.append(chunk)
+                continue
 
             segment_outputs.append(polished)
 
@@ -1169,14 +1225,43 @@ class PolisherAgent(BaseAgent):
                 quality_risk_note=None,
             )
 
+        if failed_segments >= total_chunks:
+            if exec_events is not None:
+                exec_events.append({
+                    "event_type": "polisher_degraded",
+                    "message": "Polisher 所有分段润色均失败，已保留执笔稿进入后续审核",
+                    "status": "warning",
+                    "payload": {
+                        "failed_segments": failed_segments,
+                        "total_segments": total_chunks,
+                        "degraded_reason": "all_segments_failed",
+                    },
+                })
+            return PolisherOutput(
+                content=content,
+                fact_change_risk="none",
+                changed_scope=["passthrough"],
+                summary=f"分段润色全部失败（{failed_segments}/{total_chunks}），保留原稿",
+                fixed_quality_findings=[],
+                deferred_quality_findings=["polisher_all_segments_failed"],
+                quality_risk_note="polisher_all_segments_failed",
+            )
+
         return PolisherOutput(
             content=merged_content,
             fact_change_risk="none",
             changed_scope=["sentence", "dialogue", "rhythm", "scene_texture"],
-            summary=f"分段润色完成（共{total_chunks}段）",
+            summary=(
+                f"分段润色完成（共{total_chunks}段，失败回退{failed_segments}段）"
+                if failed_segments else f"分段润色完成（共{total_chunks}段）"
+            ),
             fixed_quality_findings=[],
-            deferred_quality_findings=[],
-            quality_risk_note=None,
+            deferred_quality_findings=(
+                ["polisher_partial_segment_fallback"] if failed_segments else []
+            ),
+            quality_risk_note=(
+                "polisher_partial_segment_fallback" if failed_segments else None
+            ),
         )
 
     def _try_compress_overlong_polish(
@@ -1241,7 +1326,23 @@ class PolisherAgent(BaseAgent):
         max_tokens: int,
         max_retries: int | None,
         request_timeout_seconds: int | None,
+        on_chunk: Any | None = None,
     ) -> str:
+        # v6.10.0: Use streaming if callback provided
+        if on_chunk is not None:
+            try:
+                return self.llm.invoke_text_stream(
+                    messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    agent_id=self.agent_id,
+                    on_chunk=on_chunk,
+                    request_timeout_seconds=request_timeout_seconds,
+                )
+            except TypeError:
+                # Provider doesn't support streaming, fall back
+                pass
+
         try:
             return self.llm.invoke_text(
                 messages,

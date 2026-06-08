@@ -12,3 +12,6 @@ quality_gate:
 workflow:
   task_timeout_minutes: 30
   checkpoint_enabled: true
+  node_timeout_seconds: 300
+  node_timeout_overrides:
+    memory_curator: 600

@@ -113,7 +113,7 @@ def test_planner_gets_subset():
 
 
 def test_polisher_gets_polish_related_skills():
-    """Polisher gets polish-related skills (dialogue, ai-style, show-dont-tell, scene, style)."""
+    """Polisher gets polish-related skills (dialogue, ai-style, show-dont-tell, scene, style, pacing, character)."""
     km = KnowledgeManager(knowledge_dir="novel_factory/skills/knowledge")
     skills = km.get_for_agent("polisher")
     skill_ids = {s.skill_id for s in skills}
@@ -122,7 +122,9 @@ def test_polisher_gets_polish_related_skills():
     assert "show-dont-tell" in skill_ids
     assert "scene-sensory" in skill_ids
     assert "style-consistency" in skill_ids
-    assert len(skills) == 5
+    assert "pacing-rhythm" in skill_ids
+    assert "character-building" in skill_ids
+    assert len(skills) == 7
 
 
 def test_all_skills_to_tool_definitions():

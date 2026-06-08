@@ -137,6 +137,7 @@ export function useSSEStream(
   const eventSourceRef = useRef<EventSource | null>(null);
   const retryCountRef = useRef(0);
   const lastEventIdRef = useRef<number>(0);
+  const receivedEventIdsRef = useRef<Set<number>>(new Set());
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const streamUrlRef = useRef<string | null>(null);
   const runIdRef = useRef<string | null>(null);
@@ -186,7 +187,12 @@ export function useSSEStream(
     eventSource.addEventListener('workflow_event', ((e: MessageEvent) => {
       try {
         const event = JSON.parse((e as MessageEvent<string>).data) as WorkflowStreamEvent;
-        if (event.id) lastEventIdRef.current = event.id;
+        // Dedup: skip events already received (e.g. from DB replay + queue replay)
+        if (event.id && receivedEventIdsRef.current.has(event.id)) return;
+        if (event.id) {
+          receivedEventIdsRef.current.add(event.id);
+          lastEventIdRef.current = event.id;
+        }
 
         const agentKey = normalizeAgentKey(event.node_name || event.agent_id);
         if (!agentKey) return;
@@ -384,6 +390,7 @@ export function useSSEStream(
     setIsStreaming(true);
     retryCountRef.current = 0;
     lastEventIdRef.current = 0;
+    receivedEventIdsRef.current.clear();
 
     const launchAndConnect = async () => {
       const response = await fetch(apiUrl('/run/chapter/start'), {

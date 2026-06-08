@@ -12,6 +12,30 @@ import pytest
 class TestSSEHeartbeat:
     """Verify heartbeat comments are emitted during long-running SSE polls."""
 
+    def test_event_queue_preserves_database_event_ids(self):
+        """Queue events should keep DB ids so SSE and timeline refreshes dedupe."""
+        from novel_factory.workflow.event_queue import EventQueue
+
+        queue = EventQueue("run-1")
+
+        first_id = queue.push({
+            "id": 42,
+            "node_name": "author",
+            "event_type": "llm_completed",
+            "message": "LLM 调用完成",
+        })
+        second_id = queue.push({
+            "node_name": "author",
+            "event_type": "artifact_saved",
+            "message": "保存产物",
+        })
+
+        events = queue.get_events_since(0)
+        assert first_id == 42
+        assert second_id == 43
+        assert events[0]["id"] == 42
+        assert events[1]["id"] == 43
+
     def test_heartbeat_emitted_during_poll(self, tmp_path):
         """Heartbeat comments should appear every ~15s during active polling."""
         from novel_factory.db.connection import init_db

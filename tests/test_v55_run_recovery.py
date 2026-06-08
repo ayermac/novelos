@@ -384,6 +384,50 @@ def test_mark_stuck_run_preserves_reviewed_chapter_status(tmp_path):
     assert original_task["completed_at"]
 
 
+def test_reset_recovery_cleans_blocked_reviewed_run_without_rewinding_chapter(tmp_path):
+    client, repo, db_path = _make_client(tmp_path)
+    run_id = _seed_run(repo, "recover_reviewed_blocked", status="reviewed")
+    repo.update_workflow_run(
+        run_id,
+        status="blocked",
+        current_node="memory_curator",
+        error_message="节点 memory_curator 执行超时（>300秒），需要人工介入",
+    )
+
+    cp_path = derive_checkpoint_db_path(db_path)
+    thread_id = get_checkpoint_thread_id("recover_reviewed_blocked", 1)
+    with get_sqlite_checkpointer(cp_path) as cp:
+        cp.put(
+            {"configurable": {"thread_id": thread_id, "checkpoint_ns": ""}},
+            {"id": "recover-reviewed-cp", "chapter_status": "reviewed"},
+            {},
+            {},
+        )
+    assert checkpoint_thread_exists(db_path, "recover_reviewed_blocked", 1) is True
+
+    preview = client.get(f"/api/runs/{run_id}/recovery").json()["data"]
+    assert preview["chapter_status"] == "reviewed"
+    assert preview["can_reset"] is True
+    assert preview["actions"]["reset_to_planned"]["enabled"] is True
+
+    resp = client.post(f"/api/runs/{run_id}/recovery/reset", json={"confirm": True})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    data = body["data"]
+    assert data["recovered"] is True
+    assert data["previous_status"] == "reviewed"
+    assert data["new_status"] == "reviewed"
+    assert data["checkpoint_cleared"] is True
+    assert repo.get_chapter("recover_reviewed_blocked", 1)["status"] == "reviewed"
+    assert checkpoint_thread_exists(db_path, "recover_reviewed_blocked", 1) is False
+
+    run = repo.get_workflow_runs_for_project("recover_reviewed_blocked", chapter_number=1, limit=1)[0]
+    assert run["status"] == "completed"
+    assert run["error_message"] is None
+
+
 def test_retry_author_node_recovers_to_scripted_without_full_reset(tmp_path):
     client, repo, _ = _make_client(tmp_path)
     run_id = _seed_running_run(repo, "recover_retry_author", minutes_old=50)

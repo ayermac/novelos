@@ -14,6 +14,7 @@ from typing import Any, Callable
 
 from ..db.repository import Repository
 from ..llm.provider import LLMProvider
+from ..llm.openai_compatible import ContentFilterError, OutputValidationError
 from ..models.state import ChapterStatus, FactoryState
 from .conditions import hydrate_revision_state, revision_target_from_state
 from ..agents.planner import PlannerAgent
@@ -70,6 +71,26 @@ def _node_message(node_name: str, event_type: str) -> str:
     """Get author-facing Chinese message for a node event."""
     msgs = _NODE_MESSAGES.get(node_name, {})
     return msgs.get(event_type, f"{node_name} {event_type}")
+
+
+def _node_timeout_seconds(settings: Any, node_name: str) -> int:
+    """Resolve the wall-clock timeout for a workflow node."""
+    workflow = getattr(settings, "workflow", None)
+    default_timeout = getattr(workflow, "node_timeout_seconds", 300) or 300
+    try:
+        default_timeout = int(default_timeout)
+    except (TypeError, ValueError):
+        default_timeout = 300
+
+    overrides = getattr(workflow, "node_timeout_overrides", None) or {}
+    if isinstance(overrides, dict) and node_name in overrides:
+        try:
+            override_timeout = int(overrides[node_name])
+        except (TypeError, ValueError):
+            return default_timeout
+        return override_timeout if override_timeout > 0 else default_timeout
+
+    return default_timeout
 
 
 def _redact_trace_value(value: Any) -> Any:
@@ -883,8 +904,8 @@ def create_node_runners(
                 agent_kwargs["knowledge_manager"] = knowledge_manager
             if agent_name in agentic_config:
                 agent_kwargs["agent_config"] = agentic_config[agent_name]
-            # v6.10.0: Inject streaming callback for author
-            if agent_name == "author":
+            # v6.10.0: Inject streaming callback for author and polisher
+            if agent_name in ("author", "polisher"):
                 # Queue may not exist yet; callback looks it up dynamically
                 def _make_chunk_pusher():
                     def _push_chunk(chunk: str):
@@ -896,10 +917,10 @@ def create_node_runners(
                                 log_execution_event(
                                     repo=repo,
                                     state=state,
-                                    node_name="author",
+                                    node_name=agent_name,
                                     event_type="text_chunk",
                                     message=chunk,
-                                    agent_id="author",
+                                    agent_id=agent_name,
                                     status="info",
                                     payload={"chunk_length": len(chunk)},
                                 )
@@ -939,7 +960,125 @@ def create_node_runners(
             agent_id=agent_name,
             status="running",
         )
-        result = _handle_retryable_quality_gate(state, repo, agent.run(state))
+
+        # v6.10.0: Per-node timeout guard to prevent indefinite blocking.
+        # Uses a thread executor with wall-clock timeout so that even if the
+        # agent's internal LLM calls hang, the workflow node will fail fast
+        # and surface a clear error instead of blocking the whole pipeline.
+        #
+        # IMPORTANT: We do NOT use `with executor:` context manager because
+        # its __exit__ calls shutdown(wait=True), which blocks until the
+        # background thread completes — defeating the timeout entirely.
+        # Instead we manage the executor lifecycle manually and call
+        # shutdown(wait=False, cancel_futures=True) so that on timeout
+        # we return immediately without waiting for the stuck LLM call.
+        import concurrent.futures
+        node_timeout = _node_timeout_seconds(settings, agent_name)
+
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
+            future = executor.submit(agent.run, state)
+            try:
+                agent_result = future.result(timeout=node_timeout)
+            except concurrent.futures.TimeoutError:
+                logger.error(
+                    "Agent '%s' node timed out after %ds for %s ch%d",
+                    agent_name, node_timeout,
+                    state.get("project_id", ""), state.get("chapter_number", 0),
+                )
+                _log_node_event(
+                    state, repo, agent_name, "failed", status="failed",
+                    error_message=f"节点执行超时（>{node_timeout}秒），需要人工介入",
+                )
+                log_execution_event(
+                    repo, state, agent_name, EVENT_LLM_FAILED,
+                    message=f"节点执行超时（>{node_timeout}秒），需要人工介入",
+                    agent_id=agent_name, status="error",
+                    payload={"timeout_seconds": node_timeout},
+                )
+                _finalize_run(state, repo, "blocked", f"节点 {agent_name} 执行超时（>{node_timeout}秒）")
+                return {
+                    "error": f"节点 {agent_name} 执行超时（>{node_timeout}秒），需要人工介入",
+                    "chapter_status": status_before,
+                    "requires_human": True,
+                }
+        except ContentFilterError as e:
+            # v6.10.0: Content filter rejections are non-retryable.
+            # The LLM provider rejected the request due to safety concerns.
+            logger.error(
+                "Agent '%s' content filter rejected: %s",
+                agent_name, e,
+            )
+            _log_node_event(
+                state, repo, agent_name, "failed", status="failed",
+                error_message=f"LLM 内容审核拒绝：{e}",
+            )
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_FAILED,
+                message=f"LLM 内容审核拒绝：{e}",
+                agent_id=agent_name, status="error",
+                payload={"error_type": "content_filter"},
+            )
+            _finalize_run(state, repo, "blocked", f"节点 {agent_name} LLM 内容审核拒绝")
+            return {
+                "error": f"LLM 内容审核拒绝：{e}",
+                "chapter_status": status_before,
+                "requires_human": True,
+            }
+        except OutputValidationError as e:
+            # v6.10.0: JSON parse failures after retries are non-retryable.
+            # The LLM produced malformed output that cannot be parsed.
+            logger.error(
+                "Agent '%s' output validation failed: %s",
+                agent_name, e,
+            )
+            _log_node_event(
+                state, repo, agent_name, "failed", status="failed",
+                error_message=f"LLM 输出校验失败：{e}",
+            )
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_FAILED,
+                message=f"LLM 输出校验失败：{e}",
+                agent_id=agent_name, status="error",
+                payload={"error_type": "output_validation"},
+            )
+            _finalize_run(state, repo, "blocked", f"节点 {agent_name} LLM 输出校验失败")
+            return {
+                "error": f"LLM 输出校验失败：{e}",
+                "chapter_status": status_before,
+                "requires_human": True,
+            }
+        except Exception as e:
+            # v6.10.0: Catch-all for unexpected agent execution errors.
+            # Ensures the workflow blocks gracefully instead of crashing.
+            logger.error(
+                "Agent '%s' unexpected error: %s",
+                agent_name, e, exc_info=True,
+            )
+            safe_error = str(e)[:500]
+            _log_node_event(
+                state, repo, agent_name, "failed", status="failed",
+                error_message=f"Agent 执行异常：{safe_error}",
+            )
+            log_execution_event(
+                repo, state, agent_name, EVENT_LLM_FAILED,
+                message=f"Agent 执行异常：{safe_error}",
+                agent_id=agent_name, status="error",
+                payload={"error_type": "unexpected", "error_class": type(e).__name__},
+            )
+            _finalize_run(state, repo, "blocked", f"节点 {agent_name} 执行异常：{safe_error}")
+            return {
+                "error": f"节点 {agent_name} 执行异常：{safe_error}",
+                "chapter_status": status_before,
+                "requires_human": True,
+            }
+        finally:
+            # v6.10.0: Force-terminate the executor without waiting.
+            # cancel_futures=True prevents pending futures from starting;
+            # wait=False returns immediately so the timeout path is not
+            # blocked by the stuck background thread.
+            executor.shutdown(wait=False, cancel_futures=True)
+        result = _handle_retryable_quality_gate(state, repo, agent_result)
         if memory_context_audit:
             result.setdefault("memory_context_audit", memory_context_audit)
         agent_latency_ms = int((time.perf_counter() - agent_started_at) * 1000)
@@ -2242,5 +2381,4 @@ def creative_ledger_curator_node(state: FactoryState, repo: Repository) -> dict:
         result = {"ledger_update_result": {"status": "error", "error": str(e)}}
 
     return result
-
 

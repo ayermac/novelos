@@ -840,19 +840,41 @@ class EditorAgent(BaseAgent):
                 f"[v6.6策略] {strategy_decision.reason}；保留为发布前建议，不进入自动返修。"
             ]
         elif not strategy_decision.pass_:
-            output.pass_ = False
-            if not output.revision_target:
-                output.revision_target = determine_revision_target(
-                    death_penalty=dp_result.has_critical,
-                    issues=output.issues,
-                    llm_revision_target=output.revision_target,
-                    quality_priority_count=quality_result.priority_count,
-                    seam_blocking_count=seam_result.blocking_count,
-                    retry_count=inputs.retry_count,
+            # v6.10.4: Protect LLM's explicit pass decision when the strategy
+            # failure is only due to score threshold (no hard blockers).
+            # Hard blockers (death_penalty, blocking issues, blocking skills)
+            # always override. Score-based revision should respect LLM's
+            # explicit pass judgment to avoid unnecessary revision loops.
+            has_hard_blockers = (
+                dp_result.has_critical
+                or bool(word_gate_details)
+                or seam_result.blocking_count > 0
+                or blocking_skill_count > 0
+            )
+            if output.pass_ and not has_hard_blockers:
+                # LLM said pass, no hard blockers — respect LLM decision
+                # but surface strategy concern as advisory suggestion
+                logger.info(
+                    "Editor strategy deferred to LLM pass: score=%s, reason=%s",
+                    output.score, strategy_decision.reason,
                 )
-            strategy_note = f"[v6.6策略] {strategy_decision.reason}"
-            if strategy_note not in output.issues:
-                output.issues.append(strategy_note)
+                strategy_note = f"[v6.6策略] {strategy_decision.reason}；LLM判定通过，保留为建议。"
+                if strategy_note not in output.suggestions:
+                    output.suggestions.append(strategy_note)
+            else:
+                output.pass_ = False
+                if not output.revision_target:
+                    output.revision_target = determine_revision_target(
+                        death_penalty=dp_result.has_critical,
+                        issues=output.issues,
+                        llm_revision_target=output.revision_target,
+                        quality_priority_count=quality_result.priority_count,
+                        seam_blocking_count=seam_result.blocking_count,
+                        retry_count=inputs.retry_count,
+                    )
+                strategy_note = f"[v6.6策略] {strategy_decision.reason}"
+                if strategy_note not in output.issues:
+                    output.issues.append(strategy_note)
 
         # advisory_pass must NOT set revision_target
         if strategy_decision.decision_type == "advisory_pass":
@@ -1748,11 +1770,29 @@ class EditorAgent(BaseAgent):
         # Step 1: Load inputs
         inputs = self._load_editor_inputs(state)
 
+        # v6.10.0: Emit progress event - editor started
+        exec_events: list[dict] = []
+        exec_events.append({
+            "event_type": "editor_started",
+            "message": f"开始审核第 {inputs.chapter_number} 章",
+            "status": "info",
+            "payload": {"project_id": inputs.project_id, "chapter_number": inputs.chapter_number},
+        })
+
         # Step 2: Call LLM
-        output, exec_events = self._call_editor_llm(inputs, state)
+        output, llm_exec_events = self._call_editor_llm(inputs, state)
+        exec_events.extend(llm_exec_events)
 
         # Step 2.5: Style-aware weight adjustment (v6.8.1)
         self._apply_style_weight_adjustment(inputs, output)
+
+        # v6.10.0: Emit progress event - LLM review completed
+        exec_events.append({
+            "event_type": "llm_review_completed",
+            "message": f"LLM 审核完成，评分: {output.score}",
+            "status": "info",
+            "payload": {"score": output.score, "pass": output.pass_},
+        })
 
         # v6.8.5: Read quality_gate results from state (set by upstream quality_gate_node)
         quality_gate = state.get("quality_gate", {}) or {}
@@ -1801,8 +1841,28 @@ class EditorAgent(BaseAgent):
                 if issue not in output.suggestions:
                     output.suggestions.append(issue)
 
+        # v6.10.0: Emit progress event - quality diagnosis started
+        exec_events.append({
+            "event_type": "quality_diagnosis_started",
+            "message": "开始质量诊断",
+            "status": "info",
+            "payload": {},
+        })
+
         # Step 4.5: Story facts compliance check (v6.6.14) — still runs in Editor (LLM-based)
         compliance_result = self._run_story_facts_compliance(inputs)
+
+        # v6.10.0: Emit progress event - quality diagnosis completed
+        exec_events.append({
+            "event_type": "quality_diagnosis_completed",
+            "message": f"质量诊断完成，优先问题: {quality_result.priority_count}，建议: {quality_result.advisory_count}",
+            "status": "info",
+            "payload": {
+                "priority_count": quality_result.priority_count,
+                "advisory_count": quality_result.advisory_count,
+                "advisory_only": quality_result.advisory_only,
+            },
+        })
         if compliance_result.blocking_violation_count >= FACTS_COMPLIANCE_BLOCK_THRESHOLD:
             for v in compliance_result.violations:
                 if v.get("severity") == "blocking":
@@ -1815,16 +1875,57 @@ class EditorAgent(BaseAgent):
             output.pass_ = False
             output.revision_target = output.revision_target or "author"
 
+        # v6.10.0: Emit progress event - story facts compliance completed
+        exec_events.append({
+            "event_type": "story_facts_compliance_completed",
+            "message": f"事实一致性检查完成，违规: {compliance_result.violation_count}",
+            "status": "info",
+            "payload": {
+                "violation_count": compliance_result.violation_count,
+                "blocking_violation_count": compliance_result.blocking_violation_count,
+            },
+        })
+
         # Step 5: Apply review strategy (THE single decision point)
         strategy_result = self._apply_review_strategy(
             output, quality_result, seam_result, inputs,
         )
+
+        # v6.10.0: Emit progress event - review strategy applied
+        # Use output.pass_ (post-processed final decision) to stay consistent
+        # with editor_completed. The raw strategy_decision may differ when
+        # score < 75 prevents the advisory override from taking effect.
+        exec_events.append({
+            "event_type": "review_strategy_applied",
+            "message": f"审核策略应用完成，通过: {output.pass_}",
+            "status": "info",
+            "payload": {
+                "pass": output.pass_,
+                "revision_needed": strategy_result.decision.revision_needed,
+                "category": strategy_result.decision.category,
+                "revision_target": output.revision_target,
+                "score": output.score,
+            },
+        })
 
         # Step 6: Persist artifacts
         review_id = self._persist_editor_artifacts(
             inputs, output, quality_result, seam_result,
             strategy_result, compliance_result,
         )
+
+        # v6.10.0: Emit progress event - editor completed
+        exec_events.append({
+            "event_type": "editor_completed",
+            "message": f"审核完成，{'通过' if output.pass_ else '退回'}，评分: {output.score}",
+            "status": "info",
+            "payload": {
+                "pass": output.pass_,
+                "score": output.score,
+                "revision_target": output.revision_target,
+                "review_id": review_id,
+            },
+        })
 
         # Step 7: Build state updates
         result = self._build_editor_state_updates(

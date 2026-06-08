@@ -37,6 +37,37 @@ class StubLLMProvider(LLMProvider):
         return json.dumps(self.invoke_json(messages))
 
 
+def test_author_validate_output_rejects_ai_expression_variant(seeded_repo):
+    from novel_factory.agents.author import AuthorAgent
+    from novel_factory.validators.chapter_checker import count_words
+
+    agent = AuthorAgent(seeded_repo, StubLLMProvider())
+    content = "林辰垂着眼，嘴角忽然抬了一下。" + "正常情节推进。" * 80
+
+    with pytest.raises(ValueError, match="CRITICAL 死刑红线"):
+        agent.validate_output({
+            "title": "第一章 测试",
+            "content": content,
+            "word_count": count_words(content),
+            "implemented_events": [],
+            "used_plot_refs": [],
+        })
+
+
+def test_polisher_validate_output_rejects_ai_expression_variant(seeded_repo):
+    from novel_factory.agents.polisher import PolisherAgent
+
+    agent = PolisherAgent(seeded_repo, StubLLMProvider())
+
+    with pytest.raises(ValueError, match="CRITICAL 死刑红线"):
+        agent.validate_output({
+            "content": "他唇角微弯，笑意未达眼底。" + "正常润色正文。" * 80,
+            "fact_change_risk": "none",
+            "changed_scope": ["sentence"],
+            "summary": "润色完成",
+        })
+
+
 @pytest.fixture
 def tmp_db(tmp_path):
     db_path = tmp_path / "test_agent.db"
@@ -474,6 +505,29 @@ class TestAuthorAgent:
         assert "字数目标: None" not in context
         assert "至少 2550 字符" in context
         assert "建议写到 3050 字符左右" in context
+        assert "硬上限 4800 字符" in context
+
+    def test_author_context_includes_word_count_gate_repair_bounds(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
+        context = agent.build_context({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "revision",
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "author",
+                "word_count_fail": True,
+                "actual_word_count": 4999,
+                "word_target": 3000,
+                "message": "字数超标: 4999 > 4800",
+            },
+        })
+
+        assert "上一轮触发字数硬闸门" in context
+        assert "实际 4999 字符，目标 3000 字符" in context
+        assert "2550 到 4800 字符之间" in context
 
     def test_author_context_includes_scene_beat_turn(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
@@ -1147,6 +1201,54 @@ class TestAuthorAgent:
         assert "字数超标" in result["quality_gate"]["message"]
         assert result["quality_gate"].get("self_check_fail") is not True
         assert "repair_fn returned None" not in result["error"]
+
+    def test_author_segmented_prompt_includes_chapter_hard_upper_bound(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+
+        class CapturingSegmentLLM(LLMProvider):
+            config = type("Config", (), {"max_tokens": 4096})()
+
+            def __init__(self):
+                self.prompts: list[str] = []
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                return {"title": "第一章 测试"}
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None, **kwargs) -> str:
+                self.prompts.append(messages[-1]["content"])
+                return "林默按下终端确认键。屏幕亮了一下，周围的人声低下去。"
+
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET word_target=? WHERE project_id=? AND chapter_number=?",
+            (3000, "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": i, "scene_goal": f"目标{i}", "conflict": f"冲突{i}", "turn": f"转折{i}", "hook": f"钩子{i}"}
+            for i in range(1, 6)
+        ])
+        llm = CapturingSegmentLLM()
+        agent = AuthorAgent(seeded_repo, llm)
+
+        try:
+            agent.run({
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "scripted",
+                "retry_count": 0,
+                "max_retries": 3,
+                "requires_human": False,
+                "error": None,
+                "llm_mode": "real",
+            })
+        except Exception:
+            pass
+
+        assert llm.prompts
+        assert any("硬上限 4800 字符" in prompt for prompt in llm.prompts)
 
     def test_author_long_target_uses_quality_gate_instead_of_fixed_8000_cap(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent
@@ -2084,6 +2186,80 @@ class TestPolisherAgent:
             for ev in result["_exec_events"]
         )
 
+    def test_polisher_blocks_low_change_revision(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        draft = "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 80
+        seeded_repo.save_chapter_content("test_proj", 1, draft, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "revision")
+
+        stub = StubLLMProvider([{
+            "content": draft,
+            "fact_change_risk": "none",
+            "changed_scope": ["sentence", "dialogue"],
+            "summary": "已按审核意见润色",
+        }])
+        result = PolisherAgent(seeded_repo, stub).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "revision",
+            "retry_count": 2,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "_revision_review": {
+                "review_id": 370,
+                "score": 47,
+                "revision_target": "polisher",
+                "issues": ["正文仍出现模板表情句"],
+                "suggestions": ["删除模板表情并补足因果链"],
+            },
+        })
+
+        assert result["chapter_status"] == "revision"
+        assert result["quality_gate"]["low_change_fail"] is True
+        assert result["quality_gate"]["revision_target"] == "polisher"
+        assert "返修润色无效" in result["error"]
+        assert any(ev["event_type"] == "quality_gate_retry" for ev in result["_exec_events"])
+
+    def test_polisher_marks_all_segment_failures_as_degraded(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        class FilteringPolisherLLM(LLMProvider):
+            config = type("Config", (), {"max_tokens": 4096})()
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("real polisher should use text path")
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None, **kwargs) -> str:
+                return "模型内容过滤，无法润色。" * 6
+
+        draft = (
+            "林逸按下终端确认键，屏幕蓝光映在指节上。安保人员挡住手机镜头，机场负责人低声回报进度。" * 70
+            + "\n\n"
+            + "苏家电话一通接一通打进来，华鼎项目链的风控通知同步弹出，现场所有人都听见了对讲机里的停顿。" * 10
+        )
+        seeded_repo.save_chapter_content("test_proj", 1, draft, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+
+        result = PolisherAgent(seeded_repo, FilteringPolisherLLM()).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == ChapterStatus.POLISHED.value
+        assert any(ev["event_type"] == "polisher_degraded" for ev in result["_exec_events"])
+        assert any(ev["event_type"] == "segment_failed" for ev in result["_exec_events"])
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "模型内容过滤" not in chapter["content"]
+        assert "机场负责人低声回报进度" in chapter["content"]
+
     def test_polisher_rejects_fact_change(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent
 
@@ -2380,7 +2556,12 @@ class TestEditorAgent:
         assert result["quality_gate"]["revision_target"] == "author"
         assert result["_revision_review"]["revision_target"] == "author"
 
-    def test_editor_low_score_llm_pass_is_forced_to_revision(self, seeded_repo):
+    def test_editor_low_score_llm_pass_no_hard_blockers_respects_llm(self, seeded_repo):
+        """v6.10.4: LLM pass=true + score < 80 + no hard blockers → pass respected.
+
+        Score-based revision alone should NOT override LLM's explicit pass judgment.
+        Strategy concern is downgraded to advisory suggestion.
+        """
         from novel_factory.agents.editor import EditorAgent
 
         base_content = "这是一段测试正文内容，用于验证 Editor Agent 的基本功能。每次修改都需要确保内容充实完整。"
@@ -2410,10 +2591,49 @@ class TestEditorAgent:
             "error": None,
         })
 
+        # v6.10.4: No hard blockers → LLM pass=true is respected
+        assert result["chapter_status"] == ChapterStatus.REVIEWED.value
+        assert result["quality_gate"]["pass"] is True
+        assert result["quality_gate"]["score"] == 78
+
+    def test_editor_low_score_llm_pass_with_death_penalty_forced_to_revision(self, seeded_repo):
+        """v6.10.4: LLM pass=true + score < 80 + death penalty → hard blocker overrides LLM.
+
+        Death penalty in content text is a hard blocker that always overrides LLM pass.
+        """
+        from novel_factory.agents.editor import EditorAgent
+
+        # Content contains "冷笑" which triggers DP_EXPR_01 death penalty
+        base_content = "李明看着对手，嘴角露出冷笑。这是一段测试正文内容，用于验证 Editor Agent 的基本功能。每次修改都需要确保内容充实完整。"
+        long_content = base_content * 45
+
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "polished")
+
+        stub = StubLLMProvider([{
+            "pass": True,
+            "score": 78,
+            "scores": {"setting": 16, "logic": 14, "poison": 14, "text": 13, "pacing": 13},
+            "issues": [],
+            "suggestions": [],
+            "revision_target": None,
+            "state_card": {},
+        }])
+
+        agent = EditorAgent(seeded_repo, stub)
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+        })
+
+        # Death penalty is a hard blocker → overrides LLM pass
         assert result["chapter_status"] == ChapterStatus.REVISION.value
         assert result["quality_gate"]["pass"] is False
-        assert result["quality_gate"]["score"] == 78
-        assert result["quality_gate"]["revision_target"] == "polisher"
 
         review = seeded_repo.get_latest_review("test_proj", 1)
         assert review is not None

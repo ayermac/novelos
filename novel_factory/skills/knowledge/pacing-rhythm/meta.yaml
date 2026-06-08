@@ -12,6 +12,7 @@ applicable_agents:
   - planner
   - screenwriter
   - author
+  - polisher
   - editor
 applicable_genres:
   - xuanhuan

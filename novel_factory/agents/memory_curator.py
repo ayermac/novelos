@@ -635,10 +635,26 @@ class MemoryCuratorAgent(BaseAgent):
         chapter_number = state["chapter_number"]
         exec_events: list[dict] = []
 
+        # v6.10.0: Emit progress event - memory curator started
+        exec_events.append({
+            "event_type": "memory_curator_started",
+            "message": f"开始提取第 {chapter_number} 章记忆",
+            "status": "info",
+            "payload": {"project_id": project_id, "chapter_number": chapter_number},
+        })
+
         context = self._build_v6_context(state)
 
         # v6.6.17: Self-check loop for patch extraction quality with fallback support
         loop = SelfCheckLoop(agent_id=self.agent_id, max_repair_attempts=1)
+
+        # v6.10.0: Emit progress event - extraction started
+        exec_events.append({
+            "event_type": "memory_extraction_started",
+            "message": "开始记忆提取",
+            "status": "info",
+            "payload": {"project_id": project_id, "chapter_number": chapter_number},
+        })
 
         def _generate_wrap() -> dict[str, Any]:
             chapter = self._get_chapter_info(state)
@@ -850,6 +866,18 @@ class MemoryCuratorAgent(BaseAgent):
             }
 
         loop_result = loop.run(_generate_wrap, _self_check_wrap, _repair_wrap)
+
+        # v6.10.0: Emit progress event - extraction completed
+        exec_events.append({
+            "event_type": "memory_extraction_completed",
+            "message": "记忆提取完成",
+            "status": "info",
+            "payload": {
+                "degraded": loop_result.get("degraded", False),
+                "fallback_source": loop_result.get("fallback_source"),
+            },
+        })
+
         # v6.6.7: Prefer validated patches if available
         patches = loop_result.get("validated_patches") or loop_result.get("output", [])
         trace = loop_result.get("_trace", {})
@@ -966,6 +994,14 @@ class MemoryCuratorAgent(BaseAgent):
             except Exception:
                 logger.debug("MemoryCurator fallback cleanup failed", exc_info=True)
 
+        # v6.10.0: Emit progress event - batch creation started
+        exec_events.append({
+            "event_type": "memory_batch_creation_started",
+            "message": f"开始创建记忆批次，{len(patches)} 条候选",
+            "status": "info",
+            "payload": {"patch_count": len(patches), "fallback_source": fallback_source},
+        })
+
         # Create memory update batch
         batch = self.repo.create_memory_batch(
             project_id,
@@ -1064,6 +1100,20 @@ class MemoryCuratorAgent(BaseAgent):
             result_category = "fallback_candidate"
         else:
             result_category = "trusted_extraction"
+
+        # v6.10.0: Emit progress event - memory curator completed
+        exec_events.append({
+            "event_type": "memory_curator_completed",
+            "message": f"记忆整理完成，{items_created} 条记忆",
+            "status": "info",
+            "payload": {
+                "batch_id": batch["id"],
+                "items_created": items_created,
+                "fallback_source": fallback_source,
+                "fallback_model_used": fallback_model_used,
+                "result_category": result_category,
+            },
+        })
 
         if fallback_model_used:
             exec_events.append({

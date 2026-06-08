@@ -31,6 +31,7 @@ from ._memory_curator_gate import (
 router = APIRouter()
 
 PUBLISH_READY_CHAPTER_STATUSES = frozenset({"reviewed", "awaiting_publish", "published"})
+RESETTABLE_CHAPTER_STATUSES = frozenset({"blocking", "revision", "planned", "review"})
 
 
 def _get_run_recovery_settings(request: Request):
@@ -42,6 +43,14 @@ def _get_run_recovery_settings(request: Request):
         return get_settings(request)
     except FileNotFoundError:
         return Settings()
+
+
+def _run_recovery_preserves_chapter_status(run_data: dict, chapter_status: str) -> bool:
+    """Return whether recovery should clean up the run without rewinding chapter status."""
+    return (
+        chapter_status in PUBLISH_READY_CHAPTER_STATUSES
+        and run_data.get("status") in ("blocked", "failed")
+    )
 
 
 def _memory_curator_running_domain_result(project_id: str, chapter_number: int, lock: dict | None) -> dict:
@@ -564,10 +573,11 @@ async def reset_run_chapter(
             return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
         current_status = chapter.get("status", "")
-        if current_status not in ("blocking", "revision", "planned", "review"):
+        preserve_chapter_status = _run_recovery_preserves_chapter_status(run_data, current_status)
+        if current_status not in RESETTABLE_CHAPTER_STATUSES and not preserve_chapter_status:
             return error_response(
                 "INVALID_STATUS",
-                f"章节状态为 '{current_status}'，仅 'blocking'、'revision'、'planned' 或 'review' 状态可恢复",
+                f"章节状态为 '{current_status}'，仅 'blocking'、'revision'、'planned'、'review' 或存在阻塞运行的发布就绪状态可恢复",
                 details={"current_status": current_status},
             )
 
@@ -578,7 +588,7 @@ async def reset_run_chapter(
             reset = repo.reset_chapter(project_id, chapter_number, workflow_run_id=run_id)
             if not reset:
                 return error_response("RESET_FAILED", "恢复章节失败")
-        # For planned: no state reset needed, already at planned
+        # For planned or publish-ready cleanup: no chapter state reset needed.
 
         recovered_blocked_runs = 0
         if hasattr(repo, "recover_active_workflow_runs_for_chapter"):
@@ -612,14 +622,22 @@ async def reset_run_chapter(
 
         # v6.6.12: Build domain_result for recovery reset
         domain_result = success(
-            f"章节已恢复重置：{current_status} → planned",
-            user_message=f"第 {chapter_number} 章已恢复到 planned 状态，可重新开始生成",
+            (
+                f"运行已恢复清理：章节保持 {current_status}"
+                if preserve_chapter_status
+                else f"章节已恢复重置：{current_status} → planned"
+            ),
+            user_message=(
+                f"第 {chapter_number} 章已清理阻塞运行，章节状态保持 {current_status}"
+                if preserve_chapter_status
+                else f"第 {chapter_number} 章已恢复到 planned 状态，可重新开始生成"
+            ),
             details={
                 "previous_status": current_status,
-                "new_status": "planned",
+                "new_status": current_status if preserve_chapter_status else "planned",
                 "retries_cleared": max(0, retry_count_before - retry_count_after),
-                "next_action": "start_workflow",
-                "action_label": "开始生成",
+                "next_action": "publish" if preserve_chapter_status else "start_workflow",
+                "action_label": "继续发布" if preserve_chapter_status else "开始生成",
             },
             flags={"recovery_reset": True},
         ).to_dict()
@@ -630,7 +648,7 @@ async def reset_run_chapter(
             "project_id": project_id,
             "chapter_number": chapter_number,
             "previous_status": current_status,
-            "new_status": "planned",
+            "new_status": current_status if preserve_chapter_status else "planned",
             "retry_count_before": retry_count_before,
             "retry_count_after": retry_count_after,
             "retries_cleared": max(0, retry_count_before - retry_count_after),
@@ -1398,7 +1416,8 @@ def _build_recovery_state(
     retry_count = repo.get_chapter_retry_count(project_id, chapter_number)
     stuck_info = _detect_stuck_run(repo, run_data, timeout_minutes)
     can_mark_stuck = bool(stuck_info.get("stuck", False)) and chapter_status != "unknown"
-    can_reset = chapter_status in ("blocking", "revision", "planned", "review")
+    preserve_chapter_status = _run_recovery_preserves_chapter_status(run_data, chapter_status)
+    can_reset = chapter_status in RESETTABLE_CHAPTER_STATUSES or preserve_chapter_status
     retry_target = _node_retry_target(run_data.get("current_node"))
     can_retry_node = bool(retry_target and chapter_status in ("blocking", "revision"))
     reason = None
@@ -1406,6 +1425,8 @@ def _build_recovery_state(
         reason = "章节不存在"
     elif chapter_status == "planned":
         reason = "章节已为 planned，可清除旧运行和 checkpoint 后重新开始工作流。"
+    elif preserve_chapter_status:
+        reason = f"章节已处于 {chapter_status}，可清理阻塞运行和 checkpoint 后继续后续操作。"
     elif can_reset:
         reason = "可清除阻塞/返修状态并回到 planned，重新开始工作流。"
     else:
@@ -1447,7 +1468,7 @@ def _build_recovery_state(
         "actions": {
             "reset_to_planned": {
                 "enabled": can_reset,
-                "label": "清除阻塞并回到 planned",
+                "label": "清除阻塞运行" if preserve_chapter_status else "清除阻塞并回到 planned",
                 "reason": reason,
             },
             "mark_stuck_blocked": {

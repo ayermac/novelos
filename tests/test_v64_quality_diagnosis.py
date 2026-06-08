@@ -187,6 +187,40 @@ class TestQualityHubDiagnose:
             if os.path.exists(db_path):
                 os.unlink(db_path)
 
+    def test_diagnose_detects_dense_system_mechanics(self):
+        """System-panel-heavy chapters should surface mechanics overload."""
+        from novel_factory.quality.hub import QualityHub
+        from novel_factory.skills.registry import SkillRegistry
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        repo = Repository(db_path)
+        try:
+            text = (
+                "林辰走进总统套房。\n\n"
+                "【签到成功：神级首签】\n"
+                "【奖励：黑金至尊卡】\n"
+                "【权限：机场贵宾通道已解锁】\n"
+                "【资产权限：千亿资产托管预热】\n"
+                "【风控：关联资本自动切断】\n"
+                "【任务：午夜再次签到】\n"
+                "帝豪总统套房已经封层，华鼎项目撤资，专车停在楼下。"
+            )
+            hub = QualityHub(repo, skill_registry=SkillRegistry())
+            result = hub.diagnose(text)
+
+            codes = [f["code"] for f in result["findings"]]
+            assert "system_mechanics" in result["dimensions"]
+            assert result["dimensions"]["system_mechanics"] < 100
+            assert "SYSTEM_MECHANICS_DENSE_PANEL" in codes
+            assert result["metrics"]["system_panel_count"] >= 5
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
     def test_diagnose_structure(self):
         """Diagnosis result must have the expected structure."""
         from novel_factory.quality.hub import QualityHub

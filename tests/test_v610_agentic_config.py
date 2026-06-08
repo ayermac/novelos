@@ -47,6 +47,22 @@ def test_settings_has_agentic():
     assert settings.agentic.enabled is False
 
 
+def test_settings_has_memory_curator_node_timeout_override():
+    """memory_curator gets a longer default node timeout."""
+    settings = Settings()
+    assert settings.workflow.node_timeout_seconds == 300
+    assert settings.workflow.node_timeout_overrides["memory_curator"] == 600
+
+
+def test_node_timeout_resolves_memory_curator_override():
+    """Workflow nodes resolve per-node timeout overrides."""
+    from novel_factory.workflow.nodes import _node_timeout_seconds
+
+    settings = Settings()
+    assert _node_timeout_seconds(settings, "memory_curator") == 600
+    assert _node_timeout_seconds(settings, "author") == 300
+
+
 def test_settings_from_dict():
     """Settings can be created from dict with agentic config."""
     data = {

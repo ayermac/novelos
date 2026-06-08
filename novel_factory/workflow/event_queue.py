@@ -31,8 +31,12 @@ class EventQueue:
     def push(self, event: dict[str, Any]) -> int:
         """Push an event to the queue (called from workflow thread)."""
         with self._lock:
-            self._event_id_counter += 1
-            event["id"] = self._event_id_counter
+            existing_id = event.get("id")
+            if isinstance(existing_id, int) and existing_id > 0:
+                self._event_id_counter = max(self._event_id_counter, existing_id)
+            else:
+                self._event_id_counter += 1
+                event["id"] = self._event_id_counter
             self._events.append(event)
 
             # Notify all subscribers
@@ -42,7 +46,7 @@ class EventQueue:
                 except asyncio.QueueFull:
                     pass  # Drop if subscriber is too slow
 
-            return self._event_id_counter
+            return int(event["id"])
 
     def mark_done(self, status: str = "completed") -> None:
         """Mark the run as done (called from workflow thread)."""

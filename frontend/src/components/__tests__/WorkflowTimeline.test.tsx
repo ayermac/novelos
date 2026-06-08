@@ -189,4 +189,48 @@ describe('WorkflowTimeline', () => {
     expect(within(metas as HTMLElement).getByText('3944 tokens')).toBeInTheDocument()
     expect(within(metas as HTMLElement).getByText('169.2s')).toBeInTheDocument()
   })
+
+  it('deduplicates matching live and timeline execution events with different ids and timestamps', () => {
+    render(
+      <WorkflowTimeline
+        steps={[
+          {
+            key: 'screenwriter',
+            label: '编剧',
+            description: '规划场景',
+            status: 'running',
+            events: [
+              {
+                id: 101,
+                node_name: 'screenwriter',
+                event_type: 'llm_completed',
+                status: 'pass',
+                message: 'LLM 调用完成',
+                token_count: 5773,
+                latency_ms: 74400,
+                created_at: '2026-06-08 10:00:00',
+              },
+              {
+                id: 1,
+                node_name: 'screenwriter',
+                event_type: 'llm_completed',
+                status: 'pass',
+                message: 'LLM 调用完成',
+                token_count: 5773,
+                latency_ms: 74400,
+                created_at: '2026-06-08T10:00:00.123Z',
+              },
+            ],
+            evidence: {
+              has_evidence: true,
+              event_count: 2,
+            },
+          },
+        ]}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: '查看过程' }))
+    expect(document.querySelectorAll('.exec-event')).toHaveLength(1)
+  })
 })

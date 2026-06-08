@@ -14,6 +14,7 @@ import { tWorkflowNodeLabel, tWorkflowNodeNarrative } from '../../lib/state-labe
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
 import { post } from '../../lib/api'
 import type { WorkflowTimelineData, WorkflowExecutionEvent, WorkflowNodeEvidence } from '../../lib/api'
+import { workflowEventContentKey } from '../../lib/workflow-events'
 import { PROCESS_DRAFT_LABEL, formatArtifactSummary, getArtifactTitle, type WorkflowArtifacts } from '../../lib/artifacts'
 import { LoadingButton, SkeletonStack, InlineMessage, useToast } from '../ui'
 import AttentionPanel, { ActionHintList } from '../AttentionPanel'
@@ -116,6 +117,13 @@ interface WorkflowLogRow {
 
 const STUCK_RUN_THRESHOLD_MINUTES = 30
 const TERMINAL_CHAPTER_STATUSES = new Set(['reviewed', 'awaiting_publish', 'published'])
+const PUBLISH_COMPATIBLE_BLOCKED_NODES = new Set([
+  'memory_curator',
+  'human_review',
+  'awaiting_publish',
+  'publisher',
+  'publish',
+])
 
 function isCompletedBeforeTerminal(runStatus?: string | null, chapterStatus?: string | null): boolean {
   return runStatus === 'completed' && !!chapterStatus && !TERMINAL_CHAPTER_STATUSES.has(chapterStatus)
@@ -141,13 +149,21 @@ function mergeWorkflowEvents(
   liveEvents: WorkflowExecutionEvent[],
 ): WorkflowExecutionEvent[] {
   const merged: WorkflowExecutionEvent[] = []
-  const seen = new Set<string>()
+  const seenIds = new Set<string>()
+  const seenContent = new Set<string>()
   for (const event of [...existingEvents, ...liveEvents]) {
-    const key = event.id != null
-      ? `id:${event.id}`
-      : `${event.node_name || ''}:${event.event_type}:${event.status || ''}:${event.created_at || ''}:${event.message || ''}`
-    if (seen.has(key)) continue
-    seen.add(key)
+    // v6.10.4: Two-layer dedup
+    // 1. By id (when both sources provide ids)
+    if (event.id != null) {
+      const idKey = `id:${event.id}`
+      if (seenIds.has(idKey)) continue
+      seenIds.add(idKey)
+    }
+    // 2. By content signature (catches duplicate events with different ids,
+    //    e.g. when timeline is refetched while liveEvents still hold pre-refresh data)
+    const contentKey = workflowEventContentKey(event)
+    if (seenContent.has(contentKey)) continue
+    seenContent.add(contentKey)
     merged.push(event)
   }
   return merged
@@ -654,9 +670,12 @@ export default function AuthorWritingSurface({
 
   // v6.7.6: Block publish CTAs when workflow is broken
   const effectiveRunStatus = timeline?.run_status || runDetail?.workflow_status
+  const effectiveCurrentNode = timeline?.current_node || runDetail?.current_node || ''
+  const ignoreBrokenRunForPublish = isReviewedReal &&
+    (effectiveRunStatus === 'blocked' || effectiveRunStatus === 'failed') &&
+    PUBLISH_COMPATIBLE_BLOCKED_NODES.has(effectiveCurrentNode)
   const workflowNeedsRecovery = Boolean(
-    effectiveRunStatus === 'blocked' ||
-    effectiveRunStatus === 'failed' ||
+    ((effectiveRunStatus === 'blocked' || effectiveRunStatus === 'failed') && !ignoreBrokenRunForPublish) ||
     (effectiveRunStatus === 'running' && (timeline?.is_stale || (timeline?.elapsed_minutes !== undefined && timeline?.elapsed_minutes !== null && timeline.elapsed_minutes >= STUCK_RUN_THRESHOLD_MINUTES)))
   )
 

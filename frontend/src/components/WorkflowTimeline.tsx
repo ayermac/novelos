@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { formatArtifactSummary, WorkflowArtifacts } from '../lib/artifacts'
 import { tWorkflowNodeNarrative, tEventNarrative } from '../lib/state-labels'
 import { normalizeNodeStatus, isNodeBusinessSuccess, getNodeStatusBadge } from '../lib/statusSemantics'
+import { workflowEventContentKey } from '../lib/workflow-events'
 import type { WorkflowExecutionEvent, WorkflowNodeEvidence } from '../lib/api'
 
 interface Step {
@@ -374,7 +375,16 @@ export default function WorkflowTimeline({ steps, compact = false, preflightWarn
                       </div>
                       {(() => {
                         // Filter noise and group events
-                        const filtered = step.events!.filter((ev) => !isNoiseEvent(ev))
+                        // v6.10.4: Defensive dedup by content signature to handle
+                        // edge cases where DB+SSE events still slip through.
+                        const seenSig = new Set<string>()
+                        const deduped = step.events!.filter((ev) => {
+                          const sig = workflowEventContentKey(ev)
+                          if (seenSig.has(sig)) return false
+                          seenSig.add(sig)
+                          return true
+                        })
+                        const filtered = deduped.filter((ev) => !isNoiseEvent(ev))
                         const grouped = groupEvents(filtered)
 
                         return grouped.map((group, gIdx) => {
