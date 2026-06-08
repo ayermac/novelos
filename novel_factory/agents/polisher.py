@@ -648,8 +648,8 @@ class PolisherAgent(BaseAgent):
                     "payload": {"stage": "before_save", "blocking_error": before_save_hook.blocking_error},
                 })
                 return {
-                    "error": f"Polisher before_save failed: {before_save_hook.blocking_error}",
                     "chapter_status": state.get("chapter_status"),
+                    "error": before_save_hook.blocking_error or "润色保存前检查未通过",
                     "quality_gate": {
                         "pass": False,
                         "revision_target": "polisher",
@@ -749,8 +749,8 @@ class PolisherAgent(BaseAgent):
                 },
             })
             return {
-                "error": reason,
                 "chapter_status": state.get("chapter_status"),
+                "error": reason,
                 "quality_gate": {
                     "pass": False,
                     "revision_target": "polisher",
@@ -826,8 +826,8 @@ class PolisherAgent(BaseAgent):
                     },
                 })
                 return {
-                    "error": reason,
                     "chapter_status": state.get("chapter_status"),
+                    "error": reason,
                     "quality_gate": {
                         "pass": False,
                         "revision_target": "polisher",
@@ -920,8 +920,8 @@ class PolisherAgent(BaseAgent):
                     workflow_run_id=state.get("workflow_run_id"),
                 )
                 return {
-                    "error": f"返修稿退化，已保留上一版本：{reason}",
                     "chapter_status": state.get("chapter_status"),
+                    "error": reason,
                     "quality_gate": {
                         "pass": False,
                         "revision_target": "polisher",

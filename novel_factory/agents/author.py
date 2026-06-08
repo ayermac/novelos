@@ -2033,7 +2033,8 @@ class AuthorAgent(BaseAgent):
         if ("标题与正文脱节" in feedback_text or "标题关键词" in feedback_text) and title:
             title_keyword = re.sub(r"^第\s*[一二三四五六七八九十百千零〇两\d]+\s*章\s*[:：、.\-—]?\s*", "", title).strip()
             if title_keyword and title_keyword not in patched:
-                patched = f"{patched}\n\n{title_keyword}四个字，在他心里落得很重。"
+                # v6.10.5: Neutral phrasing, no hardcoded pronoun.
+                patched = f"{patched}\n\n{title_keyword}四个字，在心头落得很重。"
 
         patched = ensure_chapter_heading(patched, title, chapter_number)
         output = AuthorOutput(
@@ -2068,7 +2069,8 @@ class AuthorAgent(BaseAgent):
         time_part = f"“{time_match.group(1)}”" if time_match else "上一章留下的时间"
         place = place_match.group(1) if place_match else ""
         place_part = f"和“{place}”这条地点线" if place and len(place) <= 18 else "和上一章留下的地点线"
-        return f"{time_part}{place_part}没有被跳过，他把未处理的约定压在心里，先稳住眼前局面。"
+        # v6.10.5: Avoid hardcoded gendered pronoun; use neutral phrasing.
+        return f"{time_part}{place_part}没有被跳过，未处理的约定压在心头，眼前的局面仍需先稳住。"
 
     def _try_segmented_plain_text_draft(
         self,

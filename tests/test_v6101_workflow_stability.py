@@ -68,3 +68,39 @@ def test_chapter_seam_ignores_question_fragment_as_location():
 
     assert result["pass"] is True
     assert all("终止与苏家所" not in issue for issue in result["blocking_issues"])
+
+
+def test_chapter_seam_ignores_action_fragment_as_location():
+    """v6.10.5: Action descriptions like '明天去苏家所' must not become hard location obligations.
+
+    The location "苏家所" is filtered because it appears in an action context
+    ("去苏家所"). However, the time marker "明天" remains a legitimate hard
+    constraint and still produces a blocking issue when unacknowledged.
+    """
+    repo = _seam_repo(
+        "上一章结尾，他说：明天去苏家所，把东西取回来。",
+        "明天去苏家所",
+    )
+    current = "掌心修罗徽章的灼热感尚未完全消退，系统提示仍悬在视野边缘。"
+
+    result = evaluate_chapter_seam(repo, "novel", 3, current)
+
+    # Location must NOT appear in blocking issues (the core fix).
+    assert not any("苏家所" in issue for issue in result["blocking_issues"])
+    # Time marker "明天" is still a hard constraint when unacknowledged.
+    assert result["pass"] is False
+    assert any("明确时间节点" in issue for issue in result["blocking_issues"])
+
+
+def test_chapter_seam_ignores_suoyou_suffix():
+    """v6.10.5: '苏家所' extracted from '苏家所有钱' must not be treated as a location."""
+    repo = _seam_repo(
+        "上一章结尾，苏家所有钱都被冻结了。",
+        "苏家所有钱",
+    )
+    current = "掌心修罗徽章的灼热感尚未完全消退，系统提示仍悬在视野边缘。"
+
+    result = evaluate_chapter_seam(repo, "novel", 3, current)
+
+    assert result["pass"] is True
+    assert result["blocking_issues"] == []

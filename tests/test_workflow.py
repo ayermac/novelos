@@ -10,6 +10,7 @@ from novel_factory.workflow.conditions import (
     normalize_revision_target,
     prepare_resume_after_human_review,
     route_by_chapter_status,
+    route_by_quality_gate,
     route_by_review_result,
     route_after_memory_curator,
     route_by_revision_type,
@@ -346,6 +347,44 @@ class TestRouteByReviewResult:
         }
         assert route_after_agent(state) == "revision_router"
 
+    def test_polisher_low_change_routes_to_revision_router(self):
+        """v6.10.5: Polisher low_change_fail must route to revision_router, not human_review."""
+        state = {
+            "chapter_status": "revision",
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "polisher",
+                "low_change_fail": True,
+            },
+        }
+        assert route_after_agent(state) == "revision_router"
+
+    def test_polisher_fact_lock_routes_to_revision_router(self):
+        """v6.10.5: Polisher fact_lock_fail must route to revision_router, not human_review."""
+        state = {
+            "chapter_status": "revision",
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "polisher",
+                "fact_lock_fail": True,
+            },
+        }
+        assert route_after_agent(state) == "revision_router"
+
+    def test_retryable_gate_takes_priority_over_error(self):
+        """v6.10.5: Retryable quality_gate must route to revision_router even when
+        the agent also sets an error field (polisher internal retries)."""
+        state = {
+            "chapter_status": "revision",
+            "error": "返修润色无效：修改幅度低于阈值",
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "polisher",
+                "low_change_fail": True,
+            },
+        }
+        assert route_after_agent(state) == "revision_router"
+
     def test_stale_quality_gate_ignored_when_status_advanced(self):
         """A stale quality_gate from a previous failed attempt must not cause
         route_after_agent to send a successful agent run back to revision_router.
@@ -364,6 +403,42 @@ class TestRouteByReviewResult:
     def test_max_retries_goes_to_human(self):
         state = {"quality_gate": {"pass": False}, "retry_count": 3, "max_retries": 3}
         assert route_by_review_result(state) == "human_review"
+
+
+class TestRouteByQualityGate:
+    """v6.10.5: Quality gate node routing tests."""
+
+    def test_fail_routes_to_revision_router(self):
+        state = {"quality_gate": {"passed": False}, "retry_count": 1, "max_retries": 3}
+        assert route_by_quality_gate(state) == "revision_router"
+
+    def test_pass_routes_to_editor(self):
+        state = {"quality_gate": {"passed": True}, "retry_count": 0, "max_retries": 3}
+        assert route_by_quality_gate(state) == "editor"
+
+    def test_max_retries_routes_to_human_review(self):
+        """v6.10.5: Even retryable gates must go to human_review when max retries reached."""
+        state = {
+            "quality_gate": {"passed": False, "word_count_fail": True},
+            "retry_count": 3,
+            "max_retries": 3,
+        }
+        assert route_by_quality_gate(state) == "human_review"
+
+    def test_error_takes_priority(self):
+        state = {
+            "quality_gate": {"passed": True},
+            "error": "some error",
+            "requires_human": False,
+        }
+        assert route_by_quality_gate(state) == "human_review"
+
+    def test_requires_human_takes_priority(self):
+        state = {
+            "quality_gate": {"passed": True},
+            "requires_human": True,
+        }
+        assert route_by_quality_gate(state) == "human_review"
 
 
 class TestRouteByRevisionType:

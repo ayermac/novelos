@@ -411,6 +411,25 @@ def _is_explicit_appointment_location(
         return False
     if any(marker in loc for marker in ("终止", "中止", "停止", "是否", "为何", "必须", "不能", "不会", "关系", "身份", "线索")):
         return False
+    # v6.10.5: Filter out action descriptions masquerading as locations.
+    action_verbs = ("去", "来", "走", "进", "到", "站", "坐", "跑", "追", "赶", "逃", "离", "离开")
+    # If the extracted location string itself contains an action verb
+    # (e.g. "明天去苏家所", "去苏家所", "走进房间"), it is an action phrase.
+    if any(marker in loc for marker in action_verbs):
+        return False
+    # Also filter when the action verb precedes the location in source_text
+    # and the location string does not already contain it.
+    for verb in action_verbs:
+        if re.search(re.escape(verb) + r".{0,2}" + re.escape(loc), source_text):
+            return False
+    # v6.10.5: Filter out question fragments.
+    question_markers = ("怎么", "什么", "哪里", "谁", "多少", "为什么", "如何")
+    for marker in question_markers:
+        if re.search(re.escape(marker) + r".{0,3}" + re.escape(loc), source_text):
+            return False
+    # v6.10.5: "所有" is not a location suffix; e.g. "苏家所" from "苏家所有钱".
+    if loc.endswith("所有") or re.search(re.escape(loc) + r".{0,1}有", source_text):
+        return False
     if "与" in loc and not any(place in loc for place in ("会所", "事务所", "派出所", "研究所")):
         return False
 
