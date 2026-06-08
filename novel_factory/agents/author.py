@@ -2381,6 +2381,7 @@ class AuthorAgent(BaseAgent):
                     max_tokens=max_tokens,
                     agent_id=self.agent_id,
                     on_chunk=on_chunk,
+                    request_timeout_seconds=request_timeout_seconds,
                 )
             except TypeError:
                 # Provider doesn't support streaming, fall back

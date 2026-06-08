@@ -821,13 +821,22 @@ class OpenAICompatibleProvider(LLMProvider):
         max_tokens: int | None = None,
         agent_id: str = "unknown",
         on_chunk: Any = None,
+        request_timeout_seconds: int | None = None,
         **kwargs: Any,
     ) -> str:
         """v6.10.0: Invoke LLM with streaming, calling on_chunk for each token."""
         from .openai_streaming import stream_text
+        # Use a dedicated client with per-call timeout so the HTTP socket
+        # does not hang indefinitely when the remote LLM is unresponsive.
+        stream_client = (
+            self.client
+            if request_timeout_seconds is None
+            or request_timeout_seconds == self.config.request_timeout_seconds
+            else self._build_client(request_timeout_seconds=request_timeout_seconds)
+        )
         try:
             content, pt, ct, dm = stream_text(
-                self.client, self._to_lc_messages, messages,
+                stream_client, self._to_lc_messages, messages,
                 temperature=temperature, max_tokens=max_tokens, agent_id=agent_id, on_chunk=on_chunk,
             )
             self.last_token_usage = TokenUsage(prompt_tokens=pt, completion_tokens=ct, total_tokens=pt + ct, duration_ms=dm)

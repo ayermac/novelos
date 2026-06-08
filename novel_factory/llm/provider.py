@@ -105,7 +105,10 @@ class LLMProvider(ABC):
             Complete text response (accumulated from all chunks).
         """
         # Default fallback: call non-streaming and invoke on_chunk once
-        result = self.invoke_text(messages, temperature=temperature, max_tokens=max_tokens, agent_id=agent_id)
+        result = self.invoke_text(
+            messages, temperature=temperature, max_tokens=max_tokens, agent_id=agent_id,
+            request_timeout_seconds=kwargs.get("request_timeout_seconds"),
+        )
         if on_chunk:
             on_chunk(result)
         return result

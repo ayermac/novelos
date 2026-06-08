@@ -958,6 +958,7 @@ class PolisherAgent(BaseAgent):
             max_tokens=max_tokens,
             max_retries=None,
             request_timeout_seconds=POLISHER_LONG_FORM_TIMEOUT_SECONDS,
+            on_chunk=self.on_text_chunk,
         ).strip()
         content = self._coerce_plain_text_content(content)
         if not content:
@@ -1241,7 +1242,23 @@ class PolisherAgent(BaseAgent):
         max_tokens: int,
         max_retries: int | None,
         request_timeout_seconds: int | None,
+        on_chunk: Any | None = None,
     ) -> str:
+        # v6.10.0: Use streaming if callback provided
+        if on_chunk is not None:
+            try:
+                return self.llm.invoke_text_stream(
+                    messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    agent_id=self.agent_id,
+                    on_chunk=on_chunk,
+                    request_timeout_seconds=request_timeout_seconds,
+                )
+            except TypeError:
+                # Provider doesn't support streaming, fall back
+                pass
+
         try:
             return self.llm.invoke_text(
                 messages,
