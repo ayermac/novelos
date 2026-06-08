@@ -660,6 +660,50 @@ class PolisherAgent(BaseAgent):
             },
         })
 
+        if in_revision_chain and low_change:
+            reason = f"返修润色无效：改动过小（{original_wc} → {polished_wc} 字），未执行审核退回意见"
+            logger.warning("Polisher: revision low-change gate failed: %s", reason)
+            self.repo.save_artifact(
+                project_id,
+                chapter_number,
+                "polisher",
+                "rejected_low_change_revision",
+                content_json={
+                    "content": polished_content,
+                    "rejection_reason": reason,
+                    "revision_source_review_id": revision_review.get("review_id"),
+                },
+                workflow_run_id=state.get("workflow_run_id"),
+            )
+            exec_events.append({
+                "event_type": "quality_gate_retry",
+                "message": reason,
+                "status": "warning",
+                "payload": {
+                    "revision_target": "polisher",
+                    "quality_gate": {
+                        "pass": False,
+                        "revision_target": "polisher",
+                        "low_change_fail": True,
+                        "message": reason,
+                    },
+                },
+            })
+            return {
+                "error": reason,
+                "chapter_status": state.get("chapter_status"),
+                "quality_gate": {
+                    "pass": False,
+                    "revision_target": "polisher",
+                    "low_change_fail": True,
+                    "message": reason,
+                    "agent": "polisher",
+                    "workflow_run_id": state.get("workflow_run_id"),
+                },
+                "_revision_review": revision_review,
+                "_exec_events": exec_events,
+            }
+
         # v6.8.5: Check for excessive word count drift even on first polish.
         # If the polished draft is >20% shorter than the original without any
         # compression request, reject it and keep the original.

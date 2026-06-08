@@ -44,6 +44,26 @@ def _create_run(repo: Repository, status: str, started_hours_ago: float | None =
     return run_id
 
 
+def _create_trusted_memory_batch(repo: Repository):
+    batch = repo.create_memory_batch(
+        PROJECT_ID,
+        chapter_number=1,
+        run_id="memory-run",
+        summary="第1章记忆提取 - 可信提取 (1项)",
+    )
+    repo.create_memory_item(
+        batch_id=batch["id"],
+        project_id=PROJECT_ID,
+        target_table="story_facts",
+        operation="create",
+        after_json='{"fact_key":"publish_guard.memory_ready"}',
+        confidence=0.9,
+        evidence_text="章节已具备发布前可信记忆。",
+        rationale="MemoryCurator LLM 正文复核提取",
+    )
+    return batch
+
+
 def _api_client(db_path: str):
     from fastapi.testclient import TestClient
     from novel_factory.api_app import create_api_app
@@ -133,3 +153,26 @@ class TestPublishGuardWorkflowRecovery:
         body = resp.json()
         error_code = (body.get("error") or {}).get("code")
         assert error_code != "WORKFLOW_RECOVERY_REQUIRED"
+
+    def test_blocked_memory_curator_run_does_not_block_reviewed_publish(self, tmp_path):
+        """Post-review MemoryCurator timeout should not trap a reviewed chapter."""
+        db_path, repo = _setup_db(tmp_path)
+        _create_trusted_memory_batch(repo)
+        run_id = _create_run(repo, "blocked")
+        repo.update_workflow_run(
+            run_id,
+            status="blocked",
+            current_node="memory_curator",
+            error_message="节点 memory_curator 执行超时（>300秒），需要人工介入",
+        )
+
+        with _api_client(db_path) as client:
+            resp = client.post(
+                "/api/publish/chapter",
+                json={"project_id": PROJECT_ID, "chapter": 1},
+            )
+
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["chapter_status"] == "published"
+        assert repo.get_chapter(PROJECT_ID, 1)["status"] == "published"

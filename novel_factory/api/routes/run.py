@@ -26,6 +26,14 @@ from ._memory_curator_gate import (
 
 router = APIRouter()
 
+PUBLISH_COMPATIBLE_BLOCKED_NODES = frozenset({
+    "memory_curator",
+    "human_review",
+    "awaiting_publish",
+    "publisher",
+    "publish",
+})
+
 
 class RunChapterRequest(BaseModel):
     """Run chapter request."""
@@ -33,6 +41,15 @@ class RunChapterRequest(BaseModel):
     project_id: str
     chapter: int
     llm_mode: str | None = None
+
+
+def _publish_guard_can_ignore_run(latest_run: dict | None, chapter_status: str | None) -> bool:
+    """Allow publishing reviewed content when only post-review housekeeping failed."""
+    if chapter_status != "reviewed" or not latest_run:
+        return False
+    if latest_run.get("status") not in ("blocked", "failed"):
+        return False
+    return (latest_run.get("current_node") or "") in PUBLISH_COMPATIBLE_BLOCKED_NODES
 
 
 def _run_guard_domain_result(guard_error) -> dict:
@@ -615,7 +632,8 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
         latest_run = latest_runs[0] if latest_runs else None
         if latest_run:
             run_status = latest_run.get("status")
-            run_is_broken = run_status in ("blocked", "failed")
+            ignore_broken_run_for_publish = _publish_guard_can_ignore_run(latest_run, current_status)
+            run_is_broken = run_status in ("blocked", "failed") and not ignore_broken_run_for_publish
             run_is_stale = False
             if run_status == "running":
                 from ...workflow.state_integrity import _run_is_recent

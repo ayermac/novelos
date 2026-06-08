@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { formatArtifactSummary, WorkflowArtifacts } from '../lib/artifacts'
 import { tWorkflowNodeNarrative, tEventNarrative } from '../lib/state-labels'
 import { normalizeNodeStatus, isNodeBusinessSuccess, getNodeStatusBadge } from '../lib/statusSemantics'
+import { workflowEventContentKey } from '../lib/workflow-events'
 import type { WorkflowExecutionEvent, WorkflowNodeEvidence } from '../lib/api'
 
 interface Step {
@@ -378,7 +379,7 @@ export default function WorkflowTimeline({ steps, compact = false, preflightWarn
                         // edge cases where DB+SSE events still slip through.
                         const seenSig = new Set<string>()
                         const deduped = step.events!.filter((ev) => {
-                          const sig = `${ev.node_name || ''}:${ev.event_type}:${ev.status || ''}:${ev.message || ''}:${ev.created_at || ''}`
+                          const sig = workflowEventContentKey(ev)
                           if (seenSig.has(sig)) return false
                           seenSig.add(sig)
                           return true

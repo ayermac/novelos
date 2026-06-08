@@ -73,6 +73,26 @@ def _node_message(node_name: str, event_type: str) -> str:
     return msgs.get(event_type, f"{node_name} {event_type}")
 
 
+def _node_timeout_seconds(settings: Any, node_name: str) -> int:
+    """Resolve the wall-clock timeout for a workflow node."""
+    workflow = getattr(settings, "workflow", None)
+    default_timeout = getattr(workflow, "node_timeout_seconds", 300) or 300
+    try:
+        default_timeout = int(default_timeout)
+    except (TypeError, ValueError):
+        default_timeout = 300
+
+    overrides = getattr(workflow, "node_timeout_overrides", None) or {}
+    if isinstance(overrides, dict) and node_name in overrides:
+        try:
+            override_timeout = int(overrides[node_name])
+        except (TypeError, ValueError):
+            return default_timeout
+        return override_timeout if override_timeout > 0 else default_timeout
+
+    return default_timeout
+
+
 def _redact_trace_value(value: Any) -> Any:
     """Recursively redact sensitive strings in trace payloads."""
     if isinstance(value, str):
@@ -953,7 +973,7 @@ def create_node_runners(
         # shutdown(wait=False, cancel_futures=True) so that on timeout
         # we return immediately without waiting for the stuck LLM call.
         import concurrent.futures
-        node_timeout = getattr(getattr(settings, "workflow", None), "node_timeout_seconds", 300) or 300
+        node_timeout = _node_timeout_seconds(settings, agent_name)
 
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
         try:
@@ -2361,5 +2381,4 @@ def creative_ledger_curator_node(state: FactoryState, repo: Repository) -> dict:
         result = {"ledger_update_result": {"status": "error", "error": str(e)}}
 
     return result
-
 

@@ -42,6 +42,15 @@ DEFAULT_RULES: list[DeathPenaltyRule] = [
         description="典型AI表情", alternatives=["唇角微弯"],
     ),
     DeathPenaltyRule(
+        code="DP_EXPR_03A",
+        pattern=r"(嘴角|唇角)[^，。！？\n]{0,8}(抬|扬|勾|弯|翘|动)[^，。！？\n]{0,8}",
+        match_type=PenaltyMatchType.REGEX,
+        severity=PenaltySeverity.CRITICAL,
+        category="ai_trace",
+        description="典型AI表情变体",
+        alternatives=[],
+    ),
+    DeathPenaltyRule(
         code="DP_EXPR_04", pattern="倒吸一口凉气", match_type=PenaltyMatchType.EXACT,
         severity=PenaltySeverity.CRITICAL, category="ai_trace",
         description="典型AI反应", alternatives=["心中一凛", "瞳孔微缩"],
@@ -65,6 +74,11 @@ DEFAULT_RULES: list[DeathPenaltyRule] = [
         code="DP_EXPR_08", pattern="眼中寒芒", match_type=PenaltyMatchType.EXACT,
         severity=PenaltySeverity.CRITICAL, category="ai_trace",
         description="典型AI表情", alternatives=["目光冰冷"],
+    ),
+    DeathPenaltyRule(
+        code="DP_EXPR_09", pattern="笑意未达眼底", match_type=PenaltyMatchType.EXACT,
+        severity=PenaltySeverity.CRITICAL, category="ai_trace",
+        description="典型AI表情", alternatives=[],
     ),
     # ── 句式类 (critical) ──
     DeathPenaltyRule(
@@ -163,21 +177,26 @@ def check_death_penalty_structured(
 
     for rule in rules:
         matched = False
+        matched_text = rule.pattern
         if rule.match_type == PenaltyMatchType.EXACT:
             matched = rule.pattern in text
         elif rule.match_type == PenaltyMatchType.SUBSTRING:
             matched = rule.pattern in text
         elif rule.match_type == PenaltyMatchType.REGEX:
             try:
-                matched = bool(re.search(rule.pattern, text))
+                regex_match = re.search(rule.pattern, text)
+                matched = bool(regex_match)
+                if regex_match:
+                    matched_text = regex_match.group(0)
             except re.error:
                 continue
 
         if matched:
-            violations.append(rule.pattern)
+            violations.append(matched_text)
             details.append({
                 "code": rule.code,
                 "pattern": rule.pattern,
+                "matched_text": matched_text,
                 "severity": rule.severity.value,
                 "category": rule.category,
             })

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from novel_factory.validators.death_penalty import check_death_penalty, has_death_penalty
+from novel_factory.validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_death_penalty
 from novel_factory.validators.chapter_checker import check_word_count, validate_chapter_output
 from novel_factory.validators.state_verifier import check_status_precondition, check_transition
 from novel_factory.validators.plot_verifier import check_plot_coverage
@@ -22,6 +22,18 @@ class TestDeathPenalty:
     def test_catch_corner_smile(self):
         violations = check_death_penalty("她嘴角微扬，露出笑意。")
         assert "嘴角微扬" in violations
+
+    def test_catch_corner_motion_variant_as_critical(self):
+        result = check_death_penalty_structured("林辰垂着眼，嘴角忽然抬了一下。")
+        assert result.has_critical is True
+        assert any("嘴角" in violation for violation in result.violations)
+        assert "嘴角忽然抬了一下" in result.violations
+        assert result.details[0].get("matched_text")
+
+    def test_catch_smile_not_reaching_eyes_as_critical(self):
+        result = check_death_penalty_structured("他唇角微弯，笑意未达眼底。")
+        assert result.has_critical is True
+        assert "笑意未达眼底" in result.violations
 
     def test_catch_gasp(self):
         violations = check_death_penalty("众人倒吸一口凉气。")
