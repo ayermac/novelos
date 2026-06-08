@@ -110,6 +110,26 @@ _AUTHOR_STRUCTURAL_KEYWORDS = (
     # issues that require author to add content, not polisher to refine.
     "对话比例较低",
     "章末钩子强度不足",
+    # v6.10.0: Structural issues that polisher cannot fix — require author
+    # to restructure scenes, remove duplicates, or rebalance pacing.
+    "重复",
+    "堆叠",
+    "重叠",
+    "功能重叠",
+    "信息功能重叠",
+    "出现两轮",
+    "两轮",
+    "多轮",
+    "压缩",
+    "合并",
+    "场景重复",
+    "段落重复",
+    "描写重复",
+    "削弱.*加速感",
+    "拖慢.*加速感",
+    "挤占",
+    "接近失真",
+    "失真边缘",
 )
 
 _SOFT_POLISH_KEYWORDS = (

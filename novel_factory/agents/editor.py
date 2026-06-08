@@ -1870,12 +1870,15 @@ class EditorAgent(BaseAgent):
         )
 
         # v6.10.0: Emit progress event - review strategy applied
+        # Use output.pass_ (post-processed final decision) to stay consistent
+        # with editor_completed. The raw strategy_decision may differ when
+        # score < 75 prevents the advisory override from taking effect.
         exec_events.append({
             "event_type": "review_strategy_applied",
-            "message": f"审核策略应用完成，通过: {strategy_result.decision.pass_}",
+            "message": f"审核策略应用完成，通过: {output.pass_}",
             "status": "info",
             "payload": {
-                "pass": strategy_result.decision.pass_,
+                "pass": output.pass_,
                 "revision_needed": strategy_result.decision.revision_needed,
                 "category": strategy_result.decision.category,
                 "revision_target": output.revision_target,
