@@ -24,7 +24,12 @@ from ..validators.chapter_checker import (
     count_words,
     derive_word_target,
 )
-from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured, has_critical_violation
+from ..validators.death_penalty import (
+    check_death_penalty,
+    check_death_penalty_structured,
+    has_critical_violation,
+    sanitize_death_penalty_text,
+)
 from ..validators.fact_lock import check_fact_integrity, extract_fact_lock
 from ..skills.registry import SkillRegistry
 from ..agent_runtime.base import BaseAgent
@@ -399,6 +404,21 @@ class PolisherAgent(BaseAgent):
             else:
                 logger.error("Polisher LLM call failed: %s", e)
                 return {"error": f"Polisher failed: {e}", "chapter_status": state.get("chapter_status")}
+
+        if state.get("llm_mode") == "real":
+            sanitized_content, replacements = sanitize_death_penalty_text(output.content)
+            if replacements:
+                logger.info(
+                    "Polisher: sanitized death-penalty phrases before validation: %s",
+                    replacements,
+                )
+                output = output.model_copy(update={"content": sanitized_content})
+                exec_events.append({
+                    "event_type": "death_penalty_sanitized",
+                    "message": f"润色稿已自动替换 {len(replacements)} 处死刑红线表达",
+                    "status": "info",
+                    "payload": {"replacements": replacements[:10]},
+                })
 
         self.validate_output(output.model_dump())
 

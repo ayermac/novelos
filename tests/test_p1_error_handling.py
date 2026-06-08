@@ -249,6 +249,48 @@ class TestAuthorValidationFailure:
         assert "眼中闪过" not in chapter["content"]
         assert "目光一闪" in chapter["content"]
 
+    def test_author_real_mode_sanitizes_regex_death_penalty_variant(self, settings, repo):
+        """Real-mode Author should repair regex-only red lines without full revision."""
+        project_id = "test_p1_author_death_penalty_regex_sanitize"
+        repo.create_project(
+            project_id=project_id,
+            name="Test Project",
+            genre="fantasy",
+        )
+        repo.add_chapter(project_id, 1, title="Chapter 1", status=ChapterStatus.SCRIPTED.value)
+
+        state: FactoryState = {
+            "project_id": project_id,
+            "chapter_number": 1,
+            "chapter_status": ChapterStatus.SCRIPTED.value,
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "steps": [],
+            "workflow_run_id": "",
+            "llm_mode": "real",
+        }
+
+        mock_llm = MagicMock()
+        mock_llm.invoke_json.return_value = {
+            "title": "Test Chapter",
+            "content": '嘴角微微一动："零点前，全部撤离。"' + ("正常内容填充" * 500),
+            "word_count": 3020,
+            "implemented_events": [],
+            "used_plot_refs": [],
+        }
+        mock_llm.last_token_usage = None
+
+        result = author_node(state, repo, mock_llm)
+
+        assert result.get("error") is None
+        assert result["chapter_status"] == ChapterStatus.DRAFTED.value
+        assert result.get("retryable_quality_gate") is not True
+        chapter = repo.get_chapter(project_id, 1)
+        assert "嘴角微微一动" not in chapter["content"]
+        assert '停了一瞬："零点前，全部撤离。"' in chapter["content"]
+
     def test_author_llm_exception_sets_requires_human_and_failed_run(self, settings, repo):
         """Provider exceptions should be captured instead of leaving runs hanging."""
         project_id = "test_p1_author_exception"
