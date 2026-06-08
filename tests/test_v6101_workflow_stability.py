@@ -54,3 +54,17 @@ def test_chapter_seam_still_blocks_unacknowledged_time_anchor():
 
     assert result["pass"] is False
     assert any("明确时间节点" in issue for issue in result["blocking_issues"])
+
+
+def test_chapter_seam_ignores_question_fragment_as_location():
+    """Question fragments ending in 所 should not become hard location obligations."""
+    repo = _seam_repo(
+        "上一章结尾，系统提示：是否终止与苏家所有合作，并立刻开启第二次签到？",
+        "是否终止与苏家所有合作",
+    )
+    current = "掌心修罗徽章的灼热感尚未完全消退，系统提示仍悬在视野边缘。"
+
+    result = evaluate_chapter_seam(repo, "novel", 3, current)
+
+    assert result["pass"] is True
+    assert all("终止与苏家所" not in issue for issue in result["blocking_issues"])

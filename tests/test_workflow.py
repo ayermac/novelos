@@ -335,6 +335,17 @@ class TestRouteByReviewResult:
         }
         assert route_after_agent(state) == "revision_router"
 
+    def test_polisher_expansion_drift_after_agent_goes_to_revision(self):
+        state = {
+            "chapter_status": "revision",
+            "quality_gate": {
+                "pass": False,
+                "revision_target": "polisher",
+                "expansion_drift_fail": True,
+            },
+        }
+        assert route_after_agent(state) == "revision_router"
+
     def test_stale_quality_gate_ignored_when_status_advanced(self):
         """A stale quality_gate from a previous failed attempt must not cause
         route_after_agent to send a successful agent run back to revision_router.

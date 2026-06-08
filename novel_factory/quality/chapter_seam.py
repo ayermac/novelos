@@ -409,6 +409,10 @@ def _is_explicit_appointment_location(
         return False
     if any(marker in loc for marker in ("着", "在了", "正站", "消失")):
         return False
+    if any(marker in loc for marker in ("终止", "中止", "停止", "是否", "为何", "必须", "不能", "不会", "关系", "身份", "线索")):
+        return False
+    if "与" in loc and not any(place in loc for place in ("会所", "事务所", "派出所", "研究所")):
+        return False
 
     if not has_time_constraint:
         return False

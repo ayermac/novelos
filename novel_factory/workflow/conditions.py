@@ -232,6 +232,9 @@ def route_after_agent(state: FactoryState) -> str:
             or gate.get("death_penalty_fail")
             or gate.get("scene_beat_coverage_fail")
             or gate.get("version_regression")
+            or gate.get("low_change_fail")
+            or gate.get("expansion_drift_fail")
+            or gate.get("fact_lock_fail")
         )
         and current_status not in (
             ChapterStatus.DRAFTED.value,
