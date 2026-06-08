@@ -14,6 +14,7 @@ This index maps shipped or reviewed versions to their planning/spec source, comp
 
 | Version | Planning/spec source | Report | Review | Coverage |
 | --- | --- | --- | --- | --- |
+| v6.10.1 | `novel-factory-v6.10.1-skill-engineering-standardization-spec.md` | none yet | none yet | standalone |
 | v6.10.0 | `novel-factory-v6.10.0-dev-prompt.md` | none yet | none yet | standalone |
 | v6.9.1 | `novel-factory-v6.9.1-editor-skillization-spec.md` | none yet | none yet | standalone |
 | v6.9.0 | `novel-factory-v6.9.0-phase-plan.md` | `../reports/novel-factory-v6.9.0-completion-report.md` | none yet | standalone |
