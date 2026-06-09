@@ -175,6 +175,50 @@ describe('AuthorWorkbench', () => {
     expect(screen.queryByText('本章已通过 AI 审核，点击确认发布。')).not.toBeInTheDocument()
   })
 
+  it('hides publish button when MemoryCurator is blocked', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        currentChapter={2}
+        currentChapterRecord={baseProps.chapters[1]}
+        llmMode="real"
+        timeline={{
+          project_id: 'test-proj',
+          chapter_number: 2,
+          run_id: 'memory-run',
+          run_status: 'blocked',
+          chapter_status: 'reviewed',
+          current_node: 'memory_curator',
+          started_at: '2026-05-13T10:00:00',
+          elapsed_minutes: 12,
+          is_stale: false,
+          recovery: {
+            recommended_action: 'backfill_memory',
+            reason: '记忆整理节点失败或超时，正文已到发布就绪状态，可补跑记忆提取后继续发布。',
+            safe_actions: [{ key: 'backfill_memory', label: '补跑记忆提取', safe: true }],
+          },
+          nodes: [
+            {
+              node_name: 'memory_curator',
+              label: '记忆整理',
+              node_group: 'support_agent',
+              node_type: 'support_agent',
+              status: 'blocked',
+              started_at: '2026-05-13T10:00:00',
+              completed_at: null,
+              duration_ms: null,
+              messages: ['节点执行超时（>600秒），需要人工介入'],
+              artifacts: [],
+            },
+          ],
+        }}
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: /确认发布/ })).not.toBeInTheDocument()
+    expect(screen.getByText('需要先恢复运行')).toBeInTheDocument()
+  })
+
   it('shows generate-next button for published chapter', () => {
     render(<AuthorWorkbench {...baseProps} currentChapter={1} currentChapterRecord={baseProps.chapters[0]} />)
     expect(screen.getAllByRole('button', { name: /生成下一章/ }).length).toBeGreaterThan(0)
@@ -414,7 +458,7 @@ describe('AuthorWorkbench', () => {
     expect(screen.getByText(/"source": "live"/)).toBeInTheDocument()
   })
 
-  it('orders same-timestamp logs by workflow progression before run-detail summaries', () => {
+  it('orders same-timestamp timeline logs by workflow progression', () => {
     const { container } = render(
       <AuthorWorkbench
         {...baseProps}
@@ -503,13 +547,10 @@ describe('AuthorWorkbench', () => {
       .map((row) => row.textContent || '')
     const screenwriterCompletedIndex = rows.findIndex((text) => text.includes('编剧 节点执行完成'))
     const authorContextIndex = rows.findIndex((text) => text.includes('读取上下文完成：7 个场景'))
-    const runDetailSummaryIndex = rows.findIndex((text) => text.includes('编剧节点已完成。'))
 
     expect(screenwriterCompletedIndex).toBeGreaterThanOrEqual(0)
     expect(authorContextIndex).toBeGreaterThanOrEqual(0)
-    expect(runDetailSummaryIndex).toBeGreaterThanOrEqual(0)
     expect(screenwriterCompletedIndex).toBeLessThan(authorContextIndex)
-    expect(runDetailSummaryIndex).toBeGreaterThan(screenwriterCompletedIndex)
   })
 
   it('content tab shows loading state without workflow steps while streaming', () => {

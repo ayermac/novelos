@@ -27,7 +27,6 @@ from ._memory_curator_gate import (
 router = APIRouter()
 
 PUBLISH_COMPATIBLE_BLOCKED_NODES = frozenset({
-    "memory_curator",
     "human_review",
     "awaiting_publish",
     "publisher",
@@ -43,13 +42,73 @@ class RunChapterRequest(BaseModel):
     llm_mode: str | None = None
 
 
-def _publish_guard_can_ignore_run(latest_run: dict | None, chapter_status: str | None) -> bool:
+def _publish_guard_can_ignore_run(
+    latest_run: dict | None,
+    chapter_status: str | None,
+    *,
+    memory_ready: bool = False,
+) -> bool:
     """Allow publishing reviewed content when only post-review housekeeping failed."""
     if chapter_status != "reviewed" or not latest_run:
         return False
     if latest_run.get("status") not in ("blocked", "failed"):
         return False
-    return (latest_run.get("current_node") or "") in PUBLISH_COMPATIBLE_BLOCKED_NODES
+    current_node = latest_run.get("current_node") or ""
+    if current_node == "memory_curator":
+        return memory_ready
+    return current_node in PUBLISH_COMPATIBLE_BLOCKED_NODES
+
+
+def _publish_workflow_recovery_error(repo, body: PublishChapterRequest, current_status: str | None):
+    """Return a publish-blocking response when workflow recovery is still needed."""
+    latest_runs = repo.get_workflow_runs_for_project(
+        body.project_id, chapter_number=body.chapter, limit=1
+    )
+    latest_run = latest_runs[0] if latest_runs else None
+    if not latest_run:
+        return None
+    run_status = latest_run.get("status")
+    memory_ready = _has_memory_curator_evidence(repo, body.project_id, body.chapter)
+    ignore_broken_run_for_publish = _publish_guard_can_ignore_run(
+        latest_run,
+        current_status,
+        memory_ready=memory_ready,
+    )
+    run_is_broken = run_status in ("blocked", "failed") and not ignore_broken_run_for_publish
+    run_is_stale = False
+    if run_status == "running":
+        from ...workflow.state_integrity import _run_is_recent
+        if not _run_is_recent(latest_run.get("started_at")):
+            run_is_stale = True
+    if not run_is_broken and not run_is_stale:
+        return None
+    reason = (
+        "工作流被阻塞" if run_status == "blocked"
+        else "工作流运行失败" if run_status == "failed"
+        else "工作流运行超时"
+    )
+    message = f"{reason}，需先恢复工作流再发布"
+    return error_response(
+        "WORKFLOW_RECOVERY_REQUIRED",
+        message,
+        details={
+            "run_status": run_status,
+            "run_id": latest_run.get("id"),
+            "domain_result": blocked(
+                message,
+                user_message=f"{reason}，请先处理工作流恢复",
+                next_action="view_workflow",
+                action_label="查看工作流恢复",
+                details={
+                    "project_id": body.project_id,
+                    "chapter": body.chapter,
+                    "run_status": run_status,
+                    "run_id": latest_run.get("id"),
+                },
+                flags={"publish_blocked": True, "workflow_needs_recovery": True},
+            ).to_dict(),
+        },
+    )
 
 
 def _run_guard_domain_result(guard_error) -> dict:
@@ -594,6 +653,10 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 },
             )
 
+        workflow_error = _publish_workflow_recovery_error(repo, body, current_status)
+        if workflow_error is not None:
+            return workflow_error
+
         # v6.7.9: Narrative continuity gate — hard block before publish
         from ...quality.continuity_gate import evaluate_publish_continuity, SEVERITY_BLOCKING
 
@@ -654,49 +717,6 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                     ).to_dict(),
                 },
             )
-
-        # v6.7.6: Block publish when latest run is blocked/failed/stale-running
-        latest_runs = repo.get_workflow_runs_for_project(
-            body.project_id, chapter_number=body.chapter, limit=1
-        )
-        latest_run = latest_runs[0] if latest_runs else None
-        if latest_run:
-            run_status = latest_run.get("status")
-            ignore_broken_run_for_publish = _publish_guard_can_ignore_run(latest_run, current_status)
-            run_is_broken = run_status in ("blocked", "failed") and not ignore_broken_run_for_publish
-            run_is_stale = False
-            if run_status == "running":
-                from ...workflow.state_integrity import _run_is_recent
-                if not _run_is_recent(latest_run.get("started_at")):
-                    run_is_stale = True
-            if run_is_broken or run_is_stale:
-                reason = (
-                    "工作流被阻塞" if run_status == "blocked"
-                    else "工作流运行失败" if run_status == "failed"
-                    else "工作流运行超时"
-                )
-                message = f"{reason}，需先恢复工作流再发布"
-                return error_response(
-                    "WORKFLOW_RECOVERY_REQUIRED",
-                    message,
-                    details={
-                        "run_status": run_status,
-                        "run_id": latest_run.get("id"),
-                        "domain_result": blocked(
-                            message,
-                            user_message=f"{reason}，请先处理工作流恢复",
-                            next_action="view_workflow",
-                            action_label="查看工作流恢复",
-                            details={
-                                "project_id": body.project_id,
-                                "chapter": body.chapter,
-                                "run_status": run_status,
-                                "run_id": latest_run.get("id"),
-                            },
-                            flags={"publish_blocked": True, "workflow_needs_recovery": True},
-                        ).to_dict(),
-                    },
-                )
 
         memory_result = await _ensure_memory_curated_before_publish(
             request,

@@ -141,3 +141,48 @@ def test_title_guard_accepts_matching_good_title():
 
     assert result.passed is True
     assert result.issues == []
+
+
+def test_title_guard_accepts_chapter_prefixed_split_keyword_title():
+    from novel_factory.quality.title_guard import validate_publish_title
+
+    content = """第6章 喂养倒计时
+
+林辰收到一条加密短信：利息需要“喂养”，坐标是“饲料”。
+拍卖倒计时在走，江城的坐标也开始呼唤。"""
+
+    result = validate_publish_title("第6章 喂养倒计时", content)
+
+    assert result.passed is True
+    assert result.evidence["semantic_title"] == "喂养倒计时"
+    assert result.evidence["keyword_evidence"][0]["match_type"] == "bigram_coverage"
+
+
+def test_title_guard_still_blocks_unrepresented_title():
+    from novel_factory.quality.title_guard import validate_publish_title
+
+    result = validate_publish_title("第6章 帝豪血衣令", "林辰收到短信，拍卖倒计时正在逼近。")
+
+    assert result.passed is False
+    assert any("标题与正文脱节" in issue for issue in result.issues)
+
+
+def test_continuity_title_check_uses_split_keyword_coverage(tmp_path):
+    from novel_factory.quality.continuity_gate import evaluate_chapter_continuity
+
+    repo = _repo(tmp_path)
+    content = """第6章 喂养倒计时
+
+林辰收到一条加密短信：利息需要“喂养”，坐标是“饲料”。
+拍卖倒计时在走，江城的坐标也开始呼唤。"""
+
+    result = evaluate_chapter_continuity(
+        repo,
+        "v6103-proj",
+        1,
+        content,
+        title="第6章 喂养倒计时",
+    )
+
+    assert not any("标题与正文脱节" in issue for issue in result.issues)
+    assert result.evidence["title"]["keyword_evidence"][0]["match_type"] == "bigram_coverage"

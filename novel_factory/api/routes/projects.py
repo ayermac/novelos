@@ -190,6 +190,8 @@ async def get_project(request: Request, project_id: str) -> EnvelopeResponse:
 
         if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
             repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
+        if hasattr(repo, "restore_memory_curator_reset_recovery_runs"):
+            repo.restore_memory_curator_reset_recovery_runs(project_id=project_id)
 
         # Get chapters
         chapters = repo.list_chapters(project_id)
@@ -306,6 +308,8 @@ async def get_project_workspace(request: Request, project_id: str) -> EnvelopeRe
 
         if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
             repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
+        if hasattr(repo, "restore_memory_curator_reset_recovery_runs"):
+            repo.restore_memory_curator_reset_recovery_runs(project_id=project_id)
 
         # Get chapters
         chapters = repo.list_chapters(project_id)
@@ -721,6 +725,9 @@ async def get_project_runs(request: Request, project_id: str) -> EnvelopeRespons
         project = repo.get_project(project_id)
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+
+        if hasattr(repo, "restore_memory_curator_reset_recovery_runs"):
+            repo.restore_memory_curator_reset_recovery_runs(project_id=project_id)
 
         runs = repo.get_workflow_runs_for_project(project_id, limit=50)
 

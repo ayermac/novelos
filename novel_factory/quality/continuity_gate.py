@@ -279,9 +279,18 @@ def _check_title(title: str, content: str) -> tuple[list[str], list[str], dict[s
 
     Returns (issues, suggestions, evidence).
     """
+    from .title_guard import semantic_title_text, title_keyword_covered
+
     issues: list[str] = []
     suggestions: list[str] = []
-    evidence: dict[str, Any] = {"title": title, "title_length": 0, "bad_ending": False, "keyword_match": True}
+    evidence: dict[str, Any] = {
+        "title": title,
+        "semantic_title": "",
+        "title_length": 0,
+        "bad_ending": False,
+        "keyword_match": True,
+        "keyword_evidence": [],
+    }
 
     if not title:
         issues.append("标题缺失：章节没有标题。")
@@ -290,6 +299,8 @@ def _check_title(title: str, content: str) -> tuple[list[str], list[str], dict[s
         return issues, suggestions, evidence
 
     title = str(title).strip()
+    semantic_title = semantic_title_text(title)
+    evidence["semantic_title"] = semantic_title
     evidence["title_length"] = len(title)
 
     # Truncation check: too short or ends with bad character
@@ -302,7 +313,7 @@ def _check_title(title: str, content: str) -> tuple[list[str], list[str], dict[s
         evidence["bad_ending"] = True
 
     # Keyword mismatch: title keywords should appear in content
-    title_keywords = re.findall(r"[\u4e00-\u9fff]{2,8}", title)
+    title_keywords = re.findall(r"[\u4e00-\u9fff]{2,8}", semantic_title)
     content_body = _strip_heading(content or "")
     if title_keywords and content_body:
         mismatches = []
@@ -310,7 +321,9 @@ def _check_title(title: str, content: str) -> tuple[list[str], list[str], dict[s
             # Skip generic chapter numbering words
             if kw in ("第章", "第一章", "第二章", "第三章", "第四章", "第五章"):
                 continue
-            if kw not in content_body:
+            covered, keyword_evidence = title_keyword_covered(kw, content_body)
+            evidence["keyword_evidence"].append(keyword_evidence)
+            if not covered:
                 mismatches.append(kw)
         if mismatches:
             issues.append(

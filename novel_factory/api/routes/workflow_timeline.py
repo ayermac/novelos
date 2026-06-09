@@ -243,6 +243,57 @@ def _get_active_memory_curator_lock(
     return None
 
 
+def _has_memory_curator_timeout_event(repo: Any, run_id: str) -> bool:
+    """Return True when MemoryCurator recorded timeout/failure for the run."""
+    if not run_id:
+        return False
+    try:
+        events = repo.get_workflow_node_events(run_id, node_name="memory_curator")
+    except Exception:
+        return False
+    for event in events:
+        status = str(event.get("status") or "").lower()
+        event_type = str(event.get("event_type") or "").lower()
+        message = f"{event.get('message') or ''} {event.get('error_message') or ''}".lower()
+        if status in {"failed", "error"} or event_type in {"failed", "error"}:
+            return True
+        if "执行超时" in message or "timeout" in message:
+            return True
+    return False
+
+
+def _block_memory_curator_timeout_run_if_needed(repo: Any, run_data: dict | None) -> bool:
+    """Release stale MemoryCurator lock and keep the run blocked at that node."""
+    if (
+        not run_data
+        or run_data.get("status") != "running"
+        or run_data.get("current_node") != "memory_curator"
+    ):
+        return False
+    run_id = str(run_data.get("id") or run_data.get("run_id") or "")
+    project_id = str(run_data.get("project_id") or "")
+    chapter_number = int(run_data.get("chapter_number") or 0)
+    if not run_id or not project_id or not chapter_number:
+        return False
+    if not _has_memory_curator_timeout_event(repo, run_id):
+        return False
+    if hasattr(repo, "release_memory_curator_lock"):
+        try:
+            repo.release_memory_curator_lock(project_id, chapter_number, run_id=run_id)
+        except Exception:
+            pass
+    try:
+        repo.update_workflow_run(
+            run_id,
+            status="blocked",
+            current_node="memory_curator",
+            error_message="节点 memory_curator 执行超时（>600秒），需要补跑记忆提取",
+        )
+    except Exception:
+        pass
+    return True
+
+
 def _parse_db_datetime(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -811,6 +862,12 @@ async def get_workflow_timeline(
                 run_id=run_id,
             )
             chapter = repo.get_chapter(project_id, chapter_number) or chapter
+        if hasattr(repo, "restore_memory_curator_reset_recovery_runs"):
+            repo.restore_memory_curator_reset_recovery_runs(
+                project_id=project_id,
+                chapter_number=chapter_number,
+                run_id=run_id,
+            )
 
         if chapter.get("status") == "revision":
             from ...workflow.reconciliation import reconcile_revision_running_workflows
@@ -863,6 +920,14 @@ async def get_workflow_timeline(
         ):
             target_run = None
 
+        if _block_memory_curator_timeout_run_if_needed(repo, target_run):
+            refreshed_id = target_run.get("id") or target_run.get("run_id")
+            if refreshed_id:
+                target_run = _get_workflow_run_by_id(
+                    repo, project_id, chapter_number, refreshed_id
+                ) or target_run
+            active_memory_lock = _get_active_memory_curator_lock(repo, project_id, chapter_number)
+
         # Reconcile terminal chapter with running run (same logic as runs.py)
         if (
             target_run
@@ -882,6 +947,7 @@ async def get_workflow_timeline(
                     target_run = _get_workflow_run_by_id(
                         repo, project_id, chapter_number, refreshed_id
                     ) or target_run
+                active_memory_lock = _get_active_memory_curator_lock(repo, project_id, chapter_number)
 
         # No run -> empty timeline
         if not target_run:

@@ -541,6 +541,58 @@ class TestWorkflowTimelineApi:
         assert data["next_action"]["target_chapter"] == 1
         assert repo.get_chapter("obs_prod_next_blocked", 1)["status"] == "blocking"
 
+    def test_production_next_prioritizes_blocked_memory_curator_backfill(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_prod_next_memory_blocked", status="reviewed")
+        run_id = _seed_run(
+            repo,
+            "obs_prod_next_memory_blocked",
+            status="blocked",
+            current_node="memory_curator",
+        )
+
+        resp = client.get("/api/projects/obs_prod_next_memory_blocked/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "backfill_memory"
+        assert data["next_action"]["run_id"] == run_id
+        assert data["next_action"]["target_chapter"] == 1
+        assert data["domain_result"]["next_action"] == "backfill_memory"
+
+    def test_production_next_blocks_timeout_memory_curator_before_publish(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_prod_next_memory_timeout", status="reviewed")
+        run_id = _seed_run(
+            repo,
+            "obs_prod_next_memory_timeout",
+            status="running",
+            current_node="memory_curator",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id="obs_prod_next_memory_timeout",
+            chapter_number=1,
+            node_name="memory_curator",
+            event_type="failed",
+            status="failed",
+            message="节点执行超时（>600秒），需要人工介入",
+        )
+        repo.acquire_memory_curator_lock("obs_prod_next_memory_timeout", 1, run_id=run_id)
+
+        resp = client.get("/api/projects/obs_prod_next_memory_timeout/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "backfill_memory"
+        assert data["next_action"]["run_id"] == run_id
+        assert repo.get_memory_curator_lock("obs_prod_next_memory_timeout", 1) is None
+        runs = repo.get_workflow_runs_for_project(
+            "obs_prod_next_memory_timeout",
+            chapter_number=1,
+            limit=1,
+        )
+        assert runs[0]["status"] == "blocked"
+        assert runs[0]["current_node"] == "memory_curator"
+
     def test_timeline_maps_legacy_publish_current_node_to_publisher(self, tmp_path):
         client, repo = _make_client(tmp_path)
         _seed_project_and_chapter(repo, "obs_publish_alias", status="published")

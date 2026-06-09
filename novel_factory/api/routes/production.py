@@ -110,6 +110,97 @@ def _get_stuck_run(repo, project_id: str, current_chapter: int) -> dict | None:
     return None
 
 
+def _has_memory_curator_timeout_event(repo, run_id: str) -> bool:
+    """Return True when MemoryCurator recorded a timeout/failure event."""
+    if not run_id:
+        return False
+    try:
+        events = repo.get_workflow_node_events(run_id, node_name="memory_curator")
+    except Exception:
+        return False
+    for event in events:
+        status = str(event.get("status") or "").lower()
+        event_type = str(event.get("event_type") or "").lower()
+        message = f"{event.get('message') or ''} {event.get('error_message') or ''}".lower()
+        if status in {"failed", "error"} or event_type in {"failed", "error"}:
+            return True
+        if "执行超时" in message or "timeout" in message:
+            return True
+    return False
+
+
+def _block_memory_curator_timeout_run_if_needed(repo, run: dict) -> bool:
+    """Release a timed-out MemoryCurator lock and persist blocked run state."""
+    if (
+        not run
+        or run.get("status") != "running"
+        or run.get("current_node") != "memory_curator"
+    ):
+        return False
+    run_id = str(run.get("id") or run.get("run_id") or "")
+    project_id = str(run.get("project_id") or "")
+    chapter_number = int(run.get("chapter_number") or 0)
+    if not run_id or not project_id or not chapter_number:
+        return False
+    if not _has_memory_curator_timeout_event(repo, run_id):
+        return False
+    if hasattr(repo, "release_memory_curator_lock"):
+        try:
+            repo.release_memory_curator_lock(project_id, chapter_number, run_id=run_id)
+        except Exception:
+            pass
+    try:
+        repo.update_workflow_run(
+            run_id,
+            status="blocked",
+            current_node="memory_curator",
+            error_message="节点 memory_curator 执行超时（>600秒），需要补跑记忆提取",
+        )
+    except Exception:
+        pass
+    return True
+
+
+def _get_memory_curator_recovery_run(repo, project_id: str, current_chapter: int) -> dict | None:
+    """Return latest blocked MemoryCurator run for a terminal chapter."""
+    chapter = repo.get_chapter(project_id, current_chapter)
+    chapter_status = chapter.get("status") if chapter else None
+    if chapter_status not in {"reviewed", "awaiting_publish", "published"}:
+        return None
+    runs = repo.get_workflow_runs_for_project(project_id, chapter_number=current_chapter, limit=5)
+    if not runs:
+        return None
+    latest = runs[0]
+    if _block_memory_curator_timeout_run_if_needed(repo, latest):
+        runs = repo.get_workflow_runs_for_project(project_id, chapter_number=current_chapter, limit=1)
+        latest = runs[0] if runs else latest
+    if (
+        _is_chapter_production_run(latest)
+        and latest.get("status") in {"blocked", "failed"}
+        and latest.get("current_node") == "memory_curator"
+    ):
+        return latest
+    return None
+
+
+def _memory_curator_backfill_action(project_id: str, chapter_number: int, run: dict) -> dict:
+    run_id = run.get("id") or run.get("run_id")
+    return {
+        "key": "backfill_memory",
+        "label": f"补跑第 {chapter_number} 章记忆提取",
+        "description": (
+            f"第 {chapter_number} 章正文已通过审核，但记忆提取节点失败或超时。"
+            "先补跑 Memory Curator，再继续发布。"
+        ),
+        "primary": True,
+        "action_url": f"/api/runs/{run_id}/memory/backfill",
+        "method": "POST",
+        "requires_confirmation": True,
+        "target_chapter": chapter_number,
+        "run_id": run_id,
+    }
+
+
 def _has_pending_memory_updates(repo, project_id: str) -> bool:
     """Check for pending or partial memory update batches."""
     pending_items, actionable_batches = _list_actionable_memory_updates(repo, project_id)
@@ -672,6 +763,10 @@ def _determine_next_action(
     stale_running = _get_project_stale_running_workflow(repo, project_id, timeout_minutes)
     planned_with_content = _get_planned_chapter_with_content(repo, project_id)
     stuck_run = _get_stuck_run(repo, project_id, current_chapter)
+    memory_recovery_run = _get_memory_curator_recovery_run(repo, project_id, current_chapter)
+
+    if memory_recovery_run:
+        return _memory_curator_backfill_action(project_id, current_chapter, memory_recovery_run)
 
     if blocking_ch:
         ch_num = blocking_ch.get("chapter_number", current_chapter)
@@ -908,6 +1003,8 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
 
         if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
             repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
+        if hasattr(repo, "restore_memory_curator_reset_recovery_runs"):
+            repo.restore_memory_curator_reset_recovery_runs(project_id=project_id)
 
         current_chapter = project.get("current_chapter", 1)
 
@@ -2836,6 +2933,20 @@ def _build_production_next_domain_result(
     - Running workflow → pending
     - Ready to generate → success
     """
+    if next_action.get("key") == "backfill_memory":
+        return needs_human(
+            "记忆提取需要补跑",
+            user_message="章节正文已完成，但记忆提取节点失败或超时，需要先补跑记忆提取",
+            next_action="backfill_memory",
+            action_label=next_action.get("label", "补跑记忆提取"),
+            details={
+                "next_action_key": next_action.get("key"),
+                "target_chapter": next_action.get("target_chapter"),
+                "run_id": next_action.get("run_id"),
+            },
+            flags={"memory_backfill_required": True},
+        ).to_dict()
+
     # Check for blocking issues
     if health.get("has_blocking_chapter") or health.get("has_stuck_run"):
         return needs_human(

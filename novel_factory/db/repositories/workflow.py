@@ -243,6 +243,77 @@ class WorkflowRepositoryMixin:
         finally:
             conn.close()
 
+    def restore_memory_curator_reset_recovery_runs(
+        self,
+        project_id: str | None = None,
+        chapter_number: int | None = None,
+        run_id: str | None = None,
+    ) -> int:
+        """Restore reset_recovery rows that actually hide MemoryCurator failure.
+
+        Earlier recovery handling could mark a reviewed chapter's timed-out
+        MemoryCurator run as ``completed/reset_recovery``. That makes the UI
+        look publish-ready while the real failed node is still MemoryCurator.
+        Restore only rows with explicit MemoryCurator failure/timeout events.
+        """
+        conn = self._conn()
+        try:
+            query = (
+                "SELECT id, project_id, chapter_number FROM workflow_runs "
+                "WHERE status='completed' "
+                "AND current_node='reset_recovery' "
+                "AND EXISTS ("
+                "  SELECT 1 FROM chapters c "
+                "  WHERE c.project_id=workflow_runs.project_id "
+                "  AND c.chapter_number=workflow_runs.chapter_number "
+                "  AND c.status IN ('reviewed', 'awaiting_publish', 'published')"
+                ") "
+                "AND EXISTS ("
+                "  SELECT 1 FROM workflow_node_events wne "
+                "  WHERE wne.run_id=workflow_runs.id "
+                "  AND wne.node_name='memory_curator' "
+                "  AND ("
+                "    lower(COALESCE(wne.status, '')) IN ('failed', 'error') "
+                "    OR lower(COALESCE(wne.event_type, '')) IN ('failed', 'error') "
+                "    OR COALESCE(wne.message, '') LIKE '%执行超时%' "
+                "    OR lower(COALESCE(wne.message, '')) LIKE '%timeout%' "
+                "    OR COALESCE(wne.error_message, '') LIKE '%执行超时%' "
+                "    OR lower(COALESCE(wne.error_message, '')) LIKE '%timeout%'"
+                "  )"
+                ")"
+            )
+            params: list[Any] = []
+            if project_id is not None:
+                query += " AND project_id=?"
+                params.append(project_id)
+            if chapter_number is not None:
+                query += " AND chapter_number=?"
+                params.append(chapter_number)
+            if run_id is not None:
+                query += " AND id=?"
+                params.append(run_id)
+            rows = conn.execute(query, params).fetchall()
+            for row in rows:
+                conn.execute(
+                    "UPDATE workflow_runs SET "
+                    "status='blocked', "
+                    "current_node='memory_curator', "
+                    "error_message='节点 memory_curator 执行超时（>600秒），需要补跑记忆提取', "
+                    "completed_at=datetime('now','+8 hours') "
+                    "WHERE id=?",
+                    (row["id"],),
+                )
+                conn.execute(
+                    "DELETE FROM memory_curator_locks "
+                    "WHERE project_id=? AND chapter_number=? "
+                    "AND (run_id=? OR run_id IS NULL)",
+                    (row["project_id"], row["chapter_number"], row["id"]),
+                )
+            conn.commit()
+            return len(rows)
+        finally:
+            conn.close()
+
     def reconcile_terminal_chapter_running_workflows(
         self,
         project_id: str | None = None,
@@ -276,6 +347,22 @@ class WorkflowRepositoryMixin:
                 "    AND ml.status='running' "
                 "    AND (ml.run_id=wr.id OR ml.run_id IS NULL) "
                 "    AND ml.locked_at > datetime('now', '+8 hours', '-120 minutes')"
+                "  )"
+                ")"
+                " AND NOT ("
+                "  wr.current_node='memory_curator' "
+                "  AND EXISTS ("
+                "    SELECT 1 FROM workflow_node_events wne "
+                "    WHERE wne.run_id=wr.id "
+                "    AND wne.node_name='memory_curator' "
+                "    AND ("
+                "      lower(COALESCE(wne.status, '')) IN ('failed', 'error') "
+                "      OR lower(COALESCE(wne.event_type, '')) IN ('failed', 'error') "
+                "      OR COALESCE(wne.message, '') LIKE '%执行超时%' "
+                "      OR lower(COALESCE(wne.message, '')) LIKE '%timeout%' "
+                "      OR COALESCE(wne.error_message, '') LIKE '%执行超时%' "
+                "      OR lower(COALESCE(wne.error_message, '')) LIKE '%timeout%'"
+                "    )"
                 "  )"
                 ")"
             )

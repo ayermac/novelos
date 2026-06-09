@@ -369,6 +369,239 @@ def test_timeline_keeps_running_memory_curator_visible_for_reviewed_chapter(clie
     assert persisted["current_node"] == "memory_curator"
 
 
+def test_memory_backfill_releases_timeout_event_lock_before_retry(client, db_path):
+    """A MemoryCurator node timeout event should make the same-run lock recoverable immediately."""
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    repo.create_project(project_id="memory-lock-timeout-backfill-proj", name="Memory Timeout Backfill", genre="test")
+    repo.add_chapter("memory-lock-timeout-backfill-proj", 1, title="Ch1", status="reviewed")
+    repo.save_chapter_content(
+        "memory-lock-timeout-backfill-proj",
+        1,
+        "第1章\n\n陆澈发现记忆提取超时后仍需补跑。",
+    )
+    run_id = repo.create_workflow_run("memory-lock-timeout-backfill-proj", 1)
+    repo.update_workflow_run(run_id, status="running", current_node="memory_curator")
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id="memory-lock-timeout-backfill-proj",
+        chapter_number=1,
+        node_name="memory_curator",
+        event_type="failed",
+        status="failed",
+        message="节点执行超时（>600秒），需要人工介入",
+        error_message="节点执行超时（>600秒），需要人工介入",
+        latency_ms=600000,
+    )
+    lock = repo.acquire_memory_curator_lock("memory-lock-timeout-backfill-proj", 1, run_id=run_id)
+    assert lock["acquired"] is True
+
+    response = client.post(
+        f"/api/runs/{run_id}/memory/backfill",
+        json={"confirm": True},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["data"]["skipped"] is False
+    assert repo.get_memory_curator_lock("memory-lock-timeout-backfill-proj", 1) is None
+    conn = repo._conn()
+    try:
+        row = conn.execute("SELECT status, current_node FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
+    finally:
+        conn.close()
+    assert row["status"] == "blocked"
+    assert row["current_node"] == "memory_curator"
+    assert repo.get_chapter("memory-lock-timeout-backfill-proj", 1)["status"] == "reviewed"
+
+
+def test_timeline_blocks_timeout_event_memory_lock(client, db_path):
+    """Timeline should keep timeout MemoryCurator at its failed node, not publish-ready."""
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    repo.create_project(project_id="memory-lock-timeout-timeline-proj", name="Memory Timeout Timeline", genre="test")
+    repo.add_chapter("memory-lock-timeout-timeline-proj", 1, title="Ch1", status="reviewed")
+    repo.save_chapter_content("memory-lock-timeout-timeline-proj", 1, "第1章\n\n陆澈等待超时记忆锁恢复。")
+    run_id = repo.create_workflow_run("memory-lock-timeout-timeline-proj", 1)
+    repo.update_workflow_run(run_id, status="running", current_node="memory_curator")
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id="memory-lock-timeout-timeline-proj",
+        chapter_number=1,
+        node_name="memory_curator",
+        event_type="failed",
+        status="failed",
+        message="节点执行超时（>600秒），需要人工介入",
+        error_message="节点执行超时（>600秒），需要人工介入",
+        latency_ms=600000,
+    )
+    repo.acquire_memory_curator_lock("memory-lock-timeout-timeline-proj", 1, run_id=run_id)
+
+    response = client.get("/api/projects/memory-lock-timeout-timeline-proj/chapters/1/workflow-timeline")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    data = body["data"]
+    assert data["run_id"] == run_id
+    assert data["run_status"] == "blocked"
+    assert data["current_node"] == "memory_curator"
+    assert data["memory_curator_running"] is False
+    assert data["memory_curator_lock"] is None
+    assert data["recovery"]["recommended_action"] == "backfill_memory"
+    assert repo.get_memory_curator_lock("memory-lock-timeout-timeline-proj", 1) is None
+    persisted = repo.get_workflow_runs_for_project(
+        "memory-lock-timeout-timeline-proj",
+        chapter_number=1,
+        limit=1,
+    )[0]
+    assert persisted["status"] == "blocked"
+    assert persisted["current_node"] == "memory_curator"
+
+
+def test_timeline_restores_reset_recovery_hiding_memory_timeout(client, db_path):
+    """A reset_recovery marker must not hide an unfinished MemoryCurator timeout."""
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    repo.create_project(project_id="memory-lock-reset-recovery-proj", name="Memory Reset Recovery", genre="test")
+    repo.add_chapter("memory-lock-reset-recovery-proj", 1, title="Ch1", status="reviewed")
+    repo.save_chapter_content("memory-lock-reset-recovery-proj", 1, "第1章\n\n陆澈等待恢复被错误清理的记忆节点。")
+    run_id = repo.create_workflow_run("memory-lock-reset-recovery-proj", 1)
+    repo.update_workflow_run(run_id, status="running", current_node="memory_curator")
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id="memory-lock-reset-recovery-proj",
+        chapter_number=1,
+        node_name="memory_curator",
+        event_type="failed",
+        status="failed",
+        message="节点执行超时（>600秒），需要人工介入",
+        error_message="节点执行超时（>600秒），需要人工介入",
+        latency_ms=600000,
+    )
+    repo.acquire_memory_curator_lock("memory-lock-reset-recovery-proj", 1, run_id=run_id)
+    repo.update_workflow_run(run_id, status="completed", current_node="reset_recovery", clear_error=True)
+
+    response = client.get("/api/projects/memory-lock-reset-recovery-proj/chapters/1/workflow-timeline")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["run_id"] == run_id
+    assert data["run_status"] == "blocked"
+    assert data["current_node"] == "memory_curator"
+    assert data["memory_curator_running"] is False
+    assert data["memory_curator_lock"] is None
+    assert data["recovery"]["recommended_action"] == "backfill_memory"
+    assert repo.get_memory_curator_lock("memory-lock-reset-recovery-proj", 1) is None
+    persisted = repo.get_workflow_runs_for_project(
+        "memory-lock-reset-recovery-proj",
+        chapter_number=1,
+        limit=1,
+    )[0]
+    assert persisted["status"] == "blocked"
+    assert persisted["current_node"] == "memory_curator"
+
+
+def test_workspace_restores_reset_recovery_hiding_memory_timeout(client, db_path):
+    """Workspace recent runs should not show reset_recovery for MemoryCurator timeout recovery."""
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    repo.create_project(project_id="memory-lock-reset-workspace-proj", name="Memory Reset Workspace", genre="test")
+    repo.add_chapter("memory-lock-reset-workspace-proj", 1, title="Ch1", status="reviewed")
+    run_id = repo.create_workflow_run("memory-lock-reset-workspace-proj", 1)
+    repo.update_workflow_run(run_id, status="running", current_node="memory_curator")
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id="memory-lock-reset-workspace-proj",
+        chapter_number=1,
+        node_name="memory_curator",
+        event_type="failed",
+        status="failed",
+        message="节点执行超时（>600秒），需要人工介入",
+    )
+    repo.update_workflow_run(run_id, status="completed", current_node="reset_recovery", clear_error=True)
+
+    response = client.get("/api/projects/memory-lock-reset-workspace-proj/workspace")
+
+    assert response.status_code == 200
+    runs = response.json()["data"]["recent_runs"]
+    assert runs[0]["id"] == run_id
+    assert runs[0]["status"] == "blocked"
+    assert runs[0]["current_node"] == "memory_curator"
+
+
+def test_mark_stuck_accepts_memory_curator_timeout_event_before_threshold(client, db_path):
+    """Mark-stuck should honor MemoryCurator's own timeout event, not only the 30-minute run threshold."""
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    repo.create_project(project_id="memory-lock-timeout-mark-proj", name="Memory Timeout Mark", genre="test")
+    repo.add_chapter("memory-lock-timeout-mark-proj", 1, title="Ch1", status="reviewed")
+    repo.save_chapter_content("memory-lock-timeout-mark-proj", 1, "第1章\n\n陆澈等待标记超时记忆运行。")
+    run_id = repo.create_workflow_run("memory-lock-timeout-mark-proj", 1)
+    repo.update_workflow_run(run_id, status="running", current_node="memory_curator")
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id="memory-lock-timeout-mark-proj",
+        chapter_number=1,
+        node_name="memory_curator",
+        event_type="failed",
+        status="failed",
+        message="节点执行超时（>600秒），需要人工介入",
+        error_message="节点执行超时（>600秒），需要人工介入",
+        latency_ms=600000,
+    )
+    repo.acquire_memory_curator_lock("memory-lock-timeout-mark-proj", 1, run_id=run_id)
+
+    response = client.post(f"/api/runs/{run_id}/recovery/mark-stuck", json={"confirm": True})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is True
+    assert body["data"]["workflow_status"] == "blocked"
+    assert body["data"]["released_memory_lock"] is True
+    assert repo.get_memory_curator_lock("memory-lock-timeout-mark-proj", 1) is None
+    conn = repo._conn()
+    try:
+        row = conn.execute("SELECT status, current_node FROM workflow_runs WHERE id=?", (run_id,)).fetchone()
+    finally:
+        conn.close()
+    assert row["status"] == "blocked"
+    assert row["current_node"] == "memory_curator"
+    assert repo.get_chapter("memory-lock-timeout-mark-proj", 1)["status"] == "reviewed"
+
+
+def test_reset_recovery_rejects_terminal_memory_curator_timeout(client, db_path):
+    """Reset recovery must not clear a terminal chapter's MemoryCurator failure."""
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    repo.create_project(project_id="memory-lock-reset-reject-proj", name="Memory Reset Reject", genre="test")
+    repo.add_chapter("memory-lock-reset-reject-proj", 1, title="Ch1", status="reviewed")
+    run_id = repo.create_workflow_run("memory-lock-reset-reject-proj", 1)
+    repo.update_workflow_run(
+        run_id,
+        status="blocked",
+        current_node="memory_curator",
+        error_message="节点 memory_curator 执行超时（>600秒），需要人工介入",
+    )
+
+    response = client.post(f"/api/runs/{run_id}/recovery/reset", json={"confirm": True})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["ok"] is False
+    assert body["error"]["code"] == "MEMORY_BACKFILL_REQUIRED"
+    row = repo.get_workflow_runs_for_project("memory-lock-reset-reject-proj", chapter_number=1, limit=1)[0]
+    assert row["status"] == "blocked"
+    assert row["current_node"] == "memory_curator"
+
+
 def test_publish_ignores_stale_memory_lock_when_batch_exists(client, db_path):
     """A stale lock should not make publish rerun or block after memory already exists."""
     from novel_factory.db.repository import Repository

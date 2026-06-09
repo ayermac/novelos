@@ -128,7 +128,6 @@ interface WorkflowLogRow {
 const STUCK_RUN_THRESHOLD_MINUTES = 30
 const TERMINAL_CHAPTER_STATUSES = new Set(['reviewed', 'awaiting_publish', 'published'])
 const PUBLISH_COMPATIBLE_BLOCKED_NODES = new Set([
-  'memory_curator',
   'human_review',
   'awaiting_publish',
   'publisher',

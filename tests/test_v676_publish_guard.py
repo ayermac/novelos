@@ -22,7 +22,13 @@ def _setup_db(tmp_path: Path):
     init_db(db_path)
     repo = Repository(str(db_path))
     repo.create_project(PROJECT_ID, "测试项目", "")
-    repo.add_chapter(PROJECT_ID, 1, "第一章")
+    repo.add_chapter(PROJECT_ID, 1, "第一章 发布校验")
+    repo.save_chapter_content(
+        PROJECT_ID,
+        1,
+        "发布校验正文已经完成，章节具备可信记忆和发布条件。",
+        title="第一章 发布校验",
+    )
     repo.update_chapter_status(PROJECT_ID, 1, "reviewed")
     return str(db_path), repo
 
@@ -154,8 +160,30 @@ class TestPublishGuardWorkflowRecovery:
         error_code = (body.get("error") or {}).get("code")
         assert error_code != "WORKFLOW_RECOVERY_REQUIRED"
 
-    def test_blocked_memory_curator_run_does_not_block_reviewed_publish(self, tmp_path):
-        """Post-review MemoryCurator timeout should not trap a reviewed chapter."""
+    def test_blocked_memory_curator_run_blocks_publish_without_trusted_memory(self, tmp_path):
+        """MemoryCurator failure still blocks publish when trusted memory is missing."""
+        db_path, repo = _setup_db(tmp_path)
+        run_id = _create_run(repo, "blocked")
+        repo.update_workflow_run(
+            run_id,
+            status="blocked",
+            current_node="memory_curator",
+            error_message="节点 memory_curator 执行超时（>300秒），需要人工介入",
+        )
+
+        with _api_client(db_path) as client:
+            resp = client.post(
+                "/api/publish/chapter",
+                json={"project_id": PROJECT_ID, "chapter": 1},
+            )
+
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["error"]["code"] == "WORKFLOW_RECOVERY_REQUIRED"
+        assert repo.get_chapter(PROJECT_ID, 1)["status"] == "reviewed"
+
+    def test_blocked_memory_curator_run_does_not_block_reviewed_publish_with_trusted_memory(self, tmp_path):
+        """Post-review MemoryCurator timeout can be ignored only after trusted memory exists."""
         db_path, repo = _setup_db(tmp_path)
         _create_trusted_memory_batch(repo)
         run_id = _create_run(repo, "blocked")

@@ -394,6 +394,10 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
 
         # Get chapter info
         chapter = repo.get_chapter(run_data["project_id"], run_data["chapter_number"])
+        if _block_memory_curator_timeout_run_if_needed(repo, run_data):
+            refreshed = _get_run_by_id(repo, run_id, reconcile=False)
+            if refreshed:
+                run_data = refreshed
         reconciliation = {"runs": 0, "tasks": 0, "run_ids": []}
         if (
             chapter
@@ -584,6 +588,34 @@ async def reset_run_chapter(
 
         current_status = chapter.get("status", "")
         preserve_chapter_status = _run_recovery_preserves_chapter_status(run_data, current_status)
+        if (
+            current_status in PUBLISH_READY_CHAPTER_STATUSES
+            and run_data.get("current_node") == "memory_curator"
+            and run_data.get("status") in {"blocked", "failed", "running"}
+        ):
+            message = "记忆整理节点失败或超时，请补跑记忆提取，不要清除为发布态。"
+            return error_response(
+                "MEMORY_BACKFILL_REQUIRED",
+                message,
+                details={
+                    "run_id": run_id,
+                    "project_id": project_id,
+                    "chapter_number": chapter_number,
+                    "domain_result": blocked(
+                        message,
+                        user_message=message,
+                        next_action="backfill_memory",
+                        action_label="补跑记忆提取",
+                        details={
+                            "run_id": run_id,
+                            "project_id": project_id,
+                            "chapter_number": chapter_number,
+                            "error_code": "MEMORY_BACKFILL_REQUIRED",
+                        },
+                        flags={"memory_backfill_required": True},
+                    ).to_dict(),
+                },
+            )
         if current_status not in RESETTABLE_CHAPTER_STATUSES and not preserve_chapter_status:
             return error_response(
                 "INVALID_STATUS",
@@ -893,6 +925,8 @@ async def backfill_run_memory(
 
         project_id = run_data["project_id"]
         chapter_number = int(run_data["chapter_number"])
+        if _block_memory_curator_timeout_run_if_needed(repo, run_data):
+            run_data = _get_run_by_id(repo, run_id, reconcile=False) or run_data
         chapter = repo.get_chapter(project_id, chapter_number)
         if not chapter:
             message = f"章节 {chapter_number} 不存在"
@@ -963,6 +997,16 @@ async def backfill_run_memory(
                 lock = repo.get_memory_curator_lock(project_id, chapter_number)
             except Exception:
                 lock = None
+        if lock and str(lock.get("status") or "") == "running":
+            active_run_id = lock.get("run_id")
+            if _release_memory_timeout_lock_if_recoverable(
+                repo,
+                project_id,
+                chapter_number,
+                str(active_run_id or ""),
+            ):
+                lock = repo.get_memory_curator_lock(project_id, chapter_number) if hasattr(repo, "get_memory_curator_lock") else None
+
         if lock and str(lock.get("status") or "") == "running":
             active_run_id = lock.get("run_id")
             same_source_run = active_run_id and str(active_run_id) == str(run_id)
@@ -1224,7 +1268,7 @@ async def backfill_run_memory(
         )
 
 
-def _get_run_by_id(repo, run_id: str) -> dict | None:
+def _get_run_by_id(repo, run_id: str, *, reconcile: bool = True) -> dict | None:
     """Fetch workflow_run by id."""
     conn = repo._conn()
     try:
@@ -1235,9 +1279,18 @@ def _get_run_by_id(repo, run_id: str) -> dict | None:
     if not run_data:
         return None
 
+    if reconcile and hasattr(repo, "restore_memory_curator_reset_recovery_runs"):
+        restored = repo.restore_memory_curator_reset_recovery_runs(run_id=run_id)
+        if restored:
+            return _get_run_by_id(repo, run_id, reconcile=False)
+
+    if reconcile and _block_memory_curator_timeout_run_if_needed(repo, run_data):
+        return _get_run_by_id(repo, run_id, reconcile=False)
+
     chapter = repo.get_chapter(run_data["project_id"], run_data["chapter_number"])
     if (
-        chapter
+        reconcile
+        and chapter
         and run_data.get("status") == "running"
         and chapter.get("status") in ("reviewed", "awaiting_publish", "published")
         and hasattr(repo, "reconcile_terminal_chapter_running_workflows")
@@ -1340,7 +1393,7 @@ def _build_run_health_item(repo, run_data: dict, timeout_minutes: int) -> dict:
 def _mark_stuck_run_for_recovery(repo, settings, run_id: str) -> dict:
     """Shared implementation for single and batch mark-stuck actions."""
     timeout_minutes = settings.workflow.task_timeout_minutes
-    run_data = _get_run_by_id(repo, run_id)
+    run_data = _get_run_by_id(repo, run_id, reconcile=False)
     if not run_data:
         return {
             "ok": False,
@@ -1626,9 +1679,12 @@ def _detect_stuck_run(repo, run_data: dict, timeout_minutes: int) -> dict:
     except Exception:
         running_tasks = []
 
-    stuck = run_stuck or task_stuck
+    memory_timeout_event = _has_memory_curator_timeout_event(repo, str(run_data.get("id") or ""))
+    stuck = run_stuck or task_stuck or memory_timeout_event
     reason = None
-    if stuck:
+    if memory_timeout_event:
+        reason = "MemoryCurator 已记录节点超时/失败事件，可直接标记阻塞并释放记忆锁。"
+    elif stuck:
         reason = (
             f"运行已超过 {timeout_minutes} 分钟仍处于 running，"
             "可先标记为阻塞再执行恢复。"
@@ -1639,6 +1695,78 @@ def _detect_stuck_run(repo, run_data: dict, timeout_minutes: int) -> dict:
         "elapsed_minutes": elapsed,
         "running_tasks": running_tasks,
     }
+
+
+def _has_memory_curator_timeout_event(repo, run_id: str) -> bool:
+    """Return True when MemoryCurator already recorded a timeout/failure event."""
+    if not run_id:
+        return False
+    try:
+        events = repo.get_workflow_node_events(run_id, node_name="memory_curator")
+    except Exception:
+        return False
+    for event in events:
+        status = str(event.get("status") or "").lower()
+        event_type = str(event.get("event_type") or "").lower()
+        message = f"{event.get('message') or ''} {event.get('error_message') or ''}".lower()
+        if status in {"failed", "error"} or event_type in {"failed", "error"}:
+            return True
+        if "执行超时" in message or "timeout" in message:
+            return True
+    return False
+
+
+def _block_memory_curator_timeout_run_if_needed(repo, run_data: dict) -> bool:
+    """Convert a timed-out MemoryCurator run to an explicit blocked node."""
+    if (
+        not run_data
+        or run_data.get("status") != "running"
+        or run_data.get("current_node") != "memory_curator"
+    ):
+        return False
+    run_id = str(run_data.get("id") or run_data.get("run_id") or "")
+    project_id = str(run_data.get("project_id") or "")
+    chapter_number = int(run_data.get("chapter_number") or 0)
+    if not run_id or not project_id or not chapter_number:
+        return False
+    if not _has_memory_curator_timeout_event(repo, run_id):
+        return False
+    _release_memory_timeout_lock_if_recoverable(
+        repo,
+        project_id,
+        chapter_number,
+        run_id,
+    )
+    return True
+
+
+def _release_memory_timeout_lock_if_recoverable(
+    repo,
+    project_id: str,
+    chapter_number: int,
+    run_id: str,
+) -> bool:
+    """Release a MemoryCurator lock after that same run already timed out.
+
+    This is intentionally not a publish-ready reconciliation. The original run
+    stays at memory_curator and becomes blocked, so the UI still shows the
+    correct failed node and does not expose publish as the primary action.
+    """
+    if not run_id or not _has_memory_curator_timeout_event(repo, run_id):
+        return False
+    released = False
+    if hasattr(repo, "release_memory_curator_lock"):
+        released = bool(repo.release_memory_curator_lock(project_id, chapter_number, run_id=run_id))
+    try:
+        repo.update_workflow_run(
+            run_id,
+            status="blocked",
+            current_node="memory_curator",
+            error_message="节点 memory_curator 执行超时（>600秒），需要补跑记忆提取",
+        )
+    except Exception:
+        pass
+    return released
 
 
 def _set_chapter_status_unchecked(
@@ -1819,6 +1947,7 @@ def _build_steps_timeline(
     if (
         graph_name == "chapter_production"
         and workflow_status == "running"
+        and current_node != "memory_curator"
         and final_status in ("reviewed", "awaiting_publish", "published")
     ):
         workflow_status = "completed"
