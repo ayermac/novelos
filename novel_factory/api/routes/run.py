@@ -694,8 +694,11 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
         from ...quality.title_guard import repair_publish_title, validate_publish_title
 
         title_guard = validate_publish_title(chapter.get("title"), chapter.get("content"))
+        title_repair_details = None
+        title_guard_warning = None
         if not title_guard.passed:
             title_repair = repair_publish_title(chapter.get("title"), chapter.get("content"), body.chapter)
+            title_repair_details = title_repair.to_dict()
             if title_repair.repaired and title_repair.title is not None:
                 repo.save_chapter_content(
                     body.project_id,
@@ -706,36 +709,12 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 chapter = repo.get_chapter(body.project_id, body.chapter) or chapter
                 title_guard = title_repair.guard or validate_publish_title(chapter.get("title"), chapter.get("content"))
             if not title_guard.passed:
-                title_repair_details = title_repair.to_dict()
-            else:
-                title_repair_details = title_repair.to_dict()
-
-        if not title_guard.passed:
-            message = "标题检查未通过，发布被拒绝"
-            return error_response(
-                "TITLE_GUARD_BLOCKED",
-                message,
-                details={
+                title_guard_warning = {
                     "issues": title_guard.issues,
                     "suggestions": title_guard.suggestions,
                     "evidence": title_guard.evidence,
                     "repair": title_repair_details,
-                    "domain_result": blocked(
-                        message,
-                        user_message="章节标题疑似缺失、截断或与正文脱节，请修复后再发布",
-                        next_action="edit_title",
-                        action_label="修改标题",
-                        details={
-                            "project_id": body.project_id,
-                            "chapter": body.chapter,
-                            "title_issues": title_guard.issues,
-                            "title_suggestions": title_guard.suggestions,
-                            "error_code": "TITLE_GUARD_BLOCKED",
-                        },
-                        flags={"publish_blocked": True, "title_blocking": True},
-                    ).to_dict(),
-                },
-            )
+                }
 
         memory_result = await _ensure_memory_curated_before_publish(
             request,
@@ -810,8 +789,13 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 details={
                     "chapter_status": "published",
                     "memory_curator_processed": memory_result.get("memory_curator_processed", False),
+                    "title_guard_warning": title_guard_warning,
                 },
-                flags={"chapter_published": True, "memory_trusted": True},
+                flags={
+                    "chapter_published": True,
+                    "memory_trusted": True,
+                    "title_warning": bool(title_guard_warning),
+                },
             ).to_dict()
         else:
             domain_result = partial_success(
@@ -823,18 +807,28 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                     "chapter_status": "published",
                     "memory_curator_processed": memory_result.get("memory_curator_processed", False),
                     "memory_incomplete": memory_result.get("memory_incomplete", False),
+                    "title_guard_warning": title_guard_warning,
                 },
-                flags={"chapter_published": True, "memory_trusted": False},
+                flags={
+                    "chapter_published": True,
+                    "memory_trusted": False,
+                    "title_warning": bool(title_guard_warning),
+                },
             ).to_dict()
 
-        return envelope_response({
+        response_data = {
             "project_id": body.project_id,
             "chapter": body.chapter,
             "chapter_status": "published",
             **memory_result,
             "message": f"第 {body.chapter} 章已发布",
             "domain_result": domain_result,
-        })
+        }
+        if title_repair_details:
+            response_data["title_repair"] = title_repair_details
+        if title_guard_warning:
+            response_data["title_guard_warning"] = title_guard_warning
+        return envelope_response(response_data)
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"发布章节失败: {str(e)}")

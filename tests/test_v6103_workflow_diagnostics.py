@@ -39,7 +39,7 @@ def _trusted_memory(repo: Repository, chapter_number: int = 1) -> None:
     )
 
 
-def test_title_guard_blocks_truncated_title_before_manual_publish(tmp_path):
+def test_publish_allows_unrepairable_title_with_warning(tmp_path):
     repo = _repo(tmp_path)
     repo.save_chapter_content(
         "v6103-proj",
@@ -66,10 +66,11 @@ def test_title_guard_blocks_truncated_title_before_manual_publish(tmp_path):
         resp = client.post("/api/publish/chapter", json={"project_id": "v6103-proj", "chapter": 1})
 
     body = resp.json()
-    assert body["ok"] is False
-    assert body["error"]["code"] == "TITLE_GUARD_BLOCKED"
-    assert body["error"]["details"]["domain_result"]["flags"]["title_blocking"] is True
-    assert repo.get_chapter("v6103-proj", 1)["status"] == "reviewed"
+    assert body["ok"] is True
+    assert body["data"]["chapter_status"] == "published"
+    assert body["data"]["title_guard_warning"]["issues"]
+    assert body["data"]["domain_result"]["flags"]["title_warning"] is True
+    assert repo.get_chapter("v6103-proj", 1)["status"] == "published"
 
 
 def test_publish_accepts_awaiting_publish_chapter(tmp_path):

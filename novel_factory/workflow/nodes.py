@@ -2024,17 +2024,12 @@ def publisher_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
                 chapter = repo.get_chapter(project_id, chapter_number) or chapter
                 title_guard = title_repair.guard or validate_publish_title(chapter.get("title"), chapter.get("content"))
         if not title_guard.passed:
-            error_msg = "发布前标题检查未通过：" + "; ".join(title_guard.issues[:3])
+            warning_msg = "发布前标题检查提醒：" + "; ".join(title_guard.issues[:3])
             _log_node_event(
-                state, repo, "publisher", "failed",
-                status="failed", error_message=error_msg,
+                state, repo, "publisher", "title_warning",
+                status="warning", message=warning_msg,
             )
-            _finalize_run(state, repo, "failed", error_msg)
-            return {
-                "error": error_msg,
-                "requires_human": True,
-                "title_guard": title_guard.to_dict(),
-            }
+            state["title_guard_warning"] = title_guard.to_dict()
 
     # v6.8.5: Reuse quality_gate results if available (continuity already checked)
     quality_gate = state.get("quality_gate", {}) or {}
