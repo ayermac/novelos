@@ -106,6 +106,19 @@ interface RunRecovery {
       label: string
       reason: string
     }
+    retry_current_node?: {
+      enabled: boolean
+      label: string
+      reason: string
+      target_status?: string | null
+      target_node?: string | null
+      resolved_failed_node?: string | null
+    }
+    backfill_memory?: {
+      enabled: boolean
+      label: string
+      reason: string
+    }
   }
 }
 
@@ -128,6 +141,17 @@ interface RunRecoveryMarkStuckResult {
   workflow_status: string
   message: string
   closed_running_tasks: number
+  recovery: RunRecovery
+}
+
+interface RunRecoveryRetryNodeResult {
+  recovered: boolean
+  previous_status: string
+  new_status: string
+  retry_node: string
+  retry_label: string
+  resolved_failed_node?: string | null
+  message: string
   recovery: RunRecovery
 }
 
@@ -202,6 +226,7 @@ export default function RunDetail() {
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null)
   const [recovering, setRecovering] = useState(false)
   const [markingStuck, setMarkingStuck] = useState(false)
+  const [retryingNode, setRetryingNode] = useState(false)
   const [memoryBackfilling, setMemoryBackfilling] = useState(false)
 
   const load = async () => {
@@ -281,6 +306,37 @@ export default function RunDetail() {
       await load()
     } else {
       setRecoveryError(result.error?.message || '标记卡住运行失败')
+    }
+  }
+
+  const handleRetryCurrentNode = async () => {
+    if (!runId || !recovery?.actions?.retry_current_node?.enabled) return
+    const action = recovery.actions.retry_current_node
+    const ok = await dialog.confirm({
+      title: action.label || '重试当前节点',
+      message: action.reason || '确认保留已有产物，只恢复到失败节点前的安全状态？',
+      tone: 'warning',
+      confirmLabel: '定点重试',
+    })
+    if (!ok) return
+
+    setRetryingNode(true)
+    setRecoveryError(null)
+    setRecoveryMessage(null)
+    const result = await post<RunRecoveryRetryNodeResult>(`/runs/${runId}/recovery/retry-node`, { confirm: true })
+    setRetryingNode(false)
+
+    if (result.ok && result.data) {
+      setRecovery(result.data.recovery)
+      setRecoveryMessage(result.data.message || `已恢复到 ${result.data.new_status}，可继续生成。`)
+      await load()
+    } else {
+      const details = result.error?.details
+      const domainResult = details?.domain_result && typeof details.domain_result === 'object'
+        ? details.domain_result as OperationResult
+        : null
+      const actionHint = domainResult ? getActionHint(domainResult) : ''
+      setRecoveryError((domainResult?.user_message || domainResult?.message || result.error?.message || '定点重试恢复失败') + (actionHint ? `\n建议操作：${actionHint}` : ''))
     }
   }
 
@@ -485,22 +541,39 @@ export default function RunDetail() {
                 {/* v6.6.7: Memory backfill button with state-aware labels */}
                 {(() => {
                   const ms = data.memory_status
-                  const hasTrusted = ms?.memory_trusted
+                  const hasTrusted = Boolean(ms?.memory_trusted)
                   const hasFallback = ms?.memory_status === 'fallback'
+                  const recoveryBackfillEnabled = Boolean(recovery.actions?.backfill_memory?.enabled)
                   const isTerminal = ['reviewed', 'awaiting_publish', 'published'].includes(data.chapter_status)
                   if (!isTerminal) return null
                   return (
                     <>
                       <button
-                        className={`btn ${hasTrusted ? 'btn-secondary' : 'btn-primary'}`}
-                        onClick={() => handleMemoryBackfill(hasFallback)}
-                        disabled={memoryBackfilling || hasTrusted}
-                        title={hasTrusted ? '已存在可信记忆批次' : hasFallback ? '重新提取可信记忆' : '补跑记忆提取'}
+                        className={`btn ${hasTrusted && !recoveryBackfillEnabled ? 'btn-secondary' : 'btn-primary'}`}
+                        onClick={() => handleMemoryBackfill(hasFallback || (hasTrusted && recoveryBackfillEnabled))}
+                        disabled={memoryBackfilling || (hasTrusted && !recoveryBackfillEnabled)}
+                        title={
+                          recoveryBackfillEnabled
+                            ? recovery.actions?.backfill_memory?.reason || '补跑记忆提取'
+                            : hasTrusted
+                              ? '已存在可信记忆批次'
+                              : hasFallback
+                                ? '重新提取可信记忆'
+                                : '补跑记忆提取'
+                        }
                       >
                         <DatabaseZap size={14} />
-                        {memoryBackfilling ? '补跑中...' : hasTrusted ? '已存在可信记忆' : hasFallback ? '重新提取可信记忆' : '补跑记忆提取'}
+                        {memoryBackfilling
+                          ? '补跑中...'
+                          : recoveryBackfillEnabled
+                            ? recovery.actions?.backfill_memory?.label || '补跑记忆提取'
+                            : hasTrusted
+                              ? '已存在可信记忆'
+                              : hasFallback
+                                ? '重新提取可信记忆'
+                                : '补跑记忆提取'}
                       </button>
-                      {hasTrusted && (
+                      {hasTrusted && !recoveryBackfillEnabled && (
                         <button
                           className="btn btn-secondary"
                           onClick={() => handleMemoryBackfill(true)}
@@ -519,6 +592,13 @@ export default function RunDetail() {
                   disabled={!(recovery.actions?.mark_stuck_blocked?.enabled) || markingStuck}
                 >
                   {markingStuck ? '标记中...' : recovery.actions?.mark_stuck_blocked?.label || '标记为阻塞'}
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleRetryCurrentNode}
+                  disabled={!(recovery.actions?.retry_current_node?.enabled) || retryingNode}
+                >
+                  {retryingNode ? '恢复中...' : recovery.actions?.retry_current_node?.label || '重试当前节点'}
                 </button>
                 <button
                   className="btn btn-primary"

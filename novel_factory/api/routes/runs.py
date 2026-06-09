@@ -27,6 +27,10 @@ from ._memory_curator_gate import (
     memory_incomplete_message,
     memory_result_is_incomplete,
 )
+from ...workflow.node_recovery import (
+    node_retry_target,
+    resolve_failed_node_from_events,
+)
 
 router = APIRouter()
 
@@ -75,6 +79,20 @@ def _memory_curator_running_domain_result(project_id: str, chapter_number: int, 
         },
         flags={"memory_curator_running": True},
     ).to_dict()
+
+
+def _resolve_recoverable_node(repo, run_data: dict | None) -> str | None:
+    """Resolve the real node that should drive recovery actions."""
+    if not run_data:
+        return None
+    run_id = str(run_data.get("id") or run_data.get("run_id") or "")
+    events: list[dict] = []
+    if run_id:
+        try:
+            events = repo.get_workflow_node_events(run_id)
+        except Exception:
+            events = []
+    return resolve_failed_node_from_events(events, run_data.get("current_node"))
 
 
 class RunRecoveryResetRequest(BaseModel):
@@ -588,9 +606,10 @@ async def reset_run_chapter(
 
         current_status = chapter.get("status", "")
         preserve_chapter_status = _run_recovery_preserves_chapter_status(run_data, current_status)
+        recoverable_node = _resolve_recoverable_node(repo, run_data)
         if (
             current_status in PUBLISH_READY_CHAPTER_STATUSES
-            and run_data.get("current_node") == "memory_curator"
+            and recoverable_node == "memory_curator"
             and run_data.get("status") in {"blocked", "failed", "running"}
         ):
             message = "记忆整理节点失败或超时，请补跑记忆提取，不要清除为发布态。"
@@ -601,6 +620,7 @@ async def reset_run_chapter(
                     "run_id": run_id,
                     "project_id": project_id,
                     "chapter_number": chapter_number,
+                    "failed_node": recoverable_node,
                     "domain_result": blocked(
                         message,
                         user_message=message,
@@ -610,6 +630,7 @@ async def reset_run_chapter(
                             "run_id": run_id,
                             "project_id": project_id,
                             "chapter_number": chapter_number,
+                            "failed_node": recoverable_node,
                             "error_code": "MEMORY_BACKFILL_REQUIRED",
                         },
                         flags={"memory_backfill_required": True},
@@ -777,12 +798,41 @@ async def retry_run_node(
         if not run_data:
             return error_response("RUN_NOT_FOUND", f"运行记录 '{run_id}' 不存在")
 
-        target = _node_retry_target(run_data.get("current_node"))
+        recoverable_node = _resolve_recoverable_node(repo, run_data)
+        if recoverable_node == "memory_curator":
+            message = "记忆整理节点失败或超时，请补跑记忆提取，不要重置整章。"
+            return error_response(
+                "MEMORY_BACKFILL_REQUIRED",
+                message,
+                details={
+                    "run_id": run_id,
+                    "project_id": run_data.get("project_id"),
+                    "chapter_number": run_data.get("chapter_number"),
+                    "failed_node": recoverable_node,
+                    "domain_result": blocked(
+                        message,
+                        user_message=message,
+                        next_action="backfill_memory",
+                        action_label="补跑记忆提取",
+                        details={
+                            "run_id": run_id,
+                            "failed_node": recoverable_node,
+                            "error_code": "MEMORY_BACKFILL_REQUIRED",
+                        },
+                        flags={"memory_backfill_required": True},
+                    ).to_dict(),
+                },
+            )
+
+        target = _node_retry_target(recoverable_node)
         if not target:
             return error_response(
                 "NODE_RETRY_UNSUPPORTED",
                 "当前节点不支持定点重试，请使用完整恢复重置。",
-                details={"current_node": run_data.get("current_node")},
+                details={
+                    "current_node": run_data.get("current_node"),
+                    "failed_node": recoverable_node,
+                },
             )
 
         project_id = run_data["project_id"]
@@ -848,6 +898,7 @@ async def retry_run_node(
             "new_status": next_status,
             "retry_node": target["node"],
             "retry_label": target["label"],
+            "resolved_failed_node": recoverable_node,
             "message": message,
             "recovery": _build_recovery_state(
                 repo,
@@ -1510,13 +1561,21 @@ def _build_recovery_state(
     retry_count = repo.get_chapter_retry_count(project_id, chapter_number)
     stuck_info = _detect_stuck_run(repo, run_data, timeout_minutes)
     can_mark_stuck = bool(stuck_info.get("stuck", False)) and chapter_status != "unknown"
+    recoverable_node = _resolve_recoverable_node(repo, run_data)
     preserve_chapter_status = _run_recovery_preserves_chapter_status(run_data, chapter_status)
-    can_reset = chapter_status in RESETTABLE_CHAPTER_STATUSES or preserve_chapter_status
-    retry_target = _node_retry_target(run_data.get("current_node"))
+    memory_backfill_only = (
+        recoverable_node == "memory_curator"
+        and chapter_status in PUBLISH_READY_CHAPTER_STATUSES
+        and run_data.get("status") in {"running", "blocked", "failed"}
+    )
+    can_reset = (chapter_status in RESETTABLE_CHAPTER_STATUSES or preserve_chapter_status) and not memory_backfill_only
+    retry_target = _node_retry_target(recoverable_node)
     can_retry_node = bool(retry_target and chapter_status in ("blocking", "revision"))
     reason = None
     if not chapter:
         reason = "章节不存在"
+    elif memory_backfill_only:
+        reason = "记忆整理节点失败或超时；正文已通过审核，应补跑记忆提取，不应重置整章。"
     elif chapter_status == "planned":
         reason = "章节已为 planned，可清除旧运行和 checkpoint 后重新开始工作流。"
     elif preserve_chapter_status:
@@ -1585,6 +1644,16 @@ def _build_recovery_state(
                 ),
                 "target_status": retry_target["status"] if retry_target else None,
                 "target_node": retry_target["node"] if retry_target else None,
+                "resolved_failed_node": recoverable_node,
+            },
+            "backfill_memory": {
+                "enabled": memory_backfill_only,
+                "label": "补跑记忆提取",
+                "reason": (
+                    "只重跑 Memory Curator，不覆盖正文、版本和审核结果。"
+                    if memory_backfill_only
+                    else "当前运行不需要补跑记忆。"
+                ),
             },
         },
         # v6.6.6: Canonical recovery state
@@ -1594,13 +1663,7 @@ def _build_recovery_state(
 
 def _node_retry_target(current_node: str | None) -> dict | None:
     """Return the last safe DB status for retrying a failed node."""
-    node = (current_node or "").strip()
-    mapping = {
-        "author": {"node": "author", "label": "执笔", "status": "scripted"},
-        "polisher": {"node": "polisher", "label": "润色", "status": "drafted"},
-        "editor": {"node": "editor", "label": "审核", "status": "polished"},
-    }
-    return mapping.get(node)
+    return node_retry_target(current_node)
 
 
 def _parse_db_datetime(value: str | None) -> datetime | None:
@@ -1720,8 +1783,7 @@ def _block_memory_curator_timeout_run_if_needed(repo, run_data: dict) -> bool:
     """Convert a timed-out MemoryCurator run to an explicit blocked node."""
     if (
         not run_data
-        or run_data.get("status") != "running"
-        or run_data.get("current_node") != "memory_curator"
+        or run_data.get("status") not in {"running", "blocked", "failed"}
     ):
         return False
     run_id = str(run_data.get("id") or run_data.get("run_id") or "")
@@ -1730,6 +1792,9 @@ def _block_memory_curator_timeout_run_if_needed(repo, run_data: dict) -> bool:
     if not run_id or not project_id or not chapter_number:
         return False
     if not _has_memory_curator_timeout_event(repo, run_id):
+        return False
+    recoverable_node = _resolve_recoverable_node(repo, run_data)
+    if recoverable_node != "memory_curator":
         return False
     _release_memory_timeout_lock_if_recoverable(
         repo,

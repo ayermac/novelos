@@ -602,6 +602,66 @@ def test_reset_recovery_rejects_terminal_memory_curator_timeout(client, db_path)
     assert row["current_node"] == "memory_curator"
 
 
+def test_recovery_resolves_memory_curator_failure_hidden_by_human_review(client, db_path):
+    """Human review is a wrapper; terminal MemoryCurator failures require backfill, not reset."""
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    repo.create_project(project_id="memory-lock-hidden-review-proj", name="Memory Hidden Review", genre="test")
+    repo.add_chapter("memory-lock-hidden-review-proj", 1, title="Ch1", status="reviewed")
+    run_id = repo.create_workflow_run("memory-lock-hidden-review-proj", 1)
+    repo.update_workflow_run(
+        run_id,
+        status="blocked",
+        current_node="human_review",
+        error_message="进入人工审核",
+    )
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id="memory-lock-hidden-review-proj",
+        chapter_number=1,
+        node_name="memory_curator",
+        event_type="failed",
+        status="failed",
+        message="节点执行超时（>600秒），需要人工介入",
+        error_message="节点执行超时（>600秒），需要人工介入",
+        latency_ms=600000,
+    )
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id="memory-lock-hidden-review-proj",
+        chapter_number=1,
+        node_name="human_review",
+        event_type="completed",
+        status="blocked",
+        message="进入人工审核",
+    )
+
+    preview = client.get(f"/api/runs/{run_id}/recovery").json()["data"]
+    assert preview["can_reset"] is False
+    assert preview["actions"]["backfill_memory"]["enabled"] is True
+    assert preview["actions"]["retry_current_node"]["enabled"] is False
+    assert preview["actions"]["retry_current_node"]["resolved_failed_node"] == "memory_curator"
+
+    retry = client.post(f"/api/runs/{run_id}/recovery/retry-node", json={"confirm": True})
+    assert retry.status_code == 200
+    retry_body = retry.json()
+    assert retry_body["ok"] is False
+    assert retry_body["error"]["code"] == "MEMORY_BACKFILL_REQUIRED"
+    assert retry_body["error"]["details"]["failed_node"] == "memory_curator"
+
+    reset = client.post(f"/api/runs/{run_id}/recovery/reset", json={"confirm": True})
+    assert reset.status_code == 200
+    reset_body = reset.json()
+    assert reset_body["ok"] is False
+    assert reset_body["error"]["code"] == "MEMORY_BACKFILL_REQUIRED"
+    assert reset_body["error"]["details"]["failed_node"] == "memory_curator"
+    row = repo.get_workflow_runs_for_project("memory-lock-hidden-review-proj", chapter_number=1, limit=1)[0]
+    assert row["status"] == "blocked"
+    assert row["current_node"] == "memory_curator"
+    assert repo.get_chapter("memory-lock-hidden-review-proj", 1)["status"] == "reviewed"
+
+
 def test_publish_ignores_stale_memory_lock_when_batch_exists(client, db_path):
     """A stale lock should not make publish rerun or block after memory already exists."""
     from novel_factory.db.repository import Repository

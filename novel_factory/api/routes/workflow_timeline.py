@@ -23,6 +23,10 @@ from fastapi import APIRouter, Request
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ...workflow.graph import get_canonical_workflow_nodes
+from ...workflow.node_recovery import (
+    node_retry_target,
+    resolve_failed_node_from_events,
+)
 
 router = APIRouter()
 
@@ -266,8 +270,7 @@ def _block_memory_curator_timeout_run_if_needed(repo: Any, run_data: dict | None
     """Release stale MemoryCurator lock and keep the run blocked at that node."""
     if (
         not run_data
-        or run_data.get("status") != "running"
-        or run_data.get("current_node") != "memory_curator"
+        or run_data.get("status") not in {"running", "blocked", "failed"}
     ):
         return False
     run_id = str(run_data.get("id") or run_data.get("run_id") or "")
@@ -276,6 +279,12 @@ def _block_memory_curator_timeout_run_if_needed(repo: Any, run_data: dict | None
     if not run_id or not project_id or not chapter_number:
         return False
     if not _has_memory_curator_timeout_event(repo, run_id):
+        return False
+    try:
+        events = repo.get_workflow_node_events(run_id)
+    except Exception:
+        events = []
+    if resolve_failed_node_from_events(events, run_data.get("current_node")) != "memory_curator":
         return False
     if hasattr(repo, "release_memory_curator_lock"):
         try:
@@ -339,6 +348,7 @@ def _build_recovery(
     timeout_minutes: int = STUCK_THRESHOLD_MINUTES,
     chapter: dict | None = None,
     checkpoint_info: dict | None = None,
+    failed_node: str | None = None,
 ) -> dict[str, Any]:
     """Build recovery recommendations for a workflow run.
 
@@ -374,7 +384,9 @@ def _build_recovery(
     recommended_action = None
     reason = None
     safe_actions: list[dict] = []
-    retry_target = _node_retry_target(run_data.get("current_node") if run_data else None)
+    current_node = run_data.get("current_node") if run_data else None
+    effective_node = failed_node or current_node
+    retry_target = _node_retry_target(effective_node)
 
     # A healthy active run is not a recovery scenario. Checkpoint availability is
     # shown in the checkpoint panel; turning it into a recovery CTA makes a
@@ -385,9 +397,8 @@ def _build_recovery(
     # v6.7.6: Blocked/Failed run takes priority over terminal chapter status
     # When run is blocked, show recovery actions even if chapter is awaiting_publish
     run_status = run_data.get("status") if run_data else None
-    current_node = run_data.get("current_node") if run_data else None
     if (
-        current_node == "memory_curator"
+        effective_node == "memory_curator"
         and chapter_status in terminal_statuses
         and run_status in ("blocked", "failed")
     ):
@@ -406,7 +417,7 @@ def _build_recovery(
         return _payload()
 
     if (
-        current_node == "memory_curator"
+        effective_node == "memory_curator"
         and chapter_status in terminal_statuses
         and run_status == "running"
         and is_stale
@@ -421,8 +432,16 @@ def _build_recovery(
         return _payload()
 
     if run_status in ("blocked", "failed"):
-        recommended_action = "reset_chapter"
-        reason = "工作流被阻塞，可清除阻塞并重置。" if run_status == "blocked" else "工作流运行失败，可清除阻塞并重置。"
+        recommended_action = "retry_node" if retry_target else "reset_chapter"
+        reason = (
+            f"工作流在{retry_target['label']}节点阻塞，可保留已有产物并定点重试。"
+            if retry_target
+            else (
+                "工作流被阻塞，可清除阻塞并重置。"
+                if run_status == "blocked"
+                else "工作流运行失败，可清除阻塞并重置。"
+            )
+        )
         safe_actions.extend([
             {"key": "view_artifacts", "label": "查看产物", "safe": True},
             {"key": "view_content", "label": "查看正文", "safe": True},
@@ -520,12 +539,10 @@ def _build_recovery(
 
 
 def _node_retry_target(current_node: str | None) -> dict[str, str] | None:
-    node = (current_node or "").strip()
-    return {
-        "author": {"label": "执笔", "status": "scripted"},
-        "polisher": {"label": "润色", "status": "drafted"},
-        "editor": {"label": "审核", "status": "polished"},
-    }.get(node)
+    target = node_retry_target(current_node)
+    if not target:
+        return None
+    return {"label": target["label"], "status": target["status"]}
 
 
 def _build_node_timeline(
@@ -1000,6 +1017,11 @@ async def get_workflow_timeline(
 
         stale_info = _detect_stale(stale_run_data, timeout_minutes)
 
+        # Fetch node events before recovery so a human_review wrapper can be
+        # attributed to the real failed node.
+        events = repo.get_workflow_node_events(run_id_str)
+        failed_node = resolve_failed_node_from_events(events, current_node)
+
         # v6.6.6: Get checkpoint info for recovery state
         checkpoint = _checkpoint_metadata(repo, project_id, chapter_number)
         recovery = _build_recovery(
@@ -1008,10 +1030,8 @@ async def get_workflow_timeline(
             timeout_minutes,
             chapter=chapter,
             checkpoint_info=checkpoint,
+            failed_node=failed_node,
         )
-
-        # Fetch node events
-        events = repo.get_workflow_node_events(run_id_str)
 
         # Fetch artifacts for this run
         artifacts: list[dict] = []
@@ -1054,6 +1074,11 @@ async def get_workflow_timeline(
             pass  # Backward compatible — execution events are additive
 
         checkpoint = _checkpoint_metadata(repo, project_id, chapter_number)
+        display_current_node = (
+            failed_node
+            if current_node == "human_review" and failed_node
+            else current_node
+        )
 
         return envelope_response({
             "project_id": project_id,
@@ -1061,7 +1086,9 @@ async def get_workflow_timeline(
             "run_id": run_id_str,
             "run_status": run_status,
             "chapter_status": chapter.get("status"),
-            "current_node": current_node,
+            "current_node": display_current_node,
+            "raw_current_node": current_node,
+            "resolved_failed_node": failed_node,
             "started_at": _normalize_timestamp(started_at),
             "elapsed_minutes": stale_info.get("elapsed_minutes"),
             "is_stale": stale_info.get("is_stale", False),

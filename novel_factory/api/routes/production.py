@@ -15,6 +15,10 @@ from pydantic import BaseModel
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ..contracts import success, partial_success, failed, blocked as blocked_result, needs_human
 from ...validators.chapter_checker import DEFAULT_INSTRUCTION_WORD_TARGET
+from ...workflow.node_recovery import (
+    event_indicates_failure,
+    resolve_failed_node_from_events,
+)
 
 router = APIRouter()
 
@@ -119,22 +123,30 @@ def _has_memory_curator_timeout_event(repo, run_id: str) -> bool:
     except Exception:
         return False
     for event in events:
-        status = str(event.get("status") or "").lower()
-        event_type = str(event.get("event_type") or "").lower()
-        message = f"{event.get('message') or ''} {event.get('error_message') or ''}".lower()
-        if status in {"failed", "error"} or event_type in {"failed", "error"}:
-            return True
-        if "执行超时" in message or "timeout" in message:
+        if event_indicates_failure(event):
             return True
     return False
+
+
+def _resolve_recoverable_node(repo, run: dict | None) -> str | None:
+    """Resolve the failed production node even if current_node is human_review."""
+    if not run:
+        return None
+    run_id = str(run.get("id") or run.get("run_id") or "")
+    events: list[dict] = []
+    if run_id:
+        try:
+            events = repo.get_workflow_node_events(run_id)
+        except Exception:
+            events = []
+    return resolve_failed_node_from_events(events, run.get("current_node"))
 
 
 def _block_memory_curator_timeout_run_if_needed(repo, run: dict) -> bool:
     """Release a timed-out MemoryCurator lock and persist blocked run state."""
     if (
         not run
-        or run.get("status") != "running"
-        or run.get("current_node") != "memory_curator"
+        or run.get("status") not in {"running", "blocked", "failed"}
     ):
         return False
     run_id = str(run.get("id") or run.get("run_id") or "")
@@ -143,6 +155,8 @@ def _block_memory_curator_timeout_run_if_needed(repo, run: dict) -> bool:
     if not run_id or not project_id or not chapter_number:
         return False
     if not _has_memory_curator_timeout_event(repo, run_id):
+        return False
+    if _resolve_recoverable_node(repo, run) != "memory_curator":
         return False
     if hasattr(repo, "release_memory_curator_lock"):
         try:
@@ -177,7 +191,7 @@ def _get_memory_curator_recovery_run(repo, project_id: str, current_chapter: int
     if (
         _is_chapter_production_run(latest)
         and latest.get("status") in {"blocked", "failed"}
-        and latest.get("current_node") == "memory_curator"
+        and _resolve_recoverable_node(repo, latest) == "memory_curator"
     ):
         return latest
     return None
