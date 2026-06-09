@@ -12,6 +12,7 @@ _OPEN_TO_CLOSE = {"「": "」", "『": "』", "“": "”", "《": "》", "（":
 _GENERIC_KEYWORDS = {"第一章", "第二章", "第三章", "第四章", "第五章", "第章"}
 _CHAPTER_PREFIX_RE = re.compile(r"^\s*第[\d一二三四五六七八九十百千万]+章[\s:：、.\-—_]*")
 _CONNECTOR_SPLIT_RE = re.compile(r"[和与及]")
+_SUSPICIOUS_POSSESSIVE_TAIL_RE = re.compile(r"^(.{2,8})[的之][\u4e00-\u9fffA-Za-z0-9]$")
 
 
 @dataclass
@@ -153,6 +154,10 @@ def _repair_candidates(title: str | None, content: str | None, chapter_number: i
 
     if semantic:
         add(_format_candidate_title(semantic, chapter_number), "cleaned_existing_title")
+
+        possessive_tail = _SUSPICIOUS_POSSESSIVE_TAIL_RE.match(semantic)
+        if possessive_tail:
+            add(_format_candidate_title(possessive_tail.group(1), chapter_number), "possessive_tail_fragment")
 
         for part in _CONNECTOR_SPLIT_RE.split(semantic):
             add(_format_candidate_title(part, chapter_number), "connector_fragment")

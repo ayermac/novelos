@@ -114,6 +114,31 @@ def test_publish_repairs_connector_fragment_title_before_publish(tmp_path):
     assert chapter["content"].splitlines()[0] == "第1章 倒计时"
 
 
+def test_publish_repairs_possessive_tail_fragment_title_before_publish(tmp_path):
+    repo = _repo(tmp_path)
+    repo.save_chapter_content(
+        "v6103-proj",
+        1,
+        "第1章 逆流的钾\n\n林辰没有顺着拍卖场的暗流走，他选择逆流而上。",
+        title="第1章 逆流的钾",
+    )
+    repo.update_chapter_status("v6103-proj", 1, "awaiting_publish")
+    _trusted_memory(repo)
+
+    from fastapi.testclient import TestClient
+    from novel_factory.api_app import create_api_app
+
+    with TestClient(create_api_app(db_path=repo.db_path, llm_mode="stub")) as client:
+        resp = client.post("/api/publish/chapter", json={"project_id": "v6103-proj", "chapter": 1})
+
+    body = resp.json()
+    chapter = repo.get_chapter("v6103-proj", 1)
+    assert body["ok"] is True
+    assert chapter["status"] == "published"
+    assert chapter["title"] == "第1章 逆流"
+    assert chapter["content"].splitlines()[0] == "第1章 逆流"
+
+
 def test_quality_gate_blocks_when_mandatory_checker_errors(tmp_path, monkeypatch):
     from novel_factory.workflow import nodes
 
