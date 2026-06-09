@@ -4,7 +4,7 @@ Tests that:
 P1 - AgentContextBundle gets memory_context_degraded / trusted_memory_batch_id flags
 P1 - format_context_bundle_for_prompt includes degraded notice when flag is True
 P2 - EditorAgent._run_story_facts_compliance: stub mode → empty, no active facts → unchecked,
-     below threshold → advisory only, at threshold → triggers revision
+     any blocking fact violation → triggers revision
 P2 - Editor result always contains story_facts_compliance field
 P3 - build_for_planner sets memory_context_audit fields from bundle metadata
 P3 - memory_context_degraded is annotation-only, never affects status flow
@@ -271,24 +271,22 @@ def test_story_facts_compliance_returns_empty_in_stub_mode():
     assert stub_llm._call_count == 0
 
 
-def test_story_facts_compliance_below_threshold_is_advisory():
-    """Below threshold blocking violations: advisory only — blocking_violation_count < threshold."""
-    below_threshold = FACTS_COMPLIANCE_BLOCK_THRESHOLD - 1
-
+def test_story_facts_compliance_zero_blocking_is_advisory():
+    """Warning-only fact findings are advisory; blocking fact findings are hard."""
     result = StoryFactsComplianceResult(
         checked=True,
-        violation_count=below_threshold,
-        blocking_violation_count=below_threshold,
+        violation_count=1,
+        blocking_violation_count=0,
         violations=[
-            {"fact_key": "k", "fact_statement": "s", "violation_text": "t", "severity": "blocking"}
-        ] * below_threshold,
+            {"fact_key": "k", "fact_statement": "s", "violation_text": "t", "severity": "warning"}
+        ],
     )
 
     assert result.blocking_violation_count < FACTS_COMPLIANCE_BLOCK_THRESHOLD
 
 
 def test_story_facts_compliance_at_threshold_triggers_revision():
-    """At threshold: compliance check LLM returns enough blocking violations."""
+    """At threshold: one blocking fact violation is enough to trigger revision."""
     _, repo = _make_db()
     project_id = "proj_threshold"
     _seed_project(repo, project_id, chapter_number=2)
@@ -479,5 +477,5 @@ def test_story_facts_compliance_result_schema():
 
 
 def test_facts_compliance_block_threshold_value():
-    """FACTS_COMPLIANCE_BLOCK_THRESHOLD is 3 as specified."""
-    assert FACTS_COMPLIANCE_BLOCK_THRESHOLD == 3
+    """A single explicit blocking fact violation should block publishing."""
+    assert FACTS_COMPLIANCE_BLOCK_THRESHOLD == 1

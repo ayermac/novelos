@@ -319,6 +319,60 @@ class TestProductionNextAPI:
         assert data["next_action"]["key"] == "apply_memory_updates"
         os.unlink(db_path)
 
+    def test_publish_ready_chapter_outranks_current_chapter_memory_updates(self, client, project_id):
+        """Publish-ready chapters should not expose memory inbox as the primary action."""
+        from novel_factory.api_app import create_api_app
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        app = create_api_app(db_path=db_path, llm_mode="stub")
+        tc = TestClient(app)
+        tc.post("/api/onboarding/projects", json={
+            "project_id": "publish-mem-test", "name": "Publish Mem Test", "genre": "奇幻",
+            "description": "test", "total_chapters_planned": 10, "target_words": 30000,
+        })
+        tc.post("/api/projects/publish-mem-test/genesis/generate", json={
+            "title": "T", "genre": "奇幻", "premise": "p", "target_chapters": 10, "target_words": 30000,
+        })
+        gid = tc.get("/api/projects/publish-mem-test/genesis/latest").json()["data"]["id"]
+        tc.post(f"/api/projects/publish-mem-test/genesis/{gid}/approve", json={
+            "force_apply": True,
+            "confirm_quality_risk": True,
+        })
+        tc.post("/api/projects/publish-mem-test/production/auto-fill", json={
+            "scope": "missing_context", "chapter_start": 1, "chapter_end": 10, "confirm": True,
+        })
+
+        repo = Repository(db_path)
+        repo.save_chapter(
+            "publish-mem-test",
+            1,
+            "第 1 章",
+            "已审核正文" * 100,
+            500,
+            "awaiting_publish",
+        )
+        batch = repo.create_memory_batch("publish-mem-test", chapter_number=1, summary="test batch")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id="publish-mem-test",
+            target_table="story_facts",
+            operation="create",
+            after_json='{"fact_key":"ch1.fact","value":"可信事实"}',
+            confidence=0.95,
+            evidence_text="可信事实证据",
+        )
+
+        resp = tc.get("/api/projects/publish-mem-test/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["health"]["has_pending_memory_updates"] is True
+        assert data["next_action"]["key"] == "review_chapter"
+        os.unlink(db_path)
+
     def test_running_target_chapter_takes_priority_over_pending_memory(self, client, project_id):
         """Running workflow on the current target chapter must outrank memory updates."""
         from novel_factory.api_app import create_api_app

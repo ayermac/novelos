@@ -1230,6 +1230,118 @@ def _fallback_apply_error() -> EnvelopeResponse:
     )
 
 
+def apply_pending_memory_batches_for_chapter(
+    repo,
+    project_id: str,
+    chapter_number: int,
+) -> dict:
+    """Apply trusted pending memory batches for one chapter before publish.
+
+    This is the publish-time, user-invisible path. It only auto-applies
+    trusted MemoryCurator output. Fallback/untrusted batches stay in the inbox
+    and are never applied silently.
+    """
+    from ._memory_curator_gate import is_state_card_fallback_batch, is_trusted_memory_batch
+
+    batches = [
+        batch for batch in repo.list_memory_batches(project_id)
+        if int(batch.get("chapter_number") or 0) == int(chapter_number)
+        and batch.get("status") in ("pending", "partial")
+    ]
+    if not batches:
+        return {
+            "ok": True,
+            "memory_apply_processed": False,
+            "memory_apply_skipped": True,
+            "applied_batches": [],
+            "skipped_batches": [],
+            "failed_batches": [],
+            "items_processed": 0,
+        }
+
+    batches.sort(key=lambda batch: str(batch.get("created_at") or ""))
+    applied_batches: list[dict] = []
+    skipped_batches: list[dict] = []
+    failed_batches: list[dict] = []
+    total_items_processed = 0
+
+    for batch in batches:
+        batch_id = batch["id"]
+        all_items = repo.list_memory_items(batch_id)
+        if is_state_card_fallback_batch(repo, batch) or not is_trusted_memory_batch(repo, batch):
+            skipped_batches.append({
+                "batch_id": batch_id,
+                "status": batch.get("status"),
+                "reason": "untrusted_or_fallback",
+                "items": len(all_items),
+            })
+            continue
+
+        pending_items = [
+            item for item in _order_items_for_apply(all_items)
+            if item.get("status") == "pending"
+        ]
+        results: list[dict] = []
+        for item in pending_items:
+            apply_result = _apply_memory_item(
+                repo,
+                project_id,
+                item,
+                chapter_number=chapter_number,
+                batch_id=batch_id,
+            )
+            update_data = {"status": "applied" if apply_result["success"] else "failed"}
+            if not apply_result["success"] and apply_result.get("error"):
+                update_data["error_message"] = apply_result["error"]
+            repo.update_memory_item(item["id"], update_data)
+            results.append({**apply_result, "item_id": item["id"]})
+
+        new_status = _compute_batch_status(batch_id, repo)
+        repo.update_memory_batch(batch_id, {"status": new_status})
+        total_items_processed += len(results)
+
+        failed_results = [result for result in results if not result.get("success")]
+        if new_status == "partial" or failed_results:
+            failed_batches.append({
+                "batch_id": batch_id,
+                "status": new_status,
+                "items_processed": len(results),
+                "failed_count": len(failed_results) or len(repo.list_memory_items(batch_id, status="failed")),
+                "results": results,
+            })
+        else:
+            applied_batches.append({
+                "batch_id": batch_id,
+                "status": new_status,
+                "items_processed": len(results),
+                "results": results,
+            })
+
+    if failed_batches:
+        failed_count = sum(batch.get("failed_count", 0) for batch in failed_batches)
+        return {
+            "ok": False,
+            "error": f"发布前记忆应用失败：{failed_count} 条记忆项失败",
+            "memory_apply_processed": total_items_processed > 0,
+            "memory_apply_failed": True,
+            "applied_batches": applied_batches,
+            "skipped_batches": skipped_batches,
+            "failed_batches": failed_batches,
+            "items_processed": total_items_processed,
+            "failed_count": failed_count,
+        }
+
+    return {
+        "ok": True,
+        "memory_apply_processed": bool(applied_batches),
+        "memory_apply_skipped": not bool(applied_batches),
+        "applied_batches": applied_batches,
+        "skipped_batches": skipped_batches,
+        "failed_batches": [],
+        "items_processed": total_items_processed,
+    }
+
+
 def _build_memory_apply_domain_result(
     batch_id: str,
     new_status: str,

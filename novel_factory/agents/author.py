@@ -1636,6 +1636,8 @@ class AuthorAgent(BaseAgent):
         suggestions = (revision_review or {}).get("suggestions") or []
         hard_markers = (
             "不可违背事实",
+            "事实一致性违规",
+            "事实锁",
             "Hard Constraints",
             "硬约束",
             "时间线",

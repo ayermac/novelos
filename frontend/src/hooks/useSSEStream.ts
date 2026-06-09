@@ -106,14 +106,14 @@ function appendStepLog(
 }
 
 function workflowEventLevel(event: WorkflowStreamEvent): WorkflowNodeLog['level'] {
-  if (event.status === 'failed' || event.event_type === 'llm_failed') return 'error';
+  if (event.status === 'failed' || event.event_type === 'llm_failed' || event.event_type === 'node_timeout') return 'error';
   if (event.status === 'warning') return 'warning';
   if (event.status === 'pass' || event.event_type === 'evidence_verified') return 'success';
   return 'info';
 }
 
 function workflowEventStepStatus(event: WorkflowStreamEvent): StepStatus['status'] {
-  if (event.status === 'failed' || event.event_type === 'llm_failed') return 'failed';
+  if (event.status === 'failed' || event.event_type === 'llm_failed' || event.event_type === 'node_timeout') return 'failed';
   if (event.event_type === 'evidence_verified') return 'completed';
   return 'running';
 }

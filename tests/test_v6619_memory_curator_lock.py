@@ -168,6 +168,13 @@ def test_memory_curator_node_timeout_releases_source_lock(tmp_path, monkeypatch)
     assert result["requires_human"] is True
     assert "执行超时" in result["error"]
     assert repo.get_memory_curator_lock("memory-lock-proj", 1) is None
+    event_types = [
+        event["event_type"]
+        for event in repo.get_workflow_execution_events(run_id)
+        if event["node_name"] == "memory_curator"
+    ]
+    assert "node_timeout" in event_types
+    assert "llm_failed" not in event_types
 
 
 def test_memory_curator_agent_does_not_extract_when_lock_is_held(tmp_path):

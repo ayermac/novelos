@@ -37,6 +37,7 @@ from .execution_events import (
     EVENT_LLM_RESPONSE_DETAIL,
     EVENT_LLM_COMPLETED,
     EVENT_LLM_FAILED,
+    EVENT_NODE_TIMEOUT,
     EVENT_EVIDENCE_VERIFIED,
     EVENT_FALLBACK_USED,
     EVIDENCE_STATUS_FAIL,
@@ -47,6 +48,13 @@ logger = logging.getLogger(__name__)
 
 
 # ── Helper ──────────────────────────────────────────────────────
+
+
+_NODE_TIMEOUT_FLOORS: dict[str, int] = {
+    "author": 1200,
+    "polisher": 900,
+    "memory_curator": 600,
+}
 
 
 # v5.8: Chinese-facing node messages for observability
@@ -90,7 +98,7 @@ def _node_timeout_seconds(settings: Any, node_name: str) -> int:
             return default_timeout
         return override_timeout if override_timeout > 0 else default_timeout
 
-    return default_timeout
+    return max(default_timeout, _NODE_TIMEOUT_FLOORS.get(node_name, 0))
 
 
 def _redact_trace_value(value: Any) -> Any:
@@ -1005,10 +1013,10 @@ def create_node_runners(
                     error_message=f"节点执行超时（>{node_timeout}秒），需要人工介入",
                 )
                 log_execution_event(
-                    repo, state, agent_name, EVENT_LLM_FAILED,
+                    repo, state, agent_name, EVENT_NODE_TIMEOUT,
                     message=f"节点执行超时（>{node_timeout}秒），需要人工介入",
                     agent_id=agent_name, status="error",
-                    payload={"timeout_seconds": node_timeout},
+                    payload={"timeout_seconds": node_timeout, "error_type": "node_timeout"},
                 )
                 if agent_name == "memory_curator" and hasattr(repo, "release_memory_curator_lock"):
                     try:

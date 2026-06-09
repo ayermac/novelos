@@ -197,6 +197,19 @@ class TestEditorStrategySemantics:
         assert d.pass_ is False
         assert d.category == "blocking"
 
+    def test_story_fact_violation_marker_is_blocking(self):
+        """A story-facts contradiction marker is a hard blocker, not advisory."""
+        from novel_factory.quality.editor_strategy import build_policy_input, classify_editor_result
+        p = build_policy_input(
+            score=92,
+            pass_=False,
+            issues=["[事实一致性违规] 已确认角色在旧工业区，正文写成帝豪酒店总统套房"],
+        )
+        d = classify_editor_result(p)
+        assert p.blocking_issue_count == 1
+        assert d.pass_ is False
+        assert d.category == "blocking"
+
     def test_revision_target_default_not_empty(self):
         """11. revision_target default is never empty for revision."""
         from novel_factory.quality.editor_strategy import determine_revision_target
@@ -356,6 +369,12 @@ class TestRevisionTargetSemantics:
     def test_author_level_issues_route_to_author(self):
         from novel_factory.quality.editor_strategy import determine_revision_target
         assert determine_revision_target(issues=["逻辑漏洞"]) == "author"
+
+    def test_story_fact_issues_route_to_author(self):
+        from novel_factory.quality.editor_strategy import determine_revision_target
+        assert determine_revision_target(
+            issues=["[事实一致性违规] 已确认前往明华路，正文回写到帝豪酒店"]
+        ) == "author"
 
     def test_structural_dialogue_issues_route_to_author(self):
         from novel_factory.quality.editor_strategy import determine_revision_target

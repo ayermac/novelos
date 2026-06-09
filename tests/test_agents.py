@@ -2650,6 +2650,122 @@ class TestEditorAgent:
         assert result["quality_gate"]["revision_target"] == "author"
         assert result["_revision_review"]["revision_target"] == "author"
 
+    def test_editor_story_fact_block_forces_author_even_with_high_skill_score(self, seeded_repo):
+        from novel_factory.agents.editor import EditorAgent, StoryFactsComplianceResult
+
+        long_content = (
+            "林辰沿着旧工业区边缘向前，秦伯压低声音提醒，监控灯在雨里一闪一灭。"
+            "他没有回头，只把掌心的锚点密匙攥紧，继续靠近明华路边界。"
+        ) * 45
+
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "polished")
+
+        stub = StubLLMProvider([{
+            "pass": False,
+            "score": 74,
+            "scores": {"setting": 18, "logic": 18, "poison": 15, "text": 12, "pacing": 11},
+            "issues": ["[v6.4质量信号] LOW_COLLOQUIAL_MARKERS: 对白口语化标记不足"],
+            "suggestions": ["增加少量口语化对白"],
+            "revision_target": None,
+            "state_card": {},
+        }])
+
+        agent = EditorAgent(seeded_repo, stub)
+        agent._run_before_review_skills = lambda inputs, output: {  # type: ignore[method-assign]
+            "skill_scores": {"narrative-quality-scorer": 100.0},
+            "blocking_skill_count": 0,
+            "warning_skill_count": 0,
+        }
+        agent._run_story_facts_compliance = lambda inputs: StoryFactsComplianceResult(  # type: ignore[method-assign]
+            checked=True,
+            violation_count=1,
+            blocking_violation_count=1,
+            violations=[{
+                "fact_key": "location.current",
+                "fact_statement": "林辰已前往明华路旧工业区边界",
+                "violation_text": "正文回到帝豪酒店总统套房",
+                "severity": "blocking",
+            }],
+        )
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "polished",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"]["pass"] is False
+        assert result["quality_gate"]["revision_target"] == "author"
+        assert any("事实一致性违规" in item for item in result["_revision_review"]["issues"])
+        strategy_events = [
+            ev for ev in result["_exec_events"]
+            if ev.get("event_type") == "review_strategy_applied"
+        ]
+        assert strategy_events[-1]["payload"]["category"] == "blocking"
+
+    def test_editor_score_regression_guard_forces_author_target(self, seeded_repo):
+        from novel_factory.agents.editor import EditorAgent, StoryFactsComplianceResult
+
+        long_content = (
+            "林辰沿着旧工业区边缘向前，秦伯压低声音提醒，监控灯在雨里一闪一灭。"
+            "他没有回头，只把掌心的锚点密匙攥紧，继续靠近明华路边界。"
+        ) * 45
+
+        seeded_repo.save_chapter_content("test_proj", 1, long_content, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "polished")
+
+        stub = StubLLMProvider([{
+            "pass": False,
+            "score": 40,
+            "scores": {"setting": 8, "logic": 8, "poison": 8, "text": 8, "pacing": 8},
+            "issues": ["AI 痕迹偏高"],
+            "suggestions": ["润色句式"],
+            "revision_target": "polisher",
+            "state_card": {},
+        }])
+
+        agent = EditorAgent(seeded_repo, stub)
+        agent._run_story_facts_compliance = lambda inputs: StoryFactsComplianceResult(  # type: ignore[method-assign]
+            checked=True,
+            violation_count=0,
+            blocking_violation_count=0,
+            violations=[],
+        )
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "polished",
+            "retry_count": 2,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+            "_revision_review": {
+                "review_id": 405,
+                "score": 70,
+                "revision_target": "author",
+                "issues": ["上一轮内容问题"],
+                "suggestions": ["定点修复"],
+            },
+        })
+
+        assert result["chapter_status"] == ChapterStatus.REVISION.value
+        assert result["quality_gate"]["revision_target"] == "author"
+        assert result["_revision_review"]["revision_target"] == "author"
+        assert any("质量回退保护" in item for item in result["_revision_review"]["issues"])
+        assert any(
+            ev.get("event_type") == "revision_regression_guard_applied"
+            for ev in result["_exec_events"]
+        )
+
     def test_editor_low_score_llm_pass_no_hard_blockers_respects_llm(self, seeded_repo):
         """v6.10.4: LLM pass=true + score < 80 + no hard blockers → pass respected.
 
@@ -2935,6 +3051,44 @@ class TestEditorAgent:
 
 
 class TestMemoryCuratorAgent:
+    def test_publish_memory_auto_apply_applies_trusted_chapter_batch(self, seeded_repo):
+        from novel_factory.api.routes.memory_updates import apply_pending_memory_batches_for_chapter
+
+        batch = seeded_repo.create_memory_batch(
+            "test_proj",
+            chapter_number=1,
+            summary="第1章记忆提取 (1项)",
+        )
+        item = seeded_repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id="test_proj",
+            target_table="story_facts",
+            operation="create",
+            after_json=json.dumps({
+                "fact_key": "ch1.reward",
+                "fact_type": "plot",
+                "subject": "林辰",
+                "attribute": "奖励",
+                "value": "获得锚点维护密匙",
+                "source_chapter": 1,
+                "source_agent": "memory_curator",
+            }, ensure_ascii=False),
+            confidence=0.95,
+            evidence_text="林辰获得锚点维护密匙。",
+            rationale="第1章可信记忆提取",
+        )
+
+        result = apply_pending_memory_batches_for_chapter(seeded_repo, "test_proj", 1)
+
+        assert result["ok"] is True
+        assert result["memory_apply_processed"] is True
+        assert result["items_processed"] == 1
+        assert seeded_repo.get_memory_item(item["id"])["status"] == "applied"
+        assert seeded_repo.get_memory_batch(batch["id"])["status"] == "applied"
+        fact = seeded_repo.get_story_fact_by_key("test_proj", "ch1.reward")
+        assert fact is not None
+        assert fact["source_agent"] == "memory_curator"
+
     def test_memory_curator_preserves_plot_hole_resolve_operation(self, seeded_repo):
         from novel_factory.agents.memory_curator import MemoryCuratorAgent
         from novel_factory.api.routes.memory_updates import _apply_memory_item
