@@ -141,6 +141,18 @@ def test_pyproject_includes_package_data():
     assert "config/*.yaml" in content
 
 
+def test_packaging_declares_ruamel_yaml_for_windows_sidecar():
+    """Windows PyInstaller sidecar imports settings routes at startup."""
+    repo_root = Path(__file__).resolve().parent.parent
+    pyproject = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+    requirements = (repo_root / "requirements.txt").read_text(encoding="utf-8")
+    spec = (repo_root / "packaging" / "pyinstaller" / "novelos-sidecar.spec").read_text(encoding="utf-8")
+
+    assert "ruamel.yaml" in pyproject
+    assert "ruamel.yaml" in requirements
+    assert '"ruamel.yaml"' in spec
+
+
 def test_doctor_command_works(tmp_path):
     """Test doctor command works and checks resources."""
     result = subprocess.run(

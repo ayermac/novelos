@@ -7,9 +7,23 @@ from pydantic import BaseModel
 from ruamel.yaml import YAML
 
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 
 router = APIRouter()
+
+
+def _dump_yaml_atomic(config_file: Path, yaml_writer: YAML, data: dict) -> None:
+    """Write YAML via same-directory replace so Windows does not need fcntl."""
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    with NamedTemporaryFile("w", encoding="utf-8", dir=config_file.parent, delete=False) as tmp:
+        tmp_path = Path(tmp.name)
+        yaml_writer.dump(data, tmp)
+    try:
+        tmp_path.replace(config_file)
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
 
 
 class ConfigPlanRequest(BaseModel):
@@ -453,17 +467,7 @@ async def update_llm_profile(
         profiles[profile_name] = profile
         raw["llm_profiles"] = profiles
 
-        # Write back (with file lock to prevent concurrent write corruption)
-        import fcntl
-        config_file.parent.mkdir(parents=True, exist_ok=True)
-        with open(config_file, "r+", encoding="utf-8") as f:
-            fcntl.flock(f.fileno(), fcntl.LOCK_EX)
-            try:
-                f.seek(0)
-                f.truncate()
-                ry.dump(raw, f)
-            finally:
-                fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+        _dump_yaml_atomic(config_file, ry, raw)
 
         return envelope_response({
             "saved": True,
