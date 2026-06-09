@@ -25,6 +25,20 @@ def _repo(tmp_path: Path) -> Repository:
     return repo
 
 
+def _trusted_memory(repo: Repository, chapter_number: int = 1) -> None:
+    batch = repo.create_memory_batch("v6103-proj", chapter_number=chapter_number, run_id="mem", summary="trusted")
+    repo.create_memory_item(
+        batch_id=batch["id"],
+        project_id="v6103-proj",
+        target_table="story_facts",
+        operation="create",
+        after_json=f'{{"fact_key":"chapter_{chapter_number}.trusted"}}',
+        confidence=0.9,
+        evidence_text="可信记忆",
+        rationale="MemoryCurator LLM 正文复核提取",
+    )
+
+
 def test_title_guard_blocks_truncated_title_before_manual_publish(tmp_path):
     repo = _repo(tmp_path)
     repo.save_chapter_content(
@@ -56,6 +70,48 @@ def test_title_guard_blocks_truncated_title_before_manual_publish(tmp_path):
     assert body["error"]["code"] == "TITLE_GUARD_BLOCKED"
     assert body["error"]["details"]["domain_result"]["flags"]["title_blocking"] is True
     assert repo.get_chapter("v6103-proj", 1)["status"] == "reviewed"
+
+
+def test_publish_accepts_awaiting_publish_chapter(tmp_path):
+    repo = _repo(tmp_path)
+    repo.update_chapter_status("v6103-proj", 1, "awaiting_publish")
+    _trusted_memory(repo)
+
+    from fastapi.testclient import TestClient
+    from novel_factory.api_app import create_api_app
+
+    with TestClient(create_api_app(db_path=repo.db_path, llm_mode="stub")) as client:
+        resp = client.post("/api/publish/chapter", json={"project_id": "v6103-proj", "chapter": 1})
+
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["data"]["chapter_status"] == "published"
+    assert repo.get_chapter("v6103-proj", 1)["status"] == "published"
+
+
+def test_publish_repairs_connector_fragment_title_before_publish(tmp_path):
+    repo = _repo(tmp_path)
+    repo.save_chapter_content(
+        "v6103-proj",
+        1,
+        "第1章 倒计时与钾\n\n拍卖倒计时压在屏幕角落，林辰必须在午夜前完成签到。",
+        title="第1章 倒计时与钾",
+    )
+    repo.update_chapter_status("v6103-proj", 1, "awaiting_publish")
+    _trusted_memory(repo)
+
+    from fastapi.testclient import TestClient
+    from novel_factory.api_app import create_api_app
+
+    with TestClient(create_api_app(db_path=repo.db_path, llm_mode="stub")) as client:
+        resp = client.post("/api/publish/chapter", json={"project_id": "v6103-proj", "chapter": 1})
+
+    body = resp.json()
+    chapter = repo.get_chapter("v6103-proj", 1)
+    assert body["ok"] is True
+    assert chapter["status"] == "published"
+    assert chapter["title"] == "第1章 倒计时"
+    assert chapter["content"].splitlines()[0] == "第1章 倒计时"
 
 
 def test_quality_gate_blocks_when_mandatory_checker_errors(tmp_path, monkeypatch):

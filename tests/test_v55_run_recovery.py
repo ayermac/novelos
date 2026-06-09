@@ -68,6 +68,25 @@ def _backdate_task(repo: Repository, task_id: int, minutes_old: int) -> None:
         conn.close()
 
 
+def _seed_trusted_memory(repo: Repository, project_id: str, chapter_number: int = 1) -> None:
+    batch = repo.create_memory_batch(
+        project_id,
+        chapter_number=chapter_number,
+        run_id="trusted-memory-run",
+        summary=f"第{chapter_number}章记忆提取 - 可信批次",
+    )
+    repo.create_memory_item(
+        batch_id=batch["id"],
+        project_id=project_id,
+        target_table="story_facts",
+        operation="create",
+        after_json='{"fact_key":"trusted_fact","value":"trusted"}',
+        confidence=0.9,
+        evidence_text="可信记忆证据",
+        rationale="MemoryCurator LLM 复核",
+    )
+
+
 def test_run_recovery_preview_for_blocked_run(tmp_path):
     client, repo, _ = _make_client(tmp_path)
     run_id = _seed_run(repo, "recover_preview")
@@ -422,6 +441,57 @@ def test_reset_recovery_rejects_blocked_reviewed_memory_run_without_rewinding_ch
 
     run = repo.get_workflow_runs_for_project("recover_reviewed_blocked", chapter_number=1, limit=1)[0]
     assert run["status"] == "blocked"
+    assert run["current_node"] == "memory_curator"
+
+
+def test_run_recovery_clears_memory_backfill_when_trusted_memory_exists(tmp_path):
+    client, repo, _ = _make_client(tmp_path)
+    run_id = _seed_run(repo, "recover_reviewed_memory_done", status="reviewed")
+    repo.update_workflow_run(
+        run_id,
+        status="blocked",
+        current_node="memory_curator",
+        error_message="节点 memory_curator 执行超时（>600秒），需要人工介入",
+    )
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id="recover_reviewed_memory_done",
+        chapter_number=1,
+        node_name="memory_curator",
+        event_type="failed",
+        status="failed",
+        message="节点执行超时（>600秒），需要人工介入",
+    )
+    _seed_trusted_memory(repo, "recover_reviewed_memory_done")
+
+    preview = client.get(f"/api/runs/{run_id}/recovery").json()["data"]
+
+    assert preview["workflow_status"] == "completed"
+    assert preview["can_reset"] is False
+    assert preview["actions"]["backfill_memory"]["enabled"] is False
+    run = repo.get_workflow_runs_for_project("recover_reviewed_memory_done", chapter_number=1, limit=1)[0]
+    assert run["status"] == "completed"
+    assert run["current_node"] == "awaiting_publish"
+
+
+def test_trusted_memory_does_not_complete_active_memory_curator_run(tmp_path):
+    _, repo, _ = _make_client(tmp_path)
+    project_id = "recover_memory_active_run"
+    repo.create_project(project_id=project_id, name="Recovery Project", genre="fantasy")
+    repo.add_chapter(project_id, 1, title="Ch1", status="reviewed")
+    run_id = repo.create_workflow_run(project_id, 1, graph_name="memory_backfill")
+    repo.update_workflow_run(run_id, status="running", current_node="memory_curator")
+    _seed_trusted_memory(repo, project_id)
+
+    from novel_factory.api.routes._memory_curator_gate import (
+        complete_memory_curator_recovery_if_trusted,
+    )
+
+    completed = complete_memory_curator_recovery_if_trusted(repo, project_id, 1, run_id=run_id)
+
+    assert completed == 0
+    run = repo.get_workflow_runs_for_project(project_id, chapter_number=1, limit=1)[0]
+    assert run["status"] == "running"
     assert run["current_node"] == "memory_curator"
 
 

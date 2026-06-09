@@ -291,6 +291,15 @@ export interface WorkflowTimelineCheckpoint {
   recovery_available: boolean
 }
 
+export interface MemoryStatusSnapshot {
+  memory_status: string
+  memory_trusted: boolean
+  batch_count?: number
+  trusted_batch_count?: number
+  fallback_batch_count?: number
+  latest_memory_batch_id?: string | null
+}
+
 export interface WorkflowTimelineData {
   project_id: string
   chapter_number: number
@@ -303,6 +312,7 @@ export interface WorkflowTimelineData {
   is_stale: boolean
   memory_curator_running?: boolean
   memory_curator_lock?: Record<string, unknown> | null
+  memory_status?: MemoryStatusSnapshot | null
   recovery: WorkflowTimelineRecovery
   checkpoint?: WorkflowTimelineCheckpoint
   nodes: WorkflowTimelineNode[]

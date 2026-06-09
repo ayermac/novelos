@@ -14,6 +14,7 @@ import {
   isBusinessSuccess,
   normalizeOperationResult,
   severityBadgeClass,
+  shouldShowMemoryBackfillAction,
   type MemoryStatusCode,
   type OperationResult,
 } from '../lib/statusSemantics'
@@ -545,7 +546,8 @@ export default function RunDetail() {
                   const hasFallback = ms?.memory_status === 'fallback'
                   const recoveryBackfillEnabled = Boolean(recovery.actions?.backfill_memory?.enabled)
                   const isTerminal = ['reviewed', 'awaiting_publish', 'published'].includes(data.chapter_status)
-                  if (!isTerminal) return null
+                  const showBackfill = shouldShowMemoryBackfillAction(ms, recoveryBackfillEnabled)
+                  if (!isTerminal || !showBackfill) return null
                   return (
                     <>
                       <button
@@ -573,16 +575,6 @@ export default function RunDetail() {
                                 ? '重新提取可信记忆'
                                 : '补跑记忆提取'}
                       </button>
-                      {hasTrusted && !recoveryBackfillEnabled && (
-                        <button
-                          className="btn btn-secondary"
-                          onClick={() => handleMemoryBackfill(true)}
-                          disabled={memoryBackfilling}
-                          title="强制重新提取（会忽略旧候选）"
-                        >
-                          <DatabaseZap size={14} /> 强制重跑
-                        </button>
-                      )}
                     </>
                   )
                 })()}

@@ -14,6 +14,7 @@ import { useWorkflowStream } from '../../hooks/useWorkflowStream'
 import { tWorkflowNodeLabel, tWorkflowNodeNarrative } from '../../lib/state-labels'
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
 import { post } from '../../lib/api'
+import { isTrustedMemoryStatus, shouldShowMemoryBackfillAction } from '../../lib/statusSemantics'
 import type { WorkflowTimelineData, WorkflowExecutionEvent, WorkflowNodeEvidence } from '../../lib/api'
 import { workflowEventContentKey } from '../../lib/workflow-events'
 import { PROCESS_DRAFT_LABEL, formatArtifactSummary, getArtifactTitle, type WorkflowArtifacts } from '../../lib/artifacts'
@@ -99,6 +100,7 @@ interface RunDetailData {
   total_tokens?: number | null
   duration_ms?: number | null
   run_doctor?: RunDoctor
+  memory_status?: WorkflowTimelineData['memory_status']
 }
 
 interface RunDoctor {
@@ -701,7 +703,7 @@ export default function AuthorWritingSurface({
   const hasContent = (chapterDetail?.word_count || 0) > 0 || Boolean(chapterDetail?.content?.trim())
   const status = currentChapterRecord?.status || ''
   const isTerminal = TERMINAL_CHAPTER_STATUSES.has(status)
-  const isReviewedReal = status === 'reviewed' && llmMode === 'real'
+  const canPublishReal = ['reviewed', 'awaiting_publish'].includes(status) && llmMode === 'real'
   // v6.10.3: Match backend check - planned + (content or word_count)
   const hasPreservedPlannedContent = status === 'planned' && (
     (currentChapterRecord?.word_count || 0) > 0 ||
@@ -730,9 +732,11 @@ export default function AuthorWritingSurface({
   // v6.7.6: Block publish CTAs when workflow is broken
   const effectiveRunStatus = timeline?.run_status || runDetail?.workflow_status
   const effectiveCurrentNode = timeline?.current_node || runDetail?.current_node || ''
-  const ignoreBrokenRunForPublish = isReviewedReal &&
+  const effectiveMemoryStatus = timeline?.memory_status || runDetail?.memory_status
+  const memoryTrusted = isTrustedMemoryStatus(effectiveMemoryStatus)
+  const ignoreBrokenRunForPublish = canPublishReal &&
     (effectiveRunStatus === 'blocked' || effectiveRunStatus === 'failed') &&
-    PUBLISH_COMPATIBLE_BLOCKED_NODES.has(effectiveCurrentNode)
+    (PUBLISH_COMPATIBLE_BLOCKED_NODES.has(effectiveCurrentNode) || (memoryTrusted && effectiveCurrentNode === 'memory_curator'))
   const workflowNeedsRecovery = Boolean(
     ((effectiveRunStatus === 'blocked' || effectiveRunStatus === 'failed') && !ignoreBrokenRunForPublish) ||
     (effectiveRunStatus === 'running' && (timeline?.is_stale || (timeline?.elapsed_minutes !== undefined && timeline?.elapsed_minutes !== null && timeline.elapsed_minutes >= STUCK_RUN_THRESHOLD_MINUTES)))
@@ -772,7 +776,7 @@ export default function AuthorWritingSurface({
           </span>
         </div>
         <div className="author-surface-actions">
-          {isReviewedReal && onPublish && !workflowNeedsRecovery && (
+          {canPublishReal && onPublish && !workflowNeedsRecovery && (
             <LoadingButton
               className="btn btn-primary btn-sm"
               variant="primary"
@@ -1561,8 +1565,10 @@ function WorkflowBody({
     const isTerminalChapter = TERMINAL_CHAPTER_STATUSES.has(runDetail.chapter_status)
     const isRunning = runDetail.workflow_status === 'running'
     const isContradictory = isTerminalChapter && isRunning
+    const effectiveMemoryStatus = runDetail.memory_status
     const canBackfillMemory = Boolean(
       onBackfillMemory &&
+      shouldShowMemoryBackfillAction(effectiveMemoryStatus) &&
       runDetail.current_node === 'memory_curator' &&
       TERMINAL_CHAPTER_STATUSES.has(runDetail.chapter_status) &&
       (isStaleRunning || runDetail.workflow_status === 'blocked' || runDetail.workflow_status === 'failed')

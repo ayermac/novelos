@@ -71,6 +71,7 @@ interface RunDetailData {
   total_tokens?: number | null
   duration_ms?: number | null
   run_doctor?: RunDoctor
+  memory_status?: WorkflowTimelineData['memory_status']
 }
 
 interface RunDoctor {

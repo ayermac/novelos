@@ -26,6 +26,7 @@ from ._memory_curator_gate import (
 
 router = APIRouter()
 
+PUBLISHABLE_CHAPTER_STATUSES = frozenset({"reviewed", "awaiting_publish"})
 PUBLISH_COMPATIBLE_BLOCKED_NODES = frozenset({
     "human_review",
     "awaiting_publish",
@@ -49,7 +50,7 @@ def _publish_guard_can_ignore_run(
     memory_ready: bool = False,
 ) -> bool:
     """Allow publishing reviewed content when only post-review housekeeping failed."""
-    if chapter_status != "reviewed" or not latest_run:
+    if chapter_status not in PUBLISHABLE_CHAPTER_STATUSES or not latest_run:
         return False
     if latest_run.get("status") not in ("blocked", "failed"):
         return False
@@ -604,11 +605,12 @@ async def _ensure_memory_curated_before_publish(request: Request, repo, project_
 
 @router.post("/publish/chapter")
 async def publish_chapter(request: Request, body: PublishChapterRequest) -> EnvelopeResponse:
-    """v5.3.0: Manually publish a reviewed chapter.
+    """v5.3.0: Manually publish a reviewed or awaiting_publish chapter.
 
     This endpoint is for real mode where auto-publish is disabled.
-    Only chapters with status='reviewed' can be published. Before publishing,
-    it also guarantees MemoryCurator has run at least once for this chapter.
+    Only chapters with status='reviewed' or 'awaiting_publish' can be published.
+    Before publishing, it also guarantees MemoryCurator has run at least once
+    for this chapter.
 
     v6.7.9: Added narrative continuity gate — blocking continuity issues
     prevent publication even when status is 'reviewed'.
@@ -628,10 +630,10 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
         if not chapter:
             return error_response("CHAPTER_NOT_FOUND", f"章节 '{body.chapter}' 不存在")
 
-        # Verify chapter status is 'reviewed'
+        # Verify chapter status is publishable.
         current_status = chapter.get("status")
-        if current_status != "reviewed":
-            message = f"章节状态为 '{current_status}'，只有 'reviewed' 状态的章节可以发布"
+        if current_status not in PUBLISHABLE_CHAPTER_STATUSES:
+            message = f"章节状态为 '{current_status}'，只有 'reviewed' 或 'awaiting_publish' 状态的章节可以发布"
             return error_response(
                 "INVALID_STATUS",
                 message,
@@ -688,10 +690,26 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 },
             )
 
-        # v6.10.3: Publish-time title hard guard.
-        from ...quality.title_guard import validate_publish_title
+        # v6.10.3: Publish-time title hard guard with deterministic metadata repair.
+        from ...quality.title_guard import repair_publish_title, validate_publish_title
 
         title_guard = validate_publish_title(chapter.get("title"), chapter.get("content"))
+        if not title_guard.passed:
+            title_repair = repair_publish_title(chapter.get("title"), chapter.get("content"), body.chapter)
+            if title_repair.repaired and title_repair.title is not None:
+                repo.save_chapter_content(
+                    body.project_id,
+                    body.chapter,
+                    title_repair.content if title_repair.content is not None else chapter.get("content", ""),
+                    title=title_repair.title,
+                )
+                chapter = repo.get_chapter(body.project_id, body.chapter) or chapter
+                title_guard = title_repair.guard or validate_publish_title(chapter.get("title"), chapter.get("content"))
+            if not title_guard.passed:
+                title_repair_details = title_repair.to_dict()
+            else:
+                title_repair_details = title_repair.to_dict()
+
         if not title_guard.passed:
             message = "标题检查未通过，发布被拒绝"
             return error_response(
@@ -701,6 +719,7 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                     "issues": title_guard.issues,
                     "suggestions": title_guard.suggestions,
                     "evidence": title_guard.evidence,
+                    "repair": title_repair_details,
                     "domain_result": blocked(
                         message,
                         user_message="章节标题疑似缺失、截断或与正文脱节，请修复后再发布",
@@ -756,10 +775,10 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 code,
                 f"发布前记忆提取失败: {memory_result['error']}",
                 details=details,
-            )
+        )
 
         # Publish the chapter
-        ok = repo.publish_chapter(body.project_id, body.chapter, expected_status="reviewed")
+        ok = repo.publish_chapter(body.project_id, body.chapter, expected_status=current_status)
         if not ok:
             message = "发布章节失败"
             return error_response(

@@ -21,6 +21,7 @@ from ..contracts import (
     ignored,
 )
 from ._memory_curator_gate import (
+    complete_memory_curator_recovery_if_trusted,
     has_trusted_memory_batch,
     is_trusted_memory_batch,
     memory_incomplete_details,
@@ -607,9 +608,11 @@ async def reset_run_chapter(
         current_status = chapter.get("status", "")
         preserve_chapter_status = _run_recovery_preserves_chapter_status(run_data, current_status)
         recoverable_node = _resolve_recoverable_node(repo, run_data)
+        memory_trusted = has_trusted_memory_batch(repo, project_id, chapter_number)
         if (
             current_status in PUBLISH_READY_CHAPTER_STATUSES
             and recoverable_node == "memory_curator"
+            and not memory_trusted
             and run_data.get("status") in {"blocked", "failed", "running"}
         ):
             message = "记忆整理节点失败或超时，请补跑记忆提取，不要清除为发布态。"
@@ -799,7 +802,11 @@ async def retry_run_node(
             return error_response("RUN_NOT_FOUND", f"运行记录 '{run_id}' 不存在")
 
         recoverable_node = _resolve_recoverable_node(repo, run_data)
-        if recoverable_node == "memory_curator":
+        if recoverable_node == "memory_curator" and not has_trusted_memory_batch(
+            repo,
+            run_data.get("project_id"),
+            int(run_data.get("chapter_number") or 0),
+        ):
             message = "记忆整理节点失败或超时，请补跑记忆提取，不要重置整章。"
             return error_response(
                 "MEMORY_BACKFILL_REQUIRED",
@@ -1029,12 +1036,19 @@ async def backfill_run_memory(
 
         # v6.6.7: Only skip if trusted batch exists AND force=false
         if has_trusted_memory_batch(repo, project_id, chapter_number) and not body.force:
+            completed_runs = complete_memory_curator_recovery_if_trusted(
+                repo,
+                project_id,
+                chapter_number,
+                run_id=run_id,
+            )
             from ..contracts import success as domain_success
             return envelope_response({
                 "skipped": True,
                 "project_id": project_id,
                 "chapter": chapter_number,
                 "chapter_status": current_status,
+                "completed_recovery_runs": completed_runs,
                 "message": "该章节已有可信记忆收件箱批次，未重复补跑。",
                 "domain_result": domain_success(
                     "记忆提取已存在可信结果，无需重复补跑",
@@ -1335,6 +1349,14 @@ def _get_run_by_id(repo, run_id: str, *, reconcile: bool = True) -> dict | None:
         if restored:
             return _get_run_by_id(repo, run_id, reconcile=False)
 
+    if reconcile and complete_memory_curator_recovery_if_trusted(
+        repo,
+        run_data["project_id"],
+        int(run_data["chapter_number"]),
+        run_id=run_id,
+    ):
+        return _get_run_by_id(repo, run_id, reconcile=False)
+
     if reconcile and _block_memory_curator_timeout_run_if_needed(repo, run_data):
         return _get_run_by_id(repo, run_id, reconcile=False)
 
@@ -1562,9 +1584,11 @@ def _build_recovery_state(
     stuck_info = _detect_stuck_run(repo, run_data, timeout_minutes)
     can_mark_stuck = bool(stuck_info.get("stuck", False)) and chapter_status != "unknown"
     recoverable_node = _resolve_recoverable_node(repo, run_data)
+    memory_trusted = has_trusted_memory_batch(repo, project_id, chapter_number)
     preserve_chapter_status = _run_recovery_preserves_chapter_status(run_data, chapter_status)
     memory_backfill_only = (
         recoverable_node == "memory_curator"
+        and not memory_trusted
         and chapter_status in PUBLISH_READY_CHAPTER_STATUSES
         and run_data.get("status") in {"running", "blocked", "failed"}
     )

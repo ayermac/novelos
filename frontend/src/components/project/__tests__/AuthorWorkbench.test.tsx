@@ -131,6 +131,22 @@ describe('AuthorWorkbench', () => {
     expect(screen.getAllByRole('button', { name: /确认发布/ }).length).toBeGreaterThan(0)
   })
 
+  it('shows publish button for awaiting_publish + real mode', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        chapters={[
+          ...baseProps.chapters,
+          { chapter_number: 5, status: 'awaiting_publish', word_count: 4000, title: '第五章' },
+        ]}
+        currentChapter={5}
+        currentChapterRecord={{ chapter_number: 5, status: 'awaiting_publish', word_count: 4000, title: '第五章' }}
+        llmMode="real"
+      />
+    )
+    expect(screen.getAllByRole('button', { name: /确认发布/ }).length).toBeGreaterThan(0)
+  })
+
   it('shows memory extraction wait state instead of publish-ready when MemoryCurator is running', () => {
     render(
       <AuthorWorkbench
@@ -816,6 +832,24 @@ describe('AuthorWorkbench', () => {
     fireEvent.click(screen.getByRole('menuitem', { name: /确认发布/ }))
     expect(baseProps.onPublishChapter).toHaveBeenCalledWith(2)
     expect(baseProps.onPublish).not.toHaveBeenCalled()
+  })
+
+  it('menu publish targets the clicked awaiting_publish chapter', () => {
+    render(
+      <AuthorWorkbench
+        {...baseProps}
+        llmMode="real"
+        chapters={[
+          ...baseProps.chapters,
+          { chapter_number: 5, status: 'awaiting_publish', word_count: 4000, title: '第五章' },
+        ]}
+        currentChapter={5}
+        currentChapterRecord={{ chapter_number: 5, status: 'awaiting_publish', word_count: 4000, title: '第五章' }}
+      />
+    )
+    fireEvent.click(screen.getByLabelText('第 5 章操作'))
+    fireEvent.click(screen.getByRole('menuitem', { name: /确认发布/ }))
+    expect(baseProps.onPublishChapter).toHaveBeenCalledWith(5)
   })
 
   it('menu generate-next targets the clicked published chapter', () => {

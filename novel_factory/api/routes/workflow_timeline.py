@@ -349,6 +349,7 @@ def _build_recovery(
     chapter: dict | None = None,
     checkpoint_info: dict | None = None,
     failed_node: str | None = None,
+    memory_trusted: bool = False,
 ) -> dict[str, Any]:
     """Build recovery recommendations for a workflow run.
 
@@ -397,6 +398,19 @@ def _build_recovery(
     # v6.7.6: Blocked/Failed run takes priority over terminal chapter status
     # When run is blocked, show recovery actions even if chapter is awaiting_publish
     run_status = run_data.get("status") if run_data else None
+    if (
+        effective_node == "memory_curator"
+        and chapter_status in terminal_statuses
+        and run_status in ("blocked", "failed")
+        and memory_trusted
+    ):
+        safe_actions.extend([
+            {"key": "view_artifacts", "label": "查看产物", "safe": True},
+            {"key": "view_content", "label": "查看正文", "safe": True},
+            {"key": "publish", "label": "确认发布", "safe": True},
+        ])
+        return _payload()
+
     if (
         effective_node == "memory_curator"
         and chapter_status in terminal_statuses
@@ -885,6 +899,26 @@ async def get_workflow_timeline(
                 chapter_number=chapter_number,
                 run_id=run_id,
             )
+        try:
+            from ._memory_curator_gate import complete_memory_curator_recovery_if_trusted
+
+            completed_memory_runs = complete_memory_curator_recovery_if_trusted(
+                repo,
+                project_id,
+                chapter_number,
+                run_id=run_id,
+            )
+            if completed_memory_runs:
+                chapter = repo.get_chapter(project_id, chapter_number) or chapter
+        except Exception:
+            pass
+        memory_status = None
+        try:
+            from ..routes._memory_curator_gate import get_memory_status_for_chapter
+
+            memory_status = get_memory_status_for_chapter(repo, project_id, chapter_number)
+        except Exception:
+            pass
 
         if chapter.get("status") == "revision":
             from ...workflow.reconciliation import reconcile_revision_running_workflows
@@ -988,6 +1022,7 @@ async def get_workflow_timeline(
                 "is_stale": False,
                 "memory_curator_running": False,
                 "memory_curator_lock": None,
+                "memory_status": memory_status,
                 "recovery": recovery,
                 "checkpoint": checkpoint,
                 "nodes": _build_node_timeline([], []),
@@ -1021,6 +1056,13 @@ async def get_workflow_timeline(
         # attributed to the real failed node.
         events = repo.get_workflow_node_events(run_id_str)
         failed_node = resolve_failed_node_from_events(events, current_node)
+        chapter_memory_trusted = False
+        try:
+            from ._memory_curator_gate import has_trusted_memory_batch
+
+            chapter_memory_trusted = has_trusted_memory_batch(repo, project_id, chapter_number)
+        except Exception:
+            chapter_memory_trusted = False
 
         # v6.6.6: Get checkpoint info for recovery state
         checkpoint = _checkpoint_metadata(repo, project_id, chapter_number)
@@ -1031,6 +1073,7 @@ async def get_workflow_timeline(
             chapter=chapter,
             checkpoint_info=checkpoint,
             failed_node=failed_node,
+            memory_trusted=chapter_memory_trusted,
         )
 
         # Fetch artifacts for this run
@@ -1046,17 +1089,17 @@ async def get_workflow_timeline(
             artifacts = []
 
         # v6.6.11: Fetch memory status for node-level semantics
-        memory_status = None
-        try:
-            from ..routes._memory_curator_gate import get_memory_status_for_chapter
-            memory_status = get_memory_status_for_chapter(
-                repo,
-                project_id,
-                chapter_number,
-                run_id=run_id_str,
-            )
-        except Exception:
-            pass
+        if memory_status is None:
+            try:
+                from ..routes._memory_curator_gate import get_memory_status_for_chapter
+                memory_status = get_memory_status_for_chapter(
+                    repo,
+                    project_id,
+                    chapter_number,
+                    run_id=run_id_str,
+                )
+            except Exception:
+                pass
 
         nodes = _build_node_timeline(
             events,
@@ -1094,6 +1137,7 @@ async def get_workflow_timeline(
             "is_stale": stale_info.get("is_stale", False),
             "memory_curator_running": memory_curator_running,
             "memory_curator_lock": active_memory_lock if memory_curator_running else None,
+            "memory_status": memory_status,
             "recovery": recovery,
             "checkpoint": checkpoint,
             "nodes": nodes,

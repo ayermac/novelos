@@ -9,6 +9,7 @@ import {
 import { StepStatus } from '../../hooks/useSSEStream'
 import { tWorkflowNodeLabel, tWorkflowNodeNarrative } from '../../lib/state-labels'
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
+import { isTrustedMemoryStatus, shouldShowMemoryBackfillAction } from '../../lib/statusSemantics'
 import { LoadingButton, InlineMessage } from '../ui'
 import type { WorkflowTimelineData } from '../../lib/api'
 
@@ -48,6 +49,7 @@ interface RunDetailData {
   total_tokens?: number | null
   duration_ms?: number | null
   run_doctor?: RunDoctor
+  memory_status?: WorkflowTimelineData['memory_status']
 }
 
 interface RunDoctor {
@@ -159,9 +161,11 @@ export default function AuthorAgentPanel({
   const workflowStatus = runDetail?.workflow_status
   const currentNode = timeline?.current_node || runDetail?.current_node
   const sseStepEntries = Object.entries(sseSteps)
-  const isReviewedReal = status === 'reviewed' && llmMode === 'real'
+  const canPublishReal = ['reviewed', 'awaiting_publish'].includes(status) && llmMode === 'real'
   const elapsedMinutes = elapsedMinutesSince(runDetail?.started_at)
   const memoryCuratorNode = timeline?.nodes?.find((node) => node.node_name === 'memory_curator')
+  const effectiveMemoryStatus = timeline?.memory_status || runDetail?.memory_status
+  const memoryTrusted = isTrustedMemoryStatus(effectiveMemoryStatus)
   const memoryCuratorRunning = Boolean(
     timeline?.memory_curator_running ||
     memoryCuratorNode?.status === 'running' ||
@@ -172,8 +176,7 @@ export default function AuthorAgentPanel({
   )
   const isStaleRunning = effectiveRunStatus === 'running' && effectiveElapsed !== null && effectiveElapsed >= STUCK_RUN_THRESHOLD_MINUTES
   const workflowNeedsRecovery = Boolean(
-    effectiveRunStatus === 'blocked' ||
-    effectiveRunStatus === 'failed' ||
+    ((effectiveRunStatus === 'blocked' || effectiveRunStatus === 'failed') && !(memoryTrusted && currentNode === 'memory_curator')) ||
     (effectiveRunStatus === 'running' && (timeline?.is_stale || isStaleRunning))
   )
   const isRunningAnotherChapter = Boolean(
@@ -186,9 +189,14 @@ export default function AuthorAgentPanel({
   const canShowPrimaryAction = activeTab !== 'workflow'
   const canDirectGenerate = canShowPrimaryAction && !isWorkflowActive && !hasPreservedPlannedContent && !needsRecovery
   const recoveryRunId = timeline?.run_id || runDetail?.run_id
+  const recoveryBackfillRecommended = Boolean(
+    timeline?.recovery?.recommended_action === 'backfill_memory' ||
+    timeline?.recovery?.safe_actions?.some((action) => action.key === 'backfill_memory')
+  )
   const canBackfillMemoryFromAssistant = Boolean(
     onBackfillMemory &&
     recoveryRunId &&
+    shouldShowMemoryBackfillAction(effectiveMemoryStatus, recoveryBackfillRecommended) &&
     (currentNode === 'memory_curator' || timeline?.current_node === 'memory_curator') &&
     ['reviewed', 'awaiting_publish', 'published'].includes(status) &&
     workflowNeedsRecovery
@@ -202,11 +210,15 @@ export default function AuthorAgentPanel({
       </div>
       <div className="author-agent-body">
         {/* Next recommended action */}
-        {isReviewedReal && onPublish && !workflowNeedsRecovery && (
+        {canPublishReal && onPublish && !workflowNeedsRecovery && (
           <div className="author-agent-next-action">
             <div className="action-label">{memoryCuratorRunning ? '记忆提取中' : '等待人工发布'}</div>
             <div className="action-desc">
-              {memoryCuratorRunning ? '记忆提取完成后才能确认发布。' : '本章已通过 AI 审核，点击确认发布。'}
+              {memoryCuratorRunning
+                ? '记忆提取完成后才能确认发布。'
+                : status === 'awaiting_publish'
+                  ? '本章已完成全部流程，点击确认发布。'
+                  : '本章已通过 AI 审核，点击确认发布。'}
             </div>
             <LoadingButton
               className="btn btn-primary btn-sm"
@@ -222,7 +234,7 @@ export default function AuthorAgentPanel({
           </div>
         )}
 
-        {isReviewedReal && workflowNeedsRecovery && (
+        {canPublishReal && workflowNeedsRecovery && (
           <div className="author-agent-next-action">
             <div className="action-label">需要先恢复运行</div>
             <div className="action-desc">
@@ -270,7 +282,7 @@ export default function AuthorAgentPanel({
           </div>
         )}
 
-        {!isReviewedReal && status !== 'published' && status !== 'awaiting_publish' && (
+        {!canPublishReal && status !== 'published' && status !== 'awaiting_publish' && (
           <div className="author-agent-next-action">
             <div className="action-label">
               {isStaleRunning
@@ -338,7 +350,7 @@ export default function AuthorAgentPanel({
           </div>
         )}
 
-        {status === 'awaiting_publish' && !workflowNeedsRecovery && (
+        {!canPublishReal && status === 'awaiting_publish' && !workflowNeedsRecovery && (
           <div className="author-agent-next-action">
             <div className="action-label">{memoryCuratorRunning ? '记忆提取中' : '等待发布'}</div>
             <div className="action-desc">
@@ -347,7 +359,7 @@ export default function AuthorAgentPanel({
           </div>
         )}
 
-        {status === 'awaiting_publish' && workflowNeedsRecovery && (
+        {!canPublishReal && status === 'awaiting_publish' && workflowNeedsRecovery && (
           <div className="author-agent-next-action">
             <div className="action-label">需要先恢复运行</div>
             <div className="action-desc">

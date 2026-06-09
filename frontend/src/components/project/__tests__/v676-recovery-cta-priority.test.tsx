@@ -145,7 +145,36 @@ describe('v6.7.6 Recovery CTA Priority', () => {
 
     render(<AuthorWritingSurface {...baseProps} timeline={timeline} />)
 
-    expect(screen.getByText('确认发布')).toBeInTheDocument()
+    expect(screen.getAllByText('确认发布').length).toBeGreaterThan(0)
+  })
+
+  it('hides memory backfill CTA when trusted memory already exists', () => {
+    const timeline = makeTimeline({
+      run_status: 'blocked',
+      chapter_status: 'awaiting_publish',
+      current_node: 'memory_curator',
+      memory_status: {
+        memory_status: 'trusted',
+        memory_trusted: true,
+        batch_count: 1,
+        trusted_batch_count: 1,
+        fallback_batch_count: 0,
+      },
+      recovery: {
+        recommended_action: null,
+        reason: null,
+        safe_actions: [
+          { key: 'view_content', label: '查看正文', safe: true },
+          { key: 'publish', label: '确认发布', safe: true },
+        ],
+      },
+    })
+
+    render(<AuthorWritingSurface {...baseProps} timeline={timeline} />)
+
+    expect(screen.queryByText('补跑记忆提取')).not.toBeInTheDocument()
+    expect(screen.queryByText('需要先恢复运行')).not.toBeInTheDocument()
+    expect(screen.getAllByText('确认发布').length).toBeGreaterThan(0)
   })
 
   // v6.7.6 round 2: Header publish CTA must respect recovery
@@ -283,6 +312,43 @@ describe('v6.7.6 AuthorAgentPanel Recovery CTA Priority', () => {
       />,
     )
 
+    expect(screen.getByText('确认发布')).toBeInTheDocument()
+  })
+
+  it('does not show memory backfill shortcut when trusted memory already exists', () => {
+    const timeline = makeTimeline({
+      run_status: 'blocked',
+      chapter_status: 'reviewed',
+      current_node: 'memory_curator',
+      memory_status: {
+        memory_status: 'trusted',
+        memory_trusted: true,
+        batch_count: 1,
+        trusted_batch_count: 1,
+        fallback_batch_count: 0,
+      },
+      recovery: {
+        recommended_action: null,
+        reason: null,
+        safe_actions: [
+          { key: 'view_content', label: '查看正文', safe: true },
+          { key: 'publish', label: '确认发布', safe: true },
+        ],
+      },
+    })
+
+    render(
+      <AuthorAgentPanel
+        {...agentBaseProps}
+        currentChapterRecord={{ status: 'reviewed', word_count: 3000, title: '第五章' }}
+        timeline={timeline}
+        onPublish={vi.fn()}
+        onBackfillMemory={vi.fn()}
+      />,
+    )
+
+    expect(screen.queryByText('补跑记忆提取')).not.toBeInTheDocument()
+    expect(screen.queryByText('需要先恢复运行')).not.toBeInTheDocument()
     expect(screen.getByText('确认发布')).toBeInTheDocument()
   })
 })

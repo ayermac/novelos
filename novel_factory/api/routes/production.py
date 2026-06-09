@@ -14,6 +14,10 @@ from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ..contracts import success, partial_success, failed, blocked as blocked_result, needs_human
+from ._memory_curator_gate import (
+    complete_memory_curator_recovery_if_trusted,
+    has_trusted_memory_batch,
+)
 from ...validators.chapter_checker import DEFAULT_INSTRUCTION_WORD_TARGET
 from ...workflow.node_recovery import (
     event_indicates_failure,
@@ -180,6 +184,9 @@ def _get_memory_curator_recovery_run(repo, project_id: str, current_chapter: int
     chapter = repo.get_chapter(project_id, current_chapter)
     chapter_status = chapter.get("status") if chapter else None
     if chapter_status not in {"reviewed", "awaiting_publish", "published"}:
+        return None
+    if has_trusted_memory_batch(repo, project_id, current_chapter):
+        complete_memory_curator_recovery_if_trusted(repo, project_id, current_chapter)
         return None
     runs = repo.get_workflow_runs_for_project(project_id, chapter_number=current_chapter, limit=5)
     if not runs:
@@ -782,6 +789,22 @@ def _determine_next_action(
     if memory_recovery_run:
         return _memory_curator_backfill_action(project_id, current_chapter, memory_recovery_run)
 
+    chapter = repo.get_chapter(project_id, current_chapter)
+    chapter_status = chapter.get("status") if chapter else "planned"
+    if (
+        chapter_status in ("reviewed", "awaiting_publish")
+        and has_trusted_memory_batch(repo, project_id, current_chapter)
+    ):
+        return {
+            "key": "review_chapter",
+            "label": f"审核/发布第 {current_chapter} 章",
+            "description": "章节正文和可信记忆均已完成，请最终确认发布。",
+            "primary": True,
+            "action_url": f"/api/projects/{project_id}/chapters/{current_chapter}",
+            "method": "GET",
+            "requires_confirmation": False,
+        }
+
     if blocking_ch:
         ch_num = blocking_ch.get("chapter_number", current_chapter)
         return {
@@ -915,8 +938,6 @@ def _determine_next_action(
         }
 
     # 5. Chapter generation flow
-    chapter = repo.get_chapter(project_id, current_chapter)
-    chapter_status = chapter.get("status") if chapter else "planned"
 
     running_current = _get_running_chapter_workflow(repo, project_id, current_chapter)
     if running_current:
@@ -2959,6 +2980,17 @@ def _build_production_next_domain_result(
                 "run_id": next_action.get("run_id"),
             },
             flags={"memory_backfill_required": True},
+        ).to_dict()
+
+    if next_action.get("key") == "review_chapter":
+        return success(
+            "章节已可发布",
+            user_message=next_action.get("description", "章节已通过审核，可确认发布"),
+            details={
+                "next_action_key": next_action.get("key"),
+                "target_chapter": next_action.get("target_chapter"),
+            },
+            flags={"publish_ready": True, "memory_trusted": True},
         ).to_dict()
 
     # Check for blocking issues

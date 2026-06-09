@@ -2009,9 +2009,20 @@ def publisher_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
     chapter = repo.get_chapter(project_id, chapter_number)
 
     if chapter:
-        from ..quality.title_guard import validate_publish_title
+        from ..quality.title_guard import repair_publish_title, validate_publish_title
 
         title_guard = validate_publish_title(chapter.get("title"), chapter.get("content"))
+        if not title_guard.passed:
+            title_repair = repair_publish_title(chapter.get("title"), chapter.get("content"), chapter_number)
+            if title_repair.repaired and title_repair.title is not None:
+                repo.save_chapter_content(
+                    project_id,
+                    chapter_number,
+                    title_repair.content if title_repair.content is not None else chapter.get("content", ""),
+                    title=title_repair.title,
+                )
+                chapter = repo.get_chapter(project_id, chapter_number) or chapter
+                title_guard = title_repair.guard or validate_publish_title(chapter.get("title"), chapter.get("content"))
         if not title_guard.passed:
             error_msg = "发布前标题检查未通过：" + "; ".join(title_guard.issues[:3])
             _log_node_event(

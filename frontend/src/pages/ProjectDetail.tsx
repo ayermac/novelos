@@ -105,6 +105,7 @@ interface RunDetailData {
   completed_at?: string
   steps: Step[]
   run_doctor?: RunDoctor
+  memory_status?: WorkflowTimelineData['memory_status']
 }
 
 interface RunDoctor {
