@@ -1,6 +1,15 @@
 db_path: ./acceptance_novel_factory.db
 default_llm: default
 
+workflow:
+  task_timeout_minutes: 30
+  checkpoint_enabled: true
+  node_timeout_seconds: 300
+  node_timeout_overrides:
+    author: 1200
+    polisher: 900
+    memory_curator: 600
+
 llm_profiles:
   default:
     provider: openai_compatible

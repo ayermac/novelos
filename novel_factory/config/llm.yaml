@@ -14,4 +14,6 @@ workflow:
   checkpoint_enabled: true
   node_timeout_seconds: 300
   node_timeout_overrides:
+    author: 1200
+    polisher: 900
     memory_curator: 600

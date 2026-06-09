@@ -56,6 +56,7 @@ const EVENT_TYPE_LABELS: Record<string, string> = {
   llm_response_detail: 'LLM 响应详情',
   llm_completed: 'LLM 调用完成',
   llm_failed: 'LLM 调用失败',
+  node_timeout: '节点执行超时',
   long_form_generation: '长文生成模式',
   artifact_saved: '产物保存',
   skill_completed: 'Skill 完成',
