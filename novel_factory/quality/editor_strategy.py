@@ -75,6 +75,7 @@ _HARD_ISSUE_MARKERS = (
     "设定冲突",
     "逻辑漏洞",
     "时间线矛盾",
+    "事实一致性违规",
 )
 
 _ADVISORY_MARKERS = (
@@ -595,6 +596,7 @@ def determine_revision_target(
     # Check if issues contain author-level problems
     author_keywords = (
         "逻辑漏洞", "剧情", "伏笔", "设定",
+        "事实一致性违规", "事实锁", "不可违背事实",
         "[CRITICAL]", "[DIALOGUE]", "[HOOK]",
         "LOW_DIALOGUE_RATIO", "对白占比", "对白仅占", "对白过低",
         "缺少角色言行", "角色对话", "动作场景呈现",

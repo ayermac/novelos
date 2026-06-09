@@ -151,7 +151,12 @@ class EditorStrategyResult:
 
 
 # v6.6.14: story_facts compliance threshold
-FACTS_COMPLIANCE_BLOCK_THRESHOLD = 3
+#
+# A violation marked "blocking" by the facts checker is a hard continuity
+# contradiction, not an advisory signal.  The earlier threshold of 3 let one
+# or two explicit contradictions flow into generic score-based revision, which
+# could route to Polisher and cause destructive rewrite loops.
+FACTS_COMPLIANCE_BLOCK_THRESHOLD = 1
 
 
 @dataclass
@@ -774,7 +779,11 @@ class EditorAgent(BaseAgent):
                 classifyable_issues if classifyable_issues else output.issues,
                 output.revision_target,
             )
-            gate_forced_target = bool(word_gate_details) or seam_result.blocking_count > 0
+            gate_forced_target = (
+                bool(word_gate_details)
+                or seam_result.blocking_count > 0
+                or any("事实一致性违规" in str(issue) for issue in output.issues)
+            )
             # Override the LLM's self-reported target when issue semantics are clearer.
             # Preserve targets set by hard gates such as word count and chapter seam.
             if classify_result.dominant_target and not gate_forced_target:
@@ -882,8 +891,10 @@ class EditorAgent(BaseAgent):
                 if strategy_note not in output.issues:
                     output.issues.append(strategy_note)
 
-        # advisory_pass must NOT set revision_target
-        if strategy_decision.decision_type == "advisory_pass":
+        # advisory_pass must NOT set revision_target.  Guard this with the
+        # effective final decision: hard gates may keep output.pass_=False even
+        # if score/skill aggregation produced an advisory strategy snapshot.
+        if output.pass_ and strategy_decision.decision_type == "advisory_pass":
             output.revision_target = None
 
         return EditorStrategyResult(
@@ -1849,6 +1860,80 @@ class EditorAgent(BaseAgent):
         result.blocking_violation_count = len(blocking)
         return result
 
+    def _apply_revision_regression_guard(
+        self,
+        inputs: EditorInputs,
+        output: EditorOutput,
+        compliance_result: StoryFactsComplianceResult,
+        exec_events: list[dict],
+    ) -> None:
+        """Prevent retry loops from degrading a chapter while chasing feedback.
+
+        When a revision attempt scores materially worse than the review that
+        triggered it, the safest automated action is not another prose polish.
+        Keep the failure, but force the target back to Author with explicit
+        "patch the current draft" instructions.
+        """
+        if output.pass_:
+            return
+
+        previous = inputs.revision_review or {}
+        previous_score_raw = previous.get("score")
+        try:
+            previous_score = float(previous_score_raw)
+            current_score = float(output.score)
+        except (TypeError, ValueError):
+            return
+
+        score_delta = current_score - previous_score
+        if score_delta > -10:
+            return
+
+        previous_issues = previous.get("issues") or []
+        previous_fact_blocks = sum(1 for item in previous_issues if "事实一致性违规" in str(item))
+        current_fact_blocks = compliance_result.blocking_violation_count
+
+        output.pass_ = False
+        output.revision_target = "author"
+        issue = (
+            f"[质量回退保护] 本轮返修评分从 {previous_score:.0f} 降至 {current_score:.0f}"
+            f"（{score_delta:.0f}），禁止继续语言润色式返修，必须由 Author 基于当前稿做定点事实/结构修复。"
+        )
+        if issue not in output.issues:
+            output.issues.insert(0, issue)
+
+        if current_fact_blocks > previous_fact_blocks:
+            fact_issue = (
+                f"[质量回退保护] 事实一致性阻断从 {previous_fact_blocks} 增至 {current_fact_blocks}，"
+                "下一轮只允许修复矛盾证据段，不得新增概念、地点或旧场景回放。"
+            )
+            if fact_issue not in output.issues:
+                output.issues.insert(1, fact_issue)
+
+        suggestion = (
+            "基于当前保留稿做补丁式返修：优先替换被标记的事实矛盾段，"
+            "保留未被点名的剧情、对白和篇幅；不要整章重写。"
+        )
+        if suggestion not in output.suggestions:
+            output.suggestions.insert(0, suggestion)
+
+        exec_events.append({
+            "event_type": "revision_regression_guard_applied",
+            "message": (
+                f"返修评分回退保护：{previous_score:.0f} → {current_score:.0f}，"
+                "强制退回 Author 定点修复"
+            ),
+            "status": "warning",
+            "payload": {
+                "previous_score": previous_score,
+                "current_score": current_score,
+                "score_delta": score_delta,
+                "previous_fact_blocks": previous_fact_blocks,
+                "current_fact_blocks": current_fact_blocks,
+                "revision_target": "author",
+            },
+        })
+
     def _execute(self, state: FactoryState) -> dict[str, Any]:
         """Execute editor review — v6.8.5 simplified pipeline.
 
@@ -1963,7 +2048,7 @@ class EditorAgent(BaseAgent):
                     if issue_msg not in output.issues:
                         output.issues.append(issue_msg)
             output.pass_ = False
-            output.revision_target = output.revision_target or "author"
+            output.revision_target = "author"
 
         # v6.10.0: Emit progress event - story facts compliance completed
         exec_events.append({
@@ -1979,6 +2064,10 @@ class EditorAgent(BaseAgent):
         # Step 5: Apply review strategy (THE single decision point)
         strategy_result = self._apply_review_strategy(
             output, quality_result, seam_result, inputs,
+        )
+
+        self._apply_revision_regression_guard(
+            inputs, output, compliance_result, exec_events,
         )
 
         # v6.10.0: Emit progress event - review strategy applied

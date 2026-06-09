@@ -925,7 +925,21 @@ def _determine_next_action(
             "requires_confirmation": True,
         }
 
-    # 4. Memory updates
+    # 4. Publish-ready chapter flow.  Pending memory for the current chapter is
+    # applied by /publish/chapter, so it should not replace the user's primary
+    # action with an internal memory-inbox task.
+    if chapter_status in ("reviewed", "awaiting_publish"):
+        return {
+            "key": "review_chapter",
+            "label": f"审核/发布第 {current_chapter} 章",
+            "description": "章节已生成并通过审核，请最终确认发布。",
+            "primary": True,
+            "action_url": f"/api/projects/{project_id}/chapters/{current_chapter}",
+            "method": "GET",
+            "requires_confirmation": False,
+        }
+
+    # 5. Memory updates for non-publish-ready work.
     if health["has_pending_memory_updates"]:
         return {
             "key": "apply_memory_updates",
@@ -937,7 +951,7 @@ def _determine_next_action(
             "requires_confirmation": False,
         }
 
-    # 5. Chapter generation flow
+    # 6. Chapter generation flow
 
     running_current = _get_running_chapter_workflow(repo, project_id, current_chapter)
     if running_current:
@@ -952,17 +966,6 @@ def _determine_next_action(
             "action_url": f"/api/run/chapter",
             "method": "POST",
             "requires_confirmation": True,
-        }
-
-    if chapter_status in ("reviewed", "awaiting_publish"):
-        return {
-            "key": "review_chapter",
-            "label": f"审核/发布第 {current_chapter} 章",
-            "description": "章节已生成并通过审核，请最终确认发布。",
-            "primary": True,
-            "action_url": f"/api/projects/{project_id}/chapters/{current_chapter}",
-            "method": "GET",
-            "requires_confirmation": False,
         }
 
     if chapter_status == "published":

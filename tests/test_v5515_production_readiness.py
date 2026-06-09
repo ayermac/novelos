@@ -11,6 +11,7 @@ Covers:
 
 from __future__ import annotations
 
+import json
 import os
 import tempfile
 
@@ -399,6 +400,74 @@ def test_ignored_memory_batch_items_do_not_surface_in_health_summary():
         next_resp = client.get(f"/api/projects/{project_id}/production-next")
         assert next_resp.status_code == 200
         assert next_resp.json()["data"]["health"]["has_pending_memory_updates"] is False
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
+def test_publish_chapter_auto_applies_trusted_memory_batch():
+    """Manual publish should apply trusted same-chapter memory before publishing."""
+    client, repo, db_path = _client_with_repo()
+    try:
+        project_id = "publish-auto-memory"
+        repo.create_project(
+            project_id=project_id,
+            name="Publish Auto Memory",
+            genre="fantasy",
+            description="test",
+            target_words=30000,
+            total_chapters_planned=10,
+        )
+        content = (
+            "林辰把锚点密匙扣进掌心，秦伯在旁低声确认权限已经稳定。"
+            "锚点密匙的纹路亮起后，走廊尽头的防护门缓缓打开。"
+        ) * 30
+        repo.save_chapter(
+            project_id,
+            1,
+            "第1章 锚点密匙",
+            content,
+            1200,
+            "awaiting_publish",
+        )
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="第1章可信记忆")
+        item = repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="story_facts",
+            operation="create",
+            after_json=json.dumps({
+                "fact_key": "ch1.anchor_key",
+                "fact_type": "plot",
+                "subject": "林辰",
+                "attribute": "道具",
+                "value": "获得锚点密匙",
+                "source_chapter": 1,
+                "source_agent": "memory_curator",
+            }, ensure_ascii=False),
+            confidence=0.95,
+            evidence_text="林辰把锚点密匙扣进掌心。",
+            rationale="第1章可信记忆提取",
+        )
+
+        resp = client.post("/api/publish/chapter", json={
+            "project_id": project_id,
+            "chapter": 1,
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        data = body["data"]
+        assert data["chapter_status"] == "published"
+        assert data["memory_apply"]["memory_apply_processed"] is True
+        assert data["memory_apply"]["items_processed"] == 1
+        assert repo.get_chapter(project_id, 1)["status"] == "published"
+        assert repo.get_memory_item(item["id"])["status"] == "applied"
+        assert repo.get_memory_batch(batch["id"])["status"] == "applied"
+        fact = repo.get_story_fact_by_key(project_id, "ch1.anchor_key")
+        assert fact is not None
+        assert fact["source_agent"] == "memory_curator"
     finally:
         if os.path.exists(db_path):
             os.unlink(db_path)

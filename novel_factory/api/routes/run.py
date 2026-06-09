@@ -756,6 +756,35 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 details=details,
         )
 
+        from .memory_updates import apply_pending_memory_batches_for_chapter
+
+        memory_apply_result = apply_pending_memory_batches_for_chapter(
+            repo,
+            body.project_id,
+            body.chapter,
+        )
+        if not memory_apply_result.get("ok", False):
+            message = memory_apply_result.get("error") or "发布前记忆应用失败"
+            details = {
+                "project_id": body.project_id,
+                "chapter_number": body.chapter,
+                "memory_apply": memory_apply_result,
+                "domain_result": blocked(
+                    message,
+                    user_message="发布被阻塞：记忆应用失败，请先处理记忆收件箱中的失败项",
+                    next_action="open_memory_inbox",
+                    action_label="查看记忆收件箱",
+                    details={
+                        "project_id": body.project_id,
+                        "chapter_number": body.chapter,
+                        "failed_batches": memory_apply_result.get("failed_batches", []),
+                        "error_code": "MEMORY_APPLY_FAILED",
+                    },
+                    flags={"publish_blocked": True, "memory_apply_failed": True},
+                ).to_dict(),
+            }
+            return error_response("MEMORY_APPLY_FAILED", message, details=details)
+
         # Publish the chapter
         ok = repo.publish_chapter(body.project_id, body.chapter, expected_status=current_status)
         if not ok:
@@ -789,6 +818,7 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 details={
                     "chapter_status": "published",
                     "memory_curator_processed": memory_result.get("memory_curator_processed", False),
+                    "memory_apply": memory_apply_result,
                     "title_guard_warning": title_guard_warning,
                 },
                 flags={
@@ -807,6 +837,7 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                     "chapter_status": "published",
                     "memory_curator_processed": memory_result.get("memory_curator_processed", False),
                     "memory_incomplete": memory_result.get("memory_incomplete", False),
+                    "memory_apply": memory_apply_result,
                     "title_guard_warning": title_guard_warning,
                 },
                 flags={
@@ -821,6 +852,7 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
             "chapter": body.chapter,
             "chapter_status": "published",
             **memory_result,
+            "memory_apply": memory_apply_result,
             "message": f"第 {body.chapter} 章已发布",
             "domain_result": domain_result,
         }
