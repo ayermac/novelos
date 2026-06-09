@@ -76,6 +76,8 @@ a = Analysis(
         "langchain_openai",
         "sqlite3",
         "yaml",
+        "ruamel",
+        "ruamel.yaml",
         "tenacity",
     ] + novel_factory_hiddenimports,
     hookspath=[],
@@ -101,6 +103,8 @@ try:
         "starlette",
         "pydantic",
         "uvicorn",
+        "ruamel",
+        "ruamel.yaml",
     ):
         try:
             a.hiddenimports.extend(collect_submodules(pkg))
