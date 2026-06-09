@@ -237,6 +237,12 @@ class TestAuthorSystemPrompt:
         from novel_factory.agents.author import AUTHOR_SYSTEM_PROMPT
         assert "旁白式解释" in AUTHOR_SYSTEM_PROMPT or "设定必须通过" in AUTHOR_SYSTEM_PROMPT
 
+    def test_prompt_contains_single_chapter_concept_budget(self):
+        from novel_factory.agents.author import AUTHOR_SYSTEM_PROMPT
+        assert "单章概念预算" in AUTHOR_SYSTEM_PROMPT
+        assert "1 个核心新概念" in AUTHOR_SYSTEM_PROMPT
+        assert "新增专有名词不超过 2 个" in AUTHOR_SYSTEM_PROMPT
+
 
 class TestAuthorBuildContext:
     """Author build_context includes anti-AI drafting guide."""

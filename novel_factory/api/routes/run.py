@@ -26,8 +26,8 @@ from ._memory_curator_gate import (
 
 router = APIRouter()
 
+PUBLISHABLE_CHAPTER_STATUSES = frozenset({"reviewed", "awaiting_publish"})
 PUBLISH_COMPATIBLE_BLOCKED_NODES = frozenset({
-    "memory_curator",
     "human_review",
     "awaiting_publish",
     "publisher",
@@ -43,13 +43,73 @@ class RunChapterRequest(BaseModel):
     llm_mode: str | None = None
 
 
-def _publish_guard_can_ignore_run(latest_run: dict | None, chapter_status: str | None) -> bool:
+def _publish_guard_can_ignore_run(
+    latest_run: dict | None,
+    chapter_status: str | None,
+    *,
+    memory_ready: bool = False,
+) -> bool:
     """Allow publishing reviewed content when only post-review housekeeping failed."""
-    if chapter_status != "reviewed" or not latest_run:
+    if chapter_status not in PUBLISHABLE_CHAPTER_STATUSES or not latest_run:
         return False
     if latest_run.get("status") not in ("blocked", "failed"):
         return False
-    return (latest_run.get("current_node") or "") in PUBLISH_COMPATIBLE_BLOCKED_NODES
+    current_node = latest_run.get("current_node") or ""
+    if current_node == "memory_curator":
+        return memory_ready
+    return current_node in PUBLISH_COMPATIBLE_BLOCKED_NODES
+
+
+def _publish_workflow_recovery_error(repo, body: PublishChapterRequest, current_status: str | None):
+    """Return a publish-blocking response when workflow recovery is still needed."""
+    latest_runs = repo.get_workflow_runs_for_project(
+        body.project_id, chapter_number=body.chapter, limit=1
+    )
+    latest_run = latest_runs[0] if latest_runs else None
+    if not latest_run:
+        return None
+    run_status = latest_run.get("status")
+    memory_ready = _has_memory_curator_evidence(repo, body.project_id, body.chapter)
+    ignore_broken_run_for_publish = _publish_guard_can_ignore_run(
+        latest_run,
+        current_status,
+        memory_ready=memory_ready,
+    )
+    run_is_broken = run_status in ("blocked", "failed") and not ignore_broken_run_for_publish
+    run_is_stale = False
+    if run_status == "running":
+        from ...workflow.state_integrity import _run_is_recent
+        if not _run_is_recent(latest_run.get("started_at")):
+            run_is_stale = True
+    if not run_is_broken and not run_is_stale:
+        return None
+    reason = (
+        "工作流被阻塞" if run_status == "blocked"
+        else "工作流运行失败" if run_status == "failed"
+        else "工作流运行超时"
+    )
+    message = f"{reason}，需先恢复工作流再发布"
+    return error_response(
+        "WORKFLOW_RECOVERY_REQUIRED",
+        message,
+        details={
+            "run_status": run_status,
+            "run_id": latest_run.get("id"),
+            "domain_result": blocked(
+                message,
+                user_message=f"{reason}，请先处理工作流恢复",
+                next_action="view_workflow",
+                action_label="查看工作流恢复",
+                details={
+                    "project_id": body.project_id,
+                    "chapter": body.chapter,
+                    "run_status": run_status,
+                    "run_id": latest_run.get("id"),
+                },
+                flags={"publish_blocked": True, "workflow_needs_recovery": True},
+            ).to_dict(),
+        },
+    )
 
 
 def _run_guard_domain_result(guard_error) -> dict:
@@ -545,11 +605,12 @@ async def _ensure_memory_curated_before_publish(request: Request, repo, project_
 
 @router.post("/publish/chapter")
 async def publish_chapter(request: Request, body: PublishChapterRequest) -> EnvelopeResponse:
-    """v5.3.0: Manually publish a reviewed chapter.
+    """v5.3.0: Manually publish a reviewed or awaiting_publish chapter.
 
     This endpoint is for real mode where auto-publish is disabled.
-    Only chapters with status='reviewed' can be published. Before publishing,
-    it also guarantees MemoryCurator has run at least once for this chapter.
+    Only chapters with status='reviewed' or 'awaiting_publish' can be published.
+    Before publishing, it also guarantees MemoryCurator has run at least once
+    for this chapter.
 
     v6.7.9: Added narrative continuity gate — blocking continuity issues
     prevent publication even when status is 'reviewed'.
@@ -569,10 +630,10 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
         if not chapter:
             return error_response("CHAPTER_NOT_FOUND", f"章节 '{body.chapter}' 不存在")
 
-        # Verify chapter status is 'reviewed'
+        # Verify chapter status is publishable.
         current_status = chapter.get("status")
-        if current_status != "reviewed":
-            message = f"章节状态为 '{current_status}'，只有 'reviewed' 状态的章节可以发布"
+        if current_status not in PUBLISHABLE_CHAPTER_STATUSES:
+            message = f"章节状态为 '{current_status}'，只有 'reviewed' 或 'awaiting_publish' 状态的章节可以发布"
             return error_response(
                 "INVALID_STATUS",
                 message,
@@ -593,6 +654,10 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                     ).to_dict(),
                 },
             )
+
+        workflow_error = _publish_workflow_recovery_error(repo, body, current_status)
+        if workflow_error is not None:
+            return workflow_error
 
         # v6.7.9: Narrative continuity gate — hard block before publish
         from ...quality.continuity_gate import evaluate_publish_continuity, SEVERITY_BLOCKING
@@ -625,48 +690,31 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 },
             )
 
-        # v6.7.6: Block publish when latest run is blocked/failed/stale-running
-        latest_runs = repo.get_workflow_runs_for_project(
-            body.project_id, chapter_number=body.chapter, limit=1
-        )
-        latest_run = latest_runs[0] if latest_runs else None
-        if latest_run:
-            run_status = latest_run.get("status")
-            ignore_broken_run_for_publish = _publish_guard_can_ignore_run(latest_run, current_status)
-            run_is_broken = run_status in ("blocked", "failed") and not ignore_broken_run_for_publish
-            run_is_stale = False
-            if run_status == "running":
-                from ...workflow.state_integrity import _run_is_recent
-                if not _run_is_recent(latest_run.get("started_at")):
-                    run_is_stale = True
-            if run_is_broken or run_is_stale:
-                reason = (
-                    "工作流被阻塞" if run_status == "blocked"
-                    else "工作流运行失败" if run_status == "failed"
-                    else "工作流运行超时"
+        # v6.10.3: Publish-time title hard guard with deterministic metadata repair.
+        from ...quality.title_guard import repair_publish_title, validate_publish_title
+
+        title_guard = validate_publish_title(chapter.get("title"), chapter.get("content"))
+        title_repair_details = None
+        title_guard_warning = None
+        if not title_guard.passed:
+            title_repair = repair_publish_title(chapter.get("title"), chapter.get("content"), body.chapter)
+            title_repair_details = title_repair.to_dict()
+            if title_repair.repaired and title_repair.title is not None:
+                repo.save_chapter_content(
+                    body.project_id,
+                    body.chapter,
+                    title_repair.content if title_repair.content is not None else chapter.get("content", ""),
+                    title=title_repair.title,
                 )
-                message = f"{reason}，需先恢复工作流再发布"
-                return error_response(
-                    "WORKFLOW_RECOVERY_REQUIRED",
-                    message,
-                    details={
-                        "run_status": run_status,
-                        "run_id": latest_run.get("id"),
-                        "domain_result": blocked(
-                            message,
-                            user_message=f"{reason}，请先处理工作流恢复",
-                            next_action="view_workflow",
-                            action_label="查看工作流恢复",
-                            details={
-                                "project_id": body.project_id,
-                                "chapter": body.chapter,
-                                "run_status": run_status,
-                                "run_id": latest_run.get("id"),
-                            },
-                            flags={"publish_blocked": True, "workflow_needs_recovery": True},
-                        ).to_dict(),
-                    },
-                )
+                chapter = repo.get_chapter(body.project_id, body.chapter) or chapter
+                title_guard = title_repair.guard or validate_publish_title(chapter.get("title"), chapter.get("content"))
+            if not title_guard.passed:
+                title_guard_warning = {
+                    "issues": title_guard.issues,
+                    "suggestions": title_guard.suggestions,
+                    "evidence": title_guard.evidence,
+                    "repair": title_repair_details,
+                }
 
         memory_result = await _ensure_memory_curated_before_publish(
             request,
@@ -706,10 +754,10 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 code,
                 f"发布前记忆提取失败: {memory_result['error']}",
                 details=details,
-            )
+        )
 
         # Publish the chapter
-        ok = repo.publish_chapter(body.project_id, body.chapter, expected_status="reviewed")
+        ok = repo.publish_chapter(body.project_id, body.chapter, expected_status=current_status)
         if not ok:
             message = "发布章节失败"
             return error_response(
@@ -741,8 +789,13 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 details={
                     "chapter_status": "published",
                     "memory_curator_processed": memory_result.get("memory_curator_processed", False),
+                    "title_guard_warning": title_guard_warning,
                 },
-                flags={"chapter_published": True, "memory_trusted": True},
+                flags={
+                    "chapter_published": True,
+                    "memory_trusted": True,
+                    "title_warning": bool(title_guard_warning),
+                },
             ).to_dict()
         else:
             domain_result = partial_success(
@@ -754,18 +807,28 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                     "chapter_status": "published",
                     "memory_curator_processed": memory_result.get("memory_curator_processed", False),
                     "memory_incomplete": memory_result.get("memory_incomplete", False),
+                    "title_guard_warning": title_guard_warning,
                 },
-                flags={"chapter_published": True, "memory_trusted": False},
+                flags={
+                    "chapter_published": True,
+                    "memory_trusted": False,
+                    "title_warning": bool(title_guard_warning),
+                },
             ).to_dict()
 
-        return envelope_response({
+        response_data = {
             "project_id": body.project_id,
             "chapter": body.chapter,
             "chapter_status": "published",
             **memory_result,
             "message": f"第 {body.chapter} 章已发布",
             "domain_result": domain_result,
-        })
+        }
+        if title_repair_details:
+            response_data["title_repair"] = title_repair_details
+        if title_guard_warning:
+            response_data["title_guard_warning"] = title_guard_warning
+        return envelope_response(response_data)
 
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"发布章节失败: {str(e)}")

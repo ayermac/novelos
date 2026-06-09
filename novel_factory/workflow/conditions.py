@@ -257,10 +257,24 @@ def route_after_memory_curator(state: FactoryState) -> str:
     v6.2: Memory curator failures still route to human_review by default
     to maintain safety. Future versions may support configurable degradation.
     """
+    llm_mode = state.get("llm_mode", "stub")
     if state.get("requires_human") or state.get("error"):
+        if (
+            llm_mode == "real"
+            and state.get("chapter_status") in {
+                ChapterStatus.REVIEWED.value,
+                "awaiting_publish",
+                ChapterStatus.PUBLISHED.value,
+            }
+            and (
+                state.get("memory_curator_degraded")
+                or state.get("fallback_created")
+                or state.get("extraction_success") is False
+            )
+        ):
+            return "awaiting_publish"
         return "human_review"
 
-    llm_mode = state.get("llm_mode", "stub")
     if llm_mode == "real":
         if state.get("memory_curator_locked"):
             return "awaiting_publish"
@@ -269,7 +283,7 @@ def route_after_memory_curator(state: FactoryState) -> str:
             or state.get("fallback_created")
             or state.get("extraction_success") is False
         ):
-            return "human_review"
+            return "awaiting_publish"
         return "awaiting_publish"
     return "publish"
 

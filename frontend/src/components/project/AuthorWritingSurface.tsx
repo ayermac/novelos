@@ -7,12 +7,14 @@ import {
   CheckCircle2,
   FileText,
   PenLine,
+  DatabaseZap,
 } from 'lucide-react'
 import { StepStatus, PreflightWarning } from '../../hooks/useSSEStream'
 import { useWorkflowStream } from '../../hooks/useWorkflowStream'
 import { tWorkflowNodeLabel, tWorkflowNodeNarrative } from '../../lib/state-labels'
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
 import { post } from '../../lib/api'
+import { isTrustedMemoryStatus, shouldShowMemoryBackfillAction } from '../../lib/statusSemantics'
 import type { WorkflowTimelineData, WorkflowExecutionEvent, WorkflowNodeEvidence } from '../../lib/api'
 import { workflowEventContentKey } from '../../lib/workflow-events'
 import { PROCESS_DRAFT_LABEL, formatArtifactSummary, getArtifactTitle, type WorkflowArtifacts } from '../../lib/artifacts'
@@ -97,6 +99,16 @@ interface RunDetailData {
   error_message?: string | null
   total_tokens?: number | null
   duration_ms?: number | null
+  run_doctor?: RunDoctor
+  memory_status?: WorkflowTimelineData['memory_status']
+}
+
+interface RunDoctor {
+  category?: string
+  severity?: 'info' | 'warning' | 'error' | string
+  summary?: string
+  next_action?: string
+  evidence?: Record<string, unknown>
 }
 
 interface WorkflowLogRow {
@@ -118,7 +130,6 @@ interface WorkflowLogRow {
 const STUCK_RUN_THRESHOLD_MINUTES = 30
 const TERMINAL_CHAPTER_STATUSES = new Set(['reviewed', 'awaiting_publish', 'published'])
 const PUBLISH_COMPATIBLE_BLOCKED_NODES = new Set([
-  'memory_curator',
   'human_review',
   'awaiting_publish',
   'publisher',
@@ -131,7 +142,7 @@ function isCompletedBeforeTerminal(runStatus?: string | null, chapterStatus?: st
 
 function recoveryActionRank(key: string, recommendedAction?: string | null): number {
   if (key === recommendedAction || (key === 'generate' && recommendedAction === 'reset_explicitly')) return 0
-  if (key === 'retry_node' || key === 'mark_stuck' || key === 'generate') return 1
+  if (key === 'retry_node' || key === 'mark_stuck' || key === 'generate' || key === 'backfill_memory') return 1
   if (key === 'reset' || key === 'reset_chapter' || key === 'reset_explicitly') return 2
   return 3
 }
@@ -142,6 +153,52 @@ function elapsedMinutesSince(value?: string | null): number | null {
   const timestamp = new Date(normalized).getTime()
   if (Number.isNaN(timestamp)) return null
   return Math.max(0, Math.floor((Date.now() - timestamp) / 60000))
+}
+
+function runDoctorCategoryLabel(category?: string): string {
+  switch (category) {
+    case 'healthy':
+      return '未发现异常'
+    case 'model_output_failure':
+      return '模型输出失败'
+    case 'deterministic_quality_failure':
+      return '确定性质检失败'
+    case 'configuration_failure':
+      return '配置失败'
+    case 'runtime_timeout':
+      return '运行超时'
+    case 'memory_failure':
+      return '记忆整理失败'
+    case 'workflow_failure':
+      return '工作流失败'
+    case 'running':
+      return '运行中'
+    default:
+      return '待确认'
+  }
+}
+
+function runDoctorActionLabel(action?: string): string {
+  switch (action) {
+    case 'backfill_memory':
+      return '补跑记忆提取'
+    case 'revise_by_gate':
+      return '按门禁问题返修'
+    case 'retry_node_or_switch_model':
+      return '重试节点或切换模型'
+    case 'check_settings':
+      return '检查 LLM 设置'
+    case 'mark_stuck':
+      return '标记卡住运行'
+    case 'view_failed_node':
+      return '查看失败节点'
+    case 'wait_or_watch':
+      return '继续观察'
+    case 'none':
+      return '无需处理'
+    default:
+      return action || '查看运行详情'
+  }
 }
 
 function mergeWorkflowEvents(
@@ -590,10 +647,12 @@ interface AuthorWritingSurfaceProps {
   onPublish?: () => void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
   onRetryRunNode?: (runId: string) => Promise<void> | void
+  onBackfillMemory?: (runId: string, force?: boolean) => Promise<void> | void
   onWorkflowDone?: (runId: string, status: string | null) => void
   publishPending?: boolean
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
+  memoryBackfillPending?: boolean
   regeneratePending?: boolean
   onTabChange: (tab: SurfaceTabKey) => void
   onViewContent: () => void
@@ -629,10 +688,12 @@ export default function AuthorWritingSurface({
   onPublish,
   onResetRunRecovery,
   onRetryRunNode,
+  onBackfillMemory,
   onWorkflowDone,
   publishPending,
   markStuckPending,
   resetRecoveryPending,
+  memoryBackfillPending,
   regeneratePending,
   onTabChange,
   onViewContent,
@@ -642,7 +703,7 @@ export default function AuthorWritingSurface({
   const hasContent = (chapterDetail?.word_count || 0) > 0 || Boolean(chapterDetail?.content?.trim())
   const status = currentChapterRecord?.status || ''
   const isTerminal = TERMINAL_CHAPTER_STATUSES.has(status)
-  const isReviewedReal = status === 'reviewed' && llmMode === 'real'
+  const canPublishReal = ['reviewed', 'awaiting_publish'].includes(status) && llmMode === 'real'
   // v6.10.3: Match backend check - planned + (content or word_count)
   const hasPreservedPlannedContent = status === 'planned' && (
     (currentChapterRecord?.word_count || 0) > 0 ||
@@ -671,9 +732,11 @@ export default function AuthorWritingSurface({
   // v6.7.6: Block publish CTAs when workflow is broken
   const effectiveRunStatus = timeline?.run_status || runDetail?.workflow_status
   const effectiveCurrentNode = timeline?.current_node || runDetail?.current_node || ''
-  const ignoreBrokenRunForPublish = isReviewedReal &&
+  const effectiveMemoryStatus = timeline?.memory_status || runDetail?.memory_status
+  const memoryTrusted = isTrustedMemoryStatus(effectiveMemoryStatus)
+  const ignoreBrokenRunForPublish = canPublishReal &&
     (effectiveRunStatus === 'blocked' || effectiveRunStatus === 'failed') &&
-    PUBLISH_COMPATIBLE_BLOCKED_NODES.has(effectiveCurrentNode)
+    (PUBLISH_COMPATIBLE_BLOCKED_NODES.has(effectiveCurrentNode) || (memoryTrusted && effectiveCurrentNode === 'memory_curator'))
   const workflowNeedsRecovery = Boolean(
     ((effectiveRunStatus === 'blocked' || effectiveRunStatus === 'failed') && !ignoreBrokenRunForPublish) ||
     (effectiveRunStatus === 'running' && (timeline?.is_stale || (timeline?.elapsed_minutes !== undefined && timeline?.elapsed_minutes !== null && timeline.elapsed_minutes >= STUCK_RUN_THRESHOLD_MINUTES)))
@@ -713,7 +776,7 @@ export default function AuthorWritingSurface({
           </span>
         </div>
         <div className="author-surface-actions">
-          {isReviewedReal && onPublish && !workflowNeedsRecovery && (
+          {canPublishReal && onPublish && !workflowNeedsRecovery && (
             <LoadingButton
               className="btn btn-primary btn-sm"
               variant="primary"
@@ -830,9 +893,11 @@ export default function AuthorWritingSurface({
             onMarkRunStuck={onMarkRunStuck}
             onResetRunRecovery={onResetRunRecovery}
             onRetryRunNode={onRetryRunNode}
+            onBackfillMemory={onBackfillMemory}
             onWorkflowDone={onWorkflowDone}
             markStuckPending={markStuckPending}
             resetRecoveryPending={resetRecoveryPending}
+            memoryBackfillPending={memoryBackfillPending}
             regeneratePending={regeneratePending}
             onTabChange={onTabChange}
             onViewContent={onViewContent}
@@ -1149,9 +1214,11 @@ function WorkflowBody({
   onMarkRunStuck,
   onResetRunRecovery,
   onRetryRunNode,
+  onBackfillMemory,
   onWorkflowDone,
   markStuckPending,
   resetRecoveryPending,
+  memoryBackfillPending,
   regeneratePending,
   onTabChange,
   onViewContent,
@@ -1169,9 +1236,11 @@ function WorkflowBody({
   onMarkRunStuck?: (runId: string) => Promise<void> | void
   onResetRunRecovery?: (runId: string) => Promise<void> | void
   onRetryRunNode?: (runId: string) => Promise<void> | void
+  onBackfillMemory?: (runId: string, force?: boolean) => Promise<void> | void
   onWorkflowDone?: (runId: string, status: string | null) => void
   markStuckPending?: boolean
   resetRecoveryPending?: boolean
+  memoryBackfillPending?: boolean
   regeneratePending?: boolean
   onTabChange: (tab: SurfaceTabKey) => void
   onViewContent: () => void
@@ -1299,6 +1368,18 @@ function WorkflowBody({
               onClick={() => onRetryRunNode(timeline.run_id!)}
             >
               {action.label}
+            </LoadingButton>
+          ) : staticHint
+        case 'backfill_memory':
+          return onBackfillMemory && timeline.run_id ? actionRow(
+            <LoadingButton
+              className="btn btn-primary btn-sm"
+              variant="primary"
+              loading={!!memoryBackfillPending}
+              loadingText="补跑中..."
+              onClick={() => onBackfillMemory(timeline.run_id!)}
+            >
+              <DatabaseZap size={12} /> {action.label}
             </LoadingButton>
           ) : staticHint
         case 'reset':
@@ -1484,6 +1565,14 @@ function WorkflowBody({
     const isTerminalChapter = TERMINAL_CHAPTER_STATUSES.has(runDetail.chapter_status)
     const isRunning = runDetail.workflow_status === 'running'
     const isContradictory = isTerminalChapter && isRunning
+    const effectiveMemoryStatus = runDetail.memory_status
+    const canBackfillMemory = Boolean(
+      onBackfillMemory &&
+      shouldShowMemoryBackfillAction(effectiveMemoryStatus) &&
+      runDetail.current_node === 'memory_curator' &&
+      TERMINAL_CHAPTER_STATUSES.has(runDetail.chapter_status) &&
+      (isStaleRunning || runDetail.workflow_status === 'blocked' || runDetail.workflow_status === 'failed')
+    )
     const incompleteCompletedRun = isCompletedBeforeTerminal(runDetail.workflow_status, runDetail.chapter_status)
     const statusTone = isContradictory || isStaleRunning || incompleteCompletedRun || runDetail.workflow_status === 'blocked' ? 'warning' : runDetail.workflow_status === 'failed' ? 'error' : 'info'
     const statusHeadline = isContradictory
@@ -1557,6 +1646,17 @@ function WorkflowBody({
                 </LoadingButton>
               )}
               <div className="run-detail-recovery-links">
+                {canBackfillMemory && (
+                  <LoadingButton
+                    className="btn btn-primary btn-sm"
+                    variant="primary"
+                    loading={!!memoryBackfillPending}
+                    loadingText="补跑中..."
+                    onClick={() => onBackfillMemory?.(runDetail.run_id)}
+                  >
+                    <DatabaseZap size={12} /> 补跑记忆提取
+                  </LoadingButton>
+                )}
                 {(runDetail.chapter_status === 'blocking' || runDetail.chapter_status === 'revision') && onRetryRunNode && ['author', 'polisher', 'editor'].includes(runDetail.current_node || '') && (
                   <LoadingButton
                     className="btn btn-primary btn-sm"
@@ -1575,6 +1675,19 @@ function WorkflowBody({
             </div>
           )}
         </div>
+        {runDetail.run_doctor && (
+          <div className={`alert ${runDetail.run_doctor.severity === 'error' ? 'alert-error' : runDetail.run_doctor.severity === 'warning' ? 'alert-warn' : 'alert-info'}`} style={{ marginBottom: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 600 }}>
+              Run Doctor：{runDoctorCategoryLabel(runDetail.run_doctor.category)}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              {runDetail.run_doctor.summary || '暂无诊断摘要。'}
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
+              建议动作：{runDoctorActionLabel(runDetail.run_doctor.next_action)}
+            </div>
+          </div>
+        )}
         <div className="alert alert-warn" style={{ marginBottom: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>Legacy fallback：正在显示运行详情旧版步骤</div>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>

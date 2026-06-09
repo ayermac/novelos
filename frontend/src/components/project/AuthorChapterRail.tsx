@@ -107,7 +107,7 @@ function ChapterMenu({
 
   const status = chapter.status
   const isTerminal = isTerminalStatus(status)
-  const isReviewedReal = status === 'reviewed' && llmMode === 'real'
+  const canPublishReal = ['reviewed', 'awaiting_publish'].includes(status) && llmMode === 'real'
   const isPublished = status === 'published'
   const isAwaiting = status === 'awaiting_publish'
   const hasPreservedPlannedContent = status === 'planned' && chapter.word_count > 0
@@ -148,7 +148,7 @@ function ChapterMenu({
   }
 
   const handleCopyInfo = async () => {
-    const info = `${title} — ${tChapterStatusLabel(status, isReviewedReal)} — ${chapter.word_count.toLocaleString()} 字`
+    const info = `${title} — ${tChapterStatusLabel(status, canPublishReal)} — ${chapter.word_count.toLocaleString()} 字`
     try {
       await navigator.clipboard.writeText(info)
     } catch {
@@ -196,7 +196,7 @@ function ChapterMenu({
         </div>
       )}
 
-      {!generationBlocked && isReviewedReal && onPublishChapter && (
+      {!generationBlocked && canPublishReal && onPublishChapter && (
         <button className="author-rail-dropdown-item" role="menuitem" onClick={handlePublish}>
           <CheckCircle2 size={13} /> 确认发布
         </button>
@@ -226,7 +226,7 @@ function ChapterMenu({
         </button>
       )}
 
-      {!generationBlocked && isAwaiting && (
+      {!generationBlocked && isAwaiting && !canPublishReal && (
         <div className="author-rail-dropdown-hint">
           <AlertCircle size={11} style={{ display: 'inline', verticalAlign: 'middle', marginRight: 4 }} />
           等待发布
@@ -277,7 +277,7 @@ export default function AuthorChapterRail({
           const icon = chapterStatusIcon(ch.status)
           const color = chapterStatusColor(ch.status)
           const title = ch.title || `第 ${ch.chapter_number} 章`
-          const statusLabel = tChapterStatusLabel(ch.status, ch.status === 'reviewed' && llmMode === 'real')
+          const statusLabel = tChapterStatusLabel(ch.status, ['reviewed', 'awaiting_publish'].includes(ch.status) && llmMode === 'real')
           const menuOpen = openMenuChapter === ch.chapter_number
           const isWorkflowRunning = isChapterWorkflowRunning?.(ch.chapter_number) ?? false
 

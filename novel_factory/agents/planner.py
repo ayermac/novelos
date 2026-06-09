@@ -20,6 +20,7 @@ from ..quality.chapter_seam import (
     build_planner_inheritance_context,
     enforce_planner_inheritance,
 )
+from ..quality.concept_budget import CONCEPT_BUDGET_CONTRACT
 
 logger = logging.getLogger(__name__)
 
@@ -68,6 +69,8 @@ Tier 2 (可选，缺失将用默认值填充):
 - 写正文
 - 跳过审核直接发布
 - 唤醒其他 Agent"""
+
+PLANNER_SYSTEM_PROMPT += "\n\n" + CONCEPT_BUDGET_CONTRACT
 
 
 def build_memory_context_audit(chapter_number: int, bundle) -> dict:

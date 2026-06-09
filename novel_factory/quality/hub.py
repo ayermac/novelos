@@ -28,6 +28,7 @@ from ..validators.fact_lock import check_fact_integrity, extract_fact_lock
 from ..validators.plot_verifier import check_plot_in_content
 from ..validators.state_verifier import check_state_consistency
 from ..skills.registry import SkillRegistry
+from .concept_budget import diagnose_concept_budget
 
 logger = logging.getLogger(__name__)
 
@@ -810,6 +811,24 @@ class QualityHub:
         dimensions["system_mechanics"] = system_mechanics["score"]
         metrics.update(system_mechanics["metrics"])
         findings.extend(system_mechanics["findings"])
+
+        concept_budget = diagnose_concept_budget(text)
+        dimensions["concept_budget"] = concept_budget.score
+        metrics["concept_budget"] = concept_budget.to_dict()
+        if concept_budget.overload:
+            findings.append({
+                "severity": "medium",
+                "code": "CONCEPT_BUDGET_OVERLOAD",
+                "message": (
+                    "单章新概念疑似过载：新增术语/机制线索过多，"
+                    "建议收束到 1 个核心新概念，并把其他线索延后到章末钩子。"
+                ),
+                "evidence": {
+                    "introduced_terms": concept_budget.introduced_terms,
+                    "marker_count": concept_budget.marker_count,
+                },
+                "suggestion": "本章只解释一个新规则；其他新名词只保留一句钩子，不展开说明。",
+            })
 
         # -- Death Penalty --
         dp_result = check_death_penalty_structured(text)

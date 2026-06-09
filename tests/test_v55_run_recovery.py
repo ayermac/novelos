@@ -68,6 +68,25 @@ def _backdate_task(repo: Repository, task_id: int, minutes_old: int) -> None:
         conn.close()
 
 
+def _seed_trusted_memory(repo: Repository, project_id: str, chapter_number: int = 1) -> None:
+    batch = repo.create_memory_batch(
+        project_id,
+        chapter_number=chapter_number,
+        run_id="trusted-memory-run",
+        summary=f"第{chapter_number}章记忆提取 - 可信批次",
+    )
+    repo.create_memory_item(
+        batch_id=batch["id"],
+        project_id=project_id,
+        target_table="story_facts",
+        operation="create",
+        after_json='{"fact_key":"trusted_fact","value":"trusted"}',
+        confidence=0.9,
+        evidence_text="可信记忆证据",
+        rationale="MemoryCurator LLM 复核",
+    )
+
+
 def test_run_recovery_preview_for_blocked_run(tmp_path):
     client, repo, _ = _make_client(tmp_path)
     run_id = _seed_run(repo, "recover_preview")
@@ -384,7 +403,7 @@ def test_mark_stuck_run_preserves_reviewed_chapter_status(tmp_path):
     assert original_task["completed_at"]
 
 
-def test_reset_recovery_cleans_blocked_reviewed_run_without_rewinding_chapter(tmp_path):
+def test_reset_recovery_rejects_blocked_reviewed_memory_run_without_rewinding_chapter(tmp_path):
     client, repo, db_path = _make_client(tmp_path)
     run_id = _seed_run(repo, "recover_reviewed_blocked", status="reviewed")
     repo.update_workflow_run(
@@ -407,25 +426,73 @@ def test_reset_recovery_cleans_blocked_reviewed_run_without_rewinding_chapter(tm
 
     preview = client.get(f"/api/runs/{run_id}/recovery").json()["data"]
     assert preview["chapter_status"] == "reviewed"
-    assert preview["can_reset"] is True
-    assert preview["actions"]["reset_to_planned"]["enabled"] is True
+    assert preview["can_reset"] is False
+    assert preview["actions"]["reset_to_planned"]["enabled"] is False
+    assert preview["actions"]["backfill_memory"]["enabled"] is True
 
     resp = client.post(f"/api/runs/{run_id}/recovery/reset", json={"confirm": True})
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["ok"] is True
-    data = body["data"]
-    assert data["recovered"] is True
-    assert data["previous_status"] == "reviewed"
-    assert data["new_status"] == "reviewed"
-    assert data["checkpoint_cleared"] is True
+    assert body["ok"] is False
+    assert body["error"]["code"] == "MEMORY_BACKFILL_REQUIRED"
     assert repo.get_chapter("recover_reviewed_blocked", 1)["status"] == "reviewed"
-    assert checkpoint_thread_exists(db_path, "recover_reviewed_blocked", 1) is False
+    assert checkpoint_thread_exists(db_path, "recover_reviewed_blocked", 1) is True
 
     run = repo.get_workflow_runs_for_project("recover_reviewed_blocked", chapter_number=1, limit=1)[0]
+    assert run["status"] == "blocked"
+    assert run["current_node"] == "memory_curator"
+
+
+def test_run_recovery_clears_memory_backfill_when_trusted_memory_exists(tmp_path):
+    client, repo, _ = _make_client(tmp_path)
+    run_id = _seed_run(repo, "recover_reviewed_memory_done", status="reviewed")
+    repo.update_workflow_run(
+        run_id,
+        status="blocked",
+        current_node="memory_curator",
+        error_message="节点 memory_curator 执行超时（>600秒），需要人工介入",
+    )
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id="recover_reviewed_memory_done",
+        chapter_number=1,
+        node_name="memory_curator",
+        event_type="failed",
+        status="failed",
+        message="节点执行超时（>600秒），需要人工介入",
+    )
+    _seed_trusted_memory(repo, "recover_reviewed_memory_done")
+
+    preview = client.get(f"/api/runs/{run_id}/recovery").json()["data"]
+
+    assert preview["workflow_status"] == "completed"
+    assert preview["can_reset"] is False
+    assert preview["actions"]["backfill_memory"]["enabled"] is False
+    run = repo.get_workflow_runs_for_project("recover_reviewed_memory_done", chapter_number=1, limit=1)[0]
     assert run["status"] == "completed"
-    assert run["error_message"] is None
+    assert run["current_node"] == "awaiting_publish"
+
+
+def test_trusted_memory_does_not_complete_active_memory_curator_run(tmp_path):
+    _, repo, _ = _make_client(tmp_path)
+    project_id = "recover_memory_active_run"
+    repo.create_project(project_id=project_id, name="Recovery Project", genre="fantasy")
+    repo.add_chapter(project_id, 1, title="Ch1", status="reviewed")
+    run_id = repo.create_workflow_run(project_id, 1, graph_name="memory_backfill")
+    repo.update_workflow_run(run_id, status="running", current_node="memory_curator")
+    _seed_trusted_memory(repo, project_id)
+
+    from novel_factory.api.routes._memory_curator_gate import (
+        complete_memory_curator_recovery_if_trusted,
+    )
+
+    completed = complete_memory_curator_recovery_if_trusted(repo, project_id, 1, run_id=run_id)
+
+    assert completed == 0
+    run = repo.get_workflow_runs_for_project(project_id, chapter_number=1, limit=1)[0]
+    assert run["status"] == "running"
+    assert run["current_node"] == "memory_curator"
 
 
 def test_retry_author_node_recovers_to_scripted_without_full_reset(tmp_path):
@@ -473,10 +540,58 @@ def test_retry_author_node_recovers_to_scripted_without_full_reset(tmp_path):
     assert "从执笔重新继续" in audit["error_message"]
 
 
+def test_retry_node_resolves_failed_author_hidden_by_human_review(tmp_path):
+    client, repo, _ = _make_client(tmp_path)
+    run_id = _seed_run(repo, "recover_retry_author_wrapped")
+    repo.update_workflow_run(
+        run_id,
+        status="blocked",
+        current_node="human_review",
+        error_message="章节审核未通过，进入人工审核",
+    )
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id="recover_retry_author_wrapped",
+        chapter_number=1,
+        node_name="author",
+        event_type="failed",
+        status="failed",
+        message="Author 纯正文生成空内容（已重试一次）",
+    )
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id="recover_retry_author_wrapped",
+        chapter_number=1,
+        node_name="human_review",
+        event_type="completed",
+        status="blocked",
+        message="进入人工审核",
+    )
+
+    preview = client.get(f"/api/runs/{run_id}/recovery").json()["data"]
+    assert preview["actions"]["retry_current_node"]["enabled"] is True
+    assert preview["actions"]["retry_current_node"]["resolved_failed_node"] == "author"
+    assert preview["actions"]["retry_current_node"]["target_status"] == "scripted"
+
+    resp = client.post(f"/api/runs/{run_id}/recovery/retry-node", json={"confirm": True})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    data = body["data"]
+    assert data["resolved_failed_node"] == "author"
+    assert data["retry_node"] == "author"
+    assert data["new_status"] == "scripted"
+    assert repo.get_chapter("recover_retry_author_wrapped", 1)["status"] == "scripted"
+    run = repo.get_workflow_runs_for_project("recover_retry_author_wrapped", chapter_number=1, limit=1)[0]
+    assert run["status"] == "completed"
+    assert run["current_node"] == "author_retry_recovery"
+
+
 def test_retry_node_rejects_unsupported_node(tmp_path):
     client, repo, _ = _make_client(tmp_path)
     run_id = _seed_run(repo, "recover_retry_unsupported")
-    repo.update_workflow_run(run_id, current_node="planner")
+    repo.update_workflow_run(run_id, current_node="quality_gate")
 
     resp = client.post(f"/api/runs/{run_id}/recovery/retry-node", json={"confirm": True})
 

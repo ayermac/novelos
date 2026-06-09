@@ -37,6 +37,7 @@ from ..agent_runtime.revision_context import normalize_revision_review
 from ..agent_runtime.skill_hooks import run_agent_skills
 from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
 from ..quality.chapter_seam import build_chapter_seam_context, evaluate_chapter_seam
+from ..quality.concept_budget import CONCEPT_BUDGET_CONTRACT
 from ..quality.continuity_gate import (
     evaluate_chapter_continuity,
     SEVERITY_BLOCKING,
@@ -91,6 +92,11 @@ revision_target 规则：
 - info dump / 设定旁白 / 直白情绪 → "author"
 - 指令本身错误或设定冲突 → "planner"
 - 通过时 → null"""
+
+EDITOR_SYSTEM_PROMPT += (
+    "\n\n" + CONCEPT_BUDGET_CONTRACT
+    + "\n评审时如发现概念超载，优先建议 Author 收束到本章唯一核心概念；除非章节目标本身冲突，否则不要退回 Planner。"
+)
 
 
 # ── Data classes for refactored pipeline ─────────────────────────────

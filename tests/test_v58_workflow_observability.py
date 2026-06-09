@@ -30,6 +30,26 @@ def _seed_run(repo: Repository, project_id: str, chapter_number: int = 1, status
     return run_id
 
 
+def _seed_trusted_memory(repo: Repository, project_id: str, chapter_number: int = 1, run_id: str = "trusted-memory-run") -> str:
+    batch = repo.create_memory_batch(
+        project_id,
+        chapter_number=chapter_number,
+        run_id=run_id,
+        summary=f"第{chapter_number}章记忆提取 - 可信批次",
+    )
+    repo.create_memory_item(
+        batch_id=batch["id"],
+        project_id=project_id,
+        target_table="story_facts",
+        operation="create",
+        after_json='{"fact_key":"trusted_fact","value":"trusted"}',
+        confidence=0.9,
+        evidence_text="可信记忆证据",
+        rationale="MemoryCurator LLM 复核",
+    )
+    return batch["id"]
+
+
 def _backdate_run(repo: Repository, run_id: str, minutes_old: int) -> None:
     started_at = (datetime.now() - timedelta(minutes=minutes_old)).strftime("%Y-%m-%d %H:%M:%S")
     conn = repo._conn()
@@ -218,6 +238,147 @@ class TestWorkflowTimelineApi:
         assert memory_node["status"] == "pending"
         assert awaiting_node["label"] == "等待发布"
         assert awaiting_node["node_group"] == "terminal"
+
+    def test_memory_curator_blocked_terminal_run_recommends_backfill(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_memory_timeout", status="reviewed")
+        run_id = _seed_run(
+            repo,
+            "obs_memory_timeout",
+            status="blocked",
+            current_node="memory_curator",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id="obs_memory_timeout",
+            chapter_number=1,
+            node_name="memory_curator",
+            event_type="failed",
+            status="failed",
+            message="节点执行超时（>600秒），需要人工介入",
+        )
+
+        resp = client.get("/api/projects/obs_memory_timeout/chapters/1/workflow-timeline")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["recovery"]["recommended_action"] == "backfill_memory"
+        actions = {action["key"]: action for action in data["recovery"]["safe_actions"]}
+        assert "backfill_memory" in actions
+        assert actions["backfill_memory"]["label"] == "补跑记忆提取"
+
+    def test_timeline_clears_memory_curator_backfill_when_trusted_memory_exists(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_memory_trusted_done", status="reviewed")
+        run_id = _seed_run(
+            repo,
+            "obs_memory_trusted_done",
+            status="blocked",
+            current_node="memory_curator",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id="obs_memory_trusted_done",
+            chapter_number=1,
+            node_name="memory_curator",
+            event_type="failed",
+            status="failed",
+            message="节点执行超时（>600秒），需要人工介入",
+        )
+        _seed_trusted_memory(repo, "obs_memory_trusted_done", run_id="manual-backfill-run")
+
+        resp = client.get("/api/projects/obs_memory_trusted_done/chapters/1/workflow-timeline")
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["run_status"] == "completed"
+        assert data["current_node"] == "awaiting_publish"
+        assert data["recovery"]["recommended_action"] is None
+        action_keys = [action["key"] for action in data["recovery"]["safe_actions"]]
+        assert "backfill_memory" not in action_keys
+        runs = repo.get_workflow_runs_for_project("obs_memory_trusted_done", chapter_number=1, limit=1)
+        assert runs[0]["status"] == "completed"
+        assert runs[0]["current_node"] == "awaiting_publish"
+
+    def test_timeline_resolves_memory_curator_failure_hidden_by_human_review(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_memory_hidden_review", status="reviewed")
+        run_id = _seed_run(
+            repo,
+            "obs_memory_hidden_review",
+            status="blocked",
+            current_node="human_review",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id="obs_memory_hidden_review",
+            chapter_number=1,
+            node_name="memory_curator",
+            event_type="failed",
+            status="failed",
+            message="节点执行超时（>600秒），需要人工介入",
+            error_message="节点执行超时（>600秒），需要人工介入",
+            latency_ms=600000,
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id="obs_memory_hidden_review",
+            chapter_number=1,
+            node_name="human_review",
+            event_type="completed",
+            status="blocked",
+            message="进入人工审核",
+        )
+
+        resp = client.get("/api/projects/obs_memory_hidden_review/chapters/1/workflow-timeline")
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["current_node"] == "memory_curator"
+        assert data["raw_current_node"] == "memory_curator"
+        assert data["resolved_failed_node"] == "memory_curator"
+        assert data["recovery"]["recommended_action"] == "backfill_memory"
+        actions = {action["key"]: action for action in data["recovery"]["safe_actions"]}
+        assert "backfill_memory" in actions
+        assert "reset_chapter" not in actions
+
+    def test_timeline_resolves_retryable_failure_hidden_by_human_review(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_author_hidden_review", status="blocking")
+        run_id = _seed_run(
+            repo,
+            "obs_author_hidden_review",
+            status="blocked",
+            current_node="human_review",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id="obs_author_hidden_review",
+            chapter_number=1,
+            node_name="author",
+            event_type="failed",
+            status="failed",
+            message="Author 纯正文生成空内容（已重试一次）",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id="obs_author_hidden_review",
+            chapter_number=1,
+            node_name="human_review",
+            event_type="completed",
+            status="blocked",
+            message="进入人工审核",
+        )
+
+        resp = client.get("/api/projects/obs_author_hidden_review/chapters/1/workflow-timeline")
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["current_node"] == "author"
+        assert data["raw_current_node"] == "human_review"
+        assert data["resolved_failed_node"] == "author"
+        assert data["recovery"]["recommended_action"] == "retry_node"
+        action_keys = [action["key"] for action in data["recovery"]["safe_actions"]]
+        assert action_keys.index("retry_node") < action_keys.index("reset_chapter")
 
     def test_timeline_includes_complete_canonical_node_skeleton(self, tmp_path):
         client, repo = _make_client(tmp_path)
@@ -513,6 +674,138 @@ class TestWorkflowTimelineApi:
         assert data["next_action"]["key"] == "recover_blocked_run"
         assert data["next_action"]["target_chapter"] == 1
         assert repo.get_chapter("obs_prod_next_blocked", 1)["status"] == "blocking"
+
+    def test_production_next_prioritizes_blocked_memory_curator_backfill(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_prod_next_memory_blocked", status="reviewed")
+        run_id = _seed_run(
+            repo,
+            "obs_prod_next_memory_blocked",
+            status="blocked",
+            current_node="memory_curator",
+        )
+
+        resp = client.get("/api/projects/obs_prod_next_memory_blocked/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "backfill_memory"
+        assert data["next_action"]["run_id"] == run_id
+        assert data["next_action"]["target_chapter"] == 1
+        assert data["domain_result"]["next_action"] == "backfill_memory"
+
+    def test_production_next_skips_backfill_when_trusted_memory_exists(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_prod_next_memory_trusted", status="reviewed")
+        run_id = _seed_run(
+            repo,
+            "obs_prod_next_memory_trusted",
+            status="blocked",
+            current_node="memory_curator",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id="obs_prod_next_memory_trusted",
+            chapter_number=1,
+            node_name="memory_curator",
+            event_type="failed",
+            status="failed",
+            message="节点执行超时（>600秒），需要人工介入",
+        )
+        _seed_trusted_memory(repo, "obs_prod_next_memory_trusted", run_id="manual-backfill-run")
+
+        resp = client.get("/api/projects/obs_prod_next_memory_trusted/production-next")
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "review_chapter"
+        assert data["domain_result"]["domain_status"] == "success"
+        assert data["domain_result"]["flags"]["publish_ready"] is True
+        runs = repo.get_workflow_runs_for_project(
+            "obs_prod_next_memory_trusted",
+            chapter_number=1,
+            limit=1,
+        )
+        assert runs[0]["status"] == "completed"
+        assert runs[0]["current_node"] == "awaiting_publish"
+
+    def test_production_next_resolves_memory_curator_failure_hidden_by_human_review(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_prod_next_memory_hidden", status="reviewed")
+        run_id = _seed_run(
+            repo,
+            "obs_prod_next_memory_hidden",
+            status="blocked",
+            current_node="human_review",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id="obs_prod_next_memory_hidden",
+            chapter_number=1,
+            node_name="memory_curator",
+            event_type="failed",
+            status="failed",
+            message="节点执行超时（>600秒），需要人工介入",
+            error_message="节点执行超时（>600秒），需要人工介入",
+            latency_ms=600000,
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id="obs_prod_next_memory_hidden",
+            chapter_number=1,
+            node_name="human_review",
+            event_type="completed",
+            status="blocked",
+            message="进入人工审核",
+        )
+
+        resp = client.get("/api/projects/obs_prod_next_memory_hidden/production-next")
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "backfill_memory"
+        assert data["next_action"]["run_id"] == run_id
+        assert data["domain_result"]["next_action"] == "backfill_memory"
+        runs = repo.get_workflow_runs_for_project(
+            "obs_prod_next_memory_hidden",
+            chapter_number=1,
+            limit=1,
+        )
+        assert runs[0]["status"] == "blocked"
+        assert runs[0]["current_node"] == "memory_curator"
+
+    def test_production_next_blocks_timeout_memory_curator_before_publish(self, tmp_path):
+        client, repo = _make_client(tmp_path)
+        _seed_project_and_chapter(repo, "obs_prod_next_memory_timeout", status="reviewed")
+        run_id = _seed_run(
+            repo,
+            "obs_prod_next_memory_timeout",
+            status="running",
+            current_node="memory_curator",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id="obs_prod_next_memory_timeout",
+            chapter_number=1,
+            node_name="memory_curator",
+            event_type="failed",
+            status="failed",
+            message="节点执行超时（>600秒），需要人工介入",
+        )
+        repo.acquire_memory_curator_lock("obs_prod_next_memory_timeout", 1, run_id=run_id)
+
+        resp = client.get("/api/projects/obs_prod_next_memory_timeout/production-next")
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["next_action"]["key"] == "backfill_memory"
+        assert data["next_action"]["run_id"] == run_id
+        assert repo.get_memory_curator_lock("obs_prod_next_memory_timeout", 1) is None
+        runs = repo.get_workflow_runs_for_project(
+            "obs_prod_next_memory_timeout",
+            chapter_number=1,
+            limit=1,
+        )
+        assert runs[0]["status"] == "blocked"
+        assert runs[0]["current_node"] == "memory_curator"
 
     def test_timeline_maps_legacy_publish_current_node_to_publisher(self, tmp_path):
         client, repo = _make_client(tmp_path)

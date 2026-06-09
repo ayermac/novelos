@@ -1,7 +1,7 @@
 {
   "name": "novelos-desktop",
-  "version": "6.10.2",
-  "description": "Novelos Desktop Client — v6.10.1 Skill Engineering Standardization",
+  "version": "6.10.3",
+  "description": "Novelos Desktop Client — v6.10.3 Workflow Stability Recovery",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",

@@ -14,6 +14,7 @@ Do not put future requirements here. Future or proposed work belongs in `../next
 
 ## Recent Reports
 
+- `novel-factory-v6.10.3-completion-report.md` — Workflow Diagnostics & Stability
 - `novel-factory-v6.7.9-completion-report.md` — Narrative Continuity Gate
 - `novel-factory-v6.7.8-completion-report.md` — Revision Retry Accounting & Continuity Semantics
 - `novel-factory-v6.7.7-completion-report.md` — Genesis Generation Progress Streaming

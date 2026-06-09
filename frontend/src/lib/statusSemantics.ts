@@ -300,6 +300,11 @@ export interface MemoryStatusDisplay {
   isBusinessSuccess: boolean;
 }
 
+export interface MemoryStatusSnapshot {
+  memory_status?: string | null;
+  memory_trusted?: boolean | null;
+}
+
 const MEMORY_STATUS_DISPLAY: Record<MemoryStatusCode, MemoryStatusDisplay> = {
   trusted: {
     label: "可信记忆",
@@ -336,6 +341,22 @@ const MEMORY_STATUS_DISPLAY: Record<MemoryStatusCode, MemoryStatusDisplay> = {
  */
 export function getMemoryStatusDisplay(status: MemoryStatusCode): MemoryStatusDisplay {
   return MEMORY_STATUS_DISPLAY[status] || MEMORY_STATUS_DISPLAY.missing;
+}
+
+export function isTrustedMemoryStatus(memoryStatus?: MemoryStatusSnapshot | null): boolean {
+  return Boolean(
+    memoryStatus?.memory_trusted === true ||
+    memoryStatus?.memory_status === "trusted",
+  );
+}
+
+export function shouldShowMemoryBackfillAction(
+  memoryStatus?: MemoryStatusSnapshot | null,
+  recoveryBackfillEnabled = false,
+): boolean {
+  if (isTrustedMemoryStatus(memoryStatus)) return false;
+  if (recoveryBackfillEnabled) return true;
+  return ["fallback", "failed", "missing"].includes(String(memoryStatus?.memory_status || ""));
 }
 
 // ── Severity to CSS color mapping ──────────────────────────────────

@@ -1535,6 +1535,71 @@ class TestMemoryStructuredFieldNormalization:
         assert qin is not None
         assert "敌对" in qin["relationship_with_protagonist"]
 
+    def test_apply_faction_update_infers_quoted_faction_name(self, client, project_id):
+        """Quoted faction-like names in evidence should create/update a faction instead of failing."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=8, summary="Quoted faction")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="factions",
+            operation="update",
+            target_id=None,
+            after_json=json.dumps({
+                "description": "该势力疑似与赵天朗早期海外资金链存在关联。",
+            }, ensure_ascii=False),
+            rationale="「猩红之夜」活动区域与赵天朗早期海外资金链存在模糊重叠。",
+            evidence_text="档案残页标注：「猩红之夜」活动区域与海外账户重合。",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id, "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        faction = next((f for f in repo.list_factions(project_id) if f["name"] == "猩红之夜"), None)
+        assert faction is not None
+        assert "赵天朗" in faction["description"]
+
+    def test_apply_unresolved_faction_update_becomes_story_fact(self, client, project_id):
+        """Unresolved faction updates with useful evidence should degrade to story_facts, not fail the batch."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=8, summary="Unresolved faction")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="factions",
+            operation="update",
+            target_id=None,
+            after_json=json.dumps({
+                "description": "赵天朗早期海外资金链与未知活动区域存在模糊重叠。",
+            }, ensure_ascii=False),
+            rationale="档案残页只能证明资金链与活动区域重叠，无法确认势力名称。",
+            evidence_text="秦伯汇报：早期海外资金链与某活动区域存在模糊重叠。",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id, "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+
+        item = repo.list_memory_items(batch["id"])[0]
+        assert item["status"] == "applied"
+        facts = repo.list_story_facts(project_id)
+        fact = next((f for f in facts if f["fact_key"].startswith("chapter_8.unresolved_faction_update.")), None)
+        assert fact is not None
+        assert fact["subject"] == "未归属势力线索"
+
     def test_apply_misclassified_faction_update_without_name_becomes_story_fact(self, client, project_id):
         """Faction updates without any faction identity should not fail when evidence is a story fact."""
         from novel_factory.db.repository import Repository

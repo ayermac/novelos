@@ -42,6 +42,8 @@ export function useWorkflowStream(
   const receivedEventIds = useRef<Set<number>>(new Set())
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const heartbeatTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const triggerReconnectRef = useRef<() => void>(() => undefined)
+  const connectSSERef = useRef<(url: string) => void>(() => undefined)
   const urlRef = useRef<string>('')
 
   const resetHeartbeat = useCallback(() => {
@@ -52,7 +54,7 @@ export function useWorkflowStream(
         eventSourceRef.current.close()
         eventSourceRef.current = null
       }
-      triggerReconnect()
+      triggerReconnectRef.current()
     }, HEARTBEAT_TIMEOUT_MS)
   }, [])
 
@@ -71,7 +73,7 @@ export function useWorkflowStream(
     reconnectTimerRef.current = setTimeout(() => {
       if (doneStatus || !isActive) return
       const url = urlRef.current + (lastEventIdRef.current ? `&since_id=${lastEventIdRef.current}` : '')
-      connectSSE(url)
+      connectSSERef.current(url)
     }, delay)
   }, [doneStatus, isActive])
 
@@ -136,9 +138,12 @@ export function useWorkflowStream(
         eventSourceRef.current = null
       }
       if (heartbeatTimerRef.current) clearTimeout(heartbeatTimerRef.current)
-      triggerReconnect()
+      triggerReconnectRef.current()
     }
-  }, [resetHeartbeat, triggerReconnect])
+  }, [resetHeartbeat])
+
+  triggerReconnectRef.current = triggerReconnect
+  connectSSERef.current = connectSSE
 
   const stopStream = useCallback(() => {
     if (eventSourceRef.current) {

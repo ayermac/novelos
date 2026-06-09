@@ -650,21 +650,21 @@ class TestRouteAfterMemoryCurator:
         state = {"llm_mode": "real"}
         assert route_after_memory_curator(state) == "awaiting_publish"
 
-    def test_real_mode_degraded_memory_routes_to_human_review(self):
+    def test_real_mode_degraded_memory_routes_to_awaiting_publish(self):
         state = {
             "llm_mode": "real",
             "memory_curator_degraded": True,
             "memory_curator_warning": "LLM 未提取出记忆候选",
         }
-        assert route_after_memory_curator(state) == "human_review"
+        assert route_after_memory_curator(state) == "awaiting_publish"
 
-    def test_real_mode_fallback_memory_routes_to_human_review(self):
+    def test_real_mode_fallback_memory_routes_to_awaiting_publish(self):
         state = {
             "llm_mode": "real",
             "extraction_success": False,
             "fallback_created": True,
         }
-        assert route_after_memory_curator(state) == "human_review"
+        assert route_after_memory_curator(state) == "awaiting_publish"
 
     def test_no_llm_mode_defaults_to_publish(self):
         state = {}

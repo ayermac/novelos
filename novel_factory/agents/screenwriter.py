@@ -14,6 +14,7 @@ from ..agent_runtime.skill_hooks import run_agent_skills
 from ..agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
 from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
 from ..quality.chapter_inheritance import validate_chapter_inheritance
+from ..quality.concept_budget import CONCEPT_BUDGET_CONTRACT
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,11 @@ SCREENWRITER_SYSTEM_PROMPT = """你是网文工厂的编剧（Screenwriter），
 - 写最终正文
 - 决定审核结果
 - 违反 ChapterBrief 中明确禁止的动作"""
+
+SCREENWRITER_SYSTEM_PROMPT += (
+    "\n\n" + CONCEPT_BUDGET_CONTRACT
+    + "\n- 分场时全章所有 scene beat 必须围绕同一个核心新概念推进，不得每个场景各自展开新机制。"
+)
 
 
 class ScreenwriterAgent(BaseAgent):

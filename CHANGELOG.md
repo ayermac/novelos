@@ -12,6 +12,19 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.3 - Workflow Diagnostics & Stability
+
+Date: 2026-06-08
+
+Key changes:
+
+- **Run Doctor**: run detail now returns failure attribution and next-action guidance for model output, quality gate, configuration, timeout, memory, and generic workflow failures.
+- **Checker health grading**: mandatory QualityGate checker failures now degrade into explicit blocking issues instead of silently passing; advisory checker failures remain diagnostic.
+- **Publish title guard**: manual publish and workflow publisher block missing, malformed, truncated, overlong, or body-detached chapter titles.
+- **Memory Curator stability**: real-mode memory degradation no longer blocks already-reviewed content; terminal chapters get a safe memory backfill path.
+- **Recovery UX**: writing surface, run detail, and assistant panel expose “补跑记忆提取” without resetting正文 or review results.
+- **Version alignment**: runtime, frontend, desktop, and lockfiles bumped to `6.10.3`.
+
 ## v6.9.0 - Creative Factory Capability Upgrade
 
 Date: 2026-06-05

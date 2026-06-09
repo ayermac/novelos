@@ -14,7 +14,15 @@ from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ..contracts import success, partial_success, failed, blocked as blocked_result, needs_human
+from ._memory_curator_gate import (
+    complete_memory_curator_recovery_if_trusted,
+    has_trusted_memory_batch,
+)
 from ...validators.chapter_checker import DEFAULT_INSTRUCTION_WORD_TARGET
+from ...workflow.node_recovery import (
+    event_indicates_failure,
+    resolve_failed_node_from_events,
+)
 
 router = APIRouter()
 
@@ -108,6 +116,110 @@ def _get_stuck_run(repo, project_id: str, current_chapter: int) -> dict | None:
     if latest.get("status") in ("failed", "blocked") and chapter_status in ("blocking", "revision"):
         return latest
     return None
+
+
+def _has_memory_curator_timeout_event(repo, run_id: str) -> bool:
+    """Return True when MemoryCurator recorded a timeout/failure event."""
+    if not run_id:
+        return False
+    try:
+        events = repo.get_workflow_node_events(run_id, node_name="memory_curator")
+    except Exception:
+        return False
+    for event in events:
+        if event_indicates_failure(event):
+            return True
+    return False
+
+
+def _resolve_recoverable_node(repo, run: dict | None) -> str | None:
+    """Resolve the failed production node even if current_node is human_review."""
+    if not run:
+        return None
+    run_id = str(run.get("id") or run.get("run_id") or "")
+    events: list[dict] = []
+    if run_id:
+        try:
+            events = repo.get_workflow_node_events(run_id)
+        except Exception:
+            events = []
+    return resolve_failed_node_from_events(events, run.get("current_node"))
+
+
+def _block_memory_curator_timeout_run_if_needed(repo, run: dict) -> bool:
+    """Release a timed-out MemoryCurator lock and persist blocked run state."""
+    if (
+        not run
+        or run.get("status") not in {"running", "blocked", "failed"}
+    ):
+        return False
+    run_id = str(run.get("id") or run.get("run_id") or "")
+    project_id = str(run.get("project_id") or "")
+    chapter_number = int(run.get("chapter_number") or 0)
+    if not run_id or not project_id or not chapter_number:
+        return False
+    if not _has_memory_curator_timeout_event(repo, run_id):
+        return False
+    if _resolve_recoverable_node(repo, run) != "memory_curator":
+        return False
+    if hasattr(repo, "release_memory_curator_lock"):
+        try:
+            repo.release_memory_curator_lock(project_id, chapter_number, run_id=run_id)
+        except Exception:
+            pass
+    try:
+        repo.update_workflow_run(
+            run_id,
+            status="blocked",
+            current_node="memory_curator",
+            error_message="节点 memory_curator 执行超时（>600秒），需要补跑记忆提取",
+        )
+    except Exception:
+        pass
+    return True
+
+
+def _get_memory_curator_recovery_run(repo, project_id: str, current_chapter: int) -> dict | None:
+    """Return latest blocked MemoryCurator run for a terminal chapter."""
+    chapter = repo.get_chapter(project_id, current_chapter)
+    chapter_status = chapter.get("status") if chapter else None
+    if chapter_status not in {"reviewed", "awaiting_publish", "published"}:
+        return None
+    if has_trusted_memory_batch(repo, project_id, current_chapter):
+        complete_memory_curator_recovery_if_trusted(repo, project_id, current_chapter)
+        return None
+    runs = repo.get_workflow_runs_for_project(project_id, chapter_number=current_chapter, limit=5)
+    if not runs:
+        return None
+    latest = runs[0]
+    if _block_memory_curator_timeout_run_if_needed(repo, latest):
+        runs = repo.get_workflow_runs_for_project(project_id, chapter_number=current_chapter, limit=1)
+        latest = runs[0] if runs else latest
+    if (
+        _is_chapter_production_run(latest)
+        and latest.get("status") in {"blocked", "failed"}
+        and _resolve_recoverable_node(repo, latest) == "memory_curator"
+    ):
+        return latest
+    return None
+
+
+def _memory_curator_backfill_action(project_id: str, chapter_number: int, run: dict) -> dict:
+    run_id = run.get("id") or run.get("run_id")
+    return {
+        "key": "backfill_memory",
+        "label": f"补跑第 {chapter_number} 章记忆提取",
+        "description": (
+            f"第 {chapter_number} 章正文已通过审核，但记忆提取节点失败或超时。"
+            "先补跑 Memory Curator，再继续发布。"
+        ),
+        "primary": True,
+        "action_url": f"/api/runs/{run_id}/memory/backfill",
+        "method": "POST",
+        "requires_confirmation": True,
+        "target_chapter": chapter_number,
+        "run_id": run_id,
+    }
 
 
 def _has_pending_memory_updates(repo, project_id: str) -> bool:
@@ -672,6 +784,26 @@ def _determine_next_action(
     stale_running = _get_project_stale_running_workflow(repo, project_id, timeout_minutes)
     planned_with_content = _get_planned_chapter_with_content(repo, project_id)
     stuck_run = _get_stuck_run(repo, project_id, current_chapter)
+    memory_recovery_run = _get_memory_curator_recovery_run(repo, project_id, current_chapter)
+
+    if memory_recovery_run:
+        return _memory_curator_backfill_action(project_id, current_chapter, memory_recovery_run)
+
+    chapter = repo.get_chapter(project_id, current_chapter)
+    chapter_status = chapter.get("status") if chapter else "planned"
+    if (
+        chapter_status in ("reviewed", "awaiting_publish")
+        and has_trusted_memory_batch(repo, project_id, current_chapter)
+    ):
+        return {
+            "key": "review_chapter",
+            "label": f"审核/发布第 {current_chapter} 章",
+            "description": "章节正文和可信记忆均已完成，请最终确认发布。",
+            "primary": True,
+            "action_url": f"/api/projects/{project_id}/chapters/{current_chapter}",
+            "method": "GET",
+            "requires_confirmation": False,
+        }
 
     if blocking_ch:
         ch_num = blocking_ch.get("chapter_number", current_chapter)
@@ -806,8 +938,6 @@ def _determine_next_action(
         }
 
     # 5. Chapter generation flow
-    chapter = repo.get_chapter(project_id, current_chapter)
-    chapter_status = chapter.get("status") if chapter else "planned"
 
     running_current = _get_running_chapter_workflow(repo, project_id, current_chapter)
     if running_current:
@@ -908,6 +1038,8 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
 
         if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
             repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
+        if hasattr(repo, "restore_memory_curator_reset_recovery_runs"):
+            repo.restore_memory_curator_reset_recovery_runs(project_id=project_id)
 
         current_chapter = project.get("current_chapter", 1)
 
@@ -2836,6 +2968,31 @@ def _build_production_next_domain_result(
     - Running workflow → pending
     - Ready to generate → success
     """
+    if next_action.get("key") == "backfill_memory":
+        return needs_human(
+            "记忆提取需要补跑",
+            user_message="章节正文已完成，但记忆提取节点失败或超时，需要先补跑记忆提取",
+            next_action="backfill_memory",
+            action_label=next_action.get("label", "补跑记忆提取"),
+            details={
+                "next_action_key": next_action.get("key"),
+                "target_chapter": next_action.get("target_chapter"),
+                "run_id": next_action.get("run_id"),
+            },
+            flags={"memory_backfill_required": True},
+        ).to_dict()
+
+    if next_action.get("key") == "review_chapter":
+        return success(
+            "章节已可发布",
+            user_message=next_action.get("description", "章节已通过审核，可确认发布"),
+            details={
+                "next_action_key": next_action.get("key"),
+                "target_chapter": next_action.get("target_chapter"),
+            },
+            flags={"publish_ready": True, "memory_trusted": True},
+        ).to_dict()
+
     # Check for blocking issues
     if health.get("has_blocking_chapter") or health.get("has_stuck_run"):
         return needs_human(

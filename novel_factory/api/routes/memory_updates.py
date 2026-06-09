@@ -150,7 +150,19 @@ def _infer_faction_name(repo, project_id: str, item: dict, after_data: dict) -> 
     pattern.
     """
     before_data = _parse_json_object(item.get("before_json"))
-    for candidate in (after_data.get("name"), before_data.get("name")):
+    for candidate in (
+        after_data.get("name"),
+        after_data.get("faction_name"),
+        after_data.get("organization"),
+        after_data.get("group"),
+        after_data.get("title"),
+        item.get("target_name"),
+        before_data.get("name"),
+        before_data.get("faction_name"),
+        before_data.get("organization"),
+        before_data.get("group"),
+        before_data.get("title"),
+    ):
         if isinstance(candidate, str) and candidate.strip():
             return candidate.strip()
 
@@ -163,7 +175,17 @@ def _infer_faction_name(repo, project_id: str, item: dict, after_data: dict) -> 
         if name and name in text:
             return name
 
-    ignored = {"拍卖会", "地下拍卖会", "豪门", "顶级豪门"}
+    explicit_patterns = (
+        r"(?:势力|组织|阵营|家族|集团|公司|派系|门派|宗门|对手|敌方)\s*(?:名称|名字|名为|叫做|代号|简称)?\s*(?:[：:]|为|是)\s*[「“《]?\s*([\u4e00-\u9fffA-Za-z0-9·]{2,16})",
+        r"[「“《]([\u4e00-\u9fffA-Za-z0-9·]{2,16})[」”》]\s*(?:势力|组织|阵营|集团|公司|家族|派系|门派|宗门|活动区域|资金链)",
+    )
+    ignored = {"拍卖会", "地下拍卖会", "豪门", "顶级豪门", "组织", "势力", "阵营", "集团", "公司", "家族"}
+    for pattern in explicit_patterns:
+        for match in re.findall(pattern, text):
+            candidate = str(match or "").strip("，。；：:、 　的与和")
+            if candidate and candidate not in ignored:
+                return candidate
+
     matches = re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{1,12}(?:集团|公司|世家|家|宗|门|派|会|阁|楼|盟|帮|宫|族)", text)
     for match in sorted(set(matches), key=len):
         candidate = match
@@ -330,12 +352,47 @@ def _story_fact_data_from_unresolved_faction_update(
         for part in (
             after_data.get("description"),
             after_data.get("relationship_with_protagonist"),
+            after_data.get("type"),
             item.get("rationale"),
             item.get("evidence_text"),
         )
     )
     if not any(marker in text for marker in ("关系", "转折", "最后通牒", "预览", "决裂", "承诺")):
-        return {}
+        summary = (
+            after_data.get("description")
+            or after_data.get("relationship_with_protagonist")
+            or item.get("rationale")
+            or item.get("evidence_text")
+            or ""
+        )
+        summary_text = str(summary or "").strip()
+        if len(_compact_match_text(summary_text)) < 8:
+            return {}
+        digest_source = "|".join(
+            str(part or "")
+            for part in (
+                chapter_number,
+                after_data.get("description"),
+                after_data.get("relationship_with_protagonist"),
+                item.get("rationale"),
+                item.get("evidence_text"),
+            )
+        )
+        digest = hashlib.sha1(digest_source.encode("utf-8")).hexdigest()[:10]
+        return {
+            "fact_key": f"chapter_{chapter_number}.unresolved_faction_update.{digest}",
+            "fact_type": "faction_context",
+            "subject": "未归属势力线索",
+            "attribute": "势力更新候选",
+            "value": {
+                "summary": summary_text,
+                "after": after_data,
+                "evidence": item.get("evidence_text", ""),
+                "rationale": item.get("rationale", ""),
+            },
+            "source_chapter": chapter_number,
+            "source_agent": "memory_curator",
+        }
 
     subject = "赵倩与林辰" if "赵倩" in text and "林辰" in text else "角色关系"
     attribute = "关系转折" if any(marker in text for marker in ("关系", "转折")) else "关系状态"

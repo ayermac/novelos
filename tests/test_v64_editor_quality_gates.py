@@ -151,6 +151,12 @@ class TestEditorPromptContract:
         assert '"author"' in EDITOR_SYSTEM_PROMPT
         assert '"polisher"' in EDITOR_SYSTEM_PROMPT
 
+    def test_prompt_contains_concept_budget_review_rule(self):
+        from novel_factory.agents.editor import EDITOR_SYSTEM_PROMPT
+        assert "单章概念预算" in EDITOR_SYSTEM_PROMPT
+        assert "概念超载" in EDITOR_SYSTEM_PROMPT
+        assert "Author 收束" in EDITOR_SYSTEM_PROMPT
+
 
 class TestEditorAdvisoryUnit:
     """Direct unit tests for _run_advisory_quality_check."""

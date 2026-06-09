@@ -4,10 +4,12 @@ import {
   Play,
   FileText,
   Eye,
+  DatabaseZap,
 } from 'lucide-react'
 import { StepStatus } from '../../hooks/useSSEStream'
 import { tWorkflowNodeLabel, tWorkflowNodeNarrative } from '../../lib/state-labels'
 import { tWorkflowStatus, tChapterStatus } from '../../lib/i18n'
+import { isTrustedMemoryStatus, shouldShowMemoryBackfillAction } from '../../lib/statusSemantics'
 import { LoadingButton, InlineMessage } from '../ui'
 import type { WorkflowTimelineData } from '../../lib/api'
 
@@ -46,6 +48,16 @@ interface RunDetailData {
   error_message?: string | null
   total_tokens?: number | null
   duration_ms?: number | null
+  run_doctor?: RunDoctor
+  memory_status?: WorkflowTimelineData['memory_status']
+}
+
+interface RunDoctor {
+  category?: string
+  severity?: 'info' | 'warning' | 'error' | string
+  summary?: string
+  next_action?: string
+  evidence?: Record<string, unknown>
 }
 
 const STUCK_RUN_THRESHOLD_MINUTES = 30
@@ -76,7 +88,9 @@ interface AuthorAgentPanelProps {
   onConfirmRegenerate?: () => void
   onPublish?: () => void
   onGenerateNext?: () => void
+  onBackfillMemory?: (runId: string, force?: boolean) => Promise<void> | void
   publishPending?: boolean
+  memoryBackfillPending?: boolean
   regeneratePending?: boolean
   onViewContent: () => void
   onViewWorkflow: (runId: string) => void
@@ -130,7 +144,9 @@ export default function AuthorAgentPanel({
   onConfirmRegenerate,
   onPublish,
   onGenerateNext,
+  onBackfillMemory,
   publishPending,
+  memoryBackfillPending,
   regeneratePending,
   onViewContent,
   onViewWorkflow,
@@ -145,9 +161,11 @@ export default function AuthorAgentPanel({
   const workflowStatus = runDetail?.workflow_status
   const currentNode = timeline?.current_node || runDetail?.current_node
   const sseStepEntries = Object.entries(sseSteps)
-  const isReviewedReal = status === 'reviewed' && llmMode === 'real'
+  const canPublishReal = ['reviewed', 'awaiting_publish'].includes(status) && llmMode === 'real'
   const elapsedMinutes = elapsedMinutesSince(runDetail?.started_at)
   const memoryCuratorNode = timeline?.nodes?.find((node) => node.node_name === 'memory_curator')
+  const effectiveMemoryStatus = timeline?.memory_status || runDetail?.memory_status
+  const memoryTrusted = isTrustedMemoryStatus(effectiveMemoryStatus)
   const memoryCuratorRunning = Boolean(
     timeline?.memory_curator_running ||
     memoryCuratorNode?.status === 'running' ||
@@ -158,8 +176,7 @@ export default function AuthorAgentPanel({
   )
   const isStaleRunning = effectiveRunStatus === 'running' && effectiveElapsed !== null && effectiveElapsed >= STUCK_RUN_THRESHOLD_MINUTES
   const workflowNeedsRecovery = Boolean(
-    effectiveRunStatus === 'blocked' ||
-    effectiveRunStatus === 'failed' ||
+    ((effectiveRunStatus === 'blocked' || effectiveRunStatus === 'failed') && !(memoryTrusted && currentNode === 'memory_curator')) ||
     (effectiveRunStatus === 'running' && (timeline?.is_stale || isStaleRunning))
   )
   const isRunningAnotherChapter = Boolean(
@@ -172,6 +189,18 @@ export default function AuthorAgentPanel({
   const canShowPrimaryAction = activeTab !== 'workflow'
   const canDirectGenerate = canShowPrimaryAction && !isWorkflowActive && !hasPreservedPlannedContent && !needsRecovery
   const recoveryRunId = timeline?.run_id || runDetail?.run_id
+  const recoveryBackfillRecommended = Boolean(
+    timeline?.recovery?.recommended_action === 'backfill_memory' ||
+    timeline?.recovery?.safe_actions?.some((action) => action.key === 'backfill_memory')
+  )
+  const canBackfillMemoryFromAssistant = Boolean(
+    onBackfillMemory &&
+    recoveryRunId &&
+    shouldShowMemoryBackfillAction(effectiveMemoryStatus, recoveryBackfillRecommended) &&
+    (currentNode === 'memory_curator' || timeline?.current_node === 'memory_curator') &&
+    ['reviewed', 'awaiting_publish', 'published'].includes(status) &&
+    workflowNeedsRecovery
+  )
   const showRecoveryShortcut = activeTab !== 'workflow' && Boolean(recoveryRunId) && (isStaleRunning || needsRecovery)
 
   return (
@@ -181,11 +210,15 @@ export default function AuthorAgentPanel({
       </div>
       <div className="author-agent-body">
         {/* Next recommended action */}
-        {isReviewedReal && onPublish && !workflowNeedsRecovery && (
+        {canPublishReal && onPublish && !workflowNeedsRecovery && (
           <div className="author-agent-next-action">
             <div className="action-label">{memoryCuratorRunning ? '记忆提取中' : '等待人工发布'}</div>
             <div className="action-desc">
-              {memoryCuratorRunning ? '记忆提取完成后才能确认发布。' : '本章已通过 AI 审核，点击确认发布。'}
+              {memoryCuratorRunning
+                ? '记忆提取完成后才能确认发布。'
+                : status === 'awaiting_publish'
+                  ? '本章已完成全部流程，点击确认发布。'
+                  : '本章已通过 AI 审核，点击确认发布。'}
             </div>
             <LoadingButton
               className="btn btn-primary btn-sm"
@@ -201,21 +234,34 @@ export default function AuthorAgentPanel({
           </div>
         )}
 
-        {isReviewedReal && workflowNeedsRecovery && (
+        {canPublishReal && workflowNeedsRecovery && (
           <div className="author-agent-next-action">
             <div className="action-label">需要先恢复运行</div>
             <div className="action-desc">
               工作流存在异常（{effectiveRunStatus === 'blocked' ? '阻塞' : effectiveRunStatus === 'failed' ? '失败' : '运行超时'}），需先处理恢复，再决定发布。
             </div>
             {recoveryRunId && (
-              <button
-                className="btn btn-secondary btn-sm"
-                type="button"
-                onClick={() => onViewWorkflow(recoveryRunId)}
-                style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
-              >
-                <Eye size={12} /> 打开工作流恢复
-              </button>
+              canBackfillMemoryFromAssistant ? (
+                <LoadingButton
+                  className="btn btn-primary btn-sm"
+                  variant="primary"
+                  loading={!!memoryBackfillPending}
+                  loadingText="补跑中..."
+                  onClick={() => onBackfillMemory?.(recoveryRunId)}
+                  style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
+                >
+                  <DatabaseZap size={12} /> 补跑记忆提取
+                </LoadingButton>
+              ) : (
+                <button
+                  className="btn btn-secondary btn-sm"
+                  type="button"
+                  onClick={() => onViewWorkflow(recoveryRunId)}
+                  style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
+                >
+                  <Eye size={12} /> 打开工作流恢复
+                </button>
+              )
             )}
           </div>
         )}
@@ -236,7 +282,7 @@ export default function AuthorAgentPanel({
           </div>
         )}
 
-        {!isReviewedReal && status !== 'published' && status !== 'awaiting_publish' && (
+        {!canPublishReal && status !== 'published' && status !== 'awaiting_publish' && (
           <div className="author-agent-next-action">
             <div className="action-label">
               {isStaleRunning
@@ -304,7 +350,7 @@ export default function AuthorAgentPanel({
           </div>
         )}
 
-        {status === 'awaiting_publish' && !workflowNeedsRecovery && (
+        {!canPublishReal && status === 'awaiting_publish' && !workflowNeedsRecovery && (
           <div className="author-agent-next-action">
             <div className="action-label">{memoryCuratorRunning ? '记忆提取中' : '等待发布'}</div>
             <div className="action-desc">
@@ -313,21 +359,34 @@ export default function AuthorAgentPanel({
           </div>
         )}
 
-        {status === 'awaiting_publish' && workflowNeedsRecovery && (
+        {!canPublishReal && status === 'awaiting_publish' && workflowNeedsRecovery && (
           <div className="author-agent-next-action">
             <div className="action-label">需要先恢复运行</div>
             <div className="action-desc">
               工作流存在异常（{effectiveRunStatus === 'blocked' ? '阻塞' : effectiveRunStatus === 'failed' ? '失败' : '运行超时'}），需先处理恢复，再决定发布。
             </div>
             {recoveryRunId && (
-              <button
-                className="btn btn-secondary btn-sm"
-                type="button"
-                onClick={() => onViewWorkflow(recoveryRunId)}
-                style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
-              >
-                <Eye size={12} /> 打开工作流恢复
-              </button>
+              canBackfillMemoryFromAssistant ? (
+                <LoadingButton
+                  className="btn btn-primary btn-sm"
+                  variant="primary"
+                  loading={!!memoryBackfillPending}
+                  loadingText="补跑中..."
+                  onClick={() => onBackfillMemory?.(recoveryRunId)}
+                  style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
+                >
+                  <DatabaseZap size={12} /> 补跑记忆提取
+                </LoadingButton>
+              ) : (
+                <button
+                  className="btn btn-secondary btn-sm"
+                  type="button"
+                  onClick={() => onViewWorkflow(recoveryRunId)}
+                  style={{ marginTop: 8, width: '100%', justifyContent: 'flex-start' }}
+                >
+                  <Eye size={12} /> 打开工作流恢复
+                </button>
+              )
             )}
           </div>
         )}

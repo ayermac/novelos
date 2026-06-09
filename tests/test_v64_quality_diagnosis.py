@@ -129,6 +129,7 @@ class TestQualityHubDiagnose:
             assert "death_penalty" in dims
             assert "ai_trace" in dims
             assert "narrative_quality" in dims
+            assert "concept_budget" in dims
 
             # Show-dont-tell should be low for AI-heavy text
             assert dims["show_dont_tell"] < 80
@@ -137,6 +138,32 @@ class TestQualityHubDiagnose:
             assert result["metrics"]["word_count"] > 0
             assert result["metrics"]["paragraph_count"] > 0
             assert result["metrics"]["dialogue_ratio"] >= 0
+        finally:
+            if os.path.exists(db_path):
+                os.unlink(db_path)
+
+    def test_diagnose_concept_budget_overload_is_advisory(self):
+        """Concept overload should be surfaced as quality advice."""
+        from novel_factory.quality.hub import QualityHub
+        from novel_factory.skills.registry import SkillRegistry
+        from novel_factory.db.repository import Repository
+        from novel_factory.db.connection import init_db
+
+        fd, db_path = tempfile.mkstemp(suffix=".db")
+        os.close(fd)
+        init_db(db_path)
+        repo = Repository(db_path)
+        try:
+            hub = QualityHub(repo, skill_registry=SkillRegistry())
+            text = (
+                "林辰看着“猩红之夜”“门票”“请柬”“信标”“利息”“喂养”“猎人协议”。"
+                "未知节点第一次亮起，陌生权限与SH-7N特征码同时浮现，78.3%相似度跳动。"
+            ) * 5
+            result = hub.diagnose(text)
+
+            assert result["metrics"]["concept_budget"]["overload"] is True
+            assert result["dimensions"]["concept_budget"] < 70
+            assert any(f["code"] == "CONCEPT_BUDGET_OVERLOAD" for f in result["findings"])
         finally:
             if os.path.exists(db_path):
                 os.unlink(db_path)

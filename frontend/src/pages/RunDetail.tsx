@@ -14,6 +14,7 @@ import {
   isBusinessSuccess,
   normalizeOperationResult,
   severityBadgeClass,
+  shouldShowMemoryBackfillAction,
   type MemoryStatusCode,
   type OperationResult,
 } from '../lib/statusSemantics'
@@ -60,6 +61,16 @@ interface RunDetail {
   }
   // v6.6.10: Unified domain result
   domain_result?: OperationResult
+  // v6.10.3: Failure attribution and next-action diagnosis
+  run_doctor?: RunDoctor
+}
+
+interface RunDoctor {
+  category?: string
+  severity?: 'info' | 'warning' | 'error' | string
+  summary?: string
+  next_action?: string
+  evidence?: Record<string, unknown>
 }
 
 interface RunRecovery {
@@ -96,6 +107,19 @@ interface RunRecovery {
       label: string
       reason: string
     }
+    retry_current_node?: {
+      enabled: boolean
+      label: string
+      reason: string
+      target_status?: string | null
+      target_node?: string | null
+      resolved_failed_node?: string | null
+    }
+    backfill_memory?: {
+      enabled: boolean
+      label: string
+      reason: string
+    }
   }
 }
 
@@ -121,6 +145,17 @@ interface RunRecoveryMarkStuckResult {
   recovery: RunRecovery
 }
 
+interface RunRecoveryRetryNodeResult {
+  recovered: boolean
+  previous_status: string
+  new_status: string
+  retry_node: string
+  retry_label: string
+  resolved_failed_node?: string | null
+  message: string
+  recovery: RunRecovery
+}
+
 interface MemoryBackfillResult {
   skipped: boolean
   run_id?: string
@@ -132,6 +167,52 @@ interface MemoryBackfillResult {
   memory_curator_fallback?: string | null
   message?: string
   domain_result?: OperationResult
+}
+
+function runDoctorCategoryLabel(category?: string): string {
+  switch (category) {
+    case 'healthy':
+      return '未发现异常'
+    case 'model_output_failure':
+      return '模型输出失败'
+    case 'deterministic_quality_failure':
+      return '确定性质检失败'
+    case 'configuration_failure':
+      return '配置失败'
+    case 'runtime_timeout':
+      return '运行超时'
+    case 'memory_failure':
+      return '记忆整理失败'
+    case 'workflow_failure':
+      return '工作流失败'
+    case 'running':
+      return '运行中'
+    default:
+      return '待确认'
+  }
+}
+
+function runDoctorActionLabel(action?: string): string {
+  switch (action) {
+    case 'backfill_memory':
+      return '补跑记忆提取'
+    case 'revise_by_gate':
+      return '按门禁问题返修'
+    case 'retry_node_or_switch_model':
+      return '重试节点或切换模型'
+    case 'check_settings':
+      return '检查 LLM 设置'
+    case 'mark_stuck':
+      return '标记卡住运行'
+    case 'view_failed_node':
+      return '查看失败节点'
+    case 'wait_or_watch':
+      return '继续观察'
+    case 'none':
+      return '无需处理'
+    default:
+      return action || '查看运行详情'
+  }
 }
 
 export default function RunDetail() {
@@ -146,6 +227,7 @@ export default function RunDetail() {
   const [recoveryMessage, setRecoveryMessage] = useState<string | null>(null)
   const [recovering, setRecovering] = useState(false)
   const [markingStuck, setMarkingStuck] = useState(false)
+  const [retryingNode, setRetryingNode] = useState(false)
   const [memoryBackfilling, setMemoryBackfilling] = useState(false)
 
   const load = async () => {
@@ -225,6 +307,37 @@ export default function RunDetail() {
       await load()
     } else {
       setRecoveryError(result.error?.message || '标记卡住运行失败')
+    }
+  }
+
+  const handleRetryCurrentNode = async () => {
+    if (!runId || !recovery?.actions?.retry_current_node?.enabled) return
+    const action = recovery.actions.retry_current_node
+    const ok = await dialog.confirm({
+      title: action.label || '重试当前节点',
+      message: action.reason || '确认保留已有产物，只恢复到失败节点前的安全状态？',
+      tone: 'warning',
+      confirmLabel: '定点重试',
+    })
+    if (!ok) return
+
+    setRetryingNode(true)
+    setRecoveryError(null)
+    setRecoveryMessage(null)
+    const result = await post<RunRecoveryRetryNodeResult>(`/runs/${runId}/recovery/retry-node`, { confirm: true })
+    setRetryingNode(false)
+
+    if (result.ok && result.data) {
+      setRecovery(result.data.recovery)
+      setRecoveryMessage(result.data.message || `已恢复到 ${result.data.new_status}，可继续生成。`)
+      await load()
+    } else {
+      const details = result.error?.details
+      const domainResult = details?.domain_result && typeof details.domain_result === 'object'
+        ? details.domain_result as OperationResult
+        : null
+      const actionHint = domainResult ? getActionHint(domainResult) : ''
+      setRecoveryError((domainResult?.user_message || domainResult?.message || result.error?.message || '定点重试恢复失败') + (actionHint ? `\n建议操作：${actionHint}` : ''))
     }
   }
 
@@ -322,6 +435,20 @@ export default function RunDetail() {
           </div>
         )}
       </div>
+      {data.run_doctor && (
+        <div className={`alert alert-${data.run_doctor.severity === 'error' ? 'error' : data.run_doctor.severity === 'warning' ? 'warn' : 'info'}`} style={{ marginBottom: '16px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <strong>Run Doctor：</strong>
+            <span className={`badge ${severityBadgeClass(data.run_doctor.severity === 'error' ? 'error' : data.run_doctor.severity === 'warning' ? 'warning' : 'info')}`}>
+              {runDoctorCategoryLabel(data.run_doctor.category)}
+            </span>
+            <span>{data.run_doctor.summary || '暂无诊断摘要。'}</span>
+          </div>
+          <div style={{ marginTop: 6, fontSize: 13 }}>
+            建议动作：{runDoctorActionLabel(data.run_doctor.next_action)}
+          </div>
+        </div>
+      )}
       <div className="card" style={{ marginBottom: '16px' }}>
         <div className="card-header"><h3>基本信息</h3></div>
         <div className="card-body">
@@ -415,31 +542,39 @@ export default function RunDetail() {
                 {/* v6.6.7: Memory backfill button with state-aware labels */}
                 {(() => {
                   const ms = data.memory_status
-                  const hasTrusted = ms?.memory_trusted
+                  const hasTrusted = Boolean(ms?.memory_trusted)
                   const hasFallback = ms?.memory_status === 'fallback'
+                  const recoveryBackfillEnabled = Boolean(recovery.actions?.backfill_memory?.enabled)
                   const isTerminal = ['reviewed', 'awaiting_publish', 'published'].includes(data.chapter_status)
-                  if (!isTerminal) return null
+                  const showBackfill = shouldShowMemoryBackfillAction(ms, recoveryBackfillEnabled)
+                  if (!isTerminal || !showBackfill) return null
                   return (
                     <>
                       <button
-                        className={`btn ${hasTrusted ? 'btn-secondary' : 'btn-primary'}`}
-                        onClick={() => handleMemoryBackfill(hasFallback)}
-                        disabled={memoryBackfilling || hasTrusted}
-                        title={hasTrusted ? '已存在可信记忆批次' : hasFallback ? '重新提取可信记忆' : '补跑记忆提取'}
+                        className={`btn ${hasTrusted && !recoveryBackfillEnabled ? 'btn-secondary' : 'btn-primary'}`}
+                        onClick={() => handleMemoryBackfill(hasFallback || (hasTrusted && recoveryBackfillEnabled))}
+                        disabled={memoryBackfilling || (hasTrusted && !recoveryBackfillEnabled)}
+                        title={
+                          recoveryBackfillEnabled
+                            ? recovery.actions?.backfill_memory?.reason || '补跑记忆提取'
+                            : hasTrusted
+                              ? '已存在可信记忆批次'
+                              : hasFallback
+                                ? '重新提取可信记忆'
+                                : '补跑记忆提取'
+                        }
                       >
                         <DatabaseZap size={14} />
-                        {memoryBackfilling ? '补跑中...' : hasTrusted ? '已存在可信记忆' : hasFallback ? '重新提取可信记忆' : '补跑记忆提取'}
+                        {memoryBackfilling
+                          ? '补跑中...'
+                          : recoveryBackfillEnabled
+                            ? recovery.actions?.backfill_memory?.label || '补跑记忆提取'
+                            : hasTrusted
+                              ? '已存在可信记忆'
+                              : hasFallback
+                                ? '重新提取可信记忆'
+                                : '补跑记忆提取'}
                       </button>
-                      {hasTrusted && (
-                        <button
-                          className="btn btn-secondary"
-                          onClick={() => handleMemoryBackfill(true)}
-                          disabled={memoryBackfilling}
-                          title="强制重新提取（会忽略旧候选）"
-                        >
-                          <DatabaseZap size={14} /> 强制重跑
-                        </button>
-                      )}
                     </>
                   )
                 })()}
@@ -449,6 +584,13 @@ export default function RunDetail() {
                   disabled={!(recovery.actions?.mark_stuck_blocked?.enabled) || markingStuck}
                 >
                   {markingStuck ? '标记中...' : recovery.actions?.mark_stuck_blocked?.label || '标记为阻塞'}
+                </button>
+                <button
+                  className="btn btn-primary"
+                  onClick={handleRetryCurrentNode}
+                  disabled={!(recovery.actions?.retry_current_node?.enabled) || retryingNode}
+                >
+                  {retryingNode ? '恢复中...' : recovery.actions?.retry_current_node?.label || '重试当前节点'}
                 </button>
                 <button
                   className="btn btn-primary"

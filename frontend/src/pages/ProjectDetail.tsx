@@ -104,6 +104,16 @@ interface RunDetailData {
   started_at?: string
   completed_at?: string
   steps: Step[]
+  run_doctor?: RunDoctor
+  memory_status?: WorkflowTimelineData['memory_status']
+}
+
+interface RunDoctor {
+  category?: string
+  severity?: 'info' | 'warning' | 'error' | string
+  summary?: string
+  next_action?: string
+  evidence?: Record<string, unknown>
 }
 
 type TabKey = SurfaceTabKey
@@ -136,6 +146,7 @@ export default function ProjectDetail() {
   const [publishPending, setPublishPending] = useState(false)
   const [markStuckPending, setMarkStuckPending] = useState(false)
   const [resetRecoveryPending, setResetRecoveryPending] = useState(false)
+  const [memoryBackfillPending, setMemoryBackfillPending] = useState(false)
   const [regeneratePending, setRegeneratePending] = useState(false)
   const currentChapterRef = useRef<number>(1)
   const streamingChapterRef = useRef<number | null>(null)
@@ -667,6 +678,52 @@ export default function ProjectDetail() {
     }
   }, [dialog, refetchWorkspace, resetRecoveryPending])
 
+  const handleBackfillMemory = useCallback(async (runId: string, force = false) => {
+    if (memoryBackfillPending) return
+    const ok = await dialog.confirm({
+      title: force ? '强制重新提取记忆' : '补跑记忆提取',
+      message: force
+        ? '确认强制重新提取记忆？这不会覆盖正文或审核结果，但会忽略旧的低可信候选。'
+        : '确认只补跑记忆整理节点？这不会覆盖正文、过程稿或审核结果。',
+      tone: 'warning',
+      confirmLabel: force ? '强制提取' : '补跑记忆',
+    })
+    if (!ok) return
+    setMemoryBackfillPending(true)
+    try {
+      const res = await post<{ message?: string; run_id?: string; memory_items_count?: number }>(
+        `/runs/${runId}/memory/backfill`,
+        { confirm: true, force },
+      )
+      if (res.ok) {
+        setGenError('')
+        await refetchWorkspace()
+        if (id) await loadTimeline(id, currentChapter, { silent: true })
+        await dialog.alert({
+          title: '记忆补跑完成',
+          message: res.data?.message || `记忆提取补跑完成${typeof res.data?.memory_items_count === 'number' ? `：${res.data.memory_items_count} 条候选` : ''}`,
+          tone: 'success',
+        })
+      } else {
+        const details = res.error?.details
+        const domainResult = details?.domain_result as { user_message?: string; message?: string } | undefined
+        await dialog.alert({
+          title: '补跑记忆提取失败',
+          message: domainResult?.user_message || domainResult?.message || res.error?.message || '补跑记忆提取失败',
+          tone: 'danger',
+        })
+      }
+    } catch (err: unknown) {
+      await dialog.alert({
+        title: '补跑记忆提取失败',
+        message: err instanceof Error ? err.message : '补跑记忆提取失败',
+        tone: 'danger',
+      })
+    } finally {
+      setMemoryBackfillPending(false)
+    }
+  }, [currentChapter, dialog, id, loadTimeline, memoryBackfillPending, refetchWorkspace])
+
   const handleResetRunRecoveryForChapter = useCallback(async (chapterNumber: number) => {
     if (!id || resetRecoveryPending) return
     const ok = await dialog.confirm({
@@ -769,11 +826,13 @@ export default function ProjectDetail() {
           onPublish={handlePublish}
           onResetRunRecovery={handleResetRunRecovery}
           onRetryRunNode={handleRetryRunNode}
+          onBackfillMemory={handleBackfillMemory}
           onWorkflowDone={handleWorkflowDone}
           onResetRunRecoveryForChapter={handleResetRunRecoveryForChapter}
           publishPending={publishPending}
           markStuckPending={markStuckPending}
           resetRecoveryPending={resetRecoveryPending}
+          memoryBackfillPending={memoryBackfillPending}
           regeneratePending={regeneratePending}
           onGenerateChapter={handleGenerateChapter}
           onGenerateNextFromChapter={handleGenerateNextFromChapter}

@@ -41,6 +41,7 @@ from ..agent_runtime.revision_context import normalize_revision_review, revision
 from ..agent_runtime.skill_hooks import run_agent_skills
 from ..agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
 from ..quality.chapter_seam import build_chapter_seam_context
+from ..quality.concept_budget import CONCEPT_BUDGET_CONTRACT
 from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
 
 logger = logging.getLogger(__name__)
@@ -95,6 +96,8 @@ Drafting Contract（v6.4.1）：
 - word_count: 字数
 - implemented_events: 已实现的关键事件列表
 - used_plot_refs: 使用的伏笔代码列表"""
+
+AUTHOR_SYSTEM_PROMPT += "\n\n" + CONCEPT_BUDGET_CONTRACT
 
 
 class AuthorAgent(BaseAgent):
