@@ -174,10 +174,16 @@ export default function AuthorAgentPanel({
       (currentNode === 'memory_curator' || memoryCuratorNode?.flags?.memory_curator_running)
     )
   )
-  const isStaleRunning = effectiveRunStatus === 'running' && effectiveElapsed !== null && effectiveElapsed >= STUCK_RUN_THRESHOLD_MINUTES
+  const timelineStaleRunning = timeline?.is_stale === true
+  const fallbackStaleRunning = !timeline &&
+    effectiveRunStatus === 'running' &&
+    currentNode !== 'memory_curator' &&
+    effectiveElapsed !== null &&
+    effectiveElapsed >= STUCK_RUN_THRESHOLD_MINUTES
+  const isStaleRunning = effectiveRunStatus === 'running' && (timelineStaleRunning || fallbackStaleRunning)
   const workflowNeedsRecovery = Boolean(
     ((effectiveRunStatus === 'blocked' || effectiveRunStatus === 'failed') && !(memoryTrusted && currentNode === 'memory_curator')) ||
-    (effectiveRunStatus === 'running' && (timeline?.is_stale || isStaleRunning))
+    isStaleRunning
   )
   const isRunningAnotherChapter = Boolean(
     isProjectWorkflowRunning && runningWorkflowChapter && runningWorkflowChapter !== currentChapter
@@ -199,7 +205,9 @@ export default function AuthorAgentPanel({
     shouldShowMemoryBackfillAction(effectiveMemoryStatus, recoveryBackfillRecommended) &&
     (currentNode === 'memory_curator' || timeline?.current_node === 'memory_curator') &&
     ['reviewed', 'awaiting_publish', 'published'].includes(status) &&
-    workflowNeedsRecovery
+    workflowNeedsRecovery &&
+    !memoryCuratorRunning &&
+    effectiveRunStatus !== 'running'
   )
   const showRecoveryShortcut = activeTab !== 'workflow' && Boolean(recoveryRunId) && (isStaleRunning || needsRecovery)
 
