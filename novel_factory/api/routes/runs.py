@@ -29,6 +29,7 @@ from ._memory_curator_gate import (
     memory_result_is_incomplete,
 )
 from ...workflow.node_recovery import (
+    active_node_started_at_from_events,
     node_retry_target,
     resolve_failed_node_from_events,
 )
@@ -1618,9 +1619,15 @@ def _build_recovery_state(
 
     # v6.6.6: Derive canonical recovery state
     has_existing_content = bool(chapter and chapter.get("content"))
+    recovery_run_data = run_data
+    if stuck_info.get("active_node_started_at"):
+        recovery_run_data = {
+            **run_data,
+            "started_at": stuck_info["active_node_started_at"],
+        }
     recovery_state = derive_workflow_recovery_state(
         chapter=chapter,
-        latest_run=run_data,
+        latest_run=recovery_run_data,
         checkpoint_info=checkpoint_info,
         has_existing_content=has_existing_content,
     )
@@ -1637,6 +1644,7 @@ def _build_recovery_state(
         "max_retries": max_retries,
         "timeout_minutes": timeout_minutes,
         "elapsed_minutes": stuck_info.get("elapsed_minutes"),
+        "active_node_elapsed_minutes": stuck_info.get("active_node_elapsed_minutes"),
         "stuck": stuck_info.get("stuck", False),
         "stuck_reason": stuck_info.get("reason"),
         "running_tasks": stuck_info.get("running_tasks", []),
@@ -1728,10 +1736,10 @@ def _detect_stuck_run(repo, run_data: dict, timeout_minutes: int) -> dict:
         return {"stuck": False, "reason": None, "running_tasks": []}
 
     elapsed = _elapsed_minutes_since(run_data.get("started_at"))
-    run_stuck = elapsed is not None and elapsed >= timeout_minutes
 
     project_id = run_data.get("project_id")
     chapter_number = run_data.get("chapter_number")
+    run_id = str(run_data.get("id") or run_data.get("run_id") or "")
     running_tasks = []
     task_stuck = False
     try:
@@ -1766,11 +1774,57 @@ def _detect_stuck_run(repo, run_data: dict, timeout_minutes: int) -> dict:
     except Exception:
         running_tasks = []
 
-    memory_timeout_event = _has_memory_curator_timeout_event(repo, str(run_data.get("id") or ""))
-    stuck = run_stuck or task_stuck or memory_timeout_event
+    active_node_started_at = None
+    active_node_elapsed = None
+    active_node_stuck = False
+    current_node = str(run_data.get("current_node") or "").strip()
+    try:
+        events = repo.get_workflow_node_events(run_id) if run_id else []
+        active_node_started_at = active_node_started_at_from_events(events, current_node)
+    except Exception:
+        active_node_started_at = None
+    if active_node_started_at:
+        active_node_elapsed = _elapsed_minutes_since(active_node_started_at)
+        active_node_stuck = active_node_elapsed is not None and active_node_elapsed >= timeout_minutes
+        if not running_tasks and current_node:
+            target = _node_retry_target(current_node)
+            node_label = target["label"] if target else _agent_display_name(current_node)
+            running_tasks.append({
+                "id": None,
+                "task_type": current_node,
+                "task_label": f"{node_label}节点",
+                "agent_id": current_node,
+                "agent_label": node_label,
+                "started_at": active_node_started_at,
+                "elapsed_minutes": active_node_elapsed,
+                "stuck": active_node_stuck,
+                "source": "workflow_node_event",
+            })
+
+    fallback_run_stuck = (
+        elapsed is not None
+        and elapsed >= timeout_minutes
+        and not running_tasks
+        and not active_node_started_at
+    )
+
+    memory_timeout_event = _has_memory_curator_timeout_event(repo, run_id)
+    stuck = fallback_run_stuck or task_stuck or active_node_stuck or memory_timeout_event
     reason = None
     if memory_timeout_event:
         reason = "MemoryCurator 已记录节点超时/失败事件，可直接标记阻塞并释放记忆锁。"
+    elif active_node_stuck:
+        node_label = _node_retry_target(current_node) or {}
+        display = node_label.get("label") or _agent_display_name(current_node)
+        reason = (
+            f"当前节点{display}已超过 {timeout_minutes} 分钟未完成，"
+            "可先标记为阻塞再执行定点重试。"
+        )
+    elif task_stuck:
+        reason = (
+            f"当前运行任务已超过 {timeout_minutes} 分钟未完成，"
+            "可先标记为阻塞再执行恢复。"
+        )
     elif stuck:
         reason = (
             f"运行已超过 {timeout_minutes} 分钟仍处于 running，"
@@ -1780,6 +1834,8 @@ def _detect_stuck_run(repo, run_data: dict, timeout_minutes: int) -> dict:
         "stuck": stuck,
         "reason": reason,
         "elapsed_minutes": elapsed,
+        "active_node_started_at": active_node_started_at,
+        "active_node_elapsed_minutes": active_node_elapsed,
         "running_tasks": running_tasks,
     }
 

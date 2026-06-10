@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 
 
 AGENT_MIN_TIMEOUT_SECONDS: dict[str, int] = {
+    "planner": 600,
+    "screenwriter": 600,
     "author": 300,
     "polisher": 300,
     "editor": 240,

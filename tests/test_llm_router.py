@@ -157,9 +157,10 @@ class TestLLMRouter:
 
         router = LLMRouter(config, llm_mode="real", env_getter=mock_getenv)
 
+        assert router.for_agent("planner").config.request_timeout_seconds == 600
+        assert router.for_agent("screenwriter").config.request_timeout_seconds == 600
         assert router.for_agent("memory_curator").config.request_timeout_seconds == 180
         assert router.for_agent("author").config.request_timeout_seconds == 300
-        assert router.for_agent("planner").config.request_timeout_seconds == 60
 
     def test_router_real_mode_missing_profile(self):
         """Real mode with missing profile raises error."""

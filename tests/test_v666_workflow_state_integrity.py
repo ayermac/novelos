@@ -472,6 +472,44 @@ def test_workflow_timeline_returns_recovery_state(client, db_path):
     assert "safe_actions" in recovery_state
 
 
+def test_workflow_timeline_uses_active_node_age_not_total_run_age(client, db_path):
+    """Timeline stale detection should not flag a long run when current node is fresh."""
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    project_id = "test-timeline-active-node-age"
+    repo.create_project(project_id=project_id, name="Timeline Active Node Age", genre="test")
+    repo.add_chapter(project_id, 1, title="Chapter 1", status="polished")
+    run_id = repo.create_workflow_run(project_id, 1)
+    repo.update_workflow_run(run_id, status="running", current_node="editor")
+    conn = repo._conn()
+    try:
+        conn.execute(
+            "UPDATE workflow_runs SET started_at=datetime('now','-45 minutes','+8 hours') WHERE id=?",
+            (run_id,),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    repo.create_workflow_node_event(
+        run_id=run_id,
+        project_id=project_id,
+        chapter_number=1,
+        node_name="editor",
+        event_type="started",
+        status="running",
+    )
+
+    response = client.get(f"/api/projects/{project_id}/chapters/1/workflow-timeline")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["elapsed_minutes"] >= 30
+    assert data["is_stale"] is False
+    assert data["recovery"]["recommended_action"] is None
+    assert data["recovery"]["recovery_state"]["recommended_action"] is None
+
+
 def test_production_next_respects_manual_intervention(client, db_path):
     """Test production-next doesn't recommend impossible automatic action when manual intervention required."""
     from novel_factory.db.repository import Repository

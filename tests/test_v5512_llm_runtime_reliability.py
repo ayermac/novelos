@@ -343,6 +343,92 @@ def test_llm_provider_text_call_tolerates_none_token_usage():
     assert provider.last_call_trace["request"]["agent_id"] == "author"
 
 
+def test_llm_provider_stream_invalid_parameter_falls_back_to_text():
+    class _TextResponse:
+        content = "ok"
+        usage_metadata = {"input_tokens": 2, "output_tokens": 3}
+        response_metadata = {"finish_reason": "stop"}
+
+    class _Client:
+        def __init__(self) -> None:
+            self.stream_calls = 0
+            self.invoke_calls = 0
+
+        def stream(self, _messages, **_kwargs):
+            self.stream_calls += 1
+            raise Exception(
+                "Error code: 400 - {'error': {'code': 'InvalidParameter', "
+                "'message': 'A parameter specified in the request is not valid', "
+                "'param': '', 'type': 'BadRequest'}}"
+            )
+
+        def invoke(self, _messages, **_kwargs):
+            self.invoke_calls += 1
+            return _TextResponse()
+
+    provider = OpenAICompatibleProvider(LLMConfig(api_key="test-key"))
+    client = _Client()
+    provider._client = client  # type: ignore[assignment]
+
+    chunks: list[str] = []
+    text = provider.invoke_text_stream(
+        [{"role": "user", "content": "write"}],
+        agent_id="author",
+        on_chunk=chunks.append,
+    )
+
+    assert text == "ok"
+    assert client.stream_calls == 1
+    assert client.invoke_calls == 1
+    assert provider.last_call_trace is not None
+    assert provider.last_call_trace["request"]["call_type"] == "text"
+    assert provider.last_call_trace["request"]["agent_id"] == "author"
+
+
+def test_llm_provider_text_invalid_parameter_falls_back_to_http(monkeypatch):
+    class _Client:
+        def invoke(self, _messages, **_kwargs):
+            raise Exception(
+                "Error code: 400 - {'error': {'code': 'InvalidParameter', "
+                "'message': 'A parameter specified in the request is not valid', "
+                "'param': '', 'type': 'BadRequest'}}"
+            )
+
+    provider = OpenAICompatibleProvider(LLMConfig(api_key="test-key"))
+    provider._client = _Client()  # type: ignore[assignment]
+    fallback_calls = []
+
+    def _fake_http_fallback(lc_messages, request_timeout_seconds=None, **kwargs):
+        fallback_calls.append({
+            "message_count": len(lc_messages),
+            "request_timeout_seconds": request_timeout_seconds,
+            "kwargs": kwargs,
+        })
+        return {
+            "choices": [{"message": {"content": "ok"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 2, "completion_tokens": 3, "total_tokens": 5},
+        }
+
+    monkeypatch.setattr(provider, "_invoke_http_chat_completion", _fake_http_fallback)
+
+    text = provider.invoke_text(
+        [{"role": "user", "content": "write"}],
+        temperature=0.7,
+        max_tokens=2048,
+        agent_id="author",
+    )
+
+    assert text == "ok"
+    assert fallback_calls
+    assert fallback_calls[0]["kwargs"]["temperature"] == 0.7
+    assert fallback_calls[0]["kwargs"]["max_tokens"] == 2048
+    assert provider.last_call_trace is not None
+    assert provider.last_call_trace["request"]["call_type"] == "text"
+    assert provider.last_call_trace["request"]["agent_id"] == "author"
+    assert provider.last_call_trace["request"]["transport_fallback"] == "http"
+    assert "parameter_error" in provider.last_call_trace["request"]
+
+
 def test_llm_provider_text_call_falls_back_on_none_shape_error(monkeypatch):
     class _Client:
         def invoke(self, _messages, **_kwargs):

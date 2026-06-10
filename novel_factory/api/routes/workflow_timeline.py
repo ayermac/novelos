@@ -24,6 +24,7 @@ from fastapi import APIRouter, Request
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ...workflow.graph import get_canonical_workflow_nodes
 from ...workflow.node_recovery import (
+    active_node_started_at_from_events,
     node_retry_target,
     resolve_failed_node_from_events,
 )
@@ -324,21 +325,36 @@ def _elapsed_minutes_since(value: str | None) -> float | None:
 def _detect_stale(
     run_data: dict | None,
     timeout_minutes: int = STUCK_THRESHOLD_MINUTES,
+    active_node_started_at: str | None = None,
 ) -> dict[str, Any]:
     if not run_data or run_data.get("status") != "running":
-        return {"is_stale": False, "reason": None, "elapsed_minutes": None}
+        return {
+            "is_stale": False,
+            "reason": None,
+            "elapsed_minutes": None,
+            "active_node_elapsed_minutes": None,
+        }
     elapsed = _elapsed_minutes_since(run_data.get("started_at"))
-    is_stale = elapsed is not None and elapsed >= timeout_minutes
+    active_elapsed = _elapsed_minutes_since(active_node_started_at)
+    effective_elapsed = active_elapsed if active_node_started_at else elapsed
+    is_stale = effective_elapsed is not None and effective_elapsed >= timeout_minutes
     reason = None
     if is_stale:
-        reason = (
-            f"运行已超过 {timeout_minutes} 分钟仍处于 running，"
-            "可先标记为阻塞再执行恢复。"
-        )
+        if active_node_started_at:
+            reason = (
+                f"当前节点已超过 {timeout_minutes} 分钟未完成，"
+                "可先标记为阻塞再执行定点重试。"
+            )
+        else:
+            reason = (
+                f"运行已超过 {timeout_minutes} 分钟仍处于 running，"
+                "可先标记为阻塞再执行恢复。"
+            )
     return {
         "is_stale": is_stale,
         "reason": reason,
         "elapsed_minutes": elapsed,
+        "active_node_elapsed_minutes": active_elapsed,
     }
 
 
@@ -350,6 +366,7 @@ def _build_recovery(
     checkpoint_info: dict | None = None,
     failed_node: str | None = None,
     memory_trusted: bool = False,
+    active_node_started_at: str | None = None,
 ) -> dict[str, Any]:
     """Build recovery recommendations for a workflow run.
 
@@ -358,16 +375,19 @@ def _build_recovery(
     """
     from ...workflow.state_integrity import derive_workflow_recovery_state
 
-    stale_info = _detect_stale(run_data, timeout_minutes)
+    stale_info = _detect_stale(run_data, timeout_minutes, active_node_started_at=active_node_started_at)
     is_stale = stale_info["is_stale"]
     chapter_status = chapter_status or "unknown"
     terminal_statuses = {"reviewed", "awaiting_publish", "published"}
 
     # v6.6.6: Derive canonical recovery state
     has_existing_content = bool(chapter and chapter.get("content")) if chapter else False
+    recovery_run_data = run_data
+    if run_data and active_node_started_at:
+        recovery_run_data = {**run_data, "started_at": active_node_started_at}
     recovery_state = derive_workflow_recovery_state(
         chapter=chapter,
-        latest_run=run_data,
+        latest_run=recovery_run_data,
         checkpoint_info=checkpoint_info,
         has_existing_content=has_existing_content,
     )
@@ -1050,12 +1070,16 @@ async def get_workflow_timeline(
                 "current_node": "memory_curator",
             }
 
-        stale_info = _detect_stale(stale_run_data, timeout_minutes)
-
         # Fetch node events before recovery so a human_review wrapper can be
         # attributed to the real failed node.
         events = repo.get_workflow_node_events(run_id_str)
         failed_node = resolve_failed_node_from_events(events, current_node)
+        active_node_started_at = active_node_started_at_from_events(events, current_node)
+        stale_info = _detect_stale(
+            stale_run_data,
+            timeout_minutes,
+            active_node_started_at=active_node_started_at,
+        )
         chapter_memory_trusted = False
         try:
             from ._memory_curator_gate import has_trusted_memory_batch
@@ -1074,6 +1098,7 @@ async def get_workflow_timeline(
             checkpoint_info=checkpoint,
             failed_node=failed_node,
             memory_trusted=chapter_memory_trusted,
+            active_node_started_at=active_node_started_at,
         )
 
         # Fetch artifacts for this run

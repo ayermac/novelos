@@ -14,6 +14,9 @@ workflow:
   checkpoint_enabled: true
   node_timeout_seconds: 300
   node_timeout_overrides:
+    planner: 720
+    screenwriter: 720
     author: 1200
     polisher: 900
+    editor: 900
     memory_curator: 600

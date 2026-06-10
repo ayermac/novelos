@@ -720,6 +720,105 @@ agent_llm_fallback:
             assert data["ok"] is True
             assert data["data"]["timeout_minutes"] == 30
 
+    def test_run_recovery_uses_active_node_age_not_total_run_age(self, test_client):
+        """A long run should not be marked stuck when the current node just started."""
+        client, db_path = test_client
+        repo = Repository(db_path)
+
+        project_id = "test-active-node-age"
+        repo.create_project(project_id=project_id, name="Active Node Age")
+        repo.add_chapter(project_id, 1, title="第一章", status="polished")
+        run_id = repo.create_workflow_run(project_id, 1)
+        repo.update_workflow_run(run_id, status="running", current_node="editor")
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "UPDATE workflow_runs SET started_at=datetime('now','-45 minutes','+8 hours') WHERE id=?",
+                (run_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id=project_id,
+            chapter_number=1,
+            node_name="screenwriter",
+            event_type="started",
+            status="running",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id=project_id,
+            chapter_number=1,
+            node_name="screenwriter",
+            event_type="completed",
+            status="completed",
+        )
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id=project_id,
+            chapter_number=1,
+            node_name="editor",
+            event_type="started",
+            status="running",
+        )
+
+        resp = client.get(f"/api/runs/{run_id}/recovery")
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["elapsed_minutes"] >= 30
+        assert data["stuck"] is False
+        assert data["actions"]["mark_stuck_blocked"]["enabled"] is False
+        assert data["recovery_state"]["recommended_action"] is None
+
+    def test_run_recovery_marks_active_node_stuck_after_node_timeout(self, test_client):
+        """A stale active node should still expose mark-stuck recovery."""
+        client, db_path = test_client
+        repo = Repository(db_path)
+
+        project_id = "test-active-node-stale"
+        repo.create_project(project_id=project_id, name="Active Node Stale")
+        repo.add_chapter(project_id, 1, title="第一章", status="polished")
+        run_id = repo.create_workflow_run(project_id, 1)
+        repo.update_workflow_run(run_id, status="running", current_node="editor")
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "UPDATE workflow_runs SET started_at=datetime('now','-45 minutes','+8 hours') WHERE id=?",
+                (run_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        repo.create_workflow_node_event(
+            run_id=run_id,
+            project_id=project_id,
+            chapter_number=1,
+            node_name="editor",
+            event_type="started",
+            status="running",
+        )
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "UPDATE workflow_node_events SET created_at=datetime('now','-35 minutes','+8 hours') "
+                "WHERE run_id=? AND node_name='editor'",
+                (run_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        resp = client.get(f"/api/runs/{run_id}/recovery")
+
+        assert resp.status_code == 200
+        data = resp.json()["data"]
+        assert data["stuck"] is True
+        assert data["active_node_elapsed_minutes"] >= 30
+        assert data["actions"]["mark_stuck_blocked"]["enabled"] is True
+
     def test_run_detail_does_not_reconcile_memory_backfill_to_awaiting_publish(self, test_client):
         """Memory backfill runs must stay on memory_curator even when chapter is terminal."""
         client, db_path = test_client

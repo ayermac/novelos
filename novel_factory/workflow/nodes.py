@@ -51,8 +51,11 @@ logger = logging.getLogger(__name__)
 
 
 _NODE_TIMEOUT_FLOORS: dict[str, int] = {
+    "planner": 720,
+    "screenwriter": 720,
     "author": 1200,
     "polisher": 900,
+    "editor": 900,
     "memory_curator": 600,
 }
 
