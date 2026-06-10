@@ -3243,6 +3243,55 @@ class TestMemoryCuratorAgent:
         assert fact_types == {"narrative_event", "character_state", "suspense_hook"}
         assert all(payload["source_chapter"] == 1 for payload in after_payloads)
 
+    def test_memory_curator_extracts_numeric_state_deterministically(self, seeded_repo):
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.api.routes.memory_updates import apply_pending_memory_batches_for_chapter
+        from novel_factory.skills.registry import SkillRegistry
+
+        seeded_repo.save_chapter_content(
+            "test_proj",
+            1,
+            "系统面板在章末重新刷新。\n"
+            "账户余额只剩800万。\n"
+            "权限等级升至3级。\n"
+            "锚点稳定率降至43%。\n"
+            "林默没有再操作面板。",
+            "第一章 测试",
+        )
+        seeded_repo.update_chapter_status("test_proj", 1, "reviewed")
+        agent = MemoryCuratorAgent(
+            seeded_repo,
+            StubLLMProvider([{"patches": []}]),
+            skill_registry=SkillRegistry(),
+        )
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-memory-numeric-state",
+        })
+
+        assert result["memory_curator_processed"] is True
+        assert result["extraction_success"] is True
+        assert result["fallback_created"] is False
+        assert result["memory_items_count"] == 3
+
+        batch = seeded_repo.list_memory_batches("test_proj")[0]
+        assert "状态卡兜底" not in batch["summary"]
+        items = seeded_repo.list_memory_items(batch["id"])
+        payloads = [json.loads(item["after_json"]) for item in items]
+        assert {payload["fact_type"] for payload in payloads} == {"numeric_state"}
+        assert {payload["subject"] for payload in payloads} == {"余额", "等级", "锚点稳定率"}
+
+        apply_result = apply_pending_memory_batches_for_chapter(seeded_repo, "test_proj", 1)
+        assert apply_result["ok"] is True
+        facts = seeded_repo.list_story_facts("test_proj", fact_type="numeric_state", status="active")
+        assert len(facts) == 3
+        assert any("800万" in fact["value_json"] for fact in facts)
+        assert any("3级" in fact["value_json"] for fact in facts)
+        assert any("43%" in fact["value_json"] for fact in facts)
+
     def test_memory_curator_real_empty_extraction_repairs_before_fallback(self, seeded_repo):
         from novel_factory.agents.memory_curator import MemoryCuratorAgent
         from novel_factory.skills.registry import SkillRegistry

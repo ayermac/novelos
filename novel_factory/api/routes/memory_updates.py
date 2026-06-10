@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import re
 import hashlib
+from typing import Any
 
 from fastapi import APIRouter, Request
 from pydantic import BaseModel
@@ -14,12 +15,30 @@ from ..contracts import success, partial_success, failed, blocked as blocked_res
 
 router = APIRouter()
 
+_ALLOWED_MEMORY_TARGET_TABLES = {
+    "characters",
+    "world_settings",
+    "factions",
+    "outlines",
+    "plot_holes",
+    "instructions",
+    "story_facts",
+    "project",
+}
+_ALLOWED_MEMORY_OPERATIONS = {"create", "update", "resolve", "deprecate"}
+_EDITABLE_MEMORY_STATUSES = {"pending", "failed"}
+
 
 class MemoryItemUpdateRequest(BaseModel):
     """Request to update a memory update item."""
 
     status: str | None = None
-    after_json: str | None = None
+    target_table: str | None = None
+    target_id: str | None = None
+    operation: str | None = None
+    before_json: Any | None = None
+    after_json: Any | None = None
+    confidence: float | None = None
     rationale: str | None = None
     evidence_text: str | None = None
 
@@ -139,6 +158,32 @@ def _parse_json_object(value) -> dict:
     except (json.JSONDecodeError, TypeError):
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _validate_json_object_text(value: Any | None, field_name: str) -> tuple[str | None, str | None]:
+    """Validate and normalize a JSON object text field."""
+    if value is None:
+        return None, None
+    if isinstance(value, dict):
+        return json.dumps(value, ensure_ascii=False), None
+    text = str(value).strip()
+    if not text:
+        return "", None
+    try:
+        parsed = json.loads(text)
+    except (json.JSONDecodeError, TypeError) as exc:
+        return None, f"{field_name} 不是合法 JSON: {str(exc)[:80]}"
+    if not isinstance(parsed, dict):
+        return None, f"{field_name} 必须是 JSON 对象"
+    return json.dumps(parsed, ensure_ascii=False), None
+
+
+def _request_has_field(body: BaseModel, field_name: str) -> bool:
+    """Return True when a Pydantic request explicitly included a field."""
+    fields_set = getattr(body, "model_fields_set", None)
+    if fields_set is None:
+        fields_set = getattr(body, "__fields_set__", set())
+    return field_name in fields_set
 
 
 def _infer_faction_name(repo, project_id: str, item: dict, after_data: dict) -> str:
@@ -282,7 +327,110 @@ def _find_world_setting_for_memory_update(repo, project_id: str, item: dict, aft
         if len(category_matches) == 1:
             return category_matches[0]
 
+    fuzzy_text = _compact_match_text(
+        "\n".join(
+            str(part or "")
+            for part in (
+                after_data.get("title"),
+                after_data.get("category"),
+                after_data.get("content"),
+                item.get("target_name"),
+                item.get("rationale"),
+                item.get("evidence_text"),
+            )
+        )
+    )
+    if fuzzy_text:
+        scored: list[tuple[int, dict]] = []
+        for setting in settings:
+            setting_text = _compact_match_text(
+                "\n".join(
+                    str(setting.get(key) or "")
+                    for key in ("title", "category", "content")
+                )
+            )
+            score = _longest_common_substring_len(fuzzy_text, setting_text)
+            if score >= 4:
+                scored.append((score, setting))
+        scored.sort(key=lambda entry: entry[0], reverse=True)
+        if scored and (len(scored) == 1 or scored[0][0] >= scored[1][0] + 3):
+            return scored[0][1]
+
     return None
+
+
+def _story_fact_data_from_unresolved_world_setting_update(
+    item: dict,
+    after_data: dict,
+    chapter_number: int,
+) -> dict:
+    """Convert a misclassified world-setting update into a traceable story fact."""
+    summary = (
+        after_data.get("content")
+        or after_data.get("description")
+        or after_data.get("summary")
+        or item.get("rationale")
+        or item.get("evidence_text")
+        or ""
+    )
+    summary_text = str(summary or "").strip()
+    evidence_text = str(item.get("evidence_text") or "").strip()
+    compact = _compact_match_text(f"{summary_text}{evidence_text}")
+    if len(compact) < 8:
+        return {}
+
+    raw_subject = (
+        after_data.get("title")
+        or after_data.get("category")
+        or item.get("target_name")
+        or _infer_world_context_subject(summary_text, evidence_text)
+        or "未归属世界观线索"
+    )
+    subject = str(raw_subject or "未归属世界观线索").strip()[:40]
+    digest_source = "|".join(
+        str(part or "")
+        for part in (
+            chapter_number,
+            after_data.get("title"),
+            after_data.get("category"),
+            after_data.get("content"),
+            item.get("rationale"),
+            item.get("evidence_text"),
+        )
+    )
+    digest = hashlib.sha1(digest_source.encode("utf-8")).hexdigest()[:10]
+    return {
+        "fact_key": f"chapter_{chapter_number}.world_context.{digest}",
+        "fact_type": "world_context",
+        "subject": subject,
+        "attribute": "世界观补充",
+        "value": {
+            "summary": summary_text,
+            "after": after_data,
+            "evidence": evidence_text,
+            "rationale": item.get("rationale", ""),
+        },
+        "source_chapter": chapter_number,
+        "source_agent": "memory_curator",
+    }
+
+
+def _infer_world_context_subject(summary: str, evidence: str) -> str:
+    """Infer a concise world-context subject from prose-only evidence."""
+    text = f"{summary}\n{evidence}"
+    quoted = re.findall(r"[「“《]([\u4e00-\u9fffA-Za-z0-9·]{2,20})[」”》]", text)
+    if quoted:
+        return quoted[0]
+    candidates = re.findall(
+        r"[\u4e00-\u9fffA-Za-z0-9·]{2,20}(?:酒店|大堂|通道|后门|陈列室|锚点|裂隙|空间|领域|规则|核心|心脏|系统|副本|现实)",
+        text,
+    )
+    ignored = {"世界观补充", "现实", "外部现实", "核心", "心脏"}
+    for candidate in sorted(set(candidates), key=len, reverse=True):
+        cleaned = candidate.strip("，。；：:、 　")
+        if cleaned and cleaned not in ignored:
+            return cleaned[:40]
+    return ""
 
 
 def _find_character_for_memory_update(repo, project_id: str, item: dict, after_data: dict) -> dict | None:
@@ -753,7 +901,30 @@ def _apply_memory_item(
                     title = str(after_data.get("title") or "").strip()
                     content = str(after_data.get("content") or "").strip()
                     if not title and not content:
-                        result["error"] = "世界观更新缺少 target_id，且没有可创建的标题或内容"
+                        fact_data = _story_fact_data_from_unresolved_world_setting_update(
+                            item,
+                            after_data,
+                            chapter_number,
+                        )
+                        if not fact_data:
+                            result["error"] = "世界观更新缺少 target_id，且没有可创建的标题或内容"
+                        else:
+                            fact = repo.upsert_story_fact(
+                                project_id,
+                                fact_key=fact_data["fact_key"],
+                                fact_type=fact_data["fact_type"],
+                                value_json=json.dumps(
+                                    fact_data.get("value", {}), ensure_ascii=False
+                                ),
+                                source_chapter=fact_data.get("source_chapter"),
+                                source_agent=fact_data.get("source_agent"),
+                                subject=fact_data.get("subject"),
+                                attribute=fact_data.get("attribute"),
+                                unit=fact_data.get("unit"),
+                            )
+                            result["operation"] = "story_fact_fallback"
+                            result["success"] = True
+                            result["created_id"] = fact["id"] if fact else None
                     else:
                         ws = repo.create_world_setting(
                             project_id,
@@ -1588,20 +1759,76 @@ async def update_memory_item(
         if item["project_id"] != project_id:
             return error_response("ITEM_NOT_FOUND", "更新项不属于该项目")
 
+        content_fields = {
+            field
+            for field in (
+                "target_table",
+                "target_id",
+                "operation",
+                "before_json",
+                "after_json",
+                "confidence",
+                "rationale",
+                "evidence_text",
+            )
+            if _request_has_field(body, field)
+        }
+        if content_fields and item.get("status") not in _EDITABLE_MEMORY_STATUSES:
+            return error_response(
+                "INVALID_ITEM_STATUS",
+                f"只能编辑待处理或失败的记忆项，当前状态: {item.get('status')}",
+            )
+
         data = {}
-        if body.status is not None:
-            data["status"] = body.status
-        if body.after_json is not None:
-            data["after_json"] = body.after_json
-        if body.rationale is not None:
-            data["rationale"] = body.rationale
-        if body.evidence_text is not None:
-            data["evidence_text"] = body.evidence_text
+        if _request_has_field(body, "status"):
+            status = str(body.status).strip()
+            if status not in {"pending", "ignored", "failed"}:
+                return error_response("INVALID_STATUS", f"不支持的记忆项状态: {status}")
+            data["status"] = status
+        if _request_has_field(body, "target_table"):
+            target_table = str(body.target_table).strip()
+            if target_table not in _ALLOWED_MEMORY_TARGET_TABLES:
+                return error_response("INVALID_TARGET_TABLE", f"不支持的目标表: {target_table}")
+            data["target_table"] = target_table
+        if _request_has_field(body, "target_id"):
+            data["target_id"] = str(body.target_id or "").strip() or None
+        if _request_has_field(body, "operation"):
+            operation = str(body.operation).strip()
+            if operation not in _ALLOWED_MEMORY_OPERATIONS:
+                return error_response("INVALID_OPERATION", f"不支持的操作: {operation}")
+            data["operation"] = operation
+        if _request_has_field(body, "before_json"):
+            before_json, error = _validate_json_object_text(body.before_json, "before_json")
+            if error:
+                return error_response("INVALID_JSON", error)
+            data["before_json"] = before_json
+        if _request_has_field(body, "after_json"):
+            after_json, error = _validate_json_object_text(body.after_json, "after_json")
+            if error:
+                return error_response("INVALID_JSON", error)
+            data["after_json"] = after_json or "{}"
+        if _request_has_field(body, "confidence"):
+            if not (0 <= body.confidence <= 1):
+                return error_response("INVALID_CONFIDENCE", "confidence 必须在 0 到 1 之间")
+            data["confidence"] = body.confidence
+        if _request_has_field(body, "rationale"):
+            data["rationale"] = body.rationale or ""
+        if _request_has_field(body, "evidence_text"):
+            data["evidence_text"] = body.evidence_text or ""
+
+        if content_fields:
+            data["error_message"] = ""
+            if item.get("status") == "failed" and "status" not in data:
+                data["status"] = "pending"
 
         if not data:
             return envelope_response(item)
 
         updated = repo.update_memory_item(item_id, data)
+        if updated:
+            new_batch_status = _compute_batch_status(updated["batch_id"], repo)
+            repo.update_memory_batch(updated["batch_id"], {"status": new_batch_status})
+            updated = repo.get_memory_item(item_id)
         return envelope_response(updated)
 
     except Exception as e:

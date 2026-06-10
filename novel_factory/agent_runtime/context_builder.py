@@ -14,6 +14,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..validators.chapter_checker import derive_word_target
+from ..quality.numeric_state import (
+    numeric_state_constraint_from_text,
+    numeric_state_constraints_from_facts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +36,10 @@ _TIMELINE_KEYWORDS = re.compile(
     r"约定地点|约定时间|下次见面|再次见面|准时赴约|"
     r"期限类威胁|倒计时|时间不多|没时间了)",
     re.IGNORECASE,
+)
+_CLOCK_PATTERN = re.compile(r"(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?!\d)")
+_COUNTDOWN_CONTEXT_PATTERN = re.compile(
+    r"(?:倒计时|计时|左眼|数字|猩红|暴跌|猛跌|预支|利息|锁链|崩断|搏动|心脏|剩余)"
 )
 
 # ── Data classes ─────────────────────────────────────────────────
@@ -59,6 +67,7 @@ class AgentContextBundle:
     story_facts: list[ContextItem] = field(default_factory=list)
     plot_obligations: list[ContextItem] = field(default_factory=list)
     timeline_constraints: list[ContextItem] = field(default_factory=list)
+    numeric_state_constraints: list[ContextItem] = field(default_factory=list)
     character_states: list[ContextItem] = field(default_factory=list)
     revision_feedback: list[ContextItem] = field(default_factory=list)
     hard_constraints: list[ContextItem] = field(default_factory=list)
@@ -73,6 +82,7 @@ class AgentContextBundle:
         return {
             "trusted_memory_count": len(self.trusted_memory),
             "timeline_constraints_count": len(self.timeline_constraints),
+            "numeric_state_constraints_count": len(self.numeric_state_constraints),
             "plot_obligations_count": len(self.plot_obligations),
             "hard_constraints_count": len(self.hard_constraints),
             "advisory_count": len(self.advisory_context),
@@ -316,6 +326,26 @@ def extract_timeline_constraints(
                                 )
                             )
 
+    # 4. Previous chapter precise countdown / timer state.
+    try:
+        prev_chapter = repo.get_chapter(project_id, prev_ch)
+    except Exception:
+        prev_chapter = None
+    prev_tail = str((prev_chapter or {}).get("content") or "")[-900:]
+    precise_timer = _extract_precise_timer_constraint(prev_tail)
+    if precise_timer:
+        items.append(
+            ContextItem(
+                kind="timeline_constraint",
+                text=precise_timer,
+                source="prev_chapter_tail:precise_timer",
+                confidence=1.0,
+                chapter_number=prev_ch,
+                priority=1,
+                trusted=True,
+            )
+        )
+
     # Deduplicate by text
     seen: set[str] = set()
     deduped: list[ContextItem] = []
@@ -325,6 +355,78 @@ def extract_timeline_constraints(
             seen.add(key)
             deduped.append(it)
     return deduped
+
+
+def _extract_precise_timer_constraint(text: str) -> str:
+    source = str(text or "")
+    clocks = _CLOCK_PATTERN.findall(source)
+    if len(clocks) < 2 or not _COUNTDOWN_CONTEXT_PATTERN.search(source):
+        return ""
+    last_clock = clocks[-1]
+    sequence = " → ".join(clocks[-5:])
+    return (
+        f"上一章结尾精确倒计时/计数器已推进至 {last_clock}；"
+        f"尾部序列：{sequence}。"
+        "本章开头必须从该状态之后继续，禁止回退到更大的倒计时或重复已完成序列，除非明确标注闪回/回放。"
+    )
+
+
+def extract_numeric_state_constraints(
+    project_id: str,
+    chapter_number: int,
+    repo: Any,
+) -> list[ContextItem]:
+    """Extract numeric state constraints from applied facts and previous tail."""
+    items: list[ContextItem] = []
+    if chapter_number <= 1:
+        return items
+
+    try:
+        facts = [
+            fact for fact in repo.list_story_facts(project_id, status="active")
+            if int(fact.get("source_chapter") or fact.get("last_changed_chapter") or 0) <= chapter_number
+        ]
+    except Exception:
+        facts = []
+
+    fact_lines = numeric_state_constraints_from_facts(facts)[:10]
+    if fact_lines:
+        items.append(
+            ContextItem(
+                kind="numeric_state_constraint",
+                text=(
+                    "已确认数值状态：\n"
+                    + "\n".join(f"- {line}" for line in fact_lines)
+                    + "\n必须继承；如发生变化，正文必须明确写出触发事件和变化过程。"
+                ),
+                source="story_facts:numeric_state",
+                confidence=1.0,
+                priority=1,
+                trusted=True,
+            )
+        )
+
+    prev_ch = chapter_number - 1
+    try:
+        prev_chapter = repo.get_chapter(project_id, prev_ch)
+    except Exception:
+        prev_chapter = None
+    prev_tail = str((prev_chapter or {}).get("content") or "")[-1200:]
+    tail_constraint = numeric_state_constraint_from_text(prev_tail, prefix="上一章结尾")
+    if tail_constraint and not any(tail_constraint == item.text for item in items):
+        items.append(
+            ContextItem(
+                kind="numeric_state_constraint",
+                text=tail_constraint,
+                source="prev_chapter_tail:numeric_state",
+                confidence=0.95,
+                chapter_number=prev_ch,
+                priority=1,
+                trusted=True,
+            )
+        )
+
+    return items
 
 
 _FULFILLED_TIMELINE_MARKERS = (
@@ -907,6 +1009,9 @@ class AgentContextBuilder:
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
         )
+        bundle.numeric_state_constraints = extract_numeric_state_constraints(
+            project_id, chapter_number, self.repo
+        )
         bundle.character_states = self._character_states_context(project_id, chapter_number)
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
@@ -918,6 +1023,7 @@ class AgentContextBuilder:
             if it.kind == "suspense_hook":
                 hard.append(it)
         hard.extend(bundle.timeline_constraints)
+        hard.extend(bundle.numeric_state_constraints)
         hard.extend(bundle.revision_feedback)
         bundle.hard_constraints = hard
         self._apply_memory_degraded_hard_constraint(bundle)
@@ -940,6 +1046,9 @@ class AgentContextBuilder:
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
         )
+        bundle.numeric_state_constraints = extract_numeric_state_constraints(
+            project_id, chapter_number, self.repo
+        )
         bundle.character_states = self._character_states_context(project_id, chapter_number)
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
@@ -947,6 +1056,7 @@ class AgentContextBuilder:
         bundle.hard_constraints = (
             [it for it in bundle.chapter_inheritance if it.kind == "suspense_hook"]
             + bundle.timeline_constraints
+            + bundle.numeric_state_constraints
             + bundle.revision_feedback
         )
         self._apply_memory_degraded_hard_constraint(bundle)
@@ -967,6 +1077,9 @@ class AgentContextBuilder:
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
         )
+        bundle.numeric_state_constraints = extract_numeric_state_constraints(
+            project_id, chapter_number, self.repo
+        )
         bundle.character_states = self._character_states_context(project_id, chapter_number)
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
@@ -974,6 +1087,7 @@ class AgentContextBuilder:
         bundle.hard_constraints = (
             [it for it in bundle.chapter_inheritance if it.kind == "suspense_hook"]
             + bundle.timeline_constraints
+            + bundle.numeric_state_constraints
             + bundle.revision_feedback
         )
         self._apply_memory_degraded_hard_constraint(bundle)
@@ -994,6 +1108,9 @@ class AgentContextBuilder:
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
         )
+        bundle.numeric_state_constraints = extract_numeric_state_constraints(
+            project_id, chapter_number, self.repo
+        )
         bundle.character_states = self._character_states_context(project_id, chapter_number)
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
@@ -1003,6 +1120,7 @@ class AgentContextBuilder:
         for it in bundle.plot_obligations:
             if it.kind == "plot_obligation":
                 hard.append(it)
+        hard.extend(bundle.numeric_state_constraints)
         hard.extend(bundle.revision_feedback)
         bundle.hard_constraints = hard
         self._apply_memory_degraded_hard_constraint(bundle)
@@ -1022,6 +1140,9 @@ class AgentContextBuilder:
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
         )
+        bundle.numeric_state_constraints = extract_numeric_state_constraints(
+            project_id, chapter_number, self.repo
+        )
         bundle.character_states = self._character_states_context(project_id, chapter_number)
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
@@ -1029,6 +1150,7 @@ class AgentContextBuilder:
         bundle.hard_constraints = (
             [it for it in bundle.chapter_inheritance if it.kind == "suspense_hook"]
             + bundle.timeline_constraints
+            + bundle.numeric_state_constraints
             + bundle.revision_feedback
         )
         self._apply_memory_degraded_hard_constraint(bundle)
@@ -1063,6 +1185,7 @@ def format_context_bundle_for_prompt(
         ("【不可违背事实 / Hard Constraints】", bundle.hard_constraints),
         ("【返修反馈 / Revision Feedback】", bundle.revision_feedback),
         ("【时间线约束 / Timeline Constraints】", bundle.timeline_constraints),
+        ("【数值状态约束 / Numeric State Constraints】", bundle.numeric_state_constraints),
         ("【伏笔债务 / Plot Obligations】", bundle.plot_obligations),
         ("【可信记忆 / Trusted Memory】", bundle.trusted_memory),
         ("【事实账本 / Story Facts】", bundle.story_facts),
@@ -1128,6 +1251,7 @@ def build_context_summary_for_trace(bundle: AgentContextBundle) -> dict[str, Any
                 "story_facts": bundle.story_facts,
                 "plot_obligations": bundle.plot_obligations,
                 "timeline_constraints": bundle.timeline_constraints,
+                "numeric_state_constraints": bundle.numeric_state_constraints,
                 "character_states": bundle.character_states,
                 "revision_feedback": bundle.revision_feedback,
                 "hard_constraints": bundle.hard_constraints,

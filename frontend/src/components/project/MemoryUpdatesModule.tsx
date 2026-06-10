@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { get, post } from '../../lib/api'
+import { get, post, put } from '../../lib/api'
 import { normalizeOperationResult, isBusinessSuccess } from '../../lib/statusSemantics'
 import {
   Database, ChevronDown, ChevronRight, CheckCircle2,
@@ -34,6 +34,17 @@ interface MemoryItem {
   created_at: string
 }
 
+interface MemoryItemEditForm {
+  target_table: string
+  target_id: string
+  operation: string
+  before_json: string
+  after_json: string
+  confidence: string
+  evidence_text: string
+  rationale: string
+}
+
 interface BatchDetail extends MemoryBatch {
   items: MemoryItem[]
 }
@@ -60,6 +71,41 @@ const OPERATION_LABELS: Record<string, string> = {
   deprecate: '废弃',
 }
 
+const TABLE_OPTIONS = Object.keys(TABLE_LABELS)
+const OPERATION_OPTIONS = Object.keys(OPERATION_LABELS)
+
+function formatJsonForEdit(value: string | null | undefined): string {
+  if (!value) return '{}'
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2)
+  } catch {
+    return value
+  }
+}
+
+function compactJsonPreview(value: string | null | undefined): string {
+  if (!value) return '{}'
+  try {
+    return JSON.stringify(JSON.parse(value), null, 2)
+  } catch {
+    return value
+  }
+}
+
+function validateJsonObjectText(value: string, label: string): string | null {
+  const text = value.trim()
+  if (!text) return null
+  try {
+    const parsed = JSON.parse(text)
+    if (!parsed || Array.isArray(parsed) || typeof parsed !== 'object') {
+      return `${label} 必须是 JSON 对象`
+    }
+  } catch {
+    return `${label} 不是合法 JSON`
+  }
+  return null
+}
+
 const STATUS_LABELS: Record<string, string> = {
   pending: '待处理',
   applied: '已应用',
@@ -77,6 +123,10 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
   const [applying, setApplying] = useState<string | null>(null)
   const [ignoring, setIgnoring] = useState<string | null>(null)
   const [retrying, setRetrying] = useState<string | null>(null)
+  const [editingItemId, setEditingItemId] = useState<string | null>(null)
+  const [savingItemId, setSavingItemId] = useState<string | null>(null)
+  const [editForm, setEditForm] = useState<MemoryItemEditForm | null>(null)
+  const [editError, setEditError] = useState<string | null>(null)
   const [message, setMessage] = useState<{ type: 'success' | 'warning' | 'error'; text: string } | null>(null)
 
   const loadBatches = useCallback(async () => {
@@ -175,6 +225,75 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
     setRetrying(null)
   }
 
+  const beginEditItem = (item: MemoryItem) => {
+    setEditingItemId(item.id)
+    setEditError(null)
+    setEditForm({
+      target_table: item.target_table,
+      target_id: item.target_id || '',
+      operation: item.operation,
+      before_json: formatJsonForEdit(item.before_json),
+      after_json: formatJsonForEdit(item.after_json),
+      confidence: String(item.confidence ?? 0.8),
+      evidence_text: item.evidence_text || '',
+      rationale: item.rationale || '',
+    })
+  }
+
+  const cancelEditItem = () => {
+    setEditingItemId(null)
+    setEditForm(null)
+    setEditError(null)
+  }
+
+  const updateEditForm = (patch: Partial<MemoryItemEditForm>) => {
+    setEditForm((current) => current ? { ...current, ...patch } : current)
+    setEditError(null)
+  }
+
+  const saveEditItem = async (itemId: string) => {
+    if (!editForm) return
+    const afterJsonError = validateJsonObjectText(editForm.after_json, 'after_json')
+    if (afterJsonError) {
+      setEditError(afterJsonError)
+      return
+    }
+    const beforeJsonError = validateJsonObjectText(editForm.before_json, 'before_json')
+    if (beforeJsonError) {
+      setEditError(beforeJsonError)
+      return
+    }
+    const confidence = Number(editForm.confidence)
+    if (!Number.isFinite(confidence) || confidence < 0 || confidence > 1) {
+      setEditError('confidence 必须在 0 到 1 之间')
+      return
+    }
+
+    setSavingItemId(itemId)
+    setMessage(null)
+    const res = await put<MemoryItem>(`/projects/${projectId}/memory-items/${itemId}`, {
+      target_table: editForm.target_table,
+      target_id: editForm.target_id.trim() || null,
+      operation: editForm.operation,
+      before_json: editForm.before_json.trim() || '{}',
+      after_json: editForm.after_json.trim() || '{}',
+      confidence,
+      evidence_text: editForm.evidence_text,
+      rationale: editForm.rationale,
+    })
+    if (res.ok) {
+      setMessage({ type: 'success', text: '记忆项已保存，可重新应用' })
+      cancelEditItem()
+      if (expandedBatchId) {
+        await loadBatchDetail(expandedBatchId)
+      }
+      await loadBatches()
+    } else {
+      setEditError(res.error?.message || '保存失败')
+    }
+    setSavingItemId(null)
+  }
+
   if (loading) return <div className="module-loading">加载中...</div>
 
   // v6.6.7: Separate trusted vs fallback batches visually
@@ -224,9 +343,17 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
                   onApply={handleApply}
                   onIgnore={handleIgnore}
                   onRetry={handleRetry}
+                  onBeginEdit={beginEditItem}
+                  onCancelEdit={cancelEditItem}
+                  onEditChange={updateEditForm}
+                  onSaveEdit={saveEditItem}
                   applying={applying === batch.id}
                   ignoring={ignoring}
                   retrying={retrying === batch.id}
+                  editingItemId={editingItemId}
+                  savingItemId={savingItemId}
+                  editForm={editForm}
+                  editError={editError}
                 />
               ))}
             </div>
@@ -253,9 +380,17 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
                   onApply={handleApply}
                   onIgnore={handleIgnore}
                   onRetry={handleRetry}
+                  onBeginEdit={beginEditItem}
+                  onCancelEdit={cancelEditItem}
+                  onEditChange={updateEditForm}
+                  onSaveEdit={saveEditItem}
                   applying={applying === batch.id}
                   ignoring={ignoring}
                   retrying={retrying === batch.id}
+                  editingItemId={editingItemId}
+                  savingItemId={savingItemId}
+                  editForm={editForm}
+                  editError={editError}
                 />
               ))}
             </div>
@@ -275,9 +410,17 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
                   onApply={handleApply}
                   onIgnore={handleIgnore}
                   onRetry={handleRetry}
+                  onBeginEdit={beginEditItem}
+                  onCancelEdit={cancelEditItem}
+                  onEditChange={updateEditForm}
+                  onSaveEdit={saveEditItem}
                   applying={applying === batch.id}
                   ignoring={ignoring}
                   retrying={retrying === batch.id}
+                  editingItemId={editingItemId}
+                  savingItemId={savingItemId}
+                  editForm={editForm}
+                  editError={editError}
                 />
               ))}
             </div>
@@ -325,11 +468,21 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
         .item-rationale { font-size: 13px; color: var(--text-secondary, #374151); margin-bottom: 4px; }
         .item-evidence { font-size: 12px; color: var(--text-muted, #9ca3af); line-height: 1.5; }
         .item-evidence-label { font-weight: 500; }
+        .item-json { margin-top: 8px; padding: 8px; border-radius: 4px; background: var(--bg-secondary); border: 1px solid var(--border-color); font-size: 12px; line-height: 1.45; overflow-x: auto; white-space: pre-wrap; color: var(--text-secondary); }
         .item-error { font-size: 12px; color: var(--danger); line-height: 1.5; margin-top: 4px; background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary)); padding: 6px 8px; border-radius: 4px; }
         .item-error-label { font-weight: 500; }
         .item-actions { display: flex; gap: 6px; margin-top: 8px; }
+        .item-edit-form { margin-top: 10px; padding: 10px; border: 1px solid var(--border-color); border-radius: 6px; background: var(--bg-secondary); display: grid; gap: 10px; }
+        .item-edit-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+        .item-edit-field { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+        .item-edit-field input, .item-edit-field select, .item-edit-field textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border-color); border-radius: 4px; background: var(--bg-primary); color: var(--text-primary); padding: 6px 8px; font-size: 12px; font-family: inherit; }
+        .item-edit-field textarea { min-height: 74px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace; }
+        .item-edit-field-wide { grid-column: 1 / -1; }
+        .item-edit-error { font-size: 12px; color: var(--danger); }
         .btn-xs { padding: 3px 8px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border-color); background: var(--bg-primary); color: var(--text-secondary); cursor: pointer; transition: all 0.15s; }
         .btn-xs:hover { background: var(--bg-tertiary); }
+        .btn-xs-primary { color: var(--primary); border-color: color-mix(in srgb, var(--primary) 28%, transparent); }
+        .btn-xs-primary:hover { background: color-mix(in srgb, var(--primary) 12%, var(--bg-primary)); }
         .btn-xs-danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 28%, transparent); }
         .btn-xs-danger:hover { background: color-mix(in srgb, var(--danger) 12%, var(--bg-primary)); }
       `}</style>
@@ -338,7 +491,26 @@ export default function MemoryUpdatesModule({ projectId }: Props) {
 }
 
 function BatchCard({
-  batch, expanded, detail, detailLoading, onExpand, onApply, onIgnore, onRetry, applying, ignoring, retrying, isFallback,
+  batch,
+  expanded,
+  detail,
+  detailLoading,
+  onExpand,
+  onApply,
+  onIgnore,
+  onRetry,
+  onBeginEdit,
+  onCancelEdit,
+  onEditChange,
+  onSaveEdit,
+  applying,
+  ignoring,
+  retrying,
+  editingItemId,
+  savingItemId,
+  editForm,
+  editError,
+  isFallback,
 }: {
   batch: MemoryBatch
   expanded: boolean
@@ -348,9 +520,17 @@ function BatchCard({
   onApply: (id: string) => void
   onIgnore: (itemId: string) => void
   onRetry: (id: string) => void
+  onBeginEdit: (item: MemoryItem) => void
+  onCancelEdit: () => void
+  onEditChange: (patch: Partial<MemoryItemEditForm>) => void
+  onSaveEdit: (itemId: string) => void
   applying: boolean
   ignoring: string | null
   retrying: boolean
+  editingItemId: string | null
+  savingItemId: string | null
+  editForm: MemoryItemEditForm | null
+  editError: string | null
   isFallback?: boolean
 }) {
   const canApply = batch.status === 'pending' || batch.status === 'partial'
@@ -402,48 +582,153 @@ function BatchCard({
           {detailLoading ? (
             <div className="batch-detail-loading">加载详情...</div>
           ) : detail?.items ? (
-            detail.items.map((item) => (
-              <div key={item.id} className="item-card">
-                <div className="item-header">
-                  <span className="item-table">{TABLE_LABELS[item.target_table] || item.target_table}</span>
-                  <span className={`item-op item-op-${item.operation}`}>
-                    {OPERATION_LABELS[item.operation] || item.operation}
-                  </span>
-                  {item.confidence < 1 && (
-                    <span className="item-confidence">
-                      置信度 {Math.round(item.confidence * 100)}%
+            detail.items.map((item) => {
+              const activeEditForm = editingItemId === item.id ? editForm : null
+              const isEditing = Boolean(activeEditForm)
+              const canEdit = item.status === 'pending' || item.status === 'failed'
+              return (
+                <div key={item.id} className="item-card">
+                  <div className="item-header">
+                    <span className="item-table">{TABLE_LABELS[item.target_table] || item.target_table}</span>
+                    <span className={`item-op item-op-${item.operation}`}>
+                      {OPERATION_LABELS[item.operation] || item.operation}
                     </span>
+                    {item.confidence < 1 && (
+                      <span className="item-confidence">
+                        置信度 {Math.round(item.confidence * 100)}%
+                      </span>
+                    )}
+                    <span className={`item-status item-status-${item.status}`}>
+                      {STATUS_LABELS[item.status] || item.status}
+                    </span>
+                  </div>
+                  <div className="item-rationale">{item.rationale}</div>
+                  {item.evidence_text && (
+                    <div className="item-evidence">
+                      <span className="item-evidence-label">证据: </span>
+                      {item.evidence_text}
+                    </div>
                   )}
-                  <span className={`item-status item-status-${item.status}`}>
-                    {STATUS_LABELS[item.status] || item.status}
-                  </span>
+                  <pre className="item-json">{compactJsonPreview(item.after_json)}</pre>
+                  {item.error_message && (
+                    <div className="item-error">
+                      <span className="item-error-label">失败原因: </span>
+                      {item.error_message}
+                    </div>
+                  )}
+
+                  {isEditing && (
+                    <div className="item-edit-form">
+                      <div className="item-edit-grid">
+                        <label className="item-edit-field">
+                          目标表
+                          <select
+                            value={activeEditForm?.target_table || item.target_table}
+                            onChange={(e) => onEditChange({ target_table: e.target.value })}
+                          >
+                            {TABLE_OPTIONS.map((option) => (
+                              <option key={option} value={option}>{TABLE_LABELS[option] || option}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="item-edit-field">
+                          操作
+                          <select
+                            value={activeEditForm?.operation || item.operation}
+                            onChange={(e) => onEditChange({ operation: e.target.value })}
+                          >
+                            {OPERATION_OPTIONS.map((option) => (
+                              <option key={option} value={option}>{OPERATION_LABELS[option] || option}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label className="item-edit-field">
+                          target_id
+                          <input
+                            value={activeEditForm?.target_id || ''}
+                            onChange={(e) => onEditChange({ target_id: e.target.value })}
+                            placeholder="可留空，由系统匹配"
+                          />
+                        </label>
+                        <label className="item-edit-field">
+                          置信度
+                          <input
+                            value={activeEditForm?.confidence || String(item.confidence ?? 0.8)}
+                            onChange={(e) => onEditChange({ confidence: e.target.value })}
+                            inputMode="decimal"
+                          />
+                        </label>
+                        <label className="item-edit-field item-edit-field-wide">
+                          after_json
+                          <textarea
+                            value={activeEditForm?.after_json || '{}'}
+                            onChange={(e) => onEditChange({ after_json: e.target.value })}
+                            rows={8}
+                          />
+                        </label>
+                        <label className="item-edit-field item-edit-field-wide">
+                          before_json
+                          <textarea
+                            value={activeEditForm?.before_json || '{}'}
+                            onChange={(e) => onEditChange({ before_json: e.target.value })}
+                            rows={4}
+                          />
+                        </label>
+                        <label className="item-edit-field item-edit-field-wide">
+                          证据
+                          <textarea
+                            value={activeEditForm?.evidence_text || ''}
+                            onChange={(e) => onEditChange({ evidence_text: e.target.value })}
+                            rows={3}
+                          />
+                        </label>
+                        <label className="item-edit-field item-edit-field-wide">
+                          理由
+                          <textarea
+                            value={activeEditForm?.rationale || ''}
+                            onChange={(e) => onEditChange({ rationale: e.target.value })}
+                            rows={3}
+                          />
+                        </label>
+                      </div>
+                      {editError && <div className="item-edit-error">{editError}</div>}
+                      <div className="item-actions">
+                        <button
+                          className="btn-xs btn-xs-primary"
+                          onClick={() => onSaveEdit(item.id)}
+                          disabled={savingItemId === item.id}
+                        >
+                          {savingItemId === item.id ? '保存中...' : '保存校正'}
+                        </button>
+                        <button className="btn-xs" onClick={onCancelEdit} disabled={savingItemId === item.id}>
+                          取消
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  {canEdit && !isEditing && (
+                    <div className="item-actions">
+                      <button
+                        className="btn-xs btn-xs-primary"
+                        onClick={() => onBeginEdit(item)}
+                      >
+                        校正
+                      </button>
+                      {item.status === 'pending' && (
+                        <button
+                          className="btn-xs btn-xs-danger"
+                          onClick={() => onIgnore(item.id)}
+                          disabled={ignoring === item.id}
+                        >
+                          {ignoring === item.id ? '忽略中...' : '忽略'}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-                <div className="item-rationale">{item.rationale}</div>
-                {item.evidence_text && (
-                  <div className="item-evidence">
-                    <span className="item-evidence-label">证据: </span>
-                    {item.evidence_text}
-                  </div>
-                )}
-                {item.error_message && (
-                  <div className="item-error">
-                    <span className="item-error-label">失败原因: </span>
-                    {item.error_message}
-                  </div>
-                )}
-                {item.status === 'pending' && (
-                  <div className="item-actions">
-                    <button
-                      className="btn-xs btn-xs-danger"
-                      onClick={() => onIgnore(item.id)}
-                      disabled={ignoring === item.id}
-                    >
-                      {ignoring === item.id ? '忽略中...' : '忽略'}
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))
+              )
+            })
           ) : (
             <div className="batch-detail-loading">无详情</div>
           )}

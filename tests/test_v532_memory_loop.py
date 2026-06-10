@@ -1467,6 +1467,108 @@ class TestMemoryRetryFailed:
         assert body["error"]["code"] == "NO_FAILED_MEMORY_ITEMS"
 
 
+class TestMemoryItemEdit:
+    """v6.10.3: Human correction for memory items before re-apply."""
+
+    def test_edit_failed_item_resets_to_pending_and_clears_error(self, client, project_id):
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="Edit failed")
+        item = repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="factions",
+            operation="update",
+            target_id="bad-target",
+            after_json=json.dumps({"description": "缺少名称"}, ensure_ascii=False),
+            confidence=0.7,
+            evidence_text="证据",
+            rationale="原始错误提取",
+        )
+        repo.update_memory_item(item["id"], {"status": "failed", "error_message": "缺少 target_id"})
+        repo.update_memory_batch(batch["id"], {"status": "partial"})
+
+        resp = client.put(
+            f"/api/projects/{project_id}/memory-items/{item['id']}",
+            json={
+                "target_table": "story_facts",
+                "target_id": None,
+                "operation": "create",
+                "after_json": {
+                    "fact_key": "ch1.relationship.shift",
+                    "fact_type": "character_relationship",
+                    "subject": "赵倩与林辰",
+                    "attribute": "关系转折",
+                    "value": {"summary": "关系发生变化"},
+                    "source_chapter": 1,
+                },
+                "confidence": 0.95,
+                "evidence_text": "关系发生变化",
+                "rationale": "人工改为事实账本项",
+            },
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        updated = repo.get_memory_item(item["id"])
+        assert updated["status"] == "pending"
+        assert updated["error_message"] == ""
+        assert updated["target_table"] == "story_facts"
+        assert updated["target_id"] is None
+        assert updated["operation"] == "create"
+        assert json.loads(updated["after_json"])["fact_key"] == "ch1.relationship.shift"
+
+    def test_edit_rejects_invalid_after_json(self, client, project_id):
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="Bad edit")
+        item = repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="characters",
+            operation="create",
+            after_json=json.dumps({"name": "A"}, ensure_ascii=False),
+        )
+
+        resp = client.put(
+            f"/api/projects/{project_id}/memory-items/{item['id']}",
+            json={"after_json": "[1, 2, 3]"},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["error"]["code"] == "INVALID_JSON"
+        assert repo.get_memory_item(item["id"])["after_json"] == item["after_json"]
+
+    def test_edit_applied_item_rejected(self, client, project_id):
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=1, summary="Applied edit")
+        item = repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="characters",
+            operation="create",
+            after_json=json.dumps({"name": "A"}, ensure_ascii=False),
+        )
+        repo.update_memory_item(item["id"], {"status": "applied"})
+
+        resp = client.put(
+            f"/api/projects/{project_id}/memory-items/{item['id']}",
+            json={"after_json": {"name": "B"}},
+        )
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is False
+        assert body["error"]["code"] == "INVALID_ITEM_STATUS"
+
+
 class TestMemoryStructuredFieldNormalization:
     """v5.3.5: Structured fields must be serialized before DB writes."""
 
@@ -1720,6 +1822,49 @@ class TestMemoryStructuredFieldNormalization:
         updated = repo.get_world_setting(project_id, existing["id"])
         assert updated is not None
         assert "海洋/潮汐系统" in updated["content"]
+
+    def test_apply_world_settings_update_without_target_falls_back_to_story_fact(self, client, project_id):
+        """Underspecified world setting updates should not block memory application."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        batch = repo.create_memory_batch(project_id, chapter_number=18, summary="World setting fallback")
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="world_settings",
+            operation="update",
+            target_id=None,
+            after_json=json.dumps({
+                "category": "融合体设定",
+            }, ensure_ascii=False),
+            confidence=0.9,
+            evidence_text=(
+                "拱心处裂开一道细缝，心跳声漏出来……零号陈列室……而中央——只一颗悬浮的心脏……"
+                "裂隙透出的非骨白，是霓虹色——帝豪酒店大堂消防通道后门特有的……"
+            ),
+            rationale="将锚点内部核心（心脏陈列室）与外部现实酒店关联起来，丰富了该融合体设定的层次。",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["status"] == "applied"
+        result = body["data"]["results"][0]
+        assert result["success"] is True
+        assert result["operation"] == "story_fact_fallback"
+
+        facts = repo.list_story_facts(project_id, fact_type="world_context", status="active")
+        assert len(facts) == 1
+        fact = facts[0]
+        assert fact["subject"] in {"融合体设定", "帝豪酒店大堂消防通道后门特有的"}
+        assert "心脏陈列室" in fact["value_json"]
+        assert "帝豪酒店" in fact["value_json"]
 
 
 class TestMemoryCuratorRouting:
