@@ -407,7 +407,13 @@ def _is_explicit_appointment_location(
         return False
     if loc.startswith(("他", "她", "它", "我", "你", "众人", "两人", "三人")):
         return False
-    if any(marker in loc for marker in ("着", "在了", "正站", "消失")):
+    if any(marker in loc for marker in ("着", "得", "在了", "正站", "消失")):
+        return False
+    body_part_markers = (
+        "头部", "胸部", "腹部", "背部", "腰部", "肩部", "颈部",
+        "腿部", "胃部", "脑部", "肺部", "肝部", "肾部",
+    )
+    if any(marker in loc for marker in body_part_markers):
         return False
     if any(marker in loc for marker in ("终止", "中止", "停止", "是否", "为何", "必须", "不能", "不会", "关系", "身份", "线索")):
         return False

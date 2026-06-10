@@ -104,3 +104,17 @@ def test_chapter_seam_ignores_suoyou_suffix():
 
     assert result["pass"] is True
     assert result["blocking_issues"] == []
+
+
+def test_chapter_seam_ignores_body_part_fragment_as_location():
+    """Body-part phrases ending in 部 must not become location obligations."""
+    repo = _seam_repo(
+        "上一章结尾，今晚的寒意顺着脊背爬上来，饥饿搅得胃部一阵抽痛。",
+        "今晚饥饿搅得胃部抽痛",
+    )
+    current = "今晚的风还冷，他扶着墙站稳，先把涌上喉咙的酸意压下去。"
+
+    result = evaluate_chapter_seam(repo, "novel", 3, current)
+
+    assert result["pass"] is True
+    assert not any("搅得胃部" in issue for issue in result["blocking_issues"])

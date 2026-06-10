@@ -37,6 +37,58 @@ def normalize_revision_review(review: dict[str, Any] | None) -> dict[str, Any] |
     }
 
 
+def revision_review_from_quality_gate(
+    gate: dict[str, Any] | None,
+    *,
+    workflow_run_id: str | None = None,
+) -> dict[str, Any] | None:
+    """Build revision feedback from a failed deterministic QualityGate result.
+
+    QualityGate can route directly to revision without an Editor review row.
+    Revision agents still need the same review-like contract so they can repair
+    the specific deterministic blocking issues instead of failing fast.
+    """
+    gate = gate or {}
+    if gate.get("passed") is not False and gate.get("pass") is not False:
+        return None
+
+    blocking = [str(i).strip() for i in gate.get("blocking_issues", []) if str(i).strip()]
+    priority = [str(i).strip() for i in gate.get("priority_issues", []) if str(i).strip()]
+    advisory = [str(i).strip() for i in gate.get("advisory_issues", []) if str(i).strip()]
+    if not (blocking or priority or advisory):
+        return None
+
+    issues = blocking + priority
+    suggestions: list[str] = []
+    diagnostics = gate.get("diagnostics") or {}
+    for check_name in ("chapter_seam", "continuity_gate", "quality_diagnosis"):
+        check_diag = diagnostics.get(check_name) or {}
+        raw_suggestions = check_diag.get("suggestions") or check_diag.get("advisory_issues") or []
+        if isinstance(raw_suggestions, list):
+            suggestions.extend(str(item).strip() for item in raw_suggestions if str(item).strip())
+
+    suggestions.extend(advisory[:4])
+    if blocking:
+        suggestions.insert(
+            0,
+            "必须逐条消解 QualityGate 阻断项；返修后不得保留同名阻断、不得只做语言润色。",
+        )
+    if any("章间衔接" in item or "时间" in item for item in blocking):
+        suggestions.append("章首必须明确承接上一章时间/地点/行动钩子，避免突然跳场或无标注回退。")
+    if any("标题与正文脱节" in item or "标题关键词" in item for item in blocking):
+        suggestions.append("标题关键词必须以原词或自然对白形式出现在正文关键场景中；否则改标题。")
+
+    return {
+        "review_id": gate.get("review_id") or f"quality_gate:{workflow_run_id or 'current'}",
+        "score": gate.get("score"),
+        "revision_target": gate.get("revision_target") or "author",
+        "issues": issues[:12],
+        "suggestions": suggestions[:12],
+        "source": "quality_gate",
+        "blocking_issue_count": len(blocking),
+    }
+
+
 def revision_feedback_block(review: dict[str, Any] | None) -> str:
     """Format review feedback for LLM prompt context."""
     normalized = normalize_revision_review(review)
@@ -70,6 +122,11 @@ def build_revision_feedback_context(
     review = None
     if state and isinstance(state, dict):
         review = state.get("_revision_review")
+        if not review:
+            review = revision_review_from_quality_gate(
+                state.get("quality_gate"),
+                workflow_run_id=state.get("workflow_run_id"),
+            )
     if not review and repo and chapter:
         project_id = chapter.get("project_id") or (state or {}).get("project_id")
         chapter_id = chapter.get("id") or chapter.get("chapter_id")

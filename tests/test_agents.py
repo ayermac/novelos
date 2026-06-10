@@ -37,6 +37,43 @@ class StubLLMProvider(LLMProvider):
         return json.dumps(self.invoke_json(messages))
 
 
+def test_author_loads_quality_gate_revision_feedback_without_editor_review(seeded_repo):
+    """QualityGate direct返修 must not require an Editor review row."""
+    from novel_factory.agents.author import AuthorAgent
+
+    seeded_repo.save_chapter_content("test_proj", 1, "已有正文" * 500, "第一章 测试")
+    seeded_repo.update_chapter_status("test_proj", 1, ChapterStatus.REVISION.value)
+    chapter = seeded_repo.get_chapter("test_proj", 1)
+
+    agent = AuthorAgent(seeded_repo, StubLLMProvider())
+    review = agent._load_revision_review(
+        {
+            "workflow_run_id": "run-qg",
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": ChapterStatus.REVISION.value,
+            "quality_gate": {
+                "passed": False,
+                "pass": False,
+                "score": 70,
+                "revision_target": "author",
+                "blocking_issues": [
+                    "章间衔接断裂：上一章结尾指向地点“帝豪酒店”，本章开头未交代。",
+                ],
+                "advisory_issues": ["对白口语化标记不足"],
+                "checks_run": ["chapter_seam"],
+            },
+        },
+        chapter,
+    )
+
+    assert review is not None
+    assert review["review_id"] == "quality_gate:run-qg"
+    assert review["revision_target"] == "author"
+    assert "章间衔接断裂" in review["issues"][0]
+    assert any("QualityGate 阻断项" in item for item in review["suggestions"])
+
+
 def test_author_validate_output_rejects_ai_expression_variant(seeded_repo):
     from novel_factory.agents.author import AuthorAgent
     from novel_factory.validators.chapter_checker import count_words
