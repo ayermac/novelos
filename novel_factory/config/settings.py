@@ -61,8 +61,11 @@ class WorkflowConfig(BaseModel):
     node_timeout_seconds: int = 300  # v6.10.0: Per-node execution timeout (5 minutes)
     node_timeout_overrides: dict[str, int] = Field(
         default_factory=lambda: {
+            "planner": 720,
+            "screenwriter": 720,
             "author": 1200,
             "polisher": 900,
+            "editor": 900,
             "memory_curator": 600,
         },
     )

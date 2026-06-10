@@ -66,8 +66,11 @@ def test_settings_has_memory_curator_node_timeout_override():
     """Long-running production nodes get safe default node timeouts."""
     settings = Settings()
     assert settings.workflow.node_timeout_seconds == 300
+    assert settings.workflow.node_timeout_overrides["planner"] == 720
+    assert settings.workflow.node_timeout_overrides["screenwriter"] == 720
     assert settings.workflow.node_timeout_overrides["author"] == 1200
     assert settings.workflow.node_timeout_overrides["polisher"] == 900
+    assert settings.workflow.node_timeout_overrides["editor"] == 900
     assert settings.workflow.node_timeout_overrides["memory_curator"] == 600
 
 
@@ -76,10 +79,13 @@ def test_node_timeout_resolves_memory_curator_override():
     from novel_factory.workflow.nodes import _node_timeout_seconds
 
     settings = Settings()
+    assert _node_timeout_seconds(settings, "planner") == 720
+    assert _node_timeout_seconds(settings, "screenwriter") == 720
     assert _node_timeout_seconds(settings, "memory_curator") == 600
     assert _node_timeout_seconds(settings, "author") == 1200
     assert _node_timeout_seconds(settings, "polisher") == 900
-    assert _node_timeout_seconds(settings, "screenwriter") == 300
+    assert _node_timeout_seconds(settings, "editor") == 900
+    assert _node_timeout_seconds(settings, "health_check") == 300
 
 
 def test_node_timeout_applies_floor_for_legacy_partial_overrides():
@@ -89,9 +95,26 @@ def test_node_timeout_applies_floor_for_legacy_partial_overrides():
     settings = Settings()
     settings.workflow.node_timeout_overrides = {"memory_curator": 600}
 
+    assert _node_timeout_seconds(settings, "planner") == 720
+    assert _node_timeout_seconds(settings, "screenwriter") == 720
     assert _node_timeout_seconds(settings, "author") == 1200
     assert _node_timeout_seconds(settings, "polisher") == 900
+    assert _node_timeout_seconds(settings, "editor") == 900
     assert _node_timeout_seconds(settings, "memory_curator") == 600
+
+
+def test_real_example_config_includes_long_running_node_timeout_overrides():
+    """Committed real-mode example config must not leave long nodes on the 300s default watchdog."""
+    from novel_factory.config.settings import load_settings
+    from novel_factory.workflow.nodes import _node_timeout_seconds
+
+    settings = load_settings("config/local.real.example.yaml")
+    assert settings.workflow.node_timeout_overrides["planner"] == 720
+    assert settings.workflow.node_timeout_overrides["screenwriter"] == 720
+    assert settings.workflow.node_timeout_overrides["editor"] == 900
+    assert _node_timeout_seconds(settings, "planner") == 720
+    assert _node_timeout_seconds(settings, "screenwriter") == 720
+    assert _node_timeout_seconds(settings, "editor") == 900
 
 
 def test_settings_from_dict():

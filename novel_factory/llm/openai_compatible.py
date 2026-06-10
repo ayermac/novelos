@@ -484,12 +484,16 @@ class OpenAICompatibleProvider(LLMProvider):
                         self.last_call_trace["error"] = redact_sensitive_text(str(e))
                     raise
                 except Exception as e:
-                    if self._is_langchain_response_shape_error(e):
+                    parameter_error = self._is_provider_parameter_error(e)
+                    if self._is_langchain_response_shape_error(e) or parameter_error:
                         safe_error = redact_sensitive_text(str(e))
                         request_payload["transport_fallback"] = "http"
-                        request_payload["langchain_error"] = safe_error
+                        if parameter_error:
+                            request_payload["parameter_error"] = safe_error
+                        else:
+                            request_payload["langchain_error"] = safe_error
                         logger.warning(
-                            "LangChain response parser failed; retrying via direct HTTP fallback model=%s attempt=%s error=%s",
+                            "SDK chat call failed; retrying via direct HTTP fallback model=%s attempt=%s error=%s",
                             self.config.model,
                             attempt_number,
                             safe_error,
@@ -601,6 +605,38 @@ class OpenAICompatibleProvider(LLMProvider):
         """
         error_str = str(error).lower()
         return any(pat in error_str for pat in self._RESPONSE_FORMAT_UNSUPPORTED_PATTERNS)
+
+    @staticmethod
+    def _is_provider_parameter_error(error: Exception) -> bool:
+        """Return true for OpenAI-compatible gateways rejecting request params.
+
+        Some gateways return generic 400 InvalidParameter errors when the SDK
+        adds a provider-incompatible parameter. A transport-level fallback is
+        safe because it preserves the same messages/model and uses a minimal
+        OpenAI-compatible chat completion payload.
+        """
+        error_str = str(error).lower()
+        return (
+            ("400" in error_str or "badrequest" in error_str or "bad request" in error_str)
+            and any(
+                pattern in error_str
+                for pattern in (
+                    "invalidparameter",
+                    "invalid parameter",
+                    "parameter specified in the request is not valid",
+                    "unsupported parameter",
+                    "unknown parameter",
+                    "stream_options",
+                    "streaming",
+                    "stream",
+                )
+            )
+        )
+
+    @staticmethod
+    def _is_streaming_parameter_error(error: Exception) -> bool:
+        """Return true when a streaming request can safely fall back to text."""
+        return OpenAICompatibleProvider._is_provider_parameter_error(error)
 
     def invoke_json(
         self,
@@ -834,18 +870,71 @@ class OpenAICompatibleProvider(LLMProvider):
             or request_timeout_seconds == self.config.request_timeout_seconds
             else self._build_client(request_timeout_seconds=request_timeout_seconds)
         )
+        request_payload = {
+            "provider": self.config.provider,
+            "base_url": redact_sensitive_text(self.config.base_url),
+            "model": self.config.model,
+            "temperature": temperature if temperature is not None else self.config.temperature,
+            "max_tokens": max_tokens if max_tokens is not None else self.config.max_tokens,
+            "request_timeout_seconds": request_timeout_seconds or self.config.request_timeout_seconds,
+            "message_count": len(messages),
+            "call_type": "text_stream",
+            "schema": None,
+            "agent_id": agent_id,
+            "messages": [_message_to_dict(msg) for msg in messages],
+        }
+        self.last_call_trace = {
+            "request": request_payload,
+            "response": None,
+            "error": None,
+        }
         try:
             content, pt, ct, dm = stream_text(
                 stream_client, self._to_lc_messages, messages,
                 temperature=temperature, max_tokens=max_tokens, agent_id=agent_id, on_chunk=on_chunk,
             )
             self.last_token_usage = TokenUsage(prompt_tokens=pt, completion_tokens=ct, total_tokens=pt + ct, duration_ms=dm)
+            self.last_call_trace = {
+                "request": request_payload,
+                "response": {
+                    "content": redact_sensitive_text(content),
+                    "content_preview": redact_sensitive_text(content)[:2000],
+                    "content_length": len(content),
+                    "usage": self.last_token_usage.to_dict(),
+                    "response_metadata": {},
+                    "finish_reason": None,
+                    "duration_ms": dm,
+                },
+                "error": None,
+            }
             return content
         except (InvalidAPIKeyError, InsufficientBalanceError, LLMTimeoutError, RateLimitError, LLMConnectionError):
             raise
         except LLMError:
             raise
         except Exception as e:
+            if self._is_streaming_parameter_error(e):
+                safe_error = redact_sensitive_text(str(e))
+                if self.last_call_trace is not None:
+                    self.last_call_trace["error"] = safe_error
+                    self.last_call_trace.setdefault("request", {})
+                    self.last_call_trace["request"]["streaming_fallback"] = "text"
+                    self.last_call_trace["request"]["streaming_error"] = safe_error
+                logger.warning(
+                    "Streaming request rejected by provider; falling back to non-stream text agent=%s model=%s error=%s",
+                    agent_id,
+                    self.config.model,
+                    safe_error,
+                )
+                return self.invoke_text(
+                    messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    request_timeout_seconds=request_timeout_seconds,
+                    agent_id=agent_id,
+                )
+            if self.last_call_trace is not None:
+                self.last_call_trace["error"] = redact_sensitive_text(str(e))
             self._handle_api_error(e)
 
     def invoke_with_tools(
