@@ -177,6 +177,71 @@ describe('v6.7.6 Recovery CTA Priority', () => {
     expect(screen.getAllByText('确认发布').length).toBeGreaterThan(0)
   })
 
+  it('does not treat fresh running memory curator as stale by total run age', () => {
+    const timeline = makeTimeline({
+      run_status: 'running',
+      chapter_status: 'awaiting_publish',
+      current_node: 'memory_curator',
+      elapsed_minutes: 31,
+      is_stale: false,
+      memory_curator_running: true,
+      recovery: {
+        recommended_action: null,
+        reason: null,
+        safe_actions: [],
+      },
+      nodes: [
+        {
+          node_name: 'memory_curator',
+          label: '记忆整理',
+          node_group: 'support_agent',
+          node_type: 'support_agent',
+          status: 'running',
+          started_at: '2026-06-10T18:02:19+08:00',
+          completed_at: null,
+          duration_ms: null,
+          messages: ['记忆整理 节点开始执行'],
+          events: [],
+          artifacts: [],
+          flags: { memory_curator_running: true },
+        },
+      ],
+    })
+
+    render(<AuthorWritingSurface {...baseProps} timeline={timeline} />)
+
+    expect(screen.getByText('工作流正在推进')).toBeInTheDocument()
+    expect(screen.queryByText('清除阻塞并重置')).not.toBeInTheDocument()
+    expect(screen.queryByText('补跑记忆提取')).not.toBeInTheDocument()
+  })
+
+  it('does not mark run-detail-only memory curator as stale by total run age', () => {
+    const startedAt = new Date(Date.now() - 31 * 60_000).toISOString()
+
+    render(
+      <AuthorWritingSurface
+        {...baseProps}
+        runDetail={{
+          run_id: 'run-123',
+          project_id: 'test-proj',
+          chapter_number: 5,
+          workflow_status: 'running',
+          chapter_status: 'awaiting_publish',
+          current_node: 'memory_curator',
+          llm_mode: 'real',
+          started_at: startedAt,
+          steps: [],
+        }}
+        timeline={null}
+        onBackfillMemory={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('工作流正在推进')).toBeInTheDocument()
+    expect(screen.queryByText('工作流疑似卡住')).not.toBeInTheDocument()
+    expect(screen.queryByText('补跑记忆提取')).not.toBeInTheDocument()
+  })
+
   // v6.7.6 round 2: Header publish CTA must respect recovery
   it('hides header publish button for blocked run + reviewed', () => {
     const timeline = makeTimeline({
@@ -350,5 +415,82 @@ describe('v6.7.6 AuthorAgentPanel Recovery CTA Priority', () => {
     expect(screen.queryByText('补跑记忆提取')).not.toBeInTheDocument()
     expect(screen.queryByText('需要先恢复运行')).not.toBeInTheDocument()
     expect(screen.getByText('确认发布')).toBeInTheDocument()
+  })
+
+  it('shows memory in progress instead of backfill while memory curator is running', () => {
+    const timeline = makeTimeline({
+      run_status: 'running',
+      chapter_status: 'reviewed',
+      current_node: 'memory_curator',
+      elapsed_minutes: 31,
+      is_stale: false,
+      memory_curator_running: true,
+      recovery: {
+        recommended_action: null,
+        reason: null,
+        safe_actions: [
+          { key: 'backfill_memory', label: '补跑记忆提取', safe: true },
+        ],
+      },
+      nodes: [
+        {
+          node_name: 'memory_curator',
+          label: '记忆整理',
+          node_group: 'support_agent',
+          node_type: 'support_agent',
+          status: 'running',
+          started_at: '2026-06-10T18:02:19+08:00',
+          completed_at: null,
+          duration_ms: null,
+          messages: ['记忆整理 节点开始执行'],
+          events: [],
+          artifacts: [],
+          flags: { memory_curator_running: true },
+        },
+      ],
+    })
+
+    render(
+      <AuthorAgentPanel
+        {...agentBaseProps}
+        currentChapterRecord={{ status: 'reviewed', word_count: 3000, title: '第五章' }}
+        timeline={timeline}
+        onPublish={vi.fn()}
+        onBackfillMemory={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('记忆提取中')).toBeInTheDocument()
+    expect(screen.queryByText('需要先恢复运行')).not.toBeInTheDocument()
+    expect(screen.queryByText('补跑记忆提取')).not.toBeInTheDocument()
+  })
+
+  it('does not show memory backfill from run detail while memory curator is running', () => {
+    const startedAt = new Date(Date.now() - 31 * 60_000).toISOString()
+
+    render(
+      <AuthorAgentPanel
+        {...agentBaseProps}
+        currentChapterRecord={{ status: 'reviewed', word_count: 3000, title: '第五章' }}
+        runDetail={{
+          run_id: 'run-123',
+          project_id: 'test-proj',
+          chapter_number: 5,
+          workflow_status: 'running',
+          chapter_status: 'reviewed',
+          current_node: 'memory_curator',
+          llm_mode: 'real',
+          started_at: startedAt,
+          steps: [],
+        }}
+        timeline={null}
+        onPublish={vi.fn()}
+        onBackfillMemory={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('记忆提取中')).toBeInTheDocument()
+    expect(screen.queryByText('需要先恢复运行')).not.toBeInTheDocument()
+    expect(screen.queryByText('补跑记忆提取')).not.toBeInTheDocument()
   })
 })

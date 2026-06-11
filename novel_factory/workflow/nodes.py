@@ -1646,6 +1646,127 @@ def _check_quality_diagnosis(content: str, repo: Repository, project_id: str, ch
     }
 
 
+def _check_core_loop_compliance(repo: Repository, project_id: str, chapter_number: int, content: str) -> dict[str, Any]:
+    """v6.10.5: 检查核心循环合规性（Story Contract compliance）"""
+    from ..quality.core_loop_checker import check_core_loop_compliance, derive_fallback_story_contract
+    from ..models.creative_contracts import StoryContract
+    from ..models.chapter_contracts import ChapterBrief
+    from ..models.creative_ledgers import ChapterContractMetrics
+    from ..quality.issue_codes import IssueCode
+
+    # Load or derive story contract
+    row = repo.get_creative_contract(project_id, "story_contract")
+    if row:
+        data_str = row.get("contract_data", "{}")
+        import json as _json
+        try:
+            contract_data = _json.loads(data_str) if isinstance(data_str, str) else data_str
+            story_contract = StoryContract(**contract_data)
+        except Exception:
+            lp_row = repo.get_creative_contract(project_id, "launch_profile")
+            gc_row = repo.get_creative_contract(project_id, "genre_contract")
+            lp = _json.loads(lp_row["contract_data"]) if lp_row and isinstance(lp_row.get("contract_data"), str) else (lp_row.get("contract_data") if lp_row else None)
+            gc = _json.loads(gc_row["contract_data"]) if gc_row and isinstance(gc_row.get("contract_data"), str) else (gc_row.get("contract_data") if gc_row else None)
+            story_contract = derive_fallback_story_contract(project_id, lp, gc)
+    else:
+        lp_row = repo.get_creative_contract(project_id, "launch_profile")
+        gc_row = repo.get_creative_contract(project_id, "genre_contract")
+        import json as _json
+        lp = _json.loads(lp_row["contract_data"]) if lp_row and isinstance(lp_row.get("contract_data"), str) else (lp_row.get("contract_data") if lp_row else None)
+        gc = _json.loads(gc_row["contract_data"]) if gc_row and isinstance(gc_row.get("contract_data"), str) else (gc_row.get("contract_data") if gc_row else None)
+        story_contract = derive_fallback_story_contract(project_id, lp, gc)
+
+    # Load chapter brief
+    brief_row = repo.get_chapter_brief(project_id, chapter_number)
+    chapter_brief = None
+    if brief_row:
+        import json as _json
+        brief_data = brief_row.get("brief_data", {})
+        if isinstance(brief_data, str):
+            try:
+                brief_data = _json.loads(brief_data)
+            except Exception:
+                brief_data = {}
+        try:
+            chapter_brief = ChapterBrief(**brief_data)
+        except Exception:
+            chapter_brief = None
+
+    # Load recent contract metrics
+    metrics_raw = repo.get_chapter_contract_metrics(project_id, limit=5, before_chapter=chapter_number)
+    recent_metrics = []
+    for m in metrics_raw:
+        if isinstance(m, dict):
+            try:
+                recent_metrics.append(ChapterContractMetrics(**m))
+            except Exception:
+                pass
+
+    # Run compliance check
+    result = check_core_loop_compliance(
+        project_id=project_id,
+        chapter_number=chapter_number,
+        content=content,
+        story_contract=story_contract,
+        chapter_brief=chapter_brief,
+        recent_contract_metrics=recent_metrics,
+    )
+
+    # Store contract metrics in ledger for future trend checking
+    if result.contract_metrics:
+        try:
+            repo.upsert_creative_ledger(
+                project_id=project_id,
+                chapter_number=chapter_number,
+                ledger_type="contract_metrics",
+                ledger_data=result.contract_metrics.model_dump(),
+            )
+        except Exception:
+            logger.debug("Failed to store contract metrics for ch%d", chapter_number, exc_info=True)
+
+    # Build result — default advisory; blocking only if contract is confirmed AND consecutive violations exceed threshold
+    advisory = []
+    priority = []
+    blocking = []
+    issue_codes = []
+
+    if not result.core_payoff_present:
+        advisory.append(f"[核心循环] 未检测到核心兑现证据（score={result.score:.0f}）")
+        issue_codes.append(IssueCode.CORE_LOOP_PAYOFF_MISSING)
+
+    for w in result.warnings:
+        advisory.append(f"[核心循环] {w}")
+
+    contract_allows_blocking = story_contract.status in {"active", "confirmed"}
+    for ds in result.drift_signals:
+        if ds.severity == "blocking" and contract_allows_blocking:
+            blocking.append(f"[核心循环阻断] {ds.description}")
+            issue_codes.append(IssueCode.CORE_LOOP_DRIFT_WARNING)
+        elif ds.severity == "warning":
+            priority.append(f"[核心循环漂移] {ds.description}")
+            issue_codes.append(IssueCode.CORE_LOOP_DRIFT_WARNING)
+
+    return {
+        "check_name": "core_loop_compliance",
+        "passed": len(blocking) == 0,
+        "advisory_issues": advisory,
+        "priority_issues": priority,
+        "blocking_issues": blocking,
+        "score_penalty": max(0, (100 - result.score) * 0.2),  # penalty proportional to gap
+        "issue_codes": issue_codes,
+        "diagnostics": {
+            "score": result.score,
+            "core_payoff_present": result.core_payoff_present,
+            "supporting_mechanism_dominance": result.supporting_mechanism_dominance,
+            "new_mechanism_count": result.new_mechanism_count,
+            "protagonist_agency_present": result.protagonist_agency_present,
+            "warnings": result.warnings,
+            "drift_signals": [{"type": s.drift_type, "severity": s.severity, "message": s.description} for s in result.drift_signals],
+            "contract_status": story_contract.status,
+        },
+    }
+
+
 def _determine_revision_target(issue_codes: list) -> str | None:
     """根据结构化问题代码确定返修目标"""
     from ..quality.issue_codes import IssueCode, ISSUE_CODE_TO_REVISION_TARGET
@@ -1851,6 +1972,34 @@ def quality_gate_node(state: FactoryState, repo: Repository, skill_registry=None
             logger.warning("QualityGate: quality_diagnosis check failed", exc_info=True)
             checker_errors.append({"checker": "quality_diagnosis", "error_type": "unknown", "message": str(e)})
             diagnostics["quality_diagnosis"] = {"error": "check failed"}
+
+    # ── 检查 6: Core Loop Compliance（核心循环合规，v6.10.5）────
+    try:
+        result = _check_core_loop_compliance(repo, project_id, chapter_number, content)
+        checks_run.append(result["check_name"])
+        diagnostics[result["check_name"]] = result["diagnostics"]
+        advisory_issues.extend(result.get("advisory_issues", []))
+        priority_issues.extend(result.get("priority_issues", []))
+        # Core loop warnings are advisory unless contract is confirmed AND consecutive violations exceed threshold
+        if result.get("blocking_issues"):
+            blocking_issues.extend(result["blocking_issues"])
+        all_issue_codes.extend(result["issue_codes"])
+    except CheckerConfigError as e:
+        logger.error("QualityGate: core_loop_compliance config error: %s", e)
+        checker_errors.append({"checker": "core_loop_compliance", "error_type": "config", "message": str(e)})
+        diagnostics["core_loop_compliance"] = {"error": "config_error", "message": str(e)}
+    except CheckerTimeoutError as e:
+        logger.warning("QualityGate: core_loop_compliance timeout: %s", e)
+        checker_errors.append({"checker": "core_loop_compliance", "error_type": "timeout", "message": str(e)})
+        diagnostics["core_loop_compliance"] = {"error": "timeout", "message": str(e)}
+    except CheckerTemporaryFailure as e:
+        logger.warning("QualityGate: core_loop_compliance temporary failure: %s", e)
+        checker_errors.append({"checker": "core_loop_compliance", "error_type": "temporary", "message": str(e)})
+        diagnostics["core_loop_compliance"] = {"error": "temporary_failure", "message": str(e)}
+    except Exception as e:
+        logger.warning("QualityGate: core_loop_compliance check failed", exc_info=True)
+        checker_errors.append({"checker": "core_loop_compliance", "error_type": "unknown", "message": str(e)})
+        diagnostics["core_loop_compliance"] = {"error": "check failed"}
 
     # ── 综合判定 ─────────────────────────────────────────────────
     mandatory_checker_errors = [
@@ -2285,45 +2434,12 @@ def _is_deterministic_quality_gate_failure(gate: dict[str, Any]) -> bool:
 
 def _revision_review_from_quality_gate(state: FactoryState) -> dict[str, Any] | None:
     """Build revision feedback from a failed deterministic QualityGate result."""
-    gate = state.get("quality_gate") or {}
-    if gate.get("passed") is not False and gate.get("pass") is not False:
-        return None
+    from ..agent_runtime.revision_context import revision_review_from_quality_gate
 
-    blocking = [str(i).strip() for i in gate.get("blocking_issues", []) if str(i).strip()]
-    priority = [str(i).strip() for i in gate.get("priority_issues", []) if str(i).strip()]
-    advisory = [str(i).strip() for i in gate.get("advisory_issues", []) if str(i).strip()]
-    if not (blocking or priority or advisory):
-        return None
-
-    issues = blocking + priority
-    suggestions: list[str] = []
-    diagnostics = gate.get("diagnostics") or {}
-    for check_name in ("chapter_seam", "continuity_gate", "quality_diagnosis"):
-        check_diag = diagnostics.get(check_name) or {}
-        raw_suggestions = check_diag.get("suggestions") or check_diag.get("advisory_issues") or []
-        if isinstance(raw_suggestions, list):
-            suggestions.extend(str(item).strip() for item in raw_suggestions if str(item).strip())
-
-    suggestions.extend(advisory[:4])
-    if blocking:
-        suggestions.insert(
-            0,
-            "必须逐条消解 QualityGate 阻断项；返修后不得保留同名阻断、不得只做语言润色。",
-        )
-    if any("章间衔接" in item or "时间" in item for item in blocking):
-        suggestions.append("章首必须明确承接上一章时间/地点/行动钩子，避免突然跳场或无标注回退。")
-    if any("标题与正文脱节" in item or "标题关键词" in item for item in blocking):
-        suggestions.append("标题关键词必须以原词或自然对白形式出现在正文关键场景中；否则改标题。")
-
-    return {
-        "review_id": gate.get("review_id") or f"quality_gate:{state.get('workflow_run_id') or 'current'}",
-        "score": gate.get("score"),
-        "revision_target": gate.get("revision_target") or "author",
-        "issues": issues[:12],
-        "suggestions": suggestions[:12],
-        "source": "quality_gate",
-        "blocking_issue_count": len(blocking),
-    }
+    return revision_review_from_quality_gate(
+        state.get("quality_gate") or {},
+        workflow_run_id=state.get("workflow_run_id"),
+    )
 
 
 def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:

@@ -34,6 +34,10 @@ class IssueCode(str, Enum):
     QUALITY_NARRATIVE_LOW = "quality_narrative_low"
     QUALITY_STYLE_ISSUE = "quality_style_issue"
 
+    # 核心循环合规类（v6.10.5，advisory/priority，返修目标：author）
+    CORE_LOOP_PAYOFF_MISSING = "core_loop_payoff_missing"
+    CORE_LOOP_DRIFT_WARNING = "core_loop_drift_warning"
+
     # 检查器错误类（非阻塞）
     CHECKER_CONFIG_ERROR = "checker_config_error"
     CHECKER_TEMPORARY_FAILURE = "checker_temporary_failure"
@@ -64,6 +68,10 @@ ISSUE_CODE_TO_REVISION_TARGET: dict[IssueCode, str] = {
     IssueCode.QUALITY_AI_TRACE: "polisher",
     IssueCode.QUALITY_NARRATIVE_LOW: "polisher",
     IssueCode.QUALITY_STYLE_ISSUE: "polisher",
+
+    # 核心循环合规 → author (v6.10.5)
+    IssueCode.CORE_LOOP_PAYOFF_MISSING: "author",
+    IssueCode.CORE_LOOP_DRIFT_WARNING: "author",
 }
 
 

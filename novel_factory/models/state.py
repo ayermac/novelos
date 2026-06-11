@@ -108,3 +108,6 @@ class FactoryState(TypedDict, total=False):
     awaiting_publish: bool
     # v6.6.14: Memory context audit written by planner_node
     memory_context_audit: dict
+    # v6.10.x: Review-like revision feedback carried between revision_router and agents.
+    _revision_review: dict[str, Any]
+    _quality_gate_revision_recorded_for: str

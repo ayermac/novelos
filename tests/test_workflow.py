@@ -4,7 +4,7 @@ import pytest
 from unittest.mock import patch
 from datetime import datetime, timedelta
 
-from novel_factory.models.state import ChapterStatus
+from novel_factory.models.state import ChapterStatus, FactoryState
 from novel_factory.workflow.conditions import (
     hydrate_revision_state,
     normalize_revision_target,
@@ -21,6 +21,11 @@ from novel_factory.workflow.runner import (
     _clear_stale_checkpoint_for_new_run,
     _graph_exit_is_success,
 )
+
+
+def test_factory_state_carries_revision_review_channel():
+    """LangGraph state schema must preserve synthetic QualityGate review feedback."""
+    assert "_revision_review" in FactoryState.__annotations__
 
 
 class TestRouteByChapterStatus:

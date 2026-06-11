@@ -14,6 +14,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from ..validators.chapter_checker import derive_word_target
+from ..quality.numeric_state import (
+    numeric_state_constraint_from_text,
+    numeric_state_constraints_from_facts,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +36,10 @@ _TIMELINE_KEYWORDS = re.compile(
     r"约定地点|约定时间|下次见面|再次见面|准时赴约|"
     r"期限类威胁|倒计时|时间不多|没时间了)",
     re.IGNORECASE,
+)
+_CLOCK_PATTERN = re.compile(r"(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?!\d)")
+_COUNTDOWN_CONTEXT_PATTERN = re.compile(
+    r"(?:倒计时|计时|左眼|数字|猩红|暴跌|猛跌|预支|利息|锁链|崩断|搏动|心脏|剩余)"
 )
 
 # ── Data classes ─────────────────────────────────────────────────
@@ -59,11 +67,16 @@ class AgentContextBundle:
     story_facts: list[ContextItem] = field(default_factory=list)
     plot_obligations: list[ContextItem] = field(default_factory=list)
     timeline_constraints: list[ContextItem] = field(default_factory=list)
+    numeric_state_constraints: list[ContextItem] = field(default_factory=list)
     character_states: list[ContextItem] = field(default_factory=list)
     revision_feedback: list[ContextItem] = field(default_factory=list)
     hard_constraints: list[ContextItem] = field(default_factory=list)
     advisory_context: list[ContextItem] = field(default_factory=list)
     diagnostics: list[ContextItem] = field(default_factory=list)
+    # v6.10.4: style bible context
+    style_context: list[ContextItem] = field(default_factory=list)
+    # v6.10.5: story contract context
+    story_contract_context: list[ContextItem] = field(default_factory=list)
     # v6.6.14: memory context annotation
     memory_context_degraded: bool = False
     trusted_memory_batch_id: str | None = None
@@ -73,12 +86,15 @@ class AgentContextBundle:
         return {
             "trusted_memory_count": len(self.trusted_memory),
             "timeline_constraints_count": len(self.timeline_constraints),
+            "numeric_state_constraints_count": len(self.numeric_state_constraints),
             "plot_obligations_count": len(self.plot_obligations),
             "hard_constraints_count": len(self.hard_constraints),
             "advisory_count": len(self.advisory_context),
             "revision_feedback_count": len(self.revision_feedback),
             "story_facts_count": len(self.story_facts),
             "character_states_count": len(self.character_states),
+            "style_context_count": len(self.style_context),
+            "story_contract_context_count": len(self.story_contract_context),
             "memory_context_degraded": self.memory_context_degraded,
             "trusted_memory_batch_id": self.trusted_memory_batch_id,
         }
@@ -316,6 +332,26 @@ def extract_timeline_constraints(
                                 )
                             )
 
+    # 4. Previous chapter precise countdown / timer state.
+    try:
+        prev_chapter = repo.get_chapter(project_id, prev_ch)
+    except Exception:
+        prev_chapter = None
+    prev_tail = str((prev_chapter or {}).get("content") or "")[-900:]
+    precise_timer = _extract_precise_timer_constraint(prev_tail)
+    if precise_timer:
+        items.append(
+            ContextItem(
+                kind="timeline_constraint",
+                text=precise_timer,
+                source="prev_chapter_tail:precise_timer",
+                confidence=1.0,
+                chapter_number=prev_ch,
+                priority=1,
+                trusted=True,
+            )
+        )
+
     # Deduplicate by text
     seen: set[str] = set()
     deduped: list[ContextItem] = []
@@ -325,6 +361,78 @@ def extract_timeline_constraints(
             seen.add(key)
             deduped.append(it)
     return deduped
+
+
+def _extract_precise_timer_constraint(text: str) -> str:
+    source = str(text or "")
+    clocks = _CLOCK_PATTERN.findall(source)
+    if len(clocks) < 2 or not _COUNTDOWN_CONTEXT_PATTERN.search(source):
+        return ""
+    last_clock = clocks[-1]
+    sequence = " → ".join(clocks[-5:])
+    return (
+        f"上一章结尾精确倒计时/计数器已推进至 {last_clock}；"
+        f"尾部序列：{sequence}。"
+        "本章开头必须从该状态之后继续，禁止回退到更大的倒计时或重复已完成序列，除非明确标注闪回/回放。"
+    )
+
+
+def extract_numeric_state_constraints(
+    project_id: str,
+    chapter_number: int,
+    repo: Any,
+) -> list[ContextItem]:
+    """Extract numeric state constraints from applied facts and previous tail."""
+    items: list[ContextItem] = []
+    if chapter_number <= 1:
+        return items
+
+    try:
+        facts = [
+            fact for fact in repo.list_story_facts(project_id, status="active")
+            if int(fact.get("source_chapter") or fact.get("last_changed_chapter") or 0) <= chapter_number
+        ]
+    except Exception:
+        facts = []
+
+    fact_lines = numeric_state_constraints_from_facts(facts)[:10]
+    if fact_lines:
+        items.append(
+            ContextItem(
+                kind="numeric_state_constraint",
+                text=(
+                    "已确认数值状态：\n"
+                    + "\n".join(f"- {line}" for line in fact_lines)
+                    + "\n必须继承；如发生变化，正文必须明确写出触发事件和变化过程。"
+                ),
+                source="story_facts:numeric_state",
+                confidence=1.0,
+                priority=1,
+                trusted=True,
+            )
+        )
+
+    prev_ch = chapter_number - 1
+    try:
+        prev_chapter = repo.get_chapter(project_id, prev_ch)
+    except Exception:
+        prev_chapter = None
+    prev_tail = str((prev_chapter or {}).get("content") or "")[-1200:]
+    tail_constraint = numeric_state_constraint_from_text(prev_tail, prefix="上一章结尾")
+    if tail_constraint and not any(tail_constraint == item.text for item in items):
+        items.append(
+            ContextItem(
+                kind="numeric_state_constraint",
+                text=tail_constraint,
+                source="prev_chapter_tail:numeric_state",
+                confidence=0.95,
+                chapter_number=prev_ch,
+                priority=1,
+                trusted=True,
+            )
+        )
+
+    return items
 
 
 _FULFILLED_TIMELINE_MARKERS = (
@@ -871,6 +979,236 @@ class AgentContextBuilder:
             )
         return items
 
+    def _style_bible_context(self, project_id: str, agent_id: str) -> list[ContextItem]:
+        """Load Style Bible and generate agent-specific style context."""
+        items: list[ContextItem] = []
+        try:
+            from ..style_bible.loader import load_style_bible_for_project
+
+            bible = load_style_bible_for_project(project_id, self.repo)
+        except Exception:
+            bible = None
+        if not bible:
+            return items
+
+        try:
+            rules_text = bible.rules_for_agent(agent_id)
+        except Exception:
+            rules_text = ""
+        if rules_text:
+            items.append(
+                ContextItem(
+                    kind="style_bible",
+                    text=rules_text,
+                    source="style_bible",
+                    priority=3,
+                    trusted=True,
+                )
+            )
+        return items
+
+    def _load_story_contract(self, project_id: str) -> "StoryContract | None":
+        """Load StoryContract from DB or derive fallback."""
+        try:
+            from ..models.creative_contracts import StoryContract
+            from ..quality.core_loop_checker import derive_fallback_story_contract
+
+            # Try to load from project_creative_contracts
+            row = self.repo.get_creative_contract(project_id, "story_contract")
+            if row:
+                data_str = row.get("contract_data", "{}")
+                if isinstance(data_str, str):
+                    data = json.loads(data_str)
+                else:
+                    data = data_str
+                if isinstance(data, dict) and data.get("core_promise"):
+                    return StoryContract(**data)
+
+            # Fallback: derive from launch_profile + genre_contract
+            lp_row = self.repo.get_creative_contract(project_id, "launch_profile")
+            gc_row = self.repo.get_creative_contract(project_id, "genre_contract")
+            lp_data = None
+            gc_data = None
+            if lp_row:
+                lp_str = lp_row.get("contract_data", "{}")
+                lp_data = json.loads(lp_str) if isinstance(lp_str, str) else lp_str
+            if gc_row:
+                gc_str = gc_row.get("contract_data", "{}")
+                gc_data = json.loads(gc_str) if isinstance(gc_str, str) else gc_str
+
+            if lp_data or gc_data:
+                return derive_fallback_story_contract(
+                    project_id, lp_data, gc_data
+                )
+        except Exception as e:
+            logger.debug("Failed to load story contract for %s: %s", project_id, e)
+        return None
+
+    def _story_contract_context(
+        self, project_id: str, agent_id: str, chapter_number: int = 0
+    ) -> list[ContextItem]:
+        """v6.10.5: Build Story Contract context for agents.
+
+        Each agent receives a tailored view:
+        - Planner: core promise, core loop, drift rules, recent trend
+        - Screenwriter: core_loop_target, scene beat mapping
+        - Author: what to deliver, evidence plan, allowed mechanisms
+        - Editor: contract checklist, compliance check guidance
+        """
+        items: list[ContextItem] = []
+        contract = self._load_story_contract(project_id)
+        if not contract:
+            return items
+
+        status_note = ""
+        if contract.status in ("draft", "needs_review", "fallback"):
+            status_note = f"\n[注意] 当前合同状态为 '{contract.status}'，仅供参考，不作硬阻断。"
+
+        if agent_id == "planner":
+            text = self._format_contract_for_planner(contract, status_note)
+        elif agent_id == "screenwriter":
+            text = self._format_contract_for_screenwriter(contract, status_note)
+        elif agent_id == "author":
+            text = self._format_contract_for_author(contract, status_note)
+        elif agent_id == "editor":
+            text = self._format_contract_for_editor(contract, status_note)
+        else:
+            text = self._format_contract_generic(contract, status_note)
+
+        if text:
+            items.append(ContextItem(
+                kind="story_contract",
+                text=text,
+                source="story_contract",
+                priority=2,
+                trusted=True,
+            ))
+
+        # Recent contract trend for planner/editor
+        if agent_id in ("planner", "editor") and chapter_number > 1:
+            trend_text = self._recent_contract_trend(project_id, chapter_number)
+            if trend_text:
+                items.append(ContextItem(
+                    kind="contract_trend",
+                    text=trend_text,
+                    source="contract_metrics",
+                    priority=3,
+                    trusted=True,
+                ))
+
+        return items
+
+    def _format_contract_for_planner(self, contract: Any, status_note: str) -> str:
+        lines = ["【Story Contract — Planner 指引】"]
+        lines.append(f"核心承诺: {contract.core_promise}")
+        if contract.core_loop:
+            loop_steps = " → ".join(
+                f"{s.label}({s.id})" for s in contract.core_loop
+            )
+            lines.append(f"核心循环: {loop_steps}")
+        if contract.drift_rules:
+            lines.append("漂移规则:")
+            for r in contract.drift_rules:
+                lines.append(f"  - {r.description} (severity={r.severity}, window={r.window_chapters}章)")
+        if contract.cadence:
+            lines.append(f"回报节奏: {json.dumps(contract.cadence, ensure_ascii=False)}")
+        if status_note:
+            lines.append(status_note)
+        lines.append("生成 ChapterBrief 时必须声明 core_loop_target 和 primary_payoff。")
+        return "\n".join(lines)
+
+    def _format_contract_for_screenwriter(self, contract: Any, status_note: str) -> str:
+        lines = ["【Story Contract — Screenwriter 指引】"]
+        if contract.core_loop:
+            lines.append("核心循环步骤（scene beat 必须映射）:")
+            for s in contract.core_loop:
+                req = "必需" if s.required else "可选"
+                lines.append(f"  - [{s.id}] {s.label} ({req})")
+        lines.append("每个 scene beat 必须说明服务哪个 core_loop_step。")
+        lines.append("禁止把辅助机制写成 scene 唯一主线。")
+        if contract.supporting_mechanisms:
+            mech_labels = [m.label for m in contract.supporting_mechanisms]
+            lines.append(f"辅助机制: {', '.join(mech_labels)}")
+        if status_note:
+            lines.append(status_note)
+        return "\n".join(lines)
+
+    def _format_contract_for_author(self, contract: Any, status_note: str) -> str:
+        lines = ["【Story Contract — Author 指引】"]
+        lines.append(f"核心承诺: {contract.core_promise}")
+        lines.append("本章写作要求:")
+        lines.append("  1. 必须完成核心兑现（参考 ChapterBrief.core_loop_target）")
+        lines.append("  2. 兑现证据必须在正文可见场景中写出")
+        lines.append("  3. 辅助机制必须服务于核心循环，不能喧宾夺主")
+        if contract.supporting_mechanisms:
+            mech_labels = [m.label for m in contract.supporting_mechanisms]
+            lines.append(f"允许的辅助机制: {', '.join(mech_labels)}")
+        if status_note:
+            lines.append(status_note)
+        return "\n".join(lines)
+
+    def _format_contract_for_editor(self, contract: Any, status_note: str) -> str:
+        lines = ["【Story Contract — Editor 审核指引】"]
+        lines.append("审核清单:")
+        lines.append("  1. 本章是否完成核心兑现？(core_payoff_present)")
+        lines.append("  2. 辅助机制是否喧宾夺主？(supporting_mechanism_dominance)")
+        lines.append("  3. 是否新增机制过载？(new_mechanism_count)")
+        lines.append("  4. 主角是否展现主动性？(protagonist_agency)")
+        if contract.drift_rules:
+            lines.append("漂移规则:")
+            for r in contract.drift_rules:
+                lines.append(f"  - {r.description}")
+        if status_note:
+            lines.append(status_note)
+        return "\n".join(lines)
+
+    def _format_contract_generic(self, contract: Any, status_note: str) -> str:
+        lines = ["【Story Contract】"]
+        lines.append(f"核心承诺: {contract.core_promise}")
+        if contract.core_loop:
+            loop_steps = " → ".join(s.label for s in contract.core_loop)
+            lines.append(f"核心循环: {loop_steps}")
+        if status_note:
+            lines.append(status_note)
+        return "\n".join(lines)
+
+    def _recent_contract_trend(self, project_id: str, chapter_number: int) -> str:
+        """Load recent contract metrics and summarize trend."""
+        try:
+            from ..models.creative_ledgers import ChapterContractMetrics
+            # Try to get from creative ledger metadata
+            metrics_raw = self.repo.get_chapter_contract_metrics(project_id, limit=3)
+            if not metrics_raw:
+                return ""
+            metrics = []
+            for m in metrics_raw:
+                if isinstance(m, dict):
+                    metrics.append(ChapterContractMetrics(**m))
+
+            if not metrics:
+                return ""
+
+            lines = ["【最近合同合规趋势】"]
+            for m in metrics:
+                payoff_mark = "✓" if m.core_payoff_present else "✗"
+                lines.append(
+                    f"  第{m.chapter_number}章: 核心兑现={payoff_mark}, "
+                    f"得分={m.contract_score:.0f}, "
+                    f"主导机制={m.dominant_mechanism or 'core_loop'}"
+                )
+            # Trend summary
+            no_payoff_streak = 0
+            for m in reversed(metrics):
+                if not m.core_payoff_present:
+                    no_payoff_streak += 1
+                else:
+                    break
+            if no_payoff_streak >= 2:
+                lines.append(f"⚠ 连续{no_payoff_streak}章未完成核心兑现，下一章必须补回。")
+            return "\n".join(lines)
+        except Exception:
+            return ""
+
     @staticmethod
     def _apply_memory_degraded_hard_constraint(bundle: AgentContextBundle) -> None:
         """Promote no-trusted-memory guidance into hard constraints."""
@@ -907,10 +1245,15 @@ class AgentContextBuilder:
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
         )
+        bundle.numeric_state_constraints = extract_numeric_state_constraints(
+            project_id, chapter_number, self.repo
+        )
         bundle.character_states = self._character_states_context(project_id, chapter_number)
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
         )
+        bundle.style_context = self._style_bible_context(project_id, "planner")
+        bundle.story_contract_context = self._story_contract_context(project_id, "planner", chapter_number)
 
         # Hard constraints for planner: suspense hooks + timeline + revision
         hard: list[ContextItem] = []
@@ -918,6 +1261,7 @@ class AgentContextBuilder:
             if it.kind == "suspense_hook":
                 hard.append(it)
         hard.extend(bundle.timeline_constraints)
+        hard.extend(bundle.numeric_state_constraints)
         hard.extend(bundle.revision_feedback)
         bundle.hard_constraints = hard
         self._apply_memory_degraded_hard_constraint(bundle)
@@ -940,13 +1284,20 @@ class AgentContextBuilder:
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
         )
+        bundle.numeric_state_constraints = extract_numeric_state_constraints(
+            project_id, chapter_number, self.repo
+        )
         bundle.character_states = self._character_states_context(project_id, chapter_number)
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
         )
+        bundle.style_context = self._style_bible_context(project_id, "screenwriter")
+        bundle.story_contract_context = self._story_contract_context(project_id, "screenwriter", chapter_number)
+
         bundle.hard_constraints = (
             [it for it in bundle.chapter_inheritance if it.kind == "suspense_hook"]
             + bundle.timeline_constraints
+            + bundle.numeric_state_constraints
             + bundle.revision_feedback
         )
         self._apply_memory_degraded_hard_constraint(bundle)
@@ -967,13 +1318,20 @@ class AgentContextBuilder:
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
         )
+        bundle.numeric_state_constraints = extract_numeric_state_constraints(
+            project_id, chapter_number, self.repo
+        )
         bundle.character_states = self._character_states_context(project_id, chapter_number)
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
         )
+        bundle.style_context = self._style_bible_context(project_id, "author")
+        bundle.story_contract_context = self._story_contract_context(project_id, "author", chapter_number)
+
         bundle.hard_constraints = (
             [it for it in bundle.chapter_inheritance if it.kind == "suspense_hook"]
             + bundle.timeline_constraints
+            + bundle.numeric_state_constraints
             + bundle.revision_feedback
         )
         self._apply_memory_degraded_hard_constraint(bundle)
@@ -994,15 +1352,22 @@ class AgentContextBuilder:
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
         )
+        bundle.numeric_state_constraints = extract_numeric_state_constraints(
+            project_id, chapter_number, self.repo
+        )
         bundle.character_states = self._character_states_context(project_id, chapter_number)
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
         )
+        bundle.style_context = self._style_bible_context(project_id, "polisher")
+        bundle.story_contract_context = self._story_contract_context(project_id, "polisher", chapter_number)
+
         # Polisher hard constraints: fact lock items (instruction events + plots)
         hard: list[ContextItem] = []
         for it in bundle.plot_obligations:
             if it.kind == "plot_obligation":
                 hard.append(it)
+        hard.extend(bundle.numeric_state_constraints)
         hard.extend(bundle.revision_feedback)
         bundle.hard_constraints = hard
         self._apply_memory_degraded_hard_constraint(bundle)
@@ -1022,13 +1387,20 @@ class AgentContextBuilder:
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
         )
+        bundle.numeric_state_constraints = extract_numeric_state_constraints(
+            project_id, chapter_number, self.repo
+        )
         bundle.character_states = self._character_states_context(project_id, chapter_number)
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
         )
+        bundle.style_context = self._style_bible_context(project_id, "editor")
+        bundle.story_contract_context = self._story_contract_context(project_id, "editor", chapter_number)
+
         bundle.hard_constraints = (
             [it for it in bundle.chapter_inheritance if it.kind == "suspense_hook"]
             + bundle.timeline_constraints
+            + bundle.numeric_state_constraints
             + bundle.revision_feedback
         )
         self._apply_memory_degraded_hard_constraint(bundle)
@@ -1063,10 +1435,13 @@ def format_context_bundle_for_prompt(
         ("【不可违背事实 / Hard Constraints】", bundle.hard_constraints),
         ("【返修反馈 / Revision Feedback】", bundle.revision_feedback),
         ("【时间线约束 / Timeline Constraints】", bundle.timeline_constraints),
+        ("【数值状态约束 / Numeric State Constraints】", bundle.numeric_state_constraints),
         ("【伏笔债务 / Plot Obligations】", bundle.plot_obligations),
         ("【可信记忆 / Trusted Memory】", bundle.trusted_memory),
         ("【事实账本 / Story Facts】", bundle.story_facts),
         ("【角色状态 / Character States】", bundle.character_states),
+        ("【故事合同 / Story Contract】", bundle.story_contract_context),
+        ("【风格规范 / Style Bible】", bundle.style_context),
         ("【建议参考 / Advisory Context】", bundle.advisory_context),
         ("【章节继承 / Chapter Inheritance】", bundle.chapter_inheritance),
         ("【项目背景 / Project Context】", bundle.project_context),
@@ -1128,10 +1503,12 @@ def build_context_summary_for_trace(bundle: AgentContextBundle) -> dict[str, Any
                 "story_facts": bundle.story_facts,
                 "plot_obligations": bundle.plot_obligations,
                 "timeline_constraints": bundle.timeline_constraints,
+                "numeric_state_constraints": bundle.numeric_state_constraints,
                 "character_states": bundle.character_states,
                 "revision_feedback": bundle.revision_feedback,
                 "hard_constraints": bundle.hard_constraints,
                 "advisory_context": bundle.advisory_context,
+                "style_context": bundle.style_context,
             }.items()
             if items
         ],

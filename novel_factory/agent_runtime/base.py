@@ -534,6 +534,22 @@ class BaseAgent:
             logger.debug("Style bible context load failed for %s", agent_id, exc_info=True)
             return ""
 
+    def _get_story_contract_context(self, project_id: str, agent_id: str) -> str:
+        """v6.10.5: Helper: get Story Contract context for a specific agent.
+
+        Returns an empty string if no Story Contract exists for the project.
+        Silently returns "" on any error (never blocks the main flow).
+        """
+        try:
+            from .context_builder import AgentContextBuilder
+            builder = AgentContextBuilder(self.repo)
+            items = builder._story_contract_context(project_id, agent_id)
+            if items:
+                return "\n\n".join(item.text for item in items)
+        except Exception:
+            logger.debug("Story contract context load failed for %s", agent_id, exc_info=True)
+        return ""
+
     def _get_title_contract_context(self, project_id: str) -> str:
         """Helper: get title-promise constraints for generation prompts."""
         try:

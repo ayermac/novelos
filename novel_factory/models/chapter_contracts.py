@@ -20,6 +20,10 @@ class ChapterBriefTier1(BaseModel):
     reader_payoff: str = ""
     protagonist_agency: str = ""
     forbidden_moves: list[str] = Field(default_factory=list)
+    # v6.10.5: Story Contract fields
+    core_loop_target: str = ""
+    primary_payoff: str = ""
+    payoff_evidence_plan: str = ""
 
 
 class ChapterBriefTier2(BaseModel):
@@ -37,6 +41,11 @@ class ChapterBriefTier2(BaseModel):
     opening_hook: str = ""
     ending_hook: str = ""
     quality_threshold_overrides: dict = Field(default_factory=dict)
+    # v6.10.5: Story Contract fields
+    supporting_mechanisms_used: list[str] = Field(default_factory=list)
+    new_mechanisms_allowed: list[str] = Field(default_factory=list)
+    drift_risks: list[str] = Field(default_factory=list)
+    contract_checklist: list[str] = Field(default_factory=list)
 
 
 class ChapterBrief(BaseModel):

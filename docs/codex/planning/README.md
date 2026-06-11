@@ -9,6 +9,8 @@ Documents here are useful for discussion and planning, but they are not binding 
 - `personal-author-workbench-direction.md` - product direction for the author workbench.
 - `pi-inspired-agent-engineering-roadmap.md` - longer-term agent engineering ideas.
 - `novel-factory-v6.6.18-segmented-agent-payloads-plan.md` - proposed reliability work for segmented real-LLM generation and extraction.
+- `novel-factory-v6.10.5-story-contract-governance-plan.md` - Story Contract governance for core-loop enforcement, payoff cadence, supporting-mechanism drift detection, and editable project-level creative commitments.
+- `novel-factory-v6.10.4-style-management-hardening-plan.md` - Style Bible canonicalization, project-level style editing, Style Gate UX, and real-mode style injection.
 - `novel-factory-v6.10.3-workflow-stability-recovery-plan.md` - workflow diagnostics, checker health grading, title guard, and Memory Curator recovery.
 
 ## Promotion Rule

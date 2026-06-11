@@ -16,12 +16,15 @@ from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ...models.creative_contracts import (
     ProjectLaunchProfile,
     GenreContract,
+    StoryContract,
 )
 from ...quality.genesis_quality_gate import (
     generate_launch_profile,
     generate_genre_contract,
+    generate_story_contract,
     check_project_ready_for_production,
 )
+from ...quality.core_loop_checker import derive_fallback_story_contract
 from ...config.genre_profile_loader import (
     load_genre_profile,
     get_all_profile_ids,
@@ -55,8 +58,15 @@ class CreativeContractResponse(BaseModel):
     project_id: str
     launch_profile: dict | None = None
     genre_contract: dict | None = None
+    story_contract: dict | None = None
     is_approved: bool = False
     is_ready_for_production: bool = False
+
+
+class UpdateStoryContractRequest(BaseModel):
+    """Request body for updating a Story Contract."""
+
+    story_contract: dict
 
 
 # ── Helper Functions ─────────────────────────────────────────────────────
@@ -101,6 +111,24 @@ def _parse_contract_data(row: dict | None) -> dict | None:
         except json.JSONDecodeError:
             return None
     return contract_data
+
+
+def _load_story_contract(repo: Any, project_id: str, launch_profile: Any = None, genre_contract: Any = None) -> StoryContract | None:
+    """Load explicit StoryContract or derive a fallback from existing creative contracts."""
+    story_contract_row = repo.get_creative_contract(project_id, "story_contract")
+    if story_contract_row:
+        parsed = _parse_contract_data(story_contract_row)
+        if parsed:
+            try:
+                return StoryContract(**parsed)
+            except Exception as e:
+                logger.warning(f"Failed to parse story contract: {e}")
+
+    launch_data = _serialize_model(launch_profile) if launch_profile else None
+    genre_data = _serialize_model(genre_contract) if genre_contract else None
+    if launch_data or genre_data:
+        return derive_fallback_story_contract(project_id, launch_data, genre_data)
+    return None
 
 
 # ── API Endpoints ────────────────────────────────────────────────────────
@@ -150,6 +178,9 @@ async def get_creative_contracts(
             except Exception as e:
                 logger.warning(f"Failed to parse genre contract: {e}")
 
+    # Get story contract (explicit or fallback)
+    story_contract = _load_story_contract(repo, project_id, launch_profile, genre_contract)
+
     # Check if project is ready for production
     is_ready = check_project_ready_for_production(project_id, repo)
 
@@ -158,6 +189,7 @@ async def get_creative_contracts(
             project_id=project_id,
             launch_profile=_serialize_model(launch_profile) if launch_profile else None,
             genre_contract=_serialize_model(genre_contract) if genre_contract else None,
+            story_contract=_serialize_model(story_contract) if story_contract else None,
             is_approved=is_approved,
             is_ready_for_production=is_ready,
         ).model_dump()
@@ -238,6 +270,23 @@ async def generate_creative_contracts(
             domain_status="error",
         )
 
+    # Generate story contract
+    try:
+        story_contract = generate_story_contract(
+            project_id=project_id,
+            launch_profile=launch_profile,
+            genre_contract=genre_contract,
+            genre_profile=genre_profile,
+            user_idea=body.user_idea,
+            llm_caller=llm_caller,
+        )
+    except Exception as e:
+        logger.error(f"Failed to generate story contract: {e}")
+        return error_response(
+            message=f"生成故事合同失败: {str(e)}",
+            domain_status="error",
+        )
+
     # Save to database
     try:
         repo.upsert_creative_contract(
@@ -250,6 +299,11 @@ async def generate_creative_contracts(
             contract_type="genre_contract",
             contract_data=_serialize_model(genre_contract),
         )
+        repo.upsert_creative_contract(
+            project_id=project_id,
+            contract_type="story_contract",
+            contract_data=_serialize_model(story_contract),
+        )
     except Exception as e:
         logger.error(f"Failed to save creative contracts: {e}")
         return error_response(
@@ -261,6 +315,7 @@ async def generate_creative_contracts(
         "project_id": project_id,
         "launch_profile": _serialize_model(launch_profile),
         "genre_contract": _serialize_model(genre_contract),
+        "story_contract": _serialize_model(story_contract),
         "is_approved": False,
         "is_ready_for_production": False,
         "message": "创作合同生成成功",
@@ -319,6 +374,19 @@ async def approve_creative_contracts(
             contract_type="genre_contract",
             contract_data=contract_data,
         )
+        story_contract_row = repo.get_creative_contract(project_id, "story_contract")
+        story_contract_data = _parse_contract_data(story_contract_row)
+        if not story_contract_data:
+            launch_profile_row = repo.get_creative_contract(project_id, "launch_profile")
+            launch_data = _parse_contract_data(launch_profile_row)
+            story_contract = derive_fallback_story_contract(project_id, launch_data, contract_data)
+            story_contract_data = _serialize_model(story_contract)
+        story_contract_data["status"] = "active"
+        repo.upsert_creative_contract(
+            project_id=project_id,
+            contract_type="story_contract",
+            contract_data=story_contract_data,
+        )
     except Exception as e:
         logger.error(f"Failed to approve genre contract: {e}")
         return error_response(
@@ -330,6 +398,45 @@ async def approve_creative_contracts(
         "project_id": project_id,
         "is_approved": True,
         "message": "类型合同审批成功，项目已准备就绪",
+    })
+
+
+@router.put("/projects/{project_id}/creative-contracts/story-contract")
+async def update_story_contract(
+    project_id: str,
+    request: Request,
+    body: UpdateStoryContractRequest,
+) -> EnvelopeResponse:
+    """Update the project Story Contract."""
+    repo = _get_repo(request)
+
+    project = repo.get_project(project_id)
+    if not project:
+        return error_response(
+            message=f"项目不存在: {project_id}",
+            domain_status="not_found",
+        )
+
+    try:
+        data = dict(body.story_contract or {})
+        data["project_id"] = project_id
+        story_contract = StoryContract(**data)
+        repo.upsert_creative_contract(
+            project_id=project_id,
+            contract_type="story_contract",
+            contract_data=_serialize_model(story_contract),
+        )
+    except Exception as e:
+        logger.error(f"Failed to update story contract: {e}")
+        return error_response(
+            message=f"更新故事合同失败: {str(e)}",
+            domain_status="error",
+        )
+
+    return envelope_response({
+        "project_id": project_id,
+        "story_contract": _serialize_model(story_contract),
+        "message": "故事合同已更新",
     })
 
 
@@ -355,6 +462,7 @@ async def check_production_readiness(
     # Check creative contracts
     launch_profile_row = repo.get_creative_contract(project_id, "launch_profile")
     genre_contract_row = repo.get_creative_contract(project_id, "genre_contract")
+    story_contract_row = repo.get_creative_contract(project_id, "story_contract")
 
     # Parse genre contract data
     genre_contract_data = _parse_contract_data(genre_contract_row)
@@ -378,6 +486,7 @@ async def check_production_readiness(
         "requirements": requirements,
         "has_launch_profile": bool(launch_profile_row),
         "has_genre_contract": bool(genre_contract_row),
+        "has_story_contract": bool(story_contract_row),
         "is_approved": is_approved,
     })
 

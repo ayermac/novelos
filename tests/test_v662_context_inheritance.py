@@ -221,6 +221,53 @@ class TestTimelineExtraction:
         texts = [it.text for it in items]
         assert any("三天后" in t for t in texts)
 
+    def test_extract_precise_countdown_from_previous_tail(self, seeded_repo):
+        seeded_repo.save_chapter_content(
+            "test_proj",
+            1,
+            "左眼猩红数字断崖式暴跌。\n"
+            "23:45:21。\n"
+            "23:31:04。\n"
+            "23:19:27。\n"
+            "23:03:41。\n"
+            "锁链一根接一根崩断，第四声搏动砸进胸腔。",
+            "第一章 测试",
+        )
+
+        items = extract_timeline_constraints("test_proj", 2, seeded_repo)
+        texts = [it.text for it in items]
+
+        assert any("23:03:41" in t for t in texts)
+        assert any("禁止回退" in t for t in texts)
+
+    def test_numeric_state_facts_become_hard_constraints(self, seeded_repo):
+        from novel_factory.agent_runtime.context_builder import AgentContextBuilder
+        from novel_factory.agent_runtime.context_builder import format_context_bundle_for_prompt
+
+        seeded_repo.create_story_fact(
+            "test_proj",
+            "chapter_1.numeric_state.balance",
+            "numeric_state",
+            json.dumps({
+                "key": "余额",
+                "label": "余额",
+                "value": "800万",
+                "evidence": "账户余额只剩800万",
+            }, ensure_ascii=False),
+            subject="余额",
+            attribute="最新数值",
+            unit="万",
+            source_chapter=1,
+            source_agent="memory_curator",
+        )
+
+        bundle = AgentContextBuilder(seeded_repo).build_for_author("test_proj", 2)
+        formatted = format_context_bundle_for_prompt(bundle, "author")
+
+        assert any(item.kind == "numeric_state_constraint" for item in bundle.hard_constraints)
+        assert "【数值状态约束 / Numeric State Constraints】" in formatted
+        assert "余额 = 800万" in formatted
+
 
 class TestPlannerContext:
     def test_planner_context_includes_trusted_memory(self, seeded_repo):

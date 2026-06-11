@@ -7,9 +7,18 @@ import re
 import math
 from typing import Any
 
+from .numeric_state import (
+    detect_numeric_state_regressions,
+    numeric_state_constraint_from_text,
+)
+
 
 _TIME_PATTERN = re.compile(
     r"(?:[一二两三四五六七八九十\d]+天后|[一二两三四五六七八九十\d]+日后|明天|今晚|今夜|当晚|次日|翌日|第二天|三日后|几天后)"
+)
+_CLOCK_PATTERN = re.compile(r"(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?!\d)")
+_COUNTDOWN_CONTEXT_PATTERN = re.compile(
+    r"(?:倒计时|计时|左眼|数字|猩红|暴跌|猛跌|预支|利息|锁链|崩断|搏动|心脏|剩余)"
 )
 _LOCATION_PATTERN = re.compile(
     r"[\u4e00-\u9fffA-Za-z0-9Ωω·]{2,18}(?:区|厂|馆|室|楼|院|校|城|市|街|路|村|山|谷|河|湖|站|场|港|厅|所|部|园|库|宅|实验室|图书馆|工厂)"
@@ -38,6 +47,15 @@ def build_chapter_seam_context(repo: Any, project_id: str, chapter_number: int) 
 
     if prev_content:
         parts.append(f"上一章结尾摘录:\n{_tail(prev_content, 700)}")
+        precise_timer = _precise_timer_constraint(prev_content)
+        if precise_timer:
+            parts.append(precise_timer)
+        numeric_state = numeric_state_constraint_from_text(
+            _tail(prev_content, 1200),
+            prefix="上一章结尾",
+        )
+        if numeric_state and numeric_state not in parts:
+            parts.append(numeric_state)
 
     ending_hook = str(prev_instruction.get("ending_hook") or "").strip()
     if ending_hook:
@@ -189,6 +207,14 @@ def evaluate_chapter_seam(
     advisory: list[str] = []
     suggestions: list[str] = []
 
+    timer_regression = _detect_precise_countdown_regression(prev_tail, opening)
+    if timer_regression:
+        blocking.append(timer_regression["issue"])
+        suggestions.append(timer_regression["suggestion"])
+    for numeric_regression in detect_numeric_state_regressions(prev_tail, opening):
+        blocking.append(numeric_regression["issue"])
+        suggestions.append(numeric_regression["suggestion"])
+
     time_markers = _unique(_TIME_PATTERN.findall(source_text))
     location_markers = _unique(_LOCATION_PATTERN.findall(source_text))
     salient_locations = [
@@ -259,6 +285,12 @@ def _planner_obligations(repo: Any, project_id: str, chapter_number: int) -> lis
     )
 
     obligations: list[str] = []
+    precise_timer = _precise_timer_obligation(prev_tail)
+    if precise_timer:
+        obligations.append(precise_timer)
+    numeric_state = numeric_state_constraint_from_text(prev_tail, prefix="上一章结尾")
+    if numeric_state:
+        obligations.append(numeric_state)
     for marker in _unique(_TIME_PATTERN.findall(source_text))[:2]:
         related_locations = _unique(_LOCATION_PATTERN.findall(source_text))
         location = f"、{related_locations[0]}" if related_locations else ""
@@ -381,6 +413,85 @@ def _parse_json(value: Any) -> Any:
         return None
 
 
+def _clock_to_seconds(value: str) -> int | None:
+    parts = str(value or "").split(":")
+    if len(parts) == 2:
+        parts.append("0")
+    if len(parts) != 3:
+        return None
+    try:
+        hour, minute, second = (int(part) for part in parts)
+    except ValueError:
+        return None
+    if not (0 <= hour <= 23 and 0 <= minute <= 59 and 0 <= second <= 59):
+        return None
+    return hour * 3600 + minute * 60 + second
+
+
+def _clock_markers(text: str) -> list[str]:
+    return _CLOCK_PATTERN.findall(str(text or ""))
+
+
+def _has_countdown_context(text: str) -> bool:
+    return bool(_COUNTDOWN_CONTEXT_PATTERN.search(str(text or "")))
+
+
+def _allows_time_replay(text: str) -> bool:
+    return any(marker in str(text or "") for marker in ("回忆", "闪回", "倒叙", "回放", "复盘", "画面回到"))
+
+
+def _precise_timer_obligation(prev_tail: str) -> str:
+    clocks = _clock_markers(prev_tail)
+    if len(clocks) < 2 or not _has_countdown_context(prev_tail):
+        return ""
+    last_clock = clocks[-1]
+    sequence = " → ".join(clocks[-5:])
+    return f"精确倒计时已推进至 {last_clock}（上一章尾部序列：{sequence}），本章不得回退或重复已发生序列"
+
+
+def _precise_timer_constraint(prev_content: str) -> str:
+    tail = _tail(str(prev_content or ""), 900)
+    obligation = _precise_timer_obligation(tail)
+    if not obligation:
+        return ""
+    return (
+        "上一章精确时间/倒计时状态:\n"
+        f"- {obligation}；除非正文明确标注为闪回/回放。"
+    )
+
+
+def _detect_precise_countdown_regression(prev_tail: str, opening: str) -> dict[str, str] | None:
+    prev_clocks = _clock_markers(prev_tail)
+    current_clocks = _clock_markers(opening)
+    if len(prev_clocks) < 2 or not current_clocks:
+        return None
+    if not (_has_countdown_context(prev_tail) or _has_countdown_context(opening)):
+        return None
+    if _allows_time_replay(opening):
+        return None
+
+    previous_last = prev_clocks[-1]
+    current_first = current_clocks[0]
+    previous_seconds = _clock_to_seconds(previous_last)
+    current_seconds = _clock_to_seconds(current_first)
+    if previous_seconds is None or current_seconds is None:
+        return None
+
+    if current_seconds > previous_seconds + 30:
+        sequence = " → ".join(prev_clocks[-5:])
+        return {
+            "issue": (
+                "章间衔接断裂：上一章结尾倒计时已推进至"
+                f"“{previous_last}”（序列：{sequence}），本章开头却回退到“{current_first}”。"
+            ),
+            "suggestion": (
+                f"本章开头必须从“{previous_last}”之后继续，或明确写成闪回/回放；"
+                "不要重复上一章已发生的倒计时崩断序列。"
+            ),
+        }
+    return None
+
+
 def _compact_json_value(value: Any) -> str:
     parsed = _parse_json(value)
     if parsed is None:
@@ -407,7 +518,13 @@ def _is_explicit_appointment_location(
         return False
     if loc.startswith(("他", "她", "它", "我", "你", "众人", "两人", "三人")):
         return False
-    if any(marker in loc for marker in ("着", "在了", "正站", "消失")):
+    if any(marker in loc for marker in ("着", "得", "在了", "正站", "消失")):
+        return False
+    body_part_markers = (
+        "头部", "胸部", "腹部", "背部", "腰部", "肩部", "颈部",
+        "腿部", "胃部", "脑部", "肺部", "肝部", "肾部",
+    )
+    if any(marker in loc for marker in body_part_markers):
         return False
     if any(marker in loc for marker in ("终止", "中止", "停止", "是否", "为何", "必须", "不能", "不会", "关系", "身份", "线索")):
         return False

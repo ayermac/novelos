@@ -13,6 +13,10 @@ from ..models.creative_contracts import (
     GenreContract,
     PayoffCadence,
     PressureLimits,
+    StoryContract,
+    CoreLoopStep,
+    SupportingMechanism,
+    DriftRule,
 )
 
 
@@ -1425,3 +1429,240 @@ def check_project_ready_for_production(
         return True
     except Exception:
         return False
+
+
+# ── v6.10.5: Story Contract Generation ───────────────────────────
+
+
+def generate_story_contract(
+    project_id: str,
+    launch_profile: ProjectLaunchProfile,
+    genre_contract: GenreContract,
+    genre_profile: GenreProfile,
+    user_idea: str = "",
+    llm_caller: Any = None,
+) -> StoryContract:
+    """Generate a StoryContract from launch profile and genre contract.
+
+    Called during Genesis after launch_profile and genre_contract are generated.
+    StoryContract status defaults to 'draft' (not auto-blocking).
+
+    Args:
+        project_id: Project identifier
+        launch_profile: Generated project launch profile
+        genre_contract: Generated genre contract
+        genre_profile: Genre profile template
+        user_idea: Original user creative idea
+        llm_caller: Optional LLM caller for real mode
+
+    Returns:
+        StoryContract with fields populated
+    """
+    if llm_caller is None:
+        return _generate_stub_story_contract(
+            project_id, launch_profile, genre_contract, genre_profile
+        )
+    return _generate_llm_story_contract(
+        project_id, launch_profile, genre_contract, genre_profile, user_idea, llm_caller
+    )
+
+
+def _generate_stub_story_contract(
+    project_id: str,
+    launch_profile: ProjectLaunchProfile,
+    genre_contract: GenreContract,
+    genre_profile: GenreProfile,
+) -> StoryContract:
+    """Generate a deterministic StoryContract for stub mode."""
+    # Core promise from launch profile
+    core_promise = launch_profile.primary_payoff_loop or launch_profile.core_hook
+    if not core_promise:
+        core_promise = genre_contract.promise_statement
+
+    # Build core loop from genre beats or default template
+    must_have = genre_contract.must_have_beats
+    if must_have:
+        core_loop = [
+            CoreLoopStep(
+                id=f"step_{i+1}",
+                label=str(beat)[:50],
+                description=str(beat),
+                payoff_type="",
+                required=i < len(must_have) - 1,  # last step optional
+            )
+            for i, beat in enumerate(must_have[:6])
+        ]
+    else:
+        core_loop = [
+            CoreLoopStep(id="trigger", label="触发核心机会", payoff_type="setup", required=True),
+            CoreLoopStep(id="action", label="完成核心动作", payoff_type="progress", required=True),
+            CoreLoopStep(id="reward", label="获得明确收益", payoff_type="reward", required=True),
+            CoreLoopStep(id="payoff", label="兑现收益", payoff_type="payoff", required=True),
+            CoreLoopStep(id="reaction", label="外部反馈", payoff_type="reaction", required=False),
+            CoreLoopStep(id="hook", label="下一章钩子", payoff_type="hook", required=False),
+        ]
+
+    # Supporting mechanisms from genre profile
+    common_poison = genre_profile.common_poison_points
+    supporting_mechs = [
+        SupportingMechanism(
+            id=f"mech_{i+1}",
+            label=str(p)[:30],
+            description=str(p),
+            allowed_role="pressure",
+            must_serve_core_loop=True,
+        )
+        for i, p in enumerate(common_poison[:4])
+    ]
+
+    # Payoff types from genre contract
+    payoff_types = []
+    if genre_contract.must_have_beats:
+        payoff_types = [str(b)[:30] for b in genre_contract.must_have_beats[:4]]
+
+    # Cadence from genre contract
+    cadence = {}
+    if genre_contract.payoff_cadence:
+        cadence = {
+            "minor_payoff": _parse_cadence_str(genre_contract.payoff_cadence.minor_payoff),
+            "visible_upgrade": _parse_cadence_str(genre_contract.payoff_cadence.visible_upgrade),
+            "public_reversal": _parse_cadence_str(genre_contract.payoff_cadence.public_reversal),
+        }
+
+    # Drift rules from genre contract forbidden_drift + defaults
+    drift_rules = []
+    for i, rule_text in enumerate(genre_contract.forbidden_drift[:3]):
+        drift_rules.append(DriftRule(
+            id=f"forbidden_{i+1}",
+            description=str(rule_text),
+            severity="warning",
+            window_chapters=2,
+            threshold=1,
+        ))
+
+    # Add default drift rules
+    drift_rules.extend([
+        DriftRule(
+            id="pressure_not_primary",
+            description="辅助机制不能连续替代核心循环",
+            severity="warning",
+            window_chapters=2,
+            threshold=1,
+        ),
+        DriftRule(
+            id="payoff_within_window",
+            description="连续2章内必须至少完成一次核心兑现",
+            severity="warning",
+            window_chapters=2,
+            threshold=1,
+        ),
+        DriftRule(
+            id="new_mechanism_budget",
+            description="单章新增核心机制不超过1个",
+            severity="warning",
+            window_chapters=1,
+            threshold=1,
+        ),
+    ])
+
+    return StoryContract(
+        project_id=project_id,
+        core_promise=core_promise,
+        core_loop=core_loop,
+        supporting_mechanisms=supporting_mechs,
+        payoff_types=payoff_types,
+        drift_rules=drift_rules,
+        cadence=cadence,
+        status="draft",
+        version="1.0.0",
+    )
+
+
+def _generate_llm_story_contract(
+    project_id: str,
+    launch_profile: ProjectLaunchProfile,
+    genre_contract: GenreContract,
+    genre_profile: GenreProfile,
+    user_idea: str,
+    llm_caller: Any,
+) -> StoryContract:
+    """Generate StoryContract using LLM."""
+    prompt = f"""根据以下项目信息，生成故事合同（Story Contract）。
+
+用户创意：
+{user_idea[:500]}
+
+项目启动配置：
+- 核心钩子: {launch_profile.core_hook}
+- 主要回报循环: {launch_profile.primary_payoff_loop}
+- 核心成长引擎: {launch_profile.protagonist_growth_engine}
+- 禁止漂移规则: {', '.join(launch_profile.hard_do_not_drift_rules)}
+
+类型合同：
+- 承诺声明: {genre_contract.promise_statement}
+- 读者期望: {', '.join(genre_contract.reader_expectations)}
+- 必须包含节拍: {', '.join(genre_contract.must_have_beats)}
+- 禁止漂移: {', '.join(genre_contract.forbidden_drift)}
+
+请生成以下JSON格式的故事合同：
+{{
+    "core_promise": "本书核心承诺（一句话描述读者为什么读这本书）",
+    "core_loop": [
+        {{"id": "step1", "label": "核心循环步骤1", "description": "描述", "payoff_type": "回报类型", "required": true}},
+        {{"id": "step2", "label": "核心循环步骤2", "description": "描述", "payoff_type": "回报类型", "required": true}}
+    ],
+    "supporting_mechanisms": [
+        {{"id": "mech1", "label": "辅助机制名称", "description": "描述", "allowed_role": "pressure|reveal|tension", "must_serve_core_loop": true}}
+    ],
+    "payoff_types": ["回报类型1", "回报类型2"],
+    "drift_rules": [
+        {{"id": "rule1", "description": "漂移规则描述", "severity": "warning", "window_chapters": 2, "threshold": 1}}
+    ],
+    "cadence": {{"minor_payoff": 1, "visible_upgrade": 3, "public_reversal": 5}}
+}}
+
+重要：
+- core_loop 步骤要抽象为通用模式，不要写死具体题材元素
+- supporting_mechanisms 列出可能喧宾夺主的辅助机制
+- drift_rules 至少包含：辅助机制不能替代核心循环、连续N章内必须有核心兑现、单章新增机制限制
+只返回JSON，不要其他文字。"""
+
+    try:
+        response = llm_caller(prompt)
+        data = json.loads(response)
+
+        # Parse nested objects
+        if "core_loop" in data and isinstance(data["core_loop"], list):
+            data["core_loop"] = [
+                CoreLoopStep(**s) if isinstance(s, dict) else s
+                for s in data["core_loop"]
+            ]
+        if "supporting_mechanisms" in data and isinstance(data["supporting_mechanisms"], list):
+            data["supporting_mechanisms"] = [
+                SupportingMechanism(**m) if isinstance(m, dict) else m
+                for m in data["supporting_mechanisms"]
+            ]
+        if "drift_rules" in data and isinstance(data["drift_rules"], list):
+            data["drift_rules"] = [
+                DriftRule(**r) if isinstance(r, dict) else r
+                for r in data["drift_rules"]
+            ]
+
+        data["project_id"] = project_id
+        data["status"] = "draft"
+        data["version"] = "1.0.0"
+        return StoryContract(**data)
+    except (json.JSONDecodeError, Exception) as e:
+        # Fallback to stub mode on error
+        return _generate_stub_story_contract(
+            project_id, launch_profile, genre_contract, genre_profile
+        )
+
+
+def _parse_cadence_str(text: str) -> int:
+    """Extract a number from cadence text like '每3-5章' -> 3."""
+    import re
+    if not text:
+        return 1
+    match = re.search(r"(\d+)", text)
+    return int(match.group(1)) if match else 1

@@ -37,6 +37,43 @@ class StubLLMProvider(LLMProvider):
         return json.dumps(self.invoke_json(messages))
 
 
+def test_author_loads_quality_gate_revision_feedback_without_editor_review(seeded_repo):
+    """QualityGate direct返修 must not require an Editor review row."""
+    from novel_factory.agents.author import AuthorAgent
+
+    seeded_repo.save_chapter_content("test_proj", 1, "已有正文" * 500, "第一章 测试")
+    seeded_repo.update_chapter_status("test_proj", 1, ChapterStatus.REVISION.value)
+    chapter = seeded_repo.get_chapter("test_proj", 1)
+
+    agent = AuthorAgent(seeded_repo, StubLLMProvider())
+    review = agent._load_revision_review(
+        {
+            "workflow_run_id": "run-qg",
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": ChapterStatus.REVISION.value,
+            "quality_gate": {
+                "passed": False,
+                "pass": False,
+                "score": 70,
+                "revision_target": "author",
+                "blocking_issues": [
+                    "章间衔接断裂：上一章结尾指向地点“帝豪酒店”，本章开头未交代。",
+                ],
+                "advisory_issues": ["对白口语化标记不足"],
+                "checks_run": ["chapter_seam"],
+            },
+        },
+        chapter,
+    )
+
+    assert review is not None
+    assert review["review_id"] == "quality_gate:run-qg"
+    assert review["revision_target"] == "author"
+    assert "章间衔接断裂" in review["issues"][0]
+    assert any("QualityGate 阻断项" in item for item in review["suggestions"])
+
+
 def test_author_validate_output_rejects_ai_expression_variant(seeded_repo):
     from novel_factory.agents.author import AuthorAgent
     from novel_factory.validators.chapter_checker import count_words
@@ -3205,6 +3242,55 @@ class TestMemoryCuratorAgent:
         fact_types = {payload["fact_type"] for payload in after_payloads}
         assert fact_types == {"narrative_event", "character_state", "suspense_hook"}
         assert all(payload["source_chapter"] == 1 for payload in after_payloads)
+
+    def test_memory_curator_extracts_numeric_state_deterministically(self, seeded_repo):
+        from novel_factory.agents.memory_curator import MemoryCuratorAgent
+        from novel_factory.api.routes.memory_updates import apply_pending_memory_batches_for_chapter
+        from novel_factory.skills.registry import SkillRegistry
+
+        seeded_repo.save_chapter_content(
+            "test_proj",
+            1,
+            "系统面板在章末重新刷新。\n"
+            "账户余额只剩800万。\n"
+            "权限等级升至3级。\n"
+            "锚点稳定率降至43%。\n"
+            "林默没有再操作面板。",
+            "第一章 测试",
+        )
+        seeded_repo.update_chapter_status("test_proj", 1, "reviewed")
+        agent = MemoryCuratorAgent(
+            seeded_repo,
+            StubLLMProvider([{"patches": []}]),
+            skill_registry=SkillRegistry(),
+        )
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "reviewed",
+            "workflow_run_id": "run-memory-numeric-state",
+        })
+
+        assert result["memory_curator_processed"] is True
+        assert result["extraction_success"] is True
+        assert result["fallback_created"] is False
+        assert result["memory_items_count"] == 3
+
+        batch = seeded_repo.list_memory_batches("test_proj")[0]
+        assert "状态卡兜底" not in batch["summary"]
+        items = seeded_repo.list_memory_items(batch["id"])
+        payloads = [json.loads(item["after_json"]) for item in items]
+        assert {payload["fact_type"] for payload in payloads} == {"numeric_state"}
+        assert {payload["subject"] for payload in payloads} == {"余额", "等级", "锚点稳定率"}
+
+        apply_result = apply_pending_memory_batches_for_chapter(seeded_repo, "test_proj", 1)
+        assert apply_result["ok"] is True
+        facts = seeded_repo.list_story_facts("test_proj", fact_type="numeric_state", status="active")
+        assert len(facts) == 3
+        assert any("800万" in fact["value_json"] for fact in facts)
+        assert any("3级" in fact["value_json"] for fact in facts)
+        assert any("43%" in fact["value_json"] for fact in facts)
 
     def test_memory_curator_real_empty_extraction_repairs_before_fallback(self, seeded_repo):
         from novel_factory.agents.memory_curator import MemoryCuratorAgent

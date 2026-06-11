@@ -718,6 +718,10 @@ export default function AuthorWritingSurface({
     timeline?.memory_curator_running ||
     memoryCuratorNode?.status === 'running' ||
     (
+      runDetail?.workflow_status === 'running' &&
+      runDetail.current_node === 'memory_curator'
+    ) ||
+    (
       timeline?.run_status === 'running' &&
       (timeline.current_node === 'memory_curator' || memoryCuratorNode?.flags?.memory_curator_running)
     )
@@ -737,9 +741,16 @@ export default function AuthorWritingSurface({
   const ignoreBrokenRunForPublish = canPublishReal &&
     (effectiveRunStatus === 'blocked' || effectiveRunStatus === 'failed') &&
     (PUBLISH_COMPATIBLE_BLOCKED_NODES.has(effectiveCurrentNode) || (memoryTrusted && effectiveCurrentNode === 'memory_curator'))
+  const timelineStaleRunning = timeline?.is_stale === true
+  const fallbackElapsed = !timeline ? elapsedMinutesSince(runDetail?.started_at) : null
+  const fallbackStaleRunning = !timeline &&
+    runDetail?.workflow_status === 'running' &&
+    effectiveCurrentNode !== 'memory_curator' &&
+    fallbackElapsed !== null &&
+    fallbackElapsed >= STUCK_RUN_THRESHOLD_MINUTES
   const workflowNeedsRecovery = Boolean(
     ((effectiveRunStatus === 'blocked' || effectiveRunStatus === 'failed') && !ignoreBrokenRunForPublish) ||
-    (effectiveRunStatus === 'running' && (timeline?.is_stale || (timeline?.elapsed_minutes !== undefined && timeline?.elapsed_minutes !== null && timeline.elapsed_minutes >= STUCK_RUN_THRESHOLD_MINUTES)))
+    (effectiveRunStatus === 'running' && (timelineStaleRunning || fallbackStaleRunning))
   )
 
   const tabs: { key: SurfaceTabKey; label: string; disabled?: boolean }[] = [
@@ -1561,17 +1572,18 @@ function WorkflowBody({
     const statusLabel = tWorkflowStatus(runDetail.workflow_status)
     const chapterStatusLabel = tChapterStatus(runDetail.chapter_status)
     const elapsedMinutes = elapsedMinutesSince(runDetail.started_at)
-    const isStaleRunning = runDetail.workflow_status === 'running' && elapsedMinutes !== null && elapsedMinutes >= STUCK_RUN_THRESHOLD_MINUTES
+    const isMemoryCuratorRunning = runDetail.workflow_status === 'running' && runDetail.current_node === 'memory_curator'
+    const isStaleRunning = runDetail.workflow_status === 'running' && !isMemoryCuratorRunning && elapsedMinutes !== null && elapsedMinutes >= STUCK_RUN_THRESHOLD_MINUTES
     const isTerminalChapter = TERMINAL_CHAPTER_STATUSES.has(runDetail.chapter_status)
     const isRunning = runDetail.workflow_status === 'running'
-    const isContradictory = isTerminalChapter && isRunning
+    const isContradictory = isTerminalChapter && isRunning && !isMemoryCuratorRunning
     const effectiveMemoryStatus = runDetail.memory_status
     const canBackfillMemory = Boolean(
       onBackfillMemory &&
       shouldShowMemoryBackfillAction(effectiveMemoryStatus) &&
       runDetail.current_node === 'memory_curator' &&
       TERMINAL_CHAPTER_STATUSES.has(runDetail.chapter_status) &&
-      (isStaleRunning || runDetail.workflow_status === 'blocked' || runDetail.workflow_status === 'failed')
+      (runDetail.workflow_status === 'blocked' || runDetail.workflow_status === 'failed')
     )
     const incompleteCompletedRun = isCompletedBeforeTerminal(runDetail.workflow_status, runDetail.chapter_status)
     const statusTone = isContradictory || isStaleRunning || incompleteCompletedRun || runDetail.workflow_status === 'blocked' ? 'warning' : runDetail.workflow_status === 'failed' ? 'error' : 'info'

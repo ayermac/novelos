@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import { get, post } from '../lib/api'
 import StatusBadge from '../components/StatusBadge'
 import EmptyState from '../components/EmptyState'
@@ -6,12 +7,14 @@ import ErrorState from '../components/ErrorState'
 import PageHeader from '../components/PageHeader'
 import { useAppDialog } from '../components/AppDialogContext'
 import { DataTable } from '../components/ui'
+import StyleBibleEditor from '../components/style/StyleBibleEditor'
+import StyleGateEditor from '../components/style/StyleGateEditor'
 
 interface StyleBible {
   project_id: string
   project_name: string
   status: string
-  version: number
+  version: number | string
   updated_at: string
 }
 
@@ -19,6 +22,7 @@ interface StyleGateConfig {
   project_id: string
   project_name: string
   enabled: boolean
+  mode: string
   threshold: number
 }
 
@@ -40,7 +44,19 @@ interface StyleData {
   }
 }
 
+interface BibleDetail {
+  project_id: string
+  project_name: string
+  status: string
+  version: string
+  bible: Record<string, unknown>
+  gate_config: Record<string, unknown>
+}
+
+type ViewMode = 'list' | 'edit_bible' | 'edit_gate' | 'view_bible'
+
 export default function Style() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const dialog = useAppDialog()
   const [data, setData] = useState<StyleData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -48,23 +64,10 @@ export default function Style() {
   const [initLoading, setInitLoading] = useState<string | null>(null)
   const [initSuccess, setInitSuccess] = useState<string | null>(null)
 
-  const handleInitStyleBible = async (projectId: string) => {
-    setInitLoading(projectId)
-    setInitSuccess(null)
-    try {
-      const res = await post('/style/init', { project_id: projectId })
-      if (res.ok) {
-        setInitSuccess(projectId)
-        load()
-      } else {
-        setError(res.error?.message || '初始化 Style Bible 失败')
-      }
-    } catch {
-      setError('操作失败')
-    } finally {
-      setInitLoading(null)
-    }
-  }
+  const [viewMode, setViewMode] = useState<ViewMode>('list')
+  const [activeProjectId, setActiveProjectId] = useState<string | null>(null)
+  const [bibleDetail, setBibleDetail] = useState<BibleDetail | null>(null)
+  const [detailLoading, setDetailLoading] = useState(false)
 
   const load = () => {
     setLoading(true)
@@ -79,15 +82,87 @@ export default function Style() {
     })
   }
 
+  const loadDetail = async (projectId: string) => {
+    setDetailLoading(true)
+    const res = await get<BibleDetail>(`/style/bible/${projectId}`)
+    if (res.ok && res.data) {
+      setBibleDetail(res.data)
+    } else {
+      setError(res.error?.message || '获取风格圣经详情失败')
+    }
+    setDetailLoading(false)
+  }
+
   useEffect(() => {
     load()
   }, [])
+
+  // Handle ?project_id=xxx query param
+  useEffect(() => {
+    const pid = searchParams.get('project_id')
+    if (pid && data) {
+      const found = data.style_bibles.find((b) => b.project_id === pid)
+      if (found) {
+        setActiveProjectId(pid)
+        setViewMode('edit_bible')
+        loadDetail(pid)
+      }
+    }
+  }, [searchParams, data])
+
+  const handleInitStyleBible = async (projectId: string) => {
+    setInitLoading(projectId)
+    setInitSuccess(null)
+    try {
+      const res = await post('/style/init', { project_id: projectId })
+      if (res.ok) {
+        setInitSuccess(projectId)
+        load()
+        // Auto-open edit for the initialized project
+        setActiveProjectId(projectId)
+        setViewMode('edit_bible')
+        loadDetail(projectId)
+      } else {
+        setError(res.error?.message || '初始化 Style Bible 失败')
+      }
+    } catch {
+      setError('操作失败')
+    } finally {
+      setInitLoading(null)
+    }
+  }
+
+  const handleEditBible = (projectId: string) => {
+    setActiveProjectId(projectId)
+    setViewMode('edit_bible')
+    loadDetail(projectId)
+    setSearchParams({ project_id: projectId })
+  }
+
+  const handleViewBible = (projectId: string) => {
+    setActiveProjectId(projectId)
+    setViewMode('view_bible')
+    loadDetail(projectId)
+  }
+
+  const handleEditGate = (projectId: string) => {
+    setActiveProjectId(projectId)
+    setViewMode('edit_gate')
+    loadDetail(projectId)
+  }
+
+  const handleBackToList = () => {
+    setViewMode('list')
+    setActiveProjectId(null)
+    setBibleDetail(null)
+    setSearchParams({})
+  }
 
   if (loading) {
     return <div>加载中...</div>
   }
 
-  if (error) {
+  if (error && viewMode === 'list') {
     return (
       <ErrorState
         title="加载失败"
@@ -106,6 +181,75 @@ export default function Style() {
       />
     )
   }
+
+  // ── Sub-views ────────────────────────────────────────────────
+
+  if (viewMode !== 'list' && activeProjectId && bibleDetail) {
+    const projectName = bibleDetail.project_name || activeProjectId
+    return (
+      <div>
+        <PageHeader
+          title={
+            viewMode === 'edit_bible'
+              ? `编辑风格圣经 - ${projectName}`
+              : viewMode === 'edit_gate'
+              ? `配置风格门禁 - ${projectName}`
+              : `查看风格圣经 - ${projectName}`
+          }
+        />
+        <div style={{ marginBottom: 16 }}>
+          <button className="btn btn-secondary btn-sm" onClick={handleBackToList}>
+            ← 返回列表
+          </button>
+        </div>
+
+        {detailLoading ? (
+          <div>加载详情中...</div>
+        ) : (
+          <>
+            {viewMode === 'edit_bible' && (
+              <div className="card">
+                <div className="card-header"><h3>风格圣经</h3></div>
+                <div className="card-body">
+                  <StyleBibleEditor
+                    projectId={activeProjectId}
+                    initialBible={bibleDetail.bible}
+                    onSaved={() => load()}
+                  />
+                </div>
+              </div>
+            )}
+
+            {viewMode === 'edit_gate' && (
+              <div className="card">
+                <div className="card-header"><h3>风格门禁配置</h3></div>
+                <div className="card-body">
+                  <StyleGateEditor
+                    projectId={activeProjectId}
+                    initialGate={bibleDetail.gate_config}
+                    onSaved={() => load()}
+                  />
+                </div>
+              </div>
+            )}
+
+            {viewMode === 'view_bible' && (
+              <div className="card">
+                <div className="card-header"><h3>风格圣经详情</h3></div>
+                <div className="card-body">
+                  <pre style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-word', fontSize: 13 }}>
+                    {JSON.stringify(bibleDetail.bible, null, 2)}
+                  </pre>
+                </div>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    )
+  }
+
+  // ── List view ────────────────────────────────────────────────
 
   const hasAnyData =
     data.style_bibles.length > 0 ||
@@ -185,7 +329,23 @@ export default function Style() {
                     { key: 'status', header: '状态', render: (bible) => <StatusBadge status={bible.status} /> },
                     { key: 'version', header: '版本', render: (bible) => `v${bible.version}` },
                     { key: 'updated', header: '更新时间', render: (bible) => <span className="text-secondary">{bible.updated_at}</span> },
-                    { key: 'actions', header: '操作', render: () => <span className="text-secondary">已建立</span> },
+                    {
+                      key: 'actions',
+                      header: '操作',
+                      render: (bible) => (
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          <button className="btn btn-secondary btn-sm" onClick={() => handleViewBible(bible.project_id)}>
+                            查看
+                          </button>
+                          <button className="btn btn-primary btn-sm" onClick={() => handleEditBible(bible.project_id)}>
+                            编辑
+                          </button>
+                          <button className="btn btn-secondary btn-sm" onClick={() => handleEditGate(bible.project_id)}>
+                            配置门禁
+                          </button>
+                        </div>
+                      ),
+                    },
                   ]}
                 />
               ) : (
@@ -241,6 +401,13 @@ export default function Style() {
                         <span className={`status-badge ${config.enabled ? 'status-active' : 'status-inactive'}`}>
                           {config.enabled ? '已启用' : '已停用'}
                         </span>
+                      ),
+                    },
+                    {
+                      key: 'mode',
+                      header: '模式',
+                      render: (config) => (
+                        <span className="text-secondary">{config.mode}</span>
                       ),
                     },
                     { key: 'threshold', header: '阈值', render: (config) => config.threshold },

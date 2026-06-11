@@ -27,6 +27,8 @@ It ships as an Electron desktop client with an embedded React workbench and a lo
 - **Project memory system** for characters, world settings, factions, outlines, plot holes, instructions, and story facts.
 - **Genesis quality gate** with depth checks for character motivations, faction actions, plot hole design, and outline specificity to prevent shallow project initialization.
 - **Runtime hygiene and observability** with unified version source, sensitive information redaction in errors and logs, and structured health diagnostics.
+- **Project-level style management (v6.10.4)** with canonical Style Bible initialization, structured editing, genre-aware templates, and Style Gate configuration. Style rules are injected into all real-mode generation paths (planner, screenwriter, author, polisher, editor).
+- **Story Contract Governance (v6.10.5)** with project-level core-loop contracts, supporting-mechanism drift checks, ChapterBrief payoff targets, core-loop quality gate diagnostics, and editable Story Contract controls in the project workspace.
 - **Quality diagnosis and revision support** for AI trace, pacing, dialogue, scene texture, info dumps, show-don't-tell, and editor gates.
 - **Run observability and diagnosis** with node events, artifacts, LLM latency/tokens, Run Doctor attribution, retry actions, recovery tools, and memory backfill.
 - **Publish safety guards** for continuity, memory readiness, and malformed or truncated chapter titles.

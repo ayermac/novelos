@@ -19,6 +19,7 @@ from ..skills.registry import SkillRegistry
 from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.skill_hooks import run_agent_skills
 from ..agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
+from ..quality.numeric_state import build_numeric_state_fact_patches
 
 logger = logging.getLogger(__name__)
 
@@ -138,6 +139,42 @@ def _validate_patches(
     return valid, issues
 
 
+def _merge_deterministic_numeric_patches(
+    patches: list[dict[str, Any]],
+    chapter_content: str,
+    chapter_number: int,
+) -> list[dict[str, Any]]:
+    """Append deterministic numeric-state patches not already provided by the LLM."""
+    numeric_patches = build_numeric_state_fact_patches(
+        chapter_content,
+        chapter_number=chapter_number,
+    )
+    if not numeric_patches:
+        return patches
+
+    seen: set[tuple[str, str]] = set()
+    for patch in patches:
+        data = patch.get("data") if isinstance(patch.get("data"), dict) else {}
+        if str(data.get("fact_type") or patch.get("fact_type") or "") != "numeric_state":
+            continue
+        value = data.get("value") if isinstance(data.get("value"), dict) else {}
+        key = str(value.get("key") or data.get("subject") or patch.get("target_name") or "")
+        raw = str(value.get("value") or data.get("value") or "")
+        if key or raw:
+            seen.add((key, raw))
+
+    merged = list(patches)
+    for patch in numeric_patches:
+        data = patch.get("data") if isinstance(patch.get("data"), dict) else {}
+        value = data.get("value") if isinstance(data.get("value"), dict) else {}
+        signature = (str(value.get("key") or ""), str(value.get("value") or ""))
+        if signature in seen:
+            continue
+        seen.add(signature)
+        merged.append(patch)
+    return merged
+
+
 # ── Patch count threshold for "meaningful" extraction ─────────────
 _MIN_PATCHES_FOR_TRUSTED = 1
 
@@ -155,7 +192,7 @@ MEMORY_CURATOR_SYSTEM_PROMPT = """你是网文工厂的记忆管理员（Memory 
 - outlines: 大纲偏移或新增弧线（chapters_range, title, content, level, sequence）
 - plot_holes: 新伏笔埋设、伏笔解决或废弃（code, type, title, description, planted_chapter, planned_resolve_chapter, status）
 - instructions: 下一章或后续章节的写作指令（chapter_number, objective, key_events, emotion_tone, word_target）
-- story_facts: 事实账本变化（fact_key, fact_type, subject, attribute, value, unit）。明确时间约定/期限/会面必须标为 fact_type=timeline_event 或 time_constraint
+- story_facts: 事实账本变化（fact_key, fact_type, subject, attribute, value, unit）。明确时间约定/期限/会面必须标为 fact_type=timeline_event 或 time_constraint；余额、等级、积分、倒计时、剩余次数、进度、血量/能量等关键数值必须标为 fact_type=numeric_state
 
 输出格式：严格按 JSON 格式输出：
 - patches: patch 列表，每项包含：
@@ -173,6 +210,7 @@ MEMORY_CURATOR_SYSTEM_PROMPT = """你是网文工厂的记忆管理员（Memory 
 - 对于新出现的，使用 create 操作并提供完整字段
 - 如果本章推进了已有伏笔，优先使用 plot_holes update/resolve，target_name 必须填写现有伏笔 code 或 title，禁止重复创建近义伏笔
 - "三天后/明天/今晚/旧工业区见"等时间地点约束必须同时沉淀到 story_facts，fact_type 使用 timeline_event/time_constraint/deadline/appointment
+- 章节末尾的关键数值状态必须沉淀到 story_facts：如倒计时、余额、等级、权限、积分、剩余次数、冷却、进度、生命值/能量；value 需包含原始 value 和必要上下文，下一章要继承
 - 伏笔状态：planted（埋设）、resolved（解决）、abandoned（废弃）
 - 指令只生成下一章（chapter_number = 当前章节号 + 1）的
 - 如果本章没有需要更新的项目资料，返回空列表"""
@@ -882,9 +920,29 @@ class MemoryCuratorAgent(BaseAgent):
         patches = loop_result.get("validated_patches") or loop_result.get("output", [])
         trace = loop_result.get("_trace", {})
         autonomy = loop_result.get("_autonomy", {})
+        try:
+            chapter = self.repo.get_chapter(project_id, chapter_number)
+            chapter_content_for_numeric = str((chapter or {}).get("content") or "")
+        except Exception:
+            chapter_content_for_numeric = ""
+
+        patches_before_numeric = len(patches)
+        patches = _merge_deterministic_numeric_patches(
+            patches,
+            chapter_content_for_numeric,
+            int(chapter_number),
+        )
+        numeric_state_added = len(patches) - patches_before_numeric
+        if numeric_state_added > 0:
+            exec_events.append({
+                "event_type": "numeric_state_extracted",
+                "message": f"确定性提取数值状态 {numeric_state_added} 条",
+                "status": "info",
+                "payload": {"numeric_state_count": numeric_state_added},
+            })
 
         # v6.6.17: Handle degraded noop (fallback_source="none")
-        if loop_result.get("degraded") and loop_result.get("fallback_source") == "none":
+        if loop_result.get("degraded") and loop_result.get("fallback_source") == "none" and not patches:
             return {
                 "memory_curator_processed": True,
                 "memory_items_count": 0,
@@ -899,7 +957,7 @@ class MemoryCuratorAgent(BaseAgent):
                 "_exec_events": exec_events,
             }
 
-        if loop_result.get("degraded"):
+        if loop_result.get("degraded") and not patches:
             return {
                 "memory_curator_processed": True,
                 "memory_curator_degraded": True,
@@ -923,6 +981,8 @@ class MemoryCuratorAgent(BaseAgent):
             }
 
         fallback_source = loop_result.get("fallback_source")
+        if fallback_source == "none" and patches:
+            fallback_source = None
         fallback_model_used = bool(loop_result.get("fallback_model_used"))
         fallback_model_profile = loop_result.get("fallback_model_profile")
         warning = loop_result.get("warning")

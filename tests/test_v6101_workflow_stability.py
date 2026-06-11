@@ -104,3 +104,102 @@ def test_chapter_seam_ignores_suoyou_suffix():
 
     assert result["pass"] is True
     assert result["blocking_issues"] == []
+
+
+def test_chapter_seam_ignores_body_part_fragment_as_location():
+    """Body-part phrases ending in 部 must not become location obligations."""
+    repo = _seam_repo(
+        "上一章结尾，今晚的寒意顺着脊背爬上来，饥饿搅得胃部一阵抽痛。",
+        "今晚饥饿搅得胃部抽痛",
+    )
+    current = "今晚的风还冷，他扶着墙站稳，先把涌上喉咙的酸意压下去。"
+
+    result = evaluate_chapter_seam(repo, "novel", 3, current)
+
+    assert result["pass"] is True
+    assert not any("搅得胃部" in issue for issue in result["blocking_issues"])
+
+
+def test_chapter_seam_blocks_precise_countdown_regression():
+    """A countdown sequence must continue from the latest previous value, not rewind."""
+    previous = (
+        "左眼猩红数字断崖式暴跌。\n"
+        "23:45:21。\n"
+        "23:31:04。\n"
+        "23:19:27。\n"
+        "23:03:41。\n"
+        "锁链一根接一根崩断，第四声搏动砸进胸腔。"
+    )
+    current = (
+        "23:45:16。\n"
+        "左眼猛地一烫，暗红的肉质地面在膝盖下蠕动。"
+    )
+    repo = _seam_repo(previous)
+
+    result = evaluate_chapter_seam(repo, "novel", 3, current)
+
+    assert result["pass"] is False
+    assert any("倒计时已推进至" in issue for issue in result["blocking_issues"])
+    assert any("23:03:41" in issue and "23:45:16" in issue for issue in result["blocking_issues"])
+
+
+def test_chapter_seam_accepts_precise_countdown_continuation():
+    """Continuing at or below the latest countdown value is not a seam break."""
+    previous = (
+        "左眼猩红数字断崖式暴跌。\n"
+        "23:45:21。\n"
+        "23:31:04。\n"
+        "23:19:27。\n"
+        "23:03:41。\n"
+        "锁链一根接一根崩断，第四声搏动砸进胸腔。"
+    )
+    current = (
+        "23:03:40。\n"
+        "第五声搏动紧跟着砸下，林辰的膝盖仍压在暗红肉质地面上。"
+    )
+    repo = _seam_repo(previous)
+
+    result = evaluate_chapter_seam(repo, "novel", 3, current)
+
+    assert result["pass"] is True
+    assert result["blocking_issues"] == []
+
+
+def test_chapter_seam_blocks_numeric_state_reset():
+    """Generic numeric states such as balances and levels must not reset silently."""
+    previous = (
+        "系统面板终于稳定下来。\n"
+        "账户余额只剩800万。\n"
+        "权限等级升至3级。\n"
+        "林辰把这两个数字牢牢记住。"
+    )
+    current = (
+        "账户余额仍是1200万。\n"
+        "权限等级还是2级。\n"
+        "林辰推门走进会议室。"
+    )
+    repo = _seam_repo(previous)
+
+    result = evaluate_chapter_seam(repo, "novel", 3, current)
+
+    assert result["pass"] is False
+    assert any("章间数值继承断裂" in issue for issue in result["blocking_issues"])
+    assert any("800万" in issue and "1200万" in issue for issue in result["blocking_issues"])
+
+
+def test_numeric_state_extracts_open_ended_state_metrics():
+    """Explicit state metrics outside the built-in keyword list should still persist."""
+    from novel_factory.quality.numeric_state import extract_numeric_states
+
+    states = extract_numeric_states(
+        "系统面板刷新：锚点稳定率降至43%。\n"
+        "裂隙指数：17.8点。\n"
+        "外级授权残页剩余2枚。\n"
+        "林辰坐上17层电梯。"
+    )
+
+    values = {state.label: state.value for state in states}
+    assert values["锚点稳定率"] == "43%"
+    assert values["裂隙指数"] == "17.8点"
+    assert values["外级授权残页"] == "2枚"
+    assert "电梯" not in values

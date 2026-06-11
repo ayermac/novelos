@@ -37,7 +37,11 @@ from ..llm.provider import is_configured_live_provider
 from ..skills.registry import SkillRegistry
 from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.chapter_text import ensure_chapter_heading, first_content_line, is_chapter_heading, strip_chapter_heading
-from ..agent_runtime.revision_context import normalize_revision_review, revision_feedback_block
+from ..agent_runtime.revision_context import (
+    normalize_revision_review,
+    revision_feedback_block,
+    revision_review_from_quality_gate,
+)
 from ..agent_runtime.skill_hooks import run_agent_skills
 from ..agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
 from ..quality.chapter_seam import build_chapter_seam_context
@@ -126,12 +130,19 @@ class AuthorAgent(BaseAgent):
         if not chapter or chapter.get("status") != ChapterStatus.REVISION.value:
             return None
         try:
-            return normalize_revision_review(
+            db_review = normalize_revision_review(
                 self.repo.get_latest_review(state.get("project_id"), chapter.get("id"))
             )
+            if db_review:
+                return db_review
         except Exception:
             logger.warning("Author: failed to load revision review fallback", exc_info=True)
-            return None
+        return normalize_revision_review(
+            revision_review_from_quality_gate(
+                state.get("quality_gate") or {},
+                workflow_run_id=state.get("workflow_run_id"),
+            )
+        )
 
     def build_context(self, state: FactoryState) -> str:
         parts = []
@@ -197,6 +208,11 @@ class AuthorAgent(BaseAgent):
         style_ctx = self._get_style_bible_context(project_id, "author")
         if style_ctx:
             parts.append(style_ctx)
+
+        # v6.10.5: Story Contract injection
+        contract_ctx = self._get_story_contract_context(project_id, "author")
+        if contract_ctx:
+            parts.append(contract_ctx)
 
         # v6.8.1: Style-aware prompt injection (webnovel excitement, suspense, romance)
         style_prompt = self._get_style_prompt_injection(project_id, "author")
@@ -270,11 +286,16 @@ class AuthorAgent(BaseAgent):
         chapter_number = state["chapter_number"]
         exec_events: list[dict] = []
 
-        context = self._build_v6_context(state)
-
         chapter = self._get_chapter_info(state)
         is_revision = chapter and chapter.get("status") == ChapterStatus.REVISION.value
         revision_review = self._load_revision_review(state, chapter) if is_revision else None
+        if is_revision and revision_review and not state.get("_revision_review"):
+            state = {
+                **state,
+                "_revision_review": revision_review,
+            }
+
+        context = self._build_v6_context(state)
 
         # v6.8.2: Validate revision context exists when in revision mode.
         # v6.8.3: Only fail-fast for real Editor rejections, NOT for quality gate
@@ -287,6 +308,8 @@ class AuthorAgent(BaseAgent):
                 or gate.get("death_penalty_fail")
                 or gate.get("scene_beat_coverage_fail")
                 or gate.get("version_regression")
+                or gate.get("checks_run")
+                or gate.get("blocking_issues")
             )
             if not is_quality_gate_retry:
                 logger.error(

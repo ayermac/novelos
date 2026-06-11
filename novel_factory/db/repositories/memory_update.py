@@ -330,7 +330,18 @@ class MemoryUpdateRepositoryMixin:
         try:
             fields = []
             values = []
-            for key in ("status", "after_json", "rationale", "evidence_text", "error_message"):
+            for key in (
+                "status",
+                "target_table",
+                "target_id",
+                "operation",
+                "before_json",
+                "after_json",
+                "confidence",
+                "rationale",
+                "evidence_text",
+                "error_message",
+            ):
                 if key in data:
                     fields.append(f"{key}=?")
                     values.append(data[key])
