@@ -75,6 +75,8 @@ class AgentContextBundle:
     diagnostics: list[ContextItem] = field(default_factory=list)
     # v6.10.4: style bible context
     style_context: list[ContextItem] = field(default_factory=list)
+    # v6.10.5: story contract context
+    story_contract_context: list[ContextItem] = field(default_factory=list)
     # v6.6.14: memory context annotation
     memory_context_degraded: bool = False
     trusted_memory_batch_id: str | None = None
@@ -92,6 +94,7 @@ class AgentContextBundle:
             "story_facts_count": len(self.story_facts),
             "character_states_count": len(self.character_states),
             "style_context_count": len(self.style_context),
+            "story_contract_context_count": len(self.story_contract_context),
             "memory_context_degraded": self.memory_context_degraded,
             "trusted_memory_batch_id": self.trusted_memory_batch_id,
         }
@@ -1004,6 +1007,208 @@ class AgentContextBuilder:
             )
         return items
 
+    def _load_story_contract(self, project_id: str) -> "StoryContract | None":
+        """Load StoryContract from DB or derive fallback."""
+        try:
+            from ..models.creative_contracts import StoryContract
+            from ..quality.core_loop_checker import derive_fallback_story_contract
+
+            # Try to load from project_creative_contracts
+            row = self.repo.get_creative_contract(project_id, "story_contract")
+            if row:
+                data_str = row.get("contract_data", "{}")
+                if isinstance(data_str, str):
+                    data = json.loads(data_str)
+                else:
+                    data = data_str
+                if isinstance(data, dict) and data.get("core_promise"):
+                    return StoryContract(**data)
+
+            # Fallback: derive from launch_profile + genre_contract
+            lp_row = self.repo.get_creative_contract(project_id, "launch_profile")
+            gc_row = self.repo.get_creative_contract(project_id, "genre_contract")
+            lp_data = None
+            gc_data = None
+            if lp_row:
+                lp_str = lp_row.get("contract_data", "{}")
+                lp_data = json.loads(lp_str) if isinstance(lp_str, str) else lp_str
+            if gc_row:
+                gc_str = gc_row.get("contract_data", "{}")
+                gc_data = json.loads(gc_str) if isinstance(gc_str, str) else gc_str
+
+            if lp_data or gc_data:
+                return derive_fallback_story_contract(
+                    project_id, lp_data, gc_data
+                )
+        except Exception as e:
+            logger.debug("Failed to load story contract for %s: %s", project_id, e)
+        return None
+
+    def _story_contract_context(
+        self, project_id: str, agent_id: str, chapter_number: int = 0
+    ) -> list[ContextItem]:
+        """v6.10.5: Build Story Contract context for agents.
+
+        Each agent receives a tailored view:
+        - Planner: core promise, core loop, drift rules, recent trend
+        - Screenwriter: core_loop_target, scene beat mapping
+        - Author: what to deliver, evidence plan, allowed mechanisms
+        - Editor: contract checklist, compliance check guidance
+        """
+        items: list[ContextItem] = []
+        contract = self._load_story_contract(project_id)
+        if not contract:
+            return items
+
+        status_note = ""
+        if contract.status in ("draft", "needs_review", "fallback"):
+            status_note = f"\n[注意] 当前合同状态为 '{contract.status}'，仅供参考，不作硬阻断。"
+
+        if agent_id == "planner":
+            text = self._format_contract_for_planner(contract, status_note)
+        elif agent_id == "screenwriter":
+            text = self._format_contract_for_screenwriter(contract, status_note)
+        elif agent_id == "author":
+            text = self._format_contract_for_author(contract, status_note)
+        elif agent_id == "editor":
+            text = self._format_contract_for_editor(contract, status_note)
+        else:
+            text = self._format_contract_generic(contract, status_note)
+
+        if text:
+            items.append(ContextItem(
+                kind="story_contract",
+                text=text,
+                source="story_contract",
+                priority=2,
+                trusted=True,
+            ))
+
+        # Recent contract trend for planner/editor
+        if agent_id in ("planner", "editor") and chapter_number > 1:
+            trend_text = self._recent_contract_trend(project_id, chapter_number)
+            if trend_text:
+                items.append(ContextItem(
+                    kind="contract_trend",
+                    text=trend_text,
+                    source="contract_metrics",
+                    priority=3,
+                    trusted=True,
+                ))
+
+        return items
+
+    def _format_contract_for_planner(self, contract: Any, status_note: str) -> str:
+        lines = ["【Story Contract — Planner 指引】"]
+        lines.append(f"核心承诺: {contract.core_promise}")
+        if contract.core_loop:
+            loop_steps = " → ".join(
+                f"{s.label}({s.id})" for s in contract.core_loop
+            )
+            lines.append(f"核心循环: {loop_steps}")
+        if contract.drift_rules:
+            lines.append("漂移规则:")
+            for r in contract.drift_rules:
+                lines.append(f"  - {r.description} (severity={r.severity}, window={r.window_chapters}章)")
+        if contract.cadence:
+            lines.append(f"回报节奏: {json.dumps(contract.cadence, ensure_ascii=False)}")
+        if status_note:
+            lines.append(status_note)
+        lines.append("生成 ChapterBrief 时必须声明 core_loop_target 和 primary_payoff。")
+        return "\n".join(lines)
+
+    def _format_contract_for_screenwriter(self, contract: Any, status_note: str) -> str:
+        lines = ["【Story Contract — Screenwriter 指引】"]
+        if contract.core_loop:
+            lines.append("核心循环步骤（scene beat 必须映射）:")
+            for s in contract.core_loop:
+                req = "必需" if s.required else "可选"
+                lines.append(f"  - [{s.id}] {s.label} ({req})")
+        lines.append("每个 scene beat 必须说明服务哪个 core_loop_step。")
+        lines.append("禁止把辅助机制写成 scene 唯一主线。")
+        if contract.supporting_mechanisms:
+            mech_labels = [m.label for m in contract.supporting_mechanisms]
+            lines.append(f"辅助机制: {', '.join(mech_labels)}")
+        if status_note:
+            lines.append(status_note)
+        return "\n".join(lines)
+
+    def _format_contract_for_author(self, contract: Any, status_note: str) -> str:
+        lines = ["【Story Contract — Author 指引】"]
+        lines.append(f"核心承诺: {contract.core_promise}")
+        lines.append("本章写作要求:")
+        lines.append("  1. 必须完成核心兑现（参考 ChapterBrief.core_loop_target）")
+        lines.append("  2. 兑现证据必须在正文可见场景中写出")
+        lines.append("  3. 辅助机制必须服务于核心循环，不能喧宾夺主")
+        if contract.supporting_mechanisms:
+            mech_labels = [m.label for m in contract.supporting_mechanisms]
+            lines.append(f"允许的辅助机制: {', '.join(mech_labels)}")
+        if status_note:
+            lines.append(status_note)
+        return "\n".join(lines)
+
+    def _format_contract_for_editor(self, contract: Any, status_note: str) -> str:
+        lines = ["【Story Contract — Editor 审核指引】"]
+        lines.append("审核清单:")
+        lines.append("  1. 本章是否完成核心兑现？(core_payoff_present)")
+        lines.append("  2. 辅助机制是否喧宾夺主？(supporting_mechanism_dominance)")
+        lines.append("  3. 是否新增机制过载？(new_mechanism_count)")
+        lines.append("  4. 主角是否展现主动性？(protagonist_agency)")
+        if contract.drift_rules:
+            lines.append("漂移规则:")
+            for r in contract.drift_rules:
+                lines.append(f"  - {r.description}")
+        if status_note:
+            lines.append(status_note)
+        return "\n".join(lines)
+
+    def _format_contract_generic(self, contract: Any, status_note: str) -> str:
+        lines = ["【Story Contract】"]
+        lines.append(f"核心承诺: {contract.core_promise}")
+        if contract.core_loop:
+            loop_steps = " → ".join(s.label for s in contract.core_loop)
+            lines.append(f"核心循环: {loop_steps}")
+        if status_note:
+            lines.append(status_note)
+        return "\n".join(lines)
+
+    def _recent_contract_trend(self, project_id: str, chapter_number: int) -> str:
+        """Load recent contract metrics and summarize trend."""
+        try:
+            from ..models.creative_ledgers import ChapterContractMetrics
+            # Try to get from creative ledger metadata
+            metrics_raw = self.repo.get_chapter_contract_metrics(project_id, limit=3)
+            if not metrics_raw:
+                return ""
+            metrics = []
+            for m in metrics_raw:
+                if isinstance(m, dict):
+                    metrics.append(ChapterContractMetrics(**m))
+
+            if not metrics:
+                return ""
+
+            lines = ["【最近合同合规趋势】"]
+            for m in metrics:
+                payoff_mark = "✓" if m.core_payoff_present else "✗"
+                lines.append(
+                    f"  第{m.chapter_number}章: 核心兑现={payoff_mark}, "
+                    f"得分={m.contract_score:.0f}, "
+                    f"主导机制={m.dominant_mechanism or 'core_loop'}"
+                )
+            # Trend summary
+            no_payoff_streak = 0
+            for m in reversed(metrics):
+                if not m.core_payoff_present:
+                    no_payoff_streak += 1
+                else:
+                    break
+            if no_payoff_streak >= 2:
+                lines.append(f"⚠ 连续{no_payoff_streak}章未完成核心兑现，下一章必须补回。")
+            return "\n".join(lines)
+        except Exception:
+            return ""
+
     @staticmethod
     def _apply_memory_degraded_hard_constraint(bundle: AgentContextBundle) -> None:
         """Promote no-trusted-memory guidance into hard constraints."""
@@ -1048,6 +1253,7 @@ class AgentContextBuilder:
             project_id, chapter_number, state
         )
         bundle.style_context = self._style_bible_context(project_id, "planner")
+        bundle.story_contract_context = self._story_contract_context(project_id, "planner", chapter_number)
 
         # Hard constraints for planner: suspense hooks + timeline + revision
         hard: list[ContextItem] = []
@@ -1086,6 +1292,7 @@ class AgentContextBuilder:
             project_id, chapter_number, state
         )
         bundle.style_context = self._style_bible_context(project_id, "screenwriter")
+        bundle.story_contract_context = self._story_contract_context(project_id, "screenwriter", chapter_number)
 
         bundle.hard_constraints = (
             [it for it in bundle.chapter_inheritance if it.kind == "suspense_hook"]
@@ -1119,6 +1326,7 @@ class AgentContextBuilder:
             project_id, chapter_number, state
         )
         bundle.style_context = self._style_bible_context(project_id, "author")
+        bundle.story_contract_context = self._story_contract_context(project_id, "author", chapter_number)
 
         bundle.hard_constraints = (
             [it for it in bundle.chapter_inheritance if it.kind == "suspense_hook"]
@@ -1152,6 +1360,7 @@ class AgentContextBuilder:
             project_id, chapter_number, state
         )
         bundle.style_context = self._style_bible_context(project_id, "polisher")
+        bundle.story_contract_context = self._story_contract_context(project_id, "polisher", chapter_number)
 
         # Polisher hard constraints: fact lock items (instruction events + plots)
         hard: list[ContextItem] = []
@@ -1186,6 +1395,7 @@ class AgentContextBuilder:
             project_id, chapter_number, state
         )
         bundle.style_context = self._style_bible_context(project_id, "editor")
+        bundle.story_contract_context = self._story_contract_context(project_id, "editor", chapter_number)
 
         bundle.hard_constraints = (
             [it for it in bundle.chapter_inheritance if it.kind == "suspense_hook"]
@@ -1230,6 +1440,7 @@ def format_context_bundle_for_prompt(
         ("【可信记忆 / Trusted Memory】", bundle.trusted_memory),
         ("【事实账本 / Story Facts】", bundle.story_facts),
         ("【角色状态 / Character States】", bundle.character_states),
+        ("【故事合同 / Story Contract】", bundle.story_contract_context),
         ("【风格规范 / Style Bible】", bundle.style_context),
         ("【建议参考 / Advisory Context】", bundle.advisory_context),
         ("【章节继承 / Chapter Inheritance】", bundle.chapter_inheritance),

@@ -131,3 +131,54 @@ class GenreContract(BaseModel):
     mystery_reveal_cadence: str = ""
     style_constraints: list[str] = Field(default_factory=list)
     editor_weights: dict = Field(default_factory=dict)
+
+
+# ── v6.10.5: Story Contract Governance ──────────────────────────
+
+
+class CoreLoopStep(BaseModel):
+    """A single step in the project's core payoff loop."""
+
+    id: str
+    label: str
+    description: str = ""
+    payoff_type: str = ""
+    required: bool = True
+
+
+class SupportingMechanism(BaseModel):
+    """A supporting narrative mechanism that must serve the core loop."""
+
+    id: str
+    label: str
+    description: str = ""
+    allowed_role: str = "pressure"  # pressure, reveal, tension, mystery
+    must_serve_core_loop: bool = True
+
+
+class DriftRule(BaseModel):
+    """A contract rule that detects creative drift."""
+
+    id: str
+    description: str
+    severity: str = "warning"  # warning, blocking
+    window_chapters: int = 1
+    threshold: int = 1
+
+
+class StoryContract(BaseModel):
+    """v6.10.5: Structured story contract for core-loop governance.
+
+    Stored as project_creative_contracts.contract_type = "story_contract".
+    When absent, a fallback is derived from launch_profile + genre_contract.
+    """
+
+    project_id: str = ""
+    core_promise: str = ""
+    core_loop: list[CoreLoopStep] = Field(default_factory=list)
+    supporting_mechanisms: list[SupportingMechanism] = Field(default_factory=list)
+    payoff_types: list[str] = Field(default_factory=list)
+    drift_rules: list[DriftRule] = Field(default_factory=list)
+    cadence: dict[str, int] = Field(default_factory=dict)
+    status: str = "draft"  # draft, needs_review, confirmed
+    version: str = "1.0.0"

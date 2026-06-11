@@ -258,6 +258,11 @@ class EditorAgent(BaseAgent):
         if style_ctx:
             parts.append(style_ctx)
 
+        # v6.10.5: Story Contract injection
+        contract_ctx = self._get_story_contract_context(project_id, "editor")
+        if contract_ctx:
+            parts.append(contract_ctx)
+
         # v6.8.1: Style-aware prompt injection (webnovel excitement, suspense, romance)
         style_prompt = self._get_style_prompt_injection(project_id, "editor")
         if style_prompt:

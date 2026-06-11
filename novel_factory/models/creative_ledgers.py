@@ -145,3 +145,25 @@ class StyleFatigueLedger(BaseModel):
     """Tracks repeated imagery, high-frequency words, tension patterns, and scene texture fatigue."""
 
     patterns: list[StyleFatigueEntry] = Field(default_factory=list)
+
+
+# ── v6.10.5: Chapter Contract Metrics ────────────────────────────
+
+
+class ChapterContractMetrics(BaseModel):
+    """v6.10.5: Per-chapter Story Contract compliance metrics.
+
+    Recorded after each chapter passes review or is published.
+    Used for trend checking, drift detection, and Run Doctor diagnostics.
+    """
+
+    chapter_number: int = 0
+    core_payoff_present: bool = False
+    payoff_type: str = ""
+    core_loop_steps_completed: list[str] = Field(default_factory=list)
+    supporting_mechanisms_used: list[str] = Field(default_factory=list)
+    dominant_mechanism: str = ""
+    new_mechanisms_introduced: list[str] = Field(default_factory=list)
+    protagonist_agency: bool = True
+    contract_drift_warnings: list[str] = Field(default_factory=list)
+    contract_score: float = 0.0

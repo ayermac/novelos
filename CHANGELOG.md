@@ -12,6 +12,28 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.5 - Story Contract Governance
+
+Date: 2026-06-11
+
+Key changes:
+
+- **Story Contract model**: added project-level `StoryContract`, `CoreLoopStep`, `SupportingMechanism`, and `DriftRule` to govern what each book must keep delivering.
+- **Contract generation**: creative contract generation now creates `story_contract` alongside launch profile and genre contract; approval activates the story contract for enforceable checks.
+- **ChapterBrief extension**: chapter briefs now carry core-loop target, primary payoff, payoff evidence plan, supporting mechanisms, new mechanism budget, drift risks, and contract checklist fields.
+- **Prompt injection**: planner, screenwriter, author, polisher, and editor receive role-specific Story Contract context through `AgentContextBuilder` and legacy agent build-context paths.
+- **Core loop quality gate**: added `core_loop_compliance` diagnostics to detect missing core payoff, supporting-mechanism dominance, new mechanism overload, and protagonist agency gaps.
+- **Trend metrics**: chapter-level contract metrics are persisted as creative ledger snapshots for future payoff-gap and drift-streak checks.
+- **Creative Contracts UX**: project Creative Contracts module now displays and edits Story Contract core promise, core loop, supporting mechanisms, payoff types, drift rules, cadence, and status.
+- **Version alignment**: backend runtime and frontend package versions bumped to `6.10.5`.
+
+Verification:
+
+- `python3 -m pytest tests/test_v6105_story_contract_models.py tests/test_v6105_core_loop_checker.py tests/test_v6105_workflow_contract_injection.py tests/test_v6105_story_contract_api.py -q`: 61 passed
+- `python3 -m pytest tests/test_v690_repository_integration.py tests/test_v690_chapter_brief.py tests/test_v690_rhythm_budget.py -q`: 92 passed
+- `npm run typecheck`: passed
+- `npm run build`: passed
+
 ## v6.10.4 - Style Management Hardening
 
 Date: 2026-06-11

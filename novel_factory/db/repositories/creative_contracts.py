@@ -224,6 +224,52 @@ class CreativeContractsRepositoryMixin:
         finally:
             conn.close()
 
+    # ── Chapter Contract Metrics (v6.10.5) ───────────────────────────
+
+    def get_chapter_contract_metrics(
+        self,
+        project_id: str,
+        limit: int = 5,
+        before_chapter: int | None = None,
+    ) -> list[dict]:
+        """Load recent ChapterContractMetrics from ledger snapshots (ledger_type='contract_metrics')."""
+        conn = self._conn()
+        try:
+            if before_chapter is not None:
+                rows = conn.execute(
+                    """SELECT * FROM creative_ledger_snapshots
+                       WHERE project_id=? AND ledger_type='contract_metrics' AND chapter_number < ?
+                       ORDER BY chapter_number DESC, created_at DESC
+                       LIMIT ?""",
+                    (project_id, before_chapter, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT * FROM creative_ledger_snapshots
+                       WHERE project_id=? AND ledger_type='contract_metrics'
+                       ORDER BY chapter_number DESC, created_at DESC
+                       LIMIT ?""",
+                    (project_id, limit),
+                ).fetchall()
+            results = []
+            for r in rows:
+                d = row_to_dict(r)
+                if d and isinstance(d.get("ledger_data"), str):
+                    import json as _json
+                    try:
+                        metrics = _json.loads(d["ledger_data"])
+                        metrics["chapter_number"] = d.get("chapter_number", 0)
+                        results.append(metrics)
+                    except (ValueError, TypeError):
+                        pass
+                elif d and isinstance(d.get("ledger_data"), dict):
+                    metrics = d["ledger_data"]
+                    metrics["chapter_number"] = d.get("chapter_number", 0)
+                    results.append(metrics)
+            return results
+        finally:
+            conn.close()
+
     # ── Editor Lens Reports ─────────────────────────────────────────
 
     def upsert_editor_lens_report(
