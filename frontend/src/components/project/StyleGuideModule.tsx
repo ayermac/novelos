@@ -24,8 +24,9 @@ interface Props {
 
 function getStyleStatusLabel(status: string): string {
   if (status === 'active') return '已启用'
-  if (status === 'unknown') return '待确认'
-  return status || '待确认'
+  if (status === 'draft') return '草稿'
+  if (status === 'needs_review') return '待确认'
+  return '已建立'
 }
 
 export default function StyleGuideModule({ projectId }: Props) {
@@ -33,6 +34,7 @@ export default function StyleGuideModule({ projectId }: Props) {
   const [loading, setLoading] = useState(true)
   const [initLoading, setInitLoading] = useState(false)
   const [error, setError] = useState('')
+  const [initSuccess, setInitSuccess] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -52,8 +54,10 @@ export default function StyleGuideModule({ projectId }: Props) {
   const handleInit = async () => {
     setInitLoading(true)
     setError('')
+    setInitSuccess(false)
     const res = await post('/style/init', { project_id: projectId })
     if (res.ok) {
+      setInitSuccess(true)
       load()
     } else {
       setError(res.error?.message || '初始化风格指南失败')
@@ -76,6 +80,11 @@ export default function StyleGuideModule({ projectId }: Props) {
       </div>
 
       {error && <div className="alert alert-error" style={{ marginBottom: 12 }}>{error}</div>}
+      {initSuccess && (
+        <div className="alert alert-success" style={{ marginBottom: 12 }}>
+          风格指南初始化成功！您可以继续完善风格设置，或直接进入编辑。
+        </div>
+      )}
 
       {bible ? (
         <div className="data-card" style={{ maxWidth: 600 }}>
@@ -86,7 +95,7 @@ export default function StyleGuideModule({ projectId }: Props) {
           <div className="data-card-title">状态: {getStyleStatusLabel(bible.status)}</div>
           <div className="data-card-content">更新于: {bible.updated_at || '未知'}</div>
           <div style={{ marginTop: 12, display: 'flex', gap: 8 }}>
-            <Link to="/style" className="btn btn-secondary btn-sm" style={{ textDecoration: 'none' }}>
+            <Link to={`/style?project_id=${projectId}`} className="btn btn-secondary btn-sm" style={{ textDecoration: 'none' }}>
               <Pencil size={14} /> 编辑
             </Link>
           </div>

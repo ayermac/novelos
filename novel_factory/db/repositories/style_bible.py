@@ -83,7 +83,13 @@ class StyleBibleRepositoryMixin:
             if not row:
                 return None
             result = row_to_dict(row)
-            result["bible"] = json.loads(result.get("bible_json", "{}"))
+            bible_data = json.loads(result.get("bible_json", "{}"))
+            try:
+                from ...style_bible.normalizer import normalize_legacy_bible
+                bible_data = normalize_legacy_bible(bible_data)
+            except Exception:
+                pass
+            result["bible"] = bible_data
             return result
         finally:
             conn.close()

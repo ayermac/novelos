@@ -12,6 +12,27 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.4 - Style Management Hardening
+
+Date: 2026-06-11
+
+Key changes:
+
+- **Canonical Style Bible initialization**: `/api/style/init` now creates normalized `StyleBible` records from genre-aware templates instead of loose `voice/narrative/prose` JSON.
+- **Legacy style compatibility**: old style records are normalized on read, preserving project style data without manual migration.
+- **Structured style API**: added `GET /api/style/bible/{project_id}` and `PUT /api/style/bible/{project_id}` while keeping legacy `PUT /api/style/bible` compatible.
+- **Style editing UX**: project style “编辑” now targets the current project, and global `/style` supports view/edit/gate configuration flows.
+- **Style Gate configuration**: users can configure enabled/mode/threshold/revision target/apply stages; defaults remain non-blocking.
+- **Real authoring path injection**: `AgentContextBuilder` now carries Style Bible context into planner, screenwriter, author, polisher, and editor prompts, including Author plain-text and segmented real-mode generation.
+- **Version alignment**: backend runtime and frontend package versions bumped to `6.10.4`.
+
+Verification:
+
+- `python3 -m pytest tests/test_v40_style_bible_models.py tests/test_v40_style_bible_context.py tests/test_v40_style_bible_skill.py tests/test_v6104_style_management.py -q`: 84 passed
+- `npm run typecheck`: passed
+- `npx vitest run src/components/project/__tests__/StyleGuideModule.test.tsx`: 5 passed
+- `npm run build`: passed
+
 ## v6.10.3 - Workflow Diagnostics & Stability
 
 Date: 2026-06-08

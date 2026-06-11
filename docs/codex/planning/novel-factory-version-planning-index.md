@@ -14,6 +14,7 @@ This index maps shipped or reviewed versions to their planning/spec source, comp
 
 | Version | Planning/spec source | Report | Review | Coverage |
 | --- | --- | --- | --- | --- |
+| v6.10.4 | `novel-factory-v6.10.4-style-management-hardening-plan.md` | none yet | none yet | standalone |
 | v6.10.3 | `novel-factory-v6.10.3-workflow-stability-recovery-plan.md` | `../reports/novel-factory-v6.10.3-completion-report.md` | `../reviews/novel-factory-v6.10.3-review.md` | standalone |
 | v6.10.2 | `novel-factory-v6.10.2-skill-consolidation-plan.md` | none yet | none yet | standalone |
 | v6.10.1 | `novel-factory-v6.10.1-skill-engineering-standardization-spec.md` | none yet | none yet | standalone |

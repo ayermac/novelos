@@ -133,6 +133,29 @@ def merge_style_bible(
     return result
 
 
+def select_template_for_genre(genre: str | None) -> str:
+    """Select the best template ID for a given genre.
+
+    Args:
+        genre: Project genre string.
+
+    Returns:
+        Template ID string.
+    """
+    if not genre:
+        return "default_web_serial"
+    g = str(genre).lower()
+    if any(k in g for k in ("都市", "系统", "签到", "异能", "现代")):
+        return "urban_fantasy_fast"
+    if any(k in g for k in ("悬疑", "推理", "惊悚", "侦探")):
+        return "mystery_suspense"
+    if any(k in g for k in ("仙侠", "修真", "修仙", "武侠", "玄幻")):
+        return "xianxia_progression"
+    if any(k in g for k in ("言情", "甜宠", "虐恋", "恋爱", "浪漫")):
+        return "romance_emotional"
+    return "default_web_serial"
+
+
 # ── Internal ───────────────────────────────────────────────────
 
 

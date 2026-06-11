@@ -73,6 +73,8 @@ class AgentContextBundle:
     hard_constraints: list[ContextItem] = field(default_factory=list)
     advisory_context: list[ContextItem] = field(default_factory=list)
     diagnostics: list[ContextItem] = field(default_factory=list)
+    # v6.10.4: style bible context
+    style_context: list[ContextItem] = field(default_factory=list)
     # v6.6.14: memory context annotation
     memory_context_degraded: bool = False
     trusted_memory_batch_id: str | None = None
@@ -89,6 +91,7 @@ class AgentContextBundle:
             "revision_feedback_count": len(self.revision_feedback),
             "story_facts_count": len(self.story_facts),
             "character_states_count": len(self.character_states),
+            "style_context_count": len(self.style_context),
             "memory_context_degraded": self.memory_context_degraded,
             "trusted_memory_batch_id": self.trusted_memory_batch_id,
         }
@@ -973,6 +976,34 @@ class AgentContextBuilder:
             )
         return items
 
+    def _style_bible_context(self, project_id: str, agent_id: str) -> list[ContextItem]:
+        """Load Style Bible and generate agent-specific style context."""
+        items: list[ContextItem] = []
+        try:
+            from ..style_bible.loader import load_style_bible_for_project
+
+            bible = load_style_bible_for_project(project_id, self.repo)
+        except Exception:
+            bible = None
+        if not bible:
+            return items
+
+        try:
+            rules_text = bible.rules_for_agent(agent_id)
+        except Exception:
+            rules_text = ""
+        if rules_text:
+            items.append(
+                ContextItem(
+                    kind="style_bible",
+                    text=rules_text,
+                    source="style_bible",
+                    priority=3,
+                    trusted=True,
+                )
+            )
+        return items
+
     @staticmethod
     def _apply_memory_degraded_hard_constraint(bundle: AgentContextBundle) -> None:
         """Promote no-trusted-memory guidance into hard constraints."""
@@ -1016,6 +1047,7 @@ class AgentContextBuilder:
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
         )
+        bundle.style_context = self._style_bible_context(project_id, "planner")
 
         # Hard constraints for planner: suspense hooks + timeline + revision
         hard: list[ContextItem] = []
@@ -1053,6 +1085,8 @@ class AgentContextBuilder:
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
         )
+        bundle.style_context = self._style_bible_context(project_id, "screenwriter")
+
         bundle.hard_constraints = (
             [it for it in bundle.chapter_inheritance if it.kind == "suspense_hook"]
             + bundle.timeline_constraints
@@ -1084,6 +1118,8 @@ class AgentContextBuilder:
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
         )
+        bundle.style_context = self._style_bible_context(project_id, "author")
+
         bundle.hard_constraints = (
             [it for it in bundle.chapter_inheritance if it.kind == "suspense_hook"]
             + bundle.timeline_constraints
@@ -1115,6 +1151,8 @@ class AgentContextBuilder:
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
         )
+        bundle.style_context = self._style_bible_context(project_id, "polisher")
+
         # Polisher hard constraints: fact lock items (instruction events + plots)
         hard: list[ContextItem] = []
         for it in bundle.plot_obligations:
@@ -1147,6 +1185,8 @@ class AgentContextBuilder:
         bundle.revision_feedback = self._revision_feedback_context(
             project_id, chapter_number, state
         )
+        bundle.style_context = self._style_bible_context(project_id, "editor")
+
         bundle.hard_constraints = (
             [it for it in bundle.chapter_inheritance if it.kind == "suspense_hook"]
             + bundle.timeline_constraints
@@ -1190,6 +1230,7 @@ def format_context_bundle_for_prompt(
         ("【可信记忆 / Trusted Memory】", bundle.trusted_memory),
         ("【事实账本 / Story Facts】", bundle.story_facts),
         ("【角色状态 / Character States】", bundle.character_states),
+        ("【风格规范 / Style Bible】", bundle.style_context),
         ("【建议参考 / Advisory Context】", bundle.advisory_context),
         ("【章节继承 / Chapter Inheritance】", bundle.chapter_inheritance),
         ("【项目背景 / Project Context】", bundle.project_context),
@@ -1256,6 +1297,7 @@ def build_context_summary_for_trace(bundle: AgentContextBundle) -> dict[str, Any
                 "revision_feedback": bundle.revision_feedback,
                 "hard_constraints": bundle.hard_constraints,
                 "advisory_context": bundle.advisory_context,
+                "style_context": bundle.style_context,
             }.items()
             if items
         ],
