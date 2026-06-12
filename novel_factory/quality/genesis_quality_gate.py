@@ -118,6 +118,43 @@ ABSTRACT_OBJECTIVE_PATTERNS = [
 ]
 
 
+def _flatten_instruction_value(value) -> list[str]:
+    """Flatten scalar/list/dict instruction fields into text fragments."""
+    if value in (None, "", [], {}):
+        return []
+    if isinstance(value, list):
+        fragments: list[str] = []
+        for item in value:
+            fragments.extend(_flatten_instruction_value(item))
+        return fragments
+    if isinstance(value, dict):
+        fragments = []
+        for item_value in value.values():
+            fragments.extend(_flatten_instruction_value(item_value))
+        return fragments
+    return [str(value)]
+
+
+def _instruction_field_text(instruction: dict, keys: list[str]) -> str:
+    """Return normalized text from one or more instruction fields."""
+    fragments: list[str] = []
+    for key in keys:
+        fragments.extend(_flatten_instruction_value(instruction.get(key)))
+    return _normalize_text(" ".join(fragments))
+
+
+def _instruction_list_item_count(value) -> int:
+    """Count usable items in structured list-like instruction fields."""
+    if not isinstance(value, list):
+        return 0
+    count = 0
+    for item in value:
+        text = " ".join(_flatten_instruction_value(item)).strip()
+        if len(text) >= 4:
+            count += 1
+    return count
+
+
 def _normalize_text(text: str | None) -> str:
     """Normalize text for comparison."""
     if not text:
@@ -319,29 +356,56 @@ def _check_instruction_depth(instructions: list[dict]) -> list[GenesisQualityIss
     missing_seed_count = 0
 
     for inst in dict_instructions:
-        objective = _normalize_text(inst.get("objective", ""))
-        key_events = _normalize_text(inst.get("key_events", ""))
-        combined = objective + " " + key_events
+        objective = _instruction_field_text(inst, ["objective"])
+        key_events = _instruction_field_text(inst, ["key_events"])
+        structured_character = _instruction_field_text(
+            inst,
+            ["protagonist", "primary_character", "viewpoint_character", "characters_in_scene"],
+        )
+        structured_location = _instruction_field_text(
+            inst,
+            ["primary_location", "location", "scene_location"],
+        )
+        structured_actions = _instruction_field_text(
+            inst,
+            ["action_chain", "concrete_actions", "scene_actions"],
+        )
+        structured_result = _instruction_field_text(
+            inst,
+            ["visible_result", "state_change", "result_change", "chapter_handoff"],
+        )
+        combined = " ".join(
+            text
+            for text in (
+                objective,
+                key_events,
+                structured_character,
+                structured_location,
+                structured_actions,
+                structured_result,
+            )
+            if text
+        )
 
         # ABSTRACT_OBJECTIVE: check for abstract patterns
         if _is_generic_pattern(objective, ABSTRACT_OBJECTIVE_PATTERNS):
             abstract_count += 1
 
         # SHALLOW_INSTRUCTION: must have specific character, location, action verb, result change
-        has_character = bool(re.search(r"[^\x00-\xff]{2,4}", combined))
-        has_location = bool(
+        has_character = bool(structured_character) or bool(re.search(r"[^\x00-\xff]{2,4}", combined))
+        has_location = bool(structured_location) or bool(
             re.search(
-                r"(地点|场所|场景|城市|学院|公司|宗门|家族|组织|基地|实验室|学校|街道|家中|办公室|战场|山谷|洞穴|塔|殿|阁|村|镇|城|医院|事务所|公寓|大楼|工厂|仓库|墓地|教堂|车站|码头|酒吧|餐厅|酒店|宫殿|密室|禁地|废墟|森林|沙漠|海岛|地下|天际|荒野|港|湾|堤|坝|站|所|区|域|界|层|网|节点|枢纽|入口)",
+                r"(地点|场所|场景|城市|学院|公司|宗门|家族|组织|基地|实验室|学校|街道|家中|办公室|战场|考场|考核场|训练场|操场|裂隙|副本|山谷|洞穴|塔|殿|阁|村|镇|城|医院|事务所|公寓|大楼|工厂|仓库|墓地|教堂|车站|码头|酒吧|餐厅|酒店|宫殿|密室|禁地|废墟|森林|沙漠|海岛|地下|天际|荒野|港|湾|堤|坝|站|所|区|域|界|层|网|节点|枢纽|入口)",
                 combined,
             )
         )
-        has_action = bool(
+        has_action = _instruction_list_item_count(inst.get("action_chain")) >= 3 or bool(
             re.search(
                 r"(发现|找到|击败|逃离|潜入|揭露|保护|摧毁|夺取|谈判|背叛|拯救|追杀|埋伏|破解|触发|遭遇|拒绝|接受|质疑|展示|失控|击碎|试探|出手|相助|暗示|暴露|引发|遭到|监视|被迫|面对|挑战|测试|觉醒|制造|引起|使用|产生|碰撞|交锋|博弈|争夺|反击|投降|逃脱|追击|拦截|封锁|围困|逆转|寻找|进入|离开|取出|隐藏|追查|验证|确认|取得|得到|送出|收到|派出|接触|控制|关闭|打开|启动|停止|删除|复制|转移|改写|修复)",
                 combined,
             )
         )
-        has_result = bool(
+        has_result = bool(structured_result) or bool(
             re.search(
                 r"(导致|结果|因此|从而|使得|失去|获得|暴露|隐藏|改变|决定|意识到|明白|确认|否认|牺牲|代价|发现|遭到|面对|封锁|取得|得到|被删|被阻|被迫|被迫|陷入|陷入|曝光|泄露|外泄|逆转|反转|翻盘|落败|获胜|解决|未解|悬而未决)",
                 combined,
@@ -351,10 +415,11 @@ def _check_instruction_depth(instructions: list[dict]) -> list[GenesisQualityIss
             shallow_count += 1
 
         # WEAK_KEY_EVENTS: count distinguishable events (split by common delimiters)
-        events_text = str(inst.get("key_events", ""))
+        events_text = " ".join(_flatten_instruction_value(inst.get("key_events")))
         event_parts = re.split(r"[；;。\.\n\r,，]", events_text)
         distinct_events = [p.strip() for p in event_parts if len(p.strip()) >= 4]
-        if len(distinct_events) < 2:
+        action_chain_count = _instruction_list_item_count(inst.get("action_chain"))
+        if max(len(distinct_events), action_chain_count) < 2:
             weak_events_count += 1
 
         # MISSING_CONTINUITY_SEED

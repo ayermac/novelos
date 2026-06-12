@@ -79,6 +79,15 @@ GENESIS_SEGMENT_MAX_TOKENS = {
     "plot": 3200,
 }
 GENESIS_INSTRUCTION_CHUNK_SIZE = 5
+GENESIS_REPAIRABLE_INSTRUCTION_CODES = {
+    "ABSTRACT_OBJECTIVE",
+    "GENERIC_INSTRUCTIONS",
+    "MISSING_CONTINUITY_SEED",
+    "REPETITIVE_KEY_EVENTS",
+    "REPETITIVE_OBJECTIVE",
+    "SHALLOW_INSTRUCTION",
+    "WEAK_KEY_EVENTS",
+}
 
 
 class GenesisGenerateRequest(BaseModel):
@@ -831,151 +840,557 @@ def _genre_terms(body: GenesisGenerateRequest) -> dict[str, str]:
     }
 
 
-def _generate_genesis_scaffold(body: GenesisGenerateRequest) -> dict:
-    """Create a complete editable Genesis draft when live output is incomplete.
+def _scaffold_seed_items(seed_draft: dict | None, section: str) -> list[dict]:
+    if not isinstance(seed_draft, dict):
+        return []
+    value = seed_draft.get(section)
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
 
-    This is a last-resort safety net. It preserves the user's title/genre/brief
-    and avoids letting a new project fail initialization just because a provider
-    returned an empty or section-only JSON payload.
 
-    v6.6.3: Scaffold drafts are now explicitly marked with _meta.quality_status
-    to prevent silent masquerading as high-quality LLM output.
-    """
+def _clean_scaffold_entity_name(value: str, fallback: str) -> str:
+    name = _as_text(value).strip()
+    generic = {
+        "",
+        "主角",
+        "男主",
+        "女主",
+        "本章主角",
+        "角色",
+        "反派",
+        "配角",
+        "未知",
+        "无",
+    }
+    return name if name not in generic and len(name) <= 12 else fallback
+
+
+def _pick_seed_character(
+    characters: list[dict],
+    *,
+    role_terms: tuple[str, ...],
+    fallback: str,
+    exclude: set[str] | None = None,
+) -> str:
+    exclude = exclude or set()
+    for item in characters:
+        role_text = _as_text(item.get("role", "")).lower()
+        name = _clean_scaffold_entity_name(item.get("name", ""), "")
+        if not name or name in exclude:
+            continue
+        if any(term in role_text for term in role_terms):
+            return name
+    for item in characters:
+        name = _clean_scaffold_entity_name(item.get("name", ""), "")
+        if name and name not in exclude:
+            return name
+    return fallback
+
+
+def _pick_seed_faction(
+    factions: list[dict],
+    *,
+    preferred_terms: tuple[str, ...],
+    fallback: str,
+    exclude: set[str] | None = None,
+) -> str:
+    exclude = exclude or set()
+    for item in factions:
+        text = " ".join(
+            _as_text(item.get(key, ""))
+            for key in ("name", "type", "description", "relationship_with_protagonist")
+        )
+        name = _clean_scaffold_entity_name(item.get("name", ""), "")
+        if name and name not in exclude and any(term in text for term in preferred_terms):
+            return name
+    for item in factions:
+        name = _clean_scaffold_entity_name(item.get("name", ""), "")
+        if name and name not in exclude:
+            return name
+    return fallback
+
+
+def _detect_scaffold_story_mode(body: GenesisGenerateRequest, seed_draft: dict | None) -> str:
+    seed_text = ""
+    if isinstance(seed_draft, dict):
+        seed_text = json.dumps(seed_draft, ensure_ascii=False)[:12000]
+    text = f"{body.title} {body.genre} {body.premise} {seed_text}"
+    if any(term in text for term in ("召唤", "神军", "战灵", "异兽潮", "觉醒者", "职业评级")):
+        return "urban_summon"
+    if any(term in text for term in ("签到", "打卡", "奖励", "返现", "系统奖励")):
+        return "urban_signin"
+    if _is_anomaly_genesis(body) or any(term in text for term in ("异常处理", "修正系统", "同化")):
+        return "anomaly"
+    if any(term in text for term in ("修仙", "宗门", "灵根", "仙帝", "玄幻")):
+        return "xianxia"
+    return "generic"
+
+
+def _default_scaffold_entities(
+    body: GenesisGenerateRequest,
+    seed_draft: dict | None,
+) -> dict[str, str]:
+    mode = _detect_scaffold_story_mode(body, seed_draft)
+    characters = _scaffold_seed_items(seed_draft, "characters")
+    factions = _scaffold_seed_items(seed_draft, "factions")
+
+    mode_defaults = {
+        "urban_summon": {
+            "protagonist": "陆沉",
+            "ally": "林破军",
+            "second_ally": "苏晚晴",
+            "antagonist": "赵天罡",
+            "observer": "军方观察员",
+            "primary_faction": "江海市城防军",
+            "rival_faction": "赵家",
+            "hidden_faction": "深渊黑潮",
+            "neutral_faction": "觉醒者协会",
+        },
+        "urban_signin": {
+            "protagonist": "林辰",
+            "ally": "秦伯",
+            "second_ally": "苏晚晴",
+            "antagonist": "赵天朗",
+            "observer": "帝豪经理",
+            "primary_faction": "帝豪酒店",
+            "rival_faction": "赵家",
+            "hidden_faction": "猩红之夜",
+            "neutral_faction": "江城商会",
+        },
+        "anomaly": {
+            "protagonist": "林泽",
+            "ally": "许知夏",
+            "second_ally": "顾清禾",
+            "antagonist": "魏承霜",
+            "observer": "周砚白",
+            "primary_faction": "异常处理局深城分部",
+            "rival_faction": "监管组第七办公室",
+            "hidden_faction": "白塔观测会",
+            "neutral_faction": "旧城区互助网络",
+        },
+        "xianxia": {
+            "protagonist": "沈砚",
+            "ally": "洛青辞",
+            "second_ally": "白迟",
+            "antagonist": "陆怀川",
+            "observer": "藏经阁守阁人",
+            "primary_faction": "青云宗",
+            "rival_faction": "陆家",
+            "hidden_faction": "上古秘境",
+            "neutral_faction": "万宝楼",
+        },
+        "generic": {
+            "protagonist": _infer_protagonist_name(body),
+            "ally": "顾清禾",
+            "second_ally": "林越",
+            "antagonist": "陆怀川",
+            "observer": "闻人述",
+            "primary_faction": "主线组织",
+            "rival_faction": "敌对势力",
+            "hidden_faction": "隐藏势力",
+            "neutral_faction": "中立情报方",
+        },
+    }
+    defaults = mode_defaults[mode]
+    protagonist = _pick_seed_character(
+        characters,
+        role_terms=("protagonist", "主角", "男主", "女主"),
+        fallback=defaults["protagonist"],
+    )
+    antagonist = _pick_seed_character(
+        characters,
+        role_terms=("antagonist", "反派", "敌"),
+        fallback=defaults["antagonist"],
+        exclude={protagonist},
+    )
+    ally = _pick_seed_character(
+        characters,
+        role_terms=("supporting", "配角", "盟友", "support"),
+        fallback=defaults["ally"],
+        exclude={protagonist, antagonist},
+    )
+    second_ally = _pick_seed_character(
+        characters,
+        role_terms=("supporting", "配角", "盟友", "support"),
+        fallback=defaults["second_ally"],
+        exclude={protagonist, antagonist, ally},
+    )
+
+    primary_faction = _pick_seed_faction(
+        factions,
+        preferred_terms=("军", "官方", "学院", "大学", "协会", "宗门", "集团", "酒店", "主角"),
+        fallback=defaults["primary_faction"],
+    )
+    rival_faction = _pick_seed_faction(
+        factions,
+        preferred_terms=("敌", "对立", "豪门", "赵家", "陆家", "监管", "黑市", "反派"),
+        fallback=defaults["rival_faction"],
+        exclude={primary_faction},
+    )
+    hidden_faction = _pick_seed_faction(
+        factions,
+        preferred_terms=("深渊", "黑潮", "裂缝", "隐藏", "神秘", "异界", "白塔", "黑市", "幕后"),
+        fallback=defaults["hidden_faction"],
+        exclude={primary_faction, rival_faction},
+    )
+    neutral_faction = _pick_seed_faction(
+        factions,
+        preferred_terms=("协会", "大学", "商会", "情报", "中立", "互助", "医疗"),
+        fallback=defaults["neutral_faction"],
+        exclude={primary_faction, rival_faction, hidden_faction},
+    )
+
+    return {
+        "mode": mode,
+        "protagonist": protagonist,
+        "ally": ally,
+        "second_ally": second_ally,
+        "antagonist": antagonist,
+        "observer": defaults["observer"],
+        "primary_faction": primary_faction,
+        "rival_faction": rival_faction,
+        "hidden_faction": hidden_faction,
+        "neutral_faction": neutral_faction,
+    }
+
+
+def _build_scaffold_instruction_templates(
+    mode: str,
+    entities: dict[str, str],
+) -> list[tuple[str, str, str, str, str, list[str], str, str]]:
+    protagonist = entities["protagonist"]
+    ally = entities["ally"]
+    second_ally = entities["second_ally"]
+    antagonist = entities["antagonist"]
+    observer = entities["observer"]
+    primary_faction = entities["primary_faction"]
+    rival_faction = entities["rival_faction"]
+    hidden_faction = entities["hidden_faction"]
+    neutral_faction = entities["neutral_faction"]
+
+    if mode == "urban_summon":
+        return [
+            (
+                f"{protagonist}在觉醒日公开验证F级召唤师评级，必须保住母亲遗物并证明自己不是家族废物",
+                "江海大学觉醒广场",
+                f"{rival_faction}与{antagonist}的当众羞辱",
+                f"{protagonist}被判定只能召唤灰铁战灵；{antagonist}推动退学和逐出家族；母亲古戒在精神力崩溃时激活帝皇序列",
+                f"{protagonist}召出第一名灰铁战灵并挡下雷系压迫，F级废柴标签第一次被撕开裂缝",
+                [f"{protagonist}完成觉醒仪式", f"{antagonist}当众打压召唤师评级", f"青铜古戒激活第一名灰铁战灵"],
+                "灰铁战灵单膝跪地称王，检测屏却显示召唤位仍为零",
+                "下一章必须解释召唤位异常，并让校园评级规则继续压迫主角",
+            ),
+            (
+                f"{protagonist}在实战课测试召唤位异常，目标是用低阶战灵打破召唤师只能当后勤的结论",
+                "江海大学实战训练场",
+                "导师评级体系和高阶学生围观施压",
+                f"{ally}观察战灵队列稳定性；{protagonist}让十名灰铁战灵完成盾墙、突刺、轮换；高阶学生强行挑战并被军阵压制",
+                "学院数据库记录到异常统御波形，召唤师评级从个人废柴转为制度争议",
+                [f"{protagonist}测试十名战灵同步行动", f"{ally}发现精神负荷没有上升", "战灵军阵击退高阶学生挑战"],
+                "训练场后台弹出一条被封存的军团召唤路径",
+                "下一章必须围绕军团召唤路径和协会注册资格展开",
+            ),
+            (
+                f"{protagonist}申请觉醒者协会注册，必须在制度刁难下拿到独立接任务资格",
+                f"{neutral_faction}评级大厅",
+                f"{neutral_faction}的F级召唤师限制条款",
+                f"评级员拒绝给{protagonist}前线资格；{second_ally}用治疗增幅短暂强化战灵；城门裂缝警报打断注册流程",
+                f"{protagonist}以临时征召身份奔赴城门，获得第一次公开战场验证机会",
+                [f"{protagonist}提交注册申请", f"{second_ally}证明治疗术可增幅召唤物", "城门裂缝警报迫使协会临时放行"],
+                "城门外传来兽潮预警，后勤名单上只有陆沉一个召唤师",
+                "下一章必须让主角在真实兽潮里兑现军团价值",
+            ),
+            (
+                f"{protagonist}在东海城门兽潮中救下被围连队，目标是证明量产战灵能改变战场数量劣势",
+                "东海城门外防线",
+                f"{hidden_faction}先遣兽潮与军方旧战法",
+                f"{primary_faction}连队被异兽切断；{protagonist}召出百名灰铁战灵组成三层盾枪阵；{ally}确认战损后战灵可重组",
+                f"{primary_faction}把{protagonist}列为特殊统帅型觉醒者，豪门开始意识到威胁",
+                [f"{protagonist}抵达城门防线", "百名灰铁战灵组成盾枪阵", f"{ally}救下被围连队并提交军报"],
+                "军报备注写着：一人成军雏形，建议封存",
+                "下一章必须让豪门势力因军报介入并制造资源封锁",
+            ),
+            (
+                f"{protagonist}面对豪门资源封锁，目标是夺回召唤材料并建立第一处军团锚点",
+                f"{rival_faction}控制的材料仓库",
+                f"{rival_faction}的合同陷阱和私军拦截",
+                f"{antagonist}冻结{protagonist}采购权限；{protagonist}带战灵潜入材料仓库查账；他用战功授权反向扣押一批灰铁核心",
+                "第一座临时兵营锚点完成，战灵数量上限从百名提升到千名",
+                [f"{antagonist}冻结召唤材料渠道", f"{protagonist}查出材料被豪门截留", "战功授权帮助主角建立临时兵营锚点"],
+                "兵营锚点深处出现母亲留下的帝皇序列第二条命令",
+                "下一章必须解锁千人军阵，并把压力转回城防战场",
+            ),
+            (
+                f"{protagonist}用千人军阵迎击第二波裂缝兽潮，目标是让城防军承认军团召唤的战略价值",
+                "东海二号裂缝前沿",
+                f"{hidden_faction}的淹没式兽潮",
+                f"常规高阶觉醒者被数量压制；{protagonist}把千名战灵拆成盾、枪、弓三阵；{ally}用军方炮火配合战灵轮换推进",
+                f"裂缝前沿被夺回，{protagonist}获得军方临时指挥权限",
+                ["高阶觉醒者防线被冲散", f"{protagonist}部署千人三阵", f"{primary_faction}授予临时指挥权限"],
+                "裂缝深处传来能让战灵集体失控的号角声",
+                "下一章必须处理战灵失控风险，并让后勤核心发挥作用",
+            ),
+            (
+                f"{protagonist}处理战灵失控风险，目标是借助治疗增幅稳定军团意志",
+                "战地医疗营",
+                "异界号角和召唤反噬质疑",
+                f"{second_ally}发现治疗术能修复战灵锚点；{protagonist}让失控战灵撤入医疗阵；{antagonist}借机指控军团召唤不可控",
+                "生命增幅与军团锚点建立协同，主角阵营形成前线后勤闭环",
+                [f"{second_ally}测试治疗术增幅战灵", f"{protagonist}压住失控战灵", f"{antagonist}发起不可控指控"],
+                "治疗阵短暂照出一名黄金战灵的影子",
+                "下一章必须追查黄金战灵来源，并揭露异界渗透",
+            ),
+            (
+                f"{protagonist}追查黄金战灵影子，目标是找出城内谁在给兽潮传递军团情报",
+                "城内黑市与裂缝物资站",
+                f"{hidden_faction}潜伏者和{rival_faction}利益链",
+                f"{protagonist}跟踪异常材料流向黑市；{ally}截获加密军报；潜伏者释放腐蚀瘴气试图污染战灵锚点",
+                f"主角确认兽潮不是随机爆发，而是有人按城防弱点引导",
+                [f"{protagonist}进入黑市追查材料", f"{ally}截获被篡改军报", "潜伏者用腐蚀瘴气攻击兵营锚点"],
+                "被抓潜伏者临死前说出第七次黑潮已经进城",
+                "下一章必须让主角在制度审查中公开部分证据",
+            ),
+            (
+                f"{protagonist}在联合审查会上公开兽潮渗透证据，目标是打破召唤师后勤化军改",
+                f"{neutral_faction}联合审查会",
+                f"{rival_faction}的舆论绞杀和制度否认",
+                f"{antagonist}质疑战功数据造假；{protagonist}展示战灵视角记录；{primary_faction}证明二号裂缝战果无法由个人高阶战力完成",
+                "召唤师后勤化政策被暂停，主角从个体逆袭进入制度改写阶段",
+                [f"{antagonist}发起审查", f"{protagonist}公开战灵视角证据", f"{primary_faction}为军团战果背书"],
+                "审查会外，城墙结界同时亮起七处黑潮裂缝",
+                "下一章必须以阶段高潮证明一人成国的雏形",
+            ),
+            (
+                f"{protagonist}面对七处裂缝同时开启，目标是用军团分线守城完成第一阶段封神",
+                "江海市七段城墙",
+                f"{hidden_faction}发动的第七次黑潮前奏",
+                f"{protagonist}把战灵军团拆分到七段城墙；{second_ally}维持生命增幅；{ally}接入军方炮火网；主角亲自镇守最危险主裂缝",
+                "江海市守住第一轮黑潮，主角获得一人成国称号但也被更高层异界意志锁定",
+                ["七处裂缝同时开启", f"{protagonist}分线部署军团", "主裂缝中的异界意志锁定主角"],
+                "主裂缝深处传来王座召唤，要求陆沉交出帝皇序列",
+                "下一阶段必须围绕帝皇序列来源和真正黑潮王座展开",
+            ),
+        ]
+
+    generic_locations = ["开场核心场景", "资源交易现场", "第一处对抗地点", "组织内部节点", "公开审查场", "危机前线", "隐藏档案处", "盟友据点", "阶段决战场", "下一阶段入口"]
+    generic_actions = [
+        ("保住关键资源", "现实压力和身份否定", "主角夺回第一份主动权"),
+        ("追查资源来源", "敌对势力的封锁", "主角拿到半份证据"),
+        ("进入核心组织", "内部规则和追兵", "幕后操盘者露出线索"),
+        ("验证新能力", "同伴质疑和外部危机", "能力第一次公开兑现"),
+        ("反击资源封锁", "合同陷阱和舆论打压", "主角建立稳定据点"),
+        ("处理外部危机", "数量劣势和规则限制", "主角获得临时权限"),
+        ("修复能力代价", "反噬风险和敌人指控", "团队协作关系成型"),
+        ("追查城内内鬼", "潜伏者和利益链", "主角确认危机被人为引导"),
+        ("公开阶段证据", "制度审查和舆论围攻", "旧规则被迫让步"),
+        ("完成阶段决战", "多线危机和最终压迫", "主角取得第一阶段胜利"),
+    ]
+    templates: list[tuple[str, str, str, str, str, list[str], str, str]] = []
+    for idx, (goal, obstacle, result) in enumerate(generic_actions, start=1):
+        location = generic_locations[idx - 1]
+        templates.append(
+            (
+                f"{protagonist}在{location}{goal}，目标是在{obstacle}下推动局势进入新阶段",
+                location,
+                obstacle,
+                f"{protagonist}在{location}{goal}；{ally}针对{obstacle}提供第 {idx} 轮关键协助；{antagonist}或{rival_faction}制造阻碍；{result}",
+                result,
+                [f"{protagonist}在{location}{goal}", f"{ally}针对{obstacle}提供协助", f"{antagonist}制造第 {idx} 轮阻碍后被主角反制"],
+                f"{hidden_faction}留下第 {idx} 条更高层线索",
+                f"下一章必须承接第 {idx} 条线索，并让主角付出新的可见代价",
+            )
+        )
+    return templates
+
+
+def _generate_genesis_scaffold(
+    body: GenesisGenerateRequest,
+    seed_draft: dict | None = None,
+) -> dict:
+    """Create a seed-aware editable Genesis draft when live output is incomplete."""
     title = body.title.strip() or "未命名项目"
     genre = body.genre.strip() or "小说"
     premise = body.premise.strip() or f"围绕《{title}》展开的{genre}故事。"
-    terms = _genre_terms(body)
     target_chapters = max(body.target_chapters, 1)
     target_words = _target_word_count(body)
     arc_mid = max(1, min(target_chapters, max(3, target_chapters // 3)))
     arc_two_end = max(arc_mid + 1, min(target_chapters, arc_mid * 2))
-    protagonist = _infer_protagonist_name(body)
-    anomaly_mode = _is_anomaly_genesis(body)
-    ally = "许知夏" if anomaly_mode else "顾清禾"
-    antagonist = "魏承霜" if anomaly_mode else "陆怀川"
-    observer = "周砚白" if anomaly_mode else "闻人述"
-    primary_faction = "异常处理局深城分部" if anomaly_mode else "星环事务所"
-    rival_faction = "监管组第七办公室" if anomaly_mode else "曜石评议会"
-    hidden_faction = "白塔观测会" if anomaly_mode else "雾港档案馆"
-    neutral_faction = "旧城区互助网络" if anomaly_mode else "灰鲸情报社"
+    terms = _genre_terms(body)
+    entities = _default_scaffold_entities(body, seed_draft)
+    mode = entities["mode"]
+    protagonist = entities["protagonist"]
+    ally = entities["ally"]
+    second_ally = entities["second_ally"]
+    antagonist = entities["antagonist"]
+    observer = entities["observer"]
+    primary_faction = entities["primary_faction"]
+    rival_faction = entities["rival_faction"]
+    hidden_faction = entities["hidden_faction"]
+    neutral_faction = entities["neutral_faction"]
 
-    instruction_templates = [
-        (
-            f"{protagonist}在旧城区废弃地铁站完成第一次异常勘察，目标是救出被困住的住户并确认修正系统的任务边界",
-            f"{protagonist}抵达旧城区废弃地铁站后发现监控画面与现场时间不一致；{ally}在处理局终端协助定位被困住户；修正系统要求直接抹除异常表征，结果会连同住户记忆一起清空；{protagonist}选择先隔离站台入口再救人，因此被系统记录一次违规",
-            f"{protagonist}看到任务结算里出现一行被隐藏的失败名单",
-            "下一章必须追查失败名单中的第一个名字，并延续系统违规记录",
-        ),
-        (
-            f"{protagonist}追查失败名单上的失踪修正员，目标是弄清对方是否死于异常还是死于处理局善后",
-            f"{protagonist}在市立医院精神科找到失踪修正员留下的病历；{ally}发现病历里的脑波图与修正系统接口频率一致；{antagonist}以监管名义要求{protagonist}交出证据；{protagonist}把病历复制进私人终端，导致同化度首次上升",
-            f"病历最后一页写着：系统比异常更早抵达现场",
-            "下一章必须让监管组介入，并让同化度变化影响主角判断",
-        ),
-        (
-            f"{protagonist}在监管审查中保住证据，目标是证明修正系统给出的最优解会伤害普通人",
-            f"监管组在处理局深城分部对{protagonist}进行问询；{antagonist}展示被清洗记忆的幸存者录像；{protagonist}发现录像中幸存者仍能听见异常噪音；{observer}暗中递来一份未登记异常坐标，结果把{protagonist}引向更高等级事件",
-            "未登记坐标的位置正好是富人区净化装置地下",
-            "下一章必须进入富人区净化装置，并揭露异常处理的阶层差异",
-        ),
-        (
-            f"{protagonist}潜入富人区净化装置地下层，目标是确认装置是否在把异常转嫁给旧城区",
-            f"{protagonist}借维修通道进入净化装置地下层；{ally}发现装置排出的不是污染而是异常残响；旧城区居民的失眠病例与排放周期吻合；{protagonist}关闭一组阀门后让市中心短暂出现异常影像，结果引来处理局高层关注",
-            "市中心屏幕上闪过一句话：转嫁协议执行中",
-            "下一章必须处理高层关注，并让旧城区病例成为现实压力",
-        ),
-        (
-            f"{protagonist}面对高层封口命令，目标是在不暴露异常真相的前提下保住旧城区居民证词",
-            f"处理局要求{protagonist}提交全部调查资料；{antagonist}安排记忆清洗小队接触旧城区居民；{protagonist}用记忆编织伪造一份无害证词；伪造行为保护了居民却让系统判定修正失败，结果扣除权限积分",
-            "被保护的居民突然认出{protagonist}后颈的接口编号",
-            "下一章必须追查接口编号来源，并让权限扣除限制主角行动",
-        ),
-        (
-            f"{protagonist}追查自己的接口编号，目标是弄清自己是否早在入职前就被系统标记",
-            f"{protagonist}进入处理局档案室查询接口记录；{ally}冒险帮他绕过低级权限墙；档案显示{protagonist}的编号来自一批已注销实验体；{observer}承认白塔观测会一直在记录系统同化数据，结果让{protagonist}开始怀疑所有任务来源",
-            "注销名单里出现了{protagonist}亲属的名字",
-            "下一章必须让亲属线索与异常任务发生碰撞",
-        ),
-        (
-            f"{protagonist}调查亲属注销记录，目标是找回被处理局删除的家庭记忆",
-            f"{protagonist}回到儿时居住的老楼寻找残留物；楼道异常会重放被删除的家庭晚餐；系统建议立即抹除整栋楼记忆以防扩散；{protagonist}拒绝执行并用现实锚定保留一段影像，结果同化度升到危险阈值",
-            "影像里的亲属对镜头说：不要相信裁衡",
-            "下一章必须解释裁衡代号，并让同化危险影响任务选择",
-        ),
-        (
-            f"{protagonist}在同化警报下接到Ⅲ类异常任务，目标是救人同时验证裁衡是否故意隐瞒信息",
-            f"商业综合体出现时间错乱点并困住上百名普通人；裁衡只标记一个出口却隐藏第二个低风险通道；{protagonist}依靠前几章证据找到隐藏通道；{antagonist}现场接管指挥并要求牺牲少数人换取稳定，结果双方公开冲突",
-            "隐藏通道尽头不是出口，而是一间白塔观测室",
-            "下一章必须进入白塔观测室，并揭示异常不是随机出现",
-        ),
-        (
-            f"{protagonist}进入白塔观测室，目标是确认异常爆发与人类决策之间的因果关系",
-            f"观测室保存着多起异常爆发前的社会冲突记录；{observer}说明白塔只观测不制造，但裁衡会根据人类选择调整任务目标；{ally}发现处理局高层与白塔共享同化数据；{protagonist}意识到修正成功可能是在训练修正员放弃道德判断",
-            "白塔档案把{protagonist}标注为可偏离样本",
-            "下一章必须让主角做出第一次明确偏离系统规则的选择",
-        ),
-        (
-            f"{protagonist}在处理局围堵中选择偏离系统规则，目标是保住现实世界而不是完成裁衡定义的修正",
-            f"处理局封锁旧城区并准备执行大范围记忆清洗；裁衡给出最快修正方案：牺牲旧城区作为隔离带；{protagonist}联合{ally}和旧城区互助网络公开异常后果的伪装证据；他用现实锚定把异常锁在自己身上，结果赢得短暂喘息也让同化进入下一层",
-            "裁衡第一次用非任务语气询问：你想成为例外吗",
-            "下一阶段必须围绕主角如何利用而非服从系统展开",
-        ),
-    ]
-    if not anomaly_mode:
-        instruction_templates = [
-            (
-                f"{protagonist}在开场地点遭遇现实压力，目标是保住一项会改变命运的关键资源",
-                f"{protagonist}在旧宅或工作场所发现资源被{antagonist}夺走；{ally}带来一条能证明真相的线索；{protagonist}选择冒险追查而不是妥协，结果得罪{rival_faction}",
-                f"{protagonist}发现关键资源上刻着{hidden_faction}的标记",
-                "下一章必须追查标记来源，并延续主角与对立势力的冲突",
-            ),
-            (
-                f"{protagonist}追查{hidden_faction}的标记，目标是找到资源背后的真正交易方",
-                f"{protagonist}进入{neutral_faction}控制的情报场所；{ally}用私人关系换到交易记录；{antagonist}派人封锁出口；{protagonist}带着半份记录逃脱，结果暴露自己的行动路线",
-                f"交易记录缺失的半页指向{primary_faction}内部",
-                "下一章必须让主角进入核心组织内部，并处理行动暴露的后果",
-            ),
-            (
-                f"{protagonist}进入{primary_faction}内部核对交易记录，目标是确认谁在操控局面",
-                f"{protagonist}借助{ally}身份进入资料室；资料显示{rival_faction}只是执行者；{observer}提醒主角不要相信公开档案；{protagonist}复制档案后触发警报，结果被迫与{antagonist}正面对峙",
-                f"{observer}留下的坐标指向一处被地图抹掉的地点",
-                "下一章必须前往被抹掉的地点，并揭示更高层级势力",
-            ),
-        ]
-        while len(instruction_templates) < target_chapters:
-            chapter = len(instruction_templates) + 1
-            instruction_templates.append(
-                (
-                    f"{protagonist}在第 {chapter} 章围绕前章坐标展开行动，目标是取得能改变局势的证据",
-                    f"{protagonist}抵达新地点后发现证据被转移；{ally}与{neutral_faction}交换情报；{antagonist}制造阻碍迫使主角选择公开或隐藏真相；{protagonist}选择保留关键证据，结果让局势转向下一轮对抗",
-                    f"证据中出现一个与{protagonist}过去有关的名字",
-                    f"下一章必须解释第 {chapter} 章证据中的名字，并让主角付出代价",
-                )
-            )
-
-    instructions = []
+    instruction_templates = _build_scaffold_instruction_templates(mode, entities)
+    instructions: list[dict] = []
     for chapter in range(1, target_chapters + 1):
-        objective, key_events, hook, continuity_seed = instruction_templates[(chapter - 1) % len(instruction_templates)]
+        (
+            objective,
+            primary_location,
+            opposing_force,
+            key_events,
+            visible_result,
+            action_chain,
+            ending_hook,
+            continuity_seed,
+        ) = instruction_templates[(chapter - 1) % len(instruction_templates)]
+        if chapter > len(instruction_templates):
+            objective = f"{protagonist}承接第 {chapter - 1} 章后果，在新战场解决第 {chapter} 章核心危机"
+            key_events = f"{protagonist}复盘上一章代价；{ally}带来第 {chapter} 章新线索；{antagonist}升级阻挠；主角用已建立能力完成一次可见兑现"
+            ending_hook = f"第 {chapter} 章结尾出现下一阶段更高层威胁"
+            continuity_seed = f"下一章必须承接第 {chapter} 章新威胁，并保留主角上一章取得的资源或权限"
+            action_chain = [f"复盘第 {chapter - 1} 章后果", "追查新线索", "完成能力兑现"]
+            visible_result = "主角能力、资源或阵营关系产生可见升级"
+            primary_location = f"第 {chapter} 章新战场"
+            opposing_force = f"{hidden_faction}升级后的外部压力"
         instructions.append({
             "chapter_number": chapter,
             "objective": objective,
+            "protagonist": protagonist,
+            "primary_location": primary_location,
+            "opposing_force": opposing_force,
+            "action_chain": action_chain,
+            "visible_result": visible_result,
+            "state_change": f"第 {chapter} 章结束时，{protagonist}相对上一章获得新的资源、权限或敌情，但也暴露新的风险",
             "key_events": key_events,
-            "plots_to_plant": ["裁衡系统真实目的", "异常转嫁协议"] if chapter == 1 else [],
+            "plots_to_plant": [f"{hidden_faction}的真正目标"] if chapter == 1 else [],
             "plots_to_resolve": [],
             "emotion_tone": terms["tone"],
-            "ending_hook": hook,
+            "ending_hook": ending_hook,
             "continuity_seed": continuity_seed,
             "word_target": target_words,
         })
 
-    return {
-        "_meta": {
-            "source": "scaffold_fallback",
-            "quality_status": "scaffold_fallback",
-            "warnings": ["此草案由系统兜底模板生成，不建议直接批准"],
-        },
-        "project_updates": {"description": _project_description_from_body(body)},
-        "world_settings": [
+    if mode == "urban_summon":
+        world_settings = [
+            {
+                "title": "觉醒纪元与都市防线",
+                "category": "时代背景",
+                "content": "现代都市在觉醒者体系、城墙防线和空间裂缝威胁下维持秩序，天赋评级决定教育、军功和资源分配。",
+            },
+            {
+                "title": "军团召唤与评级误判",
+                "category": "能力规则",
+                "content": f"{protagonist}表面是F级量产召唤师，实则可用统御锚点替代精神微操，将低阶战灵组成军团。",
+            },
+            {
+                "title": "守城爽点循环",
+                "category": "叙事规则",
+                "content": "每轮冲突必须包含压迫、召唤扩编、军阵兑现、敌方反噬和更高层裂缝威胁。",
+            },
+        ]
+        characters = [
+            {
+                "name": protagonist,
+                "role": "protagonist",
+                "description": f"F级召唤师，目标是以军团召唤证明战略价值并守住城市。\n内在矛盾/秘密: 帝皇序列来源未明，过早暴露会引来豪门和异界双重抹杀。\n与主角利益关系: 本人，所有资源、军功和身份变化都直接推动一人成国路线。",
+                "traits": "隐忍、强硬、战场判断快、重视普通人伤亡",
+            },
+            {
+                "name": ally,
+                "role": "supporting",
+                "description": f"{primary_faction}关键支持者，目标是找到能打破兽潮数量劣势的统帅型觉醒者。\n与主角利益关系: 为{protagonist}提供军方背书和实战战场。",
+                "traits": "务实、果断、重军功",
+            },
+            {
+                "name": second_ally,
+                "role": "supporting",
+                "description": f"治疗或后勤核心，目标是建立不按评级放弃低阶觉醒者的支援体系。\n与主角利益关系: 强化召唤军团续航，是主角军团闭环的重要拼图。",
+                "traits": "冷静、善良、有豪门资源但不盲从豪门",
+            },
+            {
+                "name": antagonist,
+                "role": "antagonist",
+                "description": f"旧秩序代表，目标是维持高评级职业和豪门资源垄断。\n与主角利益关系: 视{protagonist}为动摇制度的威胁，会从舆论、资源和武力层面压制。",
+                "traits": "骄傲、强势、擅长调动规则",
+            },
+        ]
+        factions = [
+            {
+                "name": primary_faction,
+                "type": "国家/军方力量",
+                "description": "掌握城防、军功和前线资源，当前急需能应对淹没式兽潮的新战法。",
+                "relationship_with_protagonist": "潜在靠山和实战舞台",
+            },
+            {
+                "name": rival_faction,
+                "type": "豪门/旧秩序势力",
+                "description": "依靠高评级觉醒者和资源垄断维持地位，当前试图压制军团召唤复苏。",
+                "relationship_with_protagonist": "直接压迫和反噬对象",
+            },
+            {
+                "name": hidden_faction,
+                "type": "外部入侵势力",
+                "description": "通过裂缝、兽潮和潜伏者冲击城市防线，正在酝酿更大规模黑潮。",
+                "relationship_with_protagonist": "长期主线敌人",
+            },
+            {
+                "name": neutral_faction,
+                "type": "教育/行业机构",
+                "description": "掌握评级、注册和任务资格，当前被既有评价标准限制。",
+                "relationship_with_protagonist": "可被战绩改写的制度入口",
+            },
+        ]
+        outlines = [
+            {
+                "chapters_range": f"1-{arc_mid}",
+                "title": "F级压迫与军团觉醒",
+                "content": f"阶段冲突: {protagonist}被F级评级和豪门羞辱压入谷底。转折: 帝皇序列让低阶战灵形成军阵。阶段结果: 主角从废柴标签中撕开第一道口子。",
+                "level": "arc",
+                "sequence": 1,
+            },
+            {
+                "chapters_range": f"{arc_mid + 1}-{arc_two_end}" if arc_mid + 1 <= arc_two_end else f"{arc_mid}",
+                "title": "能力验证与军方入场",
+                "content": f"阶段冲突: {rival_faction}和评级制度否认召唤师价值。转折: {protagonist}在真实兽潮中用军阵救下{primary_faction}。阶段结果: 军团召唤从个人逆袭升级为战略争夺。",
+                "level": "arc",
+                "sequence": 2,
+            },
+            {
+                "chapters_range": f"{arc_two_end + 1}-{target_chapters}" if arc_two_end + 1 <= target_chapters else f"{target_chapters}",
+                "title": "黑潮前奏与一人成国",
+                "content": f"阶段冲突: {hidden_faction}发动更高强度渗透，旧制度仍试图夺走主角战果。转折: 主角分线守城并证明军团召唤可替代单点高阶战力。阶段结果: 一人成国雏形出现，下一阶段引出帝皇序列来源。",
+                "level": "arc",
+                "sequence": 3,
+            },
+        ]
+        plot_holes = [
+            {
+                "code": "PH-001",
+                "type": "能力伏笔",
+                "title": "帝皇序列为何选择主角",
+                "description": f"触发场景: {protagonist}F级觉醒时古戒激活。读者表象: 母亲遗物救场。真相方向: 古戒与上古军团召唤禁区有关。预计兑现: 第 {min(target_chapters, 10)} 章后逐步揭示。",
+                "planted_chapter": 1,
+                "planned_resolve_chapter": min(target_chapters, 10),
+                "status": "planted",
+            },
+            {
+                "code": "PH-002",
+                "type": "势力伏笔",
+                "title": f"{hidden_faction}提前渗透城内",
+                "description": f"触发场景: 兽潮总能避开强防线。读者表象: 裂缝随机扩张。真相方向: 城内有人向{hidden_faction}泄露城防信息。预计兑现: 第 {min(target_chapters, 8)} 章。",
+                "planted_chapter": 3,
+                "planned_resolve_chapter": min(target_chapters, 8),
+                "status": "planted",
+            },
+            {
+                "code": "PH-003",
+                "type": "关系伏笔",
+                "title": f"{second_ally}与军团完全体的关系",
+                "description": f"触发场景: {second_ally}治疗术对战灵产生异常增幅。读者表象: 辅助能力适配。真相方向: 生命锚点是军团召唤完全体必要条件。预计兑现: 第 {min(target_chapters, 12)} 章。",
+                "planted_chapter": 4,
+                "planned_resolve_chapter": min(target_chapters, 12),
+                "status": "planted",
+            },
+        ]
+    else:
+        world_settings = [
             {
                 "title": "故事基础世界",
                 "category": "世界观",
@@ -984,100 +1399,89 @@ def _generate_genesis_scaffold(body: GenesisGenerateRequest) -> dict:
             {
                 "title": terms["power"],
                 "category": "力量规则",
-                "content": f"故事的核心成长依赖{terms['resource']}。主角需要通过行动、判断和代价逐步掌握更高层级的力量。",
+                "content": f"故事的核心成长依赖{terms['resource']}，主角必须通过具体行动逐步兑现能力或资源优势。",
             },
             {
                 "title": "冲突结构",
                 "category": "叙事规则",
                 "content": terms["conflict"],
             },
-            {
-                "title": "首批章节舞台",
-                "category": "场景",
-                "content": f"首批章节围绕《{title}》的核心卖点展开，从主角个人处境切入，逐步扩展到组织、资源和主线谜团。",
-            },
-        ],
-        "characters": [
+        ]
+        characters = [
             {
                 "name": protagonist,
                 "role": "protagonist",
-                "description": f"《{title}》的核心人物，当前目标是在制度压力和现实危机中保住自己的判断权。\n内在矛盾/秘密: 他既依赖系统能力，又怀疑系统会把人训练成工具。\n与主角利益关系: 本人，所有组织选择都直接影响他的同化风险。",
-                "traits": "克制、警觉、共情尚未完全磨损、会用规则漏洞保护普通人",
+                "description": f"《{title}》的核心人物，目标是在压迫和危机中夺回主动权。\n内在矛盾/秘密: 掌握的关键能力或资源尚未被外界理解。\n与主角利益关系: 本人，所有选择推动主线升级。",
+                "traits": "克制、果断、能在压力下反击",
             },
             {
                 "name": ally,
                 "role": "supporting",
-                "description": f"{primary_faction}的数据分析员，当前目标是查清异常任务记录被篡改的来源。\n内在矛盾/秘密: 她的家人曾被善后程序清洗记忆，因此不完全信任处理局。\n与主角利益关系: 帮助{protagonist}取得情报，也要求他别把普通人当任务代价。",
-                "traits": "敏锐、嘴硬、技术强、对制度有保留的忠诚",
+                "description": f"主角早期盟友，目标是帮助{protagonist}拿到第一轮关键证据或资源。",
+                "traits": "敏锐、可靠、有行动力",
             },
             {
                 "name": antagonist,
                 "role": "antagonist",
-                "description": f"{rival_faction}负责人，当前目标是把{protagonist}的偏离行为压回系统流程。\n内在矛盾/秘密: 他知道系统存在漏洞，但认为牺牲少数人是维持现实稳定的必要成本。\n与主角利益关系: 代表处理局强硬秩序，持续阻断主角的第三条路。",
-                "traits": "冷静、强硬、擅长审讯和流程压制",
+                "description": f"早期对抗者，目标是阻止{protagonist}打破既有秩序。",
+                "traits": "强势、谨慎、擅长调动资源",
             },
             {
                 "name": observer,
                 "role": "supporting",
-                "description": f"{hidden_faction}联络人，当前目标是观察{protagonist}是否能偏离系统最优解。\n内在矛盾/秘密: 他曾经也是修正员，保留着被判定失败的任务记忆。\n与主角利益关系: 提供线索但不直接救人，逼迫主角自己做选择。",
-                "traits": "克制、讽刺、信息量大、立场暧昧",
+                "description": f"隐藏线索观察者，目标是测试{protagonist}是否能触及更高层真相。\n内在矛盾/秘密: 掌握关键情报但不会直接替主角解决危机。\n与主角利益关系: 提供方向，同时制造信息压力。",
+                "traits": "克制、信息量大、立场暧昧",
             },
-        ],
-        "factions": [
+        ]
+        factions = [
             {
                 "name": primary_faction,
-                "type": "官方一线机构",
-                "description": f"掌握修正系统、任务调度和异常善后资源。当前阶段要求{protagonist}完成低级异常任务，同时限制他接触高层情报。\n资源/手段: 任务权限、异常档案、记忆清洗队、修正装备。\n当前阶段行动: 继续派发任务并记录主角的同化数据。",
-                "relationship_with_protagonist": "工作所属，同时是限制主角真相探索的制度来源",
+                "type": "主线组织",
+                "description": "提供任务、资源或冲突舞台，是主角进入更大世界的入口。",
+                "relationship_with_protagonist": "既提供机会也形成限制",
             },
             {
                 "name": rival_faction,
-                "type": "内部监管势力",
-                "description": f"负责审查修正员偏离行为和封存敏感任务。当前阶段将{protagonist}列入观察名单。\n资源/手段: 审讯权限、任务冻结、记忆审查、处分流程。\n当前阶段行动: 通过程序压力迫使主角交出异常调查证据。",
-                "relationship_with_protagonist": "早期直接冲突对象",
+                "type": "敌对势力",
+                "description": "维护旧秩序并压制主角崛起。",
+                "relationship_with_protagonist": "早期主要对手",
             },
             {
                 "name": hidden_faction,
-                "type": "主线谜团势力",
-                "description": f"记录异常、系统和人类选择之间的关系。当前阶段只向{protagonist}投放线索，不承诺帮助。\n资源/手段: 未登记异常坐标、同化样本档案、失踪修正员记录。\n当前阶段行动: 测试主角是否会为了现实世界违背系统指令。",
-                "relationship_with_protagonist": "观察、试探、潜在合作但不可信",
+                "type": "隐藏势力",
+                "description": "掌握更高层真相，持续投放线索或威胁。",
+                "relationship_with_protagonist": "长期谜团来源",
             },
-            {
-                "name": neutral_faction,
-                "type": "资源/情报势力",
-                "description": f"由异常幸存者、旧城区居民和被边缘化研究者组成。当前阶段掌握官方没有登记的异常后果。\n资源/手段: 民间目击记录、地下避难点、未清洗记忆者。\n当前阶段行动: 在保护自身安全的前提下向{protagonist}提供碎片证词。",
-                "relationship_with_protagonist": "可争取对象",
-            },
-        ],
-        "outlines": [
+        ]
+        outlines = [
             {
                 "chapters_range": f"1-{arc_mid}",
-                "title": "开局压迫与觉醒",
-                "content": f"{premise} 阶段冲突: {protagonist}必须在{primary_faction}任务规则和普通人安全之间做选择。转折: 他发现系统的修正成功会掩盖现实代价。阶段结果: 主角被监管关注，但保留了第一份质疑系统的证据。",
+                "title": "开局压迫与能力显形",
+                "content": f"{premise} 阶段冲突: {protagonist}在现实压力下保住关键资源。转折: 主角完成第一次可见兑现。阶段结果: 对抗从个人压迫升级为组织关注。",
                 "level": "arc",
                 "sequence": 1,
             },
             {
                 "chapters_range": f"{arc_mid + 1}-{arc_two_end}" if arc_mid + 1 <= arc_two_end else f"{arc_mid}",
-                "title": "能力验证与势力入场",
-                "content": f"阶段冲突: {protagonist}追查异常善后链条时遭到{rival_faction}压制。转折: {hidden_faction}投放未登记坐标，证明异常处理存在转嫁机制。阶段结果: 主角获得线索，同时同化度和处分风险一起上升。",
+                "title": "势力入场与规则碰撞",
+                "content": f"阶段冲突: {rival_faction}压制主角扩大影响。转折: {hidden_faction}线索证明危机背后另有操盘者。阶段结果: 主角获得新资源但暴露行动路线。",
                 "level": "arc",
                 "sequence": 2,
             },
             {
                 "chapters_range": f"{arc_two_end + 1}-{target_chapters}" if arc_two_end + 1 <= target_chapters else f"{target_chapters}",
-                "title": "阶段高潮与主线揭示",
-                "content": f"阶段冲突: 处理局要求{protagonist}牺牲局部现实稳定来完成系统定义的修正。转折: 白塔档案显示异常并非随机出现，而是会响应人类选择。阶段结果: 主角第一次明确偏离系统规则，把系统当作可利用但不可服从的工具。",
+                "title": "阶段高潮与主线升级",
+                "content": f"阶段冲突: {protagonist}必须在公开反击和隐藏真相之间选择。转折: 主角把前期资源集中兑现。阶段结果: 第一阶段敌人反噬，更高层危机开启。",
                 "level": "arc",
                 "sequence": 3,
             },
-        ],
-        "plot_holes": [
+        ]
+        plot_holes = [
             {
                 "code": "PH-001",
                 "type": "主线谜团",
-                "title": "裁衡系统为何选择林泽",
-                "description": f"触发场景: {protagonist}第一次违规后仍获得任务结算。读者表象: 系统像是在容忍新人错误。真相方向: 裁衡需要观察能偏离最优解的样本。预计兑现: 第 {min(target_chapters, 10)} 章以后逐步揭示。",
+                "title": f"{hidden_faction}为何关注{protagonist}",
+                "description": f"触发场景: {protagonist}第一次反击后出现隐藏线索。读者表象: 偶然被卷入。真相方向: 主角能力或身份与更高层规则有关。预计兑现: 第 {min(target_chapters, 10)} 章。",
                 "planted_chapter": 1,
                 "planned_resolve_chapter": min(target_chapters, 10),
                 "status": "planted",
@@ -1085,22 +1489,26 @@ def _generate_genesis_scaffold(body: GenesisGenerateRequest) -> dict:
             {
                 "code": "PH-002",
                 "type": "势力伏笔",
-                "title": "白塔观测会的可偏离样本档案",
-                "description": f"触发场景: {observer}向{protagonist}投放未登记坐标。读者表象: 白塔像是在帮助主角。真相方向: 白塔只记录选择结果，并不保证人类安全。预计兑现: 第 {min(target_chapters, 12)} 章后揭露观测目的。",
+                "title": f"{rival_faction}背后的资源链",
+                "description": f"触发场景: {rival_faction}能提前封锁主角行动。读者表象: 对手资源强。真相方向: 资源链背后连接更高层危机。预计兑现: 第 {min(target_chapters, 8)} 章。",
                 "planted_chapter": 2,
-                "planned_resolve_chapter": min(target_chapters, 12),
+                "planned_resolve_chapter": min(target_chapters, 8),
                 "status": "planted",
             },
-            {
-                "code": "PH-003",
-                "type": "关系伏笔",
-                "title": f"{ally}家属被记忆清洗的旧案",
-                "description": f"触发场景: {ally}拒绝执行一次善后命令。读者表象: 她只是同情普通人。真相方向: 她的家属曾是异常善后牺牲者。预计兑现: 第 {min(target_chapters, 15)} 章后影响她与主角的信任。",
-                "planted_chapter": 3,
-                "planned_resolve_chapter": min(target_chapters, 15),
-                "status": "planted",
-            },
-        ],
+        ]
+
+    return {
+        "_meta": {
+            "source": "scaffold_fallback",
+            "quality_status": "scaffold_fallback",
+            "warnings": ["此草案由系统兜底模板生成，不建议直接批准"],
+        },
+        "project_updates": {"description": _project_description_from_body(body)},
+        "world_settings": world_settings,
+        "characters": characters,
+        "factions": factions,
+        "outlines": outlines,
+        "plot_holes": plot_holes,
         "instructions": instructions,
     }
 
@@ -1112,7 +1520,7 @@ def _fill_missing_genesis_sections(body: GenesisGenerateRequest, draft: dict | N
     _meta.scaffold_sections to track which parts are fallback.
     """
     normalized = _dedupe_genesis_draft(_normalize_genesis_draft(draft)) or {}
-    scaffold = _generate_genesis_scaffold(body)
+    scaffold = _generate_genesis_scaffold(body, seed_draft=normalized)
 
     scaffold_sections: list[str] = []
 
@@ -1307,10 +1715,23 @@ def _coerce_instruction(item, index: int) -> dict | None:
             key_events = "；".join(str(ev) for ev in raw_key_events if ev)
         else:
             key_events = _as_text(raw_key_events)
+        raw_action_chain = item.get("action_chain", [])
+        if isinstance(raw_action_chain, list):
+            action_chain = [_as_text(action) for action in raw_action_chain if _as_text(action)]
+        elif raw_action_chain:
+            action_chain = [_as_text(raw_action_chain)]
+        else:
+            action_chain = []
         return {
             **item,
             "chapter_number": chapter_number,
             "objective": _as_text(item.get("objective", "")),
+            "protagonist": _as_text(item.get("protagonist", "")),
+            "primary_location": _as_text(item.get("primary_location", "")),
+            "opposing_force": _as_text(item.get("opposing_force", "")),
+            "action_chain": action_chain,
+            "visible_result": _as_text(item.get("visible_result", "")),
+            "state_change": _as_text(item.get("state_change", "")),
             "key_events": key_events,
             "emotion_tone": _as_text(item.get("emotion_tone", "")),
             "ending_hook": _as_text(item.get("ending_hook", "")),
@@ -1329,6 +1750,33 @@ def _coerce_instruction(item, index: int) -> dict | None:
         "continuity_seed": "",
         "word_target": DEFAULT_INSTRUCTION_WORD_TARGET,
     }
+
+
+def _format_instruction_contract_details(instruction: dict) -> str:
+    """Format structured instruction contract fields for legacy key_events storage."""
+    lines: list[str] = []
+    label_by_key = {
+        "protagonist": "本章主角",
+        "primary_location": "主要场景",
+        "opposing_force": "阻力来源",
+        "visible_result": "可见结果",
+        "state_change": "状态变化",
+    }
+    for key, label in label_by_key.items():
+        value = _as_text(instruction.get(key, "")).strip()
+        if value:
+            lines.append(f"{label}: {value}")
+
+    action_chain = instruction.get("action_chain")
+    if isinstance(action_chain, list):
+        actions = [_as_text(action).strip() for action in action_chain if _as_text(action).strip()]
+    else:
+        action_text = _as_text(action_chain).strip()
+        actions = [action_text] if action_text else []
+    if actions:
+        lines.append("行动链: " + "；".join(actions))
+
+    return "\n".join(lines)
 
 
 def _normalize_character_role(role: str | None) -> str:
@@ -1457,13 +1905,17 @@ def _build_genesis_segment_prompt(
             f"{context}\n"
             f"{draft_block}"
             f"请只返回第 {chapter_start}-{chapter_end} 章的章节指令，且只包含以下字段:\n"
-            "- instructions: [{\"chapter_number\": 1, \"objective\": \"\", \"key_events\": \"\", \"emotion_tone\": \"\", \"ending_hook\": \"\", \"continuity_seed\": \"\", \"word_target\": 3000}]\n\n"
+            "- instructions: [{\"chapter_number\": 1, \"objective\": \"\", \"protagonist\": \"\", \"primary_location\": \"\", \"opposing_force\": \"\", \"action_chain\": [\"\", \"\", \"\"], \"visible_result\": \"\", \"state_change\": \"\", \"key_events\": \"\", \"emotion_tone\": \"\", \"ending_hook\": \"\", \"continuity_seed\": \"\", \"word_target\": 3000}]\n\n"
             "要求：\n"
             "1. 只生成当前章段，不要补写其他章。\n"
-            "2. 每章必须明确主角目标、阻力、结果变化、结尾钩子和下一章承接点。\n"
-            "3. key_events 至少写 3 个具体事件，不能只写抽象总结。\n"
-            "4. 不要返回 project_updates、world_settings、characters、factions、outlines 或 plot_holes。\n"
-            "5. 输出必须是纯 JSON，不要 Markdown、解释或尾逗号。"
+            "2. 每章必须是一张可执行施工单，不是阶段大纲；必须写清谁、在哪里、被谁阻拦、连续做了什么、最后局势如何改变。\n"
+            "3. objective 必须包含本章具体目标、主要阻力和结果变化，禁止只写\"扩大冲突/推动剧情/获得主动权/打破定律/吸引注意\"这类抽象总结。\n"
+            "4. protagonist 必须使用具体角色名；primary_location 必须具体到场景或地点；opposing_force 必须写具体人物、组织或压力源。\n"
+            "5. action_chain 必须至少 3 步，每一步都要包含执行者、动作和对象，例如\"陆恒在临江觉醒者学院考核场召唤刀盾手挡住E级魔物群\"。\n"
+            "6. visible_result 写读者可见的外部结果；state_change 写本章结束后主角、敌人、势力或资源状态的变化。\n"
+            "7. key_events 至少写 3 个具体事件，并与 action_chain 一致；ending_hook 和 continuity_seed 必须可直接承接下一章。\n"
+            "8. 不要返回 project_updates、world_settings、characters、factions、outlines 或 plot_holes。\n"
+            "9. 输出必须是纯 JSON，不要 Markdown、解释或尾逗号。"
         )
 
     raise ValueError(f"Unknown genesis segment: {segment}")
@@ -1501,76 +1953,101 @@ async def _generate_real_draft(
 
     v6.7.7: Accepts optional progress callback for SSE streaming.
     """
+    from ...llm.openai_compatible import LLMTimeoutError
+
     def _emit(event_type: str, **kwargs):
         if progress and run_id:
             progress(event_type, {"run_id": run_id, **kwargs})
 
     llm = _build_genesis_llm(settings)
+    merged: dict | None = None
+    active_segment = "foundation"
 
-    # Foundation segment
-    _emit("segment_started", segment="foundation", label=GENESIS_SEGMENT_LABELS["foundation"])
-    foundation_prompt = _build_genesis_segment_prompt(body, segment="foundation")
-    foundation = await _invoke_genesis_segment(
-        llm,
-        prompt=foundation_prompt,
-        max_tokens=GENESIS_SEGMENT_MAX_TOKENS["foundation"],
-    )
-    merged = _merge_genesis_drafts(None, foundation)
-    _emit("segment_completed", segment="foundation", label=GENESIS_SEGMENT_LABELS["foundation"])
-
-    # Cast segment
-    _emit("segment_started", segment="cast", label=GENESIS_SEGMENT_LABELS["cast"])
-    cast_prompt = _build_genesis_segment_prompt(
-        body,
-        segment="cast",
-        draft_json=json.dumps(merged, ensure_ascii=False)[:10000],
-    )
-    cast = await _invoke_genesis_segment(
-        llm,
-        prompt=cast_prompt,
-        max_tokens=GENESIS_SEGMENT_MAX_TOKENS["cast"],
-    )
-    merged = _merge_genesis_drafts(merged, cast)
-    _emit("segment_completed", segment="cast", label=GENESIS_SEGMENT_LABELS["cast"])
-
-    # Plot segment
-    _emit("segment_started", segment="plot", label=GENESIS_SEGMENT_LABELS["plot"])
-    plot_prompt = _build_genesis_segment_prompt(
-        body,
-        segment="plot",
-        draft_json=json.dumps(merged, ensure_ascii=False)[:10000],
-    )
-    plot = await _invoke_genesis_segment(
-        llm,
-        prompt=plot_prompt,
-        max_tokens=GENESIS_SEGMENT_MAX_TOKENS["plot"],
-    )
-    merged = _merge_genesis_drafts(merged, plot)
-    _emit("segment_completed", segment="plot", label=GENESIS_SEGMENT_LABELS["plot"])
-
-    # Instructions segment (per-chunk)
-    chapter_count = max(1, int(body.target_chapters or 1))
-    chunk_size = max(1, GENESIS_INSTRUCTION_CHUNK_SIZE)
-    instruction_max_tokens = min(4500, 1800 + chunk_size * 420)
-    for chapter_start in range(1, chapter_count + 1, chunk_size):
-        chapter_end = min(chapter_count, chapter_start + chunk_size - 1)
-        _emit("chapter_start", chapter_start=chapter_start, chapter_end=chapter_end,
-              label=f"正在生成章节指令 {chapter_start}-{chapter_end}")
-        instruction_prompt = _build_genesis_segment_prompt(
-            body,
-            segment="instructions",
-            draft_json=json.dumps(merged, ensure_ascii=False)[:12000],
-            chapter_start=chapter_start,
-            chapter_end=chapter_end,
-        )
-        instruction_patch = await _invoke_genesis_segment(
+    try:
+        # Foundation segment
+        active_segment = "foundation"
+        _emit("segment_started", segment="foundation", label=GENESIS_SEGMENT_LABELS["foundation"])
+        foundation_prompt = _build_genesis_segment_prompt(body, segment="foundation")
+        foundation = await _invoke_genesis_segment(
             llm,
-            prompt=instruction_prompt,
-            max_tokens=instruction_max_tokens,
+            prompt=foundation_prompt,
+            max_tokens=GENESIS_SEGMENT_MAX_TOKENS["foundation"],
         )
-        merged = _merge_genesis_drafts(merged, instruction_patch)
-        _emit("chapter_end", chapter_start=chapter_start, chapter_end=chapter_end,
-              label=f"章节指令 {chapter_start}-{chapter_end} 完成")
+        merged = _merge_genesis_drafts(None, foundation)
+        _emit("segment_completed", segment="foundation", label=GENESIS_SEGMENT_LABELS["foundation"])
+
+        # Cast segment
+        active_segment = "cast"
+        _emit("segment_started", segment="cast", label=GENESIS_SEGMENT_LABELS["cast"])
+        cast_prompt = _build_genesis_segment_prompt(
+            body,
+            segment="cast",
+            draft_json=json.dumps(merged, ensure_ascii=False)[:10000],
+        )
+        cast = await _invoke_genesis_segment(
+            llm,
+            prompt=cast_prompt,
+            max_tokens=GENESIS_SEGMENT_MAX_TOKENS["cast"],
+        )
+        merged = _merge_genesis_drafts(merged, cast)
+        _emit("segment_completed", segment="cast", label=GENESIS_SEGMENT_LABELS["cast"])
+
+        # Plot segment
+        active_segment = "plot"
+        _emit("segment_started", segment="plot", label=GENESIS_SEGMENT_LABELS["plot"])
+        plot_prompt = _build_genesis_segment_prompt(
+            body,
+            segment="plot",
+            draft_json=json.dumps(merged, ensure_ascii=False)[:10000],
+        )
+        plot = await _invoke_genesis_segment(
+            llm,
+            prompt=plot_prompt,
+            max_tokens=GENESIS_SEGMENT_MAX_TOKENS["plot"],
+        )
+        merged = _merge_genesis_drafts(merged, plot)
+        _emit("segment_completed", segment="plot", label=GENESIS_SEGMENT_LABELS["plot"])
+
+        # Instructions segment (per-chunk)
+        chapter_count = max(1, int(body.target_chapters or 1))
+        chunk_size = max(1, GENESIS_INSTRUCTION_CHUNK_SIZE)
+        instruction_max_tokens = min(4500, 1800 + chunk_size * 420)
+        for chapter_start in range(1, chapter_count + 1, chunk_size):
+            chapter_end = min(chapter_count, chapter_start + chunk_size - 1)
+            active_segment = f"instructions:{chapter_start}-{chapter_end}"
+            _emit("chapter_start", chapter_start=chapter_start, chapter_end=chapter_end,
+                  label=f"正在生成章节指令 {chapter_start}-{chapter_end}")
+            instruction_prompt = _build_genesis_segment_prompt(
+                body,
+                segment="instructions",
+                draft_json=json.dumps(merged, ensure_ascii=False)[:12000],
+                chapter_start=chapter_start,
+                chapter_end=chapter_end,
+            )
+            instruction_patch = await _invoke_genesis_segment(
+                llm,
+                prompt=instruction_prompt,
+                max_tokens=instruction_max_tokens,
+            )
+            merged = _merge_genesis_drafts(merged, instruction_patch)
+            _emit("chapter_end", chapter_start=chapter_start, chapter_end=chapter_end,
+                  label=f"章节指令 {chapter_start}-{chapter_end} 完成")
+    except LLMTimeoutError as exc:
+        logger.warning(
+            "Genesis segment timed out; using local recovery segment=%s title=%s",
+            active_segment,
+            body.title,
+            exc_info=True,
+        )
+        _emit("segment_started", segment="repair", label="LLM 超时，正在保留已完成分段并本地补齐")
+        recovered = _recover_genesis_from_partial_draft(
+            body,
+            merged,
+            reason=f"{active_segment}_llm_unavailable",
+            error_message=str(exc),
+        )
+        _emit("segment_completed", segment="repair", label="已保留可用分段并完成本地补齐")
+        return recovered
 
     return _dedupe_genesis_draft(_normalize_genesis_draft(merged)) or merged
 
@@ -1616,11 +2093,11 @@ def _build_genesis_completion_prompt(
         "- factions: [{\"name\": \"\", \"type\": \"\", \"description\": \"\", \"relationship_with_protagonist\": \"\"}]\n"
         "- outlines: [{\"chapters_range\": \"1-3\", \"title\": \"\", \"content\": \"\", \"level\": \"arc\", \"sequence\": 1}]\n"
         "- plot_holes: [{\"code\": \"PH-001\", \"type\": \"\", \"title\": \"\", \"description\": \"\", \"planted_chapter\": 1, \"planned_resolve_chapter\": 10, \"status\": \"planted\"}]\n"
-        "- instructions: [{\"chapter_number\": 1, \"objective\": \"\", \"key_events\": \"\", \"emotion_tone\": \"\", \"word_target\": 3000}]\n\n"
+        "- instructions: [{\"chapter_number\": 1, \"objective\": \"\", \"protagonist\": \"\", \"primary_location\": \"\", \"opposing_force\": \"\", \"action_chain\": [\"\", \"\", \"\"], \"visible_result\": \"\", \"state_change\": \"\", \"key_events\": \"\", \"emotion_tone\": \"\", \"ending_hook\": \"\", \"continuity_seed\": \"\", \"word_target\": 3000}]\n\n"
         "要求：\n"
         "1. 角色至少包含主角、核心盟友/女主/重要配角、主要反派或对立势力人物，必须有具体姓名、目标、矛盾和利益关系。\n"
         "2. 大纲至少覆盖首批章节范围，必须包含阶段冲突、转折和阶段结果。\n"
-        "3. 章节指令必须覆盖首批每一章，包含 objective、key_events、ending_hook、continuity_seed。\n"
+        "3. 章节指令必须覆盖首批每一章，包含 objective、protagonist、primary_location、opposing_force、action_chain、visible_result、state_change、key_events、ending_hook、continuity_seed。\n"
         "4. 输出纯 JSON，不要 Markdown、解释、注释或尾逗号。"
     )
 
@@ -1639,21 +2116,36 @@ async def _complete_real_genesis_draft(
     if not missing:
         return normalized
 
+    from ...llm.openai_compatible import LLMTimeoutError
+
     llm = _build_genesis_llm(settings)
     for _attempt in range(2):
         prompt = _build_genesis_completion_prompt(body, normalized, missing)
-        patch = await asyncio.to_thread(
-            llm.invoke_json,
-            [
-                {
-                    "role": "system",
-                    "content": "你只输出纯 JSON 对象，用于补齐小说项目创世草案缺失部分。",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=9000,
-            max_retries=2,
-        )
+        try:
+            patch = await asyncio.to_thread(
+                llm.invoke_json,
+                [
+                    {
+                        "role": "system",
+                        "content": "你只输出纯 JSON 对象，用于补齐小说项目创世草案缺失部分。",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=9000,
+                max_retries=2,
+            )
+        except LLMTimeoutError as exc:
+            logger.warning(
+                "Genesis completion repair timed out; using local recovery title=%s",
+                body.title,
+                exc_info=True,
+            )
+            return _recover_genesis_from_partial_draft(
+                body,
+                normalized,
+                reason="completion_llm_unavailable",
+                error_message=str(exc),
+            )
         normalized_patch = _dedupe_genesis_draft(_normalize_genesis_draft(patch))
         normalized = _merge_genesis_drafts(normalized, normalized_patch)
         missing = _missing_required_genesis_sections(normalized)
@@ -1665,6 +2157,179 @@ async def _complete_real_genesis_draft(
         reason="incomplete_json",
         error_message="真实 LLM 草案在两次补齐后仍缺少必需创世章节，系统已用本地恢复内容补齐。",
     )
+
+
+def _instruction_repair_issue_count(quality_report) -> int:
+    """Count repairable instruction-quality issues in a Genesis quality report."""
+    return sum(
+        1
+        for issue in quality_report.issues
+        if issue.section == "instructions"
+        and issue.code in GENESIS_REPAIRABLE_INSTRUCTION_CODES
+        and issue.severity == "blocker"
+    )
+
+
+def _has_instruction_repair_target(quality_report) -> bool:
+    """Return whether a blocked Genesis draft should receive instruction-only repair."""
+    return _instruction_repair_issue_count(quality_report) > 0
+
+
+def _format_genesis_quality_issues_for_prompt(quality_report) -> str:
+    """Format instruction quality issues for a focused repair prompt."""
+    lines: list[str] = []
+    for issue in quality_report.issues:
+        if issue.section != "instructions":
+            continue
+        if issue.code not in GENESIS_REPAIRABLE_INSTRUCTION_CODES:
+            continue
+        lines.append(
+            f"- {issue.code} [{issue.severity}]: {issue.message}"
+            + (f"；修复要求: {issue.suggestion}" if issue.suggestion else "")
+        )
+    return "\n".join(lines) or "- 章节指令缺少具体人物、地点、行动链或结果变化"
+
+
+def _build_genesis_instruction_repair_prompt(
+    body: GenesisGenerateRequest,
+    draft: dict,
+    quality_report,
+) -> str:
+    """Build a focused prompt that repairs only Genesis chapter instructions."""
+    current_json = json.dumps(draft, ensure_ascii=False)[:18000]
+    issue_text = _format_genesis_quality_issues_for_prompt(quality_report)
+    return (
+        "下面的小说创世草案只有章节指令质量未达标。请只重写 instructions，不要改世界观、角色、势力、大纲或伏笔。\n"
+        f"标题: {body.title}\n"
+        f"类型: {body.genre}\n"
+        f"创意: {body.premise.strip() or '根据标题和类型推断'}\n"
+        f"首批章节范围: 前 {body.target_chapters} 章\n\n"
+        f"【质量问题】\n{issue_text}\n\n"
+        f"【已有草案 JSON】\n{current_json}\n\n"
+        "请返回严格 JSON 对象，且只包含 instructions 字段：\n"
+        "{\"instructions\": [{\"chapter_number\": 1, \"objective\": \"\", \"protagonist\": \"\", \"primary_location\": \"\", \"opposing_force\": \"\", \"action_chain\": [\"\", \"\", \"\"], \"visible_result\": \"\", \"state_change\": \"\", \"key_events\": \"\", \"emotion_tone\": \"\", \"ending_hook\": \"\", \"continuity_seed\": \"\", \"word_target\": 3000}]}\n\n"
+        "硬性要求：\n"
+        "1. 必须覆盖已有草案中的每一章，不得增删章节。\n"
+        "2. 每章必须具体到人物、地点、阻力、三步以上行动链、可见结果和状态变化。\n"
+        "3. objective 必须写成本章可执行目标：主角要做什么、被谁/什么阻拦、结束时局势如何变化。\n"
+        "4. key_events 至少 3 个具体事件，必须与 action_chain 一致。\n"
+        "5. ending_hook 和 continuity_seed 必须能直接指导下一章承接。\n"
+        "6. 禁止只写阶段目标、抽象总结或营销式概括。\n"
+        "7. 输出纯 JSON，不要 Markdown、解释、注释或尾逗号。"
+    )
+
+
+def _instruction_repair_rank(quality_report) -> tuple[int, int, int]:
+    """Rank instruction repair candidates; lower is better."""
+    blocking_count = sum(1 for issue in quality_report.issues if issue.severity == "blocker")
+    return (
+        _instruction_repair_issue_count(quality_report),
+        blocking_count,
+        -quality_report.score,
+    )
+
+
+def _build_local_instruction_repair_candidate(
+    body: GenesisGenerateRequest,
+    draft: dict,
+):
+    """Deterministically rebuild instructions from existing Genesis entities."""
+    scaffold = _generate_genesis_scaffold(body, seed_draft=draft)
+    repaired_instructions = scaffold.get("instructions")
+    if not isinstance(repaired_instructions, list) or not repaired_instructions:
+        return draft, evaluate_genesis_draft(
+            draft,
+            title=body.title,
+            genre=body.genre,
+            premise=body.premise,
+            target_chapters=body.target_chapters,
+        )
+
+    candidate = dict(draft)
+    candidate["instructions"] = repaired_instructions
+    meta = dict(candidate.get("_meta") or {})
+    warnings = list(meta.get("warnings") or [])
+    warning = "章节指令存在模板化或重复问题，已基于现有角色/势力进行本地重建。"
+    if warning not in warnings:
+        warnings.append(warning)
+    meta.update({
+        "instruction_repair_source": "local_seeded_rebuild",
+        "warnings": warnings,
+    })
+    candidate["_meta"] = meta
+    candidate = _dedupe_genesis_draft(_normalize_genesis_draft(candidate)) or candidate
+    report = evaluate_genesis_draft(
+        candidate,
+        title=body.title,
+        genre=body.genre,
+        premise=body.premise,
+        target_chapters=body.target_chapters,
+    )
+    return candidate, report
+
+
+async def _repair_genesis_instruction_quality(
+    body: GenesisGenerateRequest,
+    settings,
+    draft: dict,
+    quality_report,
+) -> dict:
+    """Repair instruction-only Genesis quality failures without regenerating other sections."""
+    if not _has_instruction_repair_target(quality_report):
+        return draft
+
+    best_draft = draft
+    best_report = quality_report
+    local_draft, local_report = _build_local_instruction_repair_candidate(body, draft)
+    if _instruction_repair_rank(local_report) < _instruction_repair_rank(best_report):
+        best_draft = local_draft
+        best_report = local_report
+    if not _has_instruction_repair_target(best_report):
+        return best_draft
+
+    llm = _build_genesis_llm(settings)
+
+    for _attempt in range(2):
+        prompt = _build_genesis_instruction_repair_prompt(body, best_draft, best_report)
+        try:
+            patch = await asyncio.to_thread(
+                llm.invoke_json,
+                [
+                    {
+                        "role": "system",
+                        "content": "你只输出纯 JSON 对象，用于定向修复小说创世草案的章节指令。",
+                    },
+                    {"role": "user", "content": prompt},
+                ],
+                max_tokens=min(9000, 2600 + max(1, len(_as_list(best_draft.get("instructions", [])))) * 650),
+                max_retries=2,
+            )
+        except Exception:
+            logger.warning("Genesis instruction quality repair failed", exc_info=True)
+            return best_draft
+
+        normalized_patch = _dedupe_genesis_draft(_normalize_genesis_draft(patch)) or {}
+        repaired_instructions = normalized_patch.get("instructions")
+        if not isinstance(repaired_instructions, list) or not repaired_instructions:
+            continue
+
+        candidate = _merge_genesis_drafts(best_draft, {"instructions": repaired_instructions})
+        candidate = _dedupe_genesis_draft(_normalize_genesis_draft(candidate)) or candidate
+        candidate_report = evaluate_genesis_draft(
+            candidate,
+            title=body.title,
+            genre=body.genre,
+            premise=body.premise,
+            target_chapters=body.target_chapters,
+        )
+
+        if _instruction_repair_rank(candidate_report) < _instruction_repair_rank(best_report):
+            best_draft = candidate
+            best_report = candidate_report
+        if not _has_instruction_repair_target(candidate_report):
+            return candidate
+
+    return best_draft
 
 
 def _mark_genesis_generation_fallback(
@@ -1746,6 +2411,23 @@ def _build_genesis_recovery_draft(
     )
 
 
+def _recover_genesis_from_partial_draft(
+    body: GenesisGenerateRequest,
+    partial_draft: dict | None,
+    *,
+    reason: str,
+    error_message: str,
+) -> dict:
+    """Keep any successful LLM Genesis sections and locally fill the missing ones."""
+    partial = partial_draft if isinstance(partial_draft, dict) else {}
+    recovered = _fill_missing_genesis_sections(body, partial)
+    return _mark_genesis_local_recovery(
+        recovered,
+        reason=reason,
+        error_message=error_message,
+    )
+
+
 async def _generate_real_draft_with_scaffold_fallback(
     body: GenesisGenerateRequest,
     settings,
@@ -1770,6 +2452,22 @@ async def _generate_real_draft_with_scaffold_fallback(
         _emit("segment_started", segment="repair", label=GENESIS_SEGMENT_LABELS["repair"])
         result = await _complete_real_genesis_draft(body, settings, draft, run_id=run_id, progress=progress)
         _emit("segment_completed", segment="repair", label=GENESIS_SEGMENT_LABELS["repair"])
+        quality_report = evaluate_genesis_draft(
+            result,
+            title=body.title,
+            genre=body.genre,
+            premise=body.premise,
+            target_chapters=body.target_chapters,
+        )
+        if _has_instruction_repair_target(quality_report):
+            _emit("segment_started", segment="repair", label="正在定向修复章节指令")
+            result = await _repair_genesis_instruction_quality(
+                body,
+                settings,
+                result,
+                quality_report,
+            )
+            _emit("segment_completed", segment="repair", label="章节指令定向修复完成")
         return result
     except OutputValidationError as exc:
         logger.warning(
@@ -2032,6 +2730,9 @@ def _apply_genesis_to_project(repo, project_id: str, draft: dict, chapter_cleanu
         emotion_tone = _as_text(inst.get("emotion_tone", ""))
         ending_hook = _as_text(inst.get("ending_hook", ""))
         continuity_seed = _as_text(inst.get("continuity_seed", ""))
+        contract_details = _format_instruction_contract_details(inst)
+        if contract_details and contract_details not in key_events:
+            key_events = f"{key_events}\n{contract_details}".strip()
         if ending_hook and ending_hook not in key_events:
             key_events = f"{key_events}\n结尾钩子: {ending_hook}".strip()
         if continuity_seed and continuity_seed not in emotion_tone:

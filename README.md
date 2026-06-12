@@ -25,7 +25,7 @@ It ships as an Electron desktop client with an embedded React workbench and a lo
 - **Desktop-first writing workbench** for planning, drafting, revising, reviewing, and publishing chapters.
 - **Agent chapter workflow** powered by LangGraph: planner, screenwriter, author, polisher, editor, memory curator, and publisher.
 - **Project memory system** for characters, world settings, factions, outlines, plot holes, instructions, and story facts.
-- **Genesis quality gate** with depth checks for character motivations, faction actions, plot hole design, and outline specificity to prevent shallow project initialization.
+- **Genesis hardening (v6.10.6)** with structured chapter instruction contracts, instruction-only quality repair, and depth checks aligned to segmented real-mode generation.
 - **Runtime hygiene and observability** with unified version source, sensitive information redaction in errors and logs, and structured health diagnostics.
 - **Project-level style management (v6.10.4)** with canonical Style Bible initialization, structured editing, genre-aware templates, and Style Gate configuration. Style rules are injected into all real-mode generation paths (planner, screenwriter, author, polisher, editor).
 - **Story Contract Governance (v6.10.5)** with project-level core-loop contracts, supporting-mechanism drift checks, ChapterBrief payoff targets, core-loop quality gate diagnostics, and editable Story Contract controls in the project workspace.

@@ -12,6 +12,24 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.6 - Genesis Hardening
+
+Date: 2026-06-11
+
+Key changes:
+
+- **Genesis instruction contract**: segmented Genesis now requires structured chapter instructions with protagonist, primary location, opposing force, action chain, visible result, state change, hook, and continuity seed.
+- **Quality-gate alignment**: `SHALLOW_INSTRUCTION` now reads structured instruction fields before falling back to regex heuristics, keeping strict checks without false negatives for structured drafts.
+- **Instruction-only repair**: real-mode Genesis evaluates draft quality after completion and runs targeted instruction repair for repairable instruction blockers without regenerating world/cast/outlines/plot holes.
+- **Timeout recovery**: Genesis segment timeouts now preserve completed LLM sections and locally fill missing sections instead of failing the whole initialization.
+- **Backward-compatible persistence**: structured instruction fields are flattened into existing `key_events` context during Genesis approval so downstream authoring receives the concrete contract without a schema migration.
+- **Version alignment**: backend runtime and frontend package versions bumped to `6.10.6`.
+
+Verification:
+
+- `python3 -m pytest tests/test_v6106_genesis_hardening.py -q`: 7 passed
+- `python3 -m pytest tests/test_v6106_genesis_hardening.py tests/test_v664_genesis_depth_quality.py tests/test_v663_genesis_quality_gate.py tests/test_v532_project_genesis.py -q`: 62 passed
+
 ## v6.10.5 - Story Contract Governance
 
 Date: 2026-06-11
