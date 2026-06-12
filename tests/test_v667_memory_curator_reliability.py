@@ -335,6 +335,62 @@ def test_run_detail_returns_memory_status_for_reviewed_chapter(client, db_path):
     assert data["memory_status"]["memory_trusted"] is False
 
 
+def test_published_chapter_timeline_displays_publish_not_awaiting_publish(client, db_path):
+    """A published chapter must not keep showing the old awaiting_publish node."""
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    repo.create_project(project_id="test-published-timeline", name="Test", genre="test")
+    repo.add_chapter("test-published-timeline", 1, title="Ch1", status="published")
+    run_id = repo.create_workflow_run("test-published-timeline", 1)
+    repo.update_workflow_run(run_id, status="completed", current_node="awaiting_publish")
+
+    response = client.get("/api/projects/test-published-timeline/chapters/1/workflow-timeline")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["chapter_status"] == "published"
+    assert data["current_node"] == "publish"
+
+
+def test_published_chapter_timeline_normalizes_stale_running_awaiting_publish(client, db_path):
+    """Published chapters should not display an old awaiting_publish run as active."""
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    repo.create_project(project_id="test-published-running-timeline", name="Test", genre="test")
+    repo.add_chapter("test-published-running-timeline", 1, title="Ch1", status="published")
+    run_id = repo.create_workflow_run("test-published-running-timeline", 1)
+    repo.update_workflow_run(run_id, status="running", current_node="awaiting_publish")
+
+    response = client.get("/api/projects/test-published-running-timeline/chapters/1/workflow-timeline")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["chapter_status"] == "published"
+    assert data["run_status"] == "completed"
+    assert data["current_node"] == "publish"
+
+
+def test_publish_sync_updates_latest_awaiting_publish_run(db_path):
+    """Manual publish should advance the latest workflow run display node."""
+    from novel_factory.api.routes.run import _sync_latest_publish_run
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    repo.create_project(project_id="test-publish-sync", name="Test", genre="test")
+    repo.add_chapter("test-publish-sync", 1, title="Ch1", status="published")
+    run_id = repo.create_workflow_run("test-publish-sync", 1)
+    repo.update_workflow_run(run_id, status="completed", current_node="awaiting_publish")
+
+    synced = _sync_latest_publish_run(repo, "test-publish-sync", 1)
+    run = repo.get_workflow_runs_for_project("test-publish-sync", chapter_number=1, limit=1)[0]
+
+    assert synced == run_id
+    assert run["status"] == "completed"
+    assert run["current_node"] == "publish"
+
+
 def test_backfill_skips_when_trusted_exists(client, db_path):
     """Test backfill skips when trusted batch exists and force=false."""
     from novel_factory.db.repository import Repository

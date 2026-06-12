@@ -30,6 +30,7 @@ from ..validators.death_penalty import (
     has_critical_violation,
     sanitize_death_penalty_text,
 )
+from ..validators.editorial_meta import strip_editorial_meta_blocks
 from ..validators.fact_lock import check_fact_integrity, extract_fact_lock
 from ..skills.registry import SkillRegistry
 from ..agent_runtime.base import BaseAgent
@@ -424,6 +425,19 @@ class PolisherAgent(BaseAgent):
                     "status": "info",
                     "payload": {"replacements": replacements[:10]},
                 })
+
+        cleaned_meta_content, removed_meta = strip_editorial_meta_blocks(output.content)
+        if removed_meta:
+            output = output.model_copy(update={"content": cleaned_meta_content})
+            exec_events.append({
+                "event_type": "editorial_meta_sanitized",
+                "message": f"润色稿中移除 {len(removed_meta)} 段评审/诊断元评论",
+                "status": "warning",
+                "payload": {
+                    "removed_count": len(removed_meta),
+                    "samples": removed_meta[:2],
+                },
+            })
 
         self.validate_output(output.model_dump())
 
@@ -1497,12 +1511,37 @@ class PolisherAgent(BaseAgent):
                 max_tokens=max_tokens,
                 max_retries=max_retries,
                 request_timeout_seconds=request_timeout_seconds,
+                agent_id=self.agent_id,
             )
         except TypeError as exc:
             exc_text = str(exc)
-            if "max_retries" not in exc_text and "request_timeout_seconds" not in exc_text:
+            if "max_retries" not in exc_text and "request_timeout_seconds" not in exc_text and "agent_id" not in exc_text:
                 raise
-            return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
+            try:
+                return self.llm.invoke_text(
+                    messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    max_retries=max_retries,
+                    agent_id=self.agent_id,
+                )
+            except TypeError as retry_exc:
+                retry_text = str(retry_exc)
+                if "max_retries" not in retry_text and "agent_id" not in retry_text:
+                    raise
+                try:
+                    return self.llm.invoke_text(
+                        messages,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        request_timeout_seconds=request_timeout_seconds,
+                        agent_id=self.agent_id,
+                    )
+                except TypeError as final_exc:
+                    final_text = str(final_exc)
+                    if "request_timeout_seconds" not in final_text and "agent_id" not in final_text:
+                        raise
+                    return self.llm.invoke_text(messages, temperature=temperature, max_tokens=max_tokens)
 
     @staticmethod
     def _coerce_plain_text_content(text: str) -> str:

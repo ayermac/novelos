@@ -31,6 +31,7 @@ from ..validators.death_penalty import (
     has_critical_violation,
     sanitize_death_penalty_text,
 )
+from ..validators.editorial_meta import strip_editorial_meta_blocks
 from ..validators.plot_verifier import check_plot_coverage
 from ..llm.openai_compatible import LLMError, OutputValidationError, TokenUsage
 from ..llm.provider import is_configured_live_provider
@@ -488,6 +489,21 @@ class AuthorAgent(BaseAgent):
                 })
 
         output = self._sanitize_output(output, state)
+        cleaned_content, removed_meta = strip_editorial_meta_blocks(output.content)
+        if removed_meta:
+            output = output.model_copy(update={
+                "content": cleaned_content,
+                "word_count": count_words(cleaned_content),
+            })
+            exec_events.append({
+                "event_type": "editorial_meta_sanitized",
+                "message": f"正文生成中移除 {len(removed_meta)} 段评审/诊断元评论",
+                "status": "warning",
+                "payload": {
+                    "removed_count": len(removed_meta),
+                    "samples": removed_meta[:2],
+                },
+            })
 
         # v6.0: Self-check loop (generate already done; now check + optional repair)
         loop = SelfCheckLoop(agent_id=self.agent_id, max_repair_attempts=1)
@@ -706,7 +722,49 @@ class AuthorAgent(BaseAgent):
                     "downgraded": True,
                 },
             })
-        self_check_data = trace.get("self_check", {}) if isinstance(trace, dict) else {}
+        final_self_check = _self_check_wrap({"output": output}).to_dict()
+        if final_scene_coverage_issues:
+            downgraded_messages = {
+                issue.get("message", "")
+                for issue in final_scene_coverage_issues
+                if isinstance(issue, dict)
+            }
+            final_issues = [
+                issue for issue in final_self_check.get("issues", [])
+                if not (
+                    isinstance(issue, dict)
+                    and issue.get("type") == "scene_beat_coverage"
+                    and issue.get("message", "") in downgraded_messages
+                )
+            ]
+            final_warnings = list(final_self_check.get("warnings", []) or [])
+            for message in downgraded_messages:
+                warning = f"scene_beat_coverage: {message}"
+                if warning not in final_warnings:
+                    final_warnings.append(warning)
+            final_self_check["issues"] = final_issues
+            final_self_check["warnings"] = final_warnings
+            final_self_check["passed"] = len(final_issues) == 0
+            final_self_check["repair_needed"] = any(
+                isinstance(issue, dict)
+                and issue.get("type") in ("word_count", "word_count_overflow", "death_penalty")
+                for issue in final_issues
+            )
+        if isinstance(trace, dict):
+            trace["self_check"] = final_self_check
+        if final_self_check.get("passed") and autonomy.get("decision") in {"ask_human", "reroute", "refuse"}:
+            autonomy = {
+                "decision": "continue",
+                "reason": "最终自检通过；scene beat 覆盖缺口已降级为编辑建议",
+                "confidence": 0.8,
+                "risk": "low",
+                "allowed_by_policy": True,
+                "next_action": "save_and_advance",
+                "metadata": {"scene_beat_coverage_downgraded": bool(final_scene_coverage_issues)},
+            }
+            if isinstance(trace, dict):
+                trace["autonomy_decision"] = autonomy
+        self_check_data = final_self_check
         sc_passed = self_check_data.get("passed", True)
         sc_issues = self_check_data.get("issues", [])
         sc_warnings = self_check_data.get("warnings", [])
@@ -2425,25 +2483,56 @@ class AuthorAgent(BaseAgent):
             })
 
         try:
-            repaired_tail = self._invoke_text_for_author(
-                messages,
-                temperature=0.68,
-                max_tokens=prose_max_tokens,
-                max_retries=None,
-                request_timeout_seconds=(
-                    AUTHOR_LONG_FORM_TIMEOUT_SECONDS
-                    if is_configured_live_provider(self.llm)
-                    else None
-                ),
-            )
+            def _invoke_repair_tail(max_tokens: int) -> str:
+                return self._invoke_text_for_author(
+                    messages,
+                    temperature=0.68,
+                    max_tokens=max_tokens,
+                    max_retries=None,
+                    request_timeout_seconds=(
+                        AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                        if is_configured_live_provider(self.llm)
+                        else None
+                    ),
+                )
+
+            try:
+                repaired_tail = _invoke_repair_tail(prose_max_tokens)
+            except LLMError as trunc_err:
+                if "finish_reason=length" not in str(trunc_err):
+                    raise
+                config_max = self._config_max_tokens(self.llm)
+                retry_max_tokens = min(
+                    config_max,
+                    max(prose_max_tokens + 1024, int(prose_max_tokens * 1.8)),
+                )
+                if retry_max_tokens <= prose_max_tokens:
+                    raise
+                logger.warning(
+                    "Author: final segment repair truncated (max_tokens=%d), retrying with %d",
+                    prose_max_tokens,
+                    retry_max_tokens,
+                )
+                if exec_events is not None:
+                    exec_events.append({
+                        "event_type": "segment_repair_retry",
+                        "message": f"Author 最后分段定向重写被截断，使用 max_tokens={retry_max_tokens} 重试",
+                        "status": "warning",
+                        "payload": {
+                            "reason": "finish_reason=length",
+                            "original_max_tokens": prose_max_tokens,
+                            "retry_max_tokens": retry_max_tokens,
+                        },
+                    })
+                repaired_tail = _invoke_repair_tail(retry_max_tokens)
             repaired_tail = self._coerce_plain_text_content(repaired_tail)
         except Exception as e:
             logger.warning("Author: final segment targeted repair failed: %s", e)
             if exec_events is not None:
                 exec_events.append({
                     "event_type": "segment_repair_failed",
-                    "message": f"Author 最后分段定向重写失败: {e}",
-                    "status": "error",
+                    "message": f"Author 最后分段定向重写失败，已降级为编辑建议: {e}",
+                    "status": "warning",
                     "payload": {"error": str(e)[:200]},
                 })
             return merged_content
