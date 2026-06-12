@@ -112,6 +112,38 @@ def _publish_workflow_recovery_error(repo, body: PublishChapterRequest, current_
     )
 
 
+def _sync_latest_publish_run(repo, project_id: str, chapter_number: int) -> str | None:
+    """Mark the latest publish-ready run as published after manual publish."""
+    try:
+        latest_runs = repo.get_workflow_runs_for_project(
+            project_id, chapter_number=chapter_number, limit=1
+        )
+    except Exception:
+        return None
+    if not latest_runs:
+        return None
+
+    latest_run = latest_runs[0]
+    run_id = str(latest_run.get("id") or latest_run.get("run_id") or "")
+    if not run_id:
+        return None
+
+    current_node = str(latest_run.get("current_node") or "")
+    if current_node not in {"awaiting_publish", "publish", "publisher", "memory_curator"}:
+        return None
+
+    try:
+        updated = repo.update_workflow_run(
+            run_id,
+            status="completed",
+            current_node="publish",
+            clear_error=True,
+        )
+    except Exception:
+        return None
+    return run_id if updated else None
+
+
 def _run_guard_domain_result(guard_error) -> dict:
     """Build domain_result for run guard blocks."""
     details = dict(getattr(guard_error, "details", {}) or {})
@@ -659,6 +691,23 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
         if workflow_error is not None:
             return workflow_error
 
+        from ...validators.editorial_meta import strip_editorial_meta_blocks
+
+        editorial_meta_sanitized = None
+        cleaned_content, removed_meta = strip_editorial_meta_blocks(chapter.get("content") or "")
+        if removed_meta and cleaned_content:
+            repo.save_chapter_content(
+                body.project_id,
+                body.chapter,
+                cleaned_content,
+                title=chapter.get("title"),
+            )
+            chapter = repo.get_chapter(body.project_id, body.chapter) or chapter
+            editorial_meta_sanitized = {
+                "removed_count": len(removed_meta),
+                "samples": removed_meta[:2],
+            }
+
         # v6.7.9: Narrative continuity gate — hard block before publish
         from ...quality.continuity_gate import evaluate_publish_continuity, SEVERITY_BLOCKING
 
@@ -809,6 +858,8 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                 },
             )
 
+        synced_run_id = _sync_latest_publish_run(repo, body.project_id, body.chapter)
+
         # v6.6.12: Build domain_result for publish
         has_trusted_mem = has_trusted_memory_batch(repo, body.project_id, body.chapter)
         if has_trusted_mem:
@@ -820,6 +871,8 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                     "memory_curator_processed": memory_result.get("memory_curator_processed", False),
                     "memory_apply": memory_apply_result,
                     "title_guard_warning": title_guard_warning,
+                    "editorial_meta_sanitized": editorial_meta_sanitized,
+                    "synced_workflow_run_id": synced_run_id,
                 },
                 flags={
                     "chapter_published": True,
@@ -839,6 +892,8 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
                     "memory_incomplete": memory_result.get("memory_incomplete", False),
                     "memory_apply": memory_apply_result,
                     "title_guard_warning": title_guard_warning,
+                    "editorial_meta_sanitized": editorial_meta_sanitized,
+                    "synced_workflow_run_id": synced_run_id,
                 },
                 flags={
                     "chapter_published": True,
@@ -853,6 +908,8 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
             "chapter_status": "published",
             **memory_result,
             "memory_apply": memory_apply_result,
+            "editorial_meta_sanitized": editorial_meta_sanitized,
+            "synced_workflow_run_id": synced_run_id,
             "message": f"第 {body.chapter} 章已发布",
             "domain_result": domain_result,
         }

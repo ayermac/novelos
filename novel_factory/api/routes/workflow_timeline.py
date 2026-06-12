@@ -1069,6 +1069,17 @@ async def get_workflow_timeline(
                 "status": "running",
                 "current_node": "memory_curator",
             }
+        elif (
+            chapter.get("status") == "published"
+            and current_node in {"awaiting_publish", "publish", "publisher"}
+        ):
+            run_status = "completed"
+            current_node = "publish"
+            stale_run_data = {
+                **target_run,
+                "status": "completed",
+                "current_node": "publish",
+            }
 
         # Fetch node events before recovery so a human_review wrapper can be
         # attributed to the real failed node.

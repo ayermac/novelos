@@ -981,6 +981,121 @@ class TestAuthorAgent:
 
         assert repaired is None
 
+    def test_author_final_segment_repair_retries_truncation(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.llm.openai_compatible import LLMError
+
+        class TruncatedThenGoodTailLLM(LLMProvider):
+            config = type("Config", (), {"max_tokens": 8192})()
+
+            def __init__(self):
+                self.text_calls = 0
+                self.max_tokens_seen: list[int | None] = []
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+                raise AssertionError("final segment repair should use plain text")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+            ) -> str:
+                self.text_calls += 1
+                self.max_tokens_seen.append(max_tokens)
+                if self.text_calls == 1:
+                    raise LLMError("[author] LLM 输出被截断 (finish_reason=length)，content_length=194")
+                return "白塔私信在屏幕边缘弹出，周砚白发来坐标：聊聊十二年前的事。"
+
+        seeded_repo.save_scene_beats("test_proj", 1, [
+            {"sequence": 1, "scene_goal": "进入车站", "turn": "发现异常", "hook": "下探站台"},
+            {"sequence": 2, "scene_goal": "任务结算界面三段式展示", "turn": "失败名单滚动出现", "hook": "周砚白名字浮现"},
+            {"sequence": 3, "scene_goal": "白塔私信出现", "turn": "周砚白发来坐标", "hook": "聊聊十二年前的事"},
+        ])
+        conn = seeded_repo._conn()
+        conn.execute(
+            "UPDATE instructions SET ending_hook=? WHERE project_id=? AND chapter_number=?",
+            ("周砚白发来坐标，聊聊十二年前的事", "test_proj", 1),
+        )
+        conn.commit()
+        conn.close()
+
+        llm = TruncatedThenGoodTailLLM()
+        agent = AuthorAgent(seeded_repo, llm)
+        state = {
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "llm_mode": "real",
+        }
+        exec_events: list[dict] = []
+        content = agent._repair_final_segment_if_needed(
+            state=state,
+            merged_content="林默进入车站，任务结算界面三段式展示，失败名单滚动出现。",
+            segment_outputs=["林默进入车站。", "任务结算界面三段式展示，失败名单滚动出现。"],
+            chunks=[
+                [{"sequence": 1, "scene_goal": "进入车站", "turn": "发现异常", "hook": "下探站台"}],
+                [{"sequence": 3, "scene_goal": "白塔私信出现", "turn": "周砚白发来坐标", "hook": "聊聊十二年前的事"}],
+            ],
+            compact_context="fallback context",
+            instruction={"ending_hook": "周砚白发来坐标，聊聊十二年前的事"},
+            chapter_number=1,
+            task_desc="补齐章末钩子",
+            exec_events=exec_events,
+        )
+
+        assert llm.text_calls == 2
+        assert llm.max_tokens_seen[1] > llm.max_tokens_seen[0]
+        assert "聊聊十二年前的事" in content
+        assert any(event["event_type"] == "segment_repair_retry" for event in exec_events)
+        assert any(event["event_type"] == "segment_repair_completed" for event in exec_events)
+
+    def test_author_scene_beat_downgrade_updates_self_check_status(self, seeded_repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.models.schemas import AuthorOutput
+
+        agent = AuthorAgent(seeded_repo, StubLLMProvider())
+        seeded_repo.update_chapter_status("test_proj", 1, "scripted")
+
+        agent._should_use_plain_text_primary = lambda _state: True
+        agent._try_plain_text_draft = lambda *args, **kwargs: AuthorOutput(
+            title="第一章 测试",
+            content="正文" * 1400,
+            word_count=2800,
+            implemented_events=[],
+            used_plot_refs=[],
+        )
+        agent._try_repair_scene_beat_coverage = lambda state, output, issues, context: None
+        agent._scene_beat_coverage_issues = lambda state, content: [
+            {"type": "scene_beat_coverage", "message": "正文尾段缺少最后 scene beat"}
+        ]
+        agent._instruction_items = lambda value: []
+
+        result = agent.run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "scripted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        self_check_events = [
+            event for event in result["_exec_events"]
+            if event["event_type"] == "self_check_completed"
+        ]
+        assert self_check_events
+        assert self_check_events[-1]["payload"]["passed"] is True
+        assert self_check_events[-1]["payload"]["issue_count"] == 0
+        assert self_check_events[-1]["payload"]["warning_count"] >= 1
+        assert "自检通过" in self_check_events[-1]["message"]
+        assert result["_trace"]["self_check"]["passed"] is True
+        assert result["_trace"]["self_check"]["issues"] == []
+
     def test_author_context_is_capped_but_preserves_head_and_tail(self, seeded_repo):
         from novel_factory.agents.author import AuthorAgent, AUTHOR_CONTEXT_CHAR_LIMIT
 
@@ -2006,8 +2121,9 @@ class TestPolisherAgent:
                 self.json_calls = 0
                 self.text_calls = 0
                 self.last_timeout = None
+                self.last_agent_id = None
 
-            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None) -> dict:
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None, agent_id="unknown") -> dict:
                 self.json_calls += 1
                 raise AssertionError("real provider polishing should not require long JSON output")
 
@@ -2018,9 +2134,11 @@ class TestPolisherAgent:
                 max_tokens=None,
                 max_retries=None,
                 request_timeout_seconds=None,
+                agent_id="unknown",
             ) -> str:
                 self.text_calls += 1
                 self.last_timeout = request_timeout_seconds
+                self.last_agent_id = agent_id
                 return "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 80
 
         base_content = "林逸盯着手机屏幕。任务完成的界面泛着淡淡蓝光，提交按钮就在那儿一闪一闪。" * 80
@@ -2045,6 +2163,56 @@ class TestPolisherAgent:
         assert llm.json_calls == 0
         assert llm.text_calls == 1
         assert llm.last_timeout == 300
+        assert llm.last_agent_id == "polisher"
+
+    def test_polisher_removes_editorial_meta_before_save(self, seeded_repo):
+        from novel_factory.agents.polisher import PolisherAgent
+
+        class MetaLeakingPolisherLLM(LLMProvider):
+            config = type("Config", (), {"max_tokens": 4096})()
+
+            def invoke_json(self, messages, schema=None, temperature=None, max_tokens=None, agent_id="unknown") -> dict:
+                raise AssertionError("real provider polishing should use text")
+
+            def invoke_text(
+                self,
+                messages,
+                temperature=None,
+                max_tokens=None,
+                max_retries=None,
+                request_timeout_seconds=None,
+                agent_id="unknown",
+            ) -> str:
+                story = "陆恒把铭牌扣进掌心，沿着楼梯向下走。" * 130
+                return (
+                    "（章末钩子强度不足，当前钩子仅为“走”字及前往黑市的悬念。建议："
+                    "增加一句环境暗示。但此处未扩写，保持原样。）\n\n"
+                    + story
+                )
+
+        draft = "陆恒把铭牌扣进掌心，沿着楼梯向下走。" * 130
+        seeded_repo.save_chapter_content("test_proj", 1, draft, "第一章 测试")
+        seeded_repo.update_chapter_status("test_proj", 1, "drafted")
+
+        result = PolisherAgent(seeded_repo, MetaLeakingPolisherLLM()).run({
+            "project_id": "test_proj",
+            "chapter_number": 1,
+            "chapter_status": "drafted",
+            "retry_count": 0,
+            "max_retries": 3,
+            "requires_human": False,
+            "error": None,
+            "llm_mode": "real",
+        })
+
+        assert result["chapter_status"] == ChapterStatus.POLISHED.value
+        chapter = seeded_repo.get_chapter("test_proj", 1)
+        assert "章末钩子强度不足" not in chapter["content"]
+        assert chapter["content"].startswith("第一章 测试\n\n陆恒")
+        assert any(
+            event["event_type"] == "editorial_meta_sanitized"
+            for event in result["_exec_events"]
+        )
 
     def test_polisher_rejects_overlong_output_before_save(self, seeded_repo):
         from novel_factory.agents.polisher import PolisherAgent

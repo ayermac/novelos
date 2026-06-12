@@ -1273,34 +1273,40 @@ function WorkflowBody({
 
   // v5.8.2: Timeline API is the primary workflow truth when available.
   if (timeline) {
-    const nodeLabel = tWorkflowNodeLabel(timeline.current_node)
-    const statusLabel = timeline.run_status ? tWorkflowStatus(timeline.run_status) : '—'
     const timelineChapterStatus = timeline.chapter_status || currentChapterStatus || ''
-    const incompleteCompletedRun = isCompletedBeforeTerminal(timeline.run_status, timelineChapterStatus)
+    const effectiveCurrentNode = timelineChapterStatus === 'published' && timeline.current_node === 'awaiting_publish'
+      ? 'publish'
+      : timeline.current_node
+    const effectiveRunStatus = timelineChapterStatus === 'published' && timeline.current_node === 'awaiting_publish'
+      ? 'completed'
+      : timeline.run_status
+    const nodeLabel = tWorkflowNodeLabel(effectiveCurrentNode)
+    const statusLabel = effectiveRunStatus ? tWorkflowStatus(effectiveRunStatus) : '—'
+    const incompleteCompletedRun = isCompletedBeforeTerminal(effectiveRunStatus, timelineChapterStatus)
     const isStale = timeline.is_stale
-    const isRunning = timeline.run_status === 'running'
+    const isRunning = effectiveRunStatus === 'running'
 
-    const statusTone = isStale || incompleteCompletedRun || timeline.run_status === 'blocked' ? 'warning' : timeline.run_status === 'failed' ? 'error' : 'info'
+    const statusTone = isStale || incompleteCompletedRun || effectiveRunStatus === 'blocked' ? 'warning' : effectiveRunStatus === 'failed' ? 'error' : 'info'
     const statusHeadline = isStale
       ? '工作流疑似卡住'
       : isRunning
         ? '工作流正在推进'
-        : timeline.run_status === 'blocked'
+        : effectiveRunStatus === 'blocked'
           ? '工作流已阻塞'
           : incompleteCompletedRun
             ? '工作流提前结束'
-          : timeline.run_status === 'completed'
+          : effectiveRunStatus === 'completed'
             ? '工作流已完成'
             : '最近一次运行'
     const statusDescription = isStale
       ? `当前节点：${nodeLabel} 已超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未完成，建议进入运行恢复处理卡住运行。`
       : isRunning
         ? `当前节点：${nodeLabel}，仍在处理。若超过 ${STUCK_RUN_THRESHOLD_MINUTES} 分钟未变化，请按卡住运行处理。`
-        : timeline.run_status === 'blocked'
+        : effectiveRunStatus === 'blocked'
           ? `本次运行已阻塞，需要先处理最近的失败或返修原因。`
           : incompleteCompletedRun
             ? `本次运行没有到达发布终态，章节仍停在 ${tChapterStatus(timelineChapterStatus)}，当前节点：${nodeLabel}。请继续生成或进入运行详情排查。`
-          : timeline.run_status === 'completed'
+          : effectiveRunStatus === 'completed'
             ? '工作流已完成，可查看产物或继续下一章。'
             : '最近一次运行记录如下。'
 
@@ -1452,6 +1458,9 @@ function WorkflowBody({
     const timelineSteps: Step[] = timeline.nodes.map((n) => {
       const existingEvents = n.events || []
       const live = liveEventsByNode[n.node_name] || []
+      const nodeStatus = timelineChapterStatus === 'published' && n.node_name === 'awaiting_publish'
+        ? 'completed'
+        : n.status
       const mergedEvents = live.length > 0
         ? mergeWorkflowEvents(existingEvents, live)
         : existingEvents
@@ -1461,7 +1470,7 @@ function WorkflowBody({
         description: n.messages[0] || '',
         node_group: n.node_group,
         node_type: n.node_type,
-        status: n.status as Step['status'],
+        status: nodeStatus as Step['status'],
         node_status: n.node_status,
         domain_status: n.domain_status,
         severity: n.severity,
@@ -1503,7 +1512,7 @@ function WorkflowBody({
               )}
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'flex-end', gap: 8 }}>
-              <span className={`status-badge status-${timeline.run_status || 'unknown'}`}>{statusLabel}</span>
+              <span className={`status-badge status-${effectiveRunStatus || 'unknown'}`}>{statusLabel}</span>
             </div>
           </div>
           {shouldShowRecoveryPanel && (
@@ -1542,7 +1551,7 @@ function WorkflowBody({
           </div>
           {(checkpoint?.checkpoint_node || checkpoint?.checkpoint_summary || (checkpoint?.state_keys?.length || 0) > 0) && (
             <div className="workflow-checkpoint-summary">
-              {checkpoint?.checkpoint_node && <span>checkpoint 节点：{tWorkflowNodeLabel(checkpoint.checkpoint_node)}</span>}
+              {checkpoint?.checkpoint_node && <span>checkpoint 节点：{tWorkflowNodeLabel(timelineChapterStatus === 'published' && checkpoint.checkpoint_node === 'awaiting_publish' ? 'publish' : checkpoint.checkpoint_node)}</span>}
               {checkpoint?.checkpoint_summary && <span>{checkpoint.checkpoint_summary}</span>}
               {(checkpoint?.state_keys?.length || 0) > 0 && <span>state keys：{checkpoint?.state_keys.slice(0, 8).join('、')}</span>}
             </div>
