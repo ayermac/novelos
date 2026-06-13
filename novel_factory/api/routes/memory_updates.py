@@ -90,12 +90,40 @@ def _normalize_character_memory_data(data: dict) -> dict:
     the characters table, status is only an active/inactive lifecycle flag.
     """
     normalized = _normalize_text_fields(
-        data, ("traits", "description", "alias", "role", "status")
+        data, ("traits", "description", "alias", "role")
     )
-    if "status" in normalized:
-        lifecycle_status = str(normalized.get("status") or "").strip().lower()
-        if lifecycle_status not in {"active", "inactive"}:
+    story_notes: list[str] = []
+    if "status" in data:
+        lifecycle_status = str(data.get("status") or "").strip().lower()
+        if lifecycle_status in {"active", "inactive"}:
+            normalized["status"] = lifecycle_status
+        else:
             normalized.pop("status", None)
+            status_text = _json_text(data.get("status")).strip()
+            if status_text:
+                story_notes.append(f"剧情状态：{status_text}")
+    for key, label in (
+        ("story_status", "剧情状态"),
+        ("state", "剧情状态"),
+        ("current_state", "剧情状态"),
+        ("location", "位置"),
+        ("current_location", "位置"),
+        ("position", "位置"),
+    ):
+        value = _json_text(data.get(key)).strip()
+        if value:
+            story_notes.append(f"{label}：{value}")
+
+    if story_notes:
+        existing_description = str(normalized.get("description") or "").strip()
+        merged_notes = []
+        for note in story_notes:
+            if note not in existing_description and note not in merged_notes:
+                merged_notes.append(note)
+        if merged_notes:
+            normalized["description"] = (
+                f"{existing_description}\n" if existing_description else ""
+            ) + "\n".join(merged_notes)
     return normalized
 
 
@@ -433,29 +461,118 @@ def _infer_world_context_subject(summary: str, evidence: str) -> str:
     return ""
 
 
+_CHARACTER_NAME_IGNORED = {
+    "角色状态", "状态更新", "角色更新", "人物更新", "证据", "他们", "身后", "这里",
+    "今天", "晨会", "主角", "有人", "外部", "内部", "位置", "交易失败", "暗卫",
+}
+
+
+def _clean_character_name_candidate(value) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    text = text.strip("「」“”'\" \t，。；：:、")
+    text = re.sub(r"^(?:更新|新增|创建|补充|记录|校正|角色|人物|目标|对象)\s*", "", text)
+    text = re.sub(r"^(?:角色|人物)?(?:状态|位置|行动)?(?:更新|补充|记录)\s*[：:]?\s*", "", text)
+    text = re.split(r"[（(]", text, maxsplit=1)[0]
+    text = re.split(
+        r"(?:在本章|本章|当前|已经|正在|仍在|陷入|进入|处于|位置|状态|行动|目标|的|与|和|及|，|,|。|；|;|：|:|\s)",
+        text,
+        maxsplit=1,
+    )[0]
+    text = text.strip("「」“”'\" \t，。；：:、")
+    if not text or text in _CHARACTER_NAME_IGNORED:
+        return ""
+    if len(_compact_match_text(text)) < 2 and not re.fullmatch(r"[A-Z]{1,4}-\d{1,4}", text):
+        return ""
+    if len(text) > 16:
+        return ""
+    return text
+
+
+def _character_name_candidates_from_value(value) -> list[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return []
+    candidates: list[str] = []
+    for part in re.split(r"[/／、,，;；]", raw):
+        cleaned = _clean_character_name_candidate(part)
+        if cleaned and cleaned not in candidates:
+            candidates.append(cleaned)
+    quoted = re.findall(r"[「“《]([\u4e00-\u9fffA-Za-z0-9·-]{1,16})[」”》]", raw)
+    for part in quoted:
+        cleaned = _clean_character_name_candidate(part)
+        if cleaned and cleaned not in candidates:
+            candidates.append(cleaned)
+    return candidates
+
+
+def _character_aliases(character: dict) -> list[str]:
+    aliases: list[str] = []
+    for value in (character.get("name"), character.get("alias")):
+        text = str(value or "").strip()
+        if not text:
+            continue
+        aliases.extend(_character_name_candidates_from_value(text) or [text])
+    deduped: list[str] = []
+    for alias in aliases:
+        cleaned = _clean_character_name_candidate(alias) or str(alias).strip()
+        if cleaned and cleaned not in deduped:
+            deduped.append(cleaned)
+    return deduped
+
+
 def _find_character_for_memory_update(repo, project_id: str, item: dict, after_data: dict) -> dict | None:
     """Find a character target for update patches that omitted target_id."""
     before_data = _parse_json_object(item.get("before_json"))
-    names = [
-        str(candidate or "").strip()
-        for candidate in (
-            after_data.get("name"),
-            item.get("target_name"),
-            before_data.get("name"),
-        )
-        if str(candidate or "").strip()
-    ]
+    names: list[str] = []
+    for candidate in (
+        after_data.get("name"),
+        after_data.get("character_name"),
+        after_data.get("subject"),
+        item.get("target_name"),
+        before_data.get("name"),
+        before_data.get("character_name"),
+        before_data.get("subject"),
+    ):
+        for name in _character_name_candidates_from_value(candidate):
+            if name and name not in names:
+                names.append(name)
+
     characters = repo.list_characters(project_id, include_inactive=True)
     exact = next(
         (
             character
             for character in characters
-            if str(character.get("name") or "").strip() in names
+            if any(alias in names for alias in _character_aliases(character))
         ),
         None,
     )
     if exact:
         return exact
+
+    search_text = "\n".join(
+        str(part or "")
+        for part in (
+            item.get("target_name"),
+            item.get("rationale"),
+            item.get("evidence_text"),
+        )
+    )
+    compact_search = _compact_match_text(search_text)
+    if compact_search:
+        scored: list[tuple[int, dict]] = []
+        for character in characters:
+            best = 0
+            for alias in _character_aliases(character):
+                compact_alias = _compact_match_text(alias)
+                if len(compact_alias) >= 2 and compact_alias in compact_search:
+                    best = max(best, len(compact_alias))
+            if best:
+                scored.append((best, character))
+        scored.sort(key=lambda entry: entry[0], reverse=True)
+        if scored and (len(scored) == 1 or scored[0][0] >= scored[1][0] + 2):
+            return scored[0][1]
 
     inferred_name = _infer_character_name_for_memory_update(item, after_data)
     if not inferred_name:
@@ -464,7 +581,7 @@ def _find_character_for_memory_update(repo, project_id: str, item: dict, after_d
         (
             character
             for character in characters
-            if str(character.get("name") or "").strip() == inferred_name
+            if inferred_name in _character_aliases(character)
         ),
         None,
     )
@@ -564,12 +681,16 @@ def _infer_character_name_for_memory_update(item: dict, after_data: dict) -> str
     before_data = _parse_json_object(item.get("before_json"))
     for candidate in (
         after_data.get("name"),
+        after_data.get("character_name"),
+        after_data.get("subject"),
         item.get("target_name"),
         before_data.get("name"),
+        before_data.get("character_name"),
+        before_data.get("subject"),
     ):
-        text = str(candidate or "").strip()
-        if text:
-            return text
+        for text in _character_name_candidates_from_value(candidate):
+            if text:
+                return text
 
     parts = [
         str(part or "")
@@ -599,13 +720,21 @@ def _infer_character_name_for_memory_update(item: dict, after_data: dict) -> str
         if match:
             return match.group(1)
 
+    direct_patterns = (
+        r"(?:更新|新增|创建|补充|记录|校正)([\u4e00-\u9fffA-Za-z0-9·]{1,16})(?:（[^）]{1,30}）|\([^)]{1,30}\))?(?:在|的|当前|本章|状态|位置|行动|目标|与|和|及|，|,|\s)",
+        r"(?:角色|人物)\s*[：:]\s*([\u4e00-\u9fffA-Za-z0-9·]{1,16})(?:（[^）]{1,30}）|\([^)]{1,30}\))?",
+        r"[「“《]([\u4e00-\u9fffA-Za-z0-9·]{1,16})[」”》]\s*(?:状态|位置|行动|角色|人物)",
+    )
+    for part in parts:
+        for pattern in direct_patterns:
+            for match in re.findall(pattern, part):
+                candidate = _clean_character_name_candidate(match)
+                if candidate:
+                    return candidate
+
     patterns = (
         r"^([\u4e00-\u9fffA-Za-z0-9]{2,12}?)(?:的|行动|追踪|忽然|提前|没继续|继续|已经|正在|用)",
     )
-    ignored = {
-        "角色状态", "状态更新", "证据", "他们", "身后", "这里", "今天", "晨会",
-        "主角", "有人", "外部", "内部",
-    }
     ignored_prefixes = ("因为", "以及", "但是", "如果", "这里", "今天", "上方", "身后")
     for part in parts:
         for segment in re.split(r"[，。；;:：\n\"'“”‘’——,]", part):
@@ -616,8 +745,8 @@ def _infer_character_name_for_memory_update(item: dict, after_data: dict) -> str
                 match = re.search(pattern, segment)
                 if not match:
                     continue
-                candidate = str(match.group(1) or "").strip("，。；：:、 　")
-                if candidate and candidate not in ignored:
+                candidate = _clean_character_name_candidate(match.group(1))
+                if candidate:
                     return candidate
     return ""
 
@@ -1401,6 +1530,104 @@ def _fallback_apply_error() -> EnvelopeResponse:
     )
 
 
+def _canonical_memory_json(value: Any) -> str:
+    if value is None:
+        return ""
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+        return json.dumps(parsed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        return str(value or "").strip()
+
+
+def _memory_item_effect_signature(item: dict) -> tuple:
+    return (
+        str(item.get("target_table") or ""),
+        str(item.get("operation") or ""),
+        str(item.get("target_id") or ""),
+        _canonical_memory_json(item.get("before_json")),
+        _canonical_memory_json(item.get("after_json")),
+    )
+
+
+def _memory_batch_effect_signature(repo, batch: dict) -> tuple | None:
+    try:
+        items = repo.list_memory_items(batch["id"])
+    except Exception:
+        items = []
+    if not items:
+        return None
+    return tuple(sorted(_memory_item_effect_signature(item) for item in items))
+
+
+def _ignore_duplicate_memory_batch(repo, batch_id: str) -> bool:
+    try:
+        for item in repo.list_memory_items(batch_id):
+            if item.get("status") != "applied":
+                repo.update_memory_item(item["id"], {"status": "ignored"})
+        repo.update_memory_batch(batch_id, {"status": "ignored"})
+        return True
+    except Exception:
+        return False
+
+
+def dedupe_duplicate_memory_batches_for_chapter(
+    repo,
+    project_id: str,
+    chapter_number: int | None = None,
+) -> dict:
+    """Ignore exact duplicate pending memory batches for a chapter/project.
+
+    Duplicate is intentionally strict: the item effect signature must match.
+    Applied batches are never ignored; if an applied copy exists, pending exact
+    duplicates are ignored.
+    """
+    try:
+        batches = repo.list_memory_batches(project_id)
+    except Exception:
+        return {"ignored_count": 0, "ignored_batch_ids": []}
+
+    grouped: dict[tuple[int, tuple], list[dict]] = {}
+    for batch in batches:
+        batch_chapter = int(batch.get("chapter_number") or 0)
+        if chapter_number is not None and batch_chapter != int(chapter_number):
+            continue
+        if str(batch.get("status") or "") == "ignored":
+            continue
+        signature = _memory_batch_effect_signature(repo, batch)
+        if not signature:
+            continue
+        grouped.setdefault((batch_chapter, signature), []).append(batch)
+
+    ignored_batch_ids: list[str] = []
+    for duplicate_batches in grouped.values():
+        if len(duplicate_batches) <= 1:
+            continue
+        applied_batches = [
+            batch for batch in duplicate_batches
+            if str(batch.get("status") or "") == "applied"
+        ]
+        if applied_batches:
+            keep_ids = {str(batch["id"]) for batch in applied_batches}
+        else:
+            duplicate_batches.sort(key=lambda batch: str(batch.get("created_at") or ""))
+            keep_ids = {str(duplicate_batches[0]["id"])}
+
+        for batch in duplicate_batches:
+            batch_id = str(batch["id"])
+            if batch_id in keep_ids:
+                continue
+            if str(batch.get("status") or "") == "applied":
+                continue
+            if _ignore_duplicate_memory_batch(repo, batch_id):
+                ignored_batch_ids.append(batch_id)
+
+    return {
+        "ignored_count": len(ignored_batch_ids),
+        "ignored_batch_ids": ignored_batch_ids,
+    }
+
+
 def apply_pending_memory_batches_for_chapter(
     repo,
     project_id: str,
@@ -1412,7 +1639,13 @@ def apply_pending_memory_batches_for_chapter(
     trusted MemoryCurator output. Fallback/untrusted batches stay in the inbox
     and are never applied silently.
     """
-    from ._memory_curator_gate import is_state_card_fallback_batch, is_trusted_memory_batch
+    from ._memory_curator_gate import is_state_card_fallback_batch
+
+    dedupe_result = dedupe_duplicate_memory_batches_for_chapter(
+        repo,
+        project_id,
+        chapter_number,
+    )
 
     batches = [
         batch for batch in repo.list_memory_batches(project_id)
@@ -1439,11 +1672,11 @@ def apply_pending_memory_batches_for_chapter(
     for batch in batches:
         batch_id = batch["id"]
         all_items = repo.list_memory_items(batch_id)
-        if is_state_card_fallback_batch(repo, batch) or not is_trusted_memory_batch(repo, batch):
+        if is_state_card_fallback_batch(repo, batch):
             skipped_batches.append({
                 "batch_id": batch_id,
                 "status": batch.get("status"),
-                "reason": "untrusted_or_fallback",
+                "reason": "fallback",
                 "items": len(all_items),
             })
             continue
@@ -1510,6 +1743,7 @@ def apply_pending_memory_batches_for_chapter(
         "skipped_batches": skipped_batches,
         "failed_batches": [],
         "items_processed": total_items_processed,
+        "dedupe": dedupe_result,
     }
 
 
@@ -1599,6 +1833,7 @@ async def list_memory_batches(
             )
 
             ignore_duplicate_state_card_fallback_batches(repo, project_id)
+            dedupe_duplicate_memory_batches_for_chapter(repo, project_id)
             for batch in repo.list_memory_batches(project_id):
                 chapter_number = batch.get("chapter_number")
                 if chapter_number is None:

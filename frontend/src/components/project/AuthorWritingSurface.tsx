@@ -714,6 +714,12 @@ export default function AuthorWritingSurface({
   const qualityScore = persistedQualityScore
   const statusLabel = tChapterStatus(status)
   const memoryCuratorNode = timeline?.nodes?.find((node) => node.node_name === 'memory_curator')
+  // v6.7.6: Block publish CTAs when workflow is broken
+  const effectiveRunStatus = timeline?.run_status || runDetail?.workflow_status
+  const effectiveCurrentNode = timeline?.current_node || runDetail?.current_node || ''
+  const effectiveMemoryStatus = timeline?.memory_status || runDetail?.memory_status
+  const memoryTrusted = isTrustedMemoryStatus(effectiveMemoryStatus)
+  const memoryHasResult = Boolean(effectiveMemoryStatus && effectiveMemoryStatus.memory_status !== 'missing')
   const memoryCuratorRunning = Boolean(
     timeline?.memory_curator_running ||
     memoryCuratorNode?.status === 'running' ||
@@ -726,18 +732,14 @@ export default function AuthorWritingSurface({
       (timeline.current_node === 'memory_curator' || memoryCuratorNode?.flags?.memory_curator_running)
     )
   )
+  const effectiveMemoryRunning = memoryCuratorRunning && !memoryHasResult
   const isRunningAnotherChapter = Boolean(
     isProjectWorkflowRunning && runningWorkflowChapter && runningWorkflowChapter !== currentChapter
   )
-  const workflowBusy = isStreaming || isWorkflowRunning || timeline?.run_status === 'running' || memoryCuratorRunning
+  const workflowBusy = isStreaming || isWorkflowRunning || timeline?.run_status === 'running' || effectiveMemoryRunning
   const isWorkflowActive = workflowBusy || isRunningAnotherChapter
   const showHeaderGenerationAction = activeTab !== 'workflow'
 
-  // v6.7.6: Block publish CTAs when workflow is broken
-  const effectiveRunStatus = timeline?.run_status || runDetail?.workflow_status
-  const effectiveCurrentNode = timeline?.current_node || runDetail?.current_node || ''
-  const effectiveMemoryStatus = timeline?.memory_status || runDetail?.memory_status
-  const memoryTrusted = isTrustedMemoryStatus(effectiveMemoryStatus)
   const ignoreBrokenRunForPublish = canPublishReal &&
     (effectiveRunStatus === 'blocked' || effectiveRunStatus === 'failed') &&
     (PUBLISH_COMPATIBLE_BLOCKED_NODES.has(effectiveCurrentNode) || (memoryTrusted && effectiveCurrentNode === 'memory_curator'))

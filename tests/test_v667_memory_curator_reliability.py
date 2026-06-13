@@ -372,6 +372,49 @@ def test_published_chapter_timeline_normalizes_stale_running_awaiting_publish(cl
     assert data["current_node"] == "publish"
 
 
+def test_timeline_completes_zombie_memory_run_when_batch_exists(client, db_path):
+    """If MemoryCurator created a batch before run finalization, timeline should self-heal."""
+    from novel_factory.db.repository import Repository
+
+    repo = Repository(db_path)
+    project_id = "test-zombie-memory-run"
+    repo.create_project(project_id=project_id, name="Test", genre="test")
+    repo.add_chapter(project_id, 2, title="Ch2", status="awaiting_publish")
+    run_id = repo.create_workflow_run(project_id, 2)
+    repo.update_workflow_run(run_id, status="running", current_node="memory_curator")
+    repo.acquire_memory_curator_lock(project_id, 2, run_id=run_id)
+    repo.start_task(project_id, 2, "memory", "memory_curator", workflow_run_id=run_id)
+    batch = repo.create_memory_batch(project_id, chapter_number=2, run_id=run_id, summary="第2章记忆提取 (1项)")
+    repo.create_memory_item(
+        batch_id=batch["id"],
+        project_id=project_id,
+        target_table="story_facts",
+        operation="create",
+        target_id=None,
+        before_json=None,
+        after_json=json.dumps({"fact_key": "chapter_2_fact"}, ensure_ascii=False),
+        confidence=0.9,
+        evidence_text="第2章可信证据",
+        rationale="MemoryCurator LLM 复核",
+    )
+
+    response = client.get(f"/api/projects/{project_id}/chapters/2/workflow-timeline")
+
+    assert response.status_code == 200
+    data = response.json()["data"]
+    assert data["run_status"] == "completed"
+    assert data["current_node"] == "awaiting_publish"
+    assert data["memory_curator_running"] is False
+    assert data["memory_status"]["memory_status"] == "trusted"
+    memory_node = next(node for node in data["nodes"] if node["node_name"] == "memory_curator")
+    assert memory_node["status"] == "completed"
+    assert memory_node["node_status"] == "succeeded"
+    run = repo.get_workflow_runs_for_project(project_id, chapter_number=2, limit=1)[0]
+    assert run["status"] == "completed"
+    assert run["current_node"] == "awaiting_publish"
+    assert repo.get_memory_curator_lock(project_id, 2) is None
+
+
 def test_publish_sync_updates_latest_awaiting_publish_run(db_path):
     """Manual publish should advance the latest workflow run display node."""
     from novel_factory.api.routes.run import _sync_latest_publish_run

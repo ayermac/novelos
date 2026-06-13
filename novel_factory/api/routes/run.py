@@ -501,6 +501,13 @@ def _memory_curator_running_domain_result(project_id: str, chapter_number: int, 
 
 async def _ensure_memory_curated_before_publish(request: Request, repo, project_id: str, chapter_number: int) -> dict:
     """Run MemoryCurator once before manual publish when evidence is missing."""
+    try:
+        from ._memory_curator_gate import complete_memory_curator_run_if_batch_exists
+
+        complete_memory_curator_run_if_batch_exists(repo, project_id, chapter_number)
+    except Exception:
+        pass
+
     lock = None
     if hasattr(repo, "get_memory_curator_lock"):
         try:

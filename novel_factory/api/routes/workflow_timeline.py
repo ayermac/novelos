@@ -920,8 +920,19 @@ async def get_workflow_timeline(
                 run_id=run_id,
             )
         try:
-            from ._memory_curator_gate import complete_memory_curator_recovery_if_trusted
+            from ._memory_curator_gate import (
+                complete_memory_curator_recovery_if_trusted,
+                complete_memory_curator_run_if_batch_exists,
+            )
 
+            completed_memory_runs = complete_memory_curator_run_if_batch_exists(
+                repo,
+                project_id,
+                chapter_number,
+                run_id=run_id,
+            )
+            if completed_memory_runs:
+                chapter = repo.get_chapter(project_id, chapter_number) or chapter
             completed_memory_runs = complete_memory_curator_recovery_if_trusted(
                 repo,
                 project_id,

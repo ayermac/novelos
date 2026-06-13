@@ -22,6 +22,7 @@ from ..contracts import (
 )
 from ._memory_curator_gate import (
     complete_memory_curator_recovery_if_trusted,
+    complete_memory_curator_run_if_batch_exists,
     has_trusted_memory_batch,
     is_trusted_memory_batch,
     memory_incomplete_details,
@@ -1351,6 +1352,14 @@ def _get_run_by_id(repo, run_id: str, *, reconcile: bool = True) -> dict | None:
             return _get_run_by_id(repo, run_id, reconcile=False)
 
     if reconcile and complete_memory_curator_recovery_if_trusted(
+        repo,
+        run_data["project_id"],
+        int(run_data["chapter_number"]),
+        run_id=run_id,
+    ):
+        return _get_run_by_id(repo, run_id, reconcile=False)
+
+    if reconcile and complete_memory_curator_run_if_batch_exists(
         repo,
         run_data["project_id"],
         int(run_data["chapter_number"]),

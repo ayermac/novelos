@@ -1095,6 +1095,54 @@ class TestMemoryApplyCanonical:
         assert updated_character["status"] == "active"
         assert "编号牌后暗道" in updated_character["description"]
 
+    def test_apply_character_update_matches_parenthesized_name_without_target_id(self, client, project_id):
+        """Character update should match existing names even when rationale adds parenthesized role text."""
+        from novel_factory.db.repository import Repository
+
+        repo = Repository(client.app.state.db_path)
+        character = repo.create_character(
+            project_id,
+            name="老蝎",
+            role="antagonist",
+            description="赤蝎势力代表，旧位置未知。",
+            traits="黑市掮客",
+        )
+        batch = repo.create_memory_batch(
+            project_id,
+            chapter_number=2,
+            summary="第2章角色状态测试",
+        )
+        repo.create_memory_item(
+            batch_id=batch["id"],
+            project_id=project_id,
+            target_table="characters",
+            operation="update",
+            after_json=json.dumps({
+                "status": "位置：C区七号仓；交易失败，与马三及暗卫交火",
+            }, ensure_ascii=False),
+            confidence=0.92,
+            evidence_text="【编辑状态卡】：“老蝎”: “位置：C区七号仓；交易失败，与马三及暗卫交火”",
+            rationale="更新老蝎（赤蝎势力代表）在本章事件后的状态和位置，交易失败并陷入冲突。",
+        )
+
+        resp = client.post("/api/memory/apply", json={
+            "project_id": project_id,
+            "batch_id": batch["id"],
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        result = body["data"]["results"][0]
+        assert result["success"] is True
+        assert result["operation"] == "update"
+        assert result["created_id"] == character["id"]
+
+        updated_character = repo.get_character(project_id, character["id"])
+        assert updated_character["status"] == "active"
+        assert "C区七号仓" in updated_character["description"]
+        assert "交易失败" in updated_character["description"]
+
     def test_apply_story_fact_derives_key_from_subject_attribute_without_fact_key(self, client, project_id):
         """Story fact patches should not fail when LLM omits fact_key but provides subject/attribute."""
         from novel_factory.db.repository import Repository
