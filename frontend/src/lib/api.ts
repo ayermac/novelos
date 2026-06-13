@@ -300,6 +300,23 @@ export interface MemoryStatusSnapshot {
   latest_memory_batch_id?: string | null
 }
 
+export interface CoreLoopDiagnostics {
+  chapter_number: number
+  score?: number
+  core_payoff_present: boolean
+  reward_acquired: boolean
+  reward_used: boolean
+  enemy_consequence: boolean
+  required_payoff_present: boolean
+  missing_evidence: string[]
+  warnings: string[]
+  evidence_spans?: Record<string, string[]>
+  tracked_states?: Record<string, string>
+  state_deltas?: Record<string, unknown>[]
+  core_loop_steps_completed?: string[]
+  dominant_mechanism?: string
+}
+
 export interface WorkflowTimelineData {
   project_id: string
   chapter_number: number
@@ -313,6 +330,7 @@ export interface WorkflowTimelineData {
   memory_curator_running?: boolean
   memory_curator_lock?: Record<string, unknown> | null
   memory_status?: MemoryStatusSnapshot | null
+  core_loop_diagnostics?: CoreLoopDiagnostics | null
   recovery: WorkflowTimelineRecovery
   checkpoint?: WorkflowTimelineCheckpoint
   nodes: WorkflowTimelineNode[]

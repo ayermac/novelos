@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
@@ -64,6 +65,14 @@ class CoreLoopCheckResult:
     blocking_issues: list[str] = field(default_factory=list)
     drift_signals: list[DriftSignal] = field(default_factory=list)
     contract_metrics: ChapterContractMetrics | None = None
+    reward_acquired: bool = False
+    reward_used: bool = False
+    enemy_consequence: bool = False
+    required_payoff_present: bool = True
+    missing_evidence: list[str] = field(default_factory=list)
+    evidence_spans: dict[str, list[str]] = field(default_factory=dict)
+    tracked_states: dict[str, str] = field(default_factory=dict)
+    state_deltas: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for API / artifact storage."""
@@ -77,6 +86,14 @@ class CoreLoopCheckResult:
             "protagonist_agency_present": self.protagonist_agency_present,
             "warnings": self.warnings,
             "blocking_issues": self.blocking_issues,
+            "reward_acquired": self.reward_acquired,
+            "reward_used": self.reward_used,
+            "enemy_consequence": self.enemy_consequence,
+            "required_payoff_present": self.required_payoff_present,
+            "missing_evidence": self.missing_evidence,
+            "evidence_spans": self.evidence_spans,
+            "tracked_states": self.tracked_states,
+            "state_deltas": self.state_deltas,
             "drift_signals": [
                 {
                     "drift_type": s.drift_type,
@@ -117,6 +134,223 @@ _NEW_MECHANISM_KEYWORDS = [
     "新规则", "新设定", "新机制", "新能力", "新系统", "新势力",
     "新限制", "新约束", "新条件", "新代价", "新境界", "新领域",
 ]
+
+_STATE_KEYS = [
+    "魂源", "统帅值", "积分", "余额", "等级", "权限", "倒计时",
+    "次数", "进度", "生命", "能量", "经验", "战力", "境界",
+]
+
+_RESOURCE_CHANGE_ACTIONS = [
+    "获得", "得到", "收获", "奖励", "吞噬", "抽干", "消耗",
+    "兑换", "扣除", "提升", "补充", "吸收", "转化",
+]
+
+
+@dataclass
+class CoreLoopEvidence:
+    """Concrete textual evidence for core-loop delivery."""
+
+    reward_acquired: bool = False
+    reward_used: bool = False
+    enemy_consequence: bool = False
+    army_payoff: bool = False
+    required_payoff_present: bool = True
+    missing_evidence: list[str] = field(default_factory=list)
+    evidence_spans: dict[str, list[str]] = field(default_factory=dict)
+    tracked_states: dict[str, str] = field(default_factory=dict)
+    state_deltas: list[dict] = field(default_factory=list)
+
+
+def _contract_text(contract: StoryContract, brief: ChapterBrief | None) -> str:
+    parts: list[str] = [contract.core_promise or ""]
+    parts.extend(contract.payoff_types or [])
+    parts.extend(step.id for step in contract.core_loop)
+    parts.extend(step.label for step in contract.core_loop)
+    parts.extend(step.description for step in contract.core_loop)
+    if brief:
+        parts.extend([
+            brief.tier1.reader_payoff,
+            brief.tier1.core_loop_target,
+            brief.tier1.primary_payoff,
+            brief.tier1.payoff_evidence_plan,
+            brief.tier2.upgrade_or_skill_use,
+        ])
+    return "\n".join(str(p) for p in parts if p)
+
+
+def _requires_summon_or_army_payoff(contract: StoryContract, brief: ChapterBrief | None) -> bool:
+    text = _contract_text(contract, brief)
+    return any(token in text for token in ("召唤", "兵俑", "军团", "战灵", "神军", "傀儡", "统帅"))
+
+
+def _segments(content: str) -> list[str]:
+    compact = content.replace("\r\n", "\n")
+    raw = re.split(r"(?<=[。！？!?；;])|\n+", compact)
+    return [s.strip() for s in raw if s and s.strip()]
+
+
+def _find_segments(content: str, patterns: list[str], limit: int = 5) -> list[str]:
+    hits: list[str] = []
+    for segment in _segments(content):
+        for pattern in patterns:
+            if re.search(pattern, segment):
+                hits.append(segment[:160])
+                break
+        if len(hits) >= limit:
+            break
+    return hits
+
+
+def _drop_hypothetical_spans(spans: list[str]) -> list[str]:
+    """Remove plan/preview text that is not actual chapter payoff evidence."""
+    filtered: list[str] = []
+    for span in spans:
+        if any(token in span for token in ("预期", "获取后", "可解锁", "可直接", "若拿到", "足以")):
+            if not any(token in span for token in ("已解锁", "已获得", "已到账", "已完成")):
+                continue
+        filtered.append(span)
+    return filtered
+
+
+def _extract_tracked_states(content: str) -> dict[str, str]:
+    states: dict[str, str] = {}
+    number = r"\d+(?:\.\d+)?(?:\s*/\s*\d+(?:\.\d+)?)?"
+    for key in _STATE_KEYS:
+        direct = re.findall(rf"{re.escape(key)}\s*[：:]\s*({number})", content)
+        if direct:
+            states[key] = direct[-1].replace(" ", "")
+            continue
+        delta = re.findall(
+            rf"{re.escape(key)}[^。\n，,；;]{{0,30}}从\s*({number})\s*(?:变为|变成|提升到|降至|增加到)\s*({number})",
+            content,
+        )
+        if delta:
+            states[key] = delta[-1][1].replace(" ", "")
+    return states
+
+
+def _extract_state_deltas(content: str, previous_states: dict[str, str], current_states: dict[str, str]) -> list[dict]:
+    deltas: list[dict] = []
+    number = r"\d+(?:\.\d+)?(?:\s*/\s*\d+(?:\.\d+)?)?"
+    seen: set[tuple[str, str, str]] = set()
+    for key in _STATE_KEYS:
+        for old, new in re.findall(
+            rf"{re.escape(key)}[^。\n，,；;]{{0,30}}从\s*({number})\s*(?:变为|变成|提升到|降至|增加到)\s*({number})",
+            content,
+        ):
+            item = (key, old.replace(" ", ""), new.replace(" ", ""))
+            if item not in seen:
+                deltas.append({"state": item[0], "from": item[1], "to": item[2], "source": "text_delta"})
+                seen.add(item)
+    for key, current in current_states.items():
+        previous = previous_states.get(key)
+        if previous and previous != current:
+            item = (key, previous, current)
+            if item not in seen:
+                deltas.append({"state": key, "from": previous, "to": current, "source": "state_snapshot"})
+                seen.add(item)
+    return deltas
+
+
+def _latest_tracked_states(recent_metrics: list[ChapterContractMetrics]) -> dict[str, str]:
+    states: dict[str, str] = {}
+    for metric in sorted(recent_metrics, key=lambda m: m.chapter_number):
+        metric_states = getattr(metric, "tracked_states", {}) or {}
+        for key, value in metric_states.items():
+            if value not in (None, ""):
+                states[key] = str(value)
+    return states
+
+
+def _changed_tracked_resources(content: str, previous_states: dict[str, str]) -> list[str]:
+    changed: list[str] = []
+    for key in previous_states:
+        if key not in content:
+            continue
+        window_hit = False
+        for match in re.finditer(re.escape(key), content):
+            start = max(0, match.start() - 24)
+            end = min(len(content), match.end() + 36)
+            window = content[start:end]
+            if any(action in window for action in _RESOURCE_CHANGE_ACTIONS):
+                window_hit = True
+                break
+        if window_hit:
+            changed.append(key)
+    return changed
+
+
+def _analyze_core_loop_evidence(
+    content: str,
+    brief: ChapterBrief | None,
+    contract: StoryContract,
+    recent_metrics: list[ChapterContractMetrics],
+) -> CoreLoopEvidence:
+    """Build evidence diagnostics from actual chapter text.
+
+    This intentionally does not treat ChapterBrief declarations as proof. Briefs
+    are plans; the checker must find matching evidence in the final prose.
+    """
+    evidence = CoreLoopEvidence()
+    reward_acquired_spans = _find_segments(content, [
+        r"(获得|得到|收获|奖励|到账|入账|夺得|拿到).{0,18}(奖励|魂源|积分|能力|权限|装备|资源|魔晶|晶核)",
+        r"(解锁|激活|觉醒).{0,18}(能力|指令|序列|技能|权限|天赋|形态)",
+        r"【[^】]*(获得|解锁|激活|奖励|指令|初始魂源)[^】]*】",
+        r"(吞噬|吸收|抽干|转化).{0,18}(魂源|能量|晶核|魂源石|积分)",
+    ])
+    reward_used_spans = _find_segments(content, [
+        r"(使用|动用|催动|发动|施展|兑现).{0,24}(奖励|能力|指令|魂源|积分|权限|技能|力量)",
+        r"(召唤|具现|指挥|命令|调动).{0,24}(兵俑|军团|战灵|召唤物|神军|傀儡)",
+        r"(兵俑|军团|战灵|神军|召唤物).{0,24}(出手|斩|杀|挡|冲|列阵|围|压|碾)",
+        r"(噬源|指令).{0,24}(发动|生效|抽干|吞噬|吸收)",
+        r"(抽干|吞噬|吸收).{0,18}(魂源石|魂源|能量|晶核)",
+        r"(魂源石|魂源|能量|晶核).{0,18}(抽干|吞噬|吸收|转化)",
+        r"实力.{0,12}(提升|突破|大幅提升|暴涨)",
+    ])
+    enemy_consequence_spans = _find_segments(content, [
+        r"(敌人|对手|顾家|顾长歌|反派|暗卫|追踪|罗盘|鱼钩|锯齿鼠|老蝎|马三).{0,32}(失败|崩断|炸开|受创|震惊|僵住|反噬|退|损失|倒飞|死)",
+        r"(打脸|反杀|碾压|击败|杀死).{0,24}(敌人|对手|顾家|反派|暗卫|锯齿鼠)",
+    ])
+    army_payoff_spans = _find_segments(content, [
+        r"(兵俑|军团|战灵|神军|召唤物).{0,32}(出手|斩|杀|挡|冲|列阵|围|压|碾|救|破)",
+        r"(召唤|具现|指挥|命令|统帅).{0,32}(兵俑|军团|战灵|神军|召唤物)",
+    ])
+
+    reward_acquired_spans = _drop_hypothetical_spans(reward_acquired_spans)
+    reward_used_spans = _drop_hypothetical_spans(reward_used_spans)
+
+    evidence.reward_acquired = bool(reward_acquired_spans)
+    evidence.reward_used = bool(reward_used_spans)
+    evidence.enemy_consequence = bool(enemy_consequence_spans)
+    evidence.army_payoff = bool(army_payoff_spans)
+    evidence.evidence_spans = {
+        "reward_acquired": reward_acquired_spans,
+        "reward_used": reward_used_spans,
+        "enemy_consequence": enemy_consequence_spans,
+        "army_payoff": army_payoff_spans,
+    }
+
+    previous_states = _latest_tracked_states(recent_metrics)
+    current_states = _extract_tracked_states(content)
+    changed_resources = _changed_tracked_resources(content, previous_states)
+    evidence.tracked_states = {**previous_states, **current_states}
+    evidence.state_deltas = _extract_state_deltas(content, previous_states, current_states)
+    for delta in evidence.state_deltas:
+        state_name = str(delta.get("state") or "")
+        new_value = str(delta.get("to") or "")
+        if state_name and new_value:
+            evidence.tracked_states[state_name] = new_value
+
+    if evidence.reward_acquired and not evidence.reward_used:
+        evidence.missing_evidence.append("reward_used")
+    if _requires_summon_or_army_payoff(contract, brief) and (evidence.reward_acquired or evidence.reward_used) and not evidence.army_payoff:
+        evidence.missing_evidence.append("contract_required_payoff")
+    for key in changed_resources:
+        if key not in current_states and not any(delta.get("state") == key for delta in evidence.state_deltas):
+            evidence.missing_evidence.append(f"state_delta:{key}")
+
+    evidence.required_payoff_present = not evidence.missing_evidence
+    return evidence
 
 
 # ── Deterministic checks ─────────────────────────────────────────
@@ -374,13 +608,34 @@ def check_core_loop_compliance(
     Returns:
         CoreLoopCheckResult with compliance status and signals
     """
-    recent = recent_contract_metrics or []
+    recent = sorted(recent_contract_metrics or [], key=lambda m: m.chapter_number)
     result = CoreLoopCheckResult()
 
-    # 1. Core payoff presence
-    payoff_present, payoff_evidence = _check_core_payoff_present(content, chapter_brief, story_contract)
-    result.core_payoff_present = payoff_present
-    if not payoff_present:
+    # 1. Evidence-grounded core payoff presence
+    evidence = _analyze_core_loop_evidence(content, chapter_brief, story_contract, recent)
+    result.reward_acquired = evidence.reward_acquired
+    result.reward_used = evidence.reward_used
+    result.enemy_consequence = evidence.enemy_consequence
+    result.required_payoff_present = evidence.required_payoff_present
+    result.missing_evidence = evidence.missing_evidence
+    result.evidence_spans = evidence.evidence_spans
+    result.tracked_states = evidence.tracked_states
+    result.state_deltas = evidence.state_deltas
+
+    payoff_evidence = ""
+    if evidence.evidence_spans.get("army_payoff"):
+        payoff_evidence = "army_payoff"
+    elif evidence.evidence_spans.get("reward_used"):
+        payoff_evidence = "reward_used"
+    elif evidence.evidence_spans.get("enemy_consequence"):
+        payoff_evidence = "enemy_consequence"
+
+    result.core_payoff_present = bool(
+        evidence.required_payoff_present
+        and evidence.reward_acquired
+        and (evidence.reward_used or evidence.enemy_consequence or evidence.army_payoff)
+    )
+    if not result.core_payoff_present:
         result.drift_signals.append(DriftSignal(
             drift_type="core_payoff_missing",
             severity="warning",
@@ -389,8 +644,31 @@ def check_core_loop_compliance(
         ))
         result.warnings.append("本章未检测到核心兑现证据")
 
+    if evidence.missing_evidence:
+        missing_text = "、".join(evidence.missing_evidence)
+        severity = (
+            "blocking"
+            if story_contract.status in {"active", "confirmed"}
+            and any(item.startswith(("reward_used", "contract_required_payoff", "state_delta:")) for item in evidence.missing_evidence)
+            else "warning"
+        )
+        result.drift_signals.append(DriftSignal(
+            drift_type="core_payoff_missing",
+            severity=severity,
+            description=f"核心循环缺少正文证据：{missing_text}",
+            evidence=missing_text,
+            chapter_number=chapter_number,
+        ))
+        result.warnings.append(f"核心循环缺少正文证据：{missing_text}")
+
     # 2. Core loop steps
     result.core_loop_steps_completed = _check_core_loop_steps(content, chapter_brief, story_contract)
+    if evidence.reward_acquired and "reward" not in result.core_loop_steps_completed:
+        result.core_loop_steps_completed.append("reward")
+    if evidence.reward_used and "payoff" not in result.core_loop_steps_completed:
+        result.core_loop_steps_completed.append("payoff")
+    if evidence.enemy_consequence and "reaction" not in result.core_loop_steps_completed:
+        result.core_loop_steps_completed.append("reaction")
 
     # 3. Supporting mechanism dominance
     dominant, dominance_evidence = _check_supporting_mechanism_dominance(content, chapter_brief, story_contract)
@@ -459,6 +737,14 @@ def check_core_loop_compliance(
         protagonist_agency=result.protagonist_agency_present,
         contract_drift_warnings=[s.description for s in result.drift_signals if s.severity == "warning"],
         contract_score=result.score,
+        reward_acquired=result.reward_acquired,
+        reward_used=result.reward_used,
+        enemy_consequence=result.enemy_consequence,
+        required_payoff_present=result.required_payoff_present,
+        missing_evidence=result.missing_evidence,
+        evidence_spans=result.evidence_spans,
+        tracked_states=result.tracked_states,
+        state_deltas=result.state_deltas,
     )
 
     return result

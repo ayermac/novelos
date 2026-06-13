@@ -6,6 +6,7 @@ Documents here are useful for discussion and planning, but they are not binding 
 
 ## Current Candidates
 
+- `novel-factory-v6.10.7-core-loop-evidence-governance-plan.md` - Core-loop evidence governance, numeric state inheritance diagnostics, and workflow-visible payoff evidence reporting.
 - `novel-factory-v6.10.6-genesis-hardening-plan.md` - Genesis instruction contract hardening, targeted instruction repair, and quality-gate/prompt alignment.
 - `personal-author-workbench-direction.md` - product direction for the author workbench.
 - `pi-inspired-agent-engineering-roadmap.md` - longer-term agent engineering ideas.

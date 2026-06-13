@@ -167,3 +167,12 @@ class ChapterContractMetrics(BaseModel):
     protagonist_agency: bool = True
     contract_drift_warnings: list[str] = Field(default_factory=list)
     contract_score: float = 0.0
+    # v6.10.7: evidence governance
+    reward_acquired: bool = False
+    reward_used: bool = False
+    enemy_consequence: bool = False
+    required_payoff_present: bool = True
+    missing_evidence: list[str] = Field(default_factory=list)
+    evidence_spans: dict[str, list[str]] = Field(default_factory=dict)
+    tracked_states: dict[str, str] = Field(default_factory=dict)
+    state_deltas: list[dict] = Field(default_factory=list)
