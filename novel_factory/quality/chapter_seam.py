@@ -585,6 +585,16 @@ def _location_acknowledged(location: str, opening: str) -> bool:
     if "云澜" in loc and "云澜" in text:
         return any(token in loc for token in venue_tokens) and any(token in text for token in venue_tokens)
 
+    # v6.10.7: 学校/校区类地点的同义承接（避免“学校”→“校墙根/宿舍/三中”被误判断裂）
+    if "校" in loc and len(loc) <= 4:
+        school_tokens = (
+            "校墙根", "校门", "校内", "校外", "宿舍", "教学楼", "教室",
+            "操场", "办公室", "校园", "校区", "三中", "四中", "五中",
+            "中学", "小学", "大学", "学院",
+        )
+        if any(token in text for token in school_tokens):
+            return True
+
     return False
 
 
