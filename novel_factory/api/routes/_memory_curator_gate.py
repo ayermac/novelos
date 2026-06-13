@@ -283,6 +283,35 @@ def has_trusted_memory_batch(repo: Any, project_id: str, chapter_number: int) ->
     return False
 
 
+def _run_has_memory_batch_result(
+    repo: Any,
+    project_id: str,
+    chapter_number: int,
+    run_id: str,
+) -> bool:
+    """Return True when the run already created visible memory candidates."""
+    if not run_id:
+        return False
+    try:
+        batches = repo.list_memory_batches(project_id)
+    except Exception:
+        return False
+    for batch in batches:
+        if int(batch.get("chapter_number") or 0) != int(chapter_number):
+            continue
+        if str(batch.get("status") or "") == "ignored":
+            continue
+        if str(batch.get("run_id") or "") != str(run_id):
+            continue
+        try:
+            items = repo.list_memory_items(batch["id"])
+        except Exception:
+            items = []
+        if items:
+            return True
+    return False
+
+
 def _has_memory_curator_recovery_evidence(repo: Any, run: dict, run_id: str) -> bool:
     """Return True when a MemoryCurator run is an old failure/recovery target.
 
@@ -334,6 +363,114 @@ def _has_memory_curator_recovery_evidence(repo: Any, run: dict, run_id: str) -> 
             return True
 
     return False
+
+
+def _complete_memory_curator_run(
+    repo: Any,
+    project_id: str,
+    chapter_number: int,
+    run_id: str,
+    resolved_node: str,
+    message: str,
+) -> bool:
+    try:
+        updated = repo.update_workflow_run(
+            run_id,
+            status="completed",
+            current_node=resolved_node,
+            clear_error=True,
+        )
+    except Exception:
+        updated = False
+    if not updated:
+        return False
+
+    if hasattr(repo, "release_memory_curator_lock"):
+        try:
+            repo.release_memory_curator_lock(project_id, chapter_number, run_id=run_id)
+        except Exception:
+            pass
+    try:
+        conn = repo._conn()
+        try:
+            conn.execute(
+                "UPDATE task_status SET status='completed', "
+                "completed_at=COALESCE(completed_at, datetime('now','+8 hours')), "
+                "error_message=NULL "
+                "WHERE workflow_run_id=? AND agent_id='memory_curator' "
+                "AND status IN ('running', 'failed', 'blocked')",
+                (run_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    if hasattr(repo, "create_workflow_node_event"):
+        try:
+            repo.create_workflow_node_event(
+                run_id=run_id,
+                project_id=project_id,
+                chapter_number=chapter_number,
+                node_name="memory_curator",
+                event_type="completed",
+                status="completed",
+                message=message,
+            )
+        except Exception:
+            pass
+    return True
+
+
+def complete_memory_curator_run_if_batch_exists(
+    repo: Any,
+    project_id: str,
+    chapter_number: int,
+    run_id: str | None = None,
+) -> int:
+    """Close a zombie MemoryCurator run after it already created a batch.
+
+    This covers the failure window where the MemoryCurator writes a memory
+    batch/items successfully, but the outer workflow process is interrupted
+    before it can write the final node/run completion event.
+    """
+    try:
+        chapter = repo.get_chapter(project_id, chapter_number)
+    except Exception:
+        chapter = None
+    chapter_status = str((chapter or {}).get("status") or "")
+    if chapter_status not in {"reviewed", "awaiting_publish", "published"}:
+        return 0
+
+    try:
+        runs = repo.get_workflow_runs_for_project(project_id, chapter_number=chapter_number, limit=50)
+    except Exception:
+        runs = []
+    if run_id:
+        runs = [run for run in runs if str(run.get("id") or run.get("run_id") or "") == str(run_id)]
+
+    resolved_node = "publish" if chapter_status == "published" else "awaiting_publish"
+    completed = 0
+    for run in runs:
+        if str(run.get("status") or "") not in {"running", "blocked", "failed"}:
+            continue
+        current_run_id = str(run.get("id") or run.get("run_id") or "")
+        if not current_run_id:
+            continue
+        if str(run.get("current_node") or "") != "memory_curator":
+            continue
+        if not _run_has_memory_batch_result(repo, project_id, chapter_number, current_run_id):
+            continue
+        if _complete_memory_curator_run(
+            repo,
+            project_id,
+            chapter_number,
+            current_run_id,
+            resolved_node,
+            "检测到该运行已生成记忆批次，记忆整理运行状态已自动收尾",
+        ):
+            completed += 1
+    return completed
 
 
 def complete_memory_curator_recovery_if_trusted(
@@ -392,53 +529,15 @@ def complete_memory_curator_recovery_if_trusted(
         if not _has_memory_curator_recovery_evidence(repo, run, current_run_id):
             continue
 
-        try:
-            updated = repo.update_workflow_run(
-                current_run_id,
-                status="completed",
-                current_node=resolved_node,
-                clear_error=True,
-            )
-        except Exception:
-            updated = False
-        if not updated:
-            continue
-
-        completed += 1
-        if hasattr(repo, "release_memory_curator_lock"):
-            try:
-                repo.release_memory_curator_lock(project_id, chapter_number, run_id=current_run_id)
-            except Exception:
-                pass
-        try:
-            conn = repo._conn()
-            try:
-                conn.execute(
-                    "UPDATE task_status SET status='completed', "
-                    "completed_at=COALESCE(completed_at, datetime('now','+8 hours')), "
-                    "error_message=NULL "
-                    "WHERE workflow_run_id=? AND agent_id='memory_curator' "
-                    "AND status IN ('running', 'failed', 'blocked')",
-                    (current_run_id,),
-                )
-                conn.commit()
-            finally:
-                conn.close()
-        except Exception:
-            pass
-        if hasattr(repo, "create_workflow_node_event"):
-            try:
-                repo.create_workflow_node_event(
-                    run_id=current_run_id,
-                    project_id=project_id,
-                    chapter_number=chapter_number,
-                    node_name="memory_curator",
-                    event_type="recovery",
-                    status="completed",
-                    message="检测到可信记忆批次，旧记忆整理阻塞已自动恢复",
-                )
-            except Exception:
-                pass
+        if _complete_memory_curator_run(
+            repo,
+            project_id,
+            chapter_number,
+            current_run_id,
+            resolved_node,
+            "检测到可信记忆批次，旧记忆整理阻塞已自动恢复",
+        ):
+            completed += 1
     return completed
 
 

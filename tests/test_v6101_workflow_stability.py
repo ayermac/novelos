@@ -203,3 +203,14 @@ def test_numeric_state_extracts_open_ended_state_metrics():
     assert values["裂隙指数"] == "17.8点"
     assert values["外级授权残页"] == "2枚"
     assert "电梯" not in values
+
+
+def test_numeric_state_extracts_arrow_final_value_and_ratio_snapshot():
+    """Dashboard-style state transitions should persist final values, not old values."""
+    from novel_factory.quality.numeric_state import extract_numeric_states
+
+    states = extract_numeric_states("【魂源：4.5 → 49.5】【统帅值：10/10】")
+
+    values = {state.label: state.value for state in states}
+    assert values["魂源"] == "49.5"
+    assert values["统帅值"] == "10/10"

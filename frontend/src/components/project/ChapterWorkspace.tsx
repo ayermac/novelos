@@ -213,7 +213,7 @@ function RunDetailSidebar({
       {/* Error/stop reason */}
       {runDetail?.error_message && (workflowStatus === 'failed' || workflowStatus === 'blocked') && (
         <div className="data-card" style={{ padding: 12, borderLeft: '3px solid #ef4444' }}>
-          <div style={{ fontSize: 12, color: '#991b1b' }}>{runDetail.error_message}</div>
+          <div style={{ fontSize: 12, color: '#991b1b', whiteSpace: 'pre-wrap' }}>{runDetail.error_message}</div>
         </div>
       )}
 
@@ -674,7 +674,7 @@ function WorkflowTab({ runDetail, generating, isLaunching, sseSteps, isStreaming
     const statusDescription = runDetail.workflow_status === 'running'
       ? `当前节点：${nodeLabel}。这表示工作流仍在推进，不是静态卡死。`
       : runDetail.workflow_status === 'blocked'
-        ? `本次运行已阻塞，需要先处理最近的失败或返修原因。`
+        ? `本次运行已阻塞，需要先处理最近的失败或返修原因。${runDetail.error_message ? '\n\n' + runDetail.error_message : ''}`
         : runDetail.workflow_status === 'completed' && runDetail.chapter_status === 'reviewed'
           ? 'AI 审核已完成，当前等待人工发布。'
           : '最近一次运行记录如下。'

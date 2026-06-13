@@ -1760,6 +1760,14 @@ def _check_core_loop_compliance(repo: Repository, project_id: str, chapter_numbe
             "supporting_mechanism_dominance": result.supporting_mechanism_dominance,
             "new_mechanism_count": result.new_mechanism_count,
             "protagonist_agency_present": result.protagonist_agency_present,
+            "reward_acquired": result.reward_acquired,
+            "reward_used": result.reward_used,
+            "enemy_consequence": result.enemy_consequence,
+            "required_payoff_present": result.required_payoff_present,
+            "missing_evidence": result.missing_evidence,
+            "evidence_spans": result.evidence_spans,
+            "tracked_states": result.tracked_states,
+            "state_deltas": result.state_deltas,
             "warnings": result.warnings,
             "drift_signals": [{"type": s.drift_type, "severity": s.severity, "message": s.description} for s in result.drift_signals],
             "contract_status": story_contract.status,
@@ -1778,7 +1786,8 @@ def _determine_revision_target(issue_codes: list) -> str | None:
     # 如果有任何 author 级别的问题，返修到 author
     author_codes = {IssueCode.DEATH_PENALTY, IssueCode.CHAPTER_SEAM_BREAK,
                     IssueCode.CONTINUITY_TIME_REGRESSION, IssueCode.CONTINUITY_EVENT_REPLAY,
-                    IssueCode.CONTINUITY_TITLE_TRUNCATION, IssueCode.STORY_FACTS_CONTRADICTION}
+                    IssueCode.CONTINUITY_TITLE_TRUNCATION, IssueCode.STORY_FACTS_CONTRADICTION,
+                    IssueCode.CORE_LOOP_PAYOFF_MISSING, IssueCode.CORE_LOOP_DRIFT_WARNING}
 
     for code in issue_codes:
         if code in author_codes:
@@ -2474,6 +2483,19 @@ def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
                 error += f"，该次失败字数: {actual_wc} (目标 {word_target})"
         if gate.get("scene_beat_coverage_fail"):
             error += "，该次失败原因: 正文未覆盖完整场景 beat / 章末钩子"
+
+        # v6.10.7: Surface story_facts violation details so users can judge
+        # whether the block is a genuine contradiction or a false positive.
+        sfc = state.get("story_facts_compliance") or {}
+        if sfc.get("violations"):
+            violation_lines = []
+            for v in sfc["violations"]:
+                fact = v.get("fact_statement", "")[:60]
+                text = v.get("violation_text", "")[:80]
+                sev = v.get("severity", "warning")
+                violation_lines.append(f"  • [{sev}] {fact}: {text}")
+            if violation_lines:
+                error += "\n\n事实一致性详情:\n" + "\n".join(violation_lines)
 
     if not error and state.get("chapter_status") == ChapterStatus.BLOCKING.value:
         is_preexisting_block = True

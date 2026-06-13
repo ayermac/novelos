@@ -22,12 +22,14 @@ from ..contracts import (
 )
 from ._memory_curator_gate import (
     complete_memory_curator_recovery_if_trusted,
+    complete_memory_curator_run_if_batch_exists,
     has_trusted_memory_batch,
     is_trusted_memory_batch,
     memory_incomplete_details,
     memory_incomplete_message,
     memory_result_is_incomplete,
 )
+from ._core_loop_diagnostics import get_core_loop_diagnostics_for_chapter
 from ...workflow.node_recovery import (
     active_node_started_at_from_events,
     node_retry_target,
@@ -487,6 +489,15 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
         except Exception:
             run_doctor = {}
 
+        try:
+            core_loop_diagnostics = get_core_loop_diagnostics_for_chapter(
+                repo,
+                run_data["project_id"],
+                run_data["chapter_number"],
+            )
+        except Exception:
+            core_loop_diagnostics = None
+
         # v6.6.14: Fetch memory context audit from planner artifact
         memory_context_audit: dict = {}
         try:
@@ -535,6 +546,8 @@ async def get_run_detail(request: Request, run_id: str) -> EnvelopeResponse:
             "domain_result": domain_result.to_dict(),
             # v6.10.3: Failure attribution and next-action diagnosis
             "run_doctor": run_doctor,
+            # v6.10.7: Core-loop evidence diagnostics
+            "core_loop_diagnostics": core_loop_diagnostics,
             # v6.6.14: Memory context audit
             "memory_context_audit": memory_context_audit,
         })
@@ -1351,6 +1364,14 @@ def _get_run_by_id(repo, run_id: str, *, reconcile: bool = True) -> dict | None:
             return _get_run_by_id(repo, run_id, reconcile=False)
 
     if reconcile and complete_memory_curator_recovery_if_trusted(
+        repo,
+        run_data["project_id"],
+        int(run_data["chapter_number"]),
+        run_id=run_id,
+    ):
+        return _get_run_by_id(repo, run_id, reconcile=False)
+
+    if reconcile and complete_memory_curator_run_if_batch_exists(
         repo,
         run_data["project_id"],
         int(run_data["chapter_number"]),

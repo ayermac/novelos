@@ -22,6 +22,7 @@ from starlette.responses import StreamingResponse
 from fastapi import APIRouter, Request
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ._core_loop_diagnostics import get_core_loop_diagnostics_for_chapter
 from ...workflow.graph import get_canonical_workflow_nodes
 from ...workflow.node_recovery import (
     active_node_started_at_from_events,
@@ -920,8 +921,19 @@ async def get_workflow_timeline(
                 run_id=run_id,
             )
         try:
-            from ._memory_curator_gate import complete_memory_curator_recovery_if_trusted
+            from ._memory_curator_gate import (
+                complete_memory_curator_recovery_if_trusted,
+                complete_memory_curator_run_if_batch_exists,
+            )
 
+            completed_memory_runs = complete_memory_curator_run_if_batch_exists(
+                repo,
+                project_id,
+                chapter_number,
+                run_id=run_id,
+            )
+            if completed_memory_runs:
+                chapter = repo.get_chapter(project_id, chapter_number) or chapter
             completed_memory_runs = complete_memory_curator_recovery_if_trusted(
                 repo,
                 project_id,
@@ -1023,6 +1035,7 @@ async def get_workflow_timeline(
         # No run -> empty timeline
         if not target_run:
             checkpoint = _checkpoint_metadata(repo, project_id, chapter_number)
+            core_loop_diagnostics = get_core_loop_diagnostics_for_chapter(repo, project_id, chapter_number)
             # v6.6.6: Build recovery state even without run
             recovery = _build_recovery(
                 None,
@@ -1043,6 +1056,7 @@ async def get_workflow_timeline(
                 "memory_curator_running": False,
                 "memory_curator_lock": None,
                 "memory_status": memory_status,
+                "core_loop_diagnostics": core_loop_diagnostics,
                 "recovery": recovery,
                 "checkpoint": checkpoint,
                 "nodes": _build_node_timeline([], []),
@@ -1153,6 +1167,7 @@ async def get_workflow_timeline(
             pass  # Backward compatible — execution events are additive
 
         checkpoint = _checkpoint_metadata(repo, project_id, chapter_number)
+        core_loop_diagnostics = get_core_loop_diagnostics_for_chapter(repo, project_id, chapter_number)
         display_current_node = (
             failed_node
             if current_node == "human_review" and failed_node
@@ -1174,6 +1189,7 @@ async def get_workflow_timeline(
             "memory_curator_running": memory_curator_running,
             "memory_curator_lock": active_memory_lock if memory_curator_running else None,
             "memory_status": memory_status,
+            "core_loop_diagnostics": core_loop_diagnostics,
             "recovery": recovery,
             "checkpoint": checkpoint,
             "nodes": nodes,

@@ -15,6 +15,7 @@ from pydantic import BaseModel
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ..contracts import success, partial_success, failed, blocked as blocked_result, needs_human
 from ._memory_curator_gate import (
+    complete_memory_curator_run_if_batch_exists,
     complete_memory_curator_recovery_if_trusted,
     has_trusted_memory_batch,
 )
@@ -185,6 +186,7 @@ def _get_memory_curator_recovery_run(repo, project_id: str, current_chapter: int
     chapter_status = chapter.get("status") if chapter else None
     if chapter_status not in {"reviewed", "awaiting_publish", "published"}:
         return None
+    complete_memory_curator_run_if_batch_exists(repo, project_id, current_chapter)
     if has_trusted_memory_batch(repo, project_id, current_chapter):
         complete_memory_curator_recovery_if_trusted(repo, project_id, current_chapter)
         return None

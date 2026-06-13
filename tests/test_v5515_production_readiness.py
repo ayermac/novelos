@@ -473,6 +473,95 @@ def test_publish_chapter_auto_applies_trusted_memory_batch():
             os.unlink(db_path)
 
 
+def test_publish_self_heals_memory_lock_dedupes_and_applies_before_publish():
+    """Manual publish should close zombie memory runs, dedupe batches, then apply memory."""
+    client, repo, db_path = _client_with_repo()
+    try:
+        project_id = "publish-memory-zombie-dedupe"
+        repo.create_project(
+            project_id=project_id,
+            name="Publish Memory Zombie Dedupe",
+            genre="fantasy",
+            description="test",
+            target_words=30000,
+            total_chapters_planned=10,
+        )
+        content = (
+            "陆恒把黑市铭牌扣进掌心，赵莽在旁确认赤蝎盘口已经转向。"
+            "黑市杀机被他反手压住，401室外的走廊重新安静下来。"
+        ) * 30
+        repo.save_chapter(
+            project_id,
+            2,
+            "第二章 黑市杀机",
+            content,
+            1200,
+            "awaiting_publish",
+        )
+        run_id = repo.create_workflow_run(project_id, 2)
+        repo.update_workflow_run(run_id, status="running", current_node="memory_curator")
+        repo.acquire_memory_curator_lock(project_id, 2, run_id=run_id)
+
+        payload = {
+            "fact_key": "ch2.black_market_badge",
+            "fact_type": "plot",
+            "subject": "陆恒",
+            "attribute": "道具",
+            "value": "获得黑市铭牌",
+            "source_chapter": 2,
+            "source_agent": "memory_curator",
+        }
+        batch_ids = []
+        item_ids = []
+        for batch_run_id in (run_id, "duplicate-memory-run"):
+            batch = repo.create_memory_batch(
+                project_id,
+                chapter_number=2,
+                run_id=batch_run_id,
+                summary="第2章记忆提取 (1项)",
+            )
+            item = repo.create_memory_item(
+                batch_id=batch["id"],
+                project_id=project_id,
+                target_table="story_facts",
+                operation="create",
+                after_json=json.dumps(payload, ensure_ascii=False),
+                confidence=0.95,
+                evidence_text="陆恒把黑市铭牌扣进掌心。",
+                rationale="第2章可信记忆提取",
+            )
+            batch_ids.append(batch["id"])
+            item_ids.append(item["id"])
+
+        resp = client.post("/api/publish/chapter", json={
+            "project_id": project_id,
+            "chapter": 2,
+        })
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        data = body["data"]
+        assert data["chapter_status"] == "published"
+        assert data["memory_apply"]["memory_apply_processed"] is True
+        assert data["memory_apply"]["items_processed"] == 1
+        assert data["memory_apply"]["dedupe"]["ignored_count"] == 1
+        batch_statuses = [repo.get_memory_batch(batch_id)["status"] for batch_id in batch_ids]
+        item_statuses = [repo.get_memory_item(item_id)["status"] for item_id in item_ids]
+        assert sorted(batch_statuses) == ["applied", "ignored"]
+        assert sorted(item_statuses) == ["applied", "ignored"]
+        run = repo.get_workflow_runs_for_project(project_id, chapter_number=2, limit=1)[0]
+        assert run["status"] == "completed"
+        assert run["current_node"] == "publish"
+        assert repo.get_memory_curator_lock(project_id, 2) is None
+        assert repo.get_chapter(project_id, 2)["status"] == "published"
+        fact = repo.get_story_fact_by_key(project_id, "ch2.black_market_badge")
+        assert fact is not None
+    finally:
+        if os.path.exists(db_path):
+            os.unlink(db_path)
+
+
 def test_obsolete_session_action_points_to_cleanup():
     """When a paused+disconnected session is obsolete and NOT yet detected
     by the active-session endpoint, the health-summary must report it

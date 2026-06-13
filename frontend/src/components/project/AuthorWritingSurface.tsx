@@ -101,6 +101,7 @@ interface RunDetailData {
   duration_ms?: number | null
   run_doctor?: RunDoctor
   memory_status?: WorkflowTimelineData['memory_status']
+  core_loop_diagnostics?: WorkflowTimelineData['core_loop_diagnostics']
 }
 
 interface RunDoctor {
@@ -199,6 +200,56 @@ function runDoctorActionLabel(action?: string): string {
     default:
       return action || '查看运行详情'
   }
+}
+
+function coreLoopEvidenceLabel(value: string): string {
+  if (value === 'reward_used') return '奖励/能力已获得，但缺少正文使用证据'
+  if (value === 'contract_required_payoff') return '缺少本书核心卖点兑现证据'
+  if (value.startsWith('state_delta:')) return `${value.replace('state_delta:', '')} 发生变化，但缺少新数值`
+  if (value === 'reward_acquired') return '缺少奖励获得证据'
+  return value
+}
+
+function CoreLoopDiagnosticsPanel({ diagnostics }: { diagnostics?: WorkflowTimelineData['core_loop_diagnostics'] | null }) {
+  if (!diagnostics) return null
+  const missing = diagnostics.missing_evidence || []
+  const stateDeltas = diagnostics.state_deltas || []
+  const trackedStates = diagnostics.tracked_states || {}
+  const tone = diagnostics.required_payoff_present && diagnostics.core_payoff_present ? 'alert-info' : 'alert-warn'
+  const evidenceSummary = [
+    diagnostics.reward_acquired ? '已获得奖励/能力' : '未确认奖励获得',
+    diagnostics.reward_used ? '已写出使用/兑现' : '未确认使用/兑现',
+    diagnostics.enemy_consequence ? '已有外部反噬' : '未确认敌方反应',
+  ].join(' · ')
+
+  return (
+    <div className={`alert ${tone}`} style={{ marginBottom: 0 }}>
+      <div style={{ fontSize: 13, fontWeight: 600 }}>核心循环诊断</div>
+      <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 4 }}>
+        {evidenceSummary}；合同分：{Math.round(Number(diagnostics.score || 0))}
+      </div>
+      {missing.length > 0 && (
+        <div style={{ fontSize: 12, color: 'var(--wb-warning)', marginTop: 6 }}>
+          缺失证据：{missing.map(coreLoopEvidenceLabel).join('、')}
+        </div>
+      )}
+      {stateDeltas.length > 0 && (
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6 }}>
+          状态变化：{stateDeltas.map((delta, index) => {
+            const state = String(delta.state || `状态${index + 1}`)
+            const from = String(delta.from || '—')
+            const to = String(delta.to || '—')
+            return `${state} ${from} → ${to}`
+          }).join('、')}
+        </div>
+      )}
+      {Object.keys(trackedStates).length > 0 && (
+        <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 6 }}>
+          当前记录：{Object.entries(trackedStates).map(([key, value]) => `${key}=${value}`).join('、')}
+        </div>
+      )}
+    </div>
+  )
 }
 
 function mergeWorkflowEvents(
@@ -714,6 +765,12 @@ export default function AuthorWritingSurface({
   const qualityScore = persistedQualityScore
   const statusLabel = tChapterStatus(status)
   const memoryCuratorNode = timeline?.nodes?.find((node) => node.node_name === 'memory_curator')
+  // v6.7.6: Block publish CTAs when workflow is broken
+  const effectiveRunStatus = timeline?.run_status || runDetail?.workflow_status
+  const effectiveCurrentNode = timeline?.current_node || runDetail?.current_node || ''
+  const effectiveMemoryStatus = timeline?.memory_status || runDetail?.memory_status
+  const memoryTrusted = isTrustedMemoryStatus(effectiveMemoryStatus)
+  const memoryHasResult = Boolean(effectiveMemoryStatus && effectiveMemoryStatus.memory_status !== 'missing')
   const memoryCuratorRunning = Boolean(
     timeline?.memory_curator_running ||
     memoryCuratorNode?.status === 'running' ||
@@ -726,18 +783,14 @@ export default function AuthorWritingSurface({
       (timeline.current_node === 'memory_curator' || memoryCuratorNode?.flags?.memory_curator_running)
     )
   )
+  const effectiveMemoryRunning = memoryCuratorRunning && !memoryHasResult
   const isRunningAnotherChapter = Boolean(
     isProjectWorkflowRunning && runningWorkflowChapter && runningWorkflowChapter !== currentChapter
   )
-  const workflowBusy = isStreaming || isWorkflowRunning || timeline?.run_status === 'running' || memoryCuratorRunning
+  const workflowBusy = isStreaming || isWorkflowRunning || timeline?.run_status === 'running' || effectiveMemoryRunning
   const isWorkflowActive = workflowBusy || isRunningAnotherChapter
   const showHeaderGenerationAction = activeTab !== 'workflow'
 
-  // v6.7.6: Block publish CTAs when workflow is broken
-  const effectiveRunStatus = timeline?.run_status || runDetail?.workflow_status
-  const effectiveCurrentNode = timeline?.current_node || runDetail?.current_node || ''
-  const effectiveMemoryStatus = timeline?.memory_status || runDetail?.memory_status
-  const memoryTrusted = isTrustedMemoryStatus(effectiveMemoryStatus)
   const ignoreBrokenRunForPublish = canPublishReal &&
     (effectiveRunStatus === 'blocked' || effectiveRunStatus === 'failed') &&
     (PUBLISH_COMPATIBLE_BLOCKED_NODES.has(effectiveCurrentNode) || (memoryTrusted && effectiveCurrentNode === 'memory_curator'))
@@ -1557,6 +1610,7 @@ function WorkflowBody({
             </div>
           )}
         </div>
+        <CoreLoopDiagnosticsPanel diagnostics={timeline.core_loop_diagnostics} />
         <WorkflowTimeline steps={timelineSteps} preflightWarnings={preflightWarnings} />
       </div>
     )
@@ -1709,6 +1763,7 @@ function WorkflowBody({
             </div>
           </div>
         )}
+        <CoreLoopDiagnosticsPanel diagnostics={runDetail.core_loop_diagnostics} />
         <div className="alert alert-warn" style={{ marginBottom: 0 }}>
           <div style={{ fontSize: 13, fontWeight: 600 }}>Legacy fallback：正在显示运行详情旧版步骤</div>
           <div style={{ fontSize: 12, color: 'var(--text-secondary)', marginTop: 2 }}>
