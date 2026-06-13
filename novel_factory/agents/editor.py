@@ -2044,16 +2044,40 @@ class EditorAgent(BaseAgent):
             },
         })
         if compliance_result.blocking_violation_count >= FACTS_COMPLIANCE_BLOCK_THRESHOLD:
+            # v6.10.7: Downgrade story_facts blocking to advisory when Editor score
+            # is borderline (>=75) and there are no quality priority issues.
+            # This prevents an independent sub-check from overriding the Editor's
+            # holistic judgment and causing unnecessary revision loops.
+            should_downgrade = (
+                output.score >= 75
+                and quality_result.priority_count == 0
+                and not any("[事实一致性违规]" in str(i) for i in output.issues)
+            )
             for v in compliance_result.violations:
                 if v.get("severity") == "blocking":
-                    issue_msg = (
-                        f"[事实一致性违规] {v.get('fact_statement', '')[:60]}: "
-                        f"{v.get('violation_text', '')[:80]}"
-                    )
-                    if issue_msg not in output.issues:
-                        output.issues.append(issue_msg)
-            output.pass_ = False
-            output.revision_target = "author"
+                    if should_downgrade:
+                        v["severity"] = "warning"
+                        v["_downgrade_reason"] = "editor_borderline_no_priority"
+                        issue_msg = (
+                            f"[事实一致性建议] {v.get('fact_statement', '')[:60]}: "
+                            f"{v.get('violation_text', '')[:80]}"
+                        )
+                        if issue_msg not in output.suggestions:
+                            output.suggestions.append(issue_msg)
+                    else:
+                        issue_msg = (
+                            f"[事实一致性违规] {v.get('fact_statement', '')[:60]}: "
+                            f"{v.get('violation_text', '')[:80]}"
+                        )
+                        if issue_msg not in output.issues:
+                            output.issues.append(issue_msg)
+            if not should_downgrade:
+                output.pass_ = False
+                output.revision_target = "author"
+            # Recompute blocking count after potential downgrades
+            compliance_result.blocking_violation_count = sum(
+                1 for v in compliance_result.violations if v.get("severity") == "blocking"
+            )
 
         # v6.10.0: Emit progress event - story facts compliance completed
         exec_events.append({

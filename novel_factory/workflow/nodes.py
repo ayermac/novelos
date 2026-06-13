@@ -2484,6 +2484,19 @@ def human_review_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
         if gate.get("scene_beat_coverage_fail"):
             error += "，该次失败原因: 正文未覆盖完整场景 beat / 章末钩子"
 
+        # v6.10.7: Surface story_facts violation details so users can judge
+        # whether the block is a genuine contradiction or a false positive.
+        sfc = state.get("story_facts_compliance") or {}
+        if sfc.get("violations"):
+            violation_lines = []
+            for v in sfc["violations"]:
+                fact = v.get("fact_statement", "")[:60]
+                text = v.get("violation_text", "")[:80]
+                sev = v.get("severity", "warning")
+                violation_lines.append(f"  • [{sev}] {fact}: {text}")
+            if violation_lines:
+                error += "\n\n事实一致性详情:\n" + "\n".join(violation_lines)
+
     if not error and state.get("chapter_status") == ChapterStatus.BLOCKING.value:
         is_preexisting_block = True
         error = "章节已处于阻塞状态，请先解除阻塞后再重新执行工作流。"
