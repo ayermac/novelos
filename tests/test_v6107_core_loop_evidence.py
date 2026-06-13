@@ -130,6 +130,38 @@ def test_summon_payoff_with_state_delta_passes():
     assert result.state_deltas == [{"state": "魂源", "from": "14.5", "to": "20", "source": "text_delta"}]
 
 
+def test_arrow_state_delta_uses_final_value_as_current_state():
+    contract = _summoner_contract(status="active")
+    recent = [
+        ChapterContractMetrics(
+            chapter_number=3,
+            tracked_states={"魂源": "4.5", "统帅值": "10/10"},
+            core_payoff_present=False,
+        )
+    ]
+    content = """
+    【获得奖励：中品魂源石】
+    陆恒动用噬源指令吸收魂源石，十名兵俑列阵冲出，刀盾压得顾家暗卫连退三步。
+    顾长歌面前的追踪罗盘炸开，他的脸色终于僵住。
+    【魂源：4.5 → 49.5】【统帅值：10/10】
+    """
+
+    result = check_core_loop_compliance(
+        project_id="test_proj",
+        chapter_number=4,
+        content=content,
+        story_contract=contract,
+        recent_contract_metrics=recent,
+    )
+
+    assert result.passed is True
+    assert result.core_payoff_present is True
+    assert result.tracked_states["魂源"] == "49.5"
+    assert result.tracked_states["统帅值"] == "10/10"
+    assert {"state": "魂源", "from": "4.5", "to": "49.5", "source": "text_delta"} in result.state_deltas
+    assert "state_delta:魂源" not in result.missing_evidence
+
+
 def test_workflow_helper_routes_core_loop_blocking_to_author(repo):
     from novel_factory.workflow.nodes import _check_core_loop_compliance, _determine_revision_target
     from novel_factory.quality.issue_codes import IssueCode

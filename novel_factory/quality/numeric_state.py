@@ -17,10 +17,9 @@ from typing import Any
 
 
 _CLOCK_PATTERN = re.compile(r"(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?!\d)")
-_NUMBER_VALUE = (
-    r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
-    r"\s*(?:万|亿|%|％|点|级|阶|层|星|次|回|小时|分钟|秒|天|元|块|枚|条|格|滴|年|号|倍)?"
-)
+_NUMBER_BASE = r"(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?"
+_NUMBER_UNIT = r"(?:万|亿|%|％|点|级|阶|层|星|次|回|小时|分钟|秒|天|元|块|枚|条|格|滴|年|号|倍)?"
+_NUMBER_VALUE = rf"{_NUMBER_BASE}(?:\s*/\s*{_NUMBER_BASE})?\s*{_NUMBER_UNIT}"
 _NUMBER_PATTERN = re.compile(
     r"(?<![A-Za-z0-9])"
     + _NUMBER_VALUE +
@@ -262,11 +261,14 @@ def extract_numeric_states(text: str, *, max_items: int = 12) -> list[NumericSta
 
     candidates: list[NumericState] = []
     candidates.extend(_extract_clock_states(source))
+    candidates.extend(_extract_explicit_state_syntax(source))
     candidates.extend(_extract_labeled_number_states(source))
 
     latest_by_key: dict[str, NumericState] = {}
     for state in candidates:
-        latest_by_key[state.key] = state
+        current = latest_by_key.get(state.key)
+        if current is None or state.position >= current.position:
+            latest_by_key[state.key] = state
 
     return sorted(latest_by_key.values(), key=lambda item: item.position)[-max_items:]
 
@@ -413,6 +415,78 @@ def _extract_clock_states(source: str) -> list[NumericState]:
             position=latest.start(),
         )
     ]
+
+
+def _extract_explicit_state_syntax(source: str) -> list[NumericState]:
+    """Extract dashboard/stat-card style values such as ``【魂源：4.5 → 49.5】``."""
+    states: list[NumericState] = []
+    label_pattern = r"([A-Za-z\u4e00-\u9fff][A-Za-z0-9\u4e00-\u9fff·/_-]{1,24})"
+    boundary = r"(?:^|[【\[\(（\n。！？；;])\s*"
+    transition_pattern = re.compile(
+        boundary
+        + label_pattern
+        + rf"\s*[：:=＝]\s*({_NUMBER_VALUE})\s*(?:→|->|—>|=>)\s*({_NUMBER_VALUE})"
+    )
+    direct_pattern = re.compile(
+        boundary
+        + label_pattern
+        + rf"\s*[：:=＝]\s*({_NUMBER_VALUE})(?!\s*(?:→|->|—>|=>))"
+    )
+
+    for match in transition_pattern.finditer(source):
+        label = _clean_generic_label(match.group(1))
+        if not _explicit_label_allowed(label):
+            continue
+        value = re.sub(r"\s+", "", match.group(3))
+        states.append(_numeric_state_from_explicit_match(source, match, label, value, match.start(3)))
+
+    for match in direct_pattern.finditer(source):
+        label = _clean_generic_label(match.group(1))
+        if not _explicit_direct_label_allowed(source, match, label):
+            continue
+        value = re.sub(r"\s+", "", match.group(2))
+        states.append(_numeric_state_from_explicit_match(source, match, label, value, match.start(2)))
+
+    return states
+
+
+def _numeric_state_from_explicit_match(
+    source: str,
+    match: re.Match,
+    label: str,
+    value: str,
+    position: int,
+) -> NumericState:
+    return NumericState(
+        key=_canonical_key(label),
+        label=_canonical_label(label),
+        value=value,
+        normalized_value=_normalize_numeric_value(value),
+        kind="explicit_numeric_state",
+        evidence=_sentence_around(source, match.start(), match.end()),
+        position=position,
+        unit=_extract_unit(value),
+    )
+
+
+def _explicit_label_allowed(label: str) -> bool:
+    if not label or len(label) < 2:
+        return False
+    return label not in _GENERIC_LABEL_IGNORED and not label.startswith(("第", "这", "那"))
+
+
+def _explicit_direct_label_allowed(source: str, match: re.Match, label: str) -> bool:
+    if not _explicit_label_allowed(label):
+        return False
+    raw = match.group(0).lstrip()
+    if raw.startswith(("【", "[", "(", "（")):
+        return True
+    sentence = _sentence_around(source, match.start(), match.end())
+    return bool(
+        label in _STATE_KEYWORDS
+        or label in _KEYWORD_CANONICAL
+        or _generic_label_is_stateful(label, sentence)
+    )
 
 
 def _extract_labeled_number_states(source: str) -> list[NumericState]:

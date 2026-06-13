@@ -216,16 +216,23 @@ def _extract_tracked_states(content: str) -> dict[str, str]:
     states: dict[str, str] = {}
     number = r"\d+(?:\.\d+)?(?:\s*/\s*\d+(?:\.\d+)?)?"
     for key in _STATE_KEYS:
-        direct = re.findall(rf"{re.escape(key)}\s*[：:]\s*({number})", content)
-        if direct:
-            states[key] = direct[-1].replace(" ", "")
-            continue
         delta = re.findall(
             rf"{re.escape(key)}[^。\n，,；;]{{0,30}}从\s*({number})\s*(?:变为|变成|提升到|降至|增加到)\s*({number})",
             content,
         )
         if delta:
             states[key] = delta[-1][1].replace(" ", "")
+            continue
+        arrow_delta = re.findall(
+            rf"{re.escape(key)}\s*[：:]?\s*({number})\s*(?:→|->|—>|=>)\s*({number})",
+            content,
+        )
+        if arrow_delta:
+            states[key] = arrow_delta[-1][1].replace(" ", "")
+            continue
+        direct = re.findall(rf"{re.escape(key)}\s*[：:]\s*({number})", content)
+        if direct:
+            states[key] = direct[-1].replace(" ", "")
     return states
 
 
@@ -236,6 +243,14 @@ def _extract_state_deltas(content: str, previous_states: dict[str, str], current
     for key in _STATE_KEYS:
         for old, new in re.findall(
             rf"{re.escape(key)}[^。\n，,；;]{{0,30}}从\s*({number})\s*(?:变为|变成|提升到|降至|增加到)\s*({number})",
+            content,
+        ):
+            item = (key, old.replace(" ", ""), new.replace(" ", ""))
+            if item not in seen:
+                deltas.append({"state": item[0], "from": item[1], "to": item[2], "source": "text_delta"})
+                seen.add(item)
+        for old, new in re.findall(
+            rf"{re.escape(key)}\s*[：:]?\s*({number})\s*(?:→|->|—>|=>)\s*({number})",
             content,
         ):
             item = (key, old.replace(" ", ""), new.replace(" ", ""))
@@ -505,20 +520,27 @@ def _check_protagonist_agency(
 
 def _check_payoff_gap_trend(
     recent_metrics: list[ChapterContractMetrics],
+    current_result: CoreLoopCheckResult,
+    chapter_number: int,
     window: int = 2,
 ) -> DriftSignal | None:
     """Check if recent chapters have a payoff gap (no core payoff in window)."""
-    if len(recent_metrics) < window:
+    current_metric = ChapterContractMetrics(
+        chapter_number=chapter_number,
+        core_payoff_present=current_result.core_payoff_present,
+    )
+    metrics = [*recent_metrics, current_metric]
+    if len(metrics) < window:
         return None
 
-    recent = recent_metrics[-window:]
+    recent = metrics[-window:]
     gap_count = sum(1 for m in recent if not m.core_payoff_present)
     if gap_count >= window:
         return DriftSignal(
             drift_type="payoff_gap",
             severity="warning",
             description=f"连续{window}章没有核心兑现",
-            evidence=f"最近{window}章 core_payoff_present 均为 False",
+            evidence=f"最近{window}章（含当前章）core_payoff_present 均为 False",
         )
     return None
 
@@ -547,6 +569,7 @@ def _evaluate_drift_rules(
     contract: StoryContract,
     recent_metrics: list[ChapterContractMetrics],
     current_result: CoreLoopCheckResult,
+    chapter_number: int,
 ) -> list[DriftSignal]:
     """Evaluate contract drift rules against current and recent data."""
     signals: list[DriftSignal] = []
@@ -565,7 +588,7 @@ def _evaluate_drift_rules(
                 ))
 
         elif rule.id == "payoff_within_window":
-            signal = _check_payoff_gap_trend(recent_metrics, window)
+            signal = _check_payoff_gap_trend(recent_metrics, current_result, chapter_number, window)
             if signal:
                 signal.severity = rule.severity
                 signals.append(signal)
@@ -693,7 +716,7 @@ def check_core_loop_compliance(
         result.warnings.append("主角在本章中缺乏主动性")
 
     # 6. Drift rule evaluation (contract + trend)
-    drift_signals = _evaluate_drift_rules(story_contract, recent, result)
+    drift_signals = _evaluate_drift_rules(story_contract, recent, result, chapter_number)
     result.drift_signals.extend(drift_signals)
 
     # 7. Calculate score

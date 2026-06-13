@@ -99,8 +99,8 @@ def _make_brief(
 class TestCorePayoffPresent:
     """Test core payoff detection."""
 
-    def test_payoff_from_brief_reader_payoff(self):
-        """Brief with reader_payoff should signal payoff present."""
+    def test_payoff_from_brief_reader_payoff_requires_textual_evidence(self):
+        """Brief reader_payoff alone is a plan, not textual payoff evidence."""
         contract = _make_contract()
         brief = _make_brief(reader_payoff="主角获得签到奖励，实力提升")
         content = "普通章节内容，没有特殊关键词。"
@@ -109,10 +109,10 @@ class TestCorePayoffPresent:
             project_id="test", chapter_number=5, content=content,
             story_contract=contract, chapter_brief=brief,
         )
-        assert result.core_payoff_present is True
+        assert result.core_payoff_present is False
 
-    def test_payoff_from_brief_primary_payoff(self):
-        """Brief with primary_payoff should signal payoff present."""
+    def test_payoff_from_brief_primary_payoff_requires_textual_evidence(self):
+        """Brief primary_payoff alone is a plan, not textual payoff evidence."""
         contract = _make_contract()
         brief = ChapterBrief(
             tier1=ChapterBriefTier1(
@@ -127,7 +127,7 @@ class TestCorePayoffPresent:
             project_id="test", chapter_number=5, content=content,
             story_contract=contract, chapter_brief=brief,
         )
-        assert result.core_payoff_present is True
+        assert result.core_payoff_present is False
 
     def test_payoff_from_content_keywords(self):
         """Content with multiple payoff keywords should signal present."""
@@ -319,6 +319,23 @@ class TestTrendChecking:
         payoff_gap_signals = [s for s in result.drift_signals if s.drift_type == "payoff_gap"]
         assert len(payoff_gap_signals) == 0
 
+    def test_no_payoff_gap_when_current_chapter_restores_payoff(self):
+        """Current payoff should clear the rolling window even if previous two chapters missed."""
+        contract = _make_contract()
+        recent = [
+            ChapterContractMetrics(chapter_number=3, core_payoff_present=False),
+            ChapterContractMetrics(chapter_number=4, core_payoff_present=False),
+        ]
+        content = "主角完成签到，获得奖励，立刻使用奖励兑现力量，敌人受到反噬。"
+
+        result = check_core_loop_compliance(
+            project_id="test", chapter_number=5, content=content,
+            story_contract=contract, recent_contract_metrics=recent,
+        )
+
+        payoff_gap_signals = [s for s in result.drift_signals if s.drift_type == "payoff_gap"]
+        assert len(payoff_gap_signals) == 0
+
 
 # ── Drift rule evaluation tests ─────────────────────────────────
 
@@ -396,7 +413,7 @@ class TestScoreAndPassFail:
         """Result should include contract metrics for ledger persistence."""
         contract = _make_contract()
         brief = _make_brief()
-        content = "主角获得奖励。"
+        content = "主角获得奖励后，立刻使用奖励兑现力量，敌人受到反噬。"
 
         result = check_core_loop_compliance(
             project_id="test", chapter_number=5, content=content,
