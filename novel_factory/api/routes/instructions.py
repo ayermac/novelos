@@ -66,6 +66,12 @@ async def create_instruction(request: Request, project_id: str) -> EnvelopeRespo
         if chapter_number is None:
             return error_response("VALIDATION_ERROR", "章节号不能为空")
 
+        # v6.10.7: Derive word_target from project config if not provided by user.
+        word_target = body.get("word_target")
+        if word_target is None or word_target == "":
+            from ...validators.chapter_checker import derive_word_target
+            word_target = derive_word_target(None, project)
+
         instruction_id = repo.create_instruction(
             project_id=project_id,
             chapter_number=int(chapter_number),
@@ -75,7 +81,7 @@ async def create_instruction(request: Request, project_id: str) -> EnvelopeRespo
             plots_to_plant=body.get("plots_to_plant", ""),
             emotion_tone=body.get("emotion_tone", ""),
             ending_hook=body.get("ending_hook", ""),
-            word_target=body.get("word_target"),
+            word_target=word_target,
             status=body.get("status", "pending"),
         )
 
