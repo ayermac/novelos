@@ -408,6 +408,7 @@ def execute_autofill(
         warnings.append("LLM 返回了 plot_holes，但该类型已有数据，已忽略")
 
     # Write instructions (only if missing, skip if chapter already has one)
+    project = repo.get_project(project_id)
     if "instructions" in missing_types:
         for inst in output.instructions:
             if chapter_start <= inst.chapter_number <= chapter_end:
@@ -415,6 +416,14 @@ def execute_autofill(
                 if existing is not None:
                     warnings.append(f"第 {inst.chapter_number} 章指令已存在，跳过")
                     continue
+                # v6.10.7: Override LLM word_target with project-derived value
+                # to prevent LLM from hallucinating unreasonable targets.
+                word_target = derive_word_target(None, project)
+                if inst.word_target != word_target:
+                    warnings.append(
+                        f"第 {inst.chapter_number} 章 LLM 字数目标 {inst.word_target} "
+                        f"被修正为项目默认值 {word_target}"
+                    )
                 repo.create_instruction(
                     project_id,
                     chapter_number=inst.chapter_number,
@@ -424,7 +433,7 @@ def execute_autofill(
                     plots_to_resolve=json.dumps(inst.plots_to_resolve, ensure_ascii=False),
                     emotion_tone=inst.emotion_tone,
                     ending_hook=inst.ending_hook,
-                    word_target=inst.word_target,
+                    word_target=word_target,
                     status="active",
                 )
                 created["instructions"] += 1
@@ -504,12 +513,20 @@ def execute_arc_plan(
         created["plot_holes"] += 1
 
     # Write instructions (skip if chapter already has one)
+    project = repo.get_project(project_id)
     for inst in output.instructions:
         if chapter_start <= inst.chapter_number <= chapter_end:
             existing = repo.get_instruction_by_chapter(project_id, inst.chapter_number)
             if existing is not None:
                 warnings.append(f"第 {inst.chapter_number} 章指令已存在，跳过")
                 continue
+            # v6.10.7: Override LLM word_target with project-derived value
+            word_target = derive_word_target(None, project)
+            if inst.word_target != word_target:
+                warnings.append(
+                    f"第 {inst.chapter_number} 章 LLM 字数目标 {inst.word_target} "
+                    f"被修正为项目默认值 {word_target}"
+                )
             repo.create_instruction(
                 project_id,
                 chapter_number=inst.chapter_number,
@@ -519,7 +536,7 @@ def execute_arc_plan(
                 plots_to_resolve=json.dumps(inst.plots_to_resolve, ensure_ascii=False),
                 emotion_tone=inst.emotion_tone,
                 ending_hook=inst.ending_hook,
-                word_target=inst.word_target,
+                word_target=word_target,
                 status="active",
             )
             created["instructions"] += 1
