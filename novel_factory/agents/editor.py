@@ -2103,16 +2103,25 @@ class EditorAgent(BaseAgent):
         # Use output.pass_ (post-processed final decision) to stay consistent
         # with editor_completed. The raw strategy_decision may differ when
         # score < 75 prevents the advisory override from taking effect.
+        #
+        # v6.10.7: Align event payload with actual behavior so that logs and
+        # downstream monitoring see the same decision that drives routing.
+        strategy = strategy_result.decision
+        effective_revision_needed = not output.pass_
+        effective_category = strategy.category
+        if strategy.revision_needed != effective_revision_needed:
+            effective_category = "revision" if effective_revision_needed else "advisory_pass"
         exec_events.append({
             "event_type": "review_strategy_applied",
             "message": f"审核策略应用完成，通过: {output.pass_}",
             "status": "info",
             "payload": {
                 "pass": output.pass_,
-                "revision_needed": strategy_result.decision.revision_needed,
-                "category": strategy_result.decision.category,
+                "revision_needed": effective_revision_needed,
+                "category": effective_category,
                 "revision_target": output.revision_target,
                 "score": output.score,
+                "strategy_overridden": strategy.revision_needed != effective_revision_needed,
             },
         })
 
