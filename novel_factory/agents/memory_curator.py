@@ -1090,8 +1090,22 @@ class MemoryCuratorAgent(BaseAgent):
             if target_table == "story_facts" and not target_name:
                 target_name = data.get("fact_key", "")
 
+            # v6.10.7: For characters, if target_name is missing, try data.name / character_name
+            if target_table == "characters" and not target_name:
+                target_name = str(data.get("name") or data.get("character_name") or "").strip()
+
             # Find existing record for upsert
             existing = self._find_existing(project_id, target_table, target_name)
+
+            # v6.10.7: If LLM claims "update" but provides no target_name and no existing
+            # record is found, this is almost certainly a mislabeled "create".
+            if operation == "update" and not existing and not patch.get("target_name"):
+                operation = "create"
+                logger.debug(
+                    "MemoryCurator: patched operation 'update' -> 'create' for %s "
+                    "because target_name was empty and no existing record found",
+                    target_table,
+                )
 
             after_data = dict(data)
             if target_table == "story_facts":

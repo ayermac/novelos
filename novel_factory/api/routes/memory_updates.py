@@ -471,7 +471,7 @@ def _clean_character_name_candidate(value) -> str:
     text = str(value or "").strip()
     if not text:
         return ""
-    text = text.strip("「」“”'\" \t，。；：:、")
+    text = text.strip("「」""'\" \t，。；：:、")
     text = re.sub(r"^(?:更新|新增|创建|补充|记录|校正|角色|人物|目标|对象)\s*", "", text)
     text = re.sub(r"^(?:角色|人物)?(?:状态|位置|行动)?(?:更新|补充|记录)\s*[：:]?\s*", "", text)
     text = re.split(r"[（(]", text, maxsplit=1)[0]
@@ -480,7 +480,7 @@ def _clean_character_name_candidate(value) -> str:
         text,
         maxsplit=1,
     )[0]
-    text = text.strip("「」“”'\" \t，。；：:、")
+    text = text.strip("「」""'\" \t，。；：:、")
     if not text or text in _CHARACTER_NAME_IGNORED:
         return ""
     if len(_compact_match_text(text)) < 2 and not re.fullmatch(r"[A-Z]{1,4}-\d{1,4}", text):
@@ -733,11 +733,12 @@ def _infer_character_name_for_memory_update(item: dict, after_data: dict) -> str
                     return candidate
 
     patterns = (
-        r"^([\u4e00-\u9fffA-Za-z0-9]{2,12}?)(?:的|行动|追踪|忽然|提前|没继续|继续|已经|正在|用)",
+        # 人名 + 常见叙事动词/上下文
+        r"^([\u4e00-\u9fffA-Za-z0-9]{2,12}?)(?:的|行动|追踪|忽然|提前|没继续|继续|已经|正在|用|放学|出门|来到|走在|站在|坐在|躺在|躲在|藏在|遇到|看见|发现|被|将|把|在|到|向|对|跟|和|与|之后|之前|随即|突然|正要|刚要|只得|只能|不禁|不由|下意识|猛然|骤然)",
     )
     ignored_prefixes = ("因为", "以及", "但是", "如果", "这里", "今天", "上方", "身后")
     for part in parts:
-        for segment in re.split(r"[，。；;:：\n\"'“”‘’——,]", part):
+        for segment in re.split(r"[，。；;:：\n\"'""''——,]", part):
             segment = segment.strip()
             if not segment or segment.startswith(ignored_prefixes):
                 continue
@@ -748,6 +749,17 @@ def _infer_character_name_for_memory_update(item: dict, after_data: dict) -> str
                 candidate = _clean_character_name_candidate(match.group(1))
                 if candidate:
                     return candidate
+    # v6.10.7: 兜底模式——证据文本常以人名开头，直接取前 2-4 个汉字作为候选
+    for part in parts:
+        part = part.strip()
+        if not part or part.startswith(ignored_prefixes):
+            continue
+        # 匹配纯中文开头的 2-4 个字（排除过于常见的词）
+        fallback_match = re.match(r"^[\u4e00-\u9fff]{2,4}", part)
+        if fallback_match:
+            candidate = _clean_character_name_candidate(fallback_match.group(0))
+            if candidate and candidate not in ("主角", "配角", "有人", "众人", "两人", "三人", "他们", "她们", "我们", "你们"):
+                return candidate
     return ""
 
 
