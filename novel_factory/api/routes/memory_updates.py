@@ -1321,19 +1321,18 @@ def _apply_memory_item(
                     if not updated:
                         result["error"] = f"伏笔 {plot['id']} 不存在，无法更新"
                 else:
-                    if operation == "update":
-                        created = _create_plot_hole_from_memory_update(
-                            repo,
-                            project_id,
-                            item,
-                            after_data,
-                            chapter_number,
-                        )
-                        result["operation"] = "create"
-                        result["success"] = created is not None
-                        result["created_id"] = created["id"] if created else None
-                    else:
-                        result["error"] = "伏笔更新缺少 target_id，且无法根据 code/title/证据匹配现有伏笔"
+                    # v6.10.7: resolve/deprecate without existing record also fall back
+                    # to create (after_data already carries the intended status).
+                    created = _create_plot_hole_from_memory_update(
+                        repo,
+                        project_id,
+                        item,
+                        after_data,
+                        chapter_number,
+                    )
+                    result["operation"] = "create"
+                    result["success"] = created is not None
+                    result["created_id"] = created["id"] if created else None
 
         elif target_table == "instructions":
             instruction_data = _normalize_text_fields(

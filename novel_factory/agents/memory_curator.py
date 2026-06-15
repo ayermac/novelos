@@ -1090,8 +1090,16 @@ class MemoryCuratorAgent(BaseAgent):
             if target_table == "story_facts" and not target_name:
                 target_name = data.get("fact_key", "")
 
-            # v6.10.7: For characters, if target_name is missing, try data.name / character_name
-            if target_table == "characters" and not target_name:
+            # v6.10.7: Unified target_name fallback for all tables where LLM omits it
+            if target_table == "plot_holes" and not target_name:
+                target_name = str(data.get("code") or data.get("title") or "").strip()
+            elif target_table == "world_settings" and not target_name:
+                target_name = str(data.get("title") or data.get("category") or "").strip()
+            elif target_table == "factions" and not target_name:
+                target_name = str(data.get("name") or "").strip()
+            elif target_table == "outlines" and not target_name:
+                target_name = str(data.get("title") or "").strip()
+            elif target_table == "characters" and not target_name:
                 target_name = str(data.get("name") or data.get("character_name") or "").strip()
 
             # Find existing record for upsert
@@ -1104,6 +1112,18 @@ class MemoryCuratorAgent(BaseAgent):
                 logger.debug(
                     "MemoryCurator: patched operation 'update' -> 'create' for %s "
                     "because target_name was empty and no existing record found",
+                    target_table,
+                )
+
+            # v6.10.7: If LLM claims "resolve" or "deprecate" but no existing record
+            # and no target_name provided, treat as "create" (the after_data already
+            # carries the intended status, e.g. resolved/abandoned).
+            if operation in ("resolve", "deprecate") and not existing and not patch.get("target_name"):
+                operation = "create"
+                logger.debug(
+                    "MemoryCurator: patched operation '%s' -> 'create' for %s "
+                    "because target_name was empty and no existing record found",
+                    patch.get("operation", ""),
                     target_table,
                 )
 
