@@ -90,9 +90,24 @@ def _normalize_character_memory_data(data: dict) -> dict:
     the characters table, status is only an active/inactive lifecycle flag.
     """
     normalized = _normalize_text_fields(
-        data, ("traits", "description", "alias", "role")
+        data, ("traits", "description", "alias")
     )
     story_notes: list[str] = []
+
+    # v6.10.7: Guard role from LLM prose pollution. Only standard enum values
+    # are allowed; descriptive text (e.g. "江海城防军少尉...") must not
+    # overwrite protagonist/supporting/antagonist.
+    _VALID_CHARACTER_ROLES = {
+        "protagonist", "supporting", "antagonist", "neutral",
+        "antagonist/neutral", "unclear", "main", "lead",
+    }
+    if "role" in data:
+        role_val = str(data.get("role") or "").strip().lower()
+        if role_val in _VALID_CHARACTER_ROLES:
+            normalized["role"] = role_val
+        else:
+            # Preserve the prose as a story note instead of corrupting the role
+            story_notes.append(f"角色定位：{data.get('role')}")
     if "status" in data:
         lifecycle_status = str(data.get("status") or "").strip().lower()
         if lifecycle_status in {"active", "inactive"}:
@@ -1079,11 +1094,32 @@ def _apply_memory_item(
 
         elif target_table == "characters":
             character_data = _normalize_character_memory_data(after_data)
+            # v6.10.7: Protagonist impact assessment — refuse destructive patches
+            # that would rename or demote the protagonist.
+            protagonist = None
+            try:
+                protagonist = repo.get_protagonist(project_id)
+            except Exception:
+                pass
             if operation == "create":
                 existing_character = _find_character_for_memory_update(
                     repo, project_id, item, after_data
                 )
                 if existing_character:
+                    # v6.10.7: If patch targets existing protagonist, do not corrupt name/role
+                    if existing_character.get("role") == "protagonist":
+                        if character_data.get("name") and character_data["name"] != existing_character.get("name"):
+                            result["error"] = (
+                                f"拒绝应用：补丁试图将主角 '{existing_character['name']}' 重命名为 "
+                                f"'{character_data['name']}'。请使用显式重命名流程。"
+                            )
+                            return result
+                        if character_data.get("role") and character_data["role"] != "protagonist":
+                            result["error"] = (
+                                f"拒绝应用：补丁试图将主角 '{existing_character['name']}' 降级为 "
+                                f"角色 {character_data['role']!r}。"
+                            )
+                            return result
                     updated = repo.update_character(
                         project_id,
                         existing_character["id"],
@@ -1115,6 +1151,20 @@ def _apply_memory_item(
                         repo, project_id, item, after_data
                     )
                 if character:
+                    # v6.10.7: Protagonist write-protection at apply time
+                    if character.get("role") == "protagonist":
+                        if character_data.get("name") and character_data["name"] != character.get("name"):
+                            result["error"] = (
+                                f"拒绝应用：补丁试图将主角 '{character['name']}' 重命名为 "
+                                f"'{character_data['name']}'。请使用显式重命名流程。"
+                            )
+                            return result
+                        if character_data.get("role") and character_data["role"] != "protagonist":
+                            result["error"] = (
+                                f"拒绝应用：补丁试图将主角 '{character['name']}' 降级为 "
+                                f"角色 {character_data['role']!r}。"
+                            )
+                            return result
                     updated = repo.update_character(
                         project_id, character["id"], character_data
                     )

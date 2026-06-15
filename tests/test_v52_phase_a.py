@@ -114,8 +114,37 @@ class TestRepositoryMixins:
             active_after = repo.list_characters("test_char", include_inactive=False)
             assert len(active_after) == 1
 
-            # Delete
-            assert repo.delete_character("test_char", char["id"]) is True
+            # v6.10.7: Protagonist demotion is blocked
+            with pytest.raises(ValueError):
+                repo.update_character("test_char", char["id"], {"role": "supporting"})
+
+            # Protagonist rename is blocked
+            with pytest.raises(ValueError):
+                repo.update_character("test_char", char["id"], {"name": "新名字"})
+
+            # Protagonist deletion is blocked
+            with pytest.raises(ValueError):
+                repo.delete_character("test_char", char["id"])
+
+            # Second protagonist creation is blocked
+            with pytest.raises(ValueError):
+                repo.create_character(
+                    project_id="test_char",
+                    name="王五",
+                    role="protagonist",
+                )
+
+            # Delete supporting character works
+            supporting_char = repo.create_character(
+                project_id="test_char",
+                name="王五",
+                role="supporting",
+            )
+            assert repo.delete_character("test_char", supporting_char["id"]) is True
+
+            # Cleanup: cascade delete bypasses protagonist guard (test infra only)
+            repo.delete_characters_by_project("test_char")
+            assert len(repo.list_characters("test_char", include_inactive=True)) == 0
 
         finally:
             if os.path.exists(db_path):
@@ -426,8 +455,26 @@ class TestAPIRoutes:
             })
             assert resp.json()["data"]["description"] == "更新后的描述"
 
-            # Delete character
+            # v6.10.7: Protagonist deletion is blocked
             resp = client.delete(f"/api/projects/api_char_test/characters/{char_id}")
+            assert resp.json()["ok"] is False
+            assert resp.json()["error"]["code"] == "OPERATION_BLOCKED"
+
+            # Protagonist demotion is also blocked
+            resp = client.put(f"/api/projects/api_char_test/characters/{char_id}", json={
+                "role": "supporting",
+            })
+            assert resp.json()["ok"] is False
+            assert resp.json()["error"]["code"] == "OPERATION_BLOCKED"
+
+            # Create and delete a supporting character works
+            resp = client.post("/api/projects/api_char_test/characters", json={
+                "name": "配角",
+                "role": "supporting",
+            })
+            assert resp.json()["ok"] is True
+            supporting_id = resp.json()["data"]["id"]
+            resp = client.delete(f"/api/projects/api_char_test/characters/{supporting_id}")
             assert resp.json()["data"]["deleted"] is True
 
         finally:
