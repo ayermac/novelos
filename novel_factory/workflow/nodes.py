@@ -1389,6 +1389,29 @@ def planner_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_
     blocking_guard = _guard_blocking_db_status(state, repo)
     if blocking_guard:
         return blocking_guard
+    # v6.10.7: Protagonist integrity gate — do not plan without a protagonist.
+    project_id = state.get("project_id")
+    if project_id:
+        try:
+            protagonist = repo.get_protagonist(project_id)
+            if not protagonist:
+                error = {
+                    "error": "PROJECT_INTEGRITY_VIOLATION: 项目缺少主角（protagonist），无法生成章节规划。请先创建或恢复主角。",
+                    "chapter_status": state.get("chapter_status"),
+                    "requires_human": True,
+                }
+                _log_agent_node_outcome(state, repo, "planner", error)
+                return error
+            if not protagonist.get("name"):
+                error = {
+                    "error": "PROJECT_INTEGRITY_VIOLATION: 主角记录存在但名字为空，无法生成章节规划。请先修复主角名字。",
+                    "chapter_status": state.get("chapter_status"),
+                    "requires_human": True,
+                }
+                _log_agent_node_outcome(state, repo, "planner", error)
+                return error
+        except Exception as e:
+            logger.warning("Planner protagonist check failed: %s", e, exc_info=True)
     _update_run_node(state, repo, "planner")
     _log_node_event(state, repo, "planner", "started", status="running")
     agent = PlannerAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))

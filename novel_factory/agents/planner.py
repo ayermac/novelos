@@ -205,6 +205,24 @@ class PlannerAgent(BaseAgent):
         chapter_number = state["chapter_number"]
         exec_events: list[dict] = []
 
+        # v6.10.7: Internal integrity gate — refuse to plan without a protagonist.
+        try:
+            from ..integrity import ProjectIntegrityChecker, IntegrityViolation
+            checker = ProjectIntegrityChecker(self.repo)
+            checker.gate_before_plan(project_id)
+        except IntegrityViolation as exc:
+            logger.error("Planner blocked by integrity check: %s", exc)
+            return {
+                "error": f"项目数据完整性检查未通过: {exc}",
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": True,
+                "integrity_violation": {
+                    "check": exc.check_name,
+                    "details": exc.details,
+                },
+                "_exec_events": exec_events,
+            }
+
         context = self._build_v6_context(state)
 
         messages = [

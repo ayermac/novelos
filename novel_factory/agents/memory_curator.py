@@ -213,7 +213,8 @@ MEMORY_CURATOR_SYSTEM_PROMPT = """你是网文工厂的记忆管理员（Memory 
 - 章节末尾的关键数值状态必须沉淀到 story_facts：如倒计时、余额、等级、权限、积分、剩余次数、冷却、进度、生命值/能量；value 需包含原始 value 和必要上下文，下一章要继承
 - 伏笔状态：planted（埋设）、resolved（解决）、abandoned（废弃）
 - 指令只生成下一章（chapter_number = 当前章节号 + 1）的
-- 如果本章没有需要更新的项目资料，返回空列表"""
+- 如果本章没有需要更新的项目资料，返回空列表
+- 禁止修改现有 protagonist 的 name 或 role。protagonist 信息只能由用户显式创建/编辑，禁止通过记忆补丁覆盖。"""
 
 
 class MemoryCuratorAgent(BaseAgent):
@@ -1126,6 +1127,52 @@ class MemoryCuratorAgent(BaseAgent):
                     patch.get("operation", ""),
                     target_table,
                 )
+
+            # v6.10.7: Protagonist guard — refuse to create memory items that would
+            # rename or demote the protagonist. This is a last-ditch upstream defense
+            # before the patch enters the user's inbox.
+            if target_table == "characters" and operation == "update" and existing:
+                if existing.get("role") == "protagonist":
+                    if data.get("name") and str(data.get("name")).strip() != existing.get("name"):
+                        logger.warning(
+                            "MemoryCurator: DROPPED patch that tries to rename protagonist "
+                            "'%s' -> '%s' for project=%s chapter=%s",
+                            existing.get("name"),
+                            data.get("name"),
+                            project_id,
+                            chapter_number,
+                        )
+                        exec_events.append({
+                            "event_type": "memory_patch_dropped",
+                            "message": f"已丢弃试图重命名主角的补丁: {existing.get('name')} -> {data.get('name')}",
+                            "status": "warning",
+                            "payload": {
+                                "drop_reason": "protagonist_name_change_blocked",
+                                "target_table": target_table,
+                                "target_name": target_name,
+                            },
+                        })
+                        continue
+                    if data.get("role") and str(data.get("role")).strip().lower() != "protagonist":
+                        logger.warning(
+                            "MemoryCurator: DROPPED patch that tries to demote protagonist "
+                            "'%s' to role '%s' for project=%s chapter=%s",
+                            existing.get("name"),
+                            data.get("role"),
+                            project_id,
+                            chapter_number,
+                        )
+                        exec_events.append({
+                            "event_type": "memory_patch_dropped",
+                            "message": f"已丢弃试图降级主角的补丁: {existing.get('name')} -> role={data.get('role')}",
+                            "status": "warning",
+                            "payload": {
+                                "drop_reason": "protagonist_role_demotion_blocked",
+                                "target_table": target_table,
+                                "target_name": target_name,
+                            },
+                        })
+                        continue
 
             after_data = dict(data)
             if target_table == "story_facts":

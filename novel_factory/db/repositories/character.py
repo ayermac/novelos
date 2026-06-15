@@ -5,6 +5,13 @@ from __future__ import annotations
 from ..connection import row_to_dict
 
 
+# v6.10.7: Valid character roles for data integrity.
+_VALID_CHARACTER_ROLES = {
+    "protagonist", "supporting", "antagonist", "neutral",
+    "antagonist/neutral", "unclear", "main", "lead",
+}
+
+
 class CharacterRepositoryMixin:
     """Repository mixin for characters table CRUD operations."""
 
@@ -54,6 +61,22 @@ class CharacterRepositoryMixin:
         finally:
             conn.close()
 
+    def get_protagonist(self, project_id: str) -> dict | None:
+        """Get the protagonist for a project.
+
+        Returns:
+            The protagonist character dict or None if not found.
+        """
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT * FROM characters WHERE project_id=? AND role='protagonist' AND status='active'",
+                (project_id,),
+            ).fetchone()
+            return row_to_dict(row)
+        finally:
+            conn.close()
+
     def create_character(
         self,
         project_id: str,
@@ -77,7 +100,32 @@ class CharacterRepositoryMixin:
 
         Returns:
             Created character dict with id.
+
+        Raises:
+            ValueError: If attempting to create a second protagonist or
+                        if role/name values are invalid.
         """
+        # v6.10.7: Validate role before write
+        role = str(role or "").strip().lower()
+        if role not in _VALID_CHARACTER_ROLES:
+            role = "supporting"
+
+        # v6.10.7: Protagonist uniqueness guard (check all statuses, not just active)
+        if role == "protagonist":
+            all_chars = self.list_characters(project_id, include_inactive=True)
+            existing_protagonists = [c for c in all_chars if c.get("role") == "protagonist"]
+            if existing_protagonists:
+                first = existing_protagonists[0]
+                raise ValueError(
+                    f"Project already has protagonist '{first['name']}' (id={first['id']}, status={first.get('status')}). "
+                    "Cannot create a second protagonist."
+                )
+
+        # v6.10.7: Name sanity check
+        name = str(name or "").strip()
+        if not name or len(name) > 16:
+            raise ValueError(f"Character name must be 1-16 characters, got: {name!r}")
+
         conn = self._conn()
         try:
             cursor = conn.execute(
@@ -117,7 +165,53 @@ class CharacterRepositoryMixin:
 
         Returns:
             Updated character dict or None if not found.
+
+        Raises:
+            ValueError: If attempting to demote protagonist or corrupt name/role.
         """
+        # v6.10.7: Protagonist write-protection — load current record before update
+        current = self.get_character(project_id, char_id)
+        if not current:
+            return None
+
+        is_protagonist = current.get("role") == "protagonist"
+
+        # v6.10.7: Guard name corruption
+        if "name" in data:
+            new_name = str(data["name"] or "").strip()
+            if not new_name or len(new_name) > 16:
+                raise ValueError(
+                    f"Refusing to corrupt character name: {new_name!r} (must be 1-16 chars)"
+                )
+            # v6.10.7: Extra guard for protagonist — do not silently rename protagonist
+            if is_protagonist and new_name != current.get("name"):
+                raise ValueError(
+                    f"Refusing to rename protagonist '{current.get('name')}' -> '{new_name}'. "
+                    "Use explicit project-level rename if intended."
+                )
+
+        # v6.10.7: Guard role corruption
+        if "role" in data:
+            new_role = str(data["role"] or "").strip().lower()
+            if new_role not in _VALID_CHARACTER_ROLES:
+                raise ValueError(
+                    f"Refusing to set invalid role {new_role!r} for character {char_id}."
+                )
+            # v6.10.7: Prevent protagonist demotion via memory patches
+            if is_protagonist and new_role != "protagonist":
+                raise ValueError(
+                    f"Refusing to demote protagonist (id={char_id}) to role {new_role!r}."
+                )
+            # v6.10.7: Prevent promoting another character to protagonist without
+            # first handling the existing one (handled by caller or explicit path)
+            if not is_protagonist and new_role == "protagonist":
+                existing_protagonist = self.get_protagonist(project_id)
+                if existing_protagonist and existing_protagonist["id"] != char_id:
+                    raise ValueError(
+                        f"Cannot promote character {char_id} to protagonist: "
+                        f"project already has protagonist '{existing_protagonist['name']}' (id={existing_protagonist['id']})."
+                    )
+
         conn = self._conn()
         try:
             # Build update clause
@@ -155,7 +249,18 @@ class CharacterRepositoryMixin:
 
         Returns:
             True if deleted, False if not found.
+
+        Raises:
+            ValueError: If attempting to delete the protagonist.
         """
+        # v6.10.7: Protagonist deletion guard
+        char = self.get_character(project_id, char_id)
+        if char and char.get("role") == "protagonist":
+            raise ValueError(
+                f"Cannot delete protagonist '{char['name']}' (id={char_id}). "
+                "Delete or reassign role first."
+            )
+
         conn = self._conn()
         try:
             cursor = conn.execute(

@@ -130,6 +130,8 @@ async def update_character(
         character = repo.update_character(project_id, char_id, data)
         return envelope_response(character)
 
+    except ValueError as e:
+        return error_response("OPERATION_BLOCKED", str(e))
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"更新角色失败: {str(e)}")
 
@@ -150,5 +152,7 @@ async def delete_character(
 
         return envelope_response({"deleted": True})
 
+    except ValueError as e:
+        return error_response("OPERATION_BLOCKED", str(e))
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"删除角色失败: {str(e)}")
