@@ -789,6 +789,9 @@ class PolisherAgent(BaseAgent):
         # plot facts.  Broad word-count gates allow useful polish expansion;
         # this local drift guard blocks unsafe relative expansion before
         # Editor later reports fact-lock violations after a retry loop.
+        #
+        # v6.10.7: Relax limits during revision chains because Editor explicitly
+        # requested substantive changes; a moderate expansion is expected.
         if (
             state.get("llm_mode") != "stub"
             and original_content
@@ -801,10 +804,12 @@ class PolisherAgent(BaseAgent):
             )
             word_delta = polished_wc - original_wc
             expansion_ratio = word_delta / original_wc
+            max_expansion_ratio = 0.25 if in_revision_chain else POLISHER_MAX_EXPANSION_RATIO
+            max_expansion_words = 500 if in_revision_chain else POLISHER_MAX_EXPANSION_WORDS
             if (
                 not system_compressed
-                and expansion_ratio > POLISHER_MAX_EXPANSION_RATIO
-                and word_delta > POLISHER_MAX_EXPANSION_WORDS
+                and expansion_ratio > max_expansion_ratio
+                and word_delta > max_expansion_words
             ):
                 reason = (
                     f"润色稿扩写漂移：{original_wc} → {polished_wc} 字"
