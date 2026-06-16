@@ -561,3 +561,78 @@ class TestCreativeLedgerCuratorInvokeFormat:
             assert isinstance(first_arg, list), f"Expected list, got {type(first_arg)}"
             assert isinstance(first_arg[0], dict)
             assert "role" in first_arg[0]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Supplementary — Provider streaming empty-content fallback (v6.10.8)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestStreamingEmptyFallback:
+    """invoke_text_stream must fallback to invoke_text when stream returns empty."""
+
+    def test_empty_stream_falls_back_to_non_stream(self):
+        from novel_factory.llm.openai_compatible import OpenAICompatibleProvider
+        from novel_factory.config.settings import LLMConfig
+
+        provider = OpenAICompatibleProvider(
+            config=LLMConfig(
+                provider="test",
+                base_url="http://localhost",
+                api_key="sk-test",
+                model="test-model",
+            )
+        )
+
+        # Simulate streaming returning empty content
+        mock_chat = MagicMock()
+        mock_chat.stream.return_value = iter([])  # No chunks
+        provider._client = mock_chat
+        with patch.object(
+            provider, "invoke_text",
+            return_value="fallback prose content",
+        ) as mock_invoke_text:
+            result = provider.invoke_text_stream(
+                messages=[{"role": "user", "content": "hello"}],
+                temperature=0.7,
+                max_tokens=100,
+                agent_id="test_author",
+            )
+
+        assert result == "fallback prose content"
+        mock_invoke_text.assert_called_once()
+        call_kwargs = mock_invoke_text.call_args[1]
+        assert call_kwargs.get("temperature") == 0.7
+        assert call_kwargs.get("max_tokens") == 100
+        assert call_kwargs.get("agent_id") == "test_author"
+
+    def test_non_empty_stream_returns_directly(self):
+        from novel_factory.llm.openai_compatible import OpenAICompatibleProvider
+        from novel_factory.config.settings import LLMConfig
+
+        provider = OpenAICompatibleProvider(
+            config=LLMConfig(
+                provider="test",
+                base_url="http://localhost",
+                api_key="sk-test",
+                model="test-model",
+            )
+        )
+
+        mock_chat = MagicMock()
+        chunk = MagicMock()
+        chunk.content = "some text"
+        mock_chat.stream.return_value = iter([chunk])
+        provider._client = mock_chat
+        with patch.object(
+            provider, "invoke_text",
+            return_value="should not be called",
+        ) as mock_invoke_text:
+            result = provider.invoke_text_stream(
+                messages=[{"role": "user", "content": "hello"}],
+                temperature=0.7,
+                max_tokens=100,
+            )
+
+        assert result == "some text"
+        mock_invoke_text.assert_not_called()
