@@ -2029,18 +2029,26 @@ class EditorAgent(BaseAgent):
         )
 
         # Inject quality_gate issues into output for strategy
-        if quality_gate.get("blocking_issues"):
-            for issue in quality_gate["blocking_issues"]:
-                if issue not in output.issues:
-                    output.issues.append(issue)
-        if quality_gate.get("priority_issues"):
-            for issue in quality_gate["priority_issues"][:3]:
-                if issue not in output.issues:
-                    output.issues.append(issue)
-        if quality_gate.get("advisory_issues"):
-            for issue in quality_gate["advisory_issues"][:2]:
-                if issue not in output.suggestions:
-                    output.suggestions.append(issue)
+        # v6.10.8-fix: Add type guards since malformed state may contain int instead of list
+        def _as_list(val: Any) -> list[Any]:
+            if isinstance(val, list):
+                return val
+            return []
+
+        blocking_issues = _as_list(quality_gate.get("blocking_issues"))
+        for issue in blocking_issues:
+            if issue not in output.issues:
+                output.issues.append(issue)
+
+        priority_issues = _as_list(quality_gate.get("priority_issues"))
+        for issue in priority_issues[:3]:
+            if issue not in output.issues:
+                output.issues.append(issue)
+
+        advisory_issues = _as_list(quality_gate.get("advisory_issues"))
+        for issue in advisory_issues[:2]:
+            if issue not in output.suggestions:
+                output.suggestions.append(issue)
 
         # v6.10.0: Emit progress event - quality diagnosis started
         exec_events.append({
