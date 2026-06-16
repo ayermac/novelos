@@ -119,13 +119,13 @@ class TestSelfCheckFinalCheck:
         loop = SelfCheckLoop(agent_id="test", max_repair_attempts=1)
         result = loop.run(generate_fn, self_check_fn, repair_fn)
 
-        # self_check_fn called twice: once for original, once for repaired
+        # v6.10.8: final_check is advisory — called for observability but never blocks
         assert call_count["n"] == 2
         assert result["text"] == "good"
         assert result["_autonomy"]["decision"] == "continue"
 
-    def test_repair_then_fail(self):
-        """Repaired output fails final_check → ask_human."""
+    def test_repair_then_still_fail(self):
+        """Repaired output still fails final_check → still continue (advisory only)."""
         from novel_factory.agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
 
         original = {"text": "bad"}
@@ -142,8 +142,11 @@ class TestSelfCheckFinalCheck:
         loop = SelfCheckLoop(agent_id="test", max_repair_attempts=1)
         result = loop.run(generate_fn, self_check_fn, repair_fn)
 
-        assert result["_autonomy"]["decision"] == "ask_human"
-        assert "重新自检仍未通过" in result["_autonomy"]["reason"]
+        # v6.10.8: final_check is advisory only — blocking was causing production
+        # chapters to pile up in human_review unnecessarily.
+        assert result["_autonomy"]["decision"] == "continue"
+        # But the trace should still record that the final_check failed
+        assert result["_trace"]["repair_attempts"][0].get("final_check") is not None
 
 
 # ──────────────────────────────────────────────────────────────────────

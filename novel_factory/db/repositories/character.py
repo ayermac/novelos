@@ -190,9 +190,12 @@ class CharacterRepositoryMixin:
                     "Use explicit project-level rename if intended."
                 )
 
-        # v6.10.7: Guard role corruption
+        # v6.10.7/v6.10.8: Guard role corruption
         if "role" in data:
             new_role = str(data["role"] or "").strip().lower()
+            # v6.10.8: Reject invalid roles early if caller did not normalise.
+            # Memory Curator now normalises prose roles to "supporting" + traits,
+            # so this path should mainly catch direct API misuse.
             if new_role not in _VALID_CHARACTER_ROLES:
                 raise ValueError(
                     f"Refusing to set invalid role {new_role!r} for character {char_id}."
