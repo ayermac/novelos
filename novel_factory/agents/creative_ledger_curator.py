@@ -24,6 +24,8 @@ class CreativeLedgerCurator(BaseAgent):
     content/review, then produces incremental patches for each ledger.
     """
 
+    agent_id = "creative_ledger_curator"
+
     def __init__(self, repo: Any, llm: Any) -> None:
         super().__init__(repo, llm)
         self.ledger_types = [
@@ -168,7 +170,10 @@ class CreativeLedgerCurator(BaseAgent):
         )
 
         try:
-            response = self.llm.invoke_json(prompt)
+            # v6.10.8: Pass messages list, not raw string — provider interface
+            # expects [{"role": ..., "content": ...}].
+            messages = [{"role": "user", "content": prompt}]
+            response = self.llm.invoke_json(messages)
             if isinstance(response, dict):
                 return response
             return previous_data

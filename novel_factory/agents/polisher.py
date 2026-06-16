@@ -16,7 +16,7 @@ from ..workflow.execution_events import (
     EVENT_SEGMENT_FAILED,
 )
 from ..models.schemas import PolisherOutput
-from ..models.state import ChapterStatus, FactoryState
+from ..models.state import ChapterStatus, FactoryState, status_order
 from ..validators.chapter_checker import (
     validate_chapter_output,
     check_word_count_quality_gate,
@@ -980,14 +980,10 @@ class PolisherAgent(BaseAgent):
         )
         if not ok:
             # v6.8.1: Check if chapter is already at or past POLISHED (recovery run)
+            # v6.10.8: Use shared status_order() instead of local dict.
             current_status = self.repo.get_chapter_status(project_id, chapter_number)
-            _STATUS_ORDER = {
-                "idea": 0, "outlined": 1, "planned": 2, "scripted": 3,
-                "drafted": 4, "polished": 5, "review": 6, "reviewed": 7,
-                "revision": 8, "published": 9, "blocking": 10,
-            }
-            current_order = _STATUS_ORDER.get(current_status, -1)
-            polished_order = _STATUS_ORDER.get("polished", 5)
+            current_order = status_order(current_status)
+            polished_order = status_order("polished")
             if current_order >= polished_order:
                 logger.info(
                     "Polisher: chapter already at '%s' (order %d >= %d), skipping status advance (recovery run)",

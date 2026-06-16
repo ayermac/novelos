@@ -546,11 +546,24 @@ class EditorAgent(BaseAgent):
             if not use_compact_review:
                 raise
             logger.warning("Editor: LLM review degraded to rule-based fallback: %s", e)
-            output = self._fallback_rule_review(
-                inputs.content, str(e),
-                project_id=inputs.project_id,
-                chapter_number=inputs.chapter_number,
-            )
+            # v6.10.8: Guard against _fallback_rule_review also failing —
+            # if output is unbound, line 561 would raise UnboundLocalError.
+            try:
+                output = self._fallback_rule_review(
+                    inputs.content, str(e),
+                    project_id=inputs.project_id,
+                    chapter_number=inputs.chapter_number,
+                )
+            except Exception as fallback_exc:
+                logger.error("Editor: rule-based fallback also failed: %s", fallback_exc)
+                from ..models.schemas import EditorScores
+                output = EditorOutput(
+                    pass_=False,
+                    score=40,
+                    issues=[f"LLM 审核异常且规则兜底也失败: {str(e)[:100]}"],
+                    revision_target="author",
+                    scores=EditorScores(continuity=40, logic=40, style=40, quality=40),
+                )
             exec_events.append({
                 "event_type": "fallback_used",
                 "message": f"LLM 审核降级为规则兜底：{str(e)[:100]}",
@@ -1282,7 +1295,12 @@ class EditorAgent(BaseAgent):
             gate_data = gate_result.get("data", {})
             if not gate_data.get("pass"):
                 output.pass_ = False
-                output.revision_target = gate_data.get("revision_target")
+                # v6.10.8: Validate revision_target against whitelist; fall back to author
+                raw_target = gate_data.get("revision_target")
+                if raw_target and raw_target in ("author", "polisher", "planner"):
+                    output.revision_target = raw_target
+                else:
+                    output.revision_target = "author"
                 blocking_issues = gate_data.get("blocking_issues", [])
                 for issue in blocking_issues:
                     issue_msg = issue.get("message", str(issue))
@@ -2001,9 +2019,12 @@ class EditorAgent(BaseAgent):
 
         # Build seam_result from quality_gate state
         seam_diagnostics = quality_gate.get("diagnostics", {}).get("chapter_seam", {})
+        # v6.10.8: Count only seam-related blocking issues, not all blocking issues
+        all_blocking = quality_gate.get("blocking_issues", [])
+        seam_blocking = [i for i in all_blocking if isinstance(i, str) and "章间衔接" in i]
         seam_result = SeamCheckResult(
             passed=seam_diagnostics.get("passed", True),
-            blocking_count=len(quality_gate.get("blocking_issues", [])) if "章间衔接" in str(quality_gate.get("blocking_issues", [])) else 0,
+            blocking_count=len(seam_blocking),
             advisory_count=len(seam_diagnostics.get("advisory_issues", [])),
         )
 

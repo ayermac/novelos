@@ -12,6 +12,16 @@ logger = logging.getLogger(__name__)
 VALID_REVISION_TARGETS = frozenset({"author", "polisher", "planner"})
 
 
+def gate_passed(gate: dict[str, Any]) -> bool:
+    """v6.10.8: Unified reader for quality_gate pass/fail status.
+
+    Editor writes ``"pass": bool`` on failure paths but
+    quality_gate_node writes ``"passed": bool``.  All routing functions
+    should call this helper instead of reading the field directly.
+    """
+    return bool(gate.get("passed", gate.get("pass", False)))
+
+
 def normalize_revision_target(value: Any) -> str:
     """Return a safe workflow revision target.
 
@@ -124,9 +134,8 @@ def route_by_quality_gate(state: FactoryState) -> str:
         return "human_review"
 
     gate = state.get("quality_gate", {}) or {}
-    passed = gate.get("passed", False)
-
-    if passed:
+    # v6.10.8: unified reader handles both "passed" and "pass" field names
+    if gate_passed(gate):
         return "editor"  # 继续 LLM 审校
 
     # 确定性检查失败，跳过 LLM 审校
@@ -200,10 +209,9 @@ def route_by_review_result(state: FactoryState) -> str:
     if state.get("chapter_status") == ChapterStatus.BLOCKING.value:
         return "human_review"
 
-    gate = state.get("quality_gate", {})
-    passed = gate.get("pass", False)
-
-    if passed:
+    gate = state.get("quality_gate", {}) or {}
+    # v6.10.8: unified reader handles both "passed" and "pass" field names
+    if gate_passed(gate):
         # v5.3.2: Route to memory_curator for fact extraction after review passes
         return "memory_curator"
 
@@ -226,8 +234,9 @@ def route_after_agent(state: FactoryState) -> str:
     # v6.10.5: Retryable quality gates take priority over the generic error field.
     # This prevents polisher internal retries (low_change_fail, expansion_drift_fail)
     # from being misrouted to human_review when they still have revision budget.
+    # v6.10.8: use gate_passed() for unified field reading.
     if (
-        gate.get("pass") is False
+        not gate_passed(gate)
         and (
             gate.get("word_count_fail")
             or gate.get("death_penalty_fail")

@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from typing import Any
 
 from ..models.state import ChapterStatus, FactoryState
@@ -350,8 +351,13 @@ class MemoryCuratorAgent(BaseAgent):
                 phs = self.repo.list_plot_holes(project_id)
                 return next((p for p in phs if p.get("code") == target_name or p.get("title") == target_name), None)
             elif target_table == "instructions":
-                inst = self.repo.get_instruction_by_chapter(project_id, int(target_name))
-                return inst
+                # v6.10.8: Extract chapter number robustly — LLM may return
+                # "第5章" or a chapter title instead of a bare integer.
+                m = re.search(r"\d+", str(target_name))
+                if m:
+                    return self.repo.get_instruction_by_chapter(project_id, int(m.group()))
+                logger.warning("MemoryCurator: cannot extract chapter number from '%s'", target_name)
+                return None
             elif target_table == "story_facts":
                 return self.repo.get_story_fact_by_key(project_id, target_name)
         except Exception:
@@ -1102,6 +1108,9 @@ class MemoryCuratorAgent(BaseAgent):
                 target_name = str(data.get("title") or "").strip()
             elif target_table == "characters" and not target_name:
                 target_name = str(data.get("name") or data.get("character_name") or "").strip()
+            # v6.10.8: instructions table was missing from v6.10.7 unified fallback
+            elif target_table == "instructions" and not target_name:
+                target_name = str(data.get("chapter_number") or data.get("chapter") or "").strip()
 
             # Find existing record for upsert
             existing = self._find_existing(project_id, target_table, target_name)

@@ -118,10 +118,23 @@ class SelfCheckLoop:
             trace["repair_attempts"].append(repair_result.to_dict())
 
             if repair_result.success:
-                decision = BoundedAutonomyDecision.continue_(
-                    reason=f"局部修复成功 ({repair_result.attempts} 次尝试)"
-                )
                 repaired_output = repair_result.metadata.get("repaired_output")
+                # v6.10.8: Re-validate repaired output (fulfil docstring's final_check)
+                if repaired_output is not None:
+                    final_check = self_check_fn(repaired_output)
+                    trace["repair_attempts"][-1]["final_check"] = final_check.to_dict()
+                    if not final_check.passed:
+                        decision = BoundedAutonomyDecision.ask_human(
+                            reason=f"修复后重新自检仍未通过 ({len(final_check.issues)} 个问题)"
+                        )
+                    else:
+                        decision = BoundedAutonomyDecision.continue_(
+                            reason=f"局部修复成功且重新自检通过 ({repair_result.attempts} 次尝试)"
+                        )
+                else:
+                    decision = BoundedAutonomyDecision.continue_(
+                        reason=f"局部修复成功 ({repair_result.attempts} 次尝试)"
+                    )
             else:
                 decision = BoundedAutonomyDecision.ask_human(
                     reason=f"局部修复失败: {repair_result.error}"

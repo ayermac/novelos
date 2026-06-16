@@ -18,6 +18,10 @@ NODE_RETRY_TARGETS: dict[str, dict[str, str]] = {
     "author": {"node": "author", "label": "执笔", "status": "scripted"},
     "polisher": {"node": "polisher", "label": "润色", "status": "drafted"},
     "editor": {"node": "editor", "label": "审核", "status": "polished"},
+    # v6.10.8: Cover nodes introduced in v6.8.5+ / v6.9.0
+    "quality_gate": {"node": "quality_gate", "label": "质检门禁", "status": "polished"},
+    "memory_curator": {"node": "memory_curator", "label": "记忆整理", "status": "reviewed"},
+    "creative_ledger_curator": {"node": "creative_ledger_curator", "label": "创作台账", "status": "published"},
 }
 
 
