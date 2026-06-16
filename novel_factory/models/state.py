@@ -29,6 +29,17 @@ class ChapterStatus(str, Enum):
         return [m.value for m in cls]
 
 
+# v6.10.8: Canonical status ordering for recovery-run checks.
+# Derived from declaration order; each agent should use this instead of
+# a local hardcoded _STATUS_ORDER dict.
+STATUS_ORDER: dict[str, int] = {m.value: i for i, m in enumerate(ChapterStatus)}
+
+
+def status_order(status: str) -> int:
+    """Return the canonical order index for *status*, or -1 if unknown."""
+    return STATUS_ORDER.get(status, -1)
+
+
 # Legal state transitions
 TRANSITIONS: dict[str, list[str]] = {
     ChapterStatus.IDEA.value: [ChapterStatus.OUTLINED.value],

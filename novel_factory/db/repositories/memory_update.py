@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import uuid
 
 from ..connection import row_to_dict
@@ -62,7 +63,43 @@ class MemoryUpdateRepositoryMixin:
                     (project_id, chapter_number),
                 ).fetchone()
                 return {"acquired": True, "lock": row_to_dict(row)}
+            except sqlite3.IntegrityError:
+                # v6.10.8: Primary key conflict — a lock already exists.
+                # Check if it's stale (>120 min); if so, clean up and retry.
+                # If it's an active lock, return acquired=False to avoid
+                # a concurrent run from seizing it.
+                conn.rollback()
+                deleted = self._delete_stale_memory_curator_lock(
+                    conn, project_id, chapter_number,
+                )
+                if deleted:
+                    conn.commit()
+                    try:
+                        conn.execute(
+                            "INSERT INTO memory_curator_locks "
+                            "(project_id, chapter_number, run_id, status) "
+                            "VALUES (?, ?, ?, 'running')",
+                            (project_id, chapter_number, run_id),
+                        )
+                        conn.commit()
+                        row = conn.execute(
+                            "SELECT * FROM memory_curator_locks "
+                            "WHERE project_id=? AND chapter_number=?",
+                            (project_id, chapter_number),
+                        ).fetchone()
+                        return {"acquired": True, "lock": row_to_dict(row)}
+                    except Exception:
+                        conn.rollback()
+                # Active lock held by another run, or retry also failed
+                row = conn.execute(
+                    "SELECT * FROM memory_curator_locks "
+                    "WHERE project_id=? AND chapter_number=?",
+                    (project_id, chapter_number),
+                ).fetchone()
+                return {"acquired": False, "lock": row_to_dict(row)}
             except Exception:
+                # Non-IntegrityError (e.g. operational/connection issue) — safe
+                # to clean up stale lock and retry once.
                 conn.rollback()
                 self._delete_stale_memory_curator_lock(conn, project_id, chapter_number)
                 conn.commit()

@@ -7,7 +7,7 @@ import logging
 from typing import Any
 
 from ..models.schemas import ScreenwriterOutput
-from ..models.state import ChapterStatus, FactoryState
+from ..models.state import ChapterStatus, FactoryState, status_order
 from ..skills.registry import SkillRegistry
 from ..agent_runtime.base import BaseAgent
 from ..agent_runtime.skill_hooks import run_agent_skills
@@ -125,6 +125,9 @@ class ScreenwriterAgent(BaseAgent):
         def _self_check_wrap(data: dict[str, Any]) -> SelfCheckResult:
             out = data["output"]
             issues: list[dict[str, Any]] = []
+            # v6.10.8: Reject empty scene_beats — downstream Author needs at least one beat
+            if not out.scene_beats:
+                issues.append({"type": "beat_completeness", "message": "scene_beats 列表为空，至少需要 1 个 beat"})
             for i, beat in enumerate(out.scene_beats):
                 if not beat.scene_goal:
                     issues.append({"type": "beat_completeness", "message": f"Beat {i+1} missing scene_goal"})
@@ -227,14 +230,10 @@ class ScreenwriterAgent(BaseAgent):
         )
         if not ok:
             # v6.8.1: Check if chapter is already at or past SCRIPTED (recovery run)
+            # v6.10.8: Use shared status_order() instead of local dict.
             current_status = self.repo.get_chapter_status(project_id, chapter_number)
-            _STATUS_ORDER = {
-                "idea": 0, "outlined": 1, "planned": 2, "scripted": 3,
-                "drafted": 4, "polished": 5, "review": 6, "reviewed": 7,
-                "revision": 8, "published": 9, "blocking": 10,
-            }
-            current_order = _STATUS_ORDER.get(current_status, -1)
-            scripted_order = _STATUS_ORDER.get("scripted", 3)
+            current_order = status_order(current_status)
+            scripted_order = status_order("scripted")
             if current_order >= scripted_order:
                 logger.info(
                     "Screenwriter: chapter already at '%s' (order %d >= %d), skipping status advance (recovery run)",

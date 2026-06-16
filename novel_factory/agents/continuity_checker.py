@@ -123,13 +123,14 @@ class ContinuityCheckerAgent:
             )
 
             # Send messages to other agents
+            # v6.10.8: Fixed method name — repository has send_message(), not send_agent_message()
             for msg in output.agent_messages:
-                self.repo.send_agent_message(
+                self.repo.send_message(
+                    project_id=project_id,
                     from_agent=self.agent_id,
                     to_agent=msg.get("to_agent", "planner"),
-                    project_id=project_id,
-                    message_type=msg.get("type", "continuity_issue"),
-                    content=msg.get("content", ""),
+                    msg_type=msg.get("type", "continuity_issue"),
+                    content={"content": msg.get("content", "")},
                 )
 
             logger.info(f"ContinuityChecker generated report {report_id} for chapters {from_chapter}-{to_chapter}")

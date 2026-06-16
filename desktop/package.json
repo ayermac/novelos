@@ -1,6 +1,6 @@
 {
   "name": "novelos-desktop",
-  "version": "6.10.7",
+  "version": "6.10.8",
   "description": "Novelos Desktop Client — v6.10.7 Core Loop Evidence Governance",
   "main": "dist/main.js",
   "scripts": {

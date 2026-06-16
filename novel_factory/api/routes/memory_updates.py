@@ -537,6 +537,25 @@ def _character_aliases(character: dict) -> list[str]:
     return deduped
 
 
+def _find_character_by_exact_name(repo, project_id: str, name: str) -> dict | None:
+    """v6.10.8: Exact-name character lookup for create operations.
+
+    Unlike the fuzzy _find_character_for_memory_update, this only
+    matches when the character's name or alias is an exact (cleaned)
+    match for *name*.  Prevents create-patches from being misrouted to
+    the protagonist just because the evidence text mentions them.
+    """
+    candidates = _character_name_candidates_from_value(name)
+    if not candidates:
+        return None
+    characters = repo.list_characters(project_id, include_inactive=True)
+    for character in characters:
+        aliases = _character_aliases(character)
+        if any(c in aliases for c in candidates):
+            return character
+    return None
+
+
 def _find_character_for_memory_update(repo, project_id: str, item: dict, after_data: dict) -> dict | None:
     """Find a character target for update patches that omitted target_id."""
     before_data = _parse_json_object(item.get("before_json"))
@@ -1102,10 +1121,20 @@ def _apply_memory_item(
             except Exception:
                 pass
             if operation == "create":
-                existing_character = _find_character_for_memory_update(
-                    repo, project_id, item, after_data
-                )
-                if existing_character:
+                # v6.10.8: For create operations, use exact name matching first.
+                # The old _find_character_for_memory_update does fuzzy matching
+                # on evidence_text, which can incorrectly match the protagonist
+                # when the new character's evidence mentions the protagonist's
+                # name (e.g. "陆恒看到了黑影" → matches 陆恒).
+                new_name = str(character_data.get("name") or "").strip()
+                exact_match = None
+                if new_name:
+                    exact_match = _find_character_by_exact_name(
+                        repo, project_id, new_name
+                    )
+
+                if exact_match:
+                    existing_character = exact_match
                     # v6.10.7: If patch targets existing protagonist, do not corrupt name/role
                     if existing_character.get("role") == "protagonist":
                         if character_data.get("name") and character_data["name"] != existing_character.get("name"):
@@ -1131,6 +1160,8 @@ def _apply_memory_item(
                     if not updated:
                         result["error"] = f"角色 {existing_character['id']} 不存在，无法更新"
                 else:
+                    # No exact match → genuinely new character, create directly.
+                    # Skip fuzzy search to avoid protagonist false-positive.
                     ch = repo.create_character(
                         project_id,
                         name=character_data.get("name", ""),

@@ -15,7 +15,7 @@ from ..workflow.execution_events import (
     EVENT_SEGMENT_FAILED,
 )
 from ..models.schemas import AuthorOutput, TitleGenerationOutput
-from ..models.state import ChapterStatus, FactoryState
+from ..models.state import ChapterStatus, FactoryState, status_order
 from ..validators.chapter_checker import (
     validate_chapter_output,
     check_word_count_quality_gate,
@@ -1156,14 +1156,10 @@ class AuthorAgent(BaseAgent):
         if not ok:
             # v6.8.1: Check if chapter is already at or past DRAFTED (recovery run)
             # If so, skip status advance — the chapter was already advanced in a previous run
+            # v6.10.8: Use shared status_order() instead of local dict.
             current_status = self.repo.get_chapter_status(project_id, chapter_number)
-            _STATUS_ORDER = {
-                "idea": 0, "outlined": 1, "planned": 2, "scripted": 3,
-                "drafted": 4, "polished": 5, "review": 6, "reviewed": 7,
-                "revision": 8, "published": 9, "blocking": 10,
-            }
-            current_order = _STATUS_ORDER.get(current_status, -1)
-            drafted_order = _STATUS_ORDER.get("drafted", 4)
+            current_order = status_order(current_status)
+            drafted_order = status_order("drafted")
             if current_order >= drafted_order:
                 logger.info(
                     "Author: chapter already at '%s' (order %d >= %d), skipping status advance (recovery run)",
@@ -1253,24 +1249,13 @@ class AuthorAgent(BaseAgent):
         candidate_opening = candidate_body[:900]
         current_opening = current_body[:900]
 
+        # v6.10.8: Removed hardcoded novel-specific anchor words ("宴会厅",
+        # "云澜", "会馆", "公司走廊", etc.) that were project fixtures leaked
+        # into generic agent logic.  These never triggered for other projects
+        # and constituted dead code.  The guard now relies on structural
+        # checks only; project-specific anchors can be re-injected via config.
         required_anchor_groups: list[tuple[str, ...]] = []
-        if "宴会厅" in review_text and "主位" in review_text:
-            required_anchor_groups.append(("宴会厅", "主位"))
-        if "云澜" in review_text and "会馆" in review_text and "主位" in review_text:
-            required_anchor_groups.append(("云澜", "主位"))
-
         stale_opening_terms: list[str] = []
-        if any(marker in review_text for marker in ("出租车", "倒叙", "离开公司", "时空断裂")):
-            stale_opening_terms.extend([
-                "离开公司",
-                "公司走廊",
-                "叫了车",
-                "车上",
-                "下车步行",
-                "会馆正门",
-                "黑西装保安",
-                "内部包场",
-            ])
 
         misses_required_anchor = bool(required_anchor_groups) and not any(
             all(term in candidate_opening for term in group)
@@ -1422,16 +1407,39 @@ class AuthorAgent(BaseAgent):
 
     @classmethod
     def _scene_terms(cls, text: Any) -> list[str]:
-        """Extract high-signal terms for deterministic beat coverage checks."""
+        """Extract high-signal terms for deterministic beat coverage checks.
+
+        v6.10.8: Sliding-window approach for Chinese robustness.  Previous
+        regex ``[\\u4e00-\\u9fff]{2,}`` produced a single long token for
+        contiguous CJK text (e.g. "林泽在宴会厅走向主位"), causing the
+        substring-match in ``_scene_beat_coverage_issues`` to almost never
+        hit.  Now we extract all substrings of length 3–6 from CJK runs and
+        short alphanumeric tokens (≥2 chars) from Latin/numeric runs.
+        """
         raw = str(text or "")
+        # Strip punctuation but keep CJK and alphanum
+        cleaned = re.sub(r"[^\u4e00-\u9fffA-Za-z0-9]+", "", raw)
+        if not cleaned:
+            return []
         terms: list[str] = []
-        for token in re.findall(r"[\u4e00-\u9fffA-Za-z0-9]{2,}", raw):
+        seen: set[str] = set()
+        # Sliding window over CJK characters (window 3–6)
+        for win in range(3, 7):
+            for i in range(len(cleaned) - win + 1):
+                token = cleaned[i : i + win]
+                # Skip pure ASCII tokens inside the sliding window pass
+                if all(ord(c) < 0x80 for c in token):
+                    continue
+                if token in cls._SCENE_TERM_STOPWORDS:
+                    continue
+                if token not in seen:
+                    seen.add(token)
+                    terms.append(token)
+        # Also extract short alphanumeric tokens (≥2 chars)
+        for token in re.findall(r"[A-Za-z0-9]{2,}", raw):
             token = token.strip()
-            if token in cls._SCENE_TERM_STOPWORDS:
-                continue
-            if len(token) > 18:
-                token = token[:18]
-            if token and token not in terms:
+            if token not in cls._SCENE_TERM_STOPWORDS and token not in seen:
+                seen.add(token)
                 terms.append(token)
         return terms
 

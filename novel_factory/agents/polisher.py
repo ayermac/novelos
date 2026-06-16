@@ -16,7 +16,7 @@ from ..workflow.execution_events import (
     EVENT_SEGMENT_FAILED,
 )
 from ..models.schemas import PolisherOutput
-from ..models.state import ChapterStatus, FactoryState
+from ..models.state import ChapterStatus, FactoryState, status_order
 from ..validators.chapter_checker import (
     validate_chapter_output,
     check_word_count_quality_gate,
@@ -789,6 +789,9 @@ class PolisherAgent(BaseAgent):
         # plot facts.  Broad word-count gates allow useful polish expansion;
         # this local drift guard blocks unsafe relative expansion before
         # Editor later reports fact-lock violations after a retry loop.
+        #
+        # v6.10.7: Relax limits during revision chains because Editor explicitly
+        # requested substantive changes; a moderate expansion is expected.
         if (
             state.get("llm_mode") != "stub"
             and original_content
@@ -801,10 +804,12 @@ class PolisherAgent(BaseAgent):
             )
             word_delta = polished_wc - original_wc
             expansion_ratio = word_delta / original_wc
+            max_expansion_ratio = 0.25 if in_revision_chain else POLISHER_MAX_EXPANSION_RATIO
+            max_expansion_words = 500 if in_revision_chain else POLISHER_MAX_EXPANSION_WORDS
             if (
                 not system_compressed
-                and expansion_ratio > POLISHER_MAX_EXPANSION_RATIO
-                and word_delta > POLISHER_MAX_EXPANSION_WORDS
+                and expansion_ratio > max_expansion_ratio
+                and word_delta > max_expansion_words
             ):
                 reason = (
                     f"润色稿扩写漂移：{original_wc} → {polished_wc} 字"
@@ -975,14 +980,10 @@ class PolisherAgent(BaseAgent):
         )
         if not ok:
             # v6.8.1: Check if chapter is already at or past POLISHED (recovery run)
+            # v6.10.8: Use shared status_order() instead of local dict.
             current_status = self.repo.get_chapter_status(project_id, chapter_number)
-            _STATUS_ORDER = {
-                "idea": 0, "outlined": 1, "planned": 2, "scripted": 3,
-                "drafted": 4, "polished": 5, "review": 6, "reviewed": 7,
-                "revision": 8, "published": 9, "blocking": 10,
-            }
-            current_order = _STATUS_ORDER.get(current_status, -1)
-            polished_order = _STATUS_ORDER.get("polished", 5)
+            current_order = status_order(current_status)
+            polished_order = status_order("polished")
             if current_order >= polished_order:
                 logger.info(
                     "Polisher: chapter already at '%s' (order %d >= %d), skipping status advance (recovery run)",
