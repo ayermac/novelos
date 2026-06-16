@@ -1,5 +1,6 @@
-# v6.10.0 知识 Skill 注册表
+# v6.10.8 知识 Skill 注册表
 # 列出所有可用的知识 Skill ID，KnowledgeManager 按此加载
+# ai-style-avoidance 已升级至 v2.0（合并 humanizer-zh 规则）
 
 skills:
   - webnovel-excitement
