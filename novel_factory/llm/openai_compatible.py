@@ -893,6 +893,33 @@ class OpenAICompatibleProvider(LLMProvider):
                 stream_client, self._to_lc_messages, messages,
                 temperature=temperature, max_tokens=max_tokens, agent_id=agent_id, on_chunk=on_chunk,
             )
+            # v6.10.8: 部分模型（如 MiniMax-M3）streaming 返回空内容但不抛异常。
+            # 自动 fallback 到非 streaming 调用重试一次，避免上层拿到空内容。
+            if not content or not content.strip():
+                safe_empty_hint = "(empty)"
+                if self.last_call_trace is not None:
+                    self.last_call_trace["request"]["streaming_empty_fallback"] = True
+                    self.last_call_trace["response"] = {
+                        "content": safe_empty_hint,
+                        "content_preview": safe_empty_hint,
+                        "content_length": 0,
+                        "usage": {"prompt_tokens": pt, "completion_tokens": 0, "total_tokens": pt, "duration_ms": dm},
+                        "response_metadata": {},
+                        "finish_reason": "empty_stream",
+                        "duration_ms": dm,
+                    }
+                logger.warning(
+                    "Streaming returned empty content for agent=%s model=%s; falling back to non-stream text",
+                    agent_id,
+                    self.config.model,
+                )
+                return self.invoke_text(
+                    messages,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    request_timeout_seconds=request_timeout_seconds,
+                    agent_id=agent_id,
+                )
             self.last_token_usage = TokenUsage(prompt_tokens=pt, completion_tokens=ct, total_tokens=pt + ct, duration_ms=dm)
             self.last_call_trace = {
                 "request": request_payload,
