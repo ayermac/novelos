@@ -106,8 +106,28 @@ def _normalize_character_memory_data(data: dict) -> dict:
         if role_val in _VALID_CHARACTER_ROLES:
             normalized["role"] = role_val
         else:
-            # Preserve the prose as a story note instead of corrupting the role
-            story_notes.append(f"角色定位：{data.get('role')}")
+            # v6.10.8: LLM often returns descriptive prose as role (e.g.
+            # "前代实验体/血池系统核心").  Instead of rejecting the whole
+            # patch, fall back to "supporting" and preserve the prose in
+            # traits so no information is lost.
+            normalized["role"] = "supporting"
+            raw_role = str(data.get("role") or "").strip()
+            if raw_role:
+                story_notes.append(f"角色定位：{raw_role}")
+                # Also inject into traits for discoverability
+                existing_traits = normalized.get("traits", "")
+                trait_note = f"定位：{raw_role}"
+                if isinstance(existing_traits, str):
+                    existing_traits = existing_traits.strip()
+                    if existing_traits:
+                        existing_traits = f"{existing_traits}、{trait_note}"
+                    else:
+                        existing_traits = trait_note
+                elif isinstance(existing_traits, list):
+                    existing_traits = existing_traits + [trait_note]
+                else:
+                    existing_traits = trait_note
+                normalized["traits"] = existing_traits
     if "status" in data:
         lifecycle_status = str(data.get("status") or "").strip().lower()
         if lifecycle_status in {"active", "inactive"}:
