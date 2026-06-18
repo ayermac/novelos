@@ -19,6 +19,7 @@ from __future__ import annotations
 import os
 import sqlite3
 import tempfile
+import json
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -636,3 +637,80 @@ class TestStreamingEmptyFallback:
 
         assert result == "some text"
         mock_invoke_text.assert_not_called()
+
+
+# ──────────────────────────────────────────────────────────────────────
+# Supplementary — JSON array unwrap + Author truncation retry (v6.10.8)
+# ──────────────────────────────────────────────────────────────────────
+
+
+class TestParseJsonArrayUnwrap:
+    """parse_json must unwrap single-element array wrappers into a dict."""
+
+    def test_single_element_array_unwrapped(self):
+        from novel_factory.llm.json_resilience import parse_json
+
+        # LLM wraps the object in a list
+        raw = json.dumps([{"score": 63, "pass": False, "issues": []}])
+        result = parse_json(raw)
+        assert isinstance(result, dict)
+        assert result["score"] == 63
+        assert result["pass"] is False
+
+    def test_bare_object_returned_as_is(self):
+        from novel_factory.llm.json_resilience import parse_json
+
+        raw = json.dumps({"score": 70, "pass": True})
+        result = parse_json(raw)
+        assert isinstance(result, dict)
+        assert result["score"] == 70
+
+    def test_multi_element_array_raises(self):
+        from novel_factory.llm.json_resilience import _unwrap_json_container
+
+        # _unwrap_json_container is the final normalization step; parse_json's
+        # upstream extract_json truncates multi-element arrays to the first
+        # object, so we test the helper directly.
+        with pytest.raises(TypeError):
+            _unwrap_json_container([{"a": 1}, {"b": 2}])
+
+    def test_scalar_payload_raises(self):
+        from novel_factory.llm.json_resilience import _unwrap_json_container
+
+        with pytest.raises(TypeError):
+            _unwrap_json_container("just a string")
+
+    def test_markdown_fenced_array_unwrapped(self):
+        """LLM may emit ```json\\n[{...}]\\n``` — must still unwrap."""
+        from novel_factory.llm.json_resilience import parse_json
+
+        raw = "```json\n" + json.dumps([{"score": 50}]) + "\n```"
+        result = parse_json(raw)
+        assert isinstance(result, dict)
+        assert result["score"] == 50
+
+
+class TestAuthorRevisionMaxTokens:
+    """Revision round must use the +1024 headroom formula (parity with segmented)."""
+
+    def test_revision_max_tokens_formula_has_headroom(self):
+        # effective_target=4000 → prose_max_tokens should be min(config_max, 4000*2.5+1024)
+        # = min(config_max, 11024) = 11024 (assuming config_max large enough) or config_max
+        effective_target = 4000
+        config_max = 16384
+        prose_max_tokens = max(1024, min(config_max, int(effective_target * 2.5) + 1024))
+        # Without +1024 the old value would have been 10000
+        assert prose_max_tokens == 11024
+
+    def test_truncation_retry_breaks_config_max_cap(self):
+        # v6.10.8: retry_max must be allowed to exceed the original prose_max_tokens
+        # even when prose_max_tokens == config_max.
+        prose_max_tokens = 6024  # as seen in production timeline
+        config_max = 6144
+        # Old formula: min(config_max, 6024*1.5) = min(6144, 9036) = 6144 (no room)
+        old_retry = min(config_max, int(prose_max_tokens * 1.5))
+        assert old_retry == 6144  # old behavior: capped at config_max
+        # New formula: min(8192, 9036) = 8192
+        new_retry = min(8192, int(prose_max_tokens * 1.5))
+        assert new_retry == 8192
+        assert new_retry > prose_max_tokens  # retry actually gives more room

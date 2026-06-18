@@ -1954,8 +1954,9 @@ class AuthorAgent(BaseAgent):
                     "只替换或压缩退回问题涉及的句段，新增句子必须同步删除等量冗余说明。"
                 )
         config_max = self._config_max_tokens(self.llm)
-        # v6.9.0: Chinese text needs ~2-2.5 tokens per character, use 2.5x
-        prose_max_tokens = max(1024, min(config_max, int(effective_target * 2.5)))
+        # v6.10.8: 返修轮需要重写更长内容并吸收 feedback 指令，采用与分段生成
+        # 一致的 +1024 余量公式，避免 finish_reason=length 截断。
+        prose_max_tokens = max(1024, min(config_max, int(effective_target * 2.5) + 1024))
         compact_context = self._build_plain_text_context(state, context)
         per_call_retries = None
 
@@ -2013,8 +2014,8 @@ class AuthorAgent(BaseAgent):
         except LLMError as e:
             if "finish_reason=length" not in str(e):
                 raise
-            config_max = self._config_max_tokens(self.llm)
-            retry_max = min(config_max, int(prose_max_tokens * 1.5))
+            # v6.10.8: 截断重试允许突破 config_max 封顶，给模型足够空间完成输出。
+            retry_max = min(8192, int(prose_max_tokens * 1.5))
             logger.warning(
                 "Author: truncation detected (max_tokens=%d), retrying with max_tokens=%d",
                 prose_max_tokens, retry_max,

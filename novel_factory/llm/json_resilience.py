@@ -209,13 +209,15 @@ def parse_json(
     repaired = _repair_json(pre_repaired)
 
     try:
-        return json.loads(repaired)
+        data = json.loads(repaired)
     except json.JSONDecodeError as e:
         # Try one more time on original candidate (in case repair made it worse)
         try:
-            return json.loads(candidate)
+            data = json.loads(candidate)
         except json.JSONDecodeError:
             pass
+        else:
+            return _unwrap_json_container(data)
 
         # Build a rich diagnostic error
         error_loc = ""
@@ -236,6 +238,32 @@ def parse_json(
             doc=text,
             pos=getattr(e, "pos", 0),
         ) from e
+
+    return _unwrap_json_container(data)
+
+
+def _unwrap_json_container(data: Any) -> dict[str, Any]:
+    """Normalize parsed JSON into a dict.
+
+    v6.10.8: Some LLMs wrap the schema object in a single-element array
+    (e.g. ``[{...}]``) instead of emitting a bare object. Callers like
+    ``EditorOutput(**raw)`` assume a mapping, so unwrap such containers
+    here. Multi-element arrays and scalar payloads raise a descriptive
+    ``TypeError`` so the caller's retry/fallback path engages.
+    """
+    if isinstance(data, dict):
+        return data
+    if isinstance(data, list):
+        if len(data) == 1 and isinstance(data[0], dict):
+            logger.warning(
+                "parse_json: unwrapped single-element JSON array for caller; "
+                "model emitted a list wrapper instead of a bare object."
+            )
+            return data[0]
+        raise TypeError(
+            f"Expected JSON object for schema, got array with {len(data)} elements"
+        )
+    raise TypeError(f"Expected JSON object for schema, got {type(data).__name__}")
 
 
 class JSONParseResult:
