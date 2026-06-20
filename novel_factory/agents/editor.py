@@ -91,25 +91,7 @@ revision_target 规则：
 - 文风、句式、节奏、AI 痕迹、对白、场景质感问题 → "polisher"
 - info dump / 设定旁白 / 直白情绪 → "author"
 - 指令本身错误或设定冲突 → "planner"
-- v6.10.9: beat 设计层问题 → "screenwriter"（见下方规则）
-- 通过时 → null
-
-v6.10.9 beat 设计层路由规则（在判定 revision_target 时必须先检查）：
-当你检测到以下问题时，先检查 scene_beats（输入上下文中提供）：
-1. 核心循环漂移/缺失：
-   - 如果 scene_beats 中有 is_reward_beat=true 的 beat → "author"（beat 设计了但 Author 没写出来）
-   - 如果 scene_beats 中没有 is_reward_beat=true 的 beat → "screenwriter"（beat 没设计核心循环）
-2. 事实一致性矛盾：
-   - 如果 scene_beats 的 character_states 已正确标注但正文违反 → "author"
-   - 如果 scene_beats 的 character_states 缺失或本身错误 → "screenwriter"
-3. 对白占比过低：
-   - 如果 scene_beats 的 dialogue_slots ≥ 3 但正文对白不足 → "author"
-   - 如果 scene_beats 的 dialogue_slots < 3 或缺失 → "screenwriter"
-4. 角色物理状态冲突（如被锁死的角色有肢体互动）：
-   - 如果 character_states 已标注"锁死/无意识"但正文仍写互动 → "author"
-   - 如果 character_states 未标注 → "screenwriter"
-
-简言之：beat 设计对了但 Author 没执行 → "author"；beat 本身设计有缺陷 → "screenwriter"。"""
+- 通过时 → null"""
 
 EDITOR_SYSTEM_PROMPT += (
     "\n\n" + CONCEPT_BUDGET_CONTRACT
@@ -275,11 +257,6 @@ class EditorAgent(BaseAgent):
         style_ctx = self._get_style_bible_context(project_id, "editor")
         if style_ctx:
             parts.append(style_ctx)
-
-        # v6.10.5: Story Contract injection
-        contract_ctx = self._get_story_contract_context(project_id, "editor")
-        if contract_ctx:
-            parts.append(contract_ctx)
 
         # v6.8.1: Style-aware prompt injection (webnovel excitement, suspense, romance)
         style_prompt = self._get_style_prompt_injection(project_id, "editor")
@@ -564,24 +541,11 @@ class EditorAgent(BaseAgent):
             if not use_compact_review:
                 raise
             logger.warning("Editor: LLM review degraded to rule-based fallback: %s", e)
-            # v6.10.8: Guard against _fallback_rule_review also failing —
-            # if output is unbound, line 561 would raise UnboundLocalError.
-            try:
-                output = self._fallback_rule_review(
-                    inputs.content, str(e),
-                    project_id=inputs.project_id,
-                    chapter_number=inputs.chapter_number,
-                )
-            except Exception as fallback_exc:
-                logger.error("Editor: rule-based fallback also failed: %s", fallback_exc)
-                from ..models.schemas import EditorScores
-                output = EditorOutput(
-                    pass_=False,
-                    score=40,
-                    issues=[f"LLM 审核异常且规则兜底也失败: {str(e)[:100]}"],
-                    revision_target="author",
-                    scores=EditorScores(continuity=40, logic=40, style=40, quality=40),
-                )
+            output = self._fallback_rule_review(
+                inputs.content, str(e),
+                project_id=inputs.project_id,
+                chapter_number=inputs.chapter_number,
+            )
             exec_events.append({
                 "event_type": "fallback_used",
                 "message": f"LLM 审核降级为规则兜底：{str(e)[:100]}",
@@ -815,25 +779,14 @@ class EditorAgent(BaseAgent):
                 classifyable_issues if classifyable_issues else output.issues,
                 output.revision_target,
             )
-            # v6.10.9: gate_forced_target only applies to HARD GATES (word count,
-            # seam). The old "事实一致性违规" check was removed because it
-            # inadvertently preserved wrong LLM-reported targets (e.g. polisher)
-            # by blocking the classifier from upgrading to author/screenwriter.
             gate_forced_target = (
                 bool(word_gate_details)
                 or seam_result.blocking_count > 0
+                or any("事实一致性违规" in str(issue) for issue in output.issues)
             )
-            # v6.10.9: "事实一致性违规" forces author (not polisher) — it's a
-            # content-level issue that polisher cannot fix. This takes
-            # precedence over classifier output to prevent the doom loop where
-            # a soft issue (e.g. LOW_COLLOQUIAL_MARKERS) routes to polisher
-            # while a hard fact violation is present.
-            has_fact_violation = any(
-                "事实一致性违规" in str(issue) for issue in output.issues
-            )
-            if has_fact_violation:
-                output.revision_target = "author"
-            elif classify_result.dominant_target and not gate_forced_target:
+            # Override the LLM's self-reported target when issue semantics are clearer.
+            # Preserve targets set by hard gates such as word count and chapter seam.
+            if classify_result.dominant_target and not gate_forced_target:
                 output.revision_target = classify_result.dominant_target
             elif classify_result.dominant_target and pre_classify_target:
                 # Gate-set target takes precedence over issue classification
@@ -1324,12 +1277,7 @@ class EditorAgent(BaseAgent):
             gate_data = gate_result.get("data", {})
             if not gate_data.get("pass"):
                 output.pass_ = False
-                # v6.10.8: Validate revision_target against whitelist; fall back to author
-                raw_target = gate_data.get("revision_target")
-                if raw_target and raw_target in ("author", "polisher", "planner"):
-                    output.revision_target = raw_target
-                else:
-                    output.revision_target = "author"
+                output.revision_target = gate_data.get("revision_target")
                 blocking_issues = gate_data.get("blocking_issues", [])
                 for issue in blocking_issues:
                     issue_msg = issue.get("message", str(issue))
@@ -2048,36 +1996,25 @@ class EditorAgent(BaseAgent):
 
         # Build seam_result from quality_gate state
         seam_diagnostics = quality_gate.get("diagnostics", {}).get("chapter_seam", {})
-        # v6.10.8: Count only seam-related blocking issues, not all blocking issues
-        all_blocking = quality_gate.get("blocking_issues", [])
-        seam_blocking = [i for i in all_blocking if isinstance(i, str) and "章间衔接" in i]
         seam_result = SeamCheckResult(
             passed=seam_diagnostics.get("passed", True),
-            blocking_count=len(seam_blocking),
+            blocking_count=len(quality_gate.get("blocking_issues", [])) if "章间衔接" in str(quality_gate.get("blocking_issues", [])) else 0,
             advisory_count=len(seam_diagnostics.get("advisory_issues", [])),
         )
 
         # Inject quality_gate issues into output for strategy
-        # v6.10.8-fix: Add type guards since malformed state may contain int instead of list
-        def _as_list(val: Any) -> list[Any]:
-            if isinstance(val, list):
-                return val
-            return []
-
-        blocking_issues = _as_list(quality_gate.get("blocking_issues"))
-        for issue in blocking_issues:
-            if issue not in output.issues:
-                output.issues.append(issue)
-
-        priority_issues = _as_list(quality_gate.get("priority_issues"))
-        for issue in priority_issues[:3]:
-            if issue not in output.issues:
-                output.issues.append(issue)
-
-        advisory_issues = _as_list(quality_gate.get("advisory_issues"))
-        for issue in advisory_issues[:2]:
-            if issue not in output.suggestions:
-                output.suggestions.append(issue)
+        if quality_gate.get("blocking_issues"):
+            for issue in quality_gate["blocking_issues"]:
+                if issue not in output.issues:
+                    output.issues.append(issue)
+        if quality_gate.get("priority_issues"):
+            for issue in quality_gate["priority_issues"][:3]:
+                if issue not in output.issues:
+                    output.issues.append(issue)
+        if quality_gate.get("advisory_issues"):
+            for issue in quality_gate["advisory_issues"][:2]:
+                if issue not in output.suggestions:
+                    output.suggestions.append(issue)
 
         # v6.10.0: Emit progress event - quality diagnosis started
         exec_events.append({
@@ -2102,40 +2039,16 @@ class EditorAgent(BaseAgent):
             },
         })
         if compliance_result.blocking_violation_count >= FACTS_COMPLIANCE_BLOCK_THRESHOLD:
-            # v6.10.7: Downgrade story_facts blocking to advisory when Editor score
-            # is borderline (>=75) and there are no quality priority issues.
-            # This prevents an independent sub-check from overriding the Editor's
-            # holistic judgment and causing unnecessary revision loops.
-            should_downgrade = (
-                output.score >= 75
-                and quality_result.priority_count == 0
-                and not any("[事实一致性违规]" in str(i) for i in output.issues)
-            )
             for v in compliance_result.violations:
                 if v.get("severity") == "blocking":
-                    if should_downgrade:
-                        v["severity"] = "warning"
-                        v["_downgrade_reason"] = "editor_borderline_no_priority"
-                        issue_msg = (
-                            f"[事实一致性建议] {v.get('fact_statement', '')[:60]}: "
-                            f"{v.get('violation_text', '')[:80]}"
-                        )
-                        if issue_msg not in output.suggestions:
-                            output.suggestions.append(issue_msg)
-                    else:
-                        issue_msg = (
-                            f"[事实一致性违规] {v.get('fact_statement', '')[:60]}: "
-                            f"{v.get('violation_text', '')[:80]}"
-                        )
-                        if issue_msg not in output.issues:
-                            output.issues.append(issue_msg)
-            if not should_downgrade:
-                output.pass_ = False
-                output.revision_target = "author"
-            # Recompute blocking count after potential downgrades
-            compliance_result.blocking_violation_count = sum(
-                1 for v in compliance_result.violations if v.get("severity") == "blocking"
-            )
+                    issue_msg = (
+                        f"[事实一致性违规] {v.get('fact_statement', '')[:60]}: "
+                        f"{v.get('violation_text', '')[:80]}"
+                    )
+                    if issue_msg not in output.issues:
+                        output.issues.append(issue_msg)
+            output.pass_ = False
+            output.revision_target = "author"
 
         # v6.10.0: Emit progress event - story facts compliance completed
         exec_events.append({
@@ -2161,25 +2074,16 @@ class EditorAgent(BaseAgent):
         # Use output.pass_ (post-processed final decision) to stay consistent
         # with editor_completed. The raw strategy_decision may differ when
         # score < 75 prevents the advisory override from taking effect.
-        #
-        # v6.10.7: Align event payload with actual behavior so that logs and
-        # downstream monitoring see the same decision that drives routing.
-        strategy = strategy_result.decision
-        effective_revision_needed = not output.pass_
-        effective_category = strategy.category
-        if strategy.revision_needed != effective_revision_needed:
-            effective_category = "revision" if effective_revision_needed else "advisory_pass"
         exec_events.append({
             "event_type": "review_strategy_applied",
             "message": f"审核策略应用完成，通过: {output.pass_}",
             "status": "info",
             "payload": {
                 "pass": output.pass_,
-                "revision_needed": effective_revision_needed,
-                "category": effective_category,
+                "revision_needed": strategy_result.decision.revision_needed,
+                "category": strategy_result.decision.category,
                 "revision_target": output.revision_target,
                 "score": output.score,
-                "strategy_overridden": strategy.revision_needed != effective_revision_needed,
             },
         })
 

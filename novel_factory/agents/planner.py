@@ -51,20 +51,11 @@ Tier 2 (可选，缺失将用默认值填充):
 
 同时包含以下传统字段（用于向后兼容）：
 - objective: 本章目标（必须以状态卡数值开头）
-- required_events: 关键事件列表（v6.10.9: 最多3个，给每个事件留出展开空间）
+- required_events: 2-4个关键事件列表
 - plots_to_plant: 要埋的伏笔代码列表
 - plots_to_resolve: 要兑现的伏笔代码列表
 - ending_hook: 章末钩子
 - constraints: 约束条件列表
-
-v6.10.9 新增字段（核心循环前置约束）：
-- core_loop: 核心循环设计对象，包含：
-  - reward_event_index: 从 required_events 中指定第几个事件为核心爽点兑现（1-based）
-  - reward_type: 爽点类型，可选 ability/intellect/emotion/identity/resource
-  - reward_evidence: 具体的爽点证据描述（禁止抽象，如"陆璃短暂恢复意识说了一个字"）
-  - protagonist_decision: 主角在该爽点中的主动决策或行动（不能是被动的）
-- dialogue_target_ratio: 目标对白占比（默认0.15，即15%）
-- fact_locks: 从上一章继承的事实锁列表（角色物理状态等）
 
 核心原则：
 1. objective/chapter_goal 必须以上一章状态卡开头
@@ -73,22 +64,6 @@ v6.10.9 新增字段（核心循环前置约束）：
 4. 禁止抽象描述（如"主角变得更强"）
 5. 必须回应上一章未处理悬念、时间约束和地点约定；如暂不处理，必须写入明确延期事件
 6. 必须优先继承已应用事实账本和可信记忆候选，不得忽略上一章真实记忆
-
-v6.10.9 核心循环设计约束：
-1. required_events 不超过3个，确保每个事件有充足展开空间
-2. 必须从 required_events 中指定1个作为核心爽点兑现（core_loop.reward_event_index）
-3. 爽点必须有具体的、可感知的胜利标志（reward_evidence），禁止抽象
-4. 主角在爽点中必须有主动决策（protagonist_decision），不能是被动接受系统提示
-5. ending_hook 必须包含具体威胁或明确的后续行动指向，禁止模糊悬念
-
-v6.10.9 事实锁继承约束：
-1. 必须读取上一章的角色物理状态，写入 fact_locks
-2. 如果角色被"锁死/濒死/昏迷"，本章不能设计与之的肢体互动
-3. 所有涉及前章设定的 required_events 必须与 fact_locks 兼容
-
-v6.10.9 对白设计约束：
-1. 目标对白占比 ≥ 15%（dialogue_target_ratio）
-2. 至少设计1段有冲突或潜台词的角色对白
 
 禁止：
 - 写正文
@@ -203,11 +178,6 @@ class PlannerAgent(BaseAgent):
         if style_ctx:
             parts.append(style_ctx)
 
-        # v6.10.5: Story Contract injection
-        contract_ctx = self._get_story_contract_context(project_id, "planner")
-        if contract_ctx:
-            parts.append(contract_ctx)
-
         # v6.8.1: Style-aware prompt injection (webnovel excitement, suspense, romance)
         style_prompt = self._get_style_prompt_injection(project_id, "planner")
         if style_prompt:
@@ -229,24 +199,6 @@ class PlannerAgent(BaseAgent):
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
         exec_events: list[dict] = []
-
-        # v6.10.7: Internal integrity gate — refuse to plan without a protagonist.
-        try:
-            from ..integrity import ProjectIntegrityChecker, IntegrityViolation
-            checker = ProjectIntegrityChecker(self.repo)
-            checker.gate_before_plan(project_id)
-        except IntegrityViolation as exc:
-            logger.error("Planner blocked by integrity check: %s", exc)
-            return {
-                "error": f"项目数据完整性检查未通过: {exc}",
-                "chapter_status": state.get("chapter_status"),
-                "requires_human": True,
-                "integrity_violation": {
-                    "check": exc.check_name,
-                    "details": exc.details,
-                },
-                "_exec_events": exec_events,
-            }
 
         context = self._build_v6_context(state)
 
@@ -368,10 +320,6 @@ class PlannerAgent(BaseAgent):
             plots_to_resolve=json.dumps(brief.plots_to_resolve, ensure_ascii=False),
             ending_hook=brief.ending_hook,
             word_target=word_target,
-            # v6.10.9: persist core_loop governance fields
-            core_loop=brief.core_loop.model_dump_json(),
-            dialogue_target_ratio=brief.dialogue_target_ratio,
-            fact_locks=json.dumps(brief.fact_locks, ensure_ascii=False),
         )
 
         exec_events.append({

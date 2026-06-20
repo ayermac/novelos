@@ -476,19 +476,6 @@ MIGRATION_REGISTRY: list[MigrationEntry] = [
             _T("editor_lens_reports"),
         ),
     ),
-    MigrationEntry(
-        migration_id="037_v6_10_9_core_loop_governance",
-        sql_filename="037_v6_10_9_core_loop_governance.sql",
-        description="v6.10.9 core loop governance — scene_beats.is_reward_beat/dialogue_slots/character_states, instructions.core_loop/dialogue_target_ratio/fact_locks",
-        requirements=(
-            SchemaRequirement(kind="column", name="scene_beats", column="is_reward_beat"),
-            SchemaRequirement(kind="column", name="scene_beats", column="dialogue_slots"),
-            SchemaRequirement(kind="column", name="scene_beats", column="character_states"),
-            SchemaRequirement(kind="column", name="instructions", column="core_loop"),
-            SchemaRequirement(kind="column", name="instructions", column="dialogue_target_ratio"),
-            SchemaRequirement(kind="column", name="instructions", column="fact_locks"),
-        ),
-    ),
 ]
 
 

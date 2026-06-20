@@ -188,37 +188,14 @@ class ChapterRepositoryMixin:
     # ── Instructions ──────────────────────────────────────────
 
     def get_instruction(self, project_id: str, chapter_number: int) -> dict | None:
-        """Get writing instruction for a chapter.
-
-        v6.10.9: Deserializes core_loop and fact_locks JSON fields.
-        """
+        """Get writing instruction for a chapter."""
         conn = self._conn()
         try:
             row = conn.execute(
                 "SELECT * FROM instructions WHERE project_id=? AND chapter_number=?",
                 (project_id, chapter_number),
             ).fetchone()
-            if not row:
-                return None
-            d = row_to_dict(row)
-            # v6.10.9: deserialize JSON fields
-            cl = d.get("core_loop")
-            if isinstance(cl, str):
-                try:
-                    d["core_loop"] = json.loads(cl)
-                except (json.JSONDecodeError, TypeError):
-                    d["core_loop"] = {}
-            elif cl is None:
-                d["core_loop"] = {}
-            fl = d.get("fact_locks")
-            if isinstance(fl, str):
-                try:
-                    d["fact_locks"] = json.loads(fl)
-                except (json.JSONDecodeError, TypeError):
-                    d["fact_locks"] = []
-            elif fl is None:
-                d["fact_locks"] = []
-            return d
+            return row_to_dict(row)
         finally:
             conn.close()
 
@@ -233,28 +210,20 @@ class ChapterRepositoryMixin:
         emotion_tone: str | None = None,
         ending_hook: str | None = None,
         word_target: int = 2500,
-        core_loop: str = "{}",
-        dialogue_target_ratio: float = 0.15,
-        fact_locks: str = "[]",
     ) -> int:
-        """Create a writing instruction. Returns instruction id.
-
-        v6.10.9: Stores core_loop, dialogue_target_ratio, fact_locks.
-        """
+        """Create a writing instruction. Returns instruction id."""
         conn = self._conn()
         try:
             cursor = conn.execute(
                 "INSERT OR REPLACE INTO instructions "
                 "(project_id, chapter_number, objective, key_events, "
                 "plots_to_plant, plots_to_resolve, emotion_tone, "
-                "ending_hook, word_target, status, "
-                "core_loop, dialogue_target_ratio, fact_locks) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, ?)",
+                "ending_hook, word_target, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')",
                 (
                     project_id, chapter_number, objective, key_events,
                     plots_to_plant, plots_to_resolve, emotion_tone,
                     ending_hook, word_target,
-                    core_loop, dialogue_target_ratio, fact_locks,
                 ),
             )
             conn.commit()
@@ -270,10 +239,7 @@ class ChapterRepositoryMixin:
         chapter_number: int,
         beats: list[dict],
     ) -> int:
-        """Save scene beats for a chapter. Clears existing beats first.
-
-        v6.10.9: Stores is_reward_beat, dialogue_slots, character_states.
-        """
+        """Save scene beats for a chapter. Clears existing beats first."""
         conn = self._conn()
         try:
             conn.execute(
@@ -285,8 +251,8 @@ class ChapterRepositoryMixin:
                     "INSERT INTO scene_beats "
                     "(project_id, chapter_number, sequence, scene_goal, "
                     "location, characters, conflict, turn, revealed_info, "
-                    "plot_refs, hook, is_reward_beat, dialogue_slots, character_states) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    "plot_refs, hook) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         project_id, chapter_number,
                         beat.get("sequence", 0),
@@ -298,9 +264,6 @@ class ChapterRepositoryMixin:
                         beat.get("revealed_info"),
                         json.dumps(beat.get("plot_refs", []), ensure_ascii=False),
                         beat.get("hook"),
-                        1 if beat.get("is_reward_beat") else 0,
-                        json.dumps(beat.get("dialogue_slots", []), ensure_ascii=False),
-                        json.dumps(beat.get("character_states", {}), ensure_ascii=False),
                     ),
                 )
             conn.commit()
@@ -309,10 +272,7 @@ class ChapterRepositoryMixin:
             conn.close()
 
     def get_scene_beats(self, project_id: str, chapter_number: int) -> list[dict]:
-        """Get scene beats for a chapter.
-
-        v6.10.9: Returns is_reward_beat, dialogue_slots, character_states.
-        """
+        """Get scene beats for a chapter."""
         conn = self._conn()
         try:
             rows = conn.execute(
@@ -320,29 +280,7 @@ class ChapterRepositoryMixin:
                 "ORDER BY sequence",
                 (project_id, chapter_number),
             ).fetchall()
-            beats = []
-            for r in rows:
-                d = row_to_dict(r)
-                # v6.10.9: deserialize JSON fields and normalize is_reward_beat
-                d["is_reward_beat"] = bool(d.get("is_reward_beat", 0))
-                ds = d.get("dialogue_slots")
-                if isinstance(ds, str):
-                    try:
-                        d["dialogue_slots"] = json.loads(ds)
-                    except (json.JSONDecodeError, TypeError):
-                        d["dialogue_slots"] = []
-                elif ds is None:
-                    d["dialogue_slots"] = []
-                cs = d.get("character_states")
-                if isinstance(cs, str):
-                    try:
-                        d["character_states"] = json.loads(cs)
-                    except (json.JSONDecodeError, TypeError):
-                        d["character_states"] = {}
-                elif cs is None:
-                    d["character_states"] = {}
-                beats.append(d)
-            return beats
+            return [row_to_dict(r) for r in rows]
         finally:
             conn.close()
 

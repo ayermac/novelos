@@ -622,9 +622,6 @@ def determine_revision_target(
         "对话比例较低", "章末钩子强度不足",
         # v6.8.5-fix: 时间逻辑、关键事件、冲突强度是 Author 内容问题
         "时间逻辑", "关键事件", "硬约束冲突", "执行偏差",
-        # v6.10.9: 核心循环漂移是 Author 问题（beat 有标记但 Author 没写）
-        "核心循环漂移", "核心循环缺少", "核心循环未检测",
-        "核心兑现证据", "核心循环兑现不足",
     )
     for issue in issues:
         if any(kw in str(issue) for kw in author_keywords):
