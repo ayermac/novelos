@@ -368,6 +368,10 @@ class PlannerAgent(BaseAgent):
             plots_to_resolve=json.dumps(brief.plots_to_resolve, ensure_ascii=False),
             ending_hook=brief.ending_hook,
             word_target=word_target,
+            # v6.10.9: persist core_loop governance fields
+            core_loop=brief.core_loop.model_dump_json(),
+            dialogue_target_ratio=brief.dialogue_target_ratio,
+            fact_locks=json.dumps(brief.fact_locks, ensure_ascii=False),
         )
 
         exec_events.append({
