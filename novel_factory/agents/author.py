@@ -215,13 +215,27 @@ class AuthorAgent(BaseAgent):
                 if b.get("is_reward_beat"):
                     line += " | 【核心爽点 beat — 必须重点展开】"
                 char_states = b.get("character_states", {})
+                if isinstance(char_states, str):
+                    try:
+                        import json as _json
+                        char_states = _json.loads(char_states)
+                    except Exception:
+                        char_states = {}
                 if char_states:
                     line += f" | 角色状态: {char_states}"
                 beats_lines.append(line)
                 # v6.10.9: inject dialogue slots
                 dialogue_slots = b.get("dialogue_slots", [])
-                if dialogue_slots:
+                if isinstance(dialogue_slots, str):
+                    try:
+                        import json as _json
+                        dialogue_slots = _json.loads(dialogue_slots)
+                    except Exception:
+                        dialogue_slots = []
+                if dialogue_slots and isinstance(dialogue_slots, list):
                     for idx, slot in enumerate(dialogue_slots, 1):
+                        if not isinstance(slot, dict):
+                            continue
                         speakers = slot.get("speakers", [])
                         conflict_type = slot.get("conflict_type", "")
                         must_convey = slot.get("must_convey", "")

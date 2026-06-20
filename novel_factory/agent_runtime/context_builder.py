@@ -897,16 +897,28 @@ class AgentContextBuilder:
                 # v6.10.9: inject reward beat marker
                 if b.get("is_reward_beat"):
                     line += " | 【核心爽点 beat】"
-                # v6.10.9: inject character states
+                # v6.10.9: inject character states (defensive: may be JSON string)
                 char_states = b.get("character_states", {})
-                if char_states:
+                if isinstance(char_states, str):
+                    try:
+                        char_states = json.loads(char_states)
+                    except Exception:
+                        char_states = {}
+                if char_states and isinstance(char_states, dict):
                     states_str = ", ".join(f"{k}:{v}" for k, v in char_states.items())
                     line += f" | 角色状态: {states_str}"
                 lines.append(line)
-                # v6.10.9: inject dialogue slots
+                # v6.10.9: inject dialogue slots (defensive: may be JSON string)
                 dialogue_slots = b.get("dialogue_slots", [])
-                if dialogue_slots:
+                if isinstance(dialogue_slots, str):
+                    try:
+                        dialogue_slots = json.loads(dialogue_slots)
+                    except Exception:
+                        dialogue_slots = []
+                if dialogue_slots and isinstance(dialogue_slots, list):
                     for idx, slot in enumerate(dialogue_slots, 1):
+                        if not isinstance(slot, dict):
+                            continue
                         speakers = slot.get("speakers", [])
                         conflict_type = slot.get("conflict_type", "")
                         must_convey = slot.get("must_convey", "")
