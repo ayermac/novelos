@@ -91,7 +91,25 @@ revision_target 规则：
 - 文风、句式、节奏、AI 痕迹、对白、场景质感问题 → "polisher"
 - info dump / 设定旁白 / 直白情绪 → "author"
 - 指令本身错误或设定冲突 → "planner"
-- 通过时 → null"""
+- v6.10.9: beat 设计层问题 → "screenwriter"（见下方规则）
+- 通过时 → null
+
+v6.10.9 beat 设计层路由规则（在判定 revision_target 时必须先检查）：
+当你检测到以下问题时，先检查 scene_beats（输入上下文中提供）：
+1. 核心循环漂移/缺失：
+   - 如果 scene_beats 中有 is_reward_beat=true 的 beat → "author"（beat 设计了但 Author 没写出来）
+   - 如果 scene_beats 中没有 is_reward_beat=true 的 beat → "screenwriter"（beat 没设计核心循环）
+2. 事实一致性矛盾：
+   - 如果 scene_beats 的 character_states 已正确标注但正文违反 → "author"
+   - 如果 scene_beats 的 character_states 缺失或本身错误 → "screenwriter"
+3. 对白占比过低：
+   - 如果 scene_beats 的 dialogue_slots ≥ 3 但正文对白不足 → "author"
+   - 如果 scene_beats 的 dialogue_slots < 3 或缺失 → "screenwriter"
+4. 角色物理状态冲突（如被锁死的角色有肢体互动）：
+   - 如果 character_states 已标注"锁死/无意识"但正文仍写互动 → "author"
+   - 如果 character_states 未标注 → "screenwriter"
+
+简言之：beat 设计对了但 Author 没执行 → "author"；beat 本身设计有缺陷 → "screenwriter"。"""
 
 EDITOR_SYSTEM_PROMPT += (
     "\n\n" + CONCEPT_BUDGET_CONTRACT
@@ -797,14 +815,25 @@ class EditorAgent(BaseAgent):
                 classifyable_issues if classifyable_issues else output.issues,
                 output.revision_target,
             )
+            # v6.10.9: gate_forced_target only applies to HARD GATES (word count,
+            # seam). The old "事实一致性违规" check was removed because it
+            # inadvertently preserved wrong LLM-reported targets (e.g. polisher)
+            # by blocking the classifier from upgrading to author/screenwriter.
             gate_forced_target = (
                 bool(word_gate_details)
                 or seam_result.blocking_count > 0
-                or any("事实一致性违规" in str(issue) for issue in output.issues)
             )
-            # Override the LLM's self-reported target when issue semantics are clearer.
-            # Preserve targets set by hard gates such as word count and chapter seam.
-            if classify_result.dominant_target and not gate_forced_target:
+            # v6.10.9: "事实一致性违规" forces author (not polisher) — it's a
+            # content-level issue that polisher cannot fix. This takes
+            # precedence over classifier output to prevent the doom loop where
+            # a soft issue (e.g. LOW_COLLOQUIAL_MARKERS) routes to polisher
+            # while a hard fact violation is present.
+            has_fact_violation = any(
+                "事实一致性违规" in str(issue) for issue in output.issues
+            )
+            if has_fact_violation:
+                output.revision_target = "author"
+            elif classify_result.dominant_target and not gate_forced_target:
                 output.revision_target = classify_result.dominant_target
             elif classify_result.dominant_target and pre_classify_target:
                 # Gate-set target takes precedence over issue classification

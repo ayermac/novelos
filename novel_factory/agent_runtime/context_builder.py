@@ -80,6 +80,10 @@ class AgentContextBundle:
     # v6.6.14: memory context annotation
     memory_context_degraded: bool = False
     trusted_memory_batch_id: str | None = None
+    # v6.10.9: scene beats for editor beat-design routing
+    scene_beats: list[ContextItem] = field(default_factory=list)
+    # v6.10.9: chapter brief core_loop / fact_locks for editor
+    core_loop_context: list[ContextItem] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
         """Serialize for trace / artifact metadata (no API keys)."""
@@ -886,10 +890,32 @@ class AgentContextBuilder:
         if beats:
             lines = []
             for b in beats:
-                lines.append(
+                line = (
                     f"  {b.get('sequence')}. 目标: {b.get('scene_goal', '')} | "
                     f"冲突: {b.get('conflict', '')} | 转折: {b.get('turn', '')} | 钩子: {b.get('hook', '')}"
                 )
+                # v6.10.9: inject reward beat marker
+                if b.get("is_reward_beat"):
+                    line += " | 【核心爽点 beat】"
+                # v6.10.9: inject character states
+                char_states = b.get("character_states", {})
+                if char_states:
+                    states_str = ", ".join(f"{k}:{v}" for k, v in char_states.items())
+                    line += f" | 角色状态: {states_str}"
+                lines.append(line)
+                # v6.10.9: inject dialogue slots
+                dialogue_slots = b.get("dialogue_slots", [])
+                if dialogue_slots:
+                    for idx, slot in enumerate(dialogue_slots, 1):
+                        speakers = slot.get("speakers", [])
+                        conflict_type = slot.get("conflict_type", "")
+                        must_convey = slot.get("must_convey", "")
+                        slot_line = f"    对白槽位{idx}: {'↔'.join(speakers)}"
+                        if conflict_type:
+                            slot_line += f" | 冲突: {conflict_type}"
+                        if must_convey:
+                            slot_line += f" | 传达: {must_convey}"
+                        lines.append(slot_line)
             items.append(
                 ContextItem(
                     kind="scene_beats",
@@ -899,6 +925,48 @@ class AgentContextBuilder:
                     trusted=True,
                 )
             )
+        return items
+
+    def _core_loop_context(self, project_id: str, chapter_number: int) -> list[ContextItem]:
+        """v6.10.9: Inject core_loop design and fact_locks from chapter_brief."""
+        items: list[ContextItem] = []
+        try:
+            instruction = self.repo.get_instruction(project_id, chapter_number)
+            if not instruction:
+                return items
+            # chapter_brief may be nested or flat depending on storage
+            brief = instruction.get("chapter_brief") or instruction
+            core_loop = brief.get("core_loop", {})
+            fact_locks = brief.get("fact_locks", [])
+            dialogue_ratio = brief.get("dialogue_target_ratio", 0.15)
+            lines = []
+            if core_loop:
+                lines.append("【核心循环设计 v6.10.9】")
+                lines.append(f"  爽点事件序号: {core_loop.get('reward_event_index', '?')}")
+                lines.append(f"  爽点类型: {core_loop.get('reward_type', '?')}")
+                ev = core_loop.get("reward_evidence", "")
+                if ev:
+                    lines.append(f"  爽点证据: {ev}")
+                pd = core_loop.get("protagonist_decision", "")
+                if pd:
+                    lines.append(f"  主角决策: {pd}")
+            if fact_locks:
+                lines.append("【事实锁 v6.10.9 — 角色物理状态】")
+                for fl in fact_locks:
+                    lines.append(f"  - {fl}")
+            if lines:
+                lines.append(f"  目标对白占比: {dialogue_ratio * 100:.0f}%")
+                items.append(
+                    ContextItem(
+                        kind="core_loop",
+                        text="\n".join(lines),
+                        source="chapter_brief",
+                        priority=2,
+                        trusted=True,
+                    )
+                )
+        except Exception:
+            pass
         return items
 
     def _pending_plots_context(self, project_id: str) -> list[ContextItem]:
@@ -1397,6 +1465,12 @@ class AgentContextBuilder:
         bundle.style_context = self._style_bible_context(project_id, "editor")
         bundle.story_contract_context = self._story_contract_context(project_id, "editor", chapter_number)
 
+        # v6.10.9: Inject scene_beats so Editor can determine beat-design vs author-execution
+        bundle.scene_beats = self._scene_beats_context(project_id, chapter_number)
+
+        # v6.10.9: Inject core_loop / fact_locks from chapter_brief
+        bundle.core_loop_context = self._core_loop_context(project_id, chapter_number)
+
         bundle.hard_constraints = (
             [it for it in bundle.chapter_inheritance if it.kind == "suspense_hook"]
             + bundle.timeline_constraints
@@ -1441,6 +1515,8 @@ def format_context_bundle_for_prompt(
         ("【事实账本 / Story Facts】", bundle.story_facts),
         ("【角色状态 / Character States】", bundle.character_states),
         ("【故事合同 / Story Contract】", bundle.story_contract_context),
+        ("【核心循环与事实锁 / Core Loop & Fact Locks】", bundle.core_loop_context),
+        ("【场景 Beat / Scene Beats】", bundle.scene_beats),
         ("【风格规范 / Style Bible】", bundle.style_context),
         ("【建议参考 / Advisory Context】", bundle.advisory_context),
         ("【章节继承 / Chapter Inheritance】", bundle.chapter_inheritance),
@@ -1509,6 +1585,8 @@ def build_context_summary_for_trace(bundle: AgentContextBundle) -> dict[str, Any
                 "hard_constraints": bundle.hard_constraints,
                 "advisory_context": bundle.advisory_context,
                 "style_context": bundle.style_context,
+                "scene_beats": bundle.scene_beats,
+                "core_loop_context": bundle.core_loop_context,
             }.items()
             if items
         ],

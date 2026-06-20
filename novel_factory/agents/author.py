@@ -100,7 +100,23 @@ Drafting Contract（v6.4.1）：
 - content: 正文内容
 - word_count: 字数
 - implemented_events: 已实现的关键事件列表
-- used_plot_refs: 使用的伏笔代码列表"""
+- used_plot_refs: 使用的伏笔代码列表
+
+v6.10.9 核心循环写作约束：
+1. 识别 scene_beats 中 is_reward_beat = true 的 beat
+2. 该 beat 必须写出具体的爽点兑现，不能模糊
+3. 爽点必须有主角的主动决策或高光行动
+4. 爽点兑现后不要马上切入新事件，留 1-2 句余韵
+
+v6.10.9 对白写作约束：
+1. 优先填充 dialogue_slots 中的对白槽位
+2. 对白要有角色目的、潜台词或冲突
+3. 不同角色语气有差异
+4. 禁止所有信息通过旁白说明传递
+
+v6.10.9 事实锁遵守：
+1. 严格按照 character_states 中的角色状态写作
+2. 被锁死的角色不能有主动肢体动作或语言"""
 
 AUTHOR_SYSTEM_PROMPT += "\n\n" + CONCEPT_BUDGET_CONTRACT
 
@@ -192,11 +208,30 @@ class AuthorAgent(BaseAgent):
         # Scene beats
         beats = self._get_scene_beats(state)
         if beats:
-            beats_str = "\n".join(
-                f"  {b['sequence']}. 目标: {b.get('scene_goal', '')} | 冲突: {b.get('conflict', '')} "
-                f"| 转折: {b.get('turn', '')} | 钩子: {b.get('hook', '')}"
-                for b in beats
-            )
+            beats_lines = []
+            for b in beats:
+                line = f"  {b['sequence']}. 目标: {b.get('scene_goal', '')} | 冲突: {b.get('conflict', '')} | 转折: {b.get('turn', '')} | 钩子: {b.get('hook', '')}"
+                # v6.10.9: inject reward beat marker and character states
+                if b.get("is_reward_beat"):
+                    line += " | 【核心爽点 beat — 必须重点展开】"
+                char_states = b.get("character_states", {})
+                if char_states:
+                    line += f" | 角色状态: {char_states}"
+                beats_lines.append(line)
+                # v6.10.9: inject dialogue slots
+                dialogue_slots = b.get("dialogue_slots", [])
+                if dialogue_slots:
+                    for idx, slot in enumerate(dialogue_slots, 1):
+                        speakers = slot.get("speakers", [])
+                        conflict_type = slot.get("conflict_type", "")
+                        must_convey = slot.get("must_convey", "")
+                        slot_line = f"    对白槽位 {idx}: {speakers}"
+                        if conflict_type:
+                            slot_line += f" | 冲突类型: {conflict_type}"
+                        if must_convey:
+                            slot_line += f" | 必须传达: {must_convey}"
+                        beats_lines.append(slot_line)
+            beats_str = "\n".join(beats_lines)
             parts.append(
                 f"【场景 Beat】\n{beats_str}\n\n"
                 "【场景覆盖硬约束】\n"

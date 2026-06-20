@@ -1514,6 +1514,34 @@ def polisher_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill
     return result
 
 
+def promote_to_polished_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
+    """v6.10.9: Lightweight node to promote chapter status from 'drafted' to 'polished'.
+
+    When the Polisher is skipped (revision target is author/screenwriter),
+    the chapter status must still be promoted so the Editor's precondition
+    (requires 'polished') is satisfied.  This node does the minimum DB update
+    without calling any LLM.
+    """
+    project_id = state.get("project_id", "")
+    chapter_number = state.get("chapter_number", 0)
+
+    try:
+        db_status = repo.get_chapter_status(project_id, chapter_number)
+        if db_status == ChapterStatus.DRAFTED.value:
+            repo.update_chapter_status(project_id, chapter_number, ChapterStatus.POLISHED.value)
+            logger.info(
+                "promote_to_polished: %s ch%d status drafted → polished (Polisher skipped)",
+                project_id, chapter_number,
+            )
+            return {"chapter_status": ChapterStatus.POLISHED.value}
+    except Exception:
+        logger.warning(
+            "promote_to_polished: failed to update status for %s ch%d",
+            project_id, chapter_number, exc_info=True,
+        )
+    return {}
+
+
 # v6.8.5: Quality Gate 独立节点
 def _check_death_penalty(content: str) -> dict[str, Any]:
     """检查死刑红线"""
@@ -1798,25 +1826,39 @@ def _check_core_loop_compliance(repo: Repository, project_id: str, chapter_numbe
     }
 
 
-def _determine_revision_target(issue_codes: list) -> str | None:
-    """根据结构化问题代码确定返修目标"""
+def _determine_revision_target(issue_codes: list, scene_beats: list[dict] | None = None) -> str | None:
+    """根据结构化问题代码确定返修目标
+
+    v6.10.9: CORE_LOOP 问题根据 beat 设计层判断路由：
+    - scene_beats 有 is_reward_beat=true → "author"（beat 已设计，内容未体现）
+    - scene_beats 无 is_reward_beat=true → "screenwriter"（beat 设计层缺失）
+
+    优先级：非 CORE_LOOP 的 author 级问题 > CORE_LOOP beat-aware 路由 > polisher
+    """
     from ..quality.issue_codes import IssueCode, ISSUE_CODE_TO_REVISION_TARGET
 
     if not issue_codes:
         return None
 
-    # 优先级：author > polisher
-    # 如果有任何 author 级别的问题，返修到 author
-    author_codes = {IssueCode.DEATH_PENALTY, IssueCode.CHAPTER_SEAM_BREAK,
-                    IssueCode.CONTINUITY_TIME_REGRESSION, IssueCode.CONTINUITY_EVENT_REPLAY,
-                    IssueCode.CONTINUITY_TITLE_TRUNCATION, IssueCode.STORY_FACTS_CONTRADICTION,
-                    IssueCode.CORE_LOOP_PAYOFF_MISSING, IssueCode.CORE_LOOP_DRIFT_WARNING}
-
+    # 非 CORE_LOOP 的 author 级问题（最高优先级，不受 beat 设计影响）
+    critical_author_codes = {
+        IssueCode.DEATH_PENALTY, IssueCode.CHAPTER_SEAM_BREAK,
+        IssueCode.CONTINUITY_TIME_REGRESSION, IssueCode.CONTINUITY_EVENT_REPLAY,
+        IssueCode.CONTINUITY_TITLE_TRUNCATION, IssueCode.STORY_FACTS_CONTRADICTION,
+    }
     for code in issue_codes:
-        if code in author_codes:
+        if code in critical_author_codes:
             return "author"
 
-    # 否则返修到 polisher
+    # v6.10.9: CORE_LOOP 问题根据 beat 设计层路由
+    core_loop_codes = {IssueCode.CORE_LOOP_PAYOFF_MISSING, IssueCode.CORE_LOOP_DRIFT_WARNING}
+    has_core_loop_issue = any(code in core_loop_codes for code in issue_codes)
+
+    if has_core_loop_issue:
+        has_reward_beat = bool(scene_beats) and any(b.get("is_reward_beat") for b in scene_beats)
+        return "author" if has_reward_beat else "screenwriter"
+
+    # 质量诊断类 → polisher
     return "polisher"
 
 
@@ -2057,7 +2099,14 @@ def quality_gate_node(state: FactoryState, repo: Repository, skill_registry=None
     passed = not has_blocking
 
     # 使用结构化错误码确定返修目标
-    revision_target = _determine_revision_target(all_issue_codes) if not passed else None
+    # v6.10.9: 加载 scene_beats 用于 CORE_LOOP 问题的 beat 设计层路由判断
+    scene_beats_for_routing = None
+    if not passed:
+        try:
+            scene_beats_for_routing = repo.get_scene_beats(project_id, chapter_number) or []
+        except Exception:
+            scene_beats_for_routing = []
+    revision_target = _determine_revision_target(all_issue_codes, scene_beats=scene_beats_for_routing) if not passed else None
 
     # 构建质量门禁结果
     quality_gate_result = {

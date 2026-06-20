@@ -28,12 +28,37 @@ SCREENWRITER_SYSTEM_PROMPT = """你是网文工厂的编剧（Screenwriter），
 - plot_refs: 涉及的伏笔代码列表
 - hook: 场景钩子
 
+v6.10.9 新增字段：
+- is_reward_beat: boolean —— 该 beat 是否承载核心爽点。Planner 指定的 reward_event_index 对应的 beat 必须设为 true
+- character_states: object —— 该 beat 中各角色的物理状态（如 {"陆璃": "锁死于金属床，无意识"}）
+- dialogue_slots: array —— 该 beat 中的对白设计槽位，每个槽位包含：
+  - speakers: 对话双方角色列表
+  - conflict_type: 冲突类型（"立场对立"/"信息差"/"潜台词"）
+  - key_line: 关键台词（可留空）
+  - must_convey: 这段对白必须传递的信息
+
 核心原则：
 1. 每个场景必须有推进作用
 2. 标记伏笔埋设或兑现位置
 3. 控制单章节奏，确保章末钩子
 4. 遵守 ChapterBrief 的 forbidden_moves（禁止动作）
 5. 优先处理 ledger_debts_to_pay（需要偿还的台账债务）
+
+v6.10.9 核心循环前置原则：
+1. 读取 Planner 指令中的 core_loop.reward_event_index
+2. 将该事件对应的 beat 标记为 is_reward_beat = true
+3. 确保该 beat 的 scene_goal 明确包含核心爽点的展开
+4. 确保主角在该 beat 中有主动行动，不是被动接受
+
+v6.10.9 事实锁感知原则：
+1. 读取 fact_locks 中的角色物理状态
+2. 每个 beat 的 character_states 必须反映这些限制
+3. 如果角色状态是"锁死/无意识"，dialogue_slots 中不能包含该角色的主动发言
+
+v6.10.9 对白设计原则：
+1. 总对白槽位数 ≥ 3（对应 15% 占比目标）
+2. 至少 1 段对白必须有冲突（conflict_type 不为空）
+3. 避免所有信息通过旁白/说明传递，优先设计对白
 
 禁止：
 - 改写世界观和角色设定
@@ -80,7 +105,7 @@ class ScreenwriterAgent(BaseAgent):
                          f"章末钩子: {instruction.get('ending_hook', '')}\n"
                          f"埋设伏笔: {instruction.get('plots_to_plant', '[]')}\n"
                          f"兑现伏笔: {instruction.get('plots_to_resolve', '[]')}")
-        
+
         # v6.9.0: Inject ChapterBrief constraints
         chapter_brief = state.get("chapter_brief", {})
         if chapter_brief:
@@ -93,6 +118,33 @@ class ScreenwriterAgent(BaseAgent):
                 if ledger_debts:
                     brief_constraints.append(f"需要偿还的债务: {', '.join(ledger_debts)}")
                 parts.append("【ChapterBrief 约束】\n" + "\n".join(brief_constraints))
+
+            # v6.10.9: Inject core_loop governance into Screenwriter context
+            core_loop = chapter_brief.get("core_loop", {})
+            if core_loop:
+                core_loop_parts = ["【核心循环设计约束 v6.10.9】"]
+                reward_idx = core_loop.get("reward_event_index", 1)
+                reward_type = core_loop.get("reward_type", "ability")
+                reward_evidence = core_loop.get("reward_evidence", "")
+                protagonist_decision = core_loop.get("protagonist_decision", "")
+                core_loop_parts.append(f"核心爽点对应第 {reward_idx} 个关键事件")
+                core_loop_parts.append(f"爽点类型: {reward_type}")
+                if reward_evidence:
+                    core_loop_parts.append(f"爽点证据: {reward_evidence}")
+                if protagonist_decision:
+                    core_loop_parts.append(f"主角主动决策: {protagonist_decision}")
+                parts.append("\n".join(core_loop_parts))
+
+            # v6.10.9: Inject fact_locks into Screenwriter context
+            fact_locks = chapter_brief.get("fact_locks", [])
+            if fact_locks:
+                parts.append("【事实锁 v6.10.9 — 角色物理状态约束】\n"
+                             + "\n".join(f"- {fl}" for fl in fact_locks))
+
+            # v6.10.9: Inject dialogue_target_ratio into Screenwriter context
+            dialogue_target = chapter_brief.get("dialogue_target_ratio", 0.15)
+            parts.append(f"【对白设计目标 v6.10.9】\n目标对白占比: {dialogue_target * 100:.0f}%\n"
+                         f"要求: 至少设计 3 段对白槽位，其中至少 1 段有冲突或潜台词")
 
         # v6.8.1: Style-aware prompt injection (webnovel excitement, suspense, romance)
         style_prompt = self._get_style_prompt_injection(project_id, "screenwriter")

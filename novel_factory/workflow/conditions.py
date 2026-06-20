@@ -9,7 +9,7 @@ from ..models.state import ChapterStatus, FactoryState
 
 logger = logging.getLogger(__name__)
 
-VALID_REVISION_TARGETS = frozenset({"author", "polisher", "planner"})
+VALID_REVISION_TARGETS = frozenset({"author", "polisher", "planner", "screenwriter"})
 
 
 def gate_passed(gate: dict[str, Any]) -> bool:
@@ -192,6 +192,8 @@ def route_by_chapter_status(state: FactoryState) -> str:
             return "polisher"
         elif target == "planner":
             return "planner"
+        elif target == "screenwriter":  # v6.10.9: beat 设计层返修
+            return "screenwriter"
         else:
             return "author"
 
@@ -202,6 +204,9 @@ def route_by_review_result(state: FactoryState) -> str:
     """Route after editor review: publish, revise, or human intervention.
 
     v5.3.0: In real mode, do NOT auto-publish. Route to 'awaiting_publish' instead.
+    v6.10.9: Detect score degradation across revision cycles.  If the
+    Editor's score drops below the previous review score after at least one
+    retry, escalate to human_review to prevent futile revision loops.
     """
     if state.get("requires_human") or state.get("error"):
         return "human_review"
@@ -221,11 +226,40 @@ def route_by_review_result(state: FactoryState) -> str:
     if retry_count >= max_retries:
         return "human_review"
 
+    # v6.10.9: Score degradation detection.
+    # If the current review score is lower than the previous review score
+    # after at least one retry, the revision loop is making things worse.
+    # Escalate to human_review to prevent wasted tokens.
+    if retry_count >= 1:
+        current_score = gate.get("score")
+        revision_review = state.get("_revision_review") or {}
+        previous_score = revision_review.get("score")
+        if (
+            current_score is not None
+            and previous_score is not None
+            and isinstance(current_score, (int, float))
+            and isinstance(previous_score, (int, float))
+            and current_score < previous_score
+        ):
+            logger.warning(
+                "Score degradation detected: %s -> %s after %d retries, "
+                "escalating to human_review",
+                previous_score, current_score, retry_count,
+            )
+            return "human_review"
+
     return "revise"
 
 
 def route_after_agent(state: FactoryState) -> str:
-    """Continue to the next node unless the agent returned an error/human flag."""
+    """Continue to the next node unless the agent returned an error/human flag.
+
+    v6.10.9: Skip Polisher when running a revision whose target is not
+    "polisher".  The Polisher receives the same revision context as the
+    Author but cannot address Author/Screenwriter-level issues, often
+    producing zero changes (passthrough).  Skipping saves one LLM call
+    and avoids the subsequent low_change_fail quality gate rejection.
+    """
     if state.get("requires_human"):
         return "human_review"
 
@@ -256,6 +290,16 @@ def route_after_agent(state: FactoryState) -> str:
 
     if state.get("error"):
         return "human_review"
+
+    # v6.10.9: Skip Polisher for non-polisher revision targets.
+    # _revision_review is set by hydrate_revision_state at revision run start
+    # and preserved through LangGraph state merges.
+    revision_review = state.get("_revision_review") or {}
+    original_target = revision_review.get("revision_target", "")
+    if original_target in ("author", "screenwriter"):
+        # Author/Screenwriter revision completed — skip Polisher,
+        # go directly to quality_gate → Editor for final verification.
+        return "skip_to_quality_gate"
 
     return "next"
 
@@ -367,6 +411,7 @@ def route_by_revision_type(state: FactoryState) -> str:
         "author": "author",
         "polisher": "polisher",
         "planner": "planner",
+        "screenwriter": "screenwriter",
     }
     return routing.get(target, "author")
 
