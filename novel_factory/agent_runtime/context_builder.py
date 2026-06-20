@@ -953,7 +953,7 @@ class AgentContextBuilder:
             dialogue_ratio = brief.get("dialogue_target_ratio", 0.15)
             lines = []
             if core_loop:
-                lines.append("【核心循环设计 v6.10.9】")
+                lines.append("【核心循环设计】")
                 lines.append(f"  爽点事件序号: {core_loop.get('reward_event_index', '?')}")
                 lines.append(f"  爽点类型: {core_loop.get('reward_type', '?')}")
                 ev = core_loop.get("reward_evidence", "")
@@ -963,7 +963,7 @@ class AgentContextBuilder:
                 if pd:
                     lines.append(f"  主角决策: {pd}")
             if fact_locks:
-                lines.append("【事实锁 v6.10.9 — 角色物理状态】")
+                lines.append("【事实锁 — 角色物理状态】")
                 for fl in fact_locks:
                     lines.append(f"  - {fl}")
             if lines:
