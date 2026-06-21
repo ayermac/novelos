@@ -47,8 +47,11 @@ logger = logging.getLogger(__name__)
 POLISHER_LONG_FORM_TIMEOUT_SECONDS = 300
 POLISHER_CONTEXT_CHAR_LIMIT = 18000
 POLISHER_DRAFT_CHAR_LIMIT = 12000
-POLISHER_MAX_EXPANSION_RATIO = 0.12
-POLISHER_MAX_EXPANSION_WORDS = 250
+# v6.10.9: Relaxed from 0.12 to 0.18 to prevent oscillation.
+# Polisher needs headroom to add dialogue, sensory details, and scene texture.
+# 12% was too tight — caused expand→contract→retry loops wasting chapter retries.
+POLISHER_MAX_EXPANSION_RATIO = 0.18
+POLISHER_MAX_EXPANSION_WORDS = 400
 
 POLISHER_SYSTEM_PROMPT = """你是网文工厂的润色编辑（Polisher），负责将草稿改写成"像人写过"的小说段落。
 

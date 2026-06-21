@@ -295,6 +295,47 @@ def _changed_tracked_resources(content: str, previous_states: dict[str, str]) ->
     return changed
 
 
+def _build_contract_patterns(contract: StoryContract, brief: ChapterBrief | None) -> tuple[list[str], list[str], list[str]]:
+    """Build dynamic regex patterns from contract payoff_types, core_loop steps, and brief.
+
+    Returns (reward_acquired_extra, reward_used_extra, enemy_extra) pattern lists.
+    """
+    reward_extra: list[str] = []
+    used_extra: list[str] = []
+    enemy_extra: list[str] = []
+
+    # Extract meaningful keywords from contract (skip very short or generic ones)
+    payoff_keywords: list[str] = []
+    for pt in (contract.payoff_types or []):
+        if pt and len(pt) >= 2:
+            payoff_keywords.append(re.escape(pt))
+
+    for step in (contract.core_loop or []):
+        for text in (step.label, step.description):
+            if text and len(text) >= 2:
+                payoff_keywords.append(re.escape(text))
+
+    if brief:
+        for text in [
+            brief.tier1.reader_payoff,
+            brief.tier1.core_loop_target,
+            brief.tier1.primary_payoff,
+            brief.tier1.payoff_evidence_plan,
+        ]:
+            if text and len(text) >= 2:
+                payoff_keywords.append(re.escape(text))
+
+    if payoff_keywords:
+        # Group keywords into OR pattern
+        kw_group = "|".join(payoff_keywords[:20])  # cap to avoid regex explosion
+        reward_extra.append(rf"(获得|得到|收获|兑现|实现|达成|完成|触发|激活).{{0,24}}({kw_group})")
+        reward_extra.append(rf"({kw_group}).{{0,24}}(生效|爆发|释放|显现|兑现|成功|完成)")
+        used_extra.append(rf"(使用|动用|催动|发动|施展|兑现|消耗|牺牲|撕裂).{{0,24}}({kw_group})")
+        used_extra.append(rf"({kw_group}).{{0,24}}(出手|生效|爆发|释放|冲击|对抗|反击)")
+
+    return reward_extra, used_extra, enemy_extra
+
+
 def _analyze_core_loop_evidence(
     content: str,
     brief: ChapterBrief | None,
@@ -305,13 +346,24 @@ def _analyze_core_loop_evidence(
 
     This intentionally does not treat ChapterBrief declarations as proof. Briefs
     are plans; the checker must find matching evidence in the final prose.
+
+    v6.10.9: Augments hardcoded patterns with contract-derived dynamic patterns
+    so project-specific vocabulary (e.g. 浊嗅, 血裔印, 压制波) is detected.
     """
     evidence = CoreLoopEvidence()
+
+    # Build contract-derived dynamic patterns
+    contract_reward_extra, contract_used_extra, contract_enemy_extra = _build_contract_patterns(contract, brief)
+
     reward_acquired_spans = _find_segments(content, [
         r"(获得|得到|收获|奖励|到账|入账|夺得|拿到).{0,18}(奖励|魂源|积分|能力|权限|装备|资源|魔晶|晶核)",
         r"(解锁|激活|觉醒).{0,18}(能力|指令|序列|技能|权限|天赋|形态)",
         r"【[^】]*(获得|解锁|激活|奖励|指令|初始魂源)[^】]*】",
         r"(吞噬|吸收|抽干|转化).{0,18}(魂源|能量|晶核|魂源石|积分)",
+        # v6.10.9: broader outcome patterns
+        r"(撕裂|牺牲|消耗|献祭|燃烧).{0,24}(记忆|感官|生命力|血|魂|代价).{0,24}(激活|触发|释放|打开|启动|兑现)",
+        r"(代价|牺牲|消耗).{0,18}(换来|换来|得到|获得|开启|激活)",
+        *contract_reward_extra,
     ])
     reward_used_spans = _find_segments(content, [
         r"(使用|动用|催动|发动|施展|兑现).{0,24}(奖励|能力|指令|魂源|积分|权限|技能|力量)",
@@ -321,10 +373,18 @@ def _analyze_core_loop_evidence(
         r"(抽干|吞噬|吸收).{0,18}(魂源石|魂源|能量|晶核)",
         r"(魂源石|魂源|能量|晶核).{0,18}(抽干|吞噬|吸收|转化)",
         r"实力.{0,12}(提升|突破|大幅提升|暴涨)",
+        # v6.10.9: broader use/action patterns
+        r"(撕裂|消耗|牺牲|献祭).{0,24}(记忆|感官|生命力|血|魂).{0,24}(引信|钥匙|代价|催化)",
+        r"(感知|感应|触碰|连接|同步).{0,24}(裂纹|断裂|变化|波动|反馈|回应)",
+        *contract_used_extra,
     ])
     enemy_consequence_spans = _find_segments(content, [
         r"(敌人|对手|顾家|顾长歌|反派|暗卫|追踪|罗盘|鱼钩|锯齿鼠|老蝎|马三).{0,32}(失败|崩断|炸开|受创|震惊|僵住|反噬|退|损失|倒飞|死)",
         r"(打脸|反杀|碾压|击败|杀死).{0,24}(敌人|对手|顾家|反派|暗卫|锯齿鼠)",
+        # v6.10.9: broader antagonist consequence patterns
+        r"(封锁|压制|控制|束缚).{0,24}(破裂|崩断|撕裂|失效|瓦解|动摇)",
+        r"(回收者|压制波|封锁线|屏障).{0,24}(阻滞|破裂|撕裂|失效|崩断|动摇)",
+        *contract_enemy_extra,
     ])
     army_payoff_spans = _find_segments(content, [
         r"(兵俑|军团|战灵|神军|召唤物).{0,32}(出手|斩|杀|挡|冲|列阵|围|压|碾|救|破)",
@@ -378,6 +438,9 @@ def _check_core_payoff_present(
     """Check if the chapter contains evidence of core payoff delivery.
 
     Returns (present, evidence).
+
+    v6.10.9: Also checks contract core_loop step labels/descriptions as keywords,
+    and uses broader outcome patterns for project-specific vocabulary.
     """
     content_lower = content.lower()
 
@@ -398,6 +461,23 @@ def _check_core_payoff_present(
     for ptype in contract.payoff_types:
         if ptype and ptype.lower() in content_lower:
             return True, f"payoff_type_match: {ptype}"
+
+    # v6.10.9: Check contract core_loop step labels/descriptions
+    for step in contract.core_loop:
+        for text in (step.label, step.description):
+            if text and len(text) >= 2 and text.lower() in content_lower:
+                return True, f"core_loop_step_match: {step.id}:{text[:60]}"
+
+    # v6.10.9: Broader outcome pattern — sacrifice/consumption leading to result
+    outcome_patterns = [
+        r"(撕裂|牺牲|消耗|献祭|燃烧).{0,30}(记忆|感官|生命力|血|魂|代价).{0,30}(激活|触发|释放|打开|启动|兑现|换来|得到)",
+        r"(代价|牺牲|消耗).{0,18}(换来|得到|获得|开启|激活)",
+        r"(感知|感应|触碰|连接|同步).{0,24}(裂纹|断裂|变化|波动|反馈|回应|突破)",
+        r"(封锁|压制|控制|束缚).{0,24}(破裂|崩断|撕裂|失效|瓦解)",
+    ]
+    for pat in outcome_patterns:
+        if re.search(pat, content):
+            return True, f"outcome_pattern_match: {pat[:60]}"
 
     return False, ""
 

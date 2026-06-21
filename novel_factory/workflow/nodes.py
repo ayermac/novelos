@@ -1850,13 +1850,25 @@ def _determine_revision_target(issue_codes: list, scene_beats: list[dict] | None
         if code in critical_author_codes:
             return "author"
 
+    # 字数门禁类（高优先级，内容结构性问题）
+    word_count_codes = {IssueCode.WORD_COUNT_BELOW_MIN, IssueCode.WORD_COUNT_ABOVE_MAX}
+    has_word_count_issue = any(code in word_count_codes for code in issue_codes)
+    if has_word_count_issue:
+        return "polisher"
+
     # v6.10.9: CORE_LOOP 问题根据 beat 设计层路由
     core_loop_codes = {IssueCode.CORE_LOOP_PAYOFF_MISSING, IssueCode.CORE_LOOP_DRIFT_WARNING}
     has_core_loop_issue = any(code in core_loop_codes for code in issue_codes)
 
     if has_core_loop_issue:
         has_reward_beat = bool(scene_beats) and any(b.get("is_reward_beat") for b in scene_beats)
-        return "author" if has_reward_beat else "screenwriter"
+        if has_reward_beat:
+            return "author"  # beat 已设计 reward，内容未体现
+        if scene_beats:
+            # v6.10.9-fix: beats 存在但无 is_reward_beat → beats 已设计，问题在内容层
+            # 路由到 author 让其在现有 beat 框架内修复兑现证据
+            return "author"
+        return "screenwriter"  # 无 beat 数据，需要从设计层修复
 
     # 质量诊断类 → polisher
     return "polisher"

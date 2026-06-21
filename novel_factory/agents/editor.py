@@ -286,6 +286,12 @@ class EditorAgent(BaseAgent):
         if quality_feedback:
             parts.append(quality_feedback)
 
+        # v6.10.9: Inject quality_gate core_loop status so editor LLM does not
+        # independently re-evaluate what the deterministic checker already passed.
+        core_loop_status = self._build_quality_gate_core_loop_status(state)
+        if core_loop_status:
+            parts.append(core_loop_status)
+
         return "\n\n".join(parts)
 
     def _build_quality_feedback(self, state: FactoryState) -> str:
@@ -309,6 +315,35 @@ class EditorAgent(BaseAgent):
         except Exception:
             logger.warning("Editor: quality diagnosis failed, skipping feedback injection", exc_info=True)
             return ""
+
+    def _build_quality_gate_core_loop_status(self, state: FactoryState) -> str:
+        """v6.10.9: Inject quality_gate core_loop status into editor context.
+
+        When the deterministic core_loop_checker already passed, tell the editor
+        LLM so it doesn't independently re-evaluate core_loop and produce
+        conflicting blocking issues.
+        """
+        quality_gate = state.get("quality_gate", {}) or {}
+        if not quality_gate:
+            return ""
+
+        gate_passed = quality_gate.get("pass", quality_gate.get("passed", None))
+        if gate_passed is not True:
+            return ""
+
+        # Quality gate passed — check if core_loop was among the checks
+        checks_run = quality_gate.get("checks_run", [])
+        core_loop_checked = any("core_loop" in str(c).lower() for c in checks_run)
+        if not core_loop_checked:
+            return ""
+
+        return (
+            "【确定性质检结果】\n"
+            "quality_gate 已通过全部确定性检查（包括 core_loop_compliance）。"
+            "核心循环兑现证据已通过确定性文本匹配验证。"
+            "请聚焦于 LLM 层面的质量评估（文风、逻辑、对白、节奏等），"
+            "不要独立重复评估核心循环兑现 — 该项已由上游确定性检查器确认通过。"
+        )
 
     def _build_compact_review_context(self, state: FactoryState) -> str:
         """Build a short review prompt for live LLM calls."""
@@ -354,6 +389,11 @@ class EditorAgent(BaseAgent):
                 for c in characters[:5]
             )
             parts.append(f"【角色】\n{char_str}")
+
+        # v6.10.9: Inject quality_gate core_loop status for compact review too
+        core_loop_status = self._build_quality_gate_core_loop_status(state)
+        if core_loop_status:
+            parts.append(core_loop_status)
 
         parts.append(
             "【输出要求】\n"

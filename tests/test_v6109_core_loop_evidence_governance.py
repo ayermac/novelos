@@ -498,8 +498,12 @@ class TestQualityGateBeatAwareRouting:
     """quality_gate_node's _determine_revision_target routes CORE_LOOP
     issues to screenwriter when beat design is deficient."""
 
-    def test_core_loop_no_reward_beat_routes_to_screenwriter(self):
-        """CORE_LOOP_PAYOFF_MISSING + no is_reward_beat → screenwriter."""
+    def test_core_loop_no_reward_beat_routes_to_author(self):
+        """CORE_LOOP_PAYOFF_MISSING + beats exist but no is_reward_beat → author.
+
+        v6.10.9-fix: When beats are designed (exist) but none marked as reward,
+        the issue is in content layer, not beat design. Route to author.
+        """
         from novel_factory.workflow.nodes import _determine_revision_target
         from novel_factory.quality.issue_codes import IssueCode
 
@@ -509,6 +513,17 @@ class TestQualityGateBeatAwareRouting:
                 {"sequence": 1, "scene_goal": "goal1"},
                 {"sequence": 2, "scene_goal": "goal2"},
             ],
+        )
+        assert target == "author"
+
+    def test_core_loop_no_beats_at_all_routes_to_screenwriter(self):
+        """CORE_LOOP_PAYOFF_MISSING + no scene_beats at all → screenwriter."""
+        from novel_factory.workflow.nodes import _determine_revision_target
+        from novel_factory.quality.issue_codes import IssueCode
+
+        target = _determine_revision_target(
+            [IssueCode.CORE_LOOP_PAYOFF_MISSING],
+            scene_beats=None,
         )
         assert target == "screenwriter"
 
