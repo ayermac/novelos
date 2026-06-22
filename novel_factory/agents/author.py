@@ -116,7 +116,9 @@ Drafting Contract（v6.4.1）：
 
 【事实锁遵守】：
 1. 严格按照 character_states 中的角色状态写作
-2. 被锁死的角色不能有主动肢体动作或语言"""
+2. 被锁死的角色不能有主动肢体动作或语言
+3. 严格遵守【事实账本 / Story Facts】中的已确认事实，禁止与之矛盾
+4. 事实账本中的角色状态、位置、关系等必须作为硬约束执行"""
 
 AUTHOR_SYSTEM_PROMPT += "\n\n" + CONCEPT_BUDGET_CONTRACT
 
@@ -176,6 +178,19 @@ class AuthorAgent(BaseAgent):
         formatted = format_context_bundle_for_prompt(bundle, agent_name="author", max_chars=10000)
         if formatted:
             parts.append(formatted)
+
+        # v6.10.10: 强调 story_facts 遵守
+        if bundle.story_facts:
+            facts_summary = []
+            for fact in bundle.story_facts[:5]:  # 只显示前5个最重要的
+                facts_summary.append(f"- {fact.text}")
+            facts_str = "\n".join(facts_summary)
+            parts.append(
+                "【事实账本硬约束】\n"
+                "以下已确认事实必须严格遵守，禁止与之矛盾：\n"
+                f"{facts_str}\n"
+                "如果正文内容与上述事实矛盾，将被判定为严重违规。"
+            )
 
         # Writing instruction
         instruction = self._get_instruction(state)
@@ -2764,6 +2779,19 @@ class AuthorAgent(BaseAgent):
             formatted = format_context_bundle_for_prompt(bundle, agent_name="author", max_chars=8000)
             if formatted:
                 parts.append(formatted)
+
+            # v6.10.10: 强调 story_facts 遵守
+            if bundle.story_facts:
+                facts_summary = []
+                for fact in bundle.story_facts[:5]:  # 只显示前5个最重要的
+                    facts_summary.append(f"- {fact.text}")
+                facts_str = "\n".join(facts_summary)
+                parts.append(
+                    "【事实账本硬约束】\n"
+                    "以下已确认事实必须严格遵守，禁止与之矛盾：\n"
+                    f"{facts_str}\n"
+                    "如果正文内容与上述事实矛盾，将被判定为严重违规。"
+                )
         except Exception:
             pass
 
