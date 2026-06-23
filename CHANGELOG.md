@@ -12,6 +12,35 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.12 - Production Stability Hardening (Planned)
+
+Scope: `docs/codex/planning/novel-factory-v6.10.12-production-stability-hardening-plan.md`
+
+Key focus areas:
+
+- **Author over-expansion control**: add revision length constraints to prompts and automatic compression when drafts exceed the allowed expansion threshold.
+- **Core loop drift detection**: extend deterministic `state_delta` patterns to recognize natural-language descriptions of state changes and add LLM-assisted semantic detection as an optional supplement.
+- **Story fact governance**: add automatic conflict detection/resolution when `memory_curator` creates facts and provide a cleanup script for existing duplicate `active` facts.
+
+## v6.10.11 - Story Facts Deduplication Fix
+
+Date: 2026-06-23
+
+Key changes:
+
+- **Story facts deduplication**: `_story_facts_context()` in `agent_runtime/context_builder.py` now keeps only the latest `source_chapter` fact per `subject.attribute`, preventing contradictory facts from being passed to the Author.
+- **Editor compliance fix**: `_run_story_facts_compliance()` in `agents/editor.py` applies the same deduplication before checking chapter content, eliminating false positives from outdated active facts.
+- **Context fragment deduplication**: `_frag_story_facts()` in `context/builder.py` also deduplicates so the UI context does not display contradictory facts.
+- **Version alignment**: backend runtime, frontend, and desktop packages bumped to `6.10.11`.
+
+Verification:
+
+- `python3 -m pytest tests/test_v532_memory_loop.py tests/test_v662_context_inheritance.py tests/test_v6614_continuity_enforcement.py tests/test_v6109_core_loop_evidence_governance.py tests/test_v667_memory_curator_reliability.py -q`: 187 passed
+- `python3 -m pytest tests/test_version_alignment.py -q`: 8 passed
+- `python3 -m pytest tests/ -q --tb=no`: 3599 passed, 27 failed (pre-existing failures unrelated to this change)
+
+Known follow-up risk: the remaining `active` duplicate facts in existing projects may still cause confusion until a cleanup script or automatic supersession is implemented. See v6.10.12 plan.
+
 ## v6.10.6 - Genesis Hardening
 
 Date: 2026-06-11
