@@ -14,7 +14,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
 cd "$REPO_ROOT"
 
 # ── Prerequisites ───────────────────────────────────────────────
-if ! command -v pyinstaller &>/dev/null; then
+# Check for pyinstaller - try command first, then python3 -m
+if command -v pyinstaller &>/dev/null; then
+    PYINSTALLER_CMD="pyinstaller"
+elif python3 -m PyInstaller --version &>/dev/null; then
+    PYINSTALLER_CMD="python3 -m PyInstaller"
+else
     echo "Error: pyinstaller is not installed."
     echo "Install with: pip install pyinstaller"
     exit 1
@@ -51,7 +56,7 @@ rm -rf "${REPO_ROOT}/dist/novelos-sidecar"
 
 # ── Run PyInstaller ─────────────────────────────────────────────
 echo "Running PyInstaller..."
-pyinstaller \
+$PYINSTALLER_CMD \
     --clean \
     "${REPO_ROOT}/packaging/pyinstaller/novelos-sidecar.spec"
 

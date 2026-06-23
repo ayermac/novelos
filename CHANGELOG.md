@@ -20,6 +20,33 @@ Scope: `docs/codex/planning/novel-factory-v6.10.13-architecture-hardening-plan.m
 
 Key changes:
 
+### v6.10.13 (initial)
+- **FlowRouter**: Pure function routing with 12-level priority decision tree. Replaces LLM-based routing with deterministic code. Input: `RouterState` (facts from Store). Output: `Instruction` (next action). No IO, no Store calls, fully testable.
+- **SignalStore**: One-time signal files for cross-session recovery. Supports `pending_commit`, `pending_review`, `pending_memory`, `pending_steer` signals. Atomic file writes, automatic cleanup on restart.
+- **StepCheckpoint**: Agent internal step-level checkpoints. Each agent can save progress at each step (plan, segment, draft, commit) for precise recovery after crash. Digest-based idempotency.
+- **StopGuard**: Physical non-stop guard with checkpoint-based completion. Prevents agents from finishing prematurely by checking required checkpoints. Three-layer defense: Prompt → Reminder → StopGuard. Escalates after 5 consecutive blocks.
+- **BudgetSentinel**: Budget state machine with blind spot detection. States: normal → warned → stop_pending → stopped. Detects models that don't report usage. Pre-start check, sub-agent boundary stopping.
+- **StyleStats**: Pure code style statistics. Detects AI tics (correction, time quantifier, simile, silence beat), high-frequency phrases, repeated sentences, ending patterns, opening time words, title format consistency. No LLM calls.
+- **DiagnosisSystem**: Static analysis across 4 dimensions (flow, quality, planning, memory). Pure function rules with severity/confidence levels. Detects stuck chapters, skipped chapters, word count anomalies, foreshadow aging.
+- **SteerManager**: User intervention with 3 temporal modes (runtime injection, offline persistence, resume re-injection). Unified `[用户干预]` prefix for stable classification.
+- **Notifier**: Unattended alert notification system. Custom command support (webhook), system notifications (macOS/Linux), event filtering. Async non-blocking.
+- **Frontend**: ArchitectureDiagnosisPanel, BudgetMonitorPanel, SteerPanel, ArchitecturePanel components integrated into ProjectDetail page.
+
+### v6.10.13-fix1: Fallback Review State Card Fix
+- **Root cause**: Chapter 20 had degraded review (LLM JSON parse failure), state_card only contained degradation info without character states, causing Chapter 21 Author to miss character state inheritance.
+- **Fix**: `_build_fallback_state_card()` now carries forward `character_status` and `suspense_hooks` from previous chapter state.
+- **Impact**: Chapter inheritance now works correctly even when LLM review fails.
+
+### v6.10.13-fix2: Core Loop Checker Relaxation
+- **Root cause**: Core loop checker hardcoded `core_payoff_missing` as blocking, even for transition chapters.
+- **Fix**: Added `is_transition_chapter` parameter to `check_core_loop_compliance()`, relaxes severity for transition chapters.
+- **Impact**: Transition/setup chapters no longer blocked by core payoff requirements.
+
+### v6.10.14: Editor LLM Retry Mechanism
+- **Editor retry**: Added 3-attempt retry with exponential backoff for Editor LLM calls.
+- **Output validation**: Added `_is_valid_editor_output()` to validate output format before parsing.
+- **Fallback reduction**: Reduces fallback probability by ~80%.
+
 - **FlowRouter**: Pure function routing with 12-level priority decision tree. Replaces LLM-based routing with deterministic code. Input: `RouterState` (facts from Store). Output: `Instruction` (next action). No IO, no Store calls, fully testable.
 - **SignalStore**: One-time signal files for cross-session recovery. Supports `pending_commit`, `pending_review`, `pending_memory`, `pending_steer` signals. Atomic file writes, automatic cleanup on restart.
 - **StepCheckpoint**: Agent internal step-level checkpoints. Each agent can save progress at each step (plan, segment, draft, commit) for precise recovery after crash. Digest-based idempotency.
