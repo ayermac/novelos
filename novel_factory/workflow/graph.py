@@ -192,7 +192,11 @@ def build_graph(
     graph.set_entry_point("health_check")
 
     # ── Add edges ─────────────────────────────────────────────
-    graph.add_edge("health_check", "task_discovery")
+    # v6.10.13: Add flow_control_node between health_check and task_discovery
+    # This allows FlowRouter to override routing decisions
+    graph.add_node("flow_control", lambda s: nodes.flow_control_node(s, repo))
+    graph.add_edge("health_check", "flow_control")
+    graph.add_edge("flow_control", "task_discovery")
 
     graph.add_conditional_edges(
         "task_discovery",

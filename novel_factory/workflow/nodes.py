@@ -1278,6 +1278,48 @@ def create_node_runners(
 # ── Node implementations ───────────────────────────────────────
 
 
+def flow_control_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
+    """Flow control node using FlowRouter for deterministic routing.
+
+    v6.10.13: Uses FlowRouter to determine routing before task_discovery.
+    If FlowRouter returns an instruction, it's added to state for downstream use.
+    """
+    from ..dispatch.flow_router import route
+    from ..dispatch.state_loader import StateLoader
+
+    project_id = state.get("project_id", "")
+    if not project_id:
+        return {}
+
+    try:
+        # Load router state
+        loader = StateLoader(repo)
+        router_state = loader.load(project_id)
+
+        # Get routing instruction
+        instruction = route(router_state)
+
+        if instruction:
+            logger.info(
+                "FlowControl: action=%s chapter=%d reason=%s",
+                instruction.action.value,
+                instruction.chapter,
+                instruction.reason,
+            )
+            # Store instruction in state for downstream nodes
+            return {
+                "_flow_action": instruction.action.value,
+                "_flow_chapter": instruction.chapter,
+                "_flow_agent": instruction.agent,
+                "_flow_task": instruction.task,
+                "_flow_reason": instruction.reason,
+            }
+    except Exception as e:
+        logger.warning("FlowControl: failed, falling back to default routing: %s", e)
+
+    return {}
+
+
 def health_check_node(state: FactoryState, repo: Repository) -> dict[str, Any]:
     """Check database health and ensure workflow_run_id exists.
 
