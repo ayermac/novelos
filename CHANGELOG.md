@@ -12,6 +12,42 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.13 - Architecture Hardening
+
+Date: 2026-06-23
+
+Scope: `docs/codex/planning/novel-factory-v6.10.13-architecture-hardening-plan.md`
+
+Key changes:
+
+- **FlowRouter**: Pure function routing with 12-level priority decision tree. Replaces LLM-based routing with deterministic code. Input: `RouterState` (facts from Store). Output: `Instruction` (next action). No IO, no Store calls, fully testable.
+- **SignalStore**: One-time signal files for cross-session recovery. Supports `pending_commit`, `pending_review`, `pending_memory`, `pending_steer` signals. Atomic file writes, automatic cleanup on restart.
+- **StepCheckpoint**: Agent internal step-level checkpoints. Each agent can save progress at each step (plan, segment, draft, commit) for precise recovery after crash. Digest-based idempotency.
+- **StopGuard**: Physical non-stop guard with checkpoint-based completion. Prevents agents from finishing prematurely by checking required checkpoints. Three-layer defense: Prompt → Reminder → StopGuard. Escalates after 5 consecutive blocks.
+- **BudgetSentinel**: Budget state machine with blind spot detection. States: normal → warned → stop_pending → stopped. Detects models that don't report usage. Pre-start check, sub-agent boundary stopping.
+- **StyleStats**: Pure code style statistics. Detects AI tics (correction, time quantifier, simile, silence beat), high-frequency phrases, repeated sentences, ending patterns, opening time words, title format consistency. No LLM calls.
+- **DiagnosisSystem**: Static analysis across 4 dimensions (flow, quality, planning, memory). Pure function rules with severity/confidence levels. Detects stuck chapters, skipped chapters, word count anomalies, foreshadow aging.
+- **SteerManager**: User intervention with 3 temporal modes (runtime injection, offline persistence, resume re-injection). Unified `[用户干预]` prefix for stable classification.
+- **Notifier**: Unattended alert notification system. Custom command support (webhook), system notifications (macOS/Linux), event filtering. Async non-blocking.
+
+New modules:
+- `novel_factory/dispatch/flow_router.py`
+- `novel_factory/dispatch/signal_store.py`
+- `novel_factory/dispatch/state_loader.py`
+- `novel_factory/dispatch/dispatcher.py`
+- `novel_factory/agent_runtime/step_checkpoint.py`
+- `novel_factory/guards/stop_guard.py`
+- `novel_factory/guards/budget_sentinel.py`
+- `novel_factory/stats/style_stats.py`
+- `novel_factory/diag/diagnosis.py`
+- `novel_factory/steer/steer_manager.py`
+- `novel_factory/notify/notifier.py`
+
+Tests: `tests/test_flow_router.py` (28 tests)
+
+Verification:
+- `python3 -m pytest tests/test_flow_router.py -v`: 28 passed
+
 ## v6.10.12 - Production Stability Hardening
 
 Date: 2026-06-23
