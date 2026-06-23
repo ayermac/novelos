@@ -257,6 +257,23 @@ def _extract_state_deltas(content: str, previous_states: dict[str, str], current
             if item not in seen:
                 deltas.append({"state": item[0], "from": item[1], "to": item[2], "source": "text_delta"})
                 seen.add(item)
+        # v6.10.12: qualitative zero-out / depletion / recovery patterns
+        for match in re.finditer(
+            rf"{re.escape(key)}[^。\n，,；;]{{0,30}}(归零|清零|耗尽|见底|指向零|归零|归零)",
+            content,
+        ):
+            item = (key, "?", "0")
+            if item not in seen:
+                deltas.append({"state": key, "from": "?", "to": "0", "source": "text_qualitative"})
+                seen.add(item)
+        for match in re.finditer(
+            rf"(?:失去|耗尽|消耗|抽干)[^。\n，,；;]{{0,18}}{re.escape(key)}",
+            content,
+        ):
+            item = (key, "?", "0")
+            if item not in seen:
+                deltas.append({"state": key, "from": "?", "to": "0", "source": "text_qualitative"})
+                seen.add(item)
     for key, current in current_states.items():
         previous = previous_states.get(key)
         if previous and previous != current:

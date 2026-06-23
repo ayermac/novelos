@@ -1536,6 +1536,10 @@ def _apply_memory_item(
                 result["success"] = True
                 result["created_id"] = fact["id"] if fact else None
 
+                # v6.10.12: auto-supersede older active facts with same subject.attribute but different value
+                if fact:
+                    _auto_supersede_conflicting_facts(repo, project_id, fact)
+
                 # Create fact event for traceability
                 if fact:
                     event_type = "updated" if is_update else "created"
@@ -1576,6 +1580,51 @@ def _apply_memory_item(
         result["error"] = f"不支持的记忆更新: {target_table}.{operation}"
 
     return result
+
+
+def _auto_supersede_conflicting_facts(repo, project_id: str, current_fact: dict) -> list[str]:
+    """v6.10.12: Mark older active facts with same subject+attribute but different value as superseded."""
+    subject = str(current_fact.get("subject") or "").strip()
+    attribute = str(current_fact.get("attribute") or "").strip()
+    if not subject and not attribute:
+        return []
+
+    current_value = _canonical_json_text(current_fact.get("value_json"))
+    current_id = str(current_fact.get("id") or "")
+
+    try:
+        facts = repo.list_story_facts(project_id, status="active")
+    except Exception:
+        return []
+
+    superseded_ids: list[str] = []
+    for fact in facts:
+        if str(fact.get("id") or "") == current_id:
+            continue
+        fact_subject = str(fact.get("subject") or "").strip()
+        fact_attribute = str(fact.get("attribute") or "").strip()
+        if fact_subject != subject or fact_attribute != attribute:
+            continue
+        old_value = _canonical_json_text(fact.get("value_json"))
+        if old_value == current_value:
+            continue
+        try:
+            repo.update_story_fact(fact["id"], {"status": "superseded"})
+            superseded_ids.append(fact["id"])
+        except Exception:
+            continue
+    return superseded_ids
+
+
+def _canonical_json_text(value) -> str:
+    """Return a canonical JSON text for stable value comparison."""
+    if value is None:
+        return ""
+    try:
+        parsed = json.loads(value) if isinstance(value, str) else value
+        return json.dumps(parsed, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    except Exception:
+        return str(value).strip()
 
 
 def _compute_batch_status(batch_id: str, repo) -> str:
