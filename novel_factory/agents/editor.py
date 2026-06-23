@@ -639,16 +639,16 @@ class EditorAgent(BaseAgent):
             project_id=inputs.project_id,
             chapter_number=inputs.chapter_number,
         )
-            exec_events.append({
-                "event_type": "fallback_used",
-                "message": f"LLM 审核降级为规则兜底：{str(e)[:100]}",
-                "payload": {
-                    "fallback_type": "rule_review",
-                    "reason": str(e)[:200],
-                    "degraded_review": True,
-                    "blocks_auto_publish": not output.pass_,
-                },
-            })
+        exec_events.append({
+            "event_type": "fallback_used",
+            "message": f"LLM 审核降级为规则兜底：{str(last_error)[:100]}",
+            "payload": {
+                "fallback_type": "rule_review",
+                "reason": str(last_error)[:200],
+                "degraded_review": True,
+                "blocks_auto_publish": not output.pass_,
+            },
+        })
 
         return output, exec_events
 
