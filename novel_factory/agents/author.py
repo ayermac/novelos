@@ -181,8 +181,10 @@ class AuthorAgent(BaseAgent):
 
         # v6.10.10: 强调 story_facts 遵守
         if bundle.story_facts:
+            # Sort by priority (lower number = higher priority), then take top 8
+            sorted_facts = sorted(bundle.story_facts, key=lambda f: f.priority)[:8]
             facts_summary = []
-            for fact in bundle.story_facts[:5]:  # 只显示前5个最重要的
+            for fact in sorted_facts:
                 facts_summary.append(f"- {fact.text}")
             facts_str = "\n".join(facts_summary)
             parts.append(
@@ -2782,8 +2784,10 @@ class AuthorAgent(BaseAgent):
 
             # v6.10.10: 强调 story_facts 遵守
             if bundle.story_facts:
+                # Sort by priority (lower number = higher priority), then take top 8
+                sorted_facts = sorted(bundle.story_facts, key=lambda f: f.priority)[:8]
                 facts_summary = []
-                for fact in bundle.story_facts[:5]:  # 只显示前5个最重要的
+                for fact in sorted_facts:
                     facts_summary.append(f"- {fact.text}")
                 facts_str = "\n".join(facts_summary)
                 parts.append(

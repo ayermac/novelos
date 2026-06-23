@@ -1553,8 +1553,10 @@ def format_context_bundle_for_prompt(
     for header, items in ordered_buckets:
         if not items:
             continue
+        # v6.10.10: Sort items by priority (lower number = higher priority)
+        sorted_items = sorted(items, key=lambda it: it.priority)
         block_lines: list[str] = [header]
-        for it in items:
+        for it in sorted_items:
             confidence_tag = f" [置信度:{it.confidence:.2f}]" if it.confidence < 1.0 else ""
             source_tag = f" [来源:{it.source}]" if it.source else ""
             line = f"- {it.text}{confidence_tag}{source_tag}"
