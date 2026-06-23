@@ -18,7 +18,7 @@ from pathlib import Path
 # Allow running from repo root without package install
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from novel_factory.db.repositories.repository import Repository
+from novel_factory.db.repository import Repository
 
 
 def cleanup_project(repo: Repository, project_id: str, dry_run: bool = True) -> dict:
