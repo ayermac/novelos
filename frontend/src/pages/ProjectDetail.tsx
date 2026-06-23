@@ -18,6 +18,7 @@ import InstructionsModule from '../components/project/InstructionsModule'
 import ProjectOverviewModule from '../components/project/ProjectOverviewModule'
 import ProjectSettingsModule from '../components/project/ProjectSettingsModule'
 import CreativeContractsModule from '../components/project/CreativeContractsModule'
+import { ArchitecturePanel } from '../components/project/ArchitecturePanel'
 import GenesisModule from '../components/project/GenesisModule'
 import MemoryUpdatesModule from '../components/project/MemoryUpdatesModule'
 import FactLedgerModule from '../components/project/FactLedgerModule'
@@ -919,6 +920,8 @@ function ModuleRouter({
       return <RunsModule projectId={projectId} />
     case 'creative-contracts':
       return <CreativeContractsModule projectId={projectId} />
+    case 'architecture':
+      return <ArchitecturePanel projectId={projectId} isRunning={isRunning} onSteerSubmitted={onWorkspaceChange} />
     case 'settings':
       return <ProjectSettingsModule projectId={projectId} onSaved={onWorkspaceChange} />
     default:
