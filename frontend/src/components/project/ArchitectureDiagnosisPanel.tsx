@@ -1,7 +1,7 @@
-import { useState, useCallback, useEffect } from 'react'
+import { useState, useCallback } from 'react'
 import { post } from '../../lib/api'
 import { AlertCircle, AlertTriangle, Info, CheckCircle2, Activity, RefreshCw } from 'lucide-react'
-import { InlineMessage, LoadingButton, SkeletonStack, useToast } from '../ui'
+import { InlineMessage, LoadingButton, useToast } from '../ui'
 
 interface ArchitectureDiagnosisPanelProps {
   projectId: string
@@ -47,7 +47,7 @@ export function ArchitectureDiagnosisPanel({ projectId }: ArchitectureDiagnosisP
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [lastRun, setLastRun] = useState<string | null>(null)
-  const { toast } = useToast()
+  const { showToast } = useToast()
 
   const runDiagnosis = useCallback(async () => {
     setLoading(true)
@@ -58,28 +58,33 @@ export function ArchitectureDiagnosisPanel({ projectId }: ArchitectureDiagnosisP
         project_id: projectId,
       })
 
-      setFindings(response.findings)
-      setLastRun(new Date().toLocaleTimeString())
+      if (response.ok && response.data) {
+        setFindings(response.data.findings)
+        setLastRun(new Date().toLocaleTimeString())
 
-      if (response.findings.length === 0) {
-        toast({
-          title: '诊断完成',
-          description: '未发现任何问题',
-          variant: 'success',
-        })
+        if (response.data.findings.length === 0) {
+          showToast({
+            title: '诊断完成',
+            message: '未发现任何问题',
+            tone: 'success',
+          })
+        }
+      } else {
+        const message = response.error?.message || '诊断失败'
+        setError(message)
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : '诊断失败'
       setError(message)
-      toast({
+      showToast({
         title: '诊断失败',
-        description: message,
-        variant: 'error',
+        message,
+        tone: 'danger',
       })
     } finally {
       setLoading(false)
     }
-  }, [projectId, toast])
+  }, [projectId, showToast])
 
   // Group findings by dimension
   const groupedFindings = findings.reduce((acc, finding) => {
@@ -117,13 +122,17 @@ export function ArchitectureDiagnosisPanel({ projectId }: ArchitectureDiagnosisP
       </div>
 
       {error && (
-        <InlineMessage variant="error" className="mb-4">
+        <InlineMessage variant="danger" className="mb-4">
           {error}
         </InlineMessage>
       )}
 
       {loading && !findings.length ? (
-        <SkeletonStack count={3} />
+        <div className="space-y-2">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="h-12 bg-gray-100 rounded animate-pulse" />
+          ))}
+        </div>
       ) : findings.length === 0 ? (
         <div className="text-center py-8 text-gray-500">
           <CheckCircle2 className="w-12 h-12 mx-auto mb-2 text-green-400" />

@@ -18,14 +18,14 @@ export function SteerPanel({ projectId, isRunning = false, onSteerSubmitted }: S
   const [text, setText] = useState('')
   const [loading, setLoading] = useState(false)
   const [lastResult, setLastResult] = useState<SteerResponse | null>(null)
-  const { toast } = useToast()
+  const { showToast } = useToast()
 
   const handleSubmit = useCallback(async () => {
     if (!text.trim()) {
-      toast({
+      showToast({
         title: '请输入干预内容',
-        description: '干预内容不能为空',
-        variant: 'error',
+        message: '干预内容不能为空',
+        tone: 'danger',
       })
       return
     }
@@ -37,27 +37,33 @@ export function SteerPanel({ projectId, isRunning = false, onSteerSubmitted }: S
         text: text.trim(),
       })
 
-      setLastResult(response)
-      setText('')
-
-      toast({
-        title: '干预已提交',
-        description: response.message,
-        variant: 'success',
-      })
-
-      onSteerSubmitted?.()
+      if (response.ok && response.data) {
+        setLastResult(response.data)
+        setText('')
+        showToast({
+          title: '干预已提交',
+          message: response.data.message,
+          tone: 'success',
+        })
+        onSteerSubmitted?.()
+      } else {
+        showToast({
+          title: '提交失败',
+          message: response.error?.message || '提交失败',
+          tone: 'danger',
+        })
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : '提交失败'
-      toast({
+      showToast({
         title: '提交失败',
-        description: message,
-        variant: 'error',
+        message,
+        tone: 'danger',
       })
     } finally {
       setLoading(false)
     }
-  }, [projectId, text, toast, onSteerSubmitted])
+  }, [projectId, text, showToast, onSteerSubmitted])
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
@@ -72,9 +78,7 @@ export function SteerPanel({ projectId, isRunning = false, onSteerSubmitted }: S
         <MessageSquare className="w-5 h-5 text-blue-500" />
         <h3 className="text-lg font-semibold">用户干预</h3>
         {isRunning && (
-          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">
-            创作中
-          </span>
+          <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded">创作中</span>
         )}
       </div>
 
@@ -84,7 +88,6 @@ export function SteerPanel({ projectId, isRunning = false, onSteerSubmitted }: S
           : '创作已停止，干预将在下次启动时生效。'}
       </p>
 
-      {/* Input */}
       <div className="mb-3">
         <textarea
           value={text}
@@ -95,57 +98,34 @@ export function SteerPanel({ projectId, isRunning = false, onSteerSubmitted }: S
           rows={3}
           disabled={loading}
         />
-        <p className="text-xs text-gray-500 mt-1">
-          按 Ctrl+Enter (或 Cmd+Enter) 快速提交
-        </p>
+        <p className="text-xs text-gray-500 mt-1">按 Ctrl+Enter (或 Cmd+Enter) 快速提交</p>
       </div>
 
-      {/* Submit button */}
       <div className="flex justify-end">
-        <LoadingButton
-          onClick={handleSubmit}
-          loading={loading}
-          disabled={!text.trim() || loading}
-          className="flex items-center gap-2"
-        >
+        <LoadingButton onClick={handleSubmit} loading={loading} disabled={!text.trim() || loading} className="flex items-center gap-2">
           <Send className="w-4 h-4" />
           {isRunning ? '注入干预' : '保存干预'}
         </LoadingButton>
       </div>
 
-      {/* Last result */}
       {lastResult && (
-        <div className={`mt-3 p-2 rounded-lg flex items-start gap-2 ${
-          lastResult.status === 'injected' ? 'bg-green-50' : 'bg-blue-50'
-        }`}>
+        <div className={`mt-3 p-2 rounded-lg flex items-start gap-2 ${lastResult.status === 'injected' ? 'bg-green-50' : 'bg-blue-50'}`}>
           {lastResult.status === 'injected' ? (
             <CheckCircle2 className="w-4 h-4 text-green-500 mt-0.5" />
           ) : (
             <AlertCircle className="w-4 h-4 text-blue-500 mt-0.5" />
           )}
-          <p className={`text-sm ${
-            lastResult.status === 'injected' ? 'text-green-700' : 'text-blue-700'
-          }`}>
+          <p className={`text-sm ${lastResult.status === 'injected' ? 'text-green-700' : 'text-blue-700'}`}>
             {lastResult.message}
           </p>
         </div>
       )}
 
-      {/* Examples */}
       <div className="mt-4 border-t pt-3">
         <p className="text-xs font-medium text-gray-500 mb-2">干预示例：</p>
         <div className="flex flex-wrap gap-2">
-          {[
-            '主角改成女性',
-            '把感情线提前到第4章',
-            '加入一个反派角色',
-            '节奏太慢了，加快推进',
-          ].map((example) => (
-            <button
-              key={example}
-              onClick={() => setText(example)}
-              className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded"
-            >
+          {['主角改成女性', '把感情线提前到第4章', '加入一个反派角色', '节奏太慢了，加快推进'].map((example) => (
+            <button key={example} onClick={() => setText(example)} className="text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded">
               {example}
             </button>
           ))}

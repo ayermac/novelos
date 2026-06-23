@@ -861,6 +861,7 @@ export default function ProjectDetail() {
               stats={workspace.stats}
               onWorkspaceChange={refetchWorkspace}
               currentChapter={currentChapter}
+              isRunning={isProjectWorkflowRunning}
             />
           </div>
         </div>
@@ -878,6 +879,7 @@ function ModuleRouter({
   stats,
   onWorkspaceChange,
   currentChapter,
+  isRunning = false,
 }: {
   module: ProjectModule
   projectId: string
@@ -885,6 +887,7 @@ function ModuleRouter({
   stats: Workspace['stats']
   onWorkspaceChange: () => void
   currentChapter: number
+  isRunning?: boolean
 }) {
   switch (module) {
     case 'overview':

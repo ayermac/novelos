@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { get, put } from '../../lib/api'
-import { DollarSign, AlertTriangle, CheckCircle2, Settings, Save } from 'lucide-react'
-import { InlineMessage, LoadingButton, useToast } from '../ui'
+import { DollarSign, AlertTriangle, Settings, Save } from 'lucide-react'
+import { LoadingButton, useToast } from '../ui'
 
 interface BudgetMonitorPanelProps {
   projectId: string
@@ -29,13 +29,15 @@ export function BudgetMonitorPanel({ projectId }: BudgetMonitorPanelProps) {
   const [editing, setEditing] = useState(false)
   const [newLimit, setNewLimit] = useState('')
   const [saving, setSaving] = useState(false)
-  const { toast } = useToast()
+  const { showToast } = useToast()
 
   const fetchStatus = useCallback(async () => {
     setLoading(true)
     try {
-      const data = await get<BudgetStatus>(`/api/v61013/budget/${projectId}`)
-      setStatus(data)
+      const response = await get<BudgetStatus>(`/api/v61013/budget/${projectId}`)
+      if (response.ok && response.data) {
+        setStatus(response.data)
+      }
     } catch (err) {
       console.error('Failed to fetch budget status:', err)
     } finally {
@@ -45,7 +47,6 @@ export function BudgetMonitorPanel({ projectId }: BudgetMonitorPanelProps) {
 
   useEffect(() => {
     fetchStatus()
-    // Refresh every 30 seconds
     const interval = setInterval(fetchStatus, 30000)
     return () => clearInterval(interval)
   }, [fetchStatus])
@@ -53,35 +54,43 @@ export function BudgetMonitorPanel({ projectId }: BudgetMonitorPanelProps) {
   const handleSaveLimit = useCallback(async () => {
     const limit = parseFloat(newLimit)
     if (isNaN(limit) || limit <= 0) {
-      toast({
+      showToast({
         title: '无效金额',
-        description: '请输入有效的预算金额',
-        variant: 'error',
+        message: '请输入有效的预算金额',
+        tone: 'danger',
       })
       return
     }
 
     setSaving(true)
     try {
-      await put(`/api/v61013/budget/${projectId}`, { limit_usd: limit })
-      toast({
-        title: '预算已更新',
-        description: `预算上限已设置为 $${limit.toFixed(2)}`,
-        variant: 'success',
-      })
-      setEditing(false)
-      setNewLimit('')
-      fetchStatus()
+      const response = await put(`/api/v61013/budget/${projectId}`, { limit_usd: limit })
+      if (response.ok) {
+        showToast({
+          title: '预算已更新',
+          message: `预算上限已设置为 $${limit.toFixed(2)}`,
+          tone: 'success',
+        })
+        setEditing(false)
+        setNewLimit('')
+        fetchStatus()
+      } else {
+        showToast({
+          title: '更新失败',
+          message: response.error?.message || '无法更新预算设置',
+          tone: 'danger',
+        })
+      }
     } catch (err) {
-      toast({
+      showToast({
         title: '更新失败',
-        description: '无法更新预算设置',
-        variant: 'error',
+        message: '无法更新预算设置',
+        tone: 'danger',
       })
     } finally {
       setSaving(false)
     }
-  }, [projectId, newLimit, toast, fetchStatus])
+  }, [projectId, newLimit, showToast, fetchStatus])
 
   if (!status) {
     return (
@@ -116,7 +125,6 @@ export function BudgetMonitorPanel({ projectId }: BudgetMonitorPanelProps) {
         </button>
       </div>
 
-      {/* Status */}
       <div className="flex items-center gap-2 mb-3">
         <span className="text-sm font-medium">状态:</span>
         <span className={`text-sm font-semibold ${stateInfo.color}`}>
@@ -129,7 +137,6 @@ export function BudgetMonitorPanel({ projectId }: BudgetMonitorPanelProps) {
         )}
       </div>
 
-      {/* Usage bar */}
       <div className="mb-3">
         <div className="flex justify-between text-sm mb-1">
           <span>使用量</span>
@@ -138,18 +145,13 @@ export function BudgetMonitorPanel({ projectId }: BudgetMonitorPanelProps) {
         <div className="w-full bg-gray-200 rounded-full h-2">
           <div
             className={`h-2 rounded-full transition-all ${
-              isStopped
-                ? 'bg-red-500'
-                : isWarning
-                ? 'bg-yellow-500'
-                : 'bg-green-500'
+              isStopped ? 'bg-red-500' : isWarning ? 'bg-yellow-500' : 'bg-green-500'
             }`}
             style={{ width: `${Math.min(100, status.usage_percent)}%` }}
           />
         </div>
       </div>
 
-      {/* Numbers */}
       <div className="grid grid-cols-3 gap-2 text-center mb-3">
         <div className="bg-gray-50 rounded p-2">
           <p className="text-xs text-gray-500">已花费</p>
@@ -167,7 +169,6 @@ export function BudgetMonitorPanel({ projectId }: BudgetMonitorPanelProps) {
         </div>
       </div>
 
-      {/* Edit limit */}
       {editing && (
         <div className="border-t pt-3 mt-3">
           <label className="block text-sm font-medium mb-1">设置新预算上限</label>
@@ -181,11 +182,7 @@ export function BudgetMonitorPanel({ projectId }: BudgetMonitorPanelProps) {
               min="0"
               step="10"
             />
-            <LoadingButton
-              onClick={handleSaveLimit}
-              loading={saving}
-              className="flex items-center gap-1"
-            >
+            <LoadingButton onClick={handleSaveLimit} loading={saving} className="flex items-center gap-1">
               <Save className="w-4 h-4" />
               保存
             </LoadingButton>
@@ -193,7 +190,6 @@ export function BudgetMonitorPanel({ projectId }: BudgetMonitorPanelProps) {
         </div>
       )}
 
-      {/* Warnings */}
       {isWarning && (
         <div className="mt-3 p-2 bg-yellow-50 rounded-lg flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5" />
@@ -208,19 +204,15 @@ export function BudgetMonitorPanel({ projectId }: BudgetMonitorPanelProps) {
       {isStopped && (
         <div className="mt-3 p-2 bg-red-50 rounded-lg flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 text-red-500 mt-0.5" />
-          <p className="text-sm text-red-700">
-            预算已耗尽，创作已停止。请增加预算后重试。
-          </p>
+          <p className="text-sm text-red-700">预算已耗尽，创作已停止。请增加预算后重试。</p>
         </div>
       )}
 
-      {/* Blind spot warning */}
       {status.zero_streak >= 5 && (
         <div className="mt-3 p-2 bg-yellow-50 rounded-lg flex items-start gap-2">
           <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5" />
           <p className="text-sm text-yellow-700">
-            模型未返回 usage 数据，成本统计为 0，预算上限不会触发。
-            请确认模型配置或上游 include_usage 设置。
+            模型未返回 usage 数据，成本统计为 0，预算上限不会触发。请确认模型配置或上游 include_usage 设置。
           </p>
         </div>
       )}
