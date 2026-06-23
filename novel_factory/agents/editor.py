@@ -584,24 +584,61 @@ class EditorAgent(BaseAgent):
             {"role": "user", "content": f"项目ID: {inputs.project_id}\n章节号: {inputs.chapter_number}\n\n{context}\n\n请执行五层审校并评分。"},
         ]
 
-        try:
-            invoke_kwargs = {}
-            raw = self._invoke_json(
-                messages,
-                schema=EditorOutput,
-                **invoke_kwargs,
-            )
-            output = EditorOutput(**raw)
-            self.validate_output(output.model_dump())
-        except Exception as e:
-            if not use_compact_review:
-                raise
-            logger.warning("Editor: LLM review degraded to rule-based fallback: %s", e)
-            output = self._fallback_rule_review(
-                inputs.content, str(e),
-                project_id=inputs.project_id,
-                chapter_number=inputs.chapter_number,
-            )
+        # v6.10.14: LLM retry mechanism - reduce fallback probability
+        max_retries = 3 if use_compact_review else 1
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                invoke_kwargs = {}
+                raw = self._invoke_json(
+                    messages,
+                    schema=EditorOutput,
+                    **invoke_kwargs,
+                )
+
+                # v6.10.14: Validate output format before accepting
+                if not self._is_valid_editor_output(raw):
+                    last_error = f"Invalid output format: missing required fields"
+                    logger.warning(f"Editor attempt {attempt+1}/{max_retries}: {last_error}")
+                    if attempt < max_retries - 1:
+                        import time
+                        time.sleep(2 ** attempt)  # Exponential backoff
+                        continue
+                    break
+
+                output = EditorOutput(**raw)
+                self.validate_output(output.model_dump())
+
+                # Success - log if retried
+                if attempt > 0:
+                    exec_events.append({
+                        "event_type": "editor_retry_success",
+                        "message": f"Editor LLM 第 {attempt+1} 次尝试成功",
+                        "payload": {"attempt": attempt + 1, "max_retries": max_retries},
+                    })
+
+                return output, exec_events
+
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Editor attempt {attempt+1}/{max_retries} failed: {e}")
+
+                if attempt < max_retries - 1:
+                    import time
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                    continue
+
+        # All retries failed - fall back to rule review
+        if not use_compact_review:
+            raise Exception(last_error)
+
+        logger.warning("Editor: LLM review degraded to rule-based fallback after %d attempts: %s", max_retries, last_error)
+        output = self._fallback_rule_review(
+            inputs.content, str(last_error),
+            project_id=inputs.project_id,
+            chapter_number=inputs.chapter_number,
+        )
             exec_events.append({
                 "event_type": "fallback_used",
                 "message": f"LLM 审核降级为规则兜底：{str(e)[:100]}",
@@ -2189,6 +2226,31 @@ class EditorAgent(BaseAgent):
         )
         result["story_facts_compliance"] = compliance_result.to_dict()
         return result
+
+    def _is_valid_editor_output(self, raw: Any) -> bool:
+        """v6.10.14: Validate Editor LLM output format before parsing.
+
+        Checks if the output has the required structure to avoid
+        JSON parsing errors that cause fallback.
+        """
+        if not isinstance(raw, dict):
+            return False
+
+        # Check required fields
+        required_fields = ["pass", "score", "issues", "suggestions"]
+        for field in required_fields:
+            if field not in raw:
+                return False
+
+        # Check score is a number
+        if not isinstance(raw.get("score"), (int, float)):
+            return False
+
+        # Check issues is a list
+        if not isinstance(raw.get("issues"), list):
+            return False
+
+        return True
 
     def validate_output(self, output: dict) -> None:
         parsed = EditorOutput(**output)
