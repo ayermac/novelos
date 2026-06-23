@@ -531,11 +531,9 @@ class EditorAgent(BaseAgent):
                 death_penalty=dp_result.has_critical,
                 seam_blocking_count=1 if continuity_blocking else 0,
             ),
-            state_card={
-                "summary": "AI 审核不可用，已完成规则兜底检查；请人工发布前复核。",
-                "degraded_review": True,
-                "fallback_type": "rule_review",
-            } if passed else {},
+            state_card=self._build_fallback_state_card(
+                content, project_id, chapter_number, passed,
+            ),
         )
 
     # ── v6.6.8: Refactored pipeline steps ───────────────────────────
@@ -2207,6 +2205,67 @@ class EditorAgent(BaseAgent):
             "character_status": {},
             "suspense_hooks": [],
         }
+
+    def _build_fallback_state_card(
+        self,
+        content: str,
+        project_id: str,
+        chapter_number: int,
+        passed: bool,
+    ) -> dict[str, Any]:
+        """Build state card for fallback review with character state extraction.
+
+        v6.10.13: When LLM review fails and we use rule-based fallback,
+        we still need to extract basic character states to ensure chapter
+        inheritance works correctly for the next chapter.
+        """
+        # Start with minimal state card
+        state_card = self._build_minimal_state_card(content)
+
+        # Add fallback markers
+        state_card["degraded_review"] = True
+        state_card["fallback_type"] = "rule_review"
+        state_card["summary"] = "AI 审核不可用，已完成规则兜底检查；请人工发布前复核。"
+
+        if not passed:
+            return {}
+
+        # Try to extract character states from previous chapter state
+        try:
+            if project_id and chapter_number > 1:
+                prev_state = self.repo.get_chapter_state(project_id, chapter_number - 1)
+                if prev_state:
+                    prev_data = prev_state.get("state_data", {})
+                    if isinstance(prev_data, str):
+                        import json
+                        try:
+                            prev_data = json.loads(prev_data)
+                        except Exception:
+                            prev_data = {}
+
+                    # Carry forward character_status from previous chapter
+                    if "character_status" in prev_data and isinstance(prev_data["character_status"], dict):
+                        state_card["character_status"] = prev_data["character_status"]
+
+                    # Carry forward suspense_hooks from previous chapter
+                    if "suspense_hooks" in prev_data and isinstance(prev_data["suspense_hooks"], list):
+                        state_card["suspense_hooks"] = prev_data["suspense_hooks"]
+        except Exception:
+            logger.warning("Editor fallback: failed to carry forward previous state")
+
+        # Try to extract character names from content for basic tracking
+        try:
+            # Get known characters from database
+            characters = self.repo.get_characters(project_id)
+            if characters and content:
+                for char in characters:
+                    char_name = char.get("name", "")
+                    if char_name and char_name in content:
+                        state_card.setdefault("character_status", {})[char_name] = "出场"
+        except Exception:
+            logger.debug("Editor fallback: character extraction not available")
+
+        return state_card
 
     def _save_learned_patterns(
         self, project_id: str, chapter_number: int, output: EditorOutput,

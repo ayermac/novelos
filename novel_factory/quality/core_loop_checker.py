@@ -620,8 +620,12 @@ def _check_payoff_gap_trend(
     current_result: CoreLoopCheckResult,
     chapter_number: int,
     window: int = 2,
+    is_transition_chapter: bool = False,
 ) -> DriftSignal | None:
-    """Check if recent chapters have a payoff gap (no core payoff in window)."""
+    """Check if recent chapters have a payoff gap (no core payoff in window).
+
+    v6.10.13: Transition chapters get extended window to avoid false alarms.
+    """
     current_metric = ChapterContractMetrics(
         chapter_number=chapter_number,
         core_payoff_present=current_result.core_payoff_present,
@@ -630,14 +634,17 @@ def _check_payoff_gap_trend(
     if len(metrics) < window:
         return None
 
-    recent = metrics[-window:]
+    # v6.10.13: Extend window for transition chapters
+    effective_window = window + 1 if is_transition_chapter else window
+
+    recent = metrics[-effective_window:]
     gap_count = sum(1 for m in recent if not m.core_payoff_present)
-    if gap_count >= window:
+    if gap_count >= effective_window:
         return DriftSignal(
             drift_type="payoff_gap",
             severity="warning",
-            description=f"连续{window}章没有核心兑现",
-            evidence=f"最近{window}章（含当前章）core_payoff_present 均为 False",
+            description=f"连续{effective_window}章没有核心兑现",
+            evidence=f"最近{effective_window}章（含当前章）core_payoff_present 均为 False",
         )
     return None
 
@@ -667,6 +674,7 @@ def _evaluate_drift_rules(
     recent_metrics: list[ChapterContractMetrics],
     current_result: CoreLoopCheckResult,
     chapter_number: int,
+    is_transition_chapter: bool = False,
 ) -> list[DriftSignal]:
     """Evaluate contract drift rules against current and recent data."""
     signals: list[DriftSignal] = []
@@ -685,7 +693,7 @@ def _evaluate_drift_rules(
                 ))
 
         elif rule.id == "payoff_within_window":
-            signal = _check_payoff_gap_trend(recent_metrics, current_result, chapter_number, window)
+            signal = _check_payoff_gap_trend(recent_metrics, current_result, chapter_number, window, is_transition_chapter)
             if signal:
                 signal.severity = rule.severity
                 signals.append(signal)
@@ -712,6 +720,7 @@ def check_core_loop_compliance(
     story_contract: StoryContract,
     chapter_brief: ChapterBrief | None = None,
     recent_contract_metrics: list[ChapterContractMetrics] | None = None,
+    is_transition_chapter: bool = False,
 ) -> CoreLoopCheckResult:
     """Check a chapter against its Story Contract.
 
@@ -724,6 +733,7 @@ def check_core_loop_compliance(
         story_contract: The project's StoryContract
         chapter_brief: Optional ChapterBrief for richer signals
         recent_contract_metrics: Optional list of recent chapter metrics for trend checks
+        is_transition_chapter: If True, relax core payoff requirements for transition/setup chapters
 
     Returns:
         CoreLoopCheckResult with compliance status and signals
@@ -756,22 +766,28 @@ def check_core_loop_compliance(
         and (evidence.reward_used or evidence.enemy_consequence or evidence.army_payoff)
     )
     if not result.core_payoff_present:
+        # v6.10.13: Transition chapters get relaxed severity
+        payoff_severity = "warning" if is_transition_chapter else "warning"
         result.drift_signals.append(DriftSignal(
             drift_type="core_payoff_missing",
-            severity="warning",
-            description="本章未检测到核心兑现证据",
+            severity=payoff_severity,
+            description="本章未检测到核心兑现证据" + ("（过渡章节）" if is_transition_chapter else ""),
             chapter_number=chapter_number,
         ))
         result.warnings.append("本章未检测到核心兑现证据")
 
     if evidence.missing_evidence:
         missing_text = "、".join(evidence.missing_evidence)
-        severity = (
-            "blocking"
-            if story_contract.status in {"active", "confirmed"}
-            and any(item.startswith(("reward_used", "contract_required_payoff", "state_delta:")) for item in evidence.missing_evidence)
-            else "warning"
-        )
+        # v6.10.13: Transition chapters get relaxed severity
+        if is_transition_chapter:
+            severity = "warning"
+        else:
+            severity = (
+                "blocking"
+                if story_contract.status in {"active", "confirmed"}
+                and any(item.startswith(("reward_used", "contract_required_payoff", "state_delta:")) for item in evidence.missing_evidence)
+                else "warning"
+            )
         result.drift_signals.append(DriftSignal(
             drift_type="core_payoff_missing",
             severity=severity,
@@ -813,7 +829,7 @@ def check_core_loop_compliance(
         result.warnings.append("主角在本章中缺乏主动性")
 
     # 6. Drift rule evaluation (contract + trend)
-    drift_signals = _evaluate_drift_rules(story_contract, recent, result, chapter_number)
+    drift_signals = _evaluate_drift_rules(story_contract, recent, result, chapter_number, is_transition_chapter)
     result.drift_signals.extend(drift_signals)
 
     # 7. Calculate score
