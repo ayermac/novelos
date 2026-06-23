@@ -235,8 +235,20 @@ class ContextBuilder:
         if not facts:
             return ContextFragment("story_facts", "", 5)
 
+        # v6.10.11: Deduplicate by subject.attribute, keeping only the latest source_chapter
+        # This prevents contradictory facts from being shown in context
+        latest_facts: dict[str, tuple[dict, int]] = {}
+        for fact in facts:
+            subject = fact.get("subject") or ""
+            attribute = fact.get("attribute") or ""
+            key = f"{subject}.{attribute}" if subject and attribute else (subject or attribute or fact.get("fact_key", ""))
+            src_ch = int(fact.get("source_chapter") or fact.get("last_changed_chapter") or 0)
+            if key not in latest_facts or src_ch > latest_facts[key][1]:
+                latest_facts[key] = (fact, src_ch)
+        deduplicated = [f for f, _ in latest_facts.values()]
+
         fact_lines = []
-        for f in facts[:15]:  # Limit to avoid context overflow
+        for f in deduplicated[:15]:  # Limit to avoid context overflow
             subject = f.get("subject", "")
             attribute = f.get("attribute", "")
             value = f.get("value_json", "{}")

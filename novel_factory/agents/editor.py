@@ -1793,6 +1793,23 @@ class EditorAgent(BaseAgent):
         if not confirmed_facts:
             return result
 
+        # v6.10.11: Deduplicate by subject.attribute, keeping only the latest source_chapter
+        # This prevents contradictory facts from being checked against chapter content
+        latest_facts: dict[str, tuple[dict, int]] = {}
+        for fact in confirmed_facts:
+            subject = fact.get("subject") or ""
+            attribute = fact.get("attribute") or ""
+            key = f"{subject}.{attribute}" if subject and attribute else (subject or attribute or fact.get("fact_key", ""))
+            src_ch = int(fact.get("source_chapter") or fact.get("last_changed_chapter") or 0)
+            if src_ch > inputs.chapter_number:
+                continue
+            if key not in latest_facts or src_ch > latest_facts[key][1]:
+                latest_facts[key] = (fact, src_ch)
+        confirmed_facts = [f for f, _ in latest_facts.values()]
+
+        if not confirmed_facts:
+            return result
+
         # Prefer facts whose subject/key tokens appear in the chapter text (up to 30)
         chapter_lower = inputs.content.lower()
 

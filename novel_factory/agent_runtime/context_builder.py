@@ -774,10 +774,21 @@ class AgentContextBuilder:
             facts = self.repo.list_story_facts(project_id, status="active")
         except Exception:
             facts = []
+        
+        # v6.10.11: Deduplicate by subject.attribute, keeping only the latest source_chapter
+        # This prevents contradictory facts from being passed to the Author
+        latest_facts: dict[str, tuple[dict, int]] = {}
         for fact in facts:
+            subject = fact.get("subject") or ""
+            attribute = fact.get("attribute") or ""
+            key = f"{subject}.{attribute}" if subject and attribute else (subject or attribute or fact.get("fact_key", ""))
             src_ch = int(fact.get("source_chapter") or fact.get("last_changed_chapter") or 0)
             if src_ch > chapter_number:
                 continue
+            if key not in latest_facts or src_ch > latest_facts[key][1]:
+                latest_facts[key] = (fact, src_ch)
+        
+        for fact, src_ch in latest_facts.values():
             subject = fact.get("subject", "")
             attribute = fact.get("attribute", "")
             value = str(fact.get("value_json") or "")
