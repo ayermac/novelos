@@ -124,12 +124,12 @@ class KnowledgeConfig(BaseModel):
     default_token_budget: int = 2400
     agents: dict[str, KnowledgeAgentConfig] = Field(
         default_factory=lambda: {
-            "planner": KnowledgeAgentConfig(token_budget=1800),
-            "screenwriter": KnowledgeAgentConfig(token_budget=2200),
-            "author": KnowledgeAgentConfig(token_budget=3000),
-            "polisher": KnowledgeAgentConfig(token_budget=2200),
-            "editor": KnowledgeAgentConfig(token_budget=2200),
-            "memory_curator": KnowledgeAgentConfig(token_budget=1200),
+            "planner": KnowledgeAgentConfig(token_budget=2000),
+            "screenwriter": KnowledgeAgentConfig(token_budget=2500),
+            "author": KnowledgeAgentConfig(token_budget=4000),  # v6.10.13: increased from 3000 to accommodate all knowledge skills
+            "polisher": KnowledgeAgentConfig(token_budget=2500),
+            "editor": KnowledgeAgentConfig(token_budget=2500),
+            "memory_curator": KnowledgeAgentConfig(token_budget=1500),
         }
     )
 
