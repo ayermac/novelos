@@ -127,6 +127,7 @@ class AuthorAgent(BaseAgent):
     """Author: writes chapter content."""
 
     agent_id = "author"
+    context_char_limit = AUTHOR_CONTEXT_CHAR_LIMIT
 
     def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, **kwargs):
         super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
@@ -167,20 +168,32 @@ class AuthorAgent(BaseAgent):
         parts = []
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+        is_internal_repair = self._is_internal_repair(state)
+        is_editor_revision = self._is_editor_revision(state)
 
         title_contract = self._get_title_contract_context(project_id)
-        if title_contract:
+        if title_contract and not is_internal_repair:
             parts.append(title_contract)
 
         # v6.6.2: Unified context builder
+        # v6.10.13: Internal repairs use a much smaller bundle to leave room
+        # for the actual draft and the narrow repair instruction.
+        # Prevent the builder from pulling in stale Editor revision feedback.
+        builder_state = state if not is_internal_repair else {
+            **state,
+            "_revision_review": None,
+        }
         builder = AgentContextBuilder(self.repo)
-        bundle = builder.build_for_author(project_id, chapter_number, state)
-        formatted = format_context_bundle_for_prompt(bundle, agent_name="author", max_chars=10000)
+        bundle = builder.build_for_author(project_id, chapter_number, builder_state)
+        bundle_max_chars = 4000 if is_internal_repair else 10000
+        formatted = format_context_bundle_for_prompt(
+            bundle, agent_name="author", max_chars=bundle_max_chars
+        )
         if formatted:
             parts.append(formatted)
 
         # v6.10.10: 强调 story_facts 遵守
-        if bundle.story_facts:
+        if bundle.story_facts and not is_internal_repair:
             # Sort by priority (lower number = higher priority), then take top 8
             sorted_facts = sorted(bundle.story_facts, key=lambda f: f.priority)[:8]
             facts_summary = []
@@ -227,7 +240,7 @@ class AuthorAgent(BaseAgent):
 
         # R3: Review notes from human review sessions (v3.2)
         review_notes = self.repo.get_chapter_review_notes(project_id, chapter_number)
-        if review_notes:
+        if review_notes and not is_internal_repair:
             latest_note = review_notes[0]
             parts.append(f"【人工审核意见】\n{latest_note['notes']}")
 
@@ -281,19 +294,22 @@ class AuthorAgent(BaseAgent):
             )
 
         # v4.0: Style Bible injection
-        style_ctx = self._get_style_bible_context(project_id, "author")
-        if style_ctx:
-            parts.append(style_ctx)
+        if not is_internal_repair:
+            style_ctx = self._get_style_bible_context(project_id, "author")
+            if style_ctx:
+                parts.append(style_ctx)
 
         # v6.10.5: Story Contract injection
-        contract_ctx = self._get_story_contract_context(project_id, "author")
-        if contract_ctx:
-            parts.append(contract_ctx)
+        if not is_internal_repair:
+            contract_ctx = self._get_story_contract_context(project_id, "author")
+            if contract_ctx:
+                parts.append(contract_ctx)
 
         # v6.8.1: Style-aware prompt injection (webnovel excitement, suspense, romance)
-        style_prompt = self._get_style_prompt_injection(project_id, "author")
-        if style_prompt:
-            parts.append(style_prompt)
+        if not is_internal_repair:
+            style_prompt = self._get_style_prompt_injection(project_id, "author")
+            if style_prompt:
+                parts.append(style_prompt)
 
         repair_context = self._build_death_penalty_repair_context(state)
         if repair_context:
@@ -324,15 +340,27 @@ class AuthorAgent(BaseAgent):
             if brief_constraints:
                 parts.append("【ChapterBrief 约束】\n" + "\n".join(brief_constraints))
 
-        # If revision, include review issues
-        chapter = self._get_chapter_info(state)
-        if chapter and chapter.get("status") == ChapterStatus.REVISION.value:
-            review = state.get("_revision_review") or self.repo.get_latest_review(project_id, chapter["id"])
+        # v6.10.13: Distinguish internal repair from Editor revision.
+        # Internal repairs only need the compact repair instruction; full Editor
+        # feedback is irrelevant and would bloat the prompt.
+        if is_internal_repair:
+            repair_instruction = self._build_internal_repair_instruction(state)
+            if repair_instruction:
+                parts.append(repair_instruction)
+        elif is_editor_revision:
+            chapter = self._get_chapter_info(state)
+            review = state.get("_revision_review")
+            if not review and chapter:
+                review = self.repo.get_latest_review(project_id, chapter["id"])
             feedback = revision_feedback_block(review)
             if feedback:
                 parts.append(feedback)
 
-        return self._limit_context_size("\n\n".join(parts))
+        return self._limit_context_size(
+            "\n\n".join(parts),
+            self._get_context_char_limit(state),
+            agent_id=self.agent_id,
+        )
 
     @staticmethod
     def _limit_context_size(context: str, limit: int = AUTHOR_CONTEXT_CHAR_LIMIT, *, agent_id: str = "author") -> str:
@@ -364,12 +392,26 @@ class AuthorAgent(BaseAgent):
 
         chapter = self._get_chapter_info(state)
         is_revision = chapter and chapter.get("status") == ChapterStatus.REVISION.value
+        is_internal_repair = self._is_internal_repair(state) if is_revision else False
         revision_review = self._load_revision_review(state, chapter) if is_revision else None
+        # v6.10.13: Internal repairs must not carry a stale Editor review into
+        # events, artifacts, or the next prompt (build_context already handles
+        # prompts).  Quality-gate non-internal revisions keep their review.
+        if is_internal_repair:
+            revision_review = None
         if is_revision and revision_review and not state.get("_revision_review"):
             state = {
                 **state,
                 "_revision_review": revision_review,
             }
+
+        # v6.10.13: Pre-load DB review into state before build_context() so
+        # _is_editor_revision() can detect real Editor revisions even when the
+        # review is only stored in the database.
+        if is_revision and not is_internal_repair and not state.get("_revision_review"):
+            db_review = self._load_revision_review(state, chapter)
+            if db_review:
+                state = {**state, "_revision_review": db_review}
 
         context = self._build_v6_context(state)
 
@@ -434,8 +476,16 @@ class AuthorAgent(BaseAgent):
         ]
 
         # v6.10.0: 知识层（双模式）
+        # v6.10.13: Internal repairs use a much smaller knowledge budget so the
+        # narrow repair instruction and the draft are not drowned out.
+        is_internal_repair = self._is_internal_repair(state)
         genre = self._get_project_genre(project_id) if self.knowledge_manager else None
         project_skill_overrides = self._get_project_skill_overrides(project_id)
+        knowledge_budget = self.agent_config.get("knowledge_token_budget")
+        if is_internal_repair:
+            knowledge_budget = self.agent_config.get(
+                "knowledge_token_budget_internal_repair", min(knowledge_budget or 2400, 1200)
+            )
 
         if self.knowledge_manager and self.use_agentic_mode:
             # Agentic 模式：LLM 主动咨询知识 Skill
@@ -444,7 +494,7 @@ class AuthorAgent(BaseAgent):
                 genre=genre,
                 project_overrides=project_skill_overrides,
                 target="agentic",
-                token_budget=self.agent_config.get("knowledge_token_budget"),
+                token_budget=knowledge_budget,
             )
             knowledge_skills = knowledge_selection.skills if knowledge_selection else []
             if knowledge_skills:
@@ -484,7 +534,7 @@ class AuthorAgent(BaseAgent):
                 genre=genre,
                 project_overrides=project_skill_overrides,
                 target="prompt",
-                token_budget=self.agent_config.get("knowledge_token_budget"),
+                token_budget=knowledge_budget,
             )
             knowledge_skills = knowledge_selection.skills if knowledge_selection else []
             if knowledge_skills:
@@ -2915,7 +2965,17 @@ class AuthorAgent(BaseAgent):
 
         v6.6.2: 统一使用 AgentContextBuilder，确保 plain-text 路径也包含
         revision feedback、inheritance context 和 hard constraints。
+        v6.10.13: Internal repairs reuse the already-trimmed fallback_context
+        from build_context() to avoid duplicating the full prompt construction.
         """
+        # v6.10.13: For internal repairs, the fallback_context already carries
+        # the compact repair instruction from build_context(). Rebuilding the
+        # full context here would re-introduce the bloat we just trimmed.
+        is_internal_repair = self._is_internal_repair(state)
+        if is_internal_repair:
+            limit = self._get_context_char_limit(state)
+            return fallback_context[:limit]
+
         from ..agent_runtime.revision_context import build_revision_feedback_context
 
         project_id = state["project_id"]

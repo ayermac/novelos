@@ -168,12 +168,13 @@ class PolisherAgent(BaseAgent):
         if not draft_block:
             return self._limit_context_size(
                 "\n\n".join(parts),
-                self.context_char_limit,
+                self._get_context_char_limit(state),
                 agent_id=self.agent_id,
             )
 
+        context_limit = self._get_context_char_limit(state)
         draft_reserved = len(draft_block) + 2
-        aux_limit = max(0, self.context_char_limit - draft_reserved)
+        aux_limit = max(0, context_limit - draft_reserved)
         aux_context = "\n\n".join(parts)
         if aux_limit > 0:
             aux_context = self._limit_context_size(
@@ -193,32 +194,47 @@ class PolisherAgent(BaseAgent):
 
         v6.6.2: Uses unified context builder for inheritance and fact consistency.
         v6.4.2: Appends polishing writing reminders derived from quality diagnosis dimensions.
+        v6.10.13: Distinguishes internal quality-gate repairs from Editor revisions;
+        internal repairs use a compact prompt focused on the narrow repair task.
         """
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
+        is_internal_repair = self._is_internal_repair(state)
+        is_editor_revision = self._is_editor_revision(state)
         parts = []
 
         title_contract = self._get_title_contract_context(project_id)
-        if title_contract:
+        if title_contract and not is_internal_repair:
             parts.append(title_contract)
 
         # v6.6.2: Unified context builder
+        # Internal repairs only need hard constraints; the full bundle is trimmed.
+        # Prevent the builder from pulling in stale Editor revision feedback.
+        builder_state = state if not is_internal_repair else {
+            **state,
+            "_revision_review": None,
+        }
         builder = AgentContextBuilder(self.repo)
-        bundle = builder.build_for_polisher(project_id, chapter_number, state)
-        formatted = format_context_bundle_for_prompt(bundle, agent_name="polisher", max_chars=12000)
+        bundle = builder.build_for_polisher(project_id, chapter_number, builder_state)
+        bundle_max_chars = 4000 if is_internal_repair else 12000
+        formatted = format_context_bundle_for_prompt(
+            bundle, agent_name="polisher", max_chars=bundle_max_chars
+        )
         if formatted:
             parts.append(formatted)
 
         chapter = self._get_chapter_info(state)
-        if state.get("_revision_review") or state.get("chapter_status") == ChapterStatus.REVISION.value or (
-            chapter and chapter.get("status") == ChapterStatus.REVISION.value
-        ):
+        if is_editor_revision:
             review = state.get("_revision_review")
             if not review and chapter:
                 review = self.repo.get_latest_review(project_id, chapter["id"])
             feedback = revision_feedback_block(review)
             if feedback:
                 parts.append(feedback)
+        elif is_internal_repair:
+            repair_instruction = self._build_internal_repair_instruction(state)
+            if repair_instruction:
+                parts.append(repair_instruction)
 
         # Original draft (Polisher needs the actual text to work on)
         if include_current_draft:
@@ -226,44 +242,53 @@ class PolisherAgent(BaseAgent):
             if draft_block:
                 parts.append(draft_block)
 
-        chapter = self._get_chapter_info(state)
-        current_content = (chapter or {}).get("content") or ""
-        if current_content and (
-            state.get("_revision_review")
-            or state.get("chapter_status") == ChapterStatus.REVISION.value
-            or ((chapter or {}).get("status") == ChapterStatus.REVISION.value)
-        ):
-            current_wc = count_words(current_content)
-            upper_bound = max(current_wc + 400, int(current_wc * 1.12))
-            parts.append(
-                "【返修润色边界】\n"
-                f"当前稿约 {current_wc} 字符。返修润色必须以当前稿为底稿做局部语言修正，"
-                f"不要扩写新场景；除非 Editor 明确要求扩写，润色后总篇幅不要超过 {upper_bound} 字符。"
-            )
+        # Word-count boundary only for real Editor revisions; internal repairs
+        # already carry a narrow instruction in the repair block above.
+        if is_editor_revision and not is_internal_repair:
+            current_content = (chapter or {}).get("content") or ""
+            if current_content:
+                current_wc = count_words(current_content)
+                upper_bound = max(current_wc + 400, int(current_wc * 1.12))
+                parts.append(
+                    "【返修润色边界】\n"
+                    f"当前稿约 {current_wc} 字符。返修润色必须以当前稿为底稿做局部语言修正，"
+                    f"不要扩写新场景；除非 Editor 明确要求扩写，润色后总篇幅不要超过 {upper_bound} 字符。"
+                )
 
         # v6.4.2: Inject quality-diagnosis-derived writing reminders
-        parts.append(
-            "【润色写作提醒】\n"
-            "1. 对白自然化：检查是否有功能性问答，尝试加入语气词、打断、省略或反问；"
-            "让不同角色的句式长度和用词习惯有差异。\n"
-            "2. 场景质感：优先强化已有感官线索；必要时只补最小动作/环境反馈，不硬加无关描写；"
-            "将抽象描述（\"他很紧张\"）改为具体动作（\"他攥紧拳头\"）。\n"
-            "3. 节奏变化：避免连续多个段落长度相近；紧张处用短句，描写处可用长句但避免>40字。\n"
-            "4. 去AI味：删除总结句（\"总之/简单来说\"）、直白心理解释和宏大空泛判断。\n"
-            "5. Show, Don't Tell：将\"感到/觉得/意识到/明白\"等直白情绪词改为动作或神态。\n"
-            "6. 职责边界：Polisher 只修语言、节奏、对白、说明段和质量诊断建议，"
-            "不要主动大改剧情结构。如发现剧情级风险，输出 risk note，不要硬改。"
-        )
+        # For internal repairs, keep only the compact core reminders to save space.
+        if is_internal_repair:
+            parts.append(
+                "【润色写作提醒】\n"
+                "1. 只改善语言、节奏和对白，不要扩写情节或新增场景。\n"
+                "2. 保留所有剧情事实、关键事件和角色动机。\n"
+                "3. 删除冗余描写、重复对白和 AI 味总结句。"
+            )
+        else:
+            parts.append(
+                "【润色写作提醒】\n"
+                "1. 对白自然化：检查是否有功能性问答，尝试加入语气词、打断、省略或反问；"
+                "让不同角色的句式长度和用词习惯有差异。\n"
+                "2. 场景质感：优先强化已有感官线索；必要时只补最小动作/环境反馈，不硬加无关描写；"
+                "将抽象描述（\"他很紧张\"）改为具体动作（\"他攥紧拳头\"）。\n"
+                "3. 节奏变化：避免连续多个段落长度相近；紧张处用短句，描写处可用长句但避免>40字。\n"
+                "4. 去AI味：删除总结句（\"总之/简单来说\"）、直白心理解释和宏大空泛判断。\n"
+                "5. Show, Don't Tell：将\"感到/觉得/意识到/明白\"等直白情绪词改为动作或神态。\n"
+                "6. 职责边界：Polisher 只修语言、节奏、对白、说明段和质量诊断建议，"
+                "不要主动大改剧情结构。如发现剧情级风险，输出 risk note，不要硬改。"
+            )
 
         # v4.0: Style Bible injection
-        style_ctx = self._get_style_bible_context(project_id, "polisher")
-        if style_ctx:
-            parts.append(style_ctx)
+        if not is_internal_repair:
+            style_ctx = self._get_style_bible_context(project_id, "polisher")
+            if style_ctx:
+                parts.append(style_ctx)
 
         # v6.10.5: Story Contract injection
-        contract_ctx = self._get_story_contract_context(project_id, "polisher")
-        if contract_ctx:
-            parts.append(contract_ctx)
+        if not is_internal_repair:
+            contract_ctx = self._get_story_contract_context(project_id, "polisher")
+            if contract_ctx:
+                parts.append(contract_ctx)
 
         # v6.6.2: Fact lock for Polisher (backward-compatible title)
         instruction = self._get_instruction(state)
@@ -276,7 +301,7 @@ class PolisherAgent(BaseAgent):
             if instruction.get("plots_to_resolve"):
                 fact_lock_parts.append(f"伏笔兑现: {instruction['plots_to_resolve']}")
         prev_state = self._get_prev_state_card(state)
-        if prev_state:
+        if prev_state and not is_internal_repair:
             state_data = prev_state.get("state_data", prev_state)
             if isinstance(state_data, dict):
                 for key in ("level", "等级", "lv", "Lv"):
@@ -291,9 +316,12 @@ class PolisherAgent(BaseAgent):
             parts.append("【事实锁定清单 — 润色时不可删除/改变】\n" + "\n".join(fact_lock_parts))
 
         # v6.6.1: Inject deterministic quality diagnosis feedback
-        quality_feedback = self._build_quality_feedback(state)
-        if quality_feedback:
-            parts.append(quality_feedback)
+        # For internal repairs, skip the full QualityHub report to avoid duplication
+        # with the narrow repair instruction already injected above.
+        if not is_internal_repair:
+            quality_feedback = self._build_quality_feedback(state)
+            if quality_feedback:
+                parts.append(quality_feedback)
 
         return "\n\n".join(parts)
 
@@ -331,12 +359,18 @@ class PolisherAgent(BaseAgent):
         # v6.1.1: Emit revision context loaded event for revision chapters
         current_status = state.get("chapter_status", "")
         revision_review = self._load_revision_review(state, chapter)
+        is_internal_repair = self._is_internal_repair(state)
+        is_editor_revision = self._is_editor_revision(state)
+        # Internal repairs should not carry a stale Editor review into events,
+        # artifacts, or the next prompt (build_context already handles prompts).
+        if is_internal_repair:
+            revision_review = None
         in_revision_chain = current_status == ChapterStatus.REVISION.value or bool(revision_review)
 
         # v6.8.2: Validate revision context exists when in revision mode.
         # v6.8.3: Only fail-fast for real Editor rejections, NOT for quality gate
         # internal repairs which temporarily set chapter_status=REVISION.
-        if current_status == ChapterStatus.REVISION.value and not revision_review:
+        if current_status == ChapterStatus.REVISION.value and not revision_review and not is_internal_repair:
             gate = state.get("quality_gate") or {}
             is_quality_gate_retry = bool(
                 gate.get("word_count_fail")
@@ -815,8 +849,10 @@ class PolisherAgent(BaseAgent):
             )
             word_delta = polished_wc - original_wc
             expansion_ratio = word_delta / original_wc
-            max_expansion_ratio = 0.25 if in_revision_chain else POLISHER_MAX_EXPANSION_RATIO
-            max_expansion_words = 500 if in_revision_chain else POLISHER_MAX_EXPANSION_WORDS
+            # v6.10.13: Only relax expansion limits for real Editor revisions.
+            # Internal repairs (e.g. expansion drift) must keep the strict limits.
+            max_expansion_ratio = 0.25 if is_editor_revision else POLISHER_MAX_EXPANSION_RATIO
+            max_expansion_words = 500 if is_editor_revision else POLISHER_MAX_EXPANSION_WORDS
             if (
                 not system_compressed
                 and expansion_ratio > max_expansion_ratio
