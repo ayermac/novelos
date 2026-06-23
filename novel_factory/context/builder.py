@@ -366,6 +366,68 @@ class ContextBuilder:
             logger.debug("Style Bible fragment unavailable for project=%s agent=%s", project_id, agent_id)
             return ContextFragment("style_bible", "", 3)
 
+    # ── v6.10.13 Style Stats fragment ──────────────────────────
+
+    def _frag_style_stats(self, project_id: str) -> ContextFragment:
+        """P8: Style statistics from StyleStats (v6.10.13)."""
+        try:
+            from ..stats.style_stats import StyleStats
+
+            stats = StyleStats(min_chapters=5)
+
+            # Load chapters
+            chapters = []
+            outlines = self.repo.list_outlines(project_id) or []
+            for outline in outlines[-20:]:  # Last 20 chapters
+                chapter_num = outline.get("chapter_number")
+                if chapter_num:
+                    chapter = self.repo.get_chapter(project_id, chapter_num)
+                    if chapter and chapter.get("content"):
+                        chapters.append(chapter["content"])
+
+            if not chapters:
+                return ContextFragment("style_stats", "", 8)
+
+            # Load titles
+            titles = [o.get("title", "") for o in outlines[-20:]]
+
+            # Compute stats
+            result = stats.compute(chapters, titles)
+            if not result:
+                return ContextFragment("style_stats", "", 8)
+
+            # Format as text
+            parts = []
+
+            # AI tics
+            if result.ai_tic_counts:
+                tic_lines = []
+                for name, data in result.ai_tic_counts.items():
+                    if data.get("total", 0) > 0:
+                        tic_lines.append(f"- {data.get('description', name)}: 全书 {data['total']} 次，章均 {data.get('per_chapter', 0):.1f} 次")
+                if tic_lines:
+                    parts.append("【AI 文风 tic 统计】\n" + "\n".join(tic_lines))
+
+            # High frequency phrases
+            if result.high_freq_phrases:
+                phrase_lines = [f"- {p['phrase']} (出现 {p['count']} 次)" for p in result.high_freq_phrases[:5]]
+                parts.append("【高频短语】\n" + "\n".join(phrase_lines))
+
+            # Repeated sentences
+            if result.repeated_sentences:
+                sent_lines = [f"- 出现 {s['occurrences']} 次: {s['sentence']}" for s in result.repeated_sentences[:3]]
+                parts.append("【跨章重复句】\n" + "\n".join(sent_lines))
+
+            if not parts:
+                return ContextFragment("style_stats", "", 8)
+
+            content = "\n\n".join(parts)
+            return ContextFragment("style_stats", content, 8)
+
+        except Exception as e:
+            logger.debug("StyleStats fragment unavailable for project=%s: %s", project_id, e)
+            return ContextFragment("style_stats", "", 8)
+
     # ── Agent-specific build methods ────────────────────────
 
     def build_for_author(self, project_id: str, chapter_number: int) -> str:
@@ -438,6 +500,7 @@ class ContextBuilder:
             self._frag_plot_requirements(project_id, chapter_number), # P4
             ContextFragment("anti_patterns", anti_pat_text, 7),     # P7-like
             self._frag_learned_patterns(project_id),                # P8
+            self._frag_style_stats(project_id),                     # P8 (v6.10.13)
         ]
         return self._assemble(fragments)
 
