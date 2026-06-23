@@ -1797,7 +1797,10 @@ class EditorAgent(BaseAgent):
         chapter_lower = inputs.content.lower()
 
         def _relevance(fact: dict) -> int:
-            tokens = str(fact.get("subject") or fact.get("fact_key") or "").lower().split()
+            # v6.10.10: Also check attribute field for better relevance matching
+            subject = str(fact.get("subject") or fact.get("fact_key") or "").lower()
+            attribute = str(fact.get("attribute") or "").lower()
+            tokens = (subject + " " + attribute).split()
             return sum(1 for t in tokens if len(t) > 1 and t in chapter_lower)
 
         sorted_facts = sorted(confirmed_facts, key=_relevance, reverse=True)

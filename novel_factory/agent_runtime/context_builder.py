@@ -781,8 +781,8 @@ class AgentContextBuilder:
             subject = fact.get("subject", "")
             attribute = fact.get("attribute", "")
             value = str(fact.get("value_json") or "")
-            if len(value) > 120:
-                value = value[:120] + "..."
+            if len(value) > 200:  # v6.10.10: Increased from 120 to 200 for better context
+                value = value[:200] + "..."
             text = f"{subject}.{attribute} = {value}" if subject or attribute else value
             items.append(
                 ContextItem(
