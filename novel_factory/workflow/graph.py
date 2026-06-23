@@ -106,6 +106,7 @@ def build_graph(
         graph.add_node("screenwriter", runners["screenwriter"])
         graph.add_node("author", runners["author"])
         graph.add_node("polisher", runners["polisher"])
+        graph.add_node("promote_to_polished", lambda s: nodes.promote_to_polished_node(s, repo))  # v6.10.9
         graph.add_node("quality_gate", lambda s: nodes.quality_gate_node(s, repo, skill_registry))  # v6.8.5
         graph.add_node("editor", runners["editor"])
         graph.add_node("memory_curator", runners["memory_curator"])
@@ -150,6 +151,10 @@ def build_graph(
             lambda s: nodes.polisher_node(s, repo, llm),
         )
         graph.add_node(
+            "promote_to_polished",
+            lambda s: nodes.promote_to_polished_node(s, repo),  # v6.10.9
+        )
+        graph.add_node(
             "quality_gate",
             lambda s: nodes.quality_gate_node(s, repo, skill_registry),  # v6.8.5
         )
@@ -187,7 +192,11 @@ def build_graph(
     graph.set_entry_point("health_check")
 
     # ── Add edges ─────────────────────────────────────────────
-    graph.add_edge("health_check", "task_discovery")
+    # v6.10.13: Add flow_control_node between health_check and task_discovery
+    # This allows FlowRouter to override routing decisions
+    graph.add_node("flow_control", lambda s: nodes.flow_control_node(s, repo))
+    graph.add_edge("health_check", "flow_control")
+    graph.add_edge("flow_control", "task_discovery")
 
     graph.add_conditional_edges(
         "task_discovery",
@@ -235,8 +244,15 @@ def build_graph(
     graph.add_conditional_edges(
         "author",
         route_after_agent,
-        {"next": "polisher", "human_review": "human_review", "revision_router": "revision_router"},
+        {
+            "next": "polisher",
+            "skip_to_quality_gate": "promote_to_polished",  # v6.10.9: skip Polisher, promote status first
+            "human_review": "human_review",
+            "revision_router": "revision_router",
+        },
     )
+    # v6.10.9: promote_to_polished → quality_gate (status promotion when Polisher skipped)
+    graph.add_edge("promote_to_polished", "quality_gate")
     # polisher → quality_gate → editor
     graph.add_conditional_edges(
         "polisher",
@@ -278,6 +294,7 @@ def build_graph(
     )
 
     # Revision routing
+    # v6.10.9: Added screenwriter for beat-design-level revision
     graph.add_conditional_edges(
         "revision_router",
         route_by_revision_type,
@@ -285,6 +302,7 @@ def build_graph(
             "author": "author",
             "polisher": "polisher",
             "planner": "planner",
+            "screenwriter": "screenwriter",
             "editor": "editor",
             "publisher": "publisher",
             "archive": "archive",

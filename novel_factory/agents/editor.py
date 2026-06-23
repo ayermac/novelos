@@ -91,7 +91,25 @@ revision_target 规则：
 - 文风、句式、节奏、AI 痕迹、对白、场景质感问题 → "polisher"
 - info dump / 设定旁白 / 直白情绪 → "author"
 - 指令本身错误或设定冲突 → "planner"
-- 通过时 → null"""
+- beat 设计层问题 → "screenwriter"（见下方规则）
+- 通过时 → null
+
+【beat 设计层路由规则】（在判定 revision_target 时必须先检查）：
+当你检测到以下问题时，先检查 scene_beats（输入上下文中提供）：
+1. 核心循环漂移/缺失：
+   - 如果 scene_beats 中有 is_reward_beat=true 的 beat → "author"（beat 设计了但 Author 没写出来）
+   - 如果 scene_beats 中没有 is_reward_beat=true 的 beat → "screenwriter"（beat 没设计核心循环）
+2. 事实一致性矛盾：
+   - 如果 scene_beats 的 character_states 已正确标注但正文违反 → "author"
+   - 如果 scene_beats 的 character_states 缺失或本身错误 → "screenwriter"
+3. 对白占比过低：
+   - 如果 scene_beats 的 dialogue_slots ≥ 3 但正文对白不足 → "author"
+   - 如果 scene_beats 的 dialogue_slots < 3 或缺失 → "screenwriter"
+4. 角色物理状态冲突（如被锁死的角色有肢体互动）：
+   - 如果 character_states 已标注"锁死/无意识"但正文仍写互动 → "author"
+   - 如果 character_states 未标注 → "screenwriter"
+
+简言之：beat 设计对了但 Author 没执行 → "author"；beat 本身设计有缺陷 → "screenwriter"。"""
 
 EDITOR_SYSTEM_PROMPT += (
     "\n\n" + CONCEPT_BUDGET_CONTRACT
@@ -258,11 +276,6 @@ class EditorAgent(BaseAgent):
         if style_ctx:
             parts.append(style_ctx)
 
-        # v6.10.5: Story Contract injection
-        contract_ctx = self._get_story_contract_context(project_id, "editor")
-        if contract_ctx:
-            parts.append(contract_ctx)
-
         # v6.8.1: Style-aware prompt injection (webnovel excitement, suspense, romance)
         style_prompt = self._get_style_prompt_injection(project_id, "editor")
         if style_prompt:
@@ -272,6 +285,12 @@ class EditorAgent(BaseAgent):
         quality_feedback = self._build_quality_feedback(state)
         if quality_feedback:
             parts.append(quality_feedback)
+
+        # v6.10.9: Inject quality_gate core_loop status so editor LLM does not
+        # independently re-evaluate what the deterministic checker already passed.
+        core_loop_status = self._build_quality_gate_core_loop_status(state)
+        if core_loop_status:
+            parts.append(core_loop_status)
 
         return "\n\n".join(parts)
 
@@ -296,6 +315,35 @@ class EditorAgent(BaseAgent):
         except Exception:
             logger.warning("Editor: quality diagnosis failed, skipping feedback injection", exc_info=True)
             return ""
+
+    def _build_quality_gate_core_loop_status(self, state: FactoryState) -> str:
+        """v6.10.9: Inject quality_gate core_loop status into editor context.
+
+        When the deterministic core_loop_checker already passed, tell the editor
+        LLM so it doesn't independently re-evaluate core_loop and produce
+        conflicting blocking issues.
+        """
+        quality_gate = state.get("quality_gate", {}) or {}
+        if not quality_gate:
+            return ""
+
+        gate_passed = quality_gate.get("pass", quality_gate.get("passed", None))
+        if gate_passed is not True:
+            return ""
+
+        # Quality gate passed — check if core_loop was among the checks
+        checks_run = quality_gate.get("checks_run", [])
+        core_loop_checked = any("core_loop" in str(c).lower() for c in checks_run)
+        if not core_loop_checked:
+            return ""
+
+        return (
+            "【确定性质检结果】\n"
+            "quality_gate 已通过全部确定性检查（包括 core_loop_compliance）。"
+            "核心循环兑现证据已通过确定性文本匹配验证。"
+            "请聚焦于 LLM 层面的质量评估（文风、逻辑、对白、节奏等），"
+            "不要独立重复评估核心循环兑现 — 该项已由上游确定性检查器确认通过。"
+        )
 
     def _build_compact_review_context(self, state: FactoryState) -> str:
         """Build a short review prompt for live LLM calls."""
@@ -341,6 +389,11 @@ class EditorAgent(BaseAgent):
                 for c in characters[:5]
             )
             parts.append(f"【角色】\n{char_str}")
+
+        # v6.10.9: Inject quality_gate core_loop status for compact review too
+        core_loop_status = self._build_quality_gate_core_loop_status(state)
+        if core_loop_status:
+            parts.append(core_loop_status)
 
         parts.append(
             "【输出要求】\n"
@@ -478,11 +531,9 @@ class EditorAgent(BaseAgent):
                 death_penalty=dp_result.has_critical,
                 seam_blocking_count=1 if continuity_blocking else 0,
             ),
-            state_card={
-                "summary": "AI 审核不可用，已完成规则兜底检查；请人工发布前复核。",
-                "degraded_review": True,
-                "fallback_type": "rule_review",
-            } if passed else {},
+            state_card=self._build_fallback_state_card(
+                content, project_id, chapter_number, passed,
+            ),
         )
 
     # ── v6.6.8: Refactored pipeline steps ───────────────────────────
@@ -533,37 +584,61 @@ class EditorAgent(BaseAgent):
             {"role": "user", "content": f"项目ID: {inputs.project_id}\n章节号: {inputs.chapter_number}\n\n{context}\n\n请执行五层审校并评分。"},
         ]
 
-        try:
-            invoke_kwargs = {}
-            raw = self._invoke_json(
-                messages,
-                schema=EditorOutput,
-                **invoke_kwargs,
-            )
-            output = EditorOutput(**raw)
-            self.validate_output(output.model_dump())
-        except Exception as e:
-            if not use_compact_review:
-                raise
-            logger.warning("Editor: LLM review degraded to rule-based fallback: %s", e)
-            # v6.10.8: Guard against _fallback_rule_review also failing —
-            # if output is unbound, line 561 would raise UnboundLocalError.
+        # v6.10.14: LLM retry mechanism - reduce fallback probability
+        max_retries = 3 if use_compact_review else 1
+        last_error = None
+
+        for attempt in range(max_retries):
             try:
-                output = self._fallback_rule_review(
-                    inputs.content, str(e),
-                    project_id=inputs.project_id,
-                    chapter_number=inputs.chapter_number,
+                invoke_kwargs = {}
+                raw = self._invoke_json(
+                    messages,
+                    schema=EditorOutput,
+                    **invoke_kwargs,
                 )
-            except Exception as fallback_exc:
-                logger.error("Editor: rule-based fallback also failed: %s", fallback_exc)
-                from ..models.schemas import EditorScores
-                output = EditorOutput(
-                    pass_=False,
-                    score=40,
-                    issues=[f"LLM 审核异常且规则兜底也失败: {str(e)[:100]}"],
-                    revision_target="author",
-                    scores=EditorScores(continuity=40, logic=40, style=40, quality=40),
-                )
+
+                # v6.10.14: Validate output format before accepting
+                if not self._is_valid_editor_output(raw):
+                    last_error = f"Invalid output format: missing required fields"
+                    logger.warning(f"Editor attempt {attempt+1}/{max_retries}: {last_error}")
+                    if attempt < max_retries - 1:
+                        import time
+                        time.sleep(2 ** attempt)  # Exponential backoff
+                        continue
+                    break
+
+                output = EditorOutput(**raw)
+                self.validate_output(output.model_dump())
+
+                # Success - log if retried
+                if attempt > 0:
+                    exec_events.append({
+                        "event_type": "editor_retry_success",
+                        "message": f"Editor LLM 第 {attempt+1} 次尝试成功",
+                        "payload": {"attempt": attempt + 1, "max_retries": max_retries},
+                    })
+
+                return output, exec_events
+
+            except Exception as e:
+                last_error = str(e)
+                logger.warning(f"Editor attempt {attempt+1}/{max_retries} failed: {e}")
+
+                if attempt < max_retries - 1:
+                    import time
+                    time.sleep(2 ** attempt)  # Exponential backoff
+                    continue
+
+        # All retries failed - fall back to rule review
+        if not use_compact_review:
+            raise Exception(last_error)
+
+        logger.warning("Editor: LLM review degraded to rule-based fallback after %d attempts: %s", max_retries, last_error)
+        output = self._fallback_rule_review(
+            inputs.content, str(last_error),
+            project_id=inputs.project_id,
+            chapter_number=inputs.chapter_number,
+        )
             exec_events.append({
                 "event_type": "fallback_used",
                 "message": f"LLM 审核降级为规则兜底：{str(e)[:100]}",
@@ -1295,12 +1370,7 @@ class EditorAgent(BaseAgent):
             gate_data = gate_result.get("data", {})
             if not gate_data.get("pass"):
                 output.pass_ = False
-                # v6.10.8: Validate revision_target against whitelist; fall back to author
-                raw_target = gate_data.get("revision_target")
-                if raw_target and raw_target in ("author", "polisher", "planner"):
-                    output.revision_target = raw_target
-                else:
-                    output.revision_target = "author"
+                output.revision_target = gate_data.get("revision_target")
                 blocking_issues = gate_data.get("blocking_issues", [])
                 for issue in blocking_issues:
                     issue_msg = issue.get("message", str(issue))
@@ -1758,11 +1828,31 @@ class EditorAgent(BaseAgent):
         if not confirmed_facts:
             return result
 
+        # v6.10.11: Deduplicate by subject.attribute, keeping only the latest source_chapter
+        # This prevents contradictory facts from being checked against chapter content
+        latest_facts: dict[str, tuple[dict, int]] = {}
+        for fact in confirmed_facts:
+            subject = fact.get("subject") or ""
+            attribute = fact.get("attribute") or ""
+            key = f"{subject}.{attribute}" if subject and attribute else (subject or attribute or fact.get("fact_key", ""))
+            src_ch = int(fact.get("source_chapter") or fact.get("last_changed_chapter") or 0)
+            if src_ch > inputs.chapter_number:
+                continue
+            if key not in latest_facts or src_ch > latest_facts[key][1]:
+                latest_facts[key] = (fact, src_ch)
+        confirmed_facts = [f for f, _ in latest_facts.values()]
+
+        if not confirmed_facts:
+            return result
+
         # Prefer facts whose subject/key tokens appear in the chapter text (up to 30)
         chapter_lower = inputs.content.lower()
 
         def _relevance(fact: dict) -> int:
-            tokens = str(fact.get("subject") or fact.get("fact_key") or "").lower().split()
+            # v6.10.10: Also check attribute field for better relevance matching
+            subject = str(fact.get("subject") or fact.get("fact_key") or "").lower()
+            attribute = str(fact.get("attribute") or "").lower()
+            tokens = (subject + " " + attribute).split()
             return sum(1 for t in tokens if len(t) > 1 and t in chapter_lower)
 
         sorted_facts = sorted(confirmed_facts, key=_relevance, reverse=True)
@@ -2019,36 +2109,25 @@ class EditorAgent(BaseAgent):
 
         # Build seam_result from quality_gate state
         seam_diagnostics = quality_gate.get("diagnostics", {}).get("chapter_seam", {})
-        # v6.10.8: Count only seam-related blocking issues, not all blocking issues
-        all_blocking = quality_gate.get("blocking_issues", [])
-        seam_blocking = [i for i in all_blocking if isinstance(i, str) and "章间衔接" in i]
         seam_result = SeamCheckResult(
             passed=seam_diagnostics.get("passed", True),
-            blocking_count=len(seam_blocking),
+            blocking_count=len(quality_gate.get("blocking_issues", [])) if "章间衔接" in str(quality_gate.get("blocking_issues", [])) else 0,
             advisory_count=len(seam_diagnostics.get("advisory_issues", [])),
         )
 
         # Inject quality_gate issues into output for strategy
-        # v6.10.8-fix: Add type guards since malformed state may contain int instead of list
-        def _as_list(val: Any) -> list[Any]:
-            if isinstance(val, list):
-                return val
-            return []
-
-        blocking_issues = _as_list(quality_gate.get("blocking_issues"))
-        for issue in blocking_issues:
-            if issue not in output.issues:
-                output.issues.append(issue)
-
-        priority_issues = _as_list(quality_gate.get("priority_issues"))
-        for issue in priority_issues[:3]:
-            if issue not in output.issues:
-                output.issues.append(issue)
-
-        advisory_issues = _as_list(quality_gate.get("advisory_issues"))
-        for issue in advisory_issues[:2]:
-            if issue not in output.suggestions:
-                output.suggestions.append(issue)
+        if quality_gate.get("blocking_issues"):
+            for issue in quality_gate["blocking_issues"]:
+                if issue not in output.issues:
+                    output.issues.append(issue)
+        if quality_gate.get("priority_issues"):
+            for issue in quality_gate["priority_issues"][:3]:
+                if issue not in output.issues:
+                    output.issues.append(issue)
+        if quality_gate.get("advisory_issues"):
+            for issue in quality_gate["advisory_issues"][:2]:
+                if issue not in output.suggestions:
+                    output.suggestions.append(issue)
 
         # v6.10.0: Emit progress event - quality diagnosis started
         exec_events.append({
@@ -2073,40 +2152,16 @@ class EditorAgent(BaseAgent):
             },
         })
         if compliance_result.blocking_violation_count >= FACTS_COMPLIANCE_BLOCK_THRESHOLD:
-            # v6.10.7: Downgrade story_facts blocking to advisory when Editor score
-            # is borderline (>=75) and there are no quality priority issues.
-            # This prevents an independent sub-check from overriding the Editor's
-            # holistic judgment and causing unnecessary revision loops.
-            should_downgrade = (
-                output.score >= 75
-                and quality_result.priority_count == 0
-                and not any("[事实一致性违规]" in str(i) for i in output.issues)
-            )
             for v in compliance_result.violations:
                 if v.get("severity") == "blocking":
-                    if should_downgrade:
-                        v["severity"] = "warning"
-                        v["_downgrade_reason"] = "editor_borderline_no_priority"
-                        issue_msg = (
-                            f"[事实一致性建议] {v.get('fact_statement', '')[:60]}: "
-                            f"{v.get('violation_text', '')[:80]}"
-                        )
-                        if issue_msg not in output.suggestions:
-                            output.suggestions.append(issue_msg)
-                    else:
-                        issue_msg = (
-                            f"[事实一致性违规] {v.get('fact_statement', '')[:60]}: "
-                            f"{v.get('violation_text', '')[:80]}"
-                        )
-                        if issue_msg not in output.issues:
-                            output.issues.append(issue_msg)
-            if not should_downgrade:
-                output.pass_ = False
-                output.revision_target = "author"
-            # Recompute blocking count after potential downgrades
-            compliance_result.blocking_violation_count = sum(
-                1 for v in compliance_result.violations if v.get("severity") == "blocking"
-            )
+                    issue_msg = (
+                        f"[事实一致性违规] {v.get('fact_statement', '')[:60]}: "
+                        f"{v.get('violation_text', '')[:80]}"
+                    )
+                    if issue_msg not in output.issues:
+                        output.issues.append(issue_msg)
+            output.pass_ = False
+            output.revision_target = "author"
 
         # v6.10.0: Emit progress event - story facts compliance completed
         exec_events.append({
@@ -2132,25 +2187,16 @@ class EditorAgent(BaseAgent):
         # Use output.pass_ (post-processed final decision) to stay consistent
         # with editor_completed. The raw strategy_decision may differ when
         # score < 75 prevents the advisory override from taking effect.
-        #
-        # v6.10.7: Align event payload with actual behavior so that logs and
-        # downstream monitoring see the same decision that drives routing.
-        strategy = strategy_result.decision
-        effective_revision_needed = not output.pass_
-        effective_category = strategy.category
-        if strategy.revision_needed != effective_revision_needed:
-            effective_category = "revision" if effective_revision_needed else "advisory_pass"
         exec_events.append({
             "event_type": "review_strategy_applied",
             "message": f"审核策略应用完成，通过: {output.pass_}",
             "status": "info",
             "payload": {
                 "pass": output.pass_,
-                "revision_needed": effective_revision_needed,
-                "category": effective_category,
+                "revision_needed": strategy_result.decision.revision_needed,
+                "category": strategy_result.decision.category,
                 "revision_target": output.revision_target,
                 "score": output.score,
-                "strategy_overridden": strategy.revision_needed != effective_revision_needed,
             },
         })
 
@@ -2181,6 +2227,31 @@ class EditorAgent(BaseAgent):
         result["story_facts_compliance"] = compliance_result.to_dict()
         return result
 
+    def _is_valid_editor_output(self, raw: Any) -> bool:
+        """v6.10.14: Validate Editor LLM output format before parsing.
+
+        Checks if the output has the required structure to avoid
+        JSON parsing errors that cause fallback.
+        """
+        if not isinstance(raw, dict):
+            return False
+
+        # Check required fields
+        required_fields = ["pass", "score", "issues", "suggestions"]
+        for field in required_fields:
+            if field not in raw:
+                return False
+
+        # Check score is a number
+        if not isinstance(raw.get("score"), (int, float)):
+            return False
+
+        # Check issues is a list
+        if not isinstance(raw.get("issues"), list):
+            return False
+
+        return True
+
     def validate_output(self, output: dict) -> None:
         parsed = EditorOutput(**output)
         if parsed.revision_target and parsed.revision_target not in ("author", "polisher", "planner", None):
@@ -2196,6 +2267,67 @@ class EditorAgent(BaseAgent):
             "character_status": {},
             "suspense_hooks": [],
         }
+
+    def _build_fallback_state_card(
+        self,
+        content: str,
+        project_id: str,
+        chapter_number: int,
+        passed: bool,
+    ) -> dict[str, Any]:
+        """Build state card for fallback review with character state extraction.
+
+        v6.10.13: When LLM review fails and we use rule-based fallback,
+        we still need to extract basic character states to ensure chapter
+        inheritance works correctly for the next chapter.
+        """
+        # Start with minimal state card
+        state_card = self._build_minimal_state_card(content)
+
+        # Add fallback markers
+        state_card["degraded_review"] = True
+        state_card["fallback_type"] = "rule_review"
+        state_card["summary"] = "AI 审核不可用，已完成规则兜底检查；请人工发布前复核。"
+
+        if not passed:
+            return {}
+
+        # Try to extract character states from previous chapter state
+        try:
+            if project_id and chapter_number > 1:
+                prev_state = self.repo.get_chapter_state(project_id, chapter_number - 1)
+                if prev_state:
+                    prev_data = prev_state.get("state_data", {})
+                    if isinstance(prev_data, str):
+                        import json
+                        try:
+                            prev_data = json.loads(prev_data)
+                        except Exception:
+                            prev_data = {}
+
+                    # Carry forward character_status from previous chapter
+                    if "character_status" in prev_data and isinstance(prev_data["character_status"], dict):
+                        state_card["character_status"] = prev_data["character_status"]
+
+                    # Carry forward suspense_hooks from previous chapter
+                    if "suspense_hooks" in prev_data and isinstance(prev_data["suspense_hooks"], list):
+                        state_card["suspense_hooks"] = prev_data["suspense_hooks"]
+        except Exception:
+            logger.warning("Editor fallback: failed to carry forward previous state")
+
+        # Try to extract character names from content for basic tracking
+        try:
+            # Get known characters from database
+            characters = self.repo.get_characters(project_id)
+            if characters and content:
+                for char in characters:
+                    char_name = char.get("name", "")
+                    if char_name and char_name in content:
+                        state_card.setdefault("character_status", {})[char_name] = "出场"
+        except Exception:
+            logger.debug("Editor fallback: character extraction not available")
+
+        return state_card
 
     def _save_learned_patterns(
         self, project_id: str, chapter_number: int, output: EditorOutput,

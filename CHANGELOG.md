@@ -12,6 +12,81 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.13 - Architecture Hardening
+
+Date: 2026-06-23
+
+Scope: `docs/codex/planning/novel-factory-v6.10.13-architecture-hardening-plan.md`
+
+Key changes:
+
+- **FlowRouter**: Pure function routing with 12-level priority decision tree. Replaces LLM-based routing with deterministic code. Input: `RouterState` (facts from Store). Output: `Instruction` (next action). No IO, no Store calls, fully testable.
+- **SignalStore**: One-time signal files for cross-session recovery. Supports `pending_commit`, `pending_review`, `pending_memory`, `pending_steer` signals. Atomic file writes, automatic cleanup on restart.
+- **StepCheckpoint**: Agent internal step-level checkpoints. Each agent can save progress at each step (plan, segment, draft, commit) for precise recovery after crash. Digest-based idempotency.
+- **StopGuard**: Physical non-stop guard with checkpoint-based completion. Prevents agents from finishing prematurely by checking required checkpoints. Three-layer defense: Prompt → Reminder → StopGuard. Escalates after 5 consecutive blocks.
+- **BudgetSentinel**: Budget state machine with blind spot detection. States: normal → warned → stop_pending → stopped. Detects models that don't report usage. Pre-start check, sub-agent boundary stopping.
+- **StyleStats**: Pure code style statistics. Detects AI tics (correction, time quantifier, simile, silence beat), high-frequency phrases, repeated sentences, ending patterns, opening time words, title format consistency. No LLM calls.
+- **DiagnosisSystem**: Static analysis across 4 dimensions (flow, quality, planning, memory). Pure function rules with severity/confidence levels. Detects stuck chapters, skipped chapters, word count anomalies, foreshadow aging.
+- **SteerManager**: User intervention with 3 temporal modes (runtime injection, offline persistence, resume re-injection). Unified `[用户干预]` prefix for stable classification.
+- **Notifier**: Unattended alert notification system. Custom command support (webhook), system notifications (macOS/Linux), event filtering. Async non-blocking.
+
+New modules:
+- `novel_factory/dispatch/flow_router.py`
+- `novel_factory/dispatch/signal_store.py`
+- `novel_factory/dispatch/state_loader.py`
+- `novel_factory/dispatch/dispatcher.py`
+- `novel_factory/agent_runtime/step_checkpoint.py`
+- `novel_factory/guards/stop_guard.py`
+- `novel_factory/guards/budget_sentinel.py`
+- `novel_factory/stats/style_stats.py`
+- `novel_factory/diag/diagnosis.py`
+- `novel_factory/steer/steer_manager.py`
+- `novel_factory/notify/notifier.py`
+
+Tests: `tests/test_flow_router.py` (28 tests)
+
+Verification:
+- `python3 -m pytest tests/test_flow_router.py -v`: 28 passed
+
+## v6.10.12 - Production Stability Hardening
+
+Date: 2026-06-23
+
+Scope: `docs/codex/planning/novel-factory-v6.10.12-production-stability-hardening-plan.md`
+
+Key changes:
+
+- **Author over-expansion control**: Added revision length constraints to Author prompts (15% growth limit) and automatic compression when drafts exceed the allowed expansion threshold. New `_try_repair_revision_length_overexpansion()` method in `agents/author.py` auto-repairs bloated revisions.
+- **Core loop drift detection**: Extended deterministic `state_delta` patterns in `quality/core_loop_checker.py` to recognize natural-language descriptions of state changes (归零, 清零, 耗尽, 见底, 失去, 消耗, 抽干) for resource depletion detection.
+- **Story fact governance**: Added automatic conflict resolution in `api/routes/memory_updates.py` - new facts with same subject+attribute but different value now auto-supersede older active facts. Executed cleanup script on novel_978q: 260 facts → 224 unique (36 duplicates superseded).
+- **Version alignment**: backend runtime, frontend, and desktop packages bumped to `6.10.12`.
+
+Verification:
+
+- `python3 -m pytest tests/ -q --tb=no`: 3597 passed, 29 failed (pre-existing failures, no new regressions)
+- Story facts cleanup: `scripts/cleanup_story_facts.py` executed successfully on novel_978q
+
+Known follow-up risk: None. v6.10.12 completes the production stability hardening cycle.
+
+## v6.10.11 - Story Facts Deduplication Fix
+
+Date: 2026-06-23
+
+Key changes:
+
+- **Story facts deduplication**: `_story_facts_context()` in `agent_runtime/context_builder.py` now keeps only the latest `source_chapter` fact per `subject.attribute`, preventing contradictory facts from being passed to the Author.
+- **Editor compliance fix**: `_run_story_facts_compliance()` in `agents/editor.py` applies the same deduplication before checking chapter content, eliminating false positives from outdated active facts.
+- **Context fragment deduplication**: `_frag_story_facts()` in `context/builder.py` also deduplicates so the UI context does not display contradictory facts.
+- **Version alignment**: backend runtime, frontend, and desktop packages bumped to `6.10.11`.
+
+Verification:
+
+- `python3 -m pytest tests/test_v532_memory_loop.py tests/test_v662_context_inheritance.py tests/test_v6614_continuity_enforcement.py tests/test_v6109_core_loop_evidence_governance.py tests/test_v667_memory_curator_reliability.py -q`: 187 passed
+- `python3 -m pytest tests/test_version_alignment.py -q`: 8 passed
+- `python3 -m pytest tests/ -q --tb=no`: 3599 passed, 27 failed (pre-existing failures unrelated to this change)
+
+Known follow-up risk: the remaining `active` duplicate facts in existing projects may still cause confusion until a cleanup script or automatic supersession is implemented. See v6.10.12 plan.
+
 ## v6.10.6 - Genesis Hardening
 
 Date: 2026-06-11

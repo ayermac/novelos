@@ -14,6 +14,10 @@ This index maps shipped or reviewed versions to their planning/spec source, comp
 
 | Version | Planning/spec source | Report | Review | Coverage |
 | --- | --- | --- | --- | --- |
+| v6.10.13 | `novel-factory-v6.10.13-architecture-hardening-plan.md` | none yet | none yet | standalone |
+| v6.10.12 | `novel-factory-v6.10.12-production-stability-hardening-plan.md` | none yet | none yet | standalone |
+| v6.10.11 | CHANGELOG only (hotfix) | none yet | none yet | hotfix |
+| v6.10.10 | CHANGELOG only (hotfix) | none yet | none yet | hotfix |
 | v6.10.7 | `novel-factory-v6.10.7-core-loop-evidence-governance-plan.md` | none yet | none yet | standalone |
 | v6.10.6 | `novel-factory-v6.10.6-genesis-hardening-plan.md` | none yet | none yet | standalone |
 | v6.10.5 | `novel-factory-v6.10.5-story-contract-governance-plan.md` | none yet | none yet | standalone |

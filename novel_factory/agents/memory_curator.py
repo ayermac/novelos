@@ -322,7 +322,7 @@ class MemoryCuratorAgent(BaseAgent):
         existing_facts = self.repo.list_story_facts(project_id, status="active")
         if existing_facts:
             facts_summary = []
-            for f in existing_facts[:15]:
+            for f in existing_facts[:25]:  # v6.10.10: Increased from 15 to 25
                 facts_summary.append(
                     f"- {f['fact_key']}: {f.get('subject', '')}.{f.get('attribute', '')} = {f.get('value_json', '{}')}"
                 )

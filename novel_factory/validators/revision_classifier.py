@@ -46,6 +46,12 @@ _CATEGORY_KEYWORDS: dict[IssueCategory, list[str]] = {
         "毒点", "读者厌恶", "套路", "反感", "劝退",
         "圣母", "降智", "无脑", "恶心",
     ],
+    # v6.10.9: Beat 设计层问题 → Screenwriter
+    IssueCategory.BEAT_DESIGN: [
+        "核心循环设计缺陷", "beat 设计", "场景 beat 设计",
+        "爽点标记缺失", "核心循环未标记", "对白槽位缺失",
+        "事实锁设计", "角色状态设计", "character_states",
+    ],
 }
 
 # Category → default revision_target mapping
@@ -57,6 +63,7 @@ _CATEGORY_TARGET: dict[IssueCategory, str] = {
     IssueCategory.SETTING: "author",
     IssueCategory.STATE: "author",
     IssueCategory.POISON: "author",  # poison can be both; default to author
+    IssueCategory.BEAT_DESIGN: "screenwriter",  # v6.10.9: beat 设计层问题 → Screenwriter
 }
 
 _AUTHOR_STRUCTURAL_KEYWORDS = (
@@ -186,6 +193,19 @@ def classify_issue(issue: str) -> ClassifiedIssue:
             issue=issue,
             category=IssueCategory.TEXT,
             revision_target="polisher",
+        )
+
+    # v6.10.9: Beat 设计层问题 → Screenwriter（优先于 Author 结构性问题判断）
+    _SCREENWRITER_DESIGN_KEYWORDS = (
+        "核心循环设计缺陷", "beat 设计", "场景 beat 设计",
+        "爽点标记缺失", "核心循环未标记", "对白槽位缺失",
+        "事实锁设计", "角色状态设计", "beat 层",
+    )
+    if any(keyword in issue for keyword in _SCREENWRITER_DESIGN_KEYWORDS):
+        return ClassifiedIssue(
+            issue=issue,
+            category=IssueCategory.BEAT_DESIGN,
+            revision_target="screenwriter",
         )
 
     if any(keyword in issue for keyword in _AUTHOR_STRUCTURAL_KEYWORDS):

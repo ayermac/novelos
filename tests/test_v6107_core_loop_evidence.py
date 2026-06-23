@@ -204,7 +204,13 @@ def test_workflow_helper_routes_core_loop_blocking_to_author(repo):
     assert result["passed"] is False
     assert result["blocking_issues"]
     assert "state_delta:魂源" in result["diagnostics"]["missing_evidence"]
-    assert _determine_revision_target([IssueCode.CORE_LOOP_DRIFT_WARNING]) == "author"
+    # v6.10.9: CORE_LOOP_DRIFT_WARNING without scene_beats → screenwriter (beat design missing)
+    assert _determine_revision_target([IssueCode.CORE_LOOP_DRIFT_WARNING]) == "screenwriter"
+    # v6.10.9: CORE_LOOP_DRIFT_WARNING with is_reward_beat → author (beat designed, content missing)
+    assert _determine_revision_target(
+        [IssueCode.CORE_LOOP_DRIFT_WARNING],
+        scene_beats=[{"sequence": 1, "is_reward_beat": True}],
+    ) == "author"
 
     diagnostics = get_core_loop_diagnostics_for_chapter(repo, "test_proj", 3)
     assert diagnostics is not None

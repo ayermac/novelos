@@ -579,6 +579,17 @@ def determine_revision_target(
         if any(kw in str(issue) for kw in planner_keywords):
             return "planner"
 
+    # v6.10.9: Check if issues contain beat-design-level problems → screenwriter
+    screenwriter_keywords = (
+        "核心循环设计缺陷", "beat 设计", "场景 beat 设计",
+        "爽点标记缺失", "核心循环未标记", "对白槽位缺失",
+        "事实锁设计", "角色状态设计", "character_states",
+        "beat 层", "is_reward_beat",
+    )
+    for issue in issues:
+        if any(kw in str(issue) for kw in screenwriter_keywords):
+            return "screenwriter"
+
     # v6.8.5: Style-oriented issues that are partly polisher-addressable.
     # After at least one author retry, route these to polisher instead.
     # On the first attempt (retry_count == 0), keep the original behavior of
@@ -631,7 +642,8 @@ def determine_revision_target(
         return "polisher"
 
     # LLM-provided target, if valid
-    if llm_revision_target in ("author", "polisher", "planner"):
+    # v6.10.9: "screenwriter" for beat-design-level revision
+    if llm_revision_target in ("author", "polisher", "planner", "screenwriter"):
         return llm_revision_target
 
     # Default: polisher (non-empty, safest for surface issues)

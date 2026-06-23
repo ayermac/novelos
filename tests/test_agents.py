@@ -3175,7 +3175,10 @@ class TestEditorAgent:
     def test_editor_word_gate_reports_target_details(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent
 
-        short_content = "短正文" * 700  # 2100 chars, below editor threshold 2500 * 90%.
+        # v6.10.9: Use shorter content to exceed tolerance band (50 words).
+        # 2500 * 0.85 = 2125 threshold, tolerance 50 → effective 2075.
+        # 1800 < 2075 → still hard fails.
+        short_content = "短正文" * 600  # 1800 chars, well below threshold.
 
         seeded_repo.save_chapter_content("test_proj", 1, short_content, "第一章 测试")
         seeded_repo.update_chapter_status("test_proj", 1, "polished")
@@ -3206,7 +3209,7 @@ class TestEditorAgent:
         assert result["chapter_status"] == ChapterStatus.REVISION.value
         assert result["quality_gate"]["pass"] is False
         assert result["quality_gate"]["word_count_fail"] is True
-        assert result["quality_gate"]["actual_word_count"] == 2100
+        assert result["quality_gate"]["actual_word_count"] == 1800
         assert result["quality_gate"]["word_target"] == 2500
         assert result["quality_gate"]["workflow_run_id"] == "run-word-gate"
 
@@ -3214,7 +3217,7 @@ class TestEditorAgent:
         """When LLM says pass but word-count gate fails, the review row must reflect fail."""
         from novel_factory.agents.editor import EditorAgent
 
-        short_content = "短正文" * 700  # 2100 chars, below editor threshold.
+        short_content = "短正文" * 600  # 1800 chars, well below tolerance threshold.
 
         seeded_repo.save_chapter_content("test_proj", 1, short_content, "第一章 测试")
         seeded_repo.update_chapter_status("test_proj", 1, "polished")

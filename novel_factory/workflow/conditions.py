@@ -9,7 +9,7 @@ from ..models.state import ChapterStatus, FactoryState
 
 logger = logging.getLogger(__name__)
 
-VALID_REVISION_TARGETS = frozenset({"author", "polisher", "planner"})
+VALID_REVISION_TARGETS = frozenset({"author", "polisher", "planner", "screenwriter"})
 
 
 def gate_passed(gate: dict[str, Any]) -> bool:
@@ -192,6 +192,8 @@ def route_by_chapter_status(state: FactoryState) -> str:
             return "polisher"
         elif target == "planner":
             return "planner"
+        elif target == "screenwriter":  # v6.10.9: beat 设计层返修
+            return "screenwriter"
         else:
             return "author"
 
@@ -221,11 +223,32 @@ def route_by_review_result(state: FactoryState) -> str:
     if retry_count >= max_retries:
         return "human_review"
 
+    # v6.10.9: Score degradation detection — if the current score is lower
+    # than the previous review's score, escalate to human_review instead of
+    # looping through another revision that may make things worse.
+    revision_review = state.get("_revision_review") or {}
+    prev_score = revision_review.get("score")
+    current_score = gate.get("score")
+    if (
+        prev_score is not None
+        and current_score is not None
+        and current_score < prev_score
+        and retry_count >= 1
+    ):
+        return "human_review"
+
     return "revise"
 
 
 def route_after_agent(state: FactoryState) -> str:
-    """Continue to the next node unless the agent returned an error/human flag."""
+    """Continue to the next node unless the agent returned an error/human flag.
+
+    v6.10.9: When a revision targets author/screenwriter (not polisher),
+    skip the Polisher step and go directly to quality_gate via
+    promote_to_polished. This prevents unnecessary polisher passes when
+    the content needs structural (author) or beat-design (screenwriter)
+    changes that polisher cannot fix.
+    """
     if state.get("requires_human"):
         return "human_review"
 
@@ -253,6 +276,15 @@ def route_after_agent(state: FactoryState) -> str:
         )
     ):
         return "revision_router"
+
+    # v6.10.9: Skip Polisher when revision target is author/screenwriter.
+    # These targets require structural changes that Polisher cannot perform.
+    # Only applies when Author just ran (status is 'drafted').
+    if current_status == ChapterStatus.DRAFTED.value:
+        revision_review = state.get("_revision_review") or {}
+        revision_target = revision_review.get("revision_target", "")
+        if revision_target in ("author", "screenwriter"):
+            return "skip_to_quality_gate"
 
     if state.get("error"):
         return "human_review"
@@ -367,6 +399,7 @@ def route_by_revision_type(state: FactoryState) -> str:
         "author": "author",
         "polisher": "polisher",
         "planner": "planner",
+        "screenwriter": "screenwriter",
     }
     return routing.get(target, "author")
 

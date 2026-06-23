@@ -341,10 +341,10 @@ class TestWordCountQualityGate:
 
     def test_author_passes_threshold(self):
         """Author output meeting 85% threshold should pass."""
-        content = "x" * 2500  # 2500 words
+        content = "x" * 2400  # 2400 words
         word_target = 3000
-        # 85% of 3000 = 2550, but we check against threshold
-        # Actually 2500 / 3000 = 83.3%, which is < 85%, so this should fail
+        # 85% of 3000 = 2550, hard_fail_tolerance = 50
+        # 2400 < 2500 (2550-50), shortfall 150 > tolerance, should fail
         passed, message = check_word_count_quality_gate(content, word_target, "author")
         assert passed is False
 

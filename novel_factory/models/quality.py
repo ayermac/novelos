@@ -94,6 +94,7 @@ class IssueCategory(str, Enum):
     PACING = "pacing"
     PLOT = "plot"
     STATE = "state"
+    BEAT_DESIGN = "beat_design"  # v6.10.9: beat 设计层问题
 
 
 class ClassifiedIssue(BaseModel):

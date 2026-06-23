@@ -1,14 +1,14 @@
 import {
   LayoutDashboard, BookOpen, Globe, Users, Swords, ListTree,
   Sparkles, FileText, Palette, CheckCircle2, History, Settings,
-  Database, ScrollText,
+  Database, ScrollText, Activity,
 } from 'lucide-react'
 
 export type ProjectModule =
   | 'overview' | 'chapters' | 'worldview' | 'characters'
   | 'factions' | 'outline' | 'plots' | 'instructions'
   | 'style' | 'review' | 'runs' | 'settings' | 'genesis'
-  | 'memory' | 'facts' | 'creative-contracts'
+  | 'memory' | 'facts' | 'creative-contracts' | 'architecture'
 
 interface ModuleTab {
   key: ProjectModule
@@ -32,6 +32,7 @@ const MODULE_TABS: ModuleTab[] = [
   { key: 'style', label: '风格规范', icon: <Palette size={16} /> },
   { key: 'runs', label: '运行记录', icon: <History size={16} /> },
   { key: 'creative-contracts', label: '创作合同', icon: <FileText size={16} /> },
+  { key: 'architecture', label: '架构强化', icon: <Activity size={16} /> },
   { key: 'settings', label: '项目设置', icon: <Settings size={16} /> },
 ]
 
