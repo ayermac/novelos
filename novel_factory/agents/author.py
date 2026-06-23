@@ -1105,41 +1105,67 @@ class AuthorAgent(BaseAgent):
                 },
             })
             if overexpanded:
-                reason = (
-                    f"返修稿异常膨胀：{original_wc} → {revised_wc} 字，"
-                    f"增长 {wc_delta} 字，超过允许增长 {expansion_limit} 字；"
-                    "Editor 未要求扩写，已保留上一版本"
+                # v6.10.12: attempt automatic compression before rejecting
+                repaired_overexpansion = self._try_repair_revision_length_overexpansion(
+                    state=state,
+                    output=output,
+                    chapter=chapter,
+                    revision_review=revision_review or {},
+                    fallback_context=context,
                 )
-                self.repo.save_artifact(
-                    project_id,
-                    chapter_number,
-                    "author",
-                    "rejected_regression",
-                    content_json={
-                        "title": output.title,
-                        "content": output.content,
-                        "rejection_reason": reason,
-                        "revision_source_review_id": (revision_review or {}).get("review_id"),
-                        "original_word_count": original_wc,
-                        "revised_word_count": revised_wc,
-                        "word_count_delta": wc_delta,
-                    },
-                    workflow_run_id=state.get("workflow_run_id"),
-                )
-                return {
-                    "error": f"返修稿退化，已保留上一版本：{reason}",
-                    "chapter_status": state.get("chapter_status"),
-                    "quality_gate": {
-                        "pass": False,
-                        "revision_target": "author",
-                        "version_regression": True,
-                        "revision_overexpanded": True,
-                        "consume_revision_retry": False,
-                        "message": reason,
-                    },
-                    "_revision_review": revision_review,
-                    "_exec_events": exec_events,
-                }
+                if repaired_overexpansion is not None:
+                    output = repaired_overexpansion
+                    exec_events.append({
+                        "event_type": "revision_overexpansion_repaired",
+                        "message": f"返修稿过度膨胀已自动修复：{revised_wc} → {output.word_count} 字",
+                        "status": "info",
+                        "payload": {
+                            "original_word_count": original_wc,
+                            "revised_word_count": revised_wc,
+                            "repaired_word_count": output.word_count,
+                        },
+                    })
+                    # Re-evaluate after repair
+                    repaired_body = strip_chapter_heading(output.content, chapter_number, output.title)
+                    repaired_wc = count_words(repaired_body)
+                    if repaired_wc - original_wc <= expansion_limit + expansion_tolerance:
+                        overexpanded = False
+                else:
+                    reason = (
+                        f"返修稿异常膨胀：{original_wc} → {revised_wc} 字，"
+                        f"增长 {wc_delta} 字，超过允许增长 {expansion_limit} 字；"
+                        "Editor 未要求扩写，已保留上一版本"
+                    )
+                    self.repo.save_artifact(
+                        project_id,
+                        chapter_number,
+                        "author",
+                        "rejected_regression",
+                        content_json={
+                            "title": output.title,
+                            "content": output.content,
+                            "rejection_reason": reason,
+                            "revision_source_review_id": (revision_review or {}).get("review_id"),
+                            "original_word_count": original_wc,
+                            "revised_word_count": revised_wc,
+                            "word_count_delta": wc_delta,
+                        },
+                        workflow_run_id=state.get("workflow_run_id"),
+                    )
+                    return {
+                        "error": f"返修稿退化，已保留上一版本：{reason}",
+                        "chapter_status": state.get("chapter_status"),
+                        "quality_gate": {
+                            "pass": False,
+                            "revision_target": "author",
+                            "version_regression": True,
+                            "revision_overexpanded": True,
+                            "consume_revision_retry": False,
+                            "message": reason,
+                        },
+                        "_revision_review": revision_review,
+                        "_exec_events": exec_events,
+                    }
 
         # v6.6.0: Do not let a revision candidate overwrite a stronger
         # existing draft when it clearly regresses.
@@ -1963,6 +1989,120 @@ class AuthorAgent(BaseAgent):
             return repaired
         except Exception as e:
             logger.warning("Author: revision length regression repair failed: %s", e)
+            return None
+
+    def _try_repair_revision_length_overexpansion(
+        self,
+        state: FactoryState,
+        output: AuthorOutput,
+        chapter: dict[str, Any],
+        revision_review: dict[str, Any] | None,
+        fallback_context: str,
+    ) -> AuthorOutput | None:
+        """Repair a revision candidate that expanded too much."""
+        if state.get("llm_mode") != "real":
+            return None
+        if self._revision_requests_compression(revision_review):
+            return None
+
+        chapter_number = state["chapter_number"]
+        current_body = strip_chapter_heading(
+            chapter.get("content", "") or "",
+            chapter_number,
+            chapter.get("title"),
+        ).strip()
+        candidate_body = strip_chapter_heading(
+            output.content,
+            chapter_number,
+            output.title,
+        ).strip()
+        current_len = count_words(current_body)
+        candidate_len = count_words(candidate_body)
+        if current_len <= 0:
+            return None
+
+        expansion_limit = max(500, int(current_len * 0.15))
+        expansion_tolerance = max(80, int(current_len * 0.03))
+        if candidate_len - current_len <= expansion_limit + expansion_tolerance:
+            return None
+
+        maximum_len = current_len + expansion_limit
+        issue_lines = "\n".join(
+            f"- {issue}" for issue in (revision_review or {}).get("issues", [])[:8]
+        )
+        suggestion_lines = "\n".join(
+            f"- {suggestion}" for suggestion in (revision_review or {}).get("suggestions", [])[:8]
+        )
+        compact_context = self._build_plain_text_context(state, fallback_context)
+        prose_max_tokens = max(4096, min(8192, int(current_len * 1.6)))
+        per_call_retries = None
+
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是网文工厂的返修编辑。现在不是重新创作，而是精简返修稿。"
+                    "只输出完整章节正文纯文本，不要 JSON、解释、清单或 Markdown。"
+                    "必须以当前保留稿为底稿，保留候选返修稿中真正修复退回问题的部分，"
+                    "删除新增的场景、支线、过度描写和冗余内容，使篇幅接近原稿。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"第{chapter_number}章返修候选稿明显膨胀：当前保留稿约 {current_len} 字符，"
+                    f"候选返修稿约 {candidate_len} 字符，Editor 未要求扩写。\n"
+                    f"请输出精简后的完整修订稿，正文不超过 {maximum_len} 字符，建议接近 {current_len} 字符。\n"
+                    "操作规则：\n"
+                    "- 以【当前保留稿】为主体，保留其整体结构和篇幅。\n"
+                    "- 只把【候选返修稿】中真正修复退回问题的段落、句子或章末钩子合并回底稿。\n"
+                    "- 删除候选稿中新增的场景、支线、背景描写和冗余内容。\n"
+                    "- 保留未被点名的问题段落、人物关系、已成立事件和场景顺序。\n\n"
+                    f"【退回问题】\n{issue_lines}\n\n"
+                    f"【修改建议】\n{suggestion_lines}\n\n"
+                    f"{compact_context}\n\n"
+                    f"【当前保留稿】\n{current_body}\n\n"
+                    f"【候选返修稿】\n{candidate_body}\n\n"
+                    "请直接输出精简合并后的完整章节正文。"
+                ),
+            },
+        ]
+
+        try:
+            content = self._invoke_text_for_author(
+                messages,
+                temperature=0.62,
+                max_tokens=prose_max_tokens,
+                max_retries=per_call_retries,
+                request_timeout_seconds=(
+                    AUTHOR_LONG_FORM_TIMEOUT_SECONDS
+                    if is_configured_live_provider(self.llm)
+                    else None
+                ),
+            )
+            content = self._coerce_plain_text_content(content)
+            if not content:
+                return None
+            repaired = AuthorOutput(
+                title=self._derive_title(state, self._get_instruction(state) or {}, content),
+                content=content,
+                word_count=len(content),
+                implemented_events=output.implemented_events,
+                used_plot_refs=output.used_plot_refs,
+            )
+            repaired = self._sanitize_output(repaired, state)
+            repaired_body = strip_chapter_heading(repaired.content, chapter_number, repaired.title)
+            repaired_len = count_words(repaired_body)
+            if repaired_len > maximum_len + expansion_tolerance:
+                logger.warning(
+                    "Author: revision overexpansion repair still too long (%s > %s)",
+                    repaired_len,
+                    maximum_len,
+                )
+                return None
+            return repaired
+        except Exception as e:
+            logger.warning("Author: revision length overexpansion repair failed: %s", e)
             return None
 
     def _try_plain_text_draft(
