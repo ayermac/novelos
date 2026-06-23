@@ -12,15 +12,25 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
-## v6.10.12 - Production Stability Hardening (Planned)
+## v6.10.12 - Production Stability Hardening
+
+Date: 2026-06-23
 
 Scope: `docs/codex/planning/novel-factory-v6.10.12-production-stability-hardening-plan.md`
 
-Key focus areas:
+Key changes:
 
-- **Author over-expansion control**: add revision length constraints to prompts and automatic compression when drafts exceed the allowed expansion threshold.
-- **Core loop drift detection**: extend deterministic `state_delta` patterns to recognize natural-language descriptions of state changes and add LLM-assisted semantic detection as an optional supplement.
-- **Story fact governance**: add automatic conflict detection/resolution when `memory_curator` creates facts and provide a cleanup script for existing duplicate `active` facts.
+- **Author over-expansion control**: Added revision length constraints to Author prompts (15% growth limit) and automatic compression when drafts exceed the allowed expansion threshold. New `_try_repair_revision_length_overexpansion()` method in `agents/author.py` auto-repairs bloated revisions.
+- **Core loop drift detection**: Extended deterministic `state_delta` patterns in `quality/core_loop_checker.py` to recognize natural-language descriptions of state changes (归零, 清零, 耗尽, 见底, 失去, 消耗, 抽干) for resource depletion detection.
+- **Story fact governance**: Added automatic conflict resolution in `api/routes/memory_updates.py` - new facts with same subject+attribute but different value now auto-supersede older active facts. Executed cleanup script on novel_978q: 260 facts → 224 unique (36 duplicates superseded).
+- **Version alignment**: backend runtime, frontend, and desktop packages bumped to `6.10.12`.
+
+Verification:
+
+- `python3 -m pytest tests/ -q --tb=no`: 3597 passed, 29 failed (pre-existing failures, no new regressions)
+- Story facts cleanup: `scripts/cleanup_story_facts.py` executed successfully on novel_978q
+
+Known follow-up risk: None. v6.10.12 completes the production stability hardening cycle.
 
 ## v6.10.11 - Story Facts Deduplication Fix
 
