@@ -177,7 +177,9 @@ class AuthorAgent(BaseAgent):
 
         # v6.6.2: Unified context builder
         # v6.10.13: Internal repairs use a much smaller bundle to leave room
-        # for the actual draft and the narrow repair instruction.
+        # for the actual draft and the narrow repair instruction. Editor revisions
+        # (including QualityGate non-internal failures) also need a smaller bundle
+        # to fit within the model context window.
         # Prevent the builder from pulling in stale Editor revision feedback.
         builder_state = state if not is_internal_repair else {
             **state,
@@ -185,7 +187,12 @@ class AuthorAgent(BaseAgent):
         }
         builder = AgentContextBuilder(self.repo)
         bundle = builder.build_for_author(project_id, chapter_number, builder_state)
-        bundle_max_chars = 4000 if is_internal_repair else 10000
+        if is_internal_repair:
+            bundle_max_chars = 4000
+        elif is_editor_revision:
+            bundle_max_chars = 6000
+        else:
+            bundle_max_chars = 10000
         formatted = format_context_bundle_for_prompt(
             bundle, agent_name="author", max_chars=bundle_max_chars
         )
@@ -478,13 +485,20 @@ class AuthorAgent(BaseAgent):
         # v6.10.0: 知识层（双模式）
         # v6.10.13: Internal repairs use a much smaller knowledge budget so the
         # narrow repair instruction and the draft are not drowned out.
+        # v6.10.14: Editor revisions also cap the knowledge budget to keep the
+        # editor's focused feedback prominent.
         is_internal_repair = self._is_internal_repair(state)
+        is_editor_revision = self._is_editor_revision(state)
         genre = self._get_project_genre(project_id) if self.knowledge_manager else None
         project_skill_overrides = self._get_project_skill_overrides(project_id)
         knowledge_budget = self.agent_config.get("knowledge_token_budget")
         if is_internal_repair:
             knowledge_budget = self.agent_config.get(
                 "knowledge_token_budget_internal_repair", min(knowledge_budget or 2400, 1200)
+            )
+        elif is_editor_revision:
+            knowledge_budget = self.agent_config.get(
+                "knowledge_token_budget_editor_revision", min(knowledge_budget or 2400, 3000)
             )
 
         if self.knowledge_manager and self.use_agentic_mode:
