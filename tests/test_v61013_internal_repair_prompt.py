@@ -78,6 +78,26 @@ class TestInternalRepairDetection:
                 "blocking_issues": ["章间衔接断裂"],
             },
         }
+        # v6.10.13-fix: Narrow quality-gate failures (continuity, word-count,
+        # death-penalty, etc.) are deterministic repairs and should use compact
+        # prompts, not full Editor revision context.  Only real Editor revisions
+        # (with review_id or score) should load the full Editor feedback.
+        assert agent._is_internal_repair(state) is True
+        assert agent._is_editor_revision(state) is False
+
+    def test_quality_gate_with_review_id_is_editor_revision(self, repo):
+        agent = AuthorAgent(repo, StubLLMProvider())
+        state: FactoryState = {
+            "project_id": "test",
+            "chapter_number": 1,
+            "chapter_status": ChapterStatus.REVISION.value,
+            "quality_gate": {
+                "pass": False,
+                "review_id": 123,
+                "score": 60,
+                "blocking_issues": ["章间衔接断裂"],
+            },
+        }
         assert agent._is_internal_repair(state) is False
         assert agent._is_editor_revision(state) is True
 

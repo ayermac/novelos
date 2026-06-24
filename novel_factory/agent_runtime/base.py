@@ -318,10 +318,14 @@ class BaseAgent:
         return f"{text[:head_len]}{marker}{text[-tail_len:]}"
 
     def _is_internal_repair(self, state: FactoryState) -> bool:
-        """True when the current invocation is a quality-gate internal repair.
+        """True when the current invocation is a narrow quality-gate repair.
 
-        Internal repairs (e.g. word-count compression, polisher expansion drift)
-        should not load Editor revision feedback and should use compact prompts.
+        This includes agent-internal repairs (word-count compression, polisher
+        expansion drift) and workflow-layer quality gate failures (continuity
+        violations, word-count shortfall, death-penalty breach, scene-beat
+        coverage gaps, etc.).  All of these are deterministic, narrow fixes
+        that should not load full Editor revision feedback and should use compact
+        prompts.
         """
         gate = state.get("quality_gate") or {}
         if gate.get("internal_repair"):
@@ -329,11 +333,32 @@ class BaseAgent:
         repair_scope = gate.get("repair_scope") or ""
         if isinstance(repair_scope, str) and repair_scope.startswith("internal_"):
             return True
-        # v6.10.13-fix: Workflow-layer quality gate failures (word_count_fail,
-        # death_penalty_fail, scene_beat_coverage_fail) are narrow deterministic
-        # repairs that should use compact prompts, not full Editor revision context.
-        if gate.get("word_count_fail") or gate.get("death_penalty_fail") or gate.get("scene_beat_coverage_fail"):
+        # v6.10.13-fix: Any workflow-layer quality gate failure that carries a
+        # specific *_fail flag or blocking_issues is a narrow deterministic
+        # repair and should use compact prompts, not full Editor revision context.
+        if any(
+            gate.get(k)
+            for k in (
+                "word_count_fail",
+                "death_penalty_fail",
+                "scene_beat_coverage_fail",
+                "expansion_drift_fail",
+                "low_change_fail",
+                "fact_lock_fail",
+                "version_regression",
+            )
+        ):
             return True
+        # blocking_issues from a quality-gate node (no review_id/score) is a
+        # narrow repair.  Editor reviews also carry blocking_issues, but those
+        # have review_id or score and should use the full Editor path.
+        if gate.get("blocking_issues") and not gate.get("review_id") and gate.get("score") is None:
+            return True
+        if gate.get("pass") is False or gate.get("passed") is False:
+            # A quality gate failure without a review_id or score is a narrow
+            # gate-level repair, not a real Editor revision.
+            if not gate.get("review_id") and gate.get("score") is None:
+                return True
         return False
 
     def _is_editor_revision(self, state: FactoryState) -> bool:
@@ -387,6 +412,17 @@ class BaseAgent:
                 "【内部修复：改动过小】\n"
                 "上次润色改动太小。请做更实质性的语言优化：调整对白节奏、补充感官细节、"
                 "改善句式多样性、删减 AI 味总结句；但不要改变剧情、设定或角色动机。"
+            )
+
+        # v6.10.13-fix: For quality-gate failures like continuity violations,
+        # extract the first blocking issue to produce a concrete repair hint.
+        blocking_issues = gate.get("blocking_issues") or []
+        if blocking_issues:
+            first_issue = str(blocking_issues[0]).strip()
+            return (
+                "【内部修复】\n"
+                f"仅修复质量门指出的问题：{first_issue}。不要重写无关部分，"
+                "不要新增场景或删除关键事件。"
             )
 
         return (
