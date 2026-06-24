@@ -2215,12 +2215,19 @@ class AuthorAgent(BaseAgent):
             gate = state.get("quality_gate") or {}
             is_word_count_retry = bool(gate.get("word_count_fail"))
             if existing_body.strip() and not is_word_count_retry:
-                revision_source_section = (
+                raw_source = (
                     "【当前保留稿 / 必须在此基础上返修】\n"
                     "下面是当前已保存章节正文。请把它当作底稿进行定点修改："
                     "保留未被 Editor 点名的问题段落、人物关系、已成立事件和整体篇幅，"
                     "只重写或补足退回问题涉及的段落。禁止脱离该底稿另起炉灶重写短版。\n\n"
                     f"{existing_body.strip()}\n"
+                )
+                # v6.10.13-fix: Cap revision source to prevent prompt bloat on
+                # long chapters (the full body can be 3000+ chars, which together
+                # with compact_context and feedback pushes the prompt over the
+                # model context window and triggers finish_reason=length).
+                revision_source_section = self._limit_context_size(
+                    raw_source, limit=3000, agent_id="author-revision-source"
                 )
             revision_review = normalize_revision_review(state.get("_revision_review")) or {}
             revision_priority_section = self._revision_blocking_priority_block(revision_review)
@@ -2502,12 +2509,17 @@ class AuthorAgent(BaseAgent):
                 existing_chapter.get("title"),
             )
             if existing_body.strip():
-                revision_source_section = (
+                raw_source = (
                     "【当前保留稿 / 必须在此基础上返修】\n"
                     "下面是当前已保存章节正文。请把它当作底稿进行定点修改："
                     "保留未被 Editor 点名的问题段落、人物关系、已成立事件和整体篇幅，"
                     "只重写或补足退回问题涉及的段落。禁止脱离该底稿另起炉灶重写短版。\n\n"
                     f"{existing_body.strip()}\n"
+                )
+                # v6.10.13-fix: Cap revision source to prevent prompt bloat on
+                # long chapters in segmented generation.
+                revision_source_section = self._limit_context_size(
+                    raw_source, limit=3000, agent_id="author-segment-revision-source"
                 )
             revision_review = normalize_revision_review(state.get("_revision_review")) or {}
             revision_priority_section = self._revision_blocking_priority_block(revision_review)
