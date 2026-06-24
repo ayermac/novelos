@@ -2518,11 +2518,15 @@ class AuthorAgent(BaseAgent):
                 )
                 # v6.10.13-fix: Cap revision source to prevent prompt bloat on
                 # long chapters in segmented generation.
-                revision_source_section = self._limit_context_size(
-                    raw_source, limit=3000, agent_id="author-segment-revision-source"
-                )
+            revision_source_section = self._limit_context_size(
+                raw_source, limit=3000, agent_id="author-segment-revision-source"
+            )
             revision_review = normalize_revision_review(state.get("_revision_review")) or {}
-            revision_priority_section = self._revision_blocking_priority_block(revision_review)
+            if self._is_internal_repair(state):
+                revision_priority_section = self._build_internal_repair_instruction(state)
+                revision_review = {}
+            else:
+                revision_priority_section = self._revision_blocking_priority_block(revision_review)
             compress_requested = self._revision_requests_compression(revision_review)
             existing_len = count_words(existing_body)
             if existing_len > 0 and not compress_requested:
