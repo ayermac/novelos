@@ -329,6 +329,11 @@ class BaseAgent:
         repair_scope = gate.get("repair_scope") or ""
         if isinstance(repair_scope, str) and repair_scope.startswith("internal_"):
             return True
+        # v6.10.13-fix: Workflow-layer quality gate failures (word_count_fail,
+        # death_penalty_fail, scene_beat_coverage_fail) are narrow deterministic
+        # repairs that should use compact prompts, not full Editor revision context.
+        if gate.get("word_count_fail") or gate.get("death_penalty_fail") or gate.get("scene_beat_coverage_fail"):
+            return True
         return False
 
     def _is_editor_revision(self, state: FactoryState) -> bool:

@@ -2200,6 +2200,7 @@ class AuthorAgent(BaseAgent):
         )
         revision_source_section = ""
         revision_priority_section = ""
+        is_word_count_retry = False
         if task_desc == "返修":
             existing_chapter = self._get_chapter_info(state) or {}
             existing_body = strip_chapter_heading(
@@ -2208,7 +2209,12 @@ class AuthorAgent(BaseAgent):
                 existing_chapter.get("title"),
             )
             existing_len = count_words(existing_body)
-            if existing_body.strip():
+            # v6.10.13-fix: Detect word-count retry so we don't load the full
+            # existing body into the prompt (which bloats context) and so we
+            # set correct expansion bounds.
+            gate = state.get("quality_gate") or {}
+            is_word_count_retry = bool(gate.get("word_count_fail"))
+            if existing_body.strip() and not is_word_count_retry:
                 revision_source_section = (
                     "【当前保留稿 / 必须在此基础上返修】\n"
                     "下面是当前已保存章节正文。请把它当作底稿进行定点修改："
@@ -2219,7 +2225,18 @@ class AuthorAgent(BaseAgent):
             revision_review = normalize_revision_review(state.get("_revision_review")) or {}
             revision_priority_section = self._revision_blocking_priority_block(revision_review)
             compress_requested = self._revision_requests_compression(revision_review)
-            if existing_len > 0 and not compress_requested:
+            if is_word_count_retry:
+                # Word-count expansion: don't constrain expansion like a patch
+                # revision; the model needs room to grow to the target.
+                minimum_required = max(minimum_required, int(word_target * 0.85))
+                effective_target = word_target
+                length_guard_note = (
+                    f"【字数扩写提示】当前正文约 {existing_len} 字符，"
+                    f"目标 {word_target} 字符，至少 {minimum_required} 字符。"
+                    "请在保留现有情节和人物关系的基础上扩写，"
+                    "增加场景描写、对话细节和感官描写，不要脱离现有情节另起炉灶。"
+                )
+            elif existing_len > 0 and not compress_requested:
                 minimum_required = max(minimum_required, int(existing_len * 0.9))
                 effective_target = max(word_target, existing_len)
                 expansion_limit = max(500, int(existing_len * 0.15))
@@ -2235,7 +2252,12 @@ class AuthorAgent(BaseAgent):
         config_max = self._config_max_tokens(self.llm)
         # v6.10.8: 返修轮需要重写更长内容并吸收 feedback 指令，采用与分段生成
         # 一致的 +1024 余量公式，避免 finish_reason=length 截断。
-        prose_max_tokens = max(1024, min(config_max, int(effective_target * 2.5) + 1024))
+        # v6.10.13-fix: Word-count expansion repairs need more output space
+        # because the model must generate more text than the original.
+        if is_word_count_retry:
+            prose_max_tokens = max(4096, min(8192, int(effective_target * 2.5) + 2048))
+        else:
+            prose_max_tokens = max(1024, min(config_max, int(effective_target * 2.5) + 1024))
         compact_context = self._build_plain_text_context(state, context)
         per_call_retries = None
 
