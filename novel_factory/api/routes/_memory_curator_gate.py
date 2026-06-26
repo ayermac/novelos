@@ -296,12 +296,25 @@ def _run_has_memory_batch_result(
         batches = repo.list_memory_batches(project_id)
     except Exception:
         return False
+    # 精确匹配：batch 的 run_id 和当前 run_id 一致
     for batch in batches:
         if int(batch.get("chapter_number") or 0) != int(chapter_number):
             continue
         if str(batch.get("status") or "") == "ignored":
             continue
-        if str(batch.get("run_id") or "") != str(run_id):
+        if str(batch.get("run_id") or "") == str(run_id):
+            try:
+                items = repo.list_memory_items(batch["id"])
+            except Exception:
+                items = []
+            if items:
+                return True
+    # v6.10.13: fallback — 如果该章节已有任何非 ignored 的 batch（无论 run_id 是否匹配），
+    # 说明记忆提取已经完成，可以修复卡住的 run。
+    for batch in batches:
+        if int(batch.get("chapter_number") or 0) != int(chapter_number):
+            continue
+        if str(batch.get("status") or "") == "ignored":
             continue
         try:
             items = repo.list_memory_items(batch["id"])
