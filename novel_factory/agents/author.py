@@ -1191,7 +1191,7 @@ class AuthorAgent(BaseAgent):
                     })
                     # Re-evaluate after repair
                     repaired_body = strip_chapter_heading(output.content, chapter_number, output.title)
-                    repaired_wc = count_words(repaired_body)
+                    repaired_wc = _cw(repaired_body)
                     if repaired_wc - original_wc <= expansion_limit + expansion_tolerance:
                         overexpanded = False
                 else:
