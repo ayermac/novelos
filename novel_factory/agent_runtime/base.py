@@ -317,6 +317,146 @@ class BaseAgent:
         )
         return f"{text[:head_len]}{marker}{text[-tail_len:]}"
 
+    def _is_internal_repair(self, state: FactoryState) -> bool:
+        """True when the current invocation is a narrow quality-gate repair.
+
+        This includes agent-internal repairs (word-count compression, polisher
+        expansion drift) and workflow-layer quality gate failures (continuity
+        violations, word-count shortfall, death-penalty breach, scene-beat
+        coverage gaps, etc.).  All of these are deterministic, narrow fixes
+        that should not load full Editor revision feedback and should use compact
+        prompts.
+        """
+        gate = state.get("quality_gate") or {}
+        if gate.get("internal_repair"):
+            return True
+        repair_scope = gate.get("repair_scope") or ""
+        if isinstance(repair_scope, str) and repair_scope.startswith("internal_"):
+            return True
+        # v6.10.13-fix: Any workflow-layer quality gate failure that carries a
+        # specific *_fail flag or blocking_issues is a narrow deterministic
+        # repair and should use compact prompts, not full Editor revision context.
+        if any(
+            gate.get(k)
+            for k in (
+                "word_count_fail",
+                "death_penalty_fail",
+                "scene_beat_coverage_fail",
+                "expansion_drift_fail",
+                "low_change_fail",
+                "fact_lock_fail",
+                "version_regression",
+            )
+        ):
+            return True
+        # blocking_issues from a quality-gate node (no review_id/score) is a
+        # narrow repair.  Editor reviews also carry blocking_issues, but those
+        # have review_id or score and should use the full Editor path.
+        if gate.get("blocking_issues") and not gate.get("review_id") and gate.get("score") is None:
+            return True
+        if gate.get("pass") is False or gate.get("passed") is False:
+            # A quality gate failure without a review_id or score is a narrow
+            # gate-level repair, not a real Editor revision.
+            if not gate.get("review_id") and gate.get("score") is None:
+                return True
+        return False
+
+    def _is_editor_revision(self, state: FactoryState) -> bool:
+        """True when the current invocation is a real Editor revision.
+
+        This includes an explicit ``_revision_review`` from Editor or a
+        QualityGate failure that is not marked as an internal repair.
+        """
+        if self._is_internal_repair(state):
+            return False
+        if state.get("_revision_review"):
+            return True
+        gate = state.get("quality_gate") or {}
+        if gate.get("pass") is False or gate.get("passed") is False:
+            return True
+        return False
+
+    def _build_internal_repair_instruction(self, state: FactoryState) -> str:
+        """Return a compact repair instruction for quality-gate internal repairs.
+
+        Avoids loading the full Editor review block, which is irrelevant for
+        deterministic internal fixes such as word-count compression or expansion
+        drift.
+        """
+        gate = state.get("quality_gate") or {}
+        repair_scope = gate.get("repair_scope") or "internal"
+        message = gate.get("message") or "质量门未通过"
+
+        if repair_scope == "internal_word_count_compression":
+            word_target = gate.get("word_target")
+            target_hint = f"{word_target} 字符附近" if word_target else "目标字数附近"
+            return (
+                "【内部修复：字数压缩】\n"
+                f"当前字数超过上限。请将正文压缩到 {target_hint}，只删除冗余铺陈、"
+                "重复描写和同义反复，不得删除关键事件、伏笔或章末钩子。"
+            )
+
+        if repair_scope == "internal_polisher_expansion_drift":
+            original = gate.get("original_word_count")
+            polished = gate.get("polished_word_count")
+            delta = gate.get("word_count_delta")
+            return (
+                "【内部修复：扩写漂移】\n"
+                f"润色后字数从 {original} 膨胀到 {polished}（+{delta} 字）。"
+                "请只压缩语言，删除冗余描写与重复对白，不删除关键事件、伏笔或角色动机，"
+                "不要新增场景或扩写。"
+            )
+
+        if repair_scope == "internal_polisher_low_change":
+            return (
+                "【内部修复：改动过小】\n"
+                "上次润色改动太小。请做更实质性的语言优化：调整对白节奏、补充感官细节、"
+                "改善句式多样性、删减 AI 味总结句；但不要改变剧情、设定或角色动机。"
+            )
+
+        # v6.10.13-fix: For quality-gate failures like continuity violations,
+        # extract the first blocking issue to produce a concrete repair hint.
+        blocking_issues = gate.get("blocking_issues") or []
+        if blocking_issues:
+            first_issue = str(blocking_issues[0]).strip()
+            return (
+                "【内部修复】\n"
+                f"仅修复质量门指出的问题：{first_issue}。不要重写无关部分，"
+                "不要新增场景或删除关键事件。"
+            )
+
+        return (
+            "【内部修复】\n"
+            f"仅修复质量门指出的问题：{message}。不要重写无关部分，"
+            "不要新增场景或删除关键事件。"
+        )
+
+    def _get_context_char_limit(self, state: FactoryState) -> int:
+        """Return a context character limit appropriate for the current mode.
+
+        Internal repairs use a much tighter budget because the task is narrow.
+        The limit is also capped by the configured LLM max_tokens to avoid
+        exceeding the model context window.
+        """
+        base_limit = self.context_char_limit
+        if self._is_internal_repair(state):
+            # Narrow task: keep only the most relevant context.  Also cap by
+            # the configured LLM max_tokens so the prompt + output fit in the
+            # model window (conservative: 1 Chinese char ≈ 1-2 tokens).
+            base_limit = min(base_limit, 6000)
+            max_tokens = self._config_max_tokens_from_llm(self.llm)
+            if max_tokens and max_tokens > 0:
+                available = int(max_tokens * 0.8 * 2)
+                base_limit = min(base_limit, available)
+        return base_limit
+
+    def _config_max_tokens_from_llm(self, llm: Any) -> int:
+        """Read max_tokens from LLM config, with a conservative fallback."""
+        try:
+            return int(getattr(getattr(llm, "config", None), "max_tokens", 4096) or 4096)
+        except Exception:
+            return 4096
+
     def _build_v6_context(self, state: FactoryState) -> str:
         """v6.0: Assemble enhanced context with role profile and memory."""
         parts = []
@@ -331,7 +471,7 @@ class BaseAgent:
             parts.append(base_ctx)
         return self._limit_context_size(
             "\n\n".join(parts),
-            self.context_char_limit,
+            self._get_context_char_limit(state),
             agent_id=self.agent_id,
         )
 

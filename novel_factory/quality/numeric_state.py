@@ -295,7 +295,7 @@ def build_numeric_state_fact_patches(
                     "fact_key": fact_key,
                     "fact_type": "numeric_state",
                     "subject": state.label,
-                    "attribute": "最新数值",
+                    "attribute": state.label,
                     "value": {
                         "key": state.key,
                         "label": state.label,

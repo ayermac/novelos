@@ -1586,6 +1586,13 @@ def _auto_supersede_conflicting_facts(repo, project_id: str, current_fact: dict)
     """v6.10.12: Mark older active facts with same subject+attribute but different value as superseded."""
     subject = str(current_fact.get("subject") or "").strip()
     attribute = str(current_fact.get("attribute") or "").strip()
+
+    # v6.10.13: Derive subject from fact_key when missing
+    if not subject:
+        fact_key = str(current_fact.get("fact_key") or "").strip()
+        if "." in fact_key:
+            subject = fact_key.split(".")[0].strip()
+
     if not subject and not attribute:
         return []
 
@@ -1603,16 +1610,46 @@ def _auto_supersede_conflicting_facts(repo, project_id: str, current_fact: dict)
             continue
         fact_subject = str(fact.get("subject") or "").strip()
         fact_attribute = str(fact.get("attribute") or "").strip()
-        if fact_subject != subject or fact_attribute != attribute:
-            continue
-        old_value = _canonical_json_text(fact.get("value_json"))
-        if old_value == current_value:
-            continue
-        try:
-            repo.update_story_fact(fact["id"], {"status": "superseded"})
-            superseded_ids.append(fact["id"])
-        except Exception:
-            continue
+
+        # v6.10.13: Derive subject from fact_key for old facts too
+        if not fact_subject:
+            old_fact_key = str(fact.get("fact_key") or "").strip()
+            if "." in old_fact_key:
+                fact_subject = old_fact_key.split(".")[0].strip()
+
+        # Match by subject+attribute first
+        if fact_subject == subject and fact_attribute == attribute:
+            old_value = _canonical_json_text(fact.get("value_json"))
+            if old_value == current_value:
+                continue
+            try:
+                repo.update_story_fact(fact["id"], {"status": "superseded"})
+                superseded_ids.append(fact["id"])
+            except Exception:
+                continue
+        # v6.10.13: Also match by subject when old fact has empty attribute
+        elif fact_subject == subject and not fact_attribute and attribute:
+            old_value = _canonical_json_text(fact.get("value_json"))
+            if old_value == current_value:
+                continue
+            try:
+                repo.update_story_fact(fact["id"], {"status": "superseded"})
+                superseded_ids.append(fact["id"])
+            except Exception:
+                continue
+        # v6.10.13: For same subject, if one attribute contains the other (e.g., "倒计时" in "神军序列沉寂倒计时"),
+        # treat them as the same concept and supersede the old one
+        elif fact_subject == subject and attribute and fact_attribute:
+            if attribute in fact_attribute or fact_attribute in attribute:
+                old_value = _canonical_json_text(fact.get("value_json"))
+                if old_value == current_value:
+                    continue
+                try:
+                    repo.update_story_fact(fact["id"], {"status": "superseded"})
+                    superseded_ids.append(fact["id"])
+                except Exception:
+                    continue
+
     return superseded_ids
 
 
