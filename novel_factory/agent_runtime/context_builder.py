@@ -18,6 +18,8 @@ from ..quality.numeric_state import (
     numeric_state_constraint_from_text,
     numeric_state_constraints_from_facts,
 )
+from ..context.aging import build_aging_warnings
+from ..context.recall_channel import build_pull_context
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +28,25 @@ logger = logging.getLogger(__name__)
 _TRUSTED_MEMORY_MIN_CONFIDENCE = 0.75
 _UNTRUSTED_MEMORY_MAX_CONFIDENCE = 0.45
 _MAX_CONTEXT_CHARS = 14000
+
+# v6.10.14 S7: Adaptive budget thresholds based on project chapter count.
+# When a project exceeds _ADAPTIVE_BUDGET_CHAPTER_THRESHOLD chapters, the
+# default budget is raised to _ADAPTIVE_BUDGET_LONGFORM_CHARS.
+_ADAPTIVE_BUDGET_CHAPTER_THRESHOLD = 100
+_ADAPTIVE_BUDGET_LONGFORM_CHARS = 20000
+
+# v6.10.14 S1: Buckets that must never be dropped by budget truncation.
+# Even when total prompt length exceeds max_chars, these are force-included
+# so critical constraints (numeric state, timeline, hard constraints) survive.
+_MANDATORY_BUCKETS: frozenset[str] = frozenset({
+    "hard_constraints",
+    "numeric_state_constraints",
+    "timeline_constraints",
+})
+
+# v6.10.14 S2/S4: Aging threshold — facts not updated for this many chapters
+# are considered "aged" and force-included in relevance filtering.
+_AGING_THRESHOLD_CHAPTERS = 20
 
 _TIMELINE_KEYWORDS = re.compile(
     r"(?:三天后|三日后|72小时|72h|四天后|五天后|六天后|七天后|"
@@ -399,7 +420,7 @@ def extract_numeric_state_constraints(
     except Exception:
         facts = []
 
-    fact_lines = numeric_state_constraints_from_facts(facts)[:10]
+    fact_lines = numeric_state_constraints_from_facts(facts)[:20]  # v6.10.14 F14: relaxed from 10 to 20
     if fact_lines:
         items.append(
             ContextItem(
@@ -504,6 +525,8 @@ class AgentContextBuilder:
 
     def __init__(self, repo: Any) -> None:
         self.repo = repo
+        # v6.10.14 S2: Cache for chapter briefs to avoid repeated DB lookups
+        self._brief_cache: dict[str, dict[str, Any] | None] = {}
 
     def _latest_approved_genesis_at(self, project_id: str) -> str | None:
         """Return the latest approved genesis timestamp, if any."""
@@ -768,7 +791,12 @@ class AgentContextBuilder:
             )
         return items
 
-    def _story_facts_context(self, project_id: str, chapter_number: int) -> list[ContextItem]:
+    def _story_facts_context(
+        self,
+        project_id: str,
+        chapter_number: int,
+        brief: dict[str, Any] | None = None,
+    ) -> list[ContextItem]:
         items: list[ContextItem] = []
         try:
             facts = self.repo.list_story_facts(project_id, status="active")
@@ -787,12 +815,19 @@ class AgentContextBuilder:
                 continue
             if key not in latest_facts or src_ch > latest_facts[key][1]:
                 latest_facts[key] = (fact, src_ch)
+
+        # v6.10.14 S2: Relevance filtering — reduce noise in long-form projects
+        deduped = [fact for fact, _src in latest_facts.values()]
+        relevant_facts = self._filter_relevant_facts(deduped, brief, chapter_number)
         
-        for fact, src_ch in latest_facts.values():
+        for fact, src_ch in ((f, int(f.get("source_chapter") or f.get("last_changed_chapter") or 0)) for f in relevant_facts):
             subject = fact.get("subject", "")
             attribute = fact.get("attribute", "")
             value = str(fact.get("value_json") or "")
-            if len(value) > 200:  # v6.10.10: Increased from 120 to 200 for better context
+            fact_type = str(fact.get("fact_type") or "").lower()
+            # v6.10.14 F8: numeric_state facts are exempt from truncation —
+            # truncating a numeric value mid-string would corrupt the constraint.
+            if fact_type != "numeric_state" and len(value) > 200:
                 value = value[:200] + "..."
             text = f"{subject}.{attribute} = {value}" if subject or attribute else value
             items.append(
@@ -807,6 +842,105 @@ class AgentContextBuilder:
                 )
             )
         return items
+
+    def _filter_relevant_facts(
+        self,
+        facts: list[dict[str, Any]],
+        brief: dict[str, Any] | None,
+        chapter_number: int,
+    ) -> list[dict[str, Any]]:
+        """v6.10.14 S2: Filter story facts by relevance to the current chapter.
+
+        Rules:
+        - ``numeric_state`` facts are always kept (critical values must not be lost).
+        - Facts whose ``subject`` matches a brief entity are kept.
+        - Facts exceeding the aging threshold (``_AGING_THRESHOLD_CHAPTERS``)
+          are kept so long-forgotten foreshadowing is surfaced.
+        - When ``brief`` is ``None``, falls back to returning all facts
+          (no regression for callers that don't pass a brief).
+        """
+        if brief is None:
+            return facts
+
+        entities = self._extract_entities(brief)
+        result: list[dict[str, Any]] = []
+        for fact in facts:
+            fact_type = str(fact.get("fact_type") or "").lower()
+            if fact_type == "numeric_state":
+                result.append(fact)
+                continue
+            subject = str(fact.get("subject") or "")
+            if subject and subject in entities:
+                result.append(fact)
+                continue
+            # Aging fallback: keep facts not updated for too many chapters
+            src_ch = int(fact.get("source_chapter") or fact.get("last_changed_chapter") or 0)
+            age = chapter_number - src_ch
+            if age >= _AGING_THRESHOLD_CHAPTERS:
+                result.append(fact)
+        return result
+
+    def _extract_entities(self, brief: dict[str, Any]) -> set[str]:
+        """v6.10.14 S2: Extract entity names from a chapter brief.
+
+        Sources (in priority order):
+        1. ``key_events`` / ``required_events`` from the instruction
+        2. Character names from the project (full-name boundary match)
+        """
+        entities: set[str] = set()
+
+        # 1. Pull entity-like tokens from brief event fields
+        for field_name in ("key_events", "required_events", "objective"):
+            raw = brief.get(field_name)
+            if not raw:
+                continue
+            if isinstance(raw, (list, tuple)):
+                text = " ".join(str(item) for item in raw)
+            else:
+                text = str(raw)
+            # Split on common CJK connectors/particles before extracting name tokens
+            text = re.sub(r"[的和与在是把被让给对为有于从到向以以及]", " ", text)
+            # Extract CJK name-like tokens (2-6 chars)
+            for match in re.finditer(r"[\u4e00-\u9fff]{2,6}", text):
+                token = match.group()
+                entities.add(token)
+                # Also add 2-3 char substrings of longer tokens so short name
+                # subjects (e.g. "张三" from "张三修炼") can match.
+                if len(token) > 3:
+                    for i in range(len(token) - 1):
+                        entities.add(token[i : i + 2])
+                    for i in range(len(token) - 2):
+                        entities.add(token[i : i + 3])
+
+        # 2. Add all character names from the project
+        try:
+            characters = self.repo.get_characters(brief.get("project_id") or "")
+            for char in characters:
+                name = str(char.get("name") or "").strip()
+                if name:
+                    entities.add(name)
+        except Exception:
+            pass
+
+        return entities
+
+    def _load_brief(self, project_id: str, chapter_number: int) -> dict[str, Any] | None:
+        """v6.10.14 S2: Load and cache the chapter brief (writing instruction).
+
+        Returns ``None`` if no instruction exists, causing
+        :meth:`_story_facts_context` to fall back to full-load (no regression).
+        """
+        cache_key = f"{project_id}:{chapter_number}"
+        if cache_key in self._brief_cache:
+            return self._brief_cache[cache_key]
+        try:
+            instruction = self.repo.get_instruction(project_id, chapter_number)
+        except Exception:
+            instruction = None
+        if instruction:
+            instruction["project_id"] = project_id
+        self._brief_cache[cache_key] = instruction
+        return instruction
 
     def _character_states_context(self, project_id: str, chapter_number: int) -> list[ContextItem]:
         items: list[ContextItem] = []
@@ -1047,6 +1181,38 @@ class AgentContextBuilder:
                 )
             )
         return items
+
+    def _inject_recall_extras(
+        self,
+        project_id: str,
+        chapter_number: int,
+        bundle: AgentContextBundle,
+        brief: dict[str, Any] | None,
+    ) -> None:
+        """v6.10.14 S4+S5: Inject aging warnings and pull-recall into advisory_context.
+
+        Mutates ``bundle.advisory_context`` in place by appending:
+        - Aging warnings for stale numeric_state facts and overdue plots (S4)
+        - Proactively pulled entity fact chains (S5)
+        """
+        # S4: Aging warnings
+        try:
+            all_facts = self.repo.list_story_facts(project_id, status="active")
+        except Exception:
+            all_facts = []
+        try:
+            pending_plots = self.repo.get_pending_plots(project_id)
+        except Exception:
+            pending_plots = []
+
+        aging_items = build_aging_warnings(all_facts, pending_plots, chapter_number)
+        if aging_items:
+            bundle.advisory_context.extend(aging_items)
+
+        # S5: Pull recall — proactively retrieve entity fact chains
+        pull_items = build_pull_context(all_facts, brief, chapter_number)
+        if pull_items:
+            bundle.advisory_context.extend(pull_items)
 
     def _world_rules_context(self, project_id: str) -> list[ContextItem]:
         items: list[ContextItem] = []
@@ -1328,10 +1494,11 @@ class AgentContextBuilder:
         self, project_id: str, chapter_number: int, state: dict[str, Any] | None = None
     ) -> AgentContextBundle:
         bundle = AgentContextBundle()
+        brief = self._load_brief(project_id, chapter_number)
         bundle.project_context = self._project_context(project_id)
         bundle.chapter_inheritance = self._previous_chapter_context(project_id, chapter_number)
         bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number, bundle)
-        bundle.story_facts = self._story_facts_context(project_id, chapter_number)
+        bundle.story_facts = self._story_facts_context(project_id, chapter_number, brief)
         bundle.plot_obligations = self._pending_plots_context(project_id)
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
@@ -1367,10 +1534,11 @@ class AgentContextBuilder:
         self, project_id: str, chapter_number: int, state: dict[str, Any] | None = None
     ) -> AgentContextBundle:
         bundle = AgentContextBundle()
+        brief = self._load_brief(project_id, chapter_number)
         bundle.project_context = self._project_context(project_id)
         bundle.chapter_inheritance = self._previous_chapter_context(project_id, chapter_number)
         bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number, bundle)
-        bundle.story_facts = self._story_facts_context(project_id, chapter_number)
+        bundle.story_facts = self._story_facts_context(project_id, chapter_number, brief)
         bundle.plot_obligations = self._instruction_context(project_id, chapter_number)
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
@@ -1401,10 +1569,11 @@ class AgentContextBuilder:
         self, project_id: str, chapter_number: int, state: dict[str, Any] | None = None
     ) -> AgentContextBundle:
         bundle = AgentContextBundle()
+        brief = self._load_brief(project_id, chapter_number)
         bundle.project_context = self._project_context(project_id)
         bundle.chapter_inheritance = self._previous_chapter_context(project_id, chapter_number)
         bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number, bundle)
-        bundle.story_facts = self._story_facts_context(project_id, chapter_number)
+        bundle.story_facts = self._story_facts_context(project_id, chapter_number, brief)
         bundle.plot_obligations = self._instruction_context(project_id, chapter_number)
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
@@ -1429,16 +1598,19 @@ class AgentContextBuilder:
         bundle.advisory_context = self._advisory_memory_context(project_id, chapter_number)
         bundle.advisory_context.extend(self._world_rules_context(project_id))
         bundle.advisory_context.extend(self._continuity_warnings_context(project_id, chapter_number))
+        # v6.10.14 S4+S5: Inject aging warnings and pull-recall for Author
+        self._inject_recall_extras(project_id, chapter_number, bundle, brief)
         return bundle
 
     def build_for_polisher(
         self, project_id: str, chapter_number: int, state: dict[str, Any] | None = None
     ) -> AgentContextBundle:
         bundle = AgentContextBundle()
+        brief = self._load_brief(project_id, chapter_number)
         bundle.project_context = self._project_context(project_id)
         bundle.chapter_inheritance = self._previous_chapter_context(project_id, chapter_number)
         bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number, bundle)
-        bundle.story_facts = self._story_facts_context(project_id, chapter_number)
+        bundle.story_facts = self._story_facts_context(project_id, chapter_number, brief)
         bundle.plot_obligations = self._instruction_context(project_id, chapter_number)
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
@@ -1470,10 +1642,11 @@ class AgentContextBuilder:
         self, project_id: str, chapter_number: int, state: dict[str, Any] | None = None
     ) -> AgentContextBundle:
         bundle = AgentContextBundle()
+        brief = self._load_brief(project_id, chapter_number)
         bundle.project_context = self._project_context(project_id)
         bundle.chapter_inheritance = self._previous_chapter_context(project_id, chapter_number)
         bundle.trusted_memory = self._trusted_memory_context(project_id, chapter_number, bundle)
-        bundle.story_facts = self._story_facts_context(project_id, chapter_number)
+        bundle.story_facts = self._story_facts_context(project_id, chapter_number, brief)
         bundle.plot_obligations = self._instruction_context(project_id, chapter_number)
         bundle.timeline_constraints = extract_timeline_constraints(
             project_id, chapter_number, self.repo
@@ -1504,10 +1677,28 @@ class AgentContextBuilder:
         bundle.advisory_context = self._advisory_memory_context(project_id, chapter_number)
         bundle.advisory_context.extend(self._world_rules_context(project_id))
         bundle.advisory_context.extend(self._continuity_warnings_context(project_id, chapter_number))
+        # v6.10.14 S4+S5: Inject aging warnings and pull-recall for Editor
+        self._inject_recall_extras(project_id, chapter_number, bundle, brief)
         return bundle
 
 
 # ── Formatting ───────────────────────────────────────────────────
+
+def compute_adaptive_budget(
+    total_chapters: int,
+    base_budget: int = _MAX_CONTEXT_CHARS,
+) -> int:
+    """v6.10.14 S7: Return an adaptive context budget based on chapter count.
+
+    For long-form projects (``total_chapters`` > threshold), the budget is
+    raised so more facts can fit without triggering truncation.  Callers
+    should pass the result as the ``max_chars`` argument to
+    :func:`format_context_bundle_for_prompt`.
+    """
+    if total_chapters > _ADAPTIVE_BUDGET_CHAPTER_THRESHOLD:
+        return _ADAPTIVE_BUDGET_LONGFORM_CHARS
+    return base_budget
+
 
 def format_context_bundle_for_prompt(
     bundle: AgentContextBundle,
@@ -1516,17 +1707,29 @@ def format_context_bundle_for_prompt(
 ) -> str:
     """Format a bundle into a single prompt string with priority-based truncation.
 
-    Priority order:
+    Priority order (matches ``ordered_buckets`` below):
     1. hard_constraints
     2. revision_feedback
     3. timeline_constraints
-    4. plot_obligations
-    5. trusted_memory
-    6. story_facts
-    7. character_states
-    8. advisory_context
-    9. chapter_inheritance (state cards, tails — lower priority for some agents)
-    10. project_context
+    4. story_facts
+    5. numeric_state_constraints
+    6. plot_obligations
+    7. trusted_memory
+    8. character_states
+    9. story_contract_context
+    10. core_loop_context
+    11. scene_beats
+    12. style_context
+    13. advisory_context
+    14. chapter_inheritance
+    15. project_context
+
+    v6.10.14: Buckets in :data:`_MANDATORY_BUCKETS` are never dropped — even
+    when the total exceeds ``max_chars`` they are force-included so that
+    critical constraints (hard / numeric_state / timeline) survive budget
+    pressure.  Non-mandatory buckets that overflow are truncated in place and
+    the loop *continues* (instead of ``break``) so subsequent mandatory
+    buckets are still processed.
     """
     ordered_buckets: list[tuple[str, list[ContextItem]]] = [
         ("【不可违背事实 / Hard Constraints】", bundle.hard_constraints),
@@ -1546,9 +1749,29 @@ def format_context_bundle_for_prompt(
         ("【项目背景 / Project Context】", bundle.project_context),
     ]
 
+    # v6.10.14: Machine-friendly keys aligned 1:1 with ordered_buckets by index
+    bucket_keys: list[str] = [
+        "hard_constraints",
+        "revision_feedback",
+        "timeline_constraints",
+        "story_facts",
+        "numeric_state_constraints",
+        "plot_obligations",
+        "trusted_memory",
+        "character_states",
+        "story_contract_context",
+        "core_loop_context",
+        "scene_beats",
+        "style_context",
+        "advisory_context",
+        "chapter_inheritance",
+        "project_context",
+    ]
+
     parts: list[str] = []
     total_len = 0
     truncated = False
+    overflow_logged = False
 
     # v6.6.14: prepend degraded notice when no trusted memory batch is available
     if bundle.memory_context_degraded:
@@ -1561,9 +1784,10 @@ def format_context_bundle_for_prompt(
         parts.append(degraded_notice)
         total_len += len(degraded_notice)
 
-    for header, items in ordered_buckets:
+    for idx, (header, items) in enumerate(ordered_buckets):
         if not items:
             continue
+        bucket_name = bucket_keys[idx]
         # v6.10.10: Sort items by priority (lower number = higher priority)
         sorted_items = sorted(items, key=lambda it: it.priority)
         block_lines: list[str] = [header]
@@ -1574,17 +1798,44 @@ def format_context_bundle_for_prompt(
             block_lines.append(line)
         block = "\n".join(block_lines)
         block_len = len(block)
+
         if total_len + block_len > max_chars:
-            # Try to include a truncated version
+            if bucket_name in _MANDATORY_BUCKETS:
+                # v6.10.14 S1: mandatory bucket — force-include even over budget
+                parts.append(block)
+                total_len += block_len
+                if not overflow_logged:
+                    logger.warning(
+                        "context_budget_overflow: bucket=%s agent=%s "
+                        "total_len=%d max_chars=%d (mandatory force-included)",
+                        bucket_name, agent_name, total_len, max_chars,
+                    )
+                    overflow_logged = True
+                continue
+
+            # v6.10.14 S3: non-mandatory — truncate in place then *continue*
+            # (previously this was a `break`, which skipped later mandatory buckets)
             remaining = max_chars - total_len - len(header) - 50
             if remaining > 100:
                 truncated = True
-                truncated_block = header + "\n" + block[len(header) + 1 : len(header) + 1 + remaining] + "\n...(已截断)"
+                # Truncate line-by-line to avoid splitting UTF-8 multi-byte chars
+                kept: list[str] = [header]
+                used = len(header) + 1
+                for line in block_lines[1:]:
+                    if used + len(line) + 1 > remaining:
+                        break
+                    kept.append(line)
+                    used += len(line) + 1
+                kept.append("...(已截断)")
+                truncated_block = "\n".join(kept)
                 parts.append(truncated_block)
                 total_len += len(truncated_block)
-            break
-        parts.append(block)
-        total_len += block_len
+            # Do NOT break — continue so mandatory buckets later in the order
+            # still get their chance to be force-included.
+            continue
+        else:
+            parts.append(block)
+            total_len += block_len
 
     result = "\n\n".join(parts)
     if truncated:

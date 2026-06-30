@@ -218,6 +218,47 @@ class ContinuityCheckerAgent:
         if instructions:
             parts.append(f"【指令】\n" + "\n".join(instructions))
 
+        # v6.10.14 S6: Inject ALL active story_facts as a full-scope validation ledger.
+        # Previously the checker only saw facts within [from, to], missing contradictions
+        # with facts injected into the writing context but outside the check range.
+        all_facts = []
+        try:
+            all_facts = self.repo.list_story_facts(project_id, status="active")
+        except Exception:
+            pass
+        if all_facts:
+            # Deduplicate by subject.attribute, keeping latest source_chapter
+            latest: dict[str, tuple[dict, int]] = {}
+            for fact in all_facts:
+                subject = fact.get("subject") or ""
+                attribute = fact.get("attribute") or ""
+                key = (
+                    f"{subject}.{attribute}"
+                    if subject and attribute
+                    else (subject or attribute or fact.get("fact_key", ""))
+                )
+                src_ch = int(fact.get("source_chapter") or fact.get("last_changed_chapter") or 0)
+                if key not in latest or src_ch > latest[key][1]:
+                    latest[key] = (fact, src_ch)
+            fact_lines = []
+            for fact, _src in latest.values():
+                subject = fact.get("subject") or ""
+                attribute = fact.get("attribute") or ""
+                value = str(fact.get("value_json") or "")
+                if len(value) > 200:
+                    value = value[:200] + "..."
+                fact_type = fact.get("fact_type") or ""
+                line = f"- [{fact_type}] {subject}.{attribute} = {value}" if subject or attribute else f"- [{fact_type}] {value}"
+                fact_lines.append(line)
+            if fact_lines:
+                parts.append(f"【全量事实账本 / Full Story Facts Ledger】\n" + "\n".join(fact_lines))
+                parts.append(
+                    "【校验职责扩展】\n"
+                    "除检查章节范围内的一致性外，你还必须主动扫描上述全量事实账本，"
+                    "检测正文中是否存在与已确认事实矛盾的内容（如角色失去左臂后仍写'双手握剑'、"
+                    "道具已消耗后仍写'剩余'等）。发现矛盾须在 issues 中标注 issue_type='fact_contradiction'。"
+                )
+
         return "\n\n".join(parts)
 
     def send_warnings(self, project_id: str, report_id: int, report: ContinuityReport) -> None:

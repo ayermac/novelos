@@ -12,6 +12,32 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.14 - Longform Recall Optimization
+
+Date: 2026-06-30
+
+Scope: `docs/codex/planning/novel-factory-v6.10.14-longform-recall-optimization-plan.md`
+
+Key changes:
+
+### v6.10.14 (initial)
+- **S1 Mandatory Bucket Protection**: `format_context_bundle_for_prompt` now force-includes `hard_constraints`, `numeric_state_constraints`, and `timeline_constraints` even when total prompt exceeds `max_chars`. Eliminates the B2/B3 bug where `story_facts` inflation caused numeric state to be dropped.
+- **S3 Per-Bucket Truncation (break → continue)**: Non-mandatory buckets that overflow are truncated in place and the loop *continues* instead of `break`-ing, so subsequent mandatory buckets still get processed. Line-by-line truncation avoids UTF-8 multi-byte character corruption.
+- **S2 Story Facts Relevance Filtering**: `_story_facts_context` now accepts an optional `brief` parameter and filters facts by entity relevance. `numeric_state` facts are always kept; entity-matched facts are kept; aged facts (≥20 chapters) are kept. Without a brief, falls back to full-load (no regression). Entity extraction uses CJK token splitting on common connectors plus 2-3 char substring expansion.
+- **F8 Numeric State Truncation Exemption**: `numeric_state` facts are exempt from the 200-char value truncation, ensuring mandatory-protected content isn't corrupted by mid-string cuts.
+- **S4 Aging Detector** (`context/aging.py`): Detects numeric_state facts not updated for ≥15 chapters and overdue/stale plot holes (≥20 chapters). Builds `aging_warning` ContextItems injected into `advisory_context` for Author and Editor.
+- **S5 Pull Recall Channel** (`context/recall_channel.py`): Proactively retrieves the full fact chain for entities mentioned in the chapter brief. Hard upper limit of 10 items. Injected into `advisory_context` for Author and Editor.
+- **S6 Continuity Full-Scope Validation**: `continuity_checker._build_context` now injects ALL active story_facts as a full validation ledger, enabling detection of contradictions with facts outside the `[from, to]` check range (e.g., "主角失去左臂后仍写双手握剑").
+- **S7 Adaptive Budget** (`compute_adaptive_budget`): Raises context budget from 14000 to 20000 chars for projects with >100 chapters.
+- **F13 Deprecated Legacy Builder**: `context/builder.py` now emits `DeprecationWarning` on import, directing users to `agent_runtime.context_builder`.
+- **F14 Relaxed Numeric State Limit**: `extract_numeric_state_constraints` limit raised from `[:10]` to `[:20]` to accommodate S2's relevant filtering.
+- **F15 Docstring Alignment**: `format_context_bundle_for_prompt` docstring updated to match actual `ordered_buckets` list.
+
+Verification:
+- 56 new unit tests (all passing): `test_v61014_mandatory_bucket_protection.py`, `test_v61014_story_facts_relevance_filter.py`, `test_v61014_numeric_state_truncation_exempt.py`, `test_v61014_aging_detector.py`, `test_v61014_recall_channel.py`, `test_v61014_continuity_full_scope.py`
+- Full pytest suite: 0 regressions introduced (all pre-existing failures remain unchanged)
+- Version bumped to 6.10.14 across `version.py`, `frontend/package.json`, `desktop/package.json`, and lockfiles
+
 ## v6.10.13 - Architecture Hardening
 
 Date: 2026-06-23

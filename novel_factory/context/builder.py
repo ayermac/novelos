@@ -1,5 +1,12 @@
 """ContextBuilder — assembles context fragments for each agent.
 
+.. deprecated:: v6.10.14
+   This module is legacy code retained for backward compatibility.
+   The production path uses :mod:`novel_factory.agent_runtime.context_builder`
+   with a budget of 14000 chars (``_MAX_CONTEXT_CHARS``).  Do not add new
+   features here — all recall-optimization work targets the agent_runtime
+   builder.  This file will be removed in a future cleanup pass.
+
 v1.2 implements:
 - Per-agent context with different fragments and priorities.
 - Token budget with mandatory (P0-P2) and trimmable (P3-P9) segments.
@@ -11,6 +18,7 @@ from __future__ import annotations
 
 import json
 import logging
+import warnings
 from typing import Any
 
 from ..db.repository import Repository
@@ -18,6 +26,14 @@ from ..validators.death_penalty import format_death_penalty_for_prompt
 from ..validators.chapter_checker import derive_word_target
 
 logger = logging.getLogger(__name__)
+
+# v6.10.14 F13: Emit DeprecationWarning on import of this legacy module.
+warnings.warn(
+    "novel_factory.context.builder is deprecated; use "
+    "novel_factory.agent_runtime.context_builder instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
 
 
 # ── Token estimation ───────────────────────────────────────────
