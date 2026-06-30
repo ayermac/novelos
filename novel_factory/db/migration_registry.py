@@ -476,6 +476,33 @@ MIGRATION_REGISTRY: list[MigrationEntry] = [
             _T("editor_lens_reports"),
         ),
     ),
+
+    # ── 037 ──
+    MigrationEntry(
+        migration_id="037_v6_10_9_core_loop_governance",
+        sql_filename="037_v6_10_9_core_loop_governance.sql",
+        description="v6.10.9 core loop governance — scene_beats and instructions columns for reward beats, dialogue slots, fact locks",
+        requirements=(
+            _C("scene_beats", "is_reward_beat"),
+            _C("scene_beats", "dialogue_slots"),
+            _C("scene_beats", "character_states"),
+            _C("instructions", "core_loop"),
+            _C("instructions", "dialogue_target_ratio"),
+            _C("instructions", "fact_locks"),
+        ),
+    ),
+
+    # ── 038 ──
+    MigrationEntry(
+        migration_id="038_v6_10_13_architecture_hardening",
+        sql_filename="038_v6_10_13_architecture_hardening.sql",
+        description="v6.10.13 architecture hardening — budget_records, diagnosis_findings, style_stats tables",
+        requirements=(
+            _T("budget_records"),
+            _T("diagnosis_findings"),
+            _T("style_stats"),
+        ),
+    ),
 ]
 
 

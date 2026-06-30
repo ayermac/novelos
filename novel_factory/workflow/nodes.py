@@ -1411,8 +1411,10 @@ def _v6_agent_kwargs(
     skill_registry: Any | None = None,
     knowledge_manager: Any | None = None,
     agent_config: dict[str, Any] | None = None,
+    checkpoint_dir: str | None = None,
 ) -> dict[str, Any]:
-    """v6.0: Build shared kwargs for core agent instantiation in legacy mode."""
+    """v6.0: Build shared kwargs for core agent instantiation in legacy mode.
+    v6.10.13: Added checkpoint_dir for step-level crash recovery."""
     kwargs: dict[str, Any] = {
         "skill_registry": _ensure_skill_registry(skill_registry),
         "tool_registry": _ensure_tool_registry(),
@@ -1423,6 +1425,8 @@ def _v6_agent_kwargs(
         kwargs["knowledge_manager"] = knowledge_manager
     if agent_config is not None:
         kwargs["agent_config"] = agent_config
+    if checkpoint_dir is not None:
+        kwargs["checkpoint_dir"] = checkpoint_dir
     return kwargs
 
 
@@ -1513,7 +1517,9 @@ def author_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
         return blocking_guard
     _update_run_node(state, repo, "author")
     _log_node_event(state, repo, "author", "started", status="running")
-    agent = AuthorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
+    # v6.10.13: Pass checkpoint_dir if available in state for step-level recovery
+    checkpoint_dir = state.get("checkpoint_dir")
+    agent = AuthorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry, checkpoint_dir=checkpoint_dir))
     result = _handle_retryable_quality_gate(state, repo, agent.run(state))
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)
@@ -2207,7 +2213,9 @@ def editor_node(state: FactoryState, repo: Repository, llm: LLMProvider, skill_r
         return blocking_guard
     _update_run_node(state, repo, "editor")
     _log_node_event(state, repo, "editor", "started", status="running")
-    agent = EditorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry))
+    # v6.10.13: Pass checkpoint_dir if available in state for step-level recovery
+    checkpoint_dir = state.get("checkpoint_dir")
+    agent = EditorAgent(repo, llm, **_v6_agent_kwargs(repo, skill_registry, checkpoint_dir=checkpoint_dir))
     result = agent.run(state)
     # v5.2: Accumulate token usage
     token_updates = _accumulate_tokens(state, llm)

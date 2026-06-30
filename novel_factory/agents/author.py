@@ -129,8 +129,8 @@ class AuthorAgent(BaseAgent):
     agent_id = "author"
     context_char_limit = AUTHOR_CONTEXT_CHAR_LIMIT
 
-    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, **kwargs):
-        super().__init__(repo, llm, skill_registry=skill_registry, **kwargs)
+    def __init__(self, repo, llm, skill_registry: SkillRegistry | None = None, checkpoint_dir: str | None = None, **kwargs):
+        super().__init__(repo, llm, skill_registry=skill_registry, checkpoint_dir=checkpoint_dir, **kwargs)
         self.skill_registry = skill_registry
 
     @staticmethod

@@ -43,6 +43,7 @@ class BaseAgent:
         knowledge_manager: Any | None = None,
         agent_config: dict[str, Any] | None = None,
         on_text_chunk: Any | None = None,
+        checkpoint_dir: str | None = None,
     ) -> None:
         self.repo = repo
         self.llm = llm
@@ -54,6 +55,23 @@ class BaseAgent:
         self.on_text_chunk = on_text_chunk  # v6.10.0: Streaming callback
         self._role_profile: Any | None = None
         self._load_role_profile()
+        # v6.10.13: Optional step checkpoint for crash recovery
+        self._checkpoint: Any | None = None
+        self._checkpoint_enabled = bool(
+            checkpoint_dir and self.agent_config.get("use_step_checkpoint")
+        )
+        if self._checkpoint_enabled:
+            try:
+                from .step_checkpoint import StepCheckpoint
+                self._checkpoint = StepCheckpoint(checkpoint_dir, self.agent_id)
+            except Exception:
+                logger.warning(
+                    "StepCheckpoint init failed for %s; disabling",
+                    self.agent_id,
+                    exc_info=True,
+                )
+                self._checkpoint_enabled = False
+                self._checkpoint = None
 
     def _load_role_profile(self) -> None:
         """v6.0: Load declarative role profile for this agent."""
@@ -64,6 +82,46 @@ class BaseAgent:
                 logger.debug("Loaded role profile for %s", self.agent_id)
         except Exception:
             logger.debug("Role profile load failed for %s", self.agent_id, exc_info=True)
+
+    # ── v6.10.13: Checkpoint helpers ───────────────────────────
+
+    def _checkpoint_save(
+        self, project_id: str, chapter: int, step: str, data: dict[str, Any]
+    ) -> None:
+        """Save a step checkpoint if enabled."""
+        if self._checkpoint and self._checkpoint_enabled:
+            try:
+                self._checkpoint.save(project_id, chapter, step, data)
+            except Exception:
+                logger.warning("Checkpoint save failed for %s/%s", step, self.agent_id, exc_info=True)
+
+    def _checkpoint_load(
+        self, project_id: str, chapter: int, step: str
+    ) -> dict[str, Any] | None:
+        """Load a step checkpoint if enabled."""
+        if self._checkpoint and self._checkpoint_enabled:
+            try:
+                return self._checkpoint.load(project_id, chapter, step)
+            except Exception:
+                logger.warning("Checkpoint load failed for %s/%s", step, self.agent_id, exc_info=True)
+        return None
+
+    def _checkpoint_has(self, project_id: str, chapter: int, step: str) -> bool:
+        """Check if a step checkpoint exists."""
+        if self._checkpoint and self._checkpoint_enabled:
+            try:
+                return self._checkpoint.has_step(project_id, chapter, step)
+            except Exception:
+                return False
+        return False
+
+    def _checkpoint_clear(self, project_id: str, chapter: int) -> None:
+        """Clear all checkpoints for a chapter after successful completion."""
+        if self._checkpoint and self._checkpoint_enabled:
+            try:
+                self._checkpoint.clear_chapter(project_id, chapter)
+            except Exception:
+                logger.warning("Checkpoint clear failed for %s", self.agent_id, exc_info=True)
 
     # ── v6.10.0: Agentic mode properties ─────────────────────
 
@@ -573,6 +631,21 @@ class BaseAgent:
         """
         started_at = time.perf_counter()
         input_summary = f"project={state.get('project_id')} chapter={state.get('chapter_number')} status={state.get('chapter_status')}"
+
+        # v6.10.13: Optional checkpoint recovery — if checkpoint has completed
+        # draft for this chapter, return cached result directly to avoid re-running
+        # expensive LLM calls after a crash.
+        if self._checkpoint_enabled and self._checkpoint:
+            project_id = state.get("project_id", "")
+            chapter_number = state.get("chapter_number", 0)
+            cached = self._checkpoint_load(project_id, chapter_number, "draft")
+            if cached:
+                logger.info(
+                    "Checkpoint recovery: %s ch%d — restoring from draft checkpoint",
+                    project_id, chapter_number,
+                )
+                return {**cached, "checkpoint_recovered": True}
+
         try:
             self.check_precondition(state)
             result = self._execute(state)
