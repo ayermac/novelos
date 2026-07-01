@@ -12,6 +12,25 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.15 - Megafiction Recall Scaling
+
+Date: 2026-07-01
+
+Scope: `docs/codex/planning/novel-factory-v6.10.15-megafiction-recall-scaling-plan.md`
+
+Key changes:
+
+### v6.10.15 (initial)
+- **S9 DB-Layer Tiered Loading**: New `list_story_facts_tiered` method in `StoryFactRepositoryMixin` with three-tier SQL query: Tier 1 (recent N chapters, full detail), Tier 2 (numeric_state always loaded), Tier 3 (aged facts with age >= threshold). Caps DB reads for 1000+ chapter projects from ~5000 rows to ~300 rows. Falls back to full load on SQL error.
+- **S10 Index Spine** (`context/index_spine.py`): Compact fact directory (~15 chars/row) injected into `advisory_context` for projects >50 chapters. Each row shows only subject.attribute + age tag, grouped by fact_type. Deduplicated, capped at 200 rows / 4000 chars. Excludes numeric_state (shown in mandatory bucket). Lets agents know "what lines exist" without loading full value_json payloads.
+- **S11 Planner/Agent Tiered Integration**: `_story_facts_context` now auto-detects megafiction (>50 chapters) and switches to `list_story_facts_tiered` instead of full `list_story_facts`. For small projects, behavior is unchanged (full load). `list_story_fact_index` provides lightweight index for the spine.
+- **Index spine injection**: `_inject_recall_extras` now injects index spine into `advisory_context` for projects >50 chapters, alongside aging warnings (S4) and pull recall (S5).
+
+Verification:
+- 20 new unit tests (all passing): `test_v61015_tiered_loading.py` (12 tests), `test_v61015_index_spine.py` (8 tests)
+- Combined with v6.10.14: 76 tests passing, 0 regressions
+- Version bumped to 6.10.15
+
 ## v6.10.14 - Longform Recall Optimization
 
 Date: 2026-06-30
