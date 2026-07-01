@@ -162,6 +162,28 @@ def route_by_chapter_status(state: FactoryState) -> str:
     if state.get("requires_human") or state.get("error"):
         return "human_review"
 
+    # v6.10.13: FlowRouter deterministic override
+    flow_action = state.get("_flow_action")
+    if flow_action:
+        flow_routing = {
+            "rewrite": "revision_router",
+            "polish": "polisher",
+            "process_review": "editor",
+            "apply_memory": "memory_curator",
+            "arc_review": "editor",
+            "arc_summary": "editor",
+            "volume_summary": "editor",
+            "expand_arc": "planner",
+            "next_volume": "planner",
+            "write_next_chapter": "author",
+            "continue_chapter": "author",
+            "plan": "planner",
+            "complete": "archive",
+        }
+        routed = flow_routing.get(flow_action)
+        if routed:
+            return routed
+
     status = state.get("chapter_status", "")
 
     routing = {

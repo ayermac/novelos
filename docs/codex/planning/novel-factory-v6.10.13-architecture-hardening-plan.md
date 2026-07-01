@@ -555,9 +555,9 @@ PUT  /api/notify/config                    # 设置通知配置
 
 | 任务 | 优先级 | 负责人 | 状态 |
 |------|--------|--------|------|
-| FlowRouter 实现 | P0 | - | TODO |
-| SignalStore 实现 | P0 | - | TODO |
-| StepCheckpoint 实现 | P0 | - | TODO |
+| FlowRouter 实现 | P0 | - | ✅ DONE |
+| SignalStore 实现 | P0 | - | ✅ DONE |
+| StepCheckpoint 实现 | P0 | - | ✅ DONE |
 | 单元测试 | P0 | - | TODO |
 
 ### 4.2 第二阶段：防御机制（v6.10.13-beta）
@@ -566,8 +566,8 @@ PUT  /api/notify/config                    # 设置通知配置
 
 | 任务 | 优先级 | 负责人 | 状态 |
 |------|--------|--------|------|
-| StopGuard 实现 | P1 | - | TODO |
-| BudgetSentinel 实现 | P1 | - | TODO |
+| StopGuard 实现 | P1 | - | ✅ DONE |
+| BudgetSentinel 实现 | P1 | - | ✅ DONE |
 | 集成测试 | P1 | - | TODO |
 
 ### 4.3 第三阶段：质量保障（v6.10.13-rc）
@@ -576,8 +576,8 @@ PUT  /api/notify/config                    # 设置通知配置
 
 | 任务 | 优先级 | 负责人 | 状态 |
 |------|--------|--------|------|
-| StyleStats 实现 | P2 | - | TODO |
-| DiagnosisSystem 实现 | P2 | - | TODO |
+| StyleStats 实现 | P2 | - | ✅ DONE |
+| DiagnosisSystem 实现 | P2 | - | ✅ DONE |
 | API 集成 | P2 | - | TODO |
 
 ### 4.4 第四阶段：用户体验（v6.10.13）
@@ -586,8 +586,8 @@ PUT  /api/notify/config                    # 设置通知配置
 
 | 任务 | 优先级 | 负责人 | 状态 |
 |------|--------|--------|------|
-| SteerManager 实现 | P3 | - | TODO |
-| Notifier 实现 | P3 | - | TODO |
+| SteerManager 实现 | P3 | - | ✅ DONE |
+| Notifier 实现 | P3 | - | ✅ DONE |
 | 前端集成 | P3 | - | TODO |
 
 ---

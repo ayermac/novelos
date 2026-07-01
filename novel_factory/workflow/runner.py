@@ -28,6 +28,7 @@ from .checkpoint import (
     get_sqlite_checkpointer,
 )
 from ..security.redaction import redact_sensitive_text
+from ..guards.budget_sentinel import BudgetSentinel
 
 logger = logging.getLogger(__name__)
 
@@ -496,6 +497,18 @@ def _runtime_budget_state(settings: Settings, repo: Repository, project_id: str)
     }
 
 
+def _get_budget_sentinel(settings: Settings) -> BudgetSentinel:
+    """Build BudgetSentinel for cost tracking (v6.10.13).
+
+    limit_usd=0 means no hard limit; sentinel still tracks and fires events.
+    """
+    budget_cfg = getattr(settings, "runtime_budget", None)
+    limit_usd = 0.0
+    if budget_cfg and hasattr(budget_cfg, "limit_usd"):
+        limit_usd = float(getattr(budget_cfg, "limit_usd", 0.0))
+    return BudgetSentinel(limit_usd=limit_usd)
+
+
 def run_with_graph(
     project_id: str,
     chapter_number: int,
@@ -616,6 +629,31 @@ def run_with_graph(
         **_runtime_budget_state(settings, repo, project_id),
     }
 
+    # v6.10.13: Inject checkpoint_dir for step-level recovery (inactive if not configured)
+    state["checkpoint_dir"] = getattr(settings, "checkpoint_dir", None)
+
+    # v6.10.13: Budget sentinel for cost tracking (inactive if limit_usd=0)
+    budget_sentinel = _get_budget_sentinel(settings)
+
+    # v6.10.13: Budget check before starting expensive graph execution
+    can_start, start_reason = budget_sentinel.can_start()
+    if not can_start:
+        logger.warning("Budget sentinel blocked run start: %s", start_reason)
+        if workflow_run_id:
+            _mark_run_failed(repo, workflow_run_id, f"Budget blocked: {start_reason}")
+        return {
+            "run_id": workflow_run_id or "",
+            "chapter_status": current_status,
+            "steps": [],
+            "error": f"Budget blocked: {start_reason}",
+            "requires_human": True,
+            "budget_exceeded": True,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "duration_ms": 0,
+        }
+
     # v6.1.1+: Recover revision_target/review metadata from the latest review
     # for fresh revision runs. Keep this shared with streaming execution.
     state = hydrate_revision_state(state, repo)
@@ -687,6 +725,22 @@ def run_with_graph(
             "requires_human": True,
             "workflow_interrupted": True,
             "awaiting_publish": False,
+            "prompt_tokens": result_state.get("prompt_tokens", 0),
+            "completion_tokens": result_state.get("completion_tokens", 0),
+            "total_tokens": result_state.get("total_tokens", 0),
+            "duration_ms": result_state.get("duration_ms", 0),
+        }
+
+    # v6.10.13: Budget check after run — return warning if budget exceeded
+    if budget_sentinel.should_stop():
+        logger.warning("Budget sentinel triggered stop after run")
+        return {
+            "run_id": result_state.get("workflow_run_id", ""),
+            "chapter_status": result_state.get("chapter_status"),
+            "steps": result_state.get("steps", []),
+            "error": "Budget exhausted after chapter run",
+            "requires_human": True,
+            "budget_exceeded": True,
             "prompt_tokens": result_state.get("prompt_tokens", 0),
             "completion_tokens": result_state.get("completion_tokens", 0),
             "total_tokens": result_state.get("total_tokens", 0),
@@ -831,6 +885,24 @@ def run_with_graph_stream(
         **_runtime_budget_state(settings, repo, project_id),
     }
 
+    # v6.10.13: Inject checkpoint_dir for step-level recovery (inactive if not configured)
+    state["checkpoint_dir"] = getattr(settings, "checkpoint_dir", None)
+
+    # v6.10.13: Inject budget sentinel for cost tracking (inactive if limit_usd=0)
+    budget_sentinel = _get_budget_sentinel(settings)
+
+    # v6.10.13: Budget check before starting expensive graph execution
+    can_start, start_reason = budget_sentinel.can_start()
+    if not can_start:
+        logger.warning("Budget sentinel blocked stream start: %s", start_reason)
+        yield {
+            "type": "run_error",
+            "error": f"Budget blocked: {start_reason}",
+            "chapter_status": current_status,
+            "budget_exceeded": True,
+        }
+        return
+
     # v6.1.1+: Recover revision_target/review metadata from the latest review
     # for fresh revision runs. Keep this shared with non-streaming execution.
     state = hydrate_revision_state(state, repo)
@@ -951,6 +1023,23 @@ def run_with_graph_stream(
         # v6.10.0: Mark event queue as done
         if event_queue:
             event_queue.mark_done("completed")
+
+        # v6.10.13: Budget check after run — yield warning if budget exceeded
+        if budget_sentinel.should_stop():
+            logger.warning("Budget sentinel triggered stop after stream run")
+            yield {
+                "type": "run_error",
+                "run_id": state.get("workflow_run_id", ""),
+                "error": "Budget exhausted after chapter run",
+                "chapter_status": state.get("chapter_status"),
+                "requires_human": True,
+                "budget_exceeded": True,
+                "prompt_tokens": state.get("prompt_tokens", 0),
+                "completion_tokens": state.get("completion_tokens", 0),
+                "total_tokens": state.get("total_tokens", 0),
+                "duration_ms": state.get("duration_ms", 0),
+            }
+            return
 
         # Emit run_complete only after a coherent terminal graph outcome.
         yield {
