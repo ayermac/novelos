@@ -39,6 +39,83 @@ class StoryFactRepositoryMixin:
         finally:
             conn.close()
 
+    def list_story_facts_tiered(
+        self,
+        project_id: str,
+        current_chapter: int,
+        *,
+        recent_window: int = 50,
+        aging_threshold: int = 20,
+        status: str = "active",
+    ) -> list[dict]:
+        """v6.10.15 S9: Tiered loading of story facts for megafiction (1000+ chapters).
+
+        Returns a merged, deduplicated set of facts using three tiers:
+        - Tier 1: All facts from the last ``recent_window`` chapters (full detail)
+        - Tier 2: All ``numeric_state`` facts regardless of chapter (full detail)
+        - Tier 3: Facts older than the window whose age >= ``aging_threshold``
+          (full detail — long-dormant foreshadowing must be surfaced)
+
+        Facts not matching any tier are excluded.  This caps DB reads and
+        memory usage for projects with thousands of chapters while preserving
+        recall of recent, numeric, and aged facts.
+        """
+        conn = self._conn()
+        try:
+            recent_cutoff = max(0, current_chapter - recent_window)
+            rows = conn.execute(
+                """
+                SELECT * FROM story_facts
+                WHERE project_id=? AND status=?
+                  AND (
+                    -- Tier 1: recent chapters
+                    (source_chapter IS NOT NULL AND source_chapter >= ?)
+                    -- Tier 2: numeric_state always loaded
+                    OR fact_type = 'numeric_state'
+                    -- Tier 3: aged facts (old enough to be "forgotten")
+                    OR (
+                      source_chapter IS NOT NULL
+                      AND source_chapter < ?
+                      AND (? - COALESCE(source_chapter, 0)) >= ?
+                    )
+                  )
+                ORDER BY source_chapter DESC
+                """,
+                (project_id, status, recent_cutoff, recent_cutoff, current_chapter, aging_threshold),
+            ).fetchall()
+            return [row_to_dict(r) for r in rows]
+        except Exception:
+            # Fallback to full load on any SQL error (graceful degradation)
+            return self.list_story_facts(project_id, status=status)
+        finally:
+            conn.close()
+
+    def list_story_fact_index(
+        self,
+        project_id: str,
+        status: str = "active",
+    ) -> list[dict]:
+        """v6.10.15 S10: Return a lightweight index of all active story facts.
+
+        Each row contains only: fact_key, fact_type, subject, attribute,
+        source_chapter.  This is used to build the index spine so agents
+        know "what lines exist" without loading full value_json payloads.
+        """
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                """
+                SELECT fact_key, fact_type, subject, attribute, source_chapter
+                FROM story_facts
+                WHERE project_id=? AND status=?
+                ORDER BY source_chapter DESC
+                """,
+                (project_id, status),
+            ).fetchall()
+            return [row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+
     def get_story_fact(self, fact_id: str) -> dict | None:
         """Get a story fact by ID."""
         conn = self._conn()

@@ -20,6 +20,7 @@ from ..quality.numeric_state import (
 )
 from ..context.aging import build_aging_warnings
 from ..context.recall_channel import build_pull_context
+from ..context.index_spine import build_index_spine
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,10 @@ _MANDATORY_BUCKETS: frozenset[str] = frozenset({
 # v6.10.14 S2/S4: Aging threshold — facts not updated for this many chapters
 # are considered "aged" and force-included in relevance filtering.
 _AGING_THRESHOLD_CHAPTERS = 20
+
+# v6.10.15 S9: Tiered loading window for megafiction (1000+ chapters).
+# Facts within this many chapters of the current chapter are always loaded.
+_TIERED_RECENT_WINDOW = 50
 
 _TIMELINE_KEYWORDS = re.compile(
     r"(?:三天后|三日后|72小时|72h|四天后|五天后|六天后|七天后|"
@@ -798,10 +803,30 @@ class AgentContextBuilder:
         brief: dict[str, Any] | None = None,
     ) -> list[ContextItem]:
         items: list[ContextItem] = []
+        # v6.10.15 S9: Use tiered loading for megafiction to avoid reading
+        # thousands of facts into memory. Falls back to full load for small
+        # projects or if the tiered method is unavailable.
         try:
-            facts = self.repo.list_story_facts(project_id, status="active")
+            chapter_count = self._get_project_chapter_count(project_id)
         except Exception:
-            facts = []
+            chapter_count = chapter_number
+        use_tiered = chapter_count > _TIERED_RECENT_WINDOW
+
+        if use_tiered and hasattr(self.repo, "list_story_facts_tiered"):
+            try:
+                facts = self.repo.list_story_facts_tiered(
+                    project_id,
+                    chapter_number,
+                    recent_window=_TIERED_RECENT_WINDOW,
+                    aging_threshold=_AGING_THRESHOLD_CHAPTERS,
+                )
+            except Exception:
+                facts = self.repo.list_story_facts(project_id, status="active")
+        else:
+            try:
+                facts = self.repo.list_story_facts(project_id, status="active")
+            except Exception:
+                facts = []
         
         # v6.10.11: Deduplicate by subject.attribute, keeping only the latest source_chapter
         # This prevents contradictory facts from being passed to the Author
@@ -1189,11 +1214,12 @@ class AgentContextBuilder:
         bundle: AgentContextBundle,
         brief: dict[str, Any] | None,
     ) -> None:
-        """v6.10.14 S4+S5: Inject aging warnings and pull-recall into advisory_context.
+        """v6.10.14 S4+S5 + v6.10.15 S10: Inject aging/pull/index into advisory_context.
 
         Mutates ``bundle.advisory_context`` in place by appending:
         - Aging warnings for stale numeric_state facts and overdue plots (S4)
         - Proactively pulled entity fact chains (S5)
+        - Index spine for megafiction awareness (S10)
         """
         # S4: Aging warnings
         try:
@@ -1213,6 +1239,33 @@ class AgentContextBuilder:
         pull_items = build_pull_context(all_facts, brief, chapter_number)
         if pull_items:
             bundle.advisory_context.extend(pull_items)
+
+        # v6.10.15 S10: Index spine — compact directory for megafiction awareness.
+        # Only inject when the project is large enough to benefit (>50 chapters).
+        # For small projects the full facts already fit, so the index is redundant.
+        try:
+            chapter_count = self._get_project_chapter_count(project_id)
+        except Exception:
+            chapter_count = chapter_number
+        if chapter_count > _TIERED_RECENT_WINDOW:
+            index_items = build_index_spine(all_facts, chapter_number)
+            if index_items:
+                bundle.advisory_context.extend(index_items)
+
+    def _get_project_chapter_count(self, project_id: str) -> int:
+        """v6.10.15: Get the total number of chapters in a project."""
+        try:
+            conn = self.repo._conn()
+            try:
+                row = conn.execute(
+                    "SELECT COUNT(*) as cnt FROM chapters WHERE project_id=?",
+                    (project_id,),
+                ).fetchone()
+                return int(row["cnt"]) if row else 0
+            finally:
+                conn.close()
+        except Exception:
+            return 0
 
     def _world_rules_context(self, project_id: str) -> list[ContextItem]:
         items: list[ContextItem] = []
