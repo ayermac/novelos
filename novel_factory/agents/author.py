@@ -200,18 +200,21 @@ class AuthorAgent(BaseAgent):
             parts.append(formatted)
 
         # v6.10.10: 强调 story_facts 遵守
+        # v6.10.16 Layer 3: 从"硬约束"改为"优先遵守 + 可声明偏离"
         if bundle.story_facts and not is_internal_repair:
-            # Sort by priority (lower number = higher priority), then take top 8
             sorted_facts = sorted(bundle.story_facts, key=lambda f: f.priority)[:8]
             facts_summary = []
             for fact in sorted_facts:
                 facts_summary.append(f"- {fact.text}")
             facts_str = "\n".join(facts_summary)
             parts.append(
-                "【事实账本硬约束】\n"
-                "以下已确认事实必须严格遵守，禁止与之矛盾：\n"
+                "【事实账本约束】\n"
+                "以下已确认事实应优先遵守：\n"
                 f"{facts_str}\n"
-                "如果正文内容与上述事实矛盾，将被判定为严重违规。"
+                "v6.10.16: 如果因剧情需要偏离某条事实（如角色编号演化、多重身份、"
+                "视角差异、闪回等），在输出 JSON 的 declared_deviations 中声明：\n"
+                '  [{"fact_key": "偏离的事实key", "deviation_reason": "原因", "new_value": "新值"}]\n'
+                "声明的偏离不会被判定为违规，系统将自动记录新事实。"
             )
 
         # v6.10.12: 生产稳定性约束

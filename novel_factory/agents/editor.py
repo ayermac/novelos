@@ -395,12 +395,90 @@ class EditorAgent(BaseAgent):
         if core_loop_status:
             parts.append(core_loop_status)
 
+        # v6.10.16 Layer 2: Inject confirmed story facts into Editor context.
+        # The main Editor LLM now performs fact compliance check in its full
+        # context, replacing the separate compliance LLM call.
+        facts_context = self._build_facts_context_for_review(
+            state["project_id"], state["chapter_number"]
+        )
+        if facts_context:
+            parts.append(facts_context)
+
         parts.append(
             "【输出要求】\n"
             "只返回紧凑 JSON。issues 和 suggestions 各最多 3 条；"
-            "state_card 只保留本章新增事实、角色状态和悬念，不要复述正文。"
+            "state_card 只保留本章新增事实、角色状态和悬念，不要复述正文。\n"
+            "v6.10.16: 如发现正文与【已确认事实】存在矛盾，请在 issues 中以"
+            "[事实一致性违规] 前缀标记，并在 state_card.fact_violations 中记录。"
+            "判断标准：笔误/疏忽 → severity=blocking；"
+            "有意叙事设计（多重身份/编号演化/视角差异/闪回等）→ severity=advisory，不报为违规。"
         )
         return "\n\n".join(parts)
+
+    def _build_facts_context_for_review(self, project_id: str, chapter_number: int) -> str:
+        """v6.10.16 Layer 2: Build confirmed facts context for Editor LLM.
+
+        Loads active story_facts, deduplicates by subject.attribute (keeping
+        latest source_chapter <= current), selects top 30 by relevance to
+        chapter content, and formats them for injection into the main review
+        prompt.  This replaces the separate compliance LLM call.
+        """
+        try:
+            confirmed_facts = self.repo.list_story_facts(project_id, status="active")
+        except Exception:
+            return ""
+
+        if not confirmed_facts:
+            return ""
+
+        # Deduplicate by subject.attribute, keeping latest source_chapter
+        latest_facts: dict[str, tuple[dict, int]] = {}
+        for fact in confirmed_facts:
+            subject = fact.get("subject") or ""
+            attribute = fact.get("attribute") or ""
+            key = f"{subject}.{attribute}" if subject and attribute else (
+                subject or attribute or fact.get("fact_key", "")
+            )
+            src_ch = int(fact.get("source_chapter") or fact.get("last_changed_chapter") or 0)
+            if src_ch > chapter_number:
+                continue
+            if key not in latest_facts or src_ch > latest_facts[key][1]:
+                latest_facts[key] = (fact, src_ch)
+        deduped = [f for f, _ in latest_facts.values()]
+        if not deduped:
+            return ""
+
+        # Get chapter content for relevance scoring
+        try:
+            chapter = self.repo.get_chapter(project_id, chapter_number)
+            chapter_lower = str((chapter or {}).get("content") or "").lower()
+        except Exception:
+            chapter_lower = ""
+
+        def _relevance(fact: dict) -> int:
+            subject = str(fact.get("subject") or fact.get("fact_key") or "").lower()
+            attribute = str(fact.get("attribute") or "").lower()
+            tokens = (subject + " " + attribute).split()
+            return sum(1 for t in tokens if len(t) > 1 and t in chapter_lower)
+
+        sorted_facts = sorted(deduped, key=_relevance, reverse=True)
+        facts_to_check = sorted_facts[:30]
+
+        facts_lines = []
+        for f in facts_to_check:
+            subject = f.get("subject") or f.get("fact_key") or "unknown"
+            attribute = f.get("attribute") or ""
+            value = f.get("value_json") or ""
+            if isinstance(value, str) and value.startswith(("{", "[")):
+                try:
+                    import json as _j
+                    value = _j.loads(value)
+                except Exception:
+                    pass
+            label = f"{subject}.{attribute}" if attribute else subject
+            facts_lines.append(f"- {label}: {value}")
+
+        return "【已确认事实】\n以下事实已在前文中确认，请核查正文是否与之矛盾：\n" + "\n".join(facts_lines)
 
     def _run_advisory_quality_check(self, content: str) -> tuple[list[str], list[str]]:
         """Run deterministic anti-AI skills and map findings to advisory issues/suggestions.
@@ -788,6 +866,7 @@ class EditorAgent(BaseAgent):
         quality_result: QualityDiagnosisResult,
         seam_result: SeamCheckResult,
         inputs: EditorInputs,
+        compliance_result: "StoryFactsComplianceResult | None" = None,
     ) -> EditorStrategyResult:
         """Step 5: Apply the single policy decision point.
 
@@ -890,6 +969,7 @@ class EditorAgent(BaseAgent):
             self._run_final_gate(inputs, output)
 
         # Apply the unified strategy
+        facts_blocks = compliance_result.blocking_violation_count if compliance_result else 0
         policy_input = build_policy_input(
             score=output.score,
             pass_=output.pass_,
@@ -908,6 +988,7 @@ class EditorAgent(BaseAgent):
             warning_skill_count=warning_skill_count,
             skill_scores=skill_scores,
             editor_weights=editor_weights,
+            facts_compliance_blocking_count=facts_blocks,
         )
         strategy_decision = classify_editor_result(policy_input)
 
@@ -934,6 +1015,7 @@ class EditorAgent(BaseAgent):
                 warning_skill_count=warning_skill_count,
                 skill_scores=skill_scores,
                 editor_weights=editor_weights,
+                facts_compliance_blocking_count=facts_blocks,
             )
 
         # v6.10.0: Only override a clear LLM rejection when the score is
@@ -969,6 +1051,9 @@ class EditorAgent(BaseAgent):
                 strategy_note = f"[v6.6策略] {strategy_decision.reason}；LLM判定通过，保留为建议。"
                 if strategy_note not in output.suggestions:
                     output.suggestions.append(strategy_note)
+                # v6.10.16-hotfix: Clear revision_target when respecting LLM pass,
+                # otherwise event payload reports revision_needed=true despite pass=true.
+                output.revision_target = None
             else:
                 output.pass_ = False
                 if not output.revision_target:
@@ -1973,6 +2058,92 @@ class EditorAgent(BaseAgent):
         result.blocking_violation_count = len(blocking)
         return result
 
+    def _extract_facts_compliance_from_output(
+        self, inputs: "EditorInputs", output: EditorOutput
+    ) -> StoryFactsComplianceResult:
+        """v6.10.16 Layer 2: Extract facts compliance from Editor LLM output.
+
+        Instead of a separate LLM call, the main Editor LLM now receives
+        confirmed facts in its prompt and reports violations in
+        state_card.fact_violations.  This method extracts them.
+
+        Falls back to the separate LLM call (_run_story_facts_compliance)
+        when the LLM didn't return fact_violations (e.g. stub mode, or
+        old prompt without facts injection).
+        """
+        result = StoryFactsComplianceResult()
+
+        # Stub mode: no compliance check
+        if inputs.llm_mode == "stub":
+            return result
+
+        # Extract fact_violations from LLM output state_card
+        state_card = output.state_card or {}
+        if isinstance(state_card, str):
+            try:
+                import json as _j
+                state_card = _j.loads(state_card)
+            except Exception:
+                state_card = {}
+
+        fact_violations = state_card.get("fact_violations") or []
+        if not fact_violations:
+            # LLM didn't return fact_violations — fall back to separate call
+            # This preserves backward compatibility with stub tests and
+            # any LLM that doesn't support the new prompt format.
+            return self._run_story_facts_compliance(inputs)
+
+        # Parse violations
+        violations = []
+        for v in fact_violations:
+            if not isinstance(v, dict):
+                continue
+            violations.append({
+                "fact_key": v.get("fact_key", ""),
+                "fact_statement": v.get("fact_statement", ""),
+                "violation_text": v.get("violation_text", ""),
+                "severity": v.get("severity", "blocking"),
+            })
+
+        # Apply the same status-fact downgrade filter
+        _STATUS_FACT_KEYWORDS = (
+            "恐惧", "害怕", "惊恐", "被围", "围住", "包围", "瘫软", "瘫倒",
+            "狼狈", "被控制", "被困", "被擒", "被缚", "被押", "动弹不得",
+            "无法动弹", "极度恐惧", "瑟瑟发抖", "浑身发抖", "双腿发软",
+            "遍体鳞伤", "精疲力竭", "奄奄一息", "伤痕累累",
+        )
+        _CONSISTENT_ACTION_KEYWORDS = (
+            "强撑", "虚张声势", "硬撑", "挣扎", "颤抖", "哆嗦", "勉强",
+            "嘴硬", "色厉内荏", "外强中干", "装作", "假装", "强装",
+            "鼓起勇气", "壮着胆子", "硬着头皮", "故作", "强自",
+        )
+        _HARD_CONTRADICTION_PHRASES = (
+            "从容指挥", "从容离开", "大步离开", "自由离开", "自由行动",
+            "调动安保", "指挥安保", "泰然自若", "若无其事", "面不改色",
+        )
+
+        def _is_status_fact_consistent(violation: dict) -> bool:
+            fact_stmt = str(violation.get("fact_statement") or "")
+            violation_text = str(violation.get("violation_text") or "")
+            has_status = any(kw in fact_stmt for kw in _STATUS_FACT_KEYWORDS)
+            if not has_status:
+                return False
+            if any(kw in violation_text for kw in _HARD_CONTRADICTION_PHRASES):
+                return False
+            return any(kw in violation_text for kw in _CONSISTENT_ACTION_KEYWORDS)
+
+        for v in violations:
+            if v.get("severity") == "blocking" and _is_status_fact_consistent(v):
+                v["severity"] = "warning"
+                v["_downgrade_reason"] = "status_fact_with_consistent_action"
+
+        blocking = [v for v in violations if v.get("severity") == "blocking"]
+        result.checked = True
+        result.violations = violations
+        result.violation_count = len(violations)
+        result.blocking_violation_count = len(blocking)
+        return result
+
     def _apply_revision_regression_guard(
         self,
         inputs: EditorInputs,
@@ -2137,8 +2308,10 @@ class EditorAgent(BaseAgent):
             "payload": {},
         })
 
-        # Step 4.5: Story facts compliance check (v6.6.14) — still runs in Editor (LLM-based)
-        compliance_result = self._run_story_facts_compliance(inputs)
+        # Step 4.5: Story facts compliance (v6.10.16 Layer 2: merged into main LLM)
+        # Facts were injected into the Editor LLM prompt via _build_facts_context_for_review.
+        # The LLM's fact_violations output is extracted here — no separate LLM call.
+        compliance_result = self._extract_facts_compliance_from_output(inputs, output)
 
         # v6.10.0: Emit progress event - quality diagnosis completed
         exec_events.append({
@@ -2151,6 +2324,9 @@ class EditorAgent(BaseAgent):
                 "advisory_only": quality_result.advisory_only,
             },
         })
+        # v6.10.16 Layer 1: Facts compliance is a signal, not a hard veto.
+        # Violations are injected as issues and routed to Author, but
+        # pass/fail is decided by the strategy layer (Step 5).
         if compliance_result.blocking_violation_count >= FACTS_COMPLIANCE_BLOCK_THRESHOLD:
             for v in compliance_result.violations:
                 if v.get("severity") == "blocking":
@@ -2160,8 +2336,8 @@ class EditorAgent(BaseAgent):
                     )
                     if issue_msg not in output.issues:
                         output.issues.append(issue_msg)
-            output.pass_ = False
-            output.revision_target = "author"
+            if not output.revision_target:
+                output.revision_target = "author"
 
         # v6.10.0: Emit progress event - story facts compliance completed
         exec_events.append({
@@ -2176,7 +2352,7 @@ class EditorAgent(BaseAgent):
 
         # Step 5: Apply review strategy (THE single decision point)
         strategy_result = self._apply_review_strategy(
-            output, quality_result, seam_result, inputs,
+            output, quality_result, seam_result, inputs, compliance_result,
         )
 
         self._apply_revision_regression_guard(
@@ -2184,16 +2360,17 @@ class EditorAgent(BaseAgent):
         )
 
         # v6.10.0: Emit progress event - review strategy applied
-        # Use output.pass_ (post-processed final decision) to stay consistent
-        # with editor_completed. The raw strategy_decision may differ when
-        # score < 75 prevents the advisory override from taking effect.
+        # All fields derived from output.pass_ (post-processed final decision)
+        # to stay consistent with editor_completed and actual routing.
+        # The raw strategy_decision may differ when the LLM pass override
+        # (v6.10.4) or stale facts guard (v6.10.16) overrides the strategy.
         exec_events.append({
             "event_type": "review_strategy_applied",
             "message": f"审核策略应用完成，通过: {output.pass_}",
             "status": "info",
             "payload": {
                 "pass": output.pass_,
-                "revision_needed": strategy_result.decision.revision_needed,
+                "revision_needed": not output.pass_,
                 "category": strategy_result.decision.category,
                 "revision_target": output.revision_target,
                 "score": output.score,

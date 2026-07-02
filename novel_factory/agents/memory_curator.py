@@ -597,6 +597,72 @@ class MemoryCuratorAgent(BaseAgent):
             "segment_count": total_chunks,
         }
 
+    def _patches_from_author_deviations(
+        self, project_id: str, chapter_number: int
+    ) -> list[dict[str, Any]]:
+        """v6.10.16 Layer 3: Extract declared deviations from Author artifact.
+
+        Reads the Author's declared_deviations from the saved artifact
+        and converts them to story_facts create patches.  This ensures
+        intentional fact deviations (e.g. dual serial-number systems)
+        are recorded as confirmed facts, preventing future false-positive
+        compliance violations.
+        """
+        try:
+            artifact = self.repo.get_artifact(project_id, chapter_number, "author", "draft")
+        except Exception:
+            return []
+
+        if not artifact:
+            return []
+
+        content_json = artifact.get("content_json")
+        if not content_json:
+            return []
+
+        if isinstance(content_json, str):
+            try:
+                content_json = json.loads(content_json)
+            except Exception:
+                return []
+
+        if not isinstance(content_json, dict):
+            return []
+
+        deviations = content_json.get("declared_deviations") or []
+        if not deviations:
+            return []
+
+        patches: list[dict[str, Any]] = []
+        for i, dev in enumerate(deviations, start=1):
+            if not isinstance(dev, dict):
+                continue
+            fact_key = dev.get("fact_key", f"deviation_{chapter_number}_{i}")
+            reason = dev.get("deviation_reason", "")
+            new_value = dev.get("new_value", "")
+
+            if not fact_key or not new_value:
+                continue
+
+            patches.append({
+                "target_table": "story_facts",
+                "operation": "create",
+                "target_name": f"chapter_{chapter_number}.deviation.{fact_key}",
+                "data": {
+                    "fact_key": f"chapter_{chapter_number}.deviation.{fact_key}",
+                    "fact_type": "declared_deviation",
+                    "subject": fact_key,
+                    "attribute": "声明偏离",
+                    "value": {"new_value": new_value, "reason": reason},
+                    "source_chapter": chapter_number,
+                    "source_agent": "author",
+                },
+                "confidence": 0.9,
+                "evidence_text": f"Author declared deviation: {fact_key} → {new_value} ({reason})"[:240],
+                "rationale": f"Author 在第 {chapter_number} 章声明的事实偏离，已自动记录为新事实。",
+            })
+        return patches
+
     def _should_repair_empty_extraction(self, project_id: str, chapter_number: int) -> bool:
         """Return True when an empty real-mode extraction is suspicious enough to retry."""
         try:
@@ -946,6 +1012,21 @@ class MemoryCuratorAgent(BaseAgent):
                 "message": f"确定性提取数值状态 {numeric_state_added} 条",
                 "status": "info",
                 "payload": {"numeric_state_count": numeric_state_added},
+            })
+
+        # v6.10.16 Layer 3: Extract declared deviations from Author artifact.
+        # These are intentional fact deviations declared by Author during
+        # writing (e.g. dual serial-number worldbuilding).  They are
+        # converted to story_facts patches so future compliance checks
+        # recognize the new values as confirmed facts.
+        deviation_patches = self._patches_from_author_deviations(project_id, chapter_number)
+        if deviation_patches:
+            patches.extend(deviation_patches)
+            exec_events.append({
+                "event_type": "author_deviations_extracted",
+                "message": f"提取 Author 声明偏离 {len(deviation_patches)} 条",
+                "status": "info",
+                "payload": {"deviation_count": len(deviation_patches)},
             })
 
         # v6.6.17: Handle degraded noop (fallback_source="none")
