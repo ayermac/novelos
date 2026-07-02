@@ -40,10 +40,7 @@ class EditorDecision:
 class EditorPolicyInput:
     """All inputs needed for the single policy decision point.
 
-    This is the single source of truth for classify_editor_result().
-    No policy-relevant field may be missing.
-
-    v6.9.1: Added skill aggregation fields for multi-skill scoring.
+    v6.10.16: Added facts_compliance_blocking_count for stale-facts guard.
     """
     score: float
     pass_: bool
@@ -57,12 +54,12 @@ class EditorPolicyInput:
     seam_advisory_count: int = 0
     retry_count: int = 0
     max_retries: int = 3
-    # v6.9.1: Skill aggregation fields
     skill_weighted_score: float = 0.0
     blocking_skill_count: int = 0
     warning_skill_count: int = 0
     skill_scores: dict[str, float] = field(default_factory=dict)
     editor_weights: dict[str, float] = field(default_factory=dict)
+    facts_compliance_blocking_count: int = 0
 
 
 # ── Hard issue markers ──────────────────────────────────────────────
@@ -241,6 +238,7 @@ def build_policy_input(
     warning_skill_count: int = 0,
     skill_scores: dict[str, float] | None = None,
     editor_weights: dict[str, float] | None = None,
+    facts_compliance_blocking_count: int = 0,
 ) -> EditorPolicyInput:
     """Build EditorPolicyInput from the raw editor state.
 
@@ -258,7 +256,7 @@ def build_policy_input(
         score=score,
         pass_=pass_,
         death_penalty=has_death_penalty or has_hard_word_fail,
-        blocking_issue_count=effective_blocking,
+        blocking_issue_count=effective_blocking + facts_compliance_blocking_count,
         priority_issue_count=priority_count,
         advisory_issue_count=advisory_count,
         quality_priority_count=quality_priority_count,
@@ -272,6 +270,7 @@ def build_policy_input(
         warning_skill_count=warning_skill_count,
         skill_scores=skill_scores or {},
         editor_weights=editor_weights or {},
+        facts_compliance_blocking_count=facts_compliance_blocking_count,
     )
 
 
@@ -335,7 +334,37 @@ def _classify_from_policy_input(p: EditorPolicyInput) -> EditorDecision:
     """Internal: classify from EditorPolicyInput.
 
     v6.9.1: Added skill-based scoring rules.
+    v6.10.16: Stale-facts guard — after 2+ unproductive Author revisions
+              for a facts-only violation, advisory-pass assuming
+              intentional narrative design.
     """
+    # v6.10.16: Stale facts compliance guard (before Rule 1).
+    # When facts compliance is the ONLY blocking signal and persists
+    # through >= 2 retries with score >= 70, assume intentional design.
+    non_facts_blocking = (
+        p.blocking_issue_count - p.facts_compliance_blocking_count
+    )
+    if (
+        p.facts_compliance_blocking_count > 0
+        and p.retry_count >= 2
+        and non_facts_blocking == 0
+        and not p.death_penalty
+        and p.blocking_skill_count == 0
+        and p.score >= 70
+    ):
+        return EditorDecision(
+            pass_=True,
+            revision_needed=False,
+            category="advisory",
+            decision_type="advisory_pass",
+            reason=(
+                f"事实一致性违规 ({p.facts_compliance_blocking_count} 项) "
+                f"经 {p.retry_count} 次返修仍未修复，判定为有意的叙事设计，"
+                f"转为 advisory pass（评分 {p.score:.0f}）"
+            ),
+            recommended_action="进入 awaiting_publish with facts-compliance warnings",
+        )
+
     # Rule 1: Hard blocking (including skill blocking)
     if p.death_penalty or p.blocking_issue_count > 0 or p.blocking_skill_count > 0:
         blocking_reason = []
@@ -502,6 +531,7 @@ def post_process_llm_decision(
     warning_skill_count: int = 0,
     skill_scores: dict[str, float] | None = None,
     editor_weights: dict[str, float] | None = None,
+    facts_compliance_blocking_count: int = 0,
 ) -> EditorDecision:
     """Post-process LLM's pass/fail decision with deterministic policy.
 
@@ -509,6 +539,7 @@ def post_process_llm_decision(
     and enforces hard blocking rules.
 
     v6.9.1: Added skill aggregation parameters.
+    v6.10.16: Added facts_compliance_blocking_count parameter.
     """
     policy_input = build_policy_input(
         score=score,
@@ -529,6 +560,7 @@ def post_process_llm_decision(
         warning_skill_count=warning_skill_count,
         skill_scores=skill_scores,
         editor_weights=editor_weights,
+        facts_compliance_blocking_count=facts_compliance_blocking_count,
     )
     decision = classify_editor_result(policy_input)
 

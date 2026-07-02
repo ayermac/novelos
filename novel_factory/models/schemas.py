@@ -168,6 +168,15 @@ class AuthorOutput(BaseModel):
     word_count: int = 0
     implemented_events: list[str] = Field(default_factory=list)
     used_plot_refs: list[str] = Field(default_factory=list)
+    # v6.10.16 Layer 3: Author can declare intentional deviations from
+    # confirmed facts (e.g. dual serial-number worldbuilding).
+    # These are recorded as new facts by memory_curator, preventing
+    # future false-positive compliance violations.
+    declared_deviations: list[dict] = Field(
+        default_factory=list,
+        description="Intentional deviations from confirmed facts: "
+        "[{fact_key, deviation_reason, new_value}]"
+    )
 
 
 # ── Title generation output (v6.7.5) ────────────────────────────
