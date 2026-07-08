@@ -72,8 +72,8 @@ r'时间节点[\u201c\u201d\"]([^\u201c\u201d\"]+)[\u201c\u201d\"]'
 - 断言从 `DRAFTED` 更新为 `REVISION`（守卫正确拒绝过短修订稿）
 
 **Fix 3: xdist 自包含测试**
-- `test_init_z_duplicate_error` 使用独立 `project_id`（`demo_dup_test`）
-- 先创建 style bible，再验证重复错误，消除与 `test_init_success` 的跨 worker 依赖
+- `test_init_z_duplicate_error` 使用独立 `project_id`（`demo_dup_test`），先创建 style bible 再验证重复错误，消除与 `test_init_success` 的跨 worker 依赖
+- 发布后补充修复（默认 `-n auto` 配置下暴露）：`test_show_existing` 与 `test_update_success` 同样依赖 `test_init_success` 先为 `demo` 创建 Style Bible；改为各自用独立 `project_id`（`show_test` / `update_test`）+ `--create-project` 自包含建库，彻底消除跨 worker 依赖
 
 ---
 
@@ -82,16 +82,23 @@ r'时间节点[\u201c\u201d\"]([^\u201c\u201d\"]+)[\u201c\u201d\"]'
 ### 4.1 测试基线
 
 ```bash
+# 默认配置（pyproject.toml: addopts = "-n auto"）
+$ python3 -m pytest -q
+3748 passed, 1 skipped, 1561 warnings in 225.04s
+
+# 单 worker（报告原始验证方式）
 $ python3 -m pytest -q -n 1
 3748 passed, 1 skipped, 1559 warnings in 1367.46s
 ```
+
+> **Errata**：原始提交 `9049e03` 仅以 `-n 1` 验证，默认 `-n auto` 下 `test_show_existing` / `test_update_success` 因跨 worker 依赖 `test_init_success` 创建 `demo` 的 Style Bible 而失败（2 failed, 3746 passed）。发布后已将这两个测试改为自包含（独立 `project_id` + `--create-project`），默认配置现达 **0 failed**。
 
 ### 4.2 导入验证
 
 所有拆分后的模块通过 `__init__.py` 兼容层保持原导入路径可用：
 - `from novel_factory.agents.author import AuthorAgent` ✅
 - `from novel_factory.workflow.nodes import planner_node` ✅
-- `from novel_factory.llm.openai_compatible import OpenAICompatibleLLM` ✅
+- `from novel_factory.llm.openai_compatible import OpenAICompatibleProvider` ✅（真实类名；原 `OpenAICompatibleLLM` 为笔误，代码中不存在）
 
 ### 4.3 文件大小检查
 

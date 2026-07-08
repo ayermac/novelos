@@ -25,46 +25,51 @@ Status: Partial completion - further slimming needed for author.py and editor.py
 Key changes:
 
 ### File拆分成果
-- **author.py拆分**:
-  - `novel_factory/agents/author/__init__.py`: 3657 → 3268 行 (-389 行, -10.6%)
-  - 新建 `novel_factory/agents/author/title_generation.py`: 415 行（标题生成逻辑独立模块）
+- **author.py 拆分**:
+  - `novel_factory/agents/author/__init__.py`: 3657 -> 2285 行 (-1372 行, -37.5%)
+  - 新建 `novel_factory/agents/author/title_generation.py`: 415 行（标题生成 Mixin 独立模块）
+  - 新建 `novel_factory/agents/author/plain_text_draft.py`: 950 行（纯文本草稿生成逻辑独立模块）
   - 使用 Mixin 策略：`AuthorAgent` 继承 `TitleGenerationMixin`，保持向后兼容
 
-- **nodes.py拆分**:
-  - `novel_factory/workflow/nodes/__init__.py`: 2851 → 1584 行 (-1267 行, -44.4%)
+- **nodes.py 拆分**:
+  - `novel_factory/workflow/nodes/__init__.py`: 2851 -> 1684 行 (-1167 行, -40.9%)
   - 新建 `novel_factory/workflow/nodes/helpers.py`: 1280 行（辅助函数独立模块）
-  - 提取前 1280 行（导入 + 辅助函数）到 helpers.py，保留节点函数在 __init__.py
+  - 提取辅助函数到 helpers.py，保留节点函数在 __init__.py 统一 re-export
 
 - **editor.py**:
-  - 暂未拆分（方法高度耦合，需要更细致的分析和拆分策略）
+  - 目录化为 `novel_factory/agents/editor/__init__.py`（2526 行，内容未进一步拆分，方法高度耦合，延后至 v6.10.18+）
 
-- **llm层拆分**:
-  - `novel_factory/llm/openai_compatible.py`: 1108 → 997 行 (-111 行)
-  - 新建 `novel_factory/llm/json_utils.py`: 121 行（JSON 提取和清理函数）
+- **llm 层拆分**:
+  - `novel_factory/llm/openai_compatible.py`: 1108 -> 996 行 (-112 行)
+  - 新建 `novel_factory/llm/json_utils.py`: 125 行（`extract_json`、`sanitize_json`）
 
 ### 总体进度
-- **主文件减少**: 9031 → 7375 行 (-1656 行, -18.3%)
-- **新建模块文件**: 2 个（title_generation.py 415 行 + helpers.py 1280 行）
-- **符合 ≤1000 行目标**: 1/5 个文件（仅 title_generation.py）
-- **在 1000-1500 行范围**: nodes/__init__.py (1584 行), nodes/helpers.py (1280 行)
-- **仍需拆分**: author/__init__.py (3268 行), editor/__init__.py (2523 行)
+- **主文件（4 个）**: 10139 -> 7491 行 (-2648 行, -26.1%)
+- **新建模块文件**: 4 个（title_generation.py 415 + plain_text_draft.py 950 + helpers.py 1280 + json_utils.py 125 = 2770 行）
+- **符合 ≤1000 行目标**: 2/8 个文件（title_generation.py、json_utils.py）
+- **在 1000-1500 行范围**: nodes/helpers.py (1280 行)
+- **仍需拆分**: author/__init__.py (2285 行), editor/__init__.py (2526 行), nodes/__init__.py (1684 行)
 
-Files changed: 10 files, +1695 / -1656 lines
-- `novel_factory/agents/author/__init__.py` (-389): 移除标题生成方法，添加 mixin 导入
-- `novel_factory/agents/author/title_generation.py` (+415): 新建标题生成 mixin
-- `novel_factory/workflow/nodes/__init__.py` (-1267): 移除辅助函数，添加 helpers 导入
-- `novel_factory/workflow/nodes/helpers.py` (+1280): 新建辅助函数模块
-- `novel_factory/llm/openai_compatible.py` (-111): 移除 JSON 工具函数，添加向后兼容别名
-- `novel_factory/llm/json_utils.py` (+121): 新建 JSON 工具模块
-- `novel_factory/version.py`: 6.10.16 → 6.10.17
-- `frontend/package.json`: 版本同步
-- `desktop/package.json`: 版本同步
-- `tests/test_v60_review_fixes.py`: 更新文件路径引用
+Files changed: 35 files, +6700 / -4434 lines (git stat 9049e03^..9a7c996)
+- `novel_factory/agents/author/__init__.py`: 移除标题生成/纯文本草稿方法，添加 mixin 导入
+- `novel_factory/agents/author/title_generation.py`: 新建标题生成 mixin
+- `novel_factory/agents/author/plain_text_draft.py`: 新建纯文本草稿模块
+- `novel_factory/workflow/nodes/__init__.py`: 移除辅助函数，添加 helpers 导入
+- `novel_factory/workflow/nodes/helpers.py`: 新建辅助函数模块
+- `novel_factory/agents/editor/__init__.py`: 目录化（原 editor.py）
+- `novel_factory/llm/openai_compatible.py`: 移除 JSON 工具函数，添加向后兼容别名
+- `novel_factory/llm/json_utils.py`: 新建 JSON 工具模块
+- `novel_factory/version.py`: 6.10.16 -> 6.10.17
+- `frontend/package.json` + `desktop/package.json`: 版本同步
+- 多个测试文件: 适配拆分后路径 + 24 个回归修复
 
 Verification:
-- pytest baseline: 62 passing (test_v60_review_fixes.py + test_v6109_core_loop_evidence_governance.py)
-- Import verification: 所有拆分后的模块正确导入，向后兼容性保持
-- Mixin继承验证: `AuthorAgent` 正确继承 `TitleGenerationMixin`
+- pytest baseline (默认 `-n auto`): **3748 passed, 1 skipped, 0 failed** (225s)
+- pytest baseline (`-n 1`): 3748 passed, 1 skipped, 0 failed (1367s)
+- Import verification: 所有拆分后的模块经 `__init__.py` re-export 保持原导入路径可用（`AuthorAgent`、`EditorAgent`、`planner_node`、`create_node_runners`、`MAX_INTERNAL_REPAIR_ATTEMPTS`、`OpenAICompatibleProvider`）
+- Mixin 继承验证: `AuthorAgent` 正确继承 `TitleGenerationMixin`
+
+> **Errata**: 原始提交 `9049e03` 仅以 `-n 1` 验证测试基线，默认 `-n auto` 下 `test_v40_style_bible_cli.py::TestStyleShow::test_show_existing` 与 `TestStyleUpdate::test_update_success` 因跨 worker 依赖 `test_init_success` 创建 `demo` 的 Style Bible 而失败（2 failed, 3746 passed）。发布后已将这两个测试改为自包含（独立 `project_id` `show_test`/`update_test` + `--create-project`），默认配置现达 0 failed。本 errata 修正同步更新于验收阶段。
 
 Technical approach:
 - 采用 **Mixin 策略** 拆分 author.py，避免破坏类结构和实例方法依赖

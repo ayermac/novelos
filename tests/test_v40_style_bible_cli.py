@@ -162,8 +162,20 @@ class TestStyleShow:
     """Test style show command."""
 
     def test_show_existing(self, db_path):
-        """style show for existing project."""
-        code, stdout, _ = run_cli(["style", "show", "--project-id", "demo", "--json"], db_path)
+        """style show for existing project.
+
+        Self-contained: creates its own Style Bible to avoid ordering dependency
+        with test_init_success under xdist -n auto (each worker gets an
+        independent module-scoped fixture DB).
+        """
+        project_id = "show_test"
+        init_code, _, _ = run_cli(
+            ["style", "init", "--project-id", project_id, "--template", "default_web_serial",
+             "--create-project", "--json"],
+            db_path,
+        )
+        assert init_code == 0, "style init for show_test should succeed"
+        code, stdout, _ = run_cli(["style", "show", "--project-id", project_id, "--json"], db_path)
         assert code == 0
         result = _parse_json(stdout)
         assert result["ok"] is True
@@ -181,9 +193,21 @@ class TestStyleUpdate:
     """Test style update command."""
 
     def test_update_success(self, db_path):
-        """style update with --set."""
+        """style update with --set.
+
+        Self-contained: creates its own Style Bible to avoid ordering dependency
+        with test_init_success under xdist -n auto (each worker gets an
+        independent module-scoped fixture DB).
+        """
+        project_id = "update_test"
+        init_code, _, _ = run_cli(
+            ["style", "init", "--project-id", project_id, "--template", "default_web_serial",
+             "--create-project", "--json"],
+            db_path,
+        )
+        assert init_code == 0, "style init for update_test should succeed"
         code, stdout, _ = run_cli(
-            ["style", "update", "--project-id", "demo", "--set", "genre=仙侠", "--json"],
+            ["style", "update", "--project-id", project_id, "--set", "genre=仙侠", "--json"],
             db_path,
         )
         assert code == 0
@@ -191,7 +215,7 @@ class TestStyleUpdate:
         assert result["ok"] is True
 
         # Verify update
-        code2, stdout2, _ = run_cli(["style", "show", "--project-id", "demo", "--json"], db_path)
+        code2, stdout2, _ = run_cli(["style", "show", "--project-id", project_id, "--json"], db_path)
         result2 = _parse_json(stdout2)
         assert result2["data"]["genre"] == "仙侠"
 
