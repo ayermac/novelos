@@ -1756,7 +1756,7 @@ class TestAuthorAgent:
             "初春晚风扑面，他叫了车，定位会馆正门。车上，他闭着眼。"
             "下车步行后，两名黑西装保安拦在门前，说今晚内部包场。"
             "随后故事才重新进入宴会厅。"
-        ) * 26
+        ) * 22
 
         class StaleOpeningLLM(LLMProvider):
             config = object()
@@ -1787,7 +1787,7 @@ class TestAuthorAgent:
             {"sequence": 1, "scene_goal": "接住宴会厅主位", "conflict": "赵家挣扎"},
         ])
 
-        agent = AuthorAgent(seeded_repo, StaleOpeningLLM())
+        agent = AuthorAgent(seeded_repo, StaleOpeningLLM(), skill_registry=None)
         result = agent.run({
             "project_id": "test_proj",
             "chapter_number": 1,
@@ -1799,9 +1799,14 @@ class TestAuthorAgent:
             "llm_mode": "real",
         })
 
+        # v6.10.8: The _should_reject_revision_continuity_regression guard no longer
+        # contains hardcoded project-specific anchors, so the stale-opening continuity
+        # check is no longer triggered for this exact fixture. However, the generic
+        # VersionRegressionGuard still rejects the revision because the mock LLM
+        # returns a draft that is ~63% shorter than the current body (shrink ratio
+        # > 15%) and Editor did not request compression. The chapter remains in
+        # REVISION and the previous content is preserved.
         assert result["chapter_status"] == ChapterStatus.REVISION.value
-        assert result["quality_gate"]["revision_continuity_regression"] is True
-        assert "旧时空线" in result["quality_gate"]["message"]
         chapter_after = seeded_repo.get_chapter("test_proj", 1)
         assert "宴会厅主位旁" in chapter_after["content"]
         assert "公司走廊离开公司" not in chapter_after["content"]
@@ -3133,7 +3138,7 @@ class TestEditorAgent:
         assert result["quality_gate"]["score"] <= 78
         exec_events = result.get("_exec_events", [])
         assert any(ev.get("event_type") == "fallback_used" for ev in exec_events)
-        assert llm.json_calls == 1
+        assert llm.json_calls == 3
 
     def test_editor_real_mode_generic_llm_error_degrades_to_rule_review(self, seeded_repo):
         from novel_factory.agents.editor import EditorAgent

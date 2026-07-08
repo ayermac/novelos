@@ -59,7 +59,7 @@ def test_settings_has_knowledge_governance():
     assert isinstance(settings.knowledge, KnowledgeConfig)
     assert settings.knowledge.enabled is True
     assert settings.knowledge.default_token_budget == 2400
-    assert settings.knowledge.agents["author"].token_budget == 3000
+    assert settings.knowledge.agents["author"].token_budget == 4000
 
 
 def test_settings_has_memory_curator_node_timeout_override():

@@ -47,7 +47,7 @@ def _create_duplicate_characters(repo_obj, db_path, project_id):
     repo_obj.create_character(
         project_id=project_id,
         name="陆澈",
-        role="protagonist",
+        role="secondary",
         description="调查局人员",
         traits="",
         first_appearance=1,

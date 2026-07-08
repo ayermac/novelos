@@ -486,7 +486,7 @@ class TestVersion:
     def test_version_is_6109(self):
         from novel_factory.version import __version__
 
-        assert __version__ == "6.10.11"
+        assert __version__ == "6.10.17"
 
 
 # ──────────────────────────────────────────────────────────────────────

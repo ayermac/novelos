@@ -240,12 +240,19 @@ class TestRunAutoAutoFill:
         # Delete all created context
         from novel_factory.db.repository import Repository
         from novel_factory.db.connection import init_db
+        import sqlite3
         # Get db_path from client
         db_path = client.app.state.db_path
         repo = Repository(db_path)
         for ws in repo.list_world_settings(project_id):
             repo.delete_world_setting(project_id, ws["id"])
         for ch in repo.list_characters(project_id, include_inactive=True):
+            # v6.10.7: protagonist cannot be deleted directly; reassign role first
+            if ch.get("role") == "protagonist":
+                conn = sqlite3.connect(db_path)
+                conn.execute("UPDATE characters SET role = 'supporting' WHERE id = ?", (ch["id"],))
+                conn.commit()
+                conn.close()
             repo.delete_character(project_id, ch["id"])
         for ol in repo.list_outlines(project_id):
             repo.delete_outline(project_id, ol["id"])

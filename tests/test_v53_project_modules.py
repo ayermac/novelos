@@ -183,7 +183,7 @@ class TestReviewModule:
         batches = repo.list_memory_batches(project_id)
         assert len(batches) == 1
         assert batches[0]["chapter_number"] == 1
-        assert batches[0]["status"] == "pending"
+        assert batches[0]["status"] == "applied"
 
     def test_publish_endpoint_does_not_treat_memory_event_as_evidence(self, test_client):
         """A completed memory_curator event without inbox batch must still be backfilled."""

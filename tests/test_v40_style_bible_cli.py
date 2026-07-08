@@ -90,10 +90,24 @@ class TestStyleInit:
         assert result["ok"] is True
         assert result["data"]["project_id"] == "demo"
 
-    def test_init_duplicate_error(self, db_path):
-        """style init on existing project returns error."""
-        code, stdout, _ = run_cli(
-            ["style", "init", "--project-id", "demo", "--template", "default_web_serial", "--json"],
+    def test_init_z_duplicate_error(self, db_path):
+        """style init on existing project returns error.
+
+        Self-contained: uses a fresh project_id to avoid ordering dependency
+        with test_init_success. Creates style bible first, then asserts duplicate.
+        """
+        # Use a distinct project_id to avoid collision with test_init_success
+        fresh_project = "demo_dup_test"
+        # First init to create the style bible
+        code1, _, _ = run_cli(
+            ["style", "init", "--project-id", fresh_project, "--template", "default_web_serial", "--create-project", "--json"],
+            db_path,
+        )
+        assert code1 == 0, "First style init should succeed"
+
+        # Second init should fail with duplicate error
+        code2, stdout, _ = run_cli(
+            ["style", "init", "--project-id", fresh_project, "--template", "default_web_serial", "--json"],
             db_path,
         )
         result = _parse_json(stdout)

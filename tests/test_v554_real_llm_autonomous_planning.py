@@ -10,6 +10,7 @@ Tests for real-mode specific behaviors that stub mode cannot cover:
 from __future__ import annotations
 
 import os
+import sqlite3
 import tempfile
 from unittest.mock import patch, MagicMock
 
@@ -287,6 +288,12 @@ class TestAutoFillEmptyOutput:
         for inst in repo.list_instructions("v554-test"):
             repo.delete_instruction("v554-test", inst["id"])
         for ch in repo.list_characters("v554-test", include_inactive=True):
+            # v6.10.7: protagonist cannot be deleted directly; reassign role first
+            if ch.get("role") == "protagonist":
+                conn = sqlite3.connect(initialized_db)
+                conn.execute("UPDATE characters SET role = 'supporting' WHERE id = ?", (ch["id"],))
+                conn.commit()
+                conn.close()
             repo.delete_character("v554-test", ch["id"])
 
         mock_llm = MagicMock()

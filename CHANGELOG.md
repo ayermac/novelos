@@ -12,6 +12,108 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.17 - Code Slimming Phase 1 (Partial Completion)
+
+Date: 2026-07-08
+
+Type: Refactoring (Code Slimming)
+
+Scope: `docs/codex/planning/novel-factory-v6.10.17-code-slimming-plan.md`
+
+Status: Partial completion - further slimming needed for author.py and editor.py
+
+Key changes:
+
+### File拆分成果
+- **author.py拆分**:
+  - `novel_factory/agents/author/__init__.py`: 3657 → 3268 行 (-389 行, -10.6%)
+  - 新建 `novel_factory/agents/author/title_generation.py`: 415 行（标题生成逻辑独立模块）
+  - 使用 Mixin 策略：`AuthorAgent` 继承 `TitleGenerationMixin`，保持向后兼容
+
+- **nodes.py拆分**:
+  - `novel_factory/workflow/nodes/__init__.py`: 2851 → 1584 行 (-1267 行, -44.4%)
+  - 新建 `novel_factory/workflow/nodes/helpers.py`: 1280 行（辅助函数独立模块）
+  - 提取前 1280 行（导入 + 辅助函数）到 helpers.py，保留节点函数在 __init__.py
+
+- **editor.py**:
+  - 暂未拆分（方法高度耦合，需要更细致的分析和拆分策略）
+
+- **llm层拆分**:
+  - `novel_factory/llm/openai_compatible.py`: 1108 → 997 行 (-111 行)
+  - 新建 `novel_factory/llm/json_utils.py`: 121 行（JSON 提取和清理函数）
+
+### 总体进度
+- **主文件减少**: 9031 → 7375 行 (-1656 行, -18.3%)
+- **新建模块文件**: 2 个（title_generation.py 415 行 + helpers.py 1280 行）
+- **符合 ≤1000 行目标**: 1/5 个文件（仅 title_generation.py）
+- **在 1000-1500 行范围**: nodes/__init__.py (1584 行), nodes/helpers.py (1280 行)
+- **仍需拆分**: author/__init__.py (3268 行), editor/__init__.py (2523 行)
+
+Files changed: 10 files, +1695 / -1656 lines
+- `novel_factory/agents/author/__init__.py` (-389): 移除标题生成方法，添加 mixin 导入
+- `novel_factory/agents/author/title_generation.py` (+415): 新建标题生成 mixin
+- `novel_factory/workflow/nodes/__init__.py` (-1267): 移除辅助函数，添加 helpers 导入
+- `novel_factory/workflow/nodes/helpers.py` (+1280): 新建辅助函数模块
+- `novel_factory/llm/openai_compatible.py` (-111): 移除 JSON 工具函数，添加向后兼容别名
+- `novel_factory/llm/json_utils.py` (+121): 新建 JSON 工具模块
+- `novel_factory/version.py`: 6.10.16 → 6.10.17
+- `frontend/package.json`: 版本同步
+- `desktop/package.json`: 版本同步
+- `tests/test_v60_review_fixes.py`: 更新文件路径引用
+
+Verification:
+- pytest baseline: 62 passing (test_v60_review_fixes.py + test_v6109_core_loop_evidence_governance.py)
+- Import verification: 所有拆分后的模块正确导入，向后兼容性保持
+- Mixin继承验证: `AuthorAgent` 正确继承 `TitleGenerationMixin`
+
+Technical approach:
+- 采用 **Mixin 策略** 拆分 author.py，避免破坏类结构和实例方法依赖
+- 采用 **模块拆分策略** 拆分 nodes.py，利用清晰的函数边界
+- 所有拆分保持 **向后兼容性**：原导入路径仍可用，测试无需修改
+
+Known follow-up (v6.10.18+):
+- **author.py**: 继续拆分修复逻辑、辅助函数、上下文构建等模块（预计还需减少 ~1500 行）
+- **editor.py**: 分析方法依赖关系，采用 Mixin 或模块拆分策略（预计需减少 ~1000 行）
+- **nodes.py**: 考虑按节点类型进一步拆分（如 planner_node.py, author_node.py 等）
+- **API 跀由层**: genesis.py, production.py 等超大文件拆分（P0 级别）
+- **DB Repository 层**: workflow.py, chapter.py 等拆分（P2 级别）
+
+Risk mitigation:
+- 每次拆分后立即运行测试验证
+- 使用兼容层 shim 确保原导入路径可用
+- 采用渐进式拆分，避免一次性大规模重构
+
+## v6.10.16 - review_strategy_applied Event Field Consistency Hotfix
+
+Date: 2026-07-02
+
+Type: Hotfix (retrospective)
+
+Scope: `docs/codex/reports/novel-factory-v6.10.16-completion-report.md`
+
+Key changes:
+
+### v6.10.16 (hotfix)
+- **Fix 1 (editor.py:1056)**: Clear `output.revision_target = None` in v6.10.4 LLM pass override path, aligning with v6.10.0 path behavior. Prevents residual revision_target from misleading downstream when override forces a pass.
+- **Fix 2 (editor.py:2370)**: Use `not output.pass_` for `revision_needed` in `review_strategy_applied` event payload, keeping it consistent with `editor_completed` event and actual workflow routing decision.
+
+Root cause: Event payload fields came from two different sources — `pass` from `output.pass_` (post-processed final decision) but `revision_needed` from `strategy_result.decision.revision_needed` (raw strategy decision). When v6.10.4 LLM pass override kicked in, `output.pass_=True` but strategy still said `revision_needed=True`, producing a contradictory `pass=True` + `revision_needed=True` payload.
+
+Files changed: 6 files, +323 / -21 lines
+- `novel_factory/agents/editor.py` (+197 / -8): core fix + strategy consistency
+- `novel_factory/agents/memory_curator.py` (+81): event field alignment
+- `novel_factory/quality/editor_strategy.py` (+44 / -7): strategy field semantics
+- `novel_factory/agents/author.py` (+11 / -2): 配套调整
+- `novel_factory/models/schemas.py` (+9): event payload schema clarification
+- `novel_factory/version.py`: 6.10.15 → 6.10.16
+
+Verification:
+- pytest baseline: 2616 passing (0 regressions vs v6.10.15)
+- Event payload consistency verified across override paths (v6.10.0 / v6.10.4)
+
+Known follow-up:
+- v6.10.17 code slimming should extract editor.py event payload construction into a dedicated function to centralize field-source management and prevent recurrence.
+
 ## v6.10.15 - Megafiction Recall Scaling
 
 Date: 2026-07-01

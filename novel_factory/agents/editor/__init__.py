@@ -15,12 +15,12 @@ import logging
 from dataclasses import asdict, dataclass, field
 from typing import Any
 
-from ..models.schemas import EditorOutput
-from ..models.state import ChapterStatus, FactoryState
-from ..validators.chapter_checker import count_words, check_word_count_quality_gate, derive_word_target
-from ..validators.death_penalty import check_death_penalty, check_death_penalty_structured
-from ..validators.revision_classifier import classify_issues
-from ..quality.editor_strategy import (
+from ...models.schemas import EditorOutput
+from ...models.state import ChapterStatus, FactoryState
+from ...validators.chapter_checker import count_words, check_word_count_quality_gate, derive_word_target
+from ...validators.death_penalty import check_death_penalty, check_death_penalty_structured
+from ...validators.revision_classifier import classify_issues
+from ...quality.editor_strategy import (
     EditorDecision,
     EditorPolicyInput,
     build_policy_input,
@@ -28,17 +28,17 @@ from ..quality.editor_strategy import (
     determine_revision_target,
     post_process_llm_decision,
 )
-from ..quality.feedback_bridge import build_compact_feedback, format_editor_context
-from ..skills.registry import SkillRegistry
-from ..skills.base import SkillFinding, parse_skill_findings, sort_findings_by_severity
-from ..llm.provider import is_configured_live_provider
-from ..agent_runtime.base import BaseAgent
-from ..agent_runtime.revision_context import normalize_revision_review
-from ..agent_runtime.skill_hooks import run_agent_skills
-from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
-from ..quality.chapter_seam import build_chapter_seam_context, evaluate_chapter_seam
-from ..quality.concept_budget import CONCEPT_BUDGET_CONTRACT
-from ..quality.continuity_gate import (
+from ...quality.feedback_bridge import build_compact_feedback, format_editor_context
+from ...skills.registry import SkillRegistry
+from ...skills.base import SkillFinding, parse_skill_findings, sort_findings_by_severity
+from ...llm.provider import is_configured_live_provider
+from ...agent_runtime.base import BaseAgent
+from ...agent_runtime.revision_context import normalize_revision_review
+from ...agent_runtime.skill_hooks import run_agent_skills
+from ...agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
+from ...quality.chapter_seam import build_chapter_seam_context, evaluate_chapter_seam
+from ...quality.concept_budget import CONCEPT_BUDGET_CONTRACT
+from ...quality.continuity_gate import (
     evaluate_chapter_continuity,
     SEVERITY_BLOCKING,
 )
@@ -304,7 +304,7 @@ class EditorAgent(BaseAgent):
             return ""
 
         try:
-            from ..quality.hub import QualityHub
+            from ...quality.hub import QualityHub
             hub = QualityHub(self.repo, self.skill_registry)
             diagnose_result = hub.diagnose(content, context={
                 "project_id": project_id,
@@ -741,8 +741,8 @@ class EditorAgent(BaseAgent):
             return result
 
         try:
-            from ..quality.hub import QualityHub
-            from ..quality.feedback_bridge import build_compact_feedback
+            from ...quality.hub import QualityHub
+            from ...quality.feedback_bridge import build_compact_feedback
 
             hub = QualityHub(self.repo, self.skill_registry)
             diagnose_result = hub.diagnose(inputs.content, context={
@@ -933,7 +933,7 @@ class EditorAgent(BaseAgent):
             logger.warning("Editor: failed to load genre contract for editor_weights", exc_info=True)
 
         # Calculate skill_weighted_score
-        from ..quality.editor_strategy import aggregate_skill_scores
+        from ...quality.editor_strategy import aggregate_skill_scores
         skill_weighted_score = aggregate_skill_scores(skill_scores, editor_weights)
 
         # Classify issues for revision_target (overrides LLM self-report)
@@ -1093,7 +1093,7 @@ class EditorAgent(BaseAgent):
         post-processed so that pacing carries more weight in the final total.
         """
         try:
-            from ..quality.style_detector import detect_style_from_text, get_editor_weight_multiplier
+            from ...quality.style_detector import detect_style_from_text, get_editor_weight_multiplier
             project = self.repo.get_project(inputs.project_id)
             if not project:
                 return
@@ -1245,7 +1245,7 @@ class EditorAgent(BaseAgent):
         # v6.9.1 Phase 4: Dynamic skill scheduling
         # Get genre contract and full skill list, then filter
         try:
-            from ..skills.editor_skill_resolver import resolve_active_skills
+            from ...skills.editor_skill_resolver import resolve_active_skills
             project = self.repo.get_project(inputs.project_id)
             genre_contract = project.get("genre_contract") if project else None
             full_skill_ids = self.skill_registry.get_skills_for_agent(
@@ -1440,7 +1440,7 @@ class EditorAgent(BaseAgent):
             return
 
         try:
-            from ..quality.hub import QualityHub
+            from ...quality.hub import QualityHub
             hub = QualityHub(self.repo, self.skill_registry)
             gate_result = hub.final_gate(
                 inputs.project_id,
@@ -2417,6 +2417,9 @@ class EditorAgent(BaseAgent):
         required_fields = ["pass", "score", "issues", "suggestions"]
         for field in required_fields:
             if field not in raw:
+                # Also accept Pydantic field name for aliased fields (pass_ vs pass)
+                if field == "pass" and "pass_" in raw:
+                    continue
                 return False
 
         # Check score is a number
