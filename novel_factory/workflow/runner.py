@@ -17,7 +17,7 @@ from ..config.settings import Settings
 from ..models.state import ChapterStatus
 from ..db.repository import Repository
 from ..models.state import FactoryState
-from ..quality.deadloop_detector import DeadloopDetector
+from ..quality.hub import DeadloopDetector
 from .graph import compile_graph
 from .conditions import hydrate_revision_state
 from .continuation_plan import ensure_continuation_plan_for_chapter
