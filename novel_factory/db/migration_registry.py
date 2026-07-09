@@ -503,6 +503,19 @@ MIGRATION_REGISTRY: list[MigrationEntry] = [
             _T("style_stats"),
         ),
     ),
+
+    # ── 039 ──
+    MigrationEntry(
+        migration_id="039_v6_10_18_chapter_brief_new_fields",
+        sql_filename="039_v6_10_18_chapter_brief_new_fields.sql",
+        description="v6.10.18 chapter brief new fields — conflict, notes, payoff_points, required_beats on instructions",
+        requirements=(
+            _C("instructions", "conflict"),
+            _C("instructions", "notes"),
+            _C("instructions", "payoff_points"),
+            _C("instructions", "required_beats"),
+        ),
+    ),
 ]
 
 

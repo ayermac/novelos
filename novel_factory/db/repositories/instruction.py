@@ -77,6 +77,10 @@ class InstructionRepositoryMixin:
         plots_to_plant: str = "",
         emotion_tone: str = "",
         ending_hook: str = "",
+        conflict: str = "",
+        notes: str = "",
+        payoff_points: str = "",
+        required_beats: str = "",
         word_target: int | None = None,
         status: str = "pending",
     ) -> int:
@@ -102,10 +106,12 @@ class InstructionRepositoryMixin:
             cursor = conn.execute(
                 "INSERT OR REPLACE INTO instructions "
                 "(project_id, chapter_number, objective, key_events, plots_to_resolve, "
-                "plots_to_plant, emotion_tone, ending_hook, word_target, status) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "plots_to_plant, emotion_tone, ending_hook, conflict, notes, payoff_points, "
+                "required_beats, word_target, status) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (project_id, chapter_number, objective, key_events, plots_to_resolve,
-                 plots_to_plant, emotion_tone, ending_hook, word_target, status),
+                 plots_to_plant, emotion_tone, ending_hook, conflict, notes, payoff_points,
+                 required_beats, word_target, status),
             )
             instruction_id = cursor.lastrowid
             conn.commit()
@@ -134,7 +140,8 @@ class InstructionRepositoryMixin:
             fields = []
             values = []
             for key in ("chapter_number", "objective", "key_events", "plots_to_resolve",
-                        "plots_to_plant", "emotion_tone", "ending_hook", "word_target", "status"):
+                        "plots_to_plant", "emotion_tone", "ending_hook", "conflict", "notes",
+                        "payoff_points", "required_beats", "word_target", "status"):
                 if key in data:
                     fields.append(f"{key}=?")
                     values.append(data[key])
