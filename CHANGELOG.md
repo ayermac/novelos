@@ -36,7 +36,20 @@ Key changes:
 - docs/codex/research/v6.10.18-field-audit-report.md: skills zero field dependency discovered
 - docs/codex/research/v6.10.18-skill-dependency-audit.md: all 27 skill files confirmed zero dependency
 
-Verification: pytest baseline TBD.
+Verification: pytest -q -> 3749 passed, 1 skipped, 0 failed (362s).
+
+### Phase A: DB Migration 039
+- 039_v6_10_18_chapter_brief_new_fields.sql: ALTER TABLE instructions ADD COLUMN conflict/notes/payoff_points/required_beats
+- InstructionRepositoryMixin: create_instruction() + update_instruction() updated for 4 new columns
+- migration_registry.py: 039 entry added
+
+### Phase B: Quality/Validators file merging
+- Quality 19 -> 16 files: concept_budget/deadloop_detector/issue_codes/style_detector -> hub.py; rhythm_budget_llm -> rhythm_budget.py; chapter_inheritance -> continuity_gate.py; version_regression_guard -> chapter_brief_validator.py
+- Validators: word_count_policy/plot_verifier -> chapter_checker.py; editorial_meta -> revision_classifier.py (shim re-exports preserved)
+- chapter_inheritance AgentContextBundle import -> TYPE_CHECKING (break circular dep)
+
+### Phase C: Store interface design
+- docs/codex/design/v6.10.19-store-interface-spec.md: 8 Store aggregation layer design (ProgressStore/DraftStore/WorldStore/SummaryStore/CharacterStore/OutlineStore/SignalStore/CheckpointStore)
 
 ## v6.10.17 - Code Slimming Phase 1 (Partial Completion)
 
