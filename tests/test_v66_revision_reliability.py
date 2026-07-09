@@ -4,7 +4,7 @@ import pytest
 import tempfile
 import os
 from novel_factory.quality.version_regression_guard import VersionRegressionGuard
-from novel_factory.quality.deadloop_detector import DeadloopDetector
+from novel_factory.quality.hub import DeadloopDetector
 from novel_factory.validators.word_count_policy import WordCountPolicy, DEFAULT_POLICY
 from novel_factory.quality.editor_strategy import classify_editor_result, post_process_llm_decision
 from novel_factory.db.best_version_recovery import find_best_chapter_version

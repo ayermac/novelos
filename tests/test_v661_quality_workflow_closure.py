@@ -530,7 +530,7 @@ class TestQualityAntiDeadloop:
 
     def test_deadloop_detector_not_triggered_by_advisory_loop(self, client_with_repo):
         """DeadloopDetector should not fire on advisory-only iterations."""
-        from novel_factory.quality.deadloop_detector import DeadloopDetector
+        from novel_factory.quality.hub import DeadloopDetector
 
         client, repo, db_path = client_with_repo
         repo.create_project(project_id="qd2", name="QD", genre="fantasy")
