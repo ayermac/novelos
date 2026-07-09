@@ -46,7 +46,7 @@ from ...agent_runtime.revision_context import (
 from ...agent_runtime.skill_hooks import run_agent_skills
 from ...agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
 from ...quality.chapter_seam import build_chapter_seam_context
-from ...quality.concept_budget import CONCEPT_BUDGET_CONTRACT
+from ...quality.hub import CONCEPT_BUDGET_CONTRACT
 from ...agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
 
 logger = logging.getLogger(__name__)

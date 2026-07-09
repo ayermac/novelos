@@ -37,7 +37,7 @@ from ...agent_runtime.revision_context import normalize_revision_review
 from ...agent_runtime.skill_hooks import run_agent_skills
 from ...agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
 from ...quality.chapter_seam import build_chapter_seam_context, evaluate_chapter_seam
-from ...quality.concept_budget import CONCEPT_BUDGET_CONTRACT
+from ...quality.hub import CONCEPT_BUDGET_CONTRACT
 from ...quality.continuity_gate import (
     evaluate_chapter_continuity,
     SEVERITY_BLOCKING,

@@ -20,7 +20,7 @@ from ..quality.chapter_seam import (
     build_planner_inheritance_context,
     enforce_planner_inheritance,
 )
-from ..quality.concept_budget import CONCEPT_BUDGET_CONTRACT
+from ..quality.hub import CONCEPT_BUDGET_CONTRACT
 
 logger = logging.getLogger(__name__)
 
