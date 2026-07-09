@@ -12,6 +12,32 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.18 - Validation Simplification: ChapterBrief Unification + Field Deprecation
+
+Date: 2026-07-08
+
+Type: Refactoring (Validation Simplification - Phase 1)
+
+Scope: docs/codex/planning/novel-factory-v6.10.18-validation-simplification-plan.md
+
+Status: Partial completion - deprecated marking only; DB migration and file merging deferred to v6.10.19
+
+Key changes:
+
+### ChapterBrief partial unification
+- New flat ChapterBrief class in novel_factory/models/chapter_brief.py: 10 target fields (chapter_goal, conflict, ending_hook, emotion_tone, notes, forbidden_moves, required_beats, emotion_target, payoff_points) + 5 new placeholder fields + deprecated old fields for backward compat
+- CoreLoopDesign moved to chapter_brief.py (canonical home, no circular import)
+- schemas.py re-exports flat ChapterBrief and CoreLoopDesign (flat consumers: Planner/screenwriter/author/context_builder/API work unchanged)
+- chapter_contracts.py nested classes marked deprecated with model_validator warnings (core_loop_checker + test_v690 unchanged)
+- 17 deprecated fields with model_validator deprecation warnings
+- 5 new placeholder fields: conflict, emotion_tone, notes, payoff_points, required_beats
+
+### Phase 0 audit (completed as prerequisite)
+- docs/codex/research/v6.10.18-field-audit-report.md: skills zero field dependency discovered
+- docs/codex/research/v6.10.18-skill-dependency-audit.md: all 27 skill files confirmed zero dependency
+
+Verification: pytest baseline TBD.
+
 ## v6.10.17 - Code Slimming Phase 1 (Partial Completion)
 
 Date: 2026-07-08

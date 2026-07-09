@@ -3,18 +3,28 @@
 These models define the per-chapter contracts that flow through the
 workflow: ChapterBrief (Planner → Screenwriter/Author), RhythmBudget
 (preflight check), and EditorLensReports (specialized editor lenses).
+
+DEPRECATED (v6.10.18):
+    The nested ChapterBrief (tier1/tier2) is deprecated. Use the flat
+    ChapterBrief from models.chapter_brief instead. This module will be
+    removed in v6.11.0.
 """
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+import warnings
+
+from pydantic import BaseModel, Field, model_validator
 
 
 # ── Chapter Brief (Planner output) ──────────────────────────────
 
 
 class ChapterBriefTier1(BaseModel):
-    """Tier 1 — required fields. Missing any of these blocks production."""
+    """Tier 1 — required fields. Missing any of these blocks production.
+
+    DEPRECATED (v6.10.18): Use flat ChapterBrief from models.chapter_brief.
+    """
 
     chapter_goal: str = ""
     reader_payoff: str = ""
@@ -27,7 +37,10 @@ class ChapterBriefTier1(BaseModel):
 
 
 class ChapterBriefTier2(BaseModel):
-    """Tier 2 — best-effort fields. Missing values filled from genre profile defaults."""
+    """Tier 2 — best-effort fields. Missing values filled from genre profile defaults.
+
+    DEPRECATED (v6.10.18): Use flat ChapterBrief from models.chapter_brief.
+    """
 
     pressure_budget: str = ""
     payoff_budget: str = ""
@@ -53,10 +66,25 @@ class ChapterBrief(BaseModel):
 
     Tier 1 fields are mandatory (blocking if missing).
     Tier 2 fields are optional (filled with genre defaults if missing).
+
+    DEPRECATED (v6.10.18): Use flat ChapterBrief from models.chapter_brief.
+    This nested model will be removed in v6.11.0.
     """
 
     tier1: ChapterBriefTier1 = Field(default_factory=ChapterBriefTier1)
     tier2: ChapterBriefTier2 = Field(default_factory=ChapterBriefTier2)
+
+    @model_validator(mode="after")
+    def warn_deprecated(self) -> "ChapterBrief":
+        """Warn that this nested ChapterBrief is deprecated."""
+        warnings.warn(
+            "The nested ChapterBrief (tier1/tier2) from chapter_contracts is deprecated. "
+            "Use the flat ChapterBrief from novel_factory.models.chapter_brief instead. "
+            "This model will be removed in v6.11.0.",
+            DeprecationWarning,
+            stacklevel=3,
+        )
+        return self
 
 
 # ── Rhythm Budget Result ────────────────────────────────────────

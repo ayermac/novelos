@@ -7,66 +7,11 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+# v6.10.18: Re-export unified ChapterBrief and CoreLoopDesign from new module
+from .chapter_brief import ChapterBrief, CoreLoopDesign
+
 
 # ── Planner output ─────────────────────────────────────────────
-
-
-class CoreLoopDesign(BaseModel):
-    """v6.10.9: 核心循环设计约束 —— Planner 输出时必须指定"""
-
-    reward_event_index: int = Field(
-        default=1, ge=1, le=5,
-        description="指定第几个关键事件为核心爽点兑现（1-based）"
-    )
-    reward_type: str = Field(
-        default="ability",
-        pattern="^(ability|intellect|emotion|identity|resource)$",
-        description="爽点类型"
-    )
-    reward_evidence: str = Field(
-        default="",
-        description="具体的爽点证据描述，如'陆璃短暂恢复意识说了一个字'（Planner 输出时 ≥20 字）"
-    )
-    protagonist_decision: str = Field(
-        default="",
-        description="主角做出的关键决策或行动（Planner 输出时 ≥10 字）"
-    )
-
-
-class ChapterBrief(BaseModel):
-    """Planner output: chapter brief / writing instruction."""
-
-    # Traditional fields (for backward compatibility)
-    objective: str = ""
-    required_events: list[str] = Field(default_factory=list)
-    plots_to_plant: list[str] = Field(default_factory=list)
-    plots_to_resolve: list[str] = Field(default_factory=list)
-    ending_hook: str = ""
-    constraints: list[str] = Field(default_factory=list)
-    
-    # Tier 1 fields (required)
-    chapter_goal: str = ""
-    reader_payoff: str = ""
-    protagonist_agency: str = ""
-    forbidden_moves: list[str] = Field(default_factory=list)
-    
-    # Tier 2 fields (optional)
-    pressure_budget: str = ""
-    payoff_budget: str = ""
-    upgrade_or_skill_use: str = ""
-    character_arc_moves: list[str] = Field(default_factory=list)
-    mystery_actions: list[str] = Field(default_factory=list)
-    conflict_actions: list[str] = Field(default_factory=list)
-    ledger_debts_to_pay: list[str] = Field(default_factory=list)
-    new_debts_allowed: bool = True
-    scene_count_target: int = 3
-    opening_hook: str = ""
-    quality_threshold_overrides: dict = Field(default_factory=dict)
-
-    # v6.10.9: Core loop governance
-    core_loop: CoreLoopDesign = Field(default_factory=CoreLoopDesign)
-    dialogue_target_ratio: float = Field(default=0.15, ge=0.0, le=1.0)
-    fact_locks: list[str] = Field(default_factory=list)
 
 
 class PlannerOutput(BaseModel):
