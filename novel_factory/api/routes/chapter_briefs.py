@@ -12,6 +12,7 @@ from typing import Any
 from fastapi import APIRouter, Request, HTTPException
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ...exceptions import APIValidationError
 from ...db.repository import Repository
 
 router = APIRouter()
@@ -54,9 +55,9 @@ async def get_chapter_brief(
         # Get the chapter
         chapter = repo.get_chapter(project_id, chapter_number)
         if not chapter:
-            return error_response(
-                code="CHAPTER_NOT_FOUND",
-                message=f"Chapter {chapter_number} not found for project {project_id}",
+            raise APIValidationError(
+                "CHAPTER_NOT_FOUND",
+                f"Chapter {chapter_number} not found for project {project_id}",
             )
         
         # Get the instruction for this chapter
@@ -101,9 +102,11 @@ async def get_chapter_brief(
             "note": "Chapter brief derived from instruction. Full brief requires planner output.",
         })
         
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         logger.error(f"Failed to get chapter brief: {e}")
         return error_response(
-            code="INTERNAL_ERROR",
-            message=f"Failed to retrieve chapter brief: {str(e)}",
+            "INTERNAL_ERROR",
+            f"Failed to retrieve chapter brief: {str(e)}",
         )
