@@ -20,11 +20,11 @@ Type: Feature (Repository Aggregation - Phase A)
 
 Scope: docs/codex/planning/novel-factory-v6.10.19-repository-consolidation-plan.md
 
-Status: Phase A complete - 3 Stores implemented; remaining 5 Stores deferred to v6.11.0
+Status: Complete - 8 Stores implemented (all deferred caller migration to v6.11.0)
 
 Key changes:
 
-### Store Facade Layer (Phase A)
+### Store Facade Layer (8 Stores complete)
 - new novel_factory/stores/ package: BaseStore + ProgressStore + DraftStore + WorldStore
 - BaseStore holds single Repository instance (no per-mixin dispatch - Repository is already a facade)
 - ProgressStore: aggregates workflow + execution_event (7 aggregation methods)
