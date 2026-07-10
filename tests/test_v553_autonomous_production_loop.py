@@ -11,6 +11,7 @@ Tests for:
 from __future__ import annotations
 
 import os
+import sqlite3
 import tempfile
 
 import pytest
@@ -899,6 +900,12 @@ class TestAutoFillAPI:
         for ws in repo.list_world_settings("af-test"):
             repo.delete_world_setting("af-test", ws["id"])
         for ch in repo.list_characters("af-test", include_inactive=True):
+            # v6.10.7: protagonist cannot be deleted directly; reassign role first
+            if ch.get("role") == "protagonist":
+                conn = sqlite3.connect(db_path)
+                conn.execute("UPDATE characters SET role = 'supporting' WHERE id = ?", (ch["id"],))
+                conn.commit()
+                conn.close()
             repo.delete_character("af-test", ch["id"])
         for ol in repo.list_outlines("af-test"):
             repo.delete_outline("af-test", ol["id"])

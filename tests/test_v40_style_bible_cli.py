@@ -90,10 +90,24 @@ class TestStyleInit:
         assert result["ok"] is True
         assert result["data"]["project_id"] == "demo"
 
-    def test_init_duplicate_error(self, db_path):
-        """style init on existing project returns error."""
-        code, stdout, _ = run_cli(
-            ["style", "init", "--project-id", "demo", "--template", "default_web_serial", "--json"],
+    def test_init_z_duplicate_error(self, db_path):
+        """style init on existing project returns error.
+
+        Self-contained: uses a fresh project_id to avoid ordering dependency
+        with test_init_success. Creates style bible first, then asserts duplicate.
+        """
+        # Use a distinct project_id to avoid collision with test_init_success
+        fresh_project = "demo_dup_test"
+        # First init to create the style bible
+        code1, _, _ = run_cli(
+            ["style", "init", "--project-id", fresh_project, "--template", "default_web_serial", "--create-project", "--json"],
+            db_path,
+        )
+        assert code1 == 0, "First style init should succeed"
+
+        # Second init should fail with duplicate error
+        code2, stdout, _ = run_cli(
+            ["style", "init", "--project-id", fresh_project, "--template", "default_web_serial", "--json"],
             db_path,
         )
         result = _parse_json(stdout)
@@ -148,8 +162,20 @@ class TestStyleShow:
     """Test style show command."""
 
     def test_show_existing(self, db_path):
-        """style show for existing project."""
-        code, stdout, _ = run_cli(["style", "show", "--project-id", "demo", "--json"], db_path)
+        """style show for existing project.
+
+        Self-contained: creates its own Style Bible to avoid ordering dependency
+        with test_init_success under xdist -n auto (each worker gets an
+        independent module-scoped fixture DB).
+        """
+        project_id = "show_test"
+        init_code, _, _ = run_cli(
+            ["style", "init", "--project-id", project_id, "--template", "default_web_serial",
+             "--create-project", "--json"],
+            db_path,
+        )
+        assert init_code == 0, "style init for show_test should succeed"
+        code, stdout, _ = run_cli(["style", "show", "--project-id", project_id, "--json"], db_path)
         assert code == 0
         result = _parse_json(stdout)
         assert result["ok"] is True
@@ -167,9 +193,21 @@ class TestStyleUpdate:
     """Test style update command."""
 
     def test_update_success(self, db_path):
-        """style update with --set."""
+        """style update with --set.
+
+        Self-contained: creates its own Style Bible to avoid ordering dependency
+        with test_init_success under xdist -n auto (each worker gets an
+        independent module-scoped fixture DB).
+        """
+        project_id = "update_test"
+        init_code, _, _ = run_cli(
+            ["style", "init", "--project-id", project_id, "--template", "default_web_serial",
+             "--create-project", "--json"],
+            db_path,
+        )
+        assert init_code == 0, "style init for update_test should succeed"
         code, stdout, _ = run_cli(
-            ["style", "update", "--project-id", "demo", "--set", "genre=仙侠", "--json"],
+            ["style", "update", "--project-id", project_id, "--set", "genre=仙侠", "--json"],
             db_path,
         )
         assert code == 0
@@ -177,7 +215,7 @@ class TestStyleUpdate:
         assert result["ok"] is True
 
         # Verify update
-        code2, stdout2, _ = run_cli(["style", "show", "--project-id", "demo", "--json"], db_path)
+        code2, stdout2, _ = run_cli(["style", "show", "--project-id", project_id, "--json"], db_path)
         result2 = _parse_json(stdout2)
         assert result2["data"]["genre"] == "仙侠"
 

@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from ..llm.provider import LLMProvider
+from ..validators.chapter_checker import derive_word_target
 from ..models.schemas import (
     AutoFillLLMOutput,
     ArcPlanLLMOutput,

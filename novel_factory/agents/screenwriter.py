@@ -14,7 +14,7 @@ from ..agent_runtime.skill_hooks import run_agent_skills
 from ..agent_runtime.self_check import SelfCheckLoop, SelfCheckResult
 from ..agent_runtime.context_builder import AgentContextBuilder, format_context_bundle_for_prompt
 from ..quality.chapter_inheritance import validate_chapter_inheritance
-from ..quality.concept_budget import CONCEPT_BUDGET_CONTRACT
+from ..quality.hub import CONCEPT_BUDGET_CONTRACT
 
 logger = logging.getLogger(__name__)
 

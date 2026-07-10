@@ -86,9 +86,9 @@ def test_core_agents_use_v6_context_in_execute_paths():
     agent_files = [
         "novel_factory/agents/planner.py",
         "novel_factory/agents/screenwriter.py",
-        "novel_factory/agents/author.py",
+        "novel_factory/agents/author/__init__.py",
         "novel_factory/agents/polisher.py",
-        "novel_factory/agents/editor.py",
+        "novel_factory/agents/editor/__init__.py",
         "novel_factory/agents/memory_curator.py",
     ]
     for relative_path in agent_files:
@@ -147,7 +147,7 @@ def test_core_agents_block_non_continue_self_check_decisions():
     """Self-check reroute/ask_human decisions must not be trace-only."""
     root = Path(__file__).resolve().parent.parent
     expected_fragments = {
-        "novel_factory/agents/author.py": 'state.get("llm_mode") == "real" and autonomy.get("decision") in {"ask_human", "reroute", "refuse"}',
+        "novel_factory/agents/author/__init__.py": 'state.get("llm_mode") == "real" and autonomy.get("decision") in {"ask_human", "reroute", "refuse"}',
         "novel_factory/agents/screenwriter.py": 'autonomy.get("decision") in {"ask_human", "reroute", "refuse"}',
         "novel_factory/agents/memory_curator.py": 'state.get("llm_mode") == "real" and autonomy.get("decision") in {"ask_human", "reroute", "refuse"}',
     }

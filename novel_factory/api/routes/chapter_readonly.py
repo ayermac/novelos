@@ -12,6 +12,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ...exceptions import APIValidationError
 
 router = APIRouter()
 
@@ -30,11 +31,13 @@ async def list_state_history(
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         history = repo.list_state_history(project_id, chapter_number)
         return envelope_response(history)
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取状态历史失败: {str(e)}")
 
@@ -57,13 +60,15 @@ async def list_quality_reports(
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         reports = repo.get_quality_reports(
             project_id, chapter_number=chapter_number, stage=stage, limit=limit
         )
         return envelope_response(reports)
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取质量报告失败: {str(e)}")
 
@@ -82,7 +87,7 @@ async def list_continuity_reports(
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         runs = repo.get_workflow_runs_for_project(project_id, limit=limit)
         reports = []
@@ -97,6 +102,8 @@ async def list_continuity_reports(
 
         return envelope_response(reports)
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取连续性报告失败: {str(e)}")
 
@@ -115,10 +122,12 @@ async def list_artifacts(
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         artifacts = repo.list_artifacts(project_id, limit=limit)
         return envelope_response(artifacts)
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取 Agent 产物失败: {str(e)}")

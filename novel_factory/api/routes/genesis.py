@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ...exceptions import APIValidationError
 from ...agent_runtime.title_contract import build_title_contract
 from ...llm.provider import is_configured_live_provider
 from ...quality.genesis_quality_gate import evaluate_genesis_draft
@@ -2776,7 +2777,7 @@ async def generate_genesis(
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         body = _with_project_defaults(body, project, project_id)
         validation_error = _validate_genesis_generate_request(body)
@@ -2791,7 +2792,7 @@ async def generate_genesis(
             _genesis_timeout_minutes(settings),
         )
         if latest and latest["status"] == "running":
-            return error_response(
+            raise APIValidationError(
                 "GENESIS_IN_PROGRESS",
                 "已有正在运行的创世任务，请等待完成",
             )
@@ -2839,6 +2840,8 @@ async def generate_genesis(
 
         return envelope_response(response_data)
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"生成项目设定失败: {str(e)[:200]}")
 
@@ -2853,7 +2856,7 @@ async def get_latest_genesis(request: Request, project_id: str) -> EnvelopeRespo
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         genesis = repo.get_latest_genesis_run(project_id)
         if not genesis:
@@ -2871,6 +2874,8 @@ async def get_latest_genesis(request: Request, project_id: str) -> EnvelopeRespo
 
         return envelope_response(response_data)
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取创世记录失败: {str(e)[:200]}")
 
@@ -2892,14 +2897,14 @@ async def get_genesis_chapter_impact(
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         genesis = repo.get_genesis_run(genesis_id)
         if not genesis:
-            return error_response("GENESIS_NOT_FOUND", "创世记录不存在")
+            raise APIValidationError("GENESIS_NOT_FOUND", "创世记录不存在")
 
         if genesis["project_id"] != project_id:
-            return error_response("GENESIS_NOT_FOUND", "创世记录不属于该项目")
+            raise APIValidationError("GENESIS_NOT_FOUND", "创世记录不属于该项目")
 
         # Get chapter status summary
         chapter_status_counts = repo.count_chapters_by_status(project_id)
@@ -2967,6 +2972,8 @@ async def get_genesis_chapter_impact(
             "recommended_mode": "keep_published" if terminal_chapters else ("keep_published" if non_terminal_chapters else None),
         })
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取章节影响分析失败: {str(e)[:200]}")
 
@@ -2995,17 +3002,17 @@ async def approve_genesis(
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         genesis = repo.get_genesis_run(genesis_id)
         if not genesis:
-            return error_response("GENESIS_NOT_FOUND", "创世记录不存在")
+            raise APIValidationError("GENESIS_NOT_FOUND", "创世记录不存在")
 
         if genesis["project_id"] != project_id:
-            return error_response("GENESIS_NOT_FOUND", "创世记录不属于该项目")
+            raise APIValidationError("GENESIS_NOT_FOUND", "创世记录不属于该项目")
 
         if genesis["status"] != "generated":
-            return error_response(
+            raise APIValidationError(
                 "INVALID_GENESIS_STATUS",
                 f"只能批准已生成的创世记录，当前状态: {genesis['status']}",
             )
@@ -3013,10 +3020,10 @@ async def approve_genesis(
         # Parse draft
         draft = _parse_genesis_draft_json(genesis.get("draft_json"))
         if draft is None:
-            return error_response("INVALID_DRAFT", "创世草案数据格式错误")
+            raise APIValidationError("INVALID_DRAFT", "创世草案数据格式错误")
         missing_sections = _missing_required_genesis_sections(draft)
         if missing_sections:
-            return error_response("INCOMPLETE_DRAFT", _incomplete_genesis_message(missing_sections))
+            raise APIValidationError("INCOMPLETE_DRAFT", _incomplete_genesis_message(missing_sections))
 
         # v6.6.3: Run quality gate
         input_json = genesis.get("input_json", "{}")
@@ -3036,12 +3043,9 @@ async def approve_genesis(
         # v6.6.3: Block if quality gate failed (unless force_apply)
         if not quality_report.passed:
             if not (force_apply and confirm_quality_risk):
-                return error_response(
+                raise APIValidationError(
                     "GENESIS_QUALITY_BLOCKED",
                     "创世草案质量不足，请重新生成或人工补全后再批准",
-                    {
-                        "quality_report": _quality_report_payload(quality_report)
-                    },
                 )
 
         # Apply to formal tables
@@ -3066,6 +3070,8 @@ async def approve_genesis(
             "forced_apply": forced_apply,
         })
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"批准创世记录失败: {str(e)[:200]}")
 
@@ -3084,17 +3090,17 @@ async def reject_genesis(
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         genesis = repo.get_genesis_run(genesis_id)
         if not genesis:
-            return error_response("GENESIS_NOT_FOUND", "创世记录不存在")
+            raise APIValidationError("GENESIS_NOT_FOUND", "创世记录不存在")
 
         if genesis["project_id"] != project_id:
-            return error_response("GENESIS_NOT_FOUND", "创世记录不属于该项目")
+            raise APIValidationError("GENESIS_NOT_FOUND", "创世记录不属于该项目")
 
         if genesis["status"] not in ("generated", "failed"):
-            return error_response(
+            raise APIValidationError(
                 "INVALID_GENESIS_STATUS",
                 f"只能拒绝已生成或失败的创世记录，当前状态: {genesis['status']}",
             )
@@ -3106,6 +3112,8 @@ async def reject_genesis(
             "status": "rejected",
         })
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"拒绝创世记录失败: {str(e)[:200]}")
 

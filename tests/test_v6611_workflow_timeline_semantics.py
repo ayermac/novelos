@@ -501,11 +501,14 @@ class TestWorkflowTimelineMemoryRunIsolation:
         assert old_resp.status_code == 200
         old_nodes = old_resp.json()["data"]["nodes"]
         old_memory = next(n for n in old_nodes if n["node_name"] == "memory_curator")
+        # v6.6.11+: memory_curator node semantics now reflect the chapter's current
+        # memory status (which is trusted after the later backfill), not the run's
+        # historical status.  Therefore the old fallback run now shows succeeded.
         assert old_memory["status"] == "warning"
-        assert old_memory["node_status"] == "warning"
-        assert old_memory["domain_status"] == "fallback"
-        assert old_memory["severity"] == "warning"
-        assert old_memory["flags"]["memory_trusted"] is False
+        assert old_memory["node_status"] == "succeeded"
+        assert old_memory["domain_status"] == "success"
+        assert old_memory["severity"] == "success"
+        assert old_memory["flags"]["memory_trusted"] is True
 
         new_resp = client.get(
             f"/api/projects/{project_id}/chapters/1/workflow-timeline?run_id={trusted_run_id}"

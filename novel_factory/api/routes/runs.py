@@ -11,6 +11,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
+from ...exceptions import APIValidationError
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ..contracts import (
     success,
@@ -291,9 +292,9 @@ async def mark_stuck_runs_from_health(
         if not body.confirm:
             return error_response("CONFIRM_REQUIRED", "请确认批量标记卡住运行")
         if not body.run_ids:
-            return error_response("NO_RUNS_SELECTED", "请选择需要标记的运行")
+            raise APIValidationError("NO_RUNS_SELECTED", "请选择需要标记的运行")
         if len(body.run_ids) > 50:
-            return error_response("TOO_MANY_RUNS", "一次最多处理 50 条运行")
+            raise APIValidationError("TOO_MANY_RUNS", "一次最多处理 50 条运行")
 
         repo = get_repo(request)
         settings = get_settings(request)
@@ -311,6 +312,8 @@ async def mark_stuck_runs_from_health(
             "failed": len(body.run_ids) - marked,
             "results": results,
         })
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"批量标记卡住运行失败: {str(e)}")
 

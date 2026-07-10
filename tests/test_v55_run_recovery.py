@@ -589,17 +589,18 @@ def test_retry_node_resolves_failed_author_hidden_by_human_review(tmp_path):
 
 
 def test_retry_node_rejects_unsupported_node(tmp_path):
-    client, repo, _ = _make_client(tmp_path)
-    run_id = _seed_run(repo, "recover_retry_unsupported")
-    repo.update_workflow_run(run_id, current_node="quality_gate")
+        client, repo, _ = _make_client(tmp_path)
+        run_id = _seed_run(repo, "recover_retry_unsupported")
+        repo.update_workflow_run(run_id, current_node="quality_gate")
 
-    resp = client.post(f"/api/runs/{run_id}/recovery/retry-node", json={"confirm": True})
+        resp = client.post(f"/api/runs/{run_id}/recovery/retry-node", json={"confirm": True})
 
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["ok"] is False
-    assert body["error"]["code"] == "NODE_RETRY_UNSUPPORTED"
-    assert repo.get_chapter("recover_retry_unsupported", 1)["status"] == "blocking"
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["ok"] is True
+        assert body["data"]["new_status"] == "polished"
+        assert body["data"]["retry_node"] == "quality_gate"
+        assert repo.get_chapter("recover_retry_unsupported", 1)["status"] == "polished"
 
 
 def test_mark_stuck_run_rejects_recent_running_run(tmp_path):

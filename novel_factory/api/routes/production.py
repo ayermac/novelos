@@ -14,6 +14,7 @@ from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ..contracts import success, partial_success, failed, blocked as blocked_result, needs_human
+from ...exceptions import APIValidationError
 from ._memory_curator_gate import (
     complete_memory_curator_run_if_batch_exists,
     complete_memory_curator_recovery_if_trusted,
@@ -1039,7 +1040,7 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
             repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
@@ -1087,6 +1088,8 @@ async def get_production_next(request: Request, project_id: str) -> EnvelopeResp
             "domain_result": domain_result,
         })
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取生产下一步失败: {str(e)}")
 
@@ -1102,10 +1105,12 @@ async def get_production_health_summary(request: Request, project_id: str) -> En
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         timeout_minutes = getattr(settings.workflow, "task_timeout_minutes", 30)
         return envelope_response(_build_project_health_summary(repo, project_id, timeout_minutes))
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取项目健康摘要失败: {str(e)}")
 
@@ -1125,10 +1130,10 @@ async def auto_fill(request: Request, project_id: str, body: AutoFillRequest) ->
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         if not body.confirm:
-            return error_response("CONFIRM_REQUIRED", "请设置 confirm=true 确认执行自动补齐")
+            raise APIValidationError("CONFIRM_REQUIRED", "请设置 confirm=true 确认执行自动补齐")
 
         created = {
             "world_settings": 0,
@@ -1194,6 +1199,8 @@ async def auto_fill(request: Request, project_id: str, body: AutoFillRequest) ->
             "warnings": warnings,
         })
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"自动补齐失败: {str(e)}")
 
@@ -1212,16 +1219,16 @@ async def arc_plan(request: Request, project_id: str, body: ArcPlanRequest) -> E
 
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         if not body.confirm:
-            return error_response("CONFIRM_REQUIRED", "请设置 confirm=true 确认执行 arc plan")
+            raise APIValidationError("CONFIRM_REQUIRED", "请设置 confirm=true 确认执行 arc plan")
 
         if body.chapter_start > body.chapter_end:
-            return error_response("VALIDATION_ERROR", "chapter_start 不能大于 chapter_end")
+            raise APIValidationError("VALIDATION_ERROR", "chapter_start 不能大于 chapter_end")
 
         if not _has_approved_genesis(repo, project_id):
-            return error_response("GENESIS_REQUIRED", "请先完成并批准项目创世设定")
+            raise APIValidationError("GENESIS_REQUIRED", "请先完成并批准项目创世设定")
 
         created = {
             "outlines": 0,
@@ -1276,6 +1283,8 @@ async def arc_plan(request: Request, project_id: str, body: ArcPlanRequest) -> E
             "warnings": warnings,
         })
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"Arc plan 生成失败: {str(e)}")
 

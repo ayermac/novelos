@@ -10,10 +10,39 @@ This index maps shipped or reviewed versions to their planning/spec source, comp
 - **Umbrella** means the version is planned as a section inside a broader version spec.
 - **Retrospective** means the planning note was reconstructed from the accepted implementation and report because the original work was an acceptance/hotfix pass.
 
+## Upcoming Optimization Roadmap (v6.10.17 → v6.10.19)
+
+These versions form a phased optimization arc targeting code slimming, validation simplification, and repository aggregation. Each is informed by the ainovel-cli design philosophy **but adapted to Novelos's specific constraints** (SQLite, LangGraph, Web API, 38 migrations, 3,748 tests).
+
+**v6.11.0 is a research topic, NOT part of the release roadmap.** It runs independently via quarterly OKRs and only enters the release roadmap if prototype validation passes.
+
+| Version | Theme | Priority | Planning source | Status |
+| --- | --- | --- | --- | --- |
+| v6.10.17 | Code Slimming — file splitting + 24 test regressions fix | P0 | `novel-factory-v6.10.17-code-slimming-plan.md` | **Shipped** |
+| v6.10.18 | Validation Simplification — field trimming with deprecation | P1 | `novel-factory-v6.10.18-validation-simplification-plan.md` | **Shipped** |
+| v6.10.19 | Repository Aggregation — Store facade over 34 repositories | P1 | `novel-factory-v6.10.19-repository-consolidation-plan.md` | **Shipped** |
+| v6.11.0 | Architecture Research — atomic tools + unified exceptions (LangGraph retained) | P2 | `novel-factory-v6.11.0-architecture-refactor-plan.md` | Research (not in release roadmap) |
+
+### Roadmap Targets (Revised)
+
+| Metric | v6.10.16 (baseline) | v6.10.17 | v6.10.18 | v6.10.19 | v6.11.0 (if implemented) |
+| --- | --- | --- | --- | --- | --- |
+| Total LOC | 97,448 | 97,000 (+shim) | 95,000 | 92,000 | 90,000 |
+| Largest file (lines) | 3,657 | ≤1,500 | ≤1,500 | ≤1,500 | ≤1,500 |
+| Validation fields | 24 | 24 (deprecated) | 10-12 | 10-12 | 10-12 |
+| Repository files | 34 | 34 | 34 | 34 + 8 Store | 34 + 8 Store |
+| try/except count | 1,206 | 1,100 | 1,000 | 900 | 800 (unified types) |
+
 ## Current And Recent Versions
 
 | Version | Planning/spec source | Report | Review | Coverage |
 | --- | --- | --- | --- | --- |
+| v6.10.19 | `novel-factory-v6.10.19-repository-consolidation-plan.md` | `../reports/novel-factory-v6.10.19-completion-report.md` | none yet | standalone |
+| v6.10.18 | `novel-factory-v6.10.18-validation-simplification-plan.md` | `../reports/novel-factory-v6.10.18-completion-report.md` | none yet | standalone |
+| v6.10.17 | `novel-factory-v6.10.17-code-slimming-plan.md` | `../reports/novel-factory-v6.10.17-completion-report.md` | none yet | standalone |
+| v6.10.16 | CHANGELOG + retrospective report | `../reports/novel-factory-v6.10.16-completion-report.md` | none yet | retrospective |
+| v6.10.15 | `novel-factory-v6.10.15-megafiction-recall-scaling-plan.md` | none yet | none yet | standalone |
+| v6.10.14 | `novel-factory-v6.10.14-longform-recall-optimization-plan.md` | none yet | none yet | standalone |
 | v6.10.13 | `novel-factory-v6.10.13-architecture-hardening-plan.md` | none yet | none yet | standalone |
 | v6.10.12 | `novel-factory-v6.10.12-production-stability-hardening-plan.md` | none yet | none yet | standalone |
 | v6.10.11 | CHANGELOG only (hotfix) | none yet | none yet | hotfix |

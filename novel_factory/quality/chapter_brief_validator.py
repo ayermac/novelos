@@ -161,6 +161,106 @@ def fill_missing_tier2_fields(
     return filled_brief
 
 
+# ══════════════════════════════════════════════════════════════════
+# v6.10.18: ChapterBriefValidator — single-layer with plugin checkers
+# ══════════════════════════════════════════════════════════════════
+
+
+class ValidationResult:
+    """Result of a single validation pass."""
+
+    def __init__(self, valid: bool = True, errors: list[str] | None = None) -> None:
+        self.valid = valid
+        self.errors: list[str] = errors or []
+
+
+class ChapterBriefValidator:
+    """Unified single-layer chapter brief validator with plugin extension.
+
+    Replaces the multi-layer approach (schema -> Tier1 -> Tier2 -> Style -> Quality)
+    with a single validation pass. Skills and external modules can register custom
+    checkers via ``register_checker()``.
+    """
+
+    # Core required fields (v6.10.18: conflict is new)
+    REQUIRED_FIELDS = [
+        "chapter_goal",
+        "conflict",
+        "ending_hook",
+    ]
+
+    # Plugin checkers registry
+    _checkers: list[callable] = []
+
+    @classmethod
+    def register_checker(cls, checker: callable) -> None:
+        """Register a custom checker callable.
+
+        Checker signature: ``def checker(brief: dict) -> ValidationResult``.
+        Registered checkers are run during ``validate()`` in registration order.
+        """
+        if checker not in cls._checkers:
+            cls._checkers.append(checker)
+
+    def validate(self, brief: dict | None) -> ValidationResult:
+        """Run single-pass validation: required fields + registered checkers.
+
+        Returns:
+            ValidationResult with ``valid`` and ``errors`` list.
+        """
+        result = ValidationResult(valid=True, errors=[])
+
+        # 1. Required fields check
+        if not brief:
+            result.valid = False
+            result.errors = [f"Missing required field: {f}" for f in self.REQUIRED_FIELDS]
+            return result
+
+        tier1 = brief.get("tier1") if isinstance(brief, dict) and "tier1" in brief else brief
+        for field in self.REQUIRED_FIELDS:
+            value = tier1.get(field) if isinstance(tier1, dict) else None
+            if value is None or value == "" or value == []:
+                result.valid = False
+                result.errors.append(f"Missing required field: {field}")
+
+        # 2. Contract consistency check
+        if isinstance(tier1, dict):
+            forbidden = tier1.get("forbidden_moves", [])
+            required_beats = tier1.get("required_beats", [])
+            if forbidden and required_beats:
+                conflicts = self._check_conflicts(forbidden, required_beats)
+                if conflicts:
+                    result.valid = False
+                    result.errors.extend(conflicts)
+
+        # 3. Plugin extension: run registered checkers
+        for checker in self._checkers:
+            sub_result = checker(brief)
+            if sub_result and sub_result.errors:
+                result.valid = False
+                result.errors.extend(sub_result.errors)
+
+        return result
+
+    @staticmethod
+    def _check_conflicts(forbidden: list, required: list) -> list[str]:
+        """Check for forbidden/required beat conflicts."""
+        errors: list[str] = []
+        forbidden_set = set(str(f).lower() for f in forbidden)
+        required_set = set(str(r).lower() for r in required)
+        overlap = forbidden_set & required_set
+        if overlap:
+            errors.append(
+                f"Contract conflict: forbidden moves also in required_beats: {sorted(overlap)}"
+            )
+        return errors
+
+
+# ══════════════════════════════════════════════════════════════════
+# Legacy functions (backward-compatible)
+# ══════════════════════════════════════════════════════════════════
+
+
 def validate_and_fill_brief(
     brief: Dict[str, Any],
     genre_profile: GenreProfile,

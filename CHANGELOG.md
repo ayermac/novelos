@@ -12,6 +12,234 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.20 - Exception Unification Framework (Pilot + API Expansion)
+
+Date: 2026-07-10
+
+Type: Refactoring (Code Quality - Exception Framework)
+
+Scope: docs/codex/planning/novel-factory-v6.10.20-exception-unification-plan.md
+
+Status: Complete - framework established, pilot expanded across 6 endpoints
+
+Key changes:
+
+### 4-Layer Exception Types
+- `novel_factory/exceptions.py`: 4 domain-specific exception classes
+  - `AgentExecutionError`: wraps agent + step + inner error for structured debugging
+  - `DBTransactionError`: database/repository layer failures
+  - `APIValidationError`: client request validation failures (4xx class) with `code` and `message` attributes
+  - `LLMProviderError`: LLM provider call failures (rate limit, timeout, etc.)
+- All inherit from `Exception` so existing `except Exception:` blocks continue to work
+- New code should catch the specific type when possible
+
+### Pilot Migration (Phase 1: Agent Runtime)
+- `agent_runtime/base.py` `run()`: Agent execution failures now wrapped in `AgentExecutionError` with structured agent/step logging
+- No existing `except Exception:` blocks were modified (backward compatible)
+
+### Pilot Expansion (Phase 2: API Routes)
+- `api/routes/runs.py` `batch_mark_stuck`: Empty run_ids and >50 limits now raise `APIValidationError`
+- `api/routes/production.py` 4 endpoints migrated:
+  - `production-next`: PROJECT_NOT_FOUND validation
+  - `health-summary`: PROJECT_NOT_FOUND validation
+  - `auto-fill`: PROJECT_NOT_FOUND, CONFIRM_REQUIRED validation
+  - `arc-plan`: PROJECT_NOT_FOUND, CONFIRM_REQUIRED, VALIDATION_ERROR, GENESIS_REQUIRED validation
+- Each endpoint catches `APIValidationError` before generic `Exception`, preserving exact error codes
+
+### Pilot Expansion (Phase 3: Genesis Routes)
+- `api/routes/genesis.py` 5 endpoints migrated:
+  - `generate`: PROJECT_NOT_FOUND, GENESIS_IN_PROGRESS validation
+  - `latest`: PROJECT_NOT_FOUND validation
+  - `impact`: PROJECT_NOT_FOUND, GENESIS_NOT_FOUND (x2) validation
+  - `approve`: PROJECT_NOT_FOUND, GENESIS_NOT_FOUND (x2), INVALID_GENESIS_STATUS, INVALID_DRAFT, INCOMPLETE_DRAFT, GENESIS_QUALITY_BLOCKED validation
+  - `reject`: PROJECT_NOT_FOUND, GENESIS_NOT_FOUND (x2), INVALID_GENESIS_STATUS validation
+
+### Tests
+- `tests/test_v61020_exceptions.py`: 13 tests covering construction, attributes, Exception-catch compatibility, tuple-catch
+- `tests/test_v6109_core_loop_evidence_governance.py`: Updated legacy version assertion (6.10.19 -> 6.10.20)
+
+Verification: pytest -q -> 3762 passed, 1 skipped (full green)
+
+Known follow-up risk:
+- Remaining `api/` routes (projects, chapters, genesis, etc.) and `workflow/` (86 `except Exception`) deferred to v6.10.21+ or v6.11.0
+
+
+## v6.10.19 - Repository Aggregation: Store Facade Phase A
+
+Date: 2026-07-09
+
+Type: Feature (Repository Aggregation - Phase A)
+
+Scope: docs/codex/planning/novel-factory-v6.10.19-repository-consolidation-plan.md
+
+Status: Complete - 8 Stores implemented (all deferred caller migration to v6.11.0)
+
+Key changes:
+
+### Store Facade Layer (8 Stores complete)
+- new novel_factory/stores/ package: BaseStore + ProgressStore + DraftStore + WorldStore
+- BaseStore holds single Repository instance (no per-mixin dispatch - Repository is already a facade)
+- ProgressStore: aggregates workflow + execution_event (7 aggregation methods)
+- DraftStore: aggregates chapter + instruction + scene_beats (4 aggregation methods)
+- WorldStore: aggregates story_fact + plot_hole + agent_memory (6 aggregation methods)
+- All Stores read-only aggregation; writes continue via store.repo
+
+### Design spec
+- docs/codex/design/v6.10.19-store-interface-spec.md: complete spec with real method signatures + N+1 risk matrix
+- Key correction vs Draft v1: BaseStore(repo) instead of _get_repo() dispatch (Repository is single facade class)
+
+### v6.10.18 carry-over
+- Unified ChapterBriefValidator with plugin checker extension (fd00a44)
+
+Verification: pytest -q -> 3749 passed, 0 failed.
+
+
+## v6.10.18 - Validation Simplification: ChapterBrief Unification + Field Deprecation
+
+Date: 2026-07-08
+
+Type: Refactoring (Validation Simplification - Phase 1)
+
+Scope: docs/codex/planning/novel-factory-v6.10.18-validation-simplification-plan.md
+
+Status: Partial completion - deprecated marking only; DB migration and file merging deferred to v6.10.19
+
+Key changes:
+
+### ChapterBrief partial unification
+- New flat ChapterBrief class in novel_factory/models/chapter_brief.py: 10 target fields (chapter_goal, conflict, ending_hook, emotion_tone, notes, forbidden_moves, required_beats, emotion_target, payoff_points) + 5 new placeholder fields + deprecated old fields for backward compat
+- CoreLoopDesign moved to chapter_brief.py (canonical home, no circular import)
+- schemas.py re-exports flat ChapterBrief and CoreLoopDesign (flat consumers: Planner/screenwriter/author/context_builder/API work unchanged)
+- chapter_contracts.py nested classes marked deprecated with model_validator warnings (core_loop_checker + test_v690 unchanged)
+- 17 deprecated fields with model_validator deprecation warnings
+- 5 new placeholder fields: conflict, emotion_tone, notes, payoff_points, required_beats
+
+### Phase 0 audit (completed as prerequisite)
+- docs/codex/research/v6.10.18-field-audit-report.md: skills zero field dependency discovered
+- docs/codex/research/v6.10.18-skill-dependency-audit.md: all 27 skill files confirmed zero dependency
+
+Verification: pytest -q -> 3749 passed, 1 skipped, 0 failed (362s).
+
+### Phase A: DB Migration 039
+- 039_v6_10_18_chapter_brief_new_fields.sql: ALTER TABLE instructions ADD COLUMN conflict/notes/payoff_points/required_beats
+- InstructionRepositoryMixin: create_instruction() + update_instruction() updated for 4 new columns
+- migration_registry.py: 039 entry added
+
+### Phase B: Quality/Validators file merging
+- Quality 19 -> 16 files: concept_budget/deadloop_detector/issue_codes/style_detector -> hub.py; rhythm_budget_llm -> rhythm_budget.py; chapter_inheritance -> continuity_gate.py; version_regression_guard -> chapter_brief_validator.py
+- Validators: word_count_policy/plot_verifier -> chapter_checker.py; editorial_meta -> revision_classifier.py (shim re-exports preserved)
+- chapter_inheritance AgentContextBundle import -> TYPE_CHECKING (break circular dep)
+
+### Phase C: Store interface design
+- docs/codex/design/v6.10.19-store-interface-spec.md: 8 Store aggregation layer design (ProgressStore/DraftStore/WorldStore/SummaryStore/CharacterStore/OutlineStore/SignalStore/CheckpointStore)
+
+## v6.10.17 - Code Slimming Phase 1 (Partial Completion)
+
+Date: 2026-07-08
+
+Type: Refactoring (Code Slimming)
+
+Scope: `docs/codex/planning/novel-factory-v6.10.17-code-slimming-plan.md`
+
+Status: Partial completion - further slimming needed for author.py and editor.py
+
+Key changes:
+
+### File拆分成果
+- **author.py 拆分**:
+  - `novel_factory/agents/author/__init__.py`: 3657 -> 2285 行 (-1372 行, -37.5%)
+  - 新建 `novel_factory/agents/author/title_generation.py`: 415 行（标题生成 Mixin 独立模块）
+  - 新建 `novel_factory/agents/author/plain_text_draft.py`: 950 行（纯文本草稿生成逻辑独立模块）
+  - 使用 Mixin 策略：`AuthorAgent` 继承 `TitleGenerationMixin`，保持向后兼容
+
+- **nodes.py 拆分**:
+  - `novel_factory/workflow/nodes/__init__.py`: 2851 -> 1684 行 (-1167 行, -40.9%)
+  - 新建 `novel_factory/workflow/nodes/helpers.py`: 1280 行（辅助函数独立模块）
+  - 提取辅助函数到 helpers.py，保留节点函数在 __init__.py 统一 re-export
+
+- **editor.py**:
+  - 目录化为 `novel_factory/agents/editor/__init__.py`（2526 行，内容未进一步拆分，方法高度耦合，延后至 v6.10.18+）
+
+- **llm 层拆分**:
+  - `novel_factory/llm/openai_compatible.py`: 1108 -> 996 行 (-112 行)
+  - 新建 `novel_factory/llm/json_utils.py`: 125 行（`extract_json`、`sanitize_json`）
+
+### 总体进度
+- **主文件（4 个）**: 10139 -> 7491 行 (-2648 行, -26.1%)
+- **新建模块文件**: 4 个（title_generation.py 415 + plain_text_draft.py 950 + helpers.py 1280 + json_utils.py 125 = 2770 行）
+- **符合 ≤1000 行目标**: 2/8 个文件（title_generation.py、json_utils.py）
+- **在 1000-1500 行范围**: nodes/helpers.py (1280 行)
+- **仍需拆分**: author/__init__.py (2285 行), editor/__init__.py (2526 行), nodes/__init__.py (1684 行)
+
+Files changed: 35 files, +6700 / -4434 lines (git stat 9049e03^..9a7c996)
+- `novel_factory/agents/author/__init__.py`: 移除标题生成/纯文本草稿方法，添加 mixin 导入
+- `novel_factory/agents/author/title_generation.py`: 新建标题生成 mixin
+- `novel_factory/agents/author/plain_text_draft.py`: 新建纯文本草稿模块
+- `novel_factory/workflow/nodes/__init__.py`: 移除辅助函数，添加 helpers 导入
+- `novel_factory/workflow/nodes/helpers.py`: 新建辅助函数模块
+- `novel_factory/agents/editor/__init__.py`: 目录化（原 editor.py）
+- `novel_factory/llm/openai_compatible.py`: 移除 JSON 工具函数，添加向后兼容别名
+- `novel_factory/llm/json_utils.py`: 新建 JSON 工具模块
+- `novel_factory/version.py`: 6.10.16 -> 6.10.17
+- `frontend/package.json` + `desktop/package.json`: 版本同步
+- 多个测试文件: 适配拆分后路径 + 24 个回归修复
+
+Verification:
+- pytest baseline (默认 `-n auto`): **3748 passed, 1 skipped, 0 failed** (225s)
+- pytest baseline (`-n 1`): 3748 passed, 1 skipped, 0 failed (1367s)
+- Import verification: 所有拆分后的模块经 `__init__.py` re-export 保持原导入路径可用（`AuthorAgent`、`EditorAgent`、`planner_node`、`create_node_runners`、`MAX_INTERNAL_REPAIR_ATTEMPTS`、`OpenAICompatibleProvider`）
+- Mixin 继承验证: `AuthorAgent` 正确继承 `TitleGenerationMixin`
+
+> **Errata**: 原始提交 `9049e03` 仅以 `-n 1` 验证测试基线，默认 `-n auto` 下 `test_v40_style_bible_cli.py::TestStyleShow::test_show_existing` 与 `TestStyleUpdate::test_update_success` 因跨 worker 依赖 `test_init_success` 创建 `demo` 的 Style Bible 而失败（2 failed, 3746 passed）。发布后已将这两个测试改为自包含（独立 `project_id` `show_test`/`update_test` + `--create-project`），默认配置现达 0 failed。本 errata 修正同步更新于验收阶段。
+
+Technical approach:
+- 采用 **Mixin 策略** 拆分 author.py，避免破坏类结构和实例方法依赖
+- 采用 **模块拆分策略** 拆分 nodes.py，利用清晰的函数边界
+- 所有拆分保持 **向后兼容性**：原导入路径仍可用，测试无需修改
+
+Known follow-up (v6.10.18+):
+- **author.py**: 继续拆分修复逻辑、辅助函数、上下文构建等模块（预计还需减少 ~1500 行）
+- **editor.py**: 分析方法依赖关系，采用 Mixin 或模块拆分策略（预计需减少 ~1000 行）
+- **nodes.py**: 考虑按节点类型进一步拆分（如 planner_node.py, author_node.py 等）
+- **API 跀由层**: genesis.py, production.py 等超大文件拆分（P0 级别）
+- **DB Repository 层**: workflow.py, chapter.py 等拆分（P2 级别）
+
+Risk mitigation:
+- 每次拆分后立即运行测试验证
+- 使用兼容层 shim 确保原导入路径可用
+- 采用渐进式拆分，避免一次性大规模重构
+
+## v6.10.16 - review_strategy_applied Event Field Consistency Hotfix
+
+Date: 2026-07-02
+
+Type: Hotfix (retrospective)
+
+Scope: `docs/codex/reports/novel-factory-v6.10.16-completion-report.md`
+
+Key changes:
+
+### v6.10.16 (hotfix)
+- **Fix 1 (editor.py:1056)**: Clear `output.revision_target = None` in v6.10.4 LLM pass override path, aligning with v6.10.0 path behavior. Prevents residual revision_target from misleading downstream when override forces a pass.
+- **Fix 2 (editor.py:2370)**: Use `not output.pass_` for `revision_needed` in `review_strategy_applied` event payload, keeping it consistent with `editor_completed` event and actual workflow routing decision.
+
+Root cause: Event payload fields came from two different sources — `pass` from `output.pass_` (post-processed final decision) but `revision_needed` from `strategy_result.decision.revision_needed` (raw strategy decision). When v6.10.4 LLM pass override kicked in, `output.pass_=True` but strategy still said `revision_needed=True`, producing a contradictory `pass=True` + `revision_needed=True` payload.
+
+Files changed: 6 files, +323 / -21 lines
+- `novel_factory/agents/editor.py` (+197 / -8): core fix + strategy consistency
+- `novel_factory/agents/memory_curator.py` (+81): event field alignment
+- `novel_factory/quality/editor_strategy.py` (+44 / -7): strategy field semantics
+- `novel_factory/agents/author.py` (+11 / -2): 配套调整
+- `novel_factory/models/schemas.py` (+9): event payload schema clarification
+- `novel_factory/version.py`: 6.10.15 → 6.10.16
+
+Verification:
+- pytest baseline: 2616 passing (0 regressions vs v6.10.15)
+- Event payload consistency verified across override paths (v6.10.0 / v6.10.4)
+
+Known follow-up:
+- v6.10.17 code slimming should extract editor.py event payload construction into a dedicated function to centralize field-source management and prevent recurrence.
+
 ## v6.10.15 - Megafiction Recall Scaling
 
 Date: 2026-07-01
