@@ -114,6 +114,7 @@ async def get_editor_state(
 ) -> EnvelopeResponse:
     """Get chapter editor state: content, editability, current version, recent versions."""
     from ..deps import get_repo
+    from ...stores import DraftStore
 
     try:
         repo = get_repo(request)
@@ -121,11 +122,13 @@ async def get_editor_state(
         if not project:
             return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
-        chapter = repo.get_chapter(project_id, chapter_number)
+        draft_store = DraftStore(repo)
+        draft = draft_store.get_chapter_with_drafts(project_id, chapter_number)
+        chapter = draft["chapter"] if draft else None
         if not chapter:
             return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
-        status = chapter.get("status", "planned")
+        status = draft["status"]
         content = chapter.get("content", "") or ""
         word_count = chapter.get("word_count", 0) or 0
 
@@ -146,9 +149,9 @@ async def get_editor_state(
             editable = False
             edit_restriction = f"章节状态 '{status}' 不可编辑"
 
-        # Current version info
-        latest_version_id = repo.get_latest_version_id(project_id, chapter_number)
-        versions = repo.list_chapter_versions(project_id, chapter_number)
+        # Current version info (from DraftStore)
+        latest_version_id = draft["latest_version_id"]
+        versions = draft["versions"]
         recent_versions = [
             {
                 "version_id": v["id"],
