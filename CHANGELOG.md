@@ -46,6 +46,14 @@ Key changes:
   - `arc-plan`: PROJECT_NOT_FOUND, CONFIRM_REQUIRED, VALIDATION_ERROR, GENESIS_REQUIRED validation
 - Each endpoint catches `APIValidationError` before generic `Exception`, preserving exact error codes
 
+### Pilot Expansion (Phase 3: Genesis Routes)
+- `api/routes/genesis.py` 5 endpoints migrated:
+  - `generate`: PROJECT_NOT_FOUND, GENESIS_IN_PROGRESS validation
+  - `latest`: PROJECT_NOT_FOUND validation
+  - `impact`: PROJECT_NOT_FOUND, GENESIS_NOT_FOUND (x2) validation
+  - `approve`: PROJECT_NOT_FOUND, GENESIS_NOT_FOUND (x2), INVALID_GENESIS_STATUS, INVALID_DRAFT, INCOMPLETE_DRAFT, GENESIS_QUALITY_BLOCKED validation
+  - `reject`: PROJECT_NOT_FOUND, GENESIS_NOT_FOUND (x2), INVALID_GENESIS_STATUS validation
+
 ### Tests
 - `tests/test_v61020_exceptions.py`: 13 tests covering construction, attributes, Exception-catch compatibility, tuple-catch
 - `tests/test_v6109_core_loop_evidence_governance.py`: Updated legacy version assertion (6.10.19 -> 6.10.20)
