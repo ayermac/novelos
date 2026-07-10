@@ -46,10 +46,18 @@ class DBTransactionError(Exception):
 class APIValidationError(Exception):
     """API request validation failure (bad payload, missing field, etc.).
 
-    This is a *client* error (4xx class), not a server crash.
+    Attributes:
+        code:    Error code string (e.g. "VALIDATION_ERROR", "NO_RUNS_SELECTED")
+        message: Human-readable message
     """
 
-    pass
+    def __init__(self, code: str, message: str) -> None:
+        self.code = code
+        self.message = message
+        super().__init__(message)
+
+    def __repr__(self) -> str:
+        return f"APIValidationError(code={self.code!r}, message={self.message!r})"
 
 
 class LLMProviderError(Exception):

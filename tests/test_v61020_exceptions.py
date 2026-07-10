@@ -69,15 +69,23 @@ class TestAPIValidationError:
     def test_is_caught_by_except_exception(self):
         with pytest.raises(APIValidationError):
             try:
-                raise APIValidationError("missing field 'project_id'")
+                raise APIValidationError("MISSING_FIELD", "missing field 'project_id'")
             except Exception:
                 raise
 
     def test_is_caught_by_specific_type(self):
         try:
-            raise APIValidationError("invalid JSON")
+            raise APIValidationError("INVALID_JSON", "invalid JSON")
         except APIValidationError as e:
             assert "invalid JSON" in str(e)
+            assert e.code == "INVALID_JSON"
+            assert e.message == "invalid JSON"
+
+    def test_repr_roundtrip(self):
+        e = APIValidationError("INVALID_JSON", "invalid JSON")
+        assert "APIValidationError" in repr(e)
+        assert "INVALID_JSON" in repr(e)
+        assert "invalid JSON" in repr(e)
 
 
 class TestLLMProviderError:
@@ -117,6 +125,8 @@ class TestExceptionHierarchy:
             try:
                 if exc_class is AgentExecutionError:
                     raise exc_class("test", "step", RuntimeError("inner"))
+                elif exc_class is APIValidationError:
+                    raise exc_class("TEST_CODE", "test")
                 else:
                     raise exc_class("test")
             except (AgentExecutionError, DBTransactionError, APIValidationError, LLMProviderError):
