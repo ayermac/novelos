@@ -12,7 +12,7 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
-## v6.10.20 - Exception Unification Framework (Pilot)
+## v6.10.20 - Exception Unification Framework (Pilot + API Expansion)
 
 Date: 2026-07-10
 
@@ -20,7 +20,7 @@ Type: Refactoring (Code Quality - Exception Framework)
 
 Scope: docs/codex/planning/novel-factory-v6.10.20-exception-unification-plan.md
 
-Status: Complete - framework established, pilot in agent_runtime/base.py
+Status: Complete - framework established, pilot expanded across 6 endpoints
 
 Key changes:
 
@@ -28,22 +28,32 @@ Key changes:
 - `novel_factory/exceptions.py`: 4 domain-specific exception classes
   - `AgentExecutionError`: wraps agent + step + inner error for structured debugging
   - `DBTransactionError`: database/repository layer failures
-  - `APIValidationError`: client request validation failures (4xx class)
+  - `APIValidationError`: client request validation failures (4xx class) with `code` and `message` attributes
   - `LLMProviderError`: LLM provider call failures (rate limit, timeout, etc.)
 - All inherit from `Exception` so existing `except Exception:` blocks continue to work
 - New code should catch the specific type when possible
 
-### Pilot Migration
+### Pilot Migration (Phase 1: Agent Runtime)
 - `agent_runtime/base.py` `run()`: Agent execution failures now wrapped in `AgentExecutionError` with structured agent/step logging
 - No existing `except Exception:` blocks were modified (backward compatible)
 
-### Tests
-- `tests/test_v61020_exceptions.py`: 12 tests covering construction, attributes, Exception-catch compatibility, tuple-catch
+### Pilot Expansion (Phase 2: API Routes)
+- `api/routes/runs.py` `batch_mark_stuck`: Empty run_ids and >50 limits now raise `APIValidationError`
+- `api/routes/production.py` 4 endpoints migrated:
+  - `production-next`: PROJECT_NOT_FOUND validation
+  - `health-summary`: PROJECT_NOT_FOUND validation
+  - `auto-fill`: PROJECT_NOT_FOUND, CONFIRM_REQUIRED validation
+  - `arc-plan`: PROJECT_NOT_FOUND, CONFIRM_REQUIRED, VALIDATION_ERROR, GENESIS_REQUIRED validation
+- Each endpoint catches `APIValidationError` before generic `Exception`, preserving exact error codes
 
-Verification: pytest -q -> 3760 passed, 1 skipped (1 flaky test unrelated to changes)
+### Tests
+- `tests/test_v61020_exceptions.py`: 13 tests covering construction, attributes, Exception-catch compatibility, tuple-catch
+- `tests/test_v6109_core_loop_evidence_governance.py`: Updated legacy version assertion (6.10.19 -> 6.10.20)
+
+Verification: pytest -q -> 3762 passed, 1 skipped (full green)
 
 Known follow-up risk:
-- Full migration of `api/` (277 `except Exception`) and `workflow/` (86 `except Exception`) deferred to v6.10.21+ or v6.11.0 research
+- Remaining `api/` routes (projects, chapters, genesis, etc.) and `workflow/` (86 `except Exception`) deferred to v6.10.21+ or v6.11.0
 
 
 ## v6.10.19 - Repository Aggregation: Store Facade Phase A

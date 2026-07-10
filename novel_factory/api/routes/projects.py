@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from ..envelope import envelope_response, error_response, EnvelopeResponse
+from ...exceptions import APIValidationError
 from ...agent_runtime.chapter_text import is_chapter_heading
 
 router = APIRouter()
@@ -186,7 +187,7 @@ async def get_project(request: Request, project_id: str) -> EnvelopeResponse:
         project = repo.get_project(project_id)
 
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
             repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
@@ -202,6 +203,8 @@ async def get_project(request: Request, project_id: str) -> EnvelopeResponse:
             "chapter_count": len(chapters),
         })
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取项目失败: {str(e)}")
 
@@ -222,7 +225,7 @@ async def update_project(
         # Verify project exists
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         # Build update data (only include non-None fields)
         update_data = {}
@@ -238,15 +241,17 @@ async def update_project(
             update_data["total_chapters_planned"] = body.total_chapters_planned
 
         if not update_data:
-            return error_response("NO_UPDATES", "没有提供需要更新的字段")
+            raise APIValidationError("NO_UPDATES", "没有提供需要更新的字段")
 
         # Update project
         updated = repo.update_project(project_id, **update_data)
         if not updated:
-            return error_response("UPDATE_FAILED", "更新项目失败")
+            raise APIValidationError("UPDATE_FAILED", "更新项目失败")
 
         return envelope_response(updated)
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"更新项目失败: {str(e)}")
 
@@ -267,12 +272,12 @@ async def get_chapter_detail(
         # Verify project exists
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         # Get chapter
         chapter = repo.get_chapter(project_id, chapter_number)
         if not chapter:
-            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+            raise APIValidationError("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
         display_title = _chapter_display_title(chapter)
 
@@ -290,6 +295,8 @@ async def get_chapter_detail(
             "updated_at": chapter.get("updated_at", ""),
         })
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取章节详情失败: {str(e)}")
 
@@ -304,7 +311,7 @@ async def get_project_workspace(request: Request, project_id: str) -> EnvelopeRe
         project = repo.get_project(project_id)
 
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         if hasattr(repo, "reconcile_latest_blocked_runs_with_chapters"):
             repo.reconcile_latest_blocked_runs_with_chapters(project_id=project_id)
@@ -343,6 +350,8 @@ async def get_project_workspace(request: Request, project_id: str) -> EnvelopeRe
             },
         })
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"获取项目工作台失败: {str(e)}")
 
@@ -357,10 +366,12 @@ async def delete_project(request: Request, project_id: str) -> EnvelopeResponse:
 
         deleted = repo.delete_project(project_id)
         if not deleted:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         return envelope_response({"deleted": True})
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         if "database is locked" in str(e).lower():
             return error_response(
@@ -386,17 +397,17 @@ async def reset_chapter(
         # Verify project exists
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         # Verify chapter exists
         chapter = repo.get_chapter(project_id, chapter_number)
         if not chapter:
-            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+            raise APIValidationError("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
         # Check if reset is allowed
         current_status = chapter.get("status", "")
         if current_status not in ("blocking", "revision", "planned", "review"):
-            return error_response(
+            raise APIValidationError(
                 "INVALID_STATUS",
                 f"章节状态为 '{current_status}'，仅 'blocking'、'revision'、'planned' 或 'review' 状态可重置"
             )
@@ -407,7 +418,7 @@ async def reset_chapter(
         if current_status in ("blocking", "revision", "review"):
             reset = repo.reset_chapter(project_id, chapter_number)
             if not reset:
-                return error_response("RESET_FAILED", "重置章节失败")
+                raise APIValidationError("RESET_FAILED", "重置章节失败")
         # For planned: no state reset needed, already at planned
 
         recovered_blocked_runs = 0
@@ -447,6 +458,8 @@ async def reset_chapter(
             "checkpoint_cleared": checkpoint_cleared,
         })
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"重置章节失败: {str(e)}")
 
@@ -466,20 +479,20 @@ async def restore_chapter_best_version(
 
     try:
         if not body.confirm:
-            return error_response("CONFIRM_REQUIRED", "请确认恢复历史最佳版本")
+            raise APIValidationError("CONFIRM_REQUIRED", "请确认恢复历史最佳版本")
 
         repo = get_repo(request)
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         chapter = repo.get_chapter(project_id, chapter_number)
         if not chapter:
-            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+            raise APIValidationError("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
         current_status = chapter.get("status", "")
         if current_status in ("published", "awaiting_publish"):
-            return error_response(
+            raise APIValidationError(
                 "PUBLISHED_PROTECTED",
                 "已发布或待发布章节不能直接恢复历史版本，请先创建修订版。",
             )
@@ -488,11 +501,11 @@ async def restore_chapter_best_version(
         word_target = derive_word_target(instruction, project)
         best = find_best_chapter_version(repo, project_id, chapter_number, word_target)
         if not best:
-            return error_response("NO_RESTORABLE_VERSION", "未找到可恢复的历史版本")
+            raise APIValidationError("NO_RESTORABLE_VERSION", "未找到可恢复的历史版本")
 
         result = restore_best_version(repo, project_id, chapter_number, word_target)
         if not result.get("success"):
-            return error_response("RESTORE_FAILED", result.get("error") or "恢复最佳版本失败")
+            raise APIValidationError("RESTORE_FAILED", result.get("error") or "恢复最佳版本失败")
 
         created_by = best.get("created_by")
         new_status = "polished" if created_by == "polisher" else "drafted"
@@ -561,6 +574,8 @@ async def restore_chapter_best_version(
             "message": "已恢复历史最佳版本，下一次运行将从当前正文继续，而不是继续死循环重写。",
         })
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"恢复历史最佳版本失败: {str(e)}")
 
@@ -583,25 +598,24 @@ async def confirm_chapter_regeneration(
 
     try:
         if not body.confirm:
-            return error_response("CONFIRM_REQUIRED", "请确认覆盖已有正文并重新生成")
+            raise APIValidationError("CONFIRM_REQUIRED", "请确认覆盖已有正文并重新生成")
 
         repo = get_repo(request)
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         chapter = repo.get_chapter(project_id, chapter_number)
         if not chapter:
-            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+            raise APIValidationError("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
         current_status = chapter.get("status", "")
         content = (chapter.get("content") or "").strip()
         word_count = chapter.get("word_count") or 0
         if current_status != "planned" or not (content or word_count > 0):
-            return error_response(
+            raise APIValidationError(
                 "INVALID_STATUS",
                 "仅 planned 且已有正文的章节需要确认覆盖重新生成",
-                details={"current_status": current_status, "word_count": word_count},
             )
 
         run_id = repo.create_workflow_run(project_id, chapter_number)
@@ -663,6 +677,8 @@ async def confirm_chapter_regeneration(
             "message": "已确认覆盖已有正文，下一次生成将重新执行本章工作流。",
         })
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"确认重新生成失败: {str(e)}")
 
@@ -683,17 +699,17 @@ async def delete_chapter(
         # Verify project exists
         project = repo.get_project(project_id)
         if not project:
-            return error_response("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
+            raise APIValidationError("PROJECT_NOT_FOUND", f"项目 '{project_id}' 不存在")
 
         # Verify chapter exists
         chapter = repo.get_chapter(project_id, chapter_number)
         if not chapter:
-            return error_response("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
+            raise APIValidationError("CHAPTER_NOT_FOUND", f"章节 {chapter_number} 不存在")
 
         # Check if deletion is allowed (only planned status)
         current_status = chapter.get("status", "")
         if current_status != "planned":
-            return error_response(
+            raise APIValidationError(
                 "INVALID_STATUS",
                 f"章节状态为 '{current_status}'，仅 'planned' 状态可删除"
             )
@@ -701,10 +717,12 @@ async def delete_chapter(
         # Delete the chapter
         deleted = repo.delete_chapter(project_id, chapter_number)
         if not deleted:
-            return error_response("DELETE_FAILED", "删除章节失败")
+            raise APIValidationError("DELETE_FAILED", "删除章节失败")
 
         return envelope_response({"deleted": True})
 
+    except APIValidationError as e:
+        return error_response(e.code, e.message)
     except Exception as e:
         return error_response("INTERNAL_ERROR", f"删除章节失败: {str(e)}")
 
