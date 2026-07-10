@@ -20,7 +20,7 @@ These versions form a phased optimization arc targeting code slimming, validatio
 | --- | --- | --- | --- | --- |
 | v6.10.17 | Code Slimming — file splitting + 24 test regressions fix | P0 | `novel-factory-v6.10.17-code-slimming-plan.md` | **Shipped** |
 | v6.10.18 | Validation Simplification — field trimming with deprecation | P1 | `novel-factory-v6.10.18-validation-simplification-plan.md` | **Shipped** |
-| v6.10.19 | Repository Aggregation — Store facade over 34 repositories | P1 | `novel-factory-v6.10.19-repository-consolidation-plan.md` | Planned |
+| v6.10.19 | Repository Aggregation — Store facade over 34 repositories | P1 | `novel-factory-v6.10.19-repository-consolidation-plan.md` | **Phase A Shipped** |
 | v6.11.0 | Architecture Research — atomic tools + unified exceptions (LangGraph retained) | P2 | `novel-factory-v6.11.0-architecture-refactor-plan.md` | Research (not in release roadmap) |
 
 ### Roadmap Targets (Revised)
@@ -37,6 +37,7 @@ These versions form a phased optimization arc targeting code slimming, validatio
 
 | Version | Planning/spec source | Report | Review | Coverage |
 | --- | --- | --- | --- | --- |
+| v6.10.19 | `novel-factory-v6.10.19-repository-consolidation-plan.md` | none yet (**Phase A**) | none yet | standalone |
 | v6.10.18 | `novel-factory-v6.10.18-validation-simplification-plan.md` | `../reports/novel-factory-v6.10.18-completion-report.md` | none yet | standalone |
 | v6.10.17 | `novel-factory-v6.10.17-code-slimming-plan.md` | `../reports/novel-factory-v6.10.17-completion-report.md` | none yet | standalone |
 | v6.10.16 | CHANGELOG + retrospective report | `../reports/novel-factory-v6.10.16-completion-report.md` | none yet | retrospective |

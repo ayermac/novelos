@@ -12,6 +12,36 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.19 - Repository Aggregation: Store Facade Phase A
+
+Date: 2026-07-09
+
+Type: Feature (Repository Aggregation - Phase A)
+
+Scope: docs/codex/planning/novel-factory-v6.10.19-repository-consolidation-plan.md
+
+Status: Phase A complete - 3 Stores implemented; remaining 5 Stores deferred to v6.11.0
+
+Key changes:
+
+### Store Facade Layer (Phase A)
+- new novel_factory/stores/ package: BaseStore + ProgressStore + DraftStore + WorldStore
+- BaseStore holds single Repository instance (no per-mixin dispatch - Repository is already a facade)
+- ProgressStore: aggregates workflow + execution_event (7 aggregation methods)
+- DraftStore: aggregates chapter + instruction + scene_beats (4 aggregation methods)
+- WorldStore: aggregates story_fact + plot_hole + agent_memory (6 aggregation methods)
+- All Stores read-only aggregation; writes continue via store.repo
+
+### Design spec
+- docs/codex/design/v6.10.19-store-interface-spec.md: complete spec with real method signatures + N+1 risk matrix
+- Key correction vs Draft v1: BaseStore(repo) instead of _get_repo() dispatch (Repository is single facade class)
+
+### v6.10.18 carry-over
+- Unified ChapterBriefValidator with plugin checker extension (fd00a44)
+
+Verification: pytest -q -> 3749 passed, 0 failed.
+
+
 ## v6.10.18 - Validation Simplification: ChapterBrief Unification + Field Deprecation
 
 Date: 2026-07-08
