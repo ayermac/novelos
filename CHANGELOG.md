@@ -12,6 +12,40 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.10.20 - Exception Unification Framework (Pilot)
+
+Date: 2026-07-10
+
+Type: Refactoring (Code Quality - Exception Framework)
+
+Scope: docs/codex/planning/novel-factory-v6.10.20-exception-unification-plan.md
+
+Status: Complete - framework established, pilot in agent_runtime/base.py
+
+Key changes:
+
+### 4-Layer Exception Types
+- `novel_factory/exceptions.py`: 4 domain-specific exception classes
+  - `AgentExecutionError`: wraps agent + step + inner error for structured debugging
+  - `DBTransactionError`: database/repository layer failures
+  - `APIValidationError`: client request validation failures (4xx class)
+  - `LLMProviderError`: LLM provider call failures (rate limit, timeout, etc.)
+- All inherit from `Exception` so existing `except Exception:` blocks continue to work
+- New code should catch the specific type when possible
+
+### Pilot Migration
+- `agent_runtime/base.py` `run()`: Agent execution failures now wrapped in `AgentExecutionError` with structured agent/step logging
+- No existing `except Exception:` blocks were modified (backward compatible)
+
+### Tests
+- `tests/test_v61020_exceptions.py`: 12 tests covering construction, attributes, Exception-catch compatibility, tuple-catch
+
+Verification: pytest -q -> 3760 passed, 1 skipped (1 flaky test unrelated to changes)
+
+Known follow-up risk:
+- Full migration of `api/` (277 `except Exception`) and `workflow/` (86 `except Exception`) deferred to v6.10.21+ or v6.11.0 research
+
+
 ## v6.10.19 - Repository Aggregation: Store Facade Phase A
 
 Date: 2026-07-09

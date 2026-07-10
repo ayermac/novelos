@@ -668,8 +668,12 @@ class BaseAgent:
             else:
                 result = {"error": message, "chapter_status": state.get("chapter_status")}
         except Exception as e:
-            logger.exception("Agent '%s' execution failed", self.agent_id)
-            result = {"error": str(e), "chapter_status": state.get("chapter_status")}
+            from novel_factory.exceptions import AgentExecutionError
+            wrapped = AgentExecutionError(self.agent_id, "_execute", e)
+            logger.exception(
+                "Agent '%s' execution failed: %s", self.agent_id, wrapped
+            )
+            result = {"error": str(wrapped), "chapter_status": state.get("chapter_status")}
 
         latency_ms = int((time.perf_counter() - started_at) * 1000)
 
