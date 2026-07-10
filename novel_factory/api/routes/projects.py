@@ -329,8 +329,10 @@ async def get_project_workspace(request: Request, project_id: str) -> EnvelopeRe
             for chapter in chapters
         ]
 
-        # Get recent runs
-        runs = repo.get_workflow_runs_for_project(project_id, limit=10)
+        # Get recent runs via v6.10.19 ProgressStore
+        from ...stores import ProgressStore
+        store = ProgressStore(repo)
+        runs = store.get_recent_runs(project_id, limit=10)
 
         # Get stats
         total_words = sum(ch.get("word_count", 0) for ch in chapters)

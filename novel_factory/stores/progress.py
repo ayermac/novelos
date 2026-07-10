@@ -38,6 +38,13 @@ class ProgressStore(BaseStore):
         )
         return events if isinstance(events, list) else []
 
+    def get_recent_runs(self, project_id: str, limit: int = 10) -> list[dict]:
+        """Recent workflow runs for a project. Thin wrapper over repo method."""
+        runs = self._safe_call(
+            self._repo.get_workflow_runs_for_project, project_id=project_id, limit=limit
+        )
+        return runs if isinstance(runs, list) else []
+
     def get_active_runs(self, project_id: str) -> list[dict]:
         """Active workflow runs across all chapters in a project."""
         return self._collect_active_runs(project_id)

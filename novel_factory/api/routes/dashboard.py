@@ -32,7 +32,9 @@ async def get_dashboard(request: Request) -> EnvelopeResponse:
         # Get recent runs (simplified)
         recent_runs = []
         for p in projects[:5]:
-            runs = repo.get_workflow_runs_for_project(p["project_id"], limit=3)
+            from ...stores import ProgressStore
+            store = ProgressStore(repo)
+            runs = store.get_recent_runs(p["project_id"], limit=3)
             for run in runs:
                 recent_runs.append({
                     "run_id": run.get("id", ""),
