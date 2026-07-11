@@ -50,18 +50,20 @@ async def get_chapter_brief(
         Chapter brief data or error if not found
     """
     repo = _get_repo(request)
+    from ...stores import DraftStore
     
     try:
-        # Get the chapter
-        chapter = repo.get_chapter(project_id, chapter_number)
+        # Get chapter + instruction via DraftStore aggregation
+        store = DraftStore(repo)
+        ctx = store.get_chapter_full_context(project_id, chapter_number)
+        chapter = ctx["chapter"] if ctx else None
         if not chapter:
             raise APIValidationError(
                 "CHAPTER_NOT_FOUND",
                 f"Chapter {chapter_number} not found for project {project_id}",
             )
         
-        # Get the instruction for this chapter
-        instruction = repo.get_instruction_by_chapter(project_id, chapter_number)
+        instruction = ctx["instruction"] if ctx else None
         if not instruction:
             return envelope_response({
                 "project_id": project_id,
