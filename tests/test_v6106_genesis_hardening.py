@@ -465,7 +465,7 @@ async def test_genesis_segment_timeout_recovers_partial_draft(monkeypatch):
                 raise LLMTimeoutError("LLM 响应超时（>300秒），请稍后重试")
             raise AssertionError(f"Unexpected prompt: {prompt[:120]}")
 
-    monkeypatch.setattr(genesis_routes, "_build_genesis_llm", lambda settings: TimeoutOnInstructionsLLM())
+    monkeypatch.setattr(genesis_routes.llm, "_build_genesis_llm", lambda settings: TimeoutOnInstructionsLLM())
 
     recovered = await genesis_routes._generate_real_draft(
         _request(),
@@ -490,7 +490,7 @@ async def test_genesis_completion_timeout_recovers_partial_draft(monkeypatch):
         def invoke_json(self, messages, max_tokens=None, max_retries=1):
             raise LLMTimeoutError("LLM 响应超时（>300秒），请稍后重试")
 
-    monkeypatch.setattr(genesis_routes, "_build_genesis_llm", lambda settings: TimeoutCompletionLLM())
+    monkeypatch.setattr(genesis_routes.llm, "_build_genesis_llm", lambda settings: TimeoutCompletionLLM())
 
     partial = {
         "project_updates": {"description": "陆恒召唤英灵军团逆袭都市觉醒体系。"},
