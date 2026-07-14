@@ -120,10 +120,12 @@ from .llm import (
     _build_genesis_common_context,
 )
 
+# Import applier function
+from .applier import _apply_genesis_to_project
+
 # Re-export all public symbols from the original file
-# Note: _endpoints.py still contains route handlers and applier functions
+# Note: _endpoints.py still contains route handlers
 from ._endpoints import (
-    _apply_genesis_to_project,
     _fail_orphaned_running_genesis,
     _genesis_timeout_minutes,
     _parse_genesis_timestamp,
