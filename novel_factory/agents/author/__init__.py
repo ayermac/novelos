@@ -1278,7 +1278,7 @@ class AuthorAgent(BaseAgent, TitleGenerationMixin, PlainTextDraftMixin):
                     "_exec_events": exec_events,
                 }
 
-            from ...quality.version_regression_guard import VersionRegressionGuard
+            from ...quality.hub import VersionRegressionGuard
 
             revision_review = revision_review or {}
             system_compressed = any(

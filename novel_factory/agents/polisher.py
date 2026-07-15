@@ -962,7 +962,7 @@ class PolisherAgent(BaseAgent):
 
         # v6.6.0: Protect the current draft from a regressing revision pass.
         if in_revision_chain and original_content:
-            from ..quality.version_regression_guard import VersionRegressionGuard
+            from ..quality.hub import VersionRegressionGuard
 
             revision_review = revision_review or {}
             system_compressed = any(

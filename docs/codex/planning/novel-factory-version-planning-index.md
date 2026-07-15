@@ -21,6 +21,7 @@ These versions form a phased optimization arc targeting code slimming, validatio
 | v6.10.17 | Code Slimming — file splitting + 24 test regressions fix | P0 | `novel-factory-v6.10.17-code-slimming-plan.md` | **Shipped** |
 | v6.10.18 | Validation Simplification — field trimming with deprecation | P1 | `novel-factory-v6.10.18-validation-simplification-plan.md` | **Shipped** |
 | v6.10.19 | Repository Aggregation — Store facade over 34 repositories | P1 | `novel-factory-v6.10.19-repository-consolidation-plan.md` | **Shipped** |
+| v6.10.20 | Exception Unification — layered exception types + pilot migration | P1 | `novel-factory-v6.10.20-exception-unification-plan.md` | **Shipped** |
 | v6.11.0 | Architecture Research — atomic tools + unified exceptions (LangGraph retained) | P2 | `novel-factory-v6.11.0-architecture-refactor-plan.md` | Research (not in release roadmap) |
 
 ### Roadmap Targets (Revised)
@@ -37,24 +38,27 @@ These versions form a phased optimization arc targeting code slimming, validatio
 
 | Version | Planning/spec source | Report | Review | Coverage |
 | --- | --- | --- | --- | --- |
+| v6.10.20 | `novel-factory-v6.10.20-exception-unification-plan.md` | `../reports/novel-factory-v6.10.20-completion-report.md` | none yet | standalone |
 | v6.10.19 | `novel-factory-v6.10.19-repository-consolidation-plan.md` | `../reports/novel-factory-v6.10.19-completion-report.md` | none yet | standalone |
 | v6.10.18 | `novel-factory-v6.10.18-validation-simplification-plan.md` | `../reports/novel-factory-v6.10.18-completion-report.md` | none yet | standalone |
 | v6.10.17 | `novel-factory-v6.10.17-code-slimming-plan.md` | `../reports/novel-factory-v6.10.17-completion-report.md` | none yet | standalone |
 | v6.10.16 | CHANGELOG + retrospective report | `../reports/novel-factory-v6.10.16-completion-report.md` | none yet | retrospective |
-| v6.10.15 | `novel-factory-v6.10.15-megafiction-recall-scaling-plan.md` | none yet | none yet | standalone |
-| v6.10.14 | `novel-factory-v6.10.14-longform-recall-optimization-plan.md` | none yet | none yet | standalone |
-| v6.10.13 | `novel-factory-v6.10.13-architecture-hardening-plan.md` | none yet | none yet | standalone |
-| v6.10.12 | `novel-factory-v6.10.12-production-stability-hardening-plan.md` | none yet | none yet | standalone |
-| v6.10.11 | CHANGELOG only (hotfix) | none yet | none yet | hotfix |
-| v6.10.10 | CHANGELOG only (hotfix) | none yet | none yet | hotfix |
-| v6.10.7 | `novel-factory-v6.10.7-core-loop-evidence-governance-plan.md` | none yet | none yet | standalone |
-| v6.10.6 | `novel-factory-v6.10.6-genesis-hardening-plan.md` | none yet | none yet | standalone |
-| v6.10.5 | `novel-factory-v6.10.5-story-contract-governance-plan.md` | none yet | none yet | standalone |
-| v6.10.4 | `novel-factory-v6.10.4-style-management-hardening-plan.md` | none yet | none yet | standalone |
+| v6.10.15 | `novel-factory-v6.10.15-megafiction-recall-scaling-plan.md` | `../reports/novel-factory-v6.10.15-completion-report.md` | none yet | standalone |
+| v6.10.14 | `novel-factory-v6.10.14-longform-recall-optimization-plan.md` | `../reports/novel-factory-v6.10.14-completion-report.md` | none yet | standalone |
+| v6.10.13 | `novel-factory-v6.10.13-architecture-hardening-plan.md` | `../reports/novel-factory-v6.10.13-completion-report.md` | none yet | standalone |
+| v6.10.12 | `novel-factory-v6.10.12-production-stability-hardening-plan.md` | `../reports/novel-factory-v6.10.12-completion-report.md` | none yet | standalone |
+| v6.10.11 | CHANGELOG only (hotfix) | `../reports/novel-factory-v6.10.11-completion-report.md` | none yet | hotfix |
+| v6.10.10 | CHANGELOG only (hotfix) | `../reports/novel-factory-v6.10.10-completion-report.md` | none yet | hotfix |
+| v6.10.9 | `novel-factory-v6.10.9-core-loop-evidence-governance.md` | `../reports/novel-factory-v6.10.9-completion-report.md` | none yet | standalone |
+| v6.10.8 | `novel-factory-v6.10.8-agent-robustness-hardening-plan.md` | `../reports/novel-factory-v6.10.8-completion-report.md` | none yet | standalone |
+| v6.10.7 | `novel-factory-v6.10.7-core-loop-evidence-governance-plan.md` | `../reports/novel-factory-v6.10.7-completion-report.md` | none yet | standalone |
+| v6.10.6 | `novel-factory-v6.10.6-genesis-hardening-plan.md` | `../reports/novel-factory-v6.10.6-completion-report.md` | none yet | standalone |
+| v6.10.5 | `novel-factory-v6.10.5-story-contract-governance-plan.md` | `../reports/novel-factory-v6.10.5-completion-report.md` | none yet | standalone |
+| v6.10.4 | `novel-factory-v6.10.4-style-management-hardening-plan.md` | `../reports/novel-factory-v6.10.4-completion-report.md` | none yet | standalone |
 | v6.10.3 | `novel-factory-v6.10.3-workflow-stability-recovery-plan.md` | `../reports/novel-factory-v6.10.3-completion-report.md` | `../reviews/novel-factory-v6.10.3-review.md` | standalone |
-| v6.10.2 | `novel-factory-v6.10.2-skill-consolidation-plan.md` | none yet | none yet | standalone |
-| v6.10.1 | `novel-factory-v6.10.1-skill-engineering-standardization-spec.md` | none yet | none yet | standalone |
-| v6.10.0 | `novel-factory-v6.10.0-dev-prompt.md` | none yet | none yet | standalone |
+| v6.10.2 | `novel-factory-v6.10.2-skill-consolidation-plan.md` | `../reports/novel-factory-v6.10.2-completion-report.md` | none yet | standalone |
+| v6.10.1 | `novel-factory-v6.10.1-skill-engineering-standardization-spec.md` | `../reports/novel-factory-v6.10.1-completion-report.md` | none yet | standalone |
+| v6.10.0 | `novel-factory-v6.10.0-dev-prompt.md` | `../reports/novel-factory-v6.10.0-completion-report.md` | none yet | standalone |
 | v6.9.1 | `novel-factory-v6.9.1-editor-skillization-spec.md` | none yet | none yet | standalone |
 | v6.9.0 | `novel-factory-v6.9.0-phase-plan.md` | `../reports/novel-factory-v6.9.0-completion-report.md` | none yet | standalone |
 | v6.7.7 | `../specs/novel-factory-v6.7.7-genesis-progress-streaming-spec.md` | `../reports/novel-factory-v6.7.7-completion-report.md` | none yet | standalone |
