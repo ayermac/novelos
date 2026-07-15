@@ -1031,6 +1031,13 @@ def create_node_runners(
                     except Exception:
                         logger.debug("Failed to release memory curator lock after node timeout", exc_info=True)
                 _finalize_run(state, repo, "blocked", f"节点 {agent_name} 执行超时（>{node_timeout}秒）")
+                if agent_name == "memory_curator":
+                    return {
+                        "memory_curator_degraded": True,
+                        "extraction_success": False,
+                        "memory_curator_warning": f"节点 {agent_name} 执行超时（>{node_timeout}秒），记忆提取降级",
+                        "chapter_status": status_before,
+                    }
                 return {
                     "error": f"节点 {agent_name} 执行超时（>{node_timeout}秒），需要人工介入",
                     "chapter_status": status_before,
