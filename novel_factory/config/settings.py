@@ -158,18 +158,3 @@ class Settings(BaseModel):
 
 # ── Loaders ────────────────────────────────────────────────────
 
-def load_settings(config_path: str | Path | None = None) -> Settings:
-    """Load settings from YAML + env overrides.
-
-    Delegates to :func:`novel_factory.config.loader.load_settings_with_cli`
-    so configuration loading has a single implementation (v6.11.01 P1).
-    ``load_env=False`` preserves this entry point's historical behavior of
-    NOT auto-loading the project ``.env`` file; callers that need ``.env``
-    loading should use ``load_settings_with_cli`` directly.
-
-    Kept for backward compatibility with existing callers/tests.
-    """
-    # Imported lazily to avoid a circular import (loader imports from settings).
-    from .loader import load_settings_with_cli
-
-    return load_settings_with_cli(config_path=config_path, load_env=False)
