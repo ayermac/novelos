@@ -283,6 +283,25 @@ def needs_human(
     )
 
 
+def pending(
+    message: str = "处理中",
+    *,
+    user_message: str = "",
+    details: dict[str, Any] | None = None,
+    flags: dict[str, bool] | None = None,
+) -> OperationResult:
+    """Business operation is pending (e.g., workflow still running)."""
+    return OperationResult(
+        ok=True,
+        domain_status="pending",
+        message=message,
+        user_message=user_message,
+        severity="info",
+        details=details or {},
+        flags=flags or {},
+    )
+
+
 def ignored(
     message: str = "操作已忽略",
     *,
@@ -300,6 +319,7 @@ def ignored(
         details=details or {},
         flags=flags or {},
     )
+
 
 
 # ── Memory domain status mapping ────────────────────────────────────
@@ -378,6 +398,154 @@ def memory_status_to_domain_result(
 
 
 # ── Workflow domain status mapping ──────────────────────────────────
+
+
+def build_chapter_domain_result(
+    workflow_status: str,
+    chapter_status: str | None,
+    error: str | None,
+    requires_human: bool,
+    awaiting_publish: bool,
+    has_trusted_memory: bool,
+    run_id: str,
+    llm_mode: str = "stub",
+) -> dict:
+    """Shared domain_result builder for run-chapter (API + CLI).
+
+    v6.11.01 P3: Extracted from api/routes/run.py and cli_app/commands/core.py
+    so the field mapping has a single source of truth.
+    """
+    if workflow_status == "failed":
+        return failed(
+            error or "章节生成失败",
+            user_message="章节生成失败，可重试或查看详情",
+            retryable=True,
+            next_action="retry_workflow",
+            action_label="重试工作流",
+            details={
+                "workflow_status": workflow_status,
+                "chapter_status": chapter_status,
+                "run_id": run_id,
+            },
+            flags={"workflow_failed": True},
+        ).to_dict()
+
+    if workflow_status == "blocked":
+        if chapter_status == "revision":
+            return needs_human(
+                "章节需要返修",
+                user_message="审核未通过，需要返修处理",
+                next_action="retry_node",
+                action_label="重试失败节点",
+                details={
+                    "workflow_status": workflow_status,
+                    "chapter_status": chapter_status,
+                    "run_id": run_id,
+                },
+                flags={"workflow_blocked": True, "revision_needed": True},
+            ).to_dict()
+        return blocked(
+            "章节生成被阻塞",
+            user_message="章节生成被阻塞，需要人工处理",
+            next_action="reset_chapter",
+            action_label="重置章节",
+            details={
+                "workflow_status": workflow_status,
+                "chapter_status": chapter_status,
+                "run_id": run_id,
+            },
+            flags={"workflow_blocked": True},
+        ).to_dict()
+
+    if workflow_status == "completed":
+        if awaiting_publish or chapter_status == "reviewed":
+            if not has_trusted_memory:
+                return partial_success(
+                    "章节已到待发布状态，但记忆提取未成功",
+                    user_message="章节正文已通过审核，但记忆提取为降级/兜底状态，建议补跑记忆",
+                    next_action="backfill_memory",
+                    action_label="补跑记忆",
+                    details={
+                        "workflow_status": workflow_status,
+                        "chapter_status": chapter_status,
+                        "run_id": run_id,
+                    },
+                    flags={
+                        "workflow_completed": True,
+                        "awaiting_publish": True,
+                        "memory_degraded": True,
+                    },
+                ).to_dict()
+            return success(
+                "AI 审核通过，等待人工确认发布",
+                user_message="章节已通过审核，可确认发布",
+                details={
+                    "workflow_status": workflow_status,
+                    "chapter_status": chapter_status,
+                    "run_id": run_id,
+                },
+                flags={
+                    "workflow_completed": True,
+                    "awaiting_publish": True,
+                    "memory_trusted": True,
+                },
+            ).to_dict()
+
+        if chapter_status == "published":
+            if not has_trusted_memory:
+                return partial_success(
+                    "章节已发布，但记忆提取未成功",
+                    user_message="章节已发布，但记忆提取为降级/兜底状态，建议补跑记忆",
+                    next_action="backfill_memory",
+                    action_label="补跑记忆",
+                    details={
+                        "workflow_status": workflow_status,
+                        "chapter_status": chapter_status,
+                        "run_id": run_id,
+                    },
+                    flags={
+                        "workflow_completed": True,
+                        "chapter_published": True,
+                        "memory_degraded": True,
+                    },
+                ).to_dict()
+            return success(
+                "章节生成完成",
+                user_message="章节已成功生成并发布",
+                details={
+                    "workflow_status": workflow_status,
+                    "chapter_status": chapter_status,
+                    "run_id": run_id,
+                },
+                flags={
+                    "workflow_completed": True,
+                    "chapter_published": True,
+                    "memory_trusted": True,
+                },
+            ).to_dict()
+
+        # Generic completed case (e.g. chapter_status is drafted/planned)
+        return success(
+            "章节生成完成" if llm_mode == "stub" else "章节已提交生成",
+            user_message="章节生成完成" if llm_mode == "stub" else "章节已提交生成",
+            details={
+                "workflow_status": workflow_status,
+                "chapter_status": chapter_status,
+                "run_id": run_id,
+            },
+            flags={"workflow_completed": True},
+        ).to_dict()
+
+    return pending(
+        f"章节状态: {chapter_status}",
+        user_message="章节正在处理中，请稍后刷新",
+        details={
+            "workflow_status": workflow_status,
+            "chapter_status": chapter_status,
+            "run_id": run_id,
+        },
+        flags={"workflow_pending": True},
+    ).to_dict()
 
 
 def workflow_run_to_domain_status(

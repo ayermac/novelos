@@ -97,75 +97,75 @@ class TestDomainResultContract:
         assert result["action_label"] == "补跑"
 
     def test_run_chapter_domain_result_helper(self):
-        """Test _build_run_chapter_domain_result helper function."""
-        from novel_factory.api.routes.run import _build_run_chapter_domain_result
+        """Test build_chapter_domain_result helper function (v6.11.01 P3)."""
+        from novel_factory.api.contracts import build_chapter_domain_result
 
         # Test failed case
-        result = _build_run_chapter_domain_result(
+        result = build_chapter_domain_result(
             workflow_status="failed",
             chapter_status="planned",
             error="Test error",
             requires_human=False,
             awaiting_publish=False,
             has_trusted_memory=False,
-            llm_mode="stub",
             run_id="test-run",
+            llm_mode="stub",
         )
         assert result["domain_status"] == "failed"
         assert result["ok"] is False
 
         # Test blocked case
-        result = _build_run_chapter_domain_result(
+        result = build_chapter_domain_result(
             workflow_status="blocked",
             chapter_status="blocking",
             error=None,
             requires_human=False,
             awaiting_publish=False,
             has_trusted_memory=False,
-            llm_mode="stub",
             run_id="test-run",
+            llm_mode="stub",
         )
         assert result["domain_status"] == "blocked"
         assert result["blocking"] is True
 
         # Test revision case
-        result = _build_run_chapter_domain_result(
+        result = build_chapter_domain_result(
             workflow_status="blocked",
             chapter_status="revision",
             error=None,
             requires_human=True,
             awaiting_publish=False,
             has_trusted_memory=False,
-            llm_mode="stub",
             run_id="test-run",
+            llm_mode="stub",
         )
         assert result["domain_status"] == "needs_human"
         assert result["blocking"] is True
 
         # Test success with trusted memory
-        result = _build_run_chapter_domain_result(
+        result = build_chapter_domain_result(
             workflow_status="completed",
             chapter_status="awaiting_publish",
             error=None,
             requires_human=False,
             awaiting_publish=True,
             has_trusted_memory=True,
-            llm_mode="stub",
             run_id="test-run",
+            llm_mode="stub",
         )
         assert result["domain_status"] == "success"
         assert result["ok"] is True
 
         # Test partial success without trusted memory
-        result = _build_run_chapter_domain_result(
+        result = build_chapter_domain_result(
             workflow_status="completed",
             chapter_status="awaiting_publish",
             error=None,
             requires_human=False,
             awaiting_publish=True,
             has_trusted_memory=False,
-            llm_mode="stub",
             run_id="test-run",
+            llm_mode="stub",
         )
         assert result["domain_status"] == "partial_success"
         assert result["severity"] == "warning"
