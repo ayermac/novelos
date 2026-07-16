@@ -6,9 +6,9 @@ and StopGuard into existing agents like Author, Editor, etc.
 This is a reference implementation - actual integration should be done
 in the real agent files.
 
-DEPRECATED (v6.11.01): Reference/example code should not live in the
-production ``agents/`` package. Scheduled for relocation to an examples
-directory (v6.11.01 P3). Not imported by any production code.
+MOVED (v6.11.01): Relocated from ``novel_factory/agents/`` to the project
+``examples/`` directory as part of P3 dead-code cleanup. Not imported by any
+production code.
 """
 
 from __future__ import annotations
@@ -17,10 +17,10 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from ..agent_runtime.base import BaseAgent
-from ..agent_runtime.guard_integration import AgentGuardMixin
-from ..guards.stop_guard import StopDecision
-from ..models.state import FactoryState
+from novel_factory.agent_runtime.base import BaseAgent
+from novel_factory.agent_runtime.guard_integration import AgentGuardMixin
+from novel_factory.guards.stop_guard import StopDecision
+from novel_factory.models.state import FactoryState
 
 logger = logging.getLogger(__name__)
 
