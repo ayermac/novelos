@@ -5,6 +5,10 @@ and StopGuard into existing agents like Author, Editor, etc.
 
 This is a reference implementation - actual integration should be done
 in the real agent files.
+
+DEPRECATED (v6.11.01): Reference/example code should not live in the
+production ``agents/`` package. Scheduled for relocation to an examples
+directory (v6.11.01 P3). Not imported by any production code.
 """
 
 from __future__ import annotations

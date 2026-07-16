@@ -1,8 +1,9 @@
-"""LangGraph node functions for the chapter production workflow.
+"""Shared helpers for LangGraph chapter-production node functions.
 
-Each node takes a FactoryState and returns a dict of updates to merge.
-v1.1: Nodes now track workflow_runs lifecycle and update current_node.
-v5.1.6: Added create_node_runners for LLMRouter-based dependency injection.
+These helpers (context-audit persistence, artifact lookup, agent node
+execution) are imported by ``workflow/nodes/__init__.py``. Node entry
+points themselves live in that package; this module holds the reusable
+implementation details so ``__init__`` can stay focused on node wiring.
 """
 
 from __future__ import annotations
