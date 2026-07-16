@@ -159,28 +159,17 @@ class Settings(BaseModel):
 # ── Loaders ────────────────────────────────────────────────────
 
 def load_settings(config_path: str | Path | None = None) -> Settings:
-    """Load settings from YAML + env overrides."""
-    data: dict[str, Any] = {}
+    """Load settings from YAML + env overrides.
 
-    config_exists = False
-    if config_path:
-        try:
-            config_exists = Path(config_path).exists()
-        except OSError:
-            config_exists = False
+    Delegates to :func:`novel_factory.config.loader.load_settings_with_cli`
+    so configuration loading has a single implementation (v6.11.01 P1).
+    ``load_env=False`` preserves this entry point's historical behavior of
+    NOT auto-loading the project ``.env`` file; callers that need ``.env``
+    loading should use ``load_settings_with_cli`` directly.
 
-    if config_path and config_exists:
-        with open(config_path, "r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
+    Kept for backward compatibility with existing callers/tests.
+    """
+    # Imported lazily to avoid a circular import (loader imports from settings).
+    from .loader import load_settings_with_cli
 
-    # env overrides
-    if env_db := os.getenv("NOVEL_FACTORY_DB"):
-        data.setdefault("db_path", env_db)
-    if env_key := os.getenv("OPENAI_API_KEY"):
-        data.setdefault("llm", {})
-        data["llm"]["api_key"] = env_key
-    if env_base := os.getenv("OPENAI_BASE_URL"):
-        data.setdefault("llm", {})
-        data["llm"]["base_url"] = env_base
-
-    return Settings(**data)
+    return load_settings_with_cli(config_path=config_path, load_env=False)

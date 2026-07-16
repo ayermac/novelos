@@ -379,19 +379,8 @@ def _save_memory_context_audit_if_missing(
         return None
 
     try:
-        conn = repo._conn()
-        try:
-            existing = conn.execute(
-                "SELECT id FROM agent_artifacts "
-                "WHERE workflow_run_id=? AND agent_id='planner' "
-                "AND artifact_type='memory_context_audit' "
-                "LIMIT 1",
-                (run_id,),
-            ).fetchone()
-            if existing:
-                return None
-        finally:
-            conn.close()
+        if repo.has_artifact_for_run(run_id, "planner", "memory_context_audit"):
+            return None
 
         bundle = AgentContextBuilder(repo).build_for_planner(project_id, chapter_number, state)
         audit = build_memory_context_audit(chapter_number, bundle)
@@ -719,21 +708,10 @@ def _latest_artifact_content(
     contracts need the actual previous handoff payload. This helper keeps the
     read scoped and best-effort for workflow validation only.
     """
-    conn = repo._conn()
     try:
-        params: list[Any] = [project_id, chapter_number, agent_id, artifact_type]
-        sql = (
-            "SELECT content_json FROM agent_artifacts "
-            "WHERE project_id=? AND chapter_number=? AND agent_id=? AND artifact_type=?"
+        return repo.get_latest_artifact_content(
+            project_id, chapter_number, agent_id, artifact_type, workflow_run_id
         )
-        if workflow_run_id:
-            sql += " AND workflow_run_id=?"
-            params.append(workflow_run_id)
-        sql += " ORDER BY created_at DESC LIMIT 1"
-        row = conn.execute(sql, params).fetchone()
-        if not row or not row["content_json"]:
-            return {}
-        return json.loads(row["content_json"])
     except Exception:
         logger.debug(
             "Failed to read latest artifact for %s/%s agent=%s type=%s",
@@ -741,8 +719,6 @@ def _latest_artifact_content(
             exc_info=True,
         )
         return {}
-    finally:
-        conn.close()
 
 
 def create_node_runners(
