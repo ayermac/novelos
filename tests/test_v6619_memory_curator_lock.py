@@ -165,8 +165,11 @@ def test_memory_curator_node_timeout_releases_source_lock(tmp_path, monkeypatch)
         "llm_mode": "real",
     })
 
-    assert result["requires_human"] is True
-    assert "执行超时" in result["error"]
+    # v6.10.20: memory_curator timeout degrades (keeps chapter_status) instead
+    # of blocking via requires_human. See commit 8b1ce3a / memory_curator降级.
+    assert result.get("memory_curator_degraded") is True
+    assert result.get("extraction_success") is False
+    assert "执行超时" in result["memory_curator_warning"]
     assert repo.get_memory_curator_lock("memory-lock-proj", 1) is None
     event_types = [
         event["event_type"]
