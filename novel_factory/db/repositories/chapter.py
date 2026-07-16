@@ -83,6 +83,29 @@ class ChapterRepositoryMixin:
         finally:
             conn.close()
 
+    def get_chapters_by_range(
+        self, project_id: str, start: int, end: int
+    ) -> list[dict]:
+        """Get chapters with chapter_number in [start, end), ordered ascending.
+
+        Single batch query to avoid N+1 lookups across a chapter range
+        (e.g. rhythm-budget preflight over the previous 10 chapters).
+        Returns only existing chapter rows; missing numbers are skipped.
+        """
+        if end <= start:
+            return []
+        conn = self._conn()
+        try:
+            rows = conn.execute(
+                "SELECT * FROM chapters WHERE project_id=? "
+                "AND chapter_number>=? AND chapter_number<? "
+                "ORDER BY chapter_number",
+                (project_id, start, end),
+            ).fetchall()
+            return [row_to_dict(r) for r in rows]
+        finally:
+            conn.close()
+
     def list_chapters(self, project_id: str) -> list[dict]:
         """List all chapters for a project.
 
