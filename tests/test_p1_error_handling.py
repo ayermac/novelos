@@ -12,7 +12,8 @@ from unittest.mock import MagicMock, patch
 import tempfile
 import os
 
-from novel_factory.config.settings import Settings, load_settings
+from novel_factory.config.loader import load_settings_with_cli as load_settings
+from novel_factory.config.settings import Settings
 from novel_factory.db.connection import init_db
 from novel_factory.db.repository import Repository
 from novel_factory.workflow.graph import compile_graph

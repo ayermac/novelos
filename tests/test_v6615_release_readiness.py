@@ -122,13 +122,15 @@ class TestVersionUniformity:
             [sys.executable, "-m", "novel_factory.cli", "--version"],
             capture_output=True,
             text=True,
-            timeout=10,
+            # Importing the complete CLI command graph takes ~2s idle and can
+            # exceed 10s while the full xdist suite is CPU-bound.
+            timeout=30,
         )
         current = get_version()
         assert current in result.stdout, f"CLI version mismatch: expected {current}, got {result.stdout}"
 
     def test_health_endpoint_uses_get_version(self):
-        """GET /api/health uses get_version() which returns 6.6.15."""
+        """GET /api/health resolves its version through get_version()."""
         from novel_factory.api.routes.health import health_check
         # Verify the module imports get_version
         import inspect

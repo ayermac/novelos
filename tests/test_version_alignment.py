@@ -1,7 +1,8 @@
-"""Prevent version drift across runtime, API, frontend, and desktop.
+"""Prevent version drift across runtime, packages, API, frontend, and desktop.
 
 This test ensures that all version sources stay in sync:
 - novel_factory/version.py
+- pyproject.toml and uv.lock
 - API /api/health response
 - frontend/package.json
 - desktop/package.json
@@ -10,7 +11,7 @@ This test ensures that all version sources stay in sync:
 from __future__ import annotations
 
 import json
-import os
+import re
 from pathlib import Path
 
 import pytest
@@ -25,6 +26,39 @@ def _load_package_json(relative_path: str) -> dict:
     pkg_path = repo_root / relative_path
     with open(pkg_path, "r", encoding="utf-8") as f:
         return json.load(f)
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _load_pyproject_version() -> str:
+    """Read project.version without requiring tomllib on Python 3.9."""
+    content = (_repo_root() / "pyproject.toml").read_text(encoding="utf-8")
+    project_section = re.search(
+        r"^\[project\]\s*$\n(?P<body>.*?)(?=^\[|\Z)",
+        content,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+    assert project_section is not None, "pyproject.toml is missing [project]"
+    match = re.search(
+        r'^version\s*=\s*["\'](?P<version>[^"\']+)["\']\s*$',
+        project_section.group("body"),
+        flags=re.MULTILINE,
+    )
+    assert match is not None, "pyproject.toml [project] is missing version"
+    return match.group("version")
+
+
+def _load_uv_project_version() -> str:
+    """Read the editable novel-factory entry from uv.lock."""
+    content = (_repo_root() / "uv.lock").read_text(encoding="utf-8")
+    match = re.search(
+        r'\[\[package\]\]\s*\nname = "novel-factory"\s*\nversion = "(?P<version>[^"]+)"\s*\nsource = \{ editable = "\." \}',
+        content,
+    )
+    assert match is not None, "uv.lock is missing the editable novel-factory package"
+    return match.group("version")
 
 
 class TestRuntimeVersion:
@@ -64,6 +98,16 @@ class TestApiHealthVersion:
         assert app.version == __version__, (
             f"FastAPI app.version {app.version!r} != runtime version {__version__!r}"
         )
+
+
+class TestPythonPackageVersion:
+    """Python package metadata and lock entry match runtime."""
+
+    def test_pyproject_version_matches_runtime(self):
+        assert _load_pyproject_version() == __version__
+
+    def test_uv_lock_version_matches_runtime(self):
+        assert _load_uv_project_version() == __version__
 
 
 class TestFrontendVersion:

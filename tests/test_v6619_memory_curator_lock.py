@@ -130,7 +130,7 @@ def test_memory_curator_lock_recovers_stale_running_lock(tmp_path):
 
 def test_memory_curator_node_timeout_releases_source_lock(tmp_path, monkeypatch):
     """A workflow-level MemoryCurator timeout should release its own chapter lock."""
-    from novel_factory.config.settings import load_settings
+    from novel_factory.config.loader import load_settings_with_cli as load_settings
     from novel_factory.workflow.nodes import create_node_runners
 
     repo = _seed_repo(tmp_path)

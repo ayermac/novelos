@@ -12,6 +12,34 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.11.02 - Release Integrity & Runtime Convergence
+
+Date: 2026-08-13
+
+Type: Release engineering and runtime convergence
+
+Scope: docs/codex/planning/novel-factory-v6.11.02-release-integrity-runtime-convergence-plan.md
+
+Status: In Progress - Wave 0 complete; runtime convergence waves remain
+
+Key changes:
+
+- Unified runtime, Python package, frontend, desktop, npm lockfile, and uv lock versions.
+- Replaced legacy release-number assertions with version-contract assertions.
+- Added a read-only release preflight and a single `scripts/verify.py release` evidence path.
+- Migrated stale test and verification imports to the canonical configuration loader removed in v6.11.01.
+- Updated batch revision fixtures to satisfy the production LangGraph readiness contract.
+- Added a socket-restricted, in-process sidecar smoke fallback without using real LLM credentials.
+
+Wave 0 verification (2026-08-13, Darwin arm64, Python 3.9.6, Node 22.22.2, npm 11.12.1):
+
+- `python3 scripts/verify.py release`: PASS.
+- Release preflight: 20/20 checks passed; dirty worktree reported without mutation.
+- Backend: 3784 passed, 1 skipped in 614.77s using 4 workers.
+- Frontend: typecheck, lint, and build passed; 25 files / 344 tests passed in 14.64s.
+- Desktop: typecheck and build passed.
+- Release smoke: all required and optional checks passed. The managed sandbox forbade local socket binding, so the sidecar health/version check used the explicit in-process stub fallback; an unrestricted packaging run must still exercise the spawned sidecar transport before distribution.
+
 ## v6.11.01 - Architecture Debt Optimization (Convergence & Cleanup)
 
 Date: 2026-07-16

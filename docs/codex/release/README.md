@@ -9,5 +9,10 @@ Use it for:
 - packaging notes
 - release safety gates
 
-Implementation specs still belong in `../specs/`; completion reports belong in `../reports/`.
+Start with:
 
+- [version-policy.md](version-policy.md) — unified product version contract
+- [desktop-release-checklist.md](desktop-release-checklist.md) — desktop packaging and release checks
+- [production-ops-runbook.md](production-ops-runbook.md) — production operations and recovery
+
+Implementation specs still belong in `../specs/`; completion reports belong in `../reports/`.

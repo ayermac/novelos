@@ -483,10 +483,12 @@ class TestContextBuilderBeatInjection:
 class TestVersion:
     """Version should be 6.10.9."""
 
-    def test_version_is_6109(self):
-        from novel_factory.version import __version__
+    def test_runtime_version_contract(self):
+        from novel_factory.version import __version__, get_version
 
-        assert __version__ == "6.10.20"
+        assert get_version() == __version__
+        assert len(__version__.split(".")) == 3
+        assert all(part.isdigit() for part in __version__.split("."))
 
 
 # ──────────────────────────────────────────────────────────────────────

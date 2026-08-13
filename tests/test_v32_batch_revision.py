@@ -16,7 +16,7 @@ from novel_factory.db.repository import Repository
 from novel_factory.dispatcher import Dispatcher
 from novel_factory.llm.provider import LLMProvider
 
-from tests.conftest import LONG_CHAPTER_CONTENT  # noqa: F401
+from tests.conftest import LONG_CHAPTER_CONTENT, seed_context_for_chapter  # noqa: F401
 
 
 class StubLLM(LLMProvider):
@@ -91,6 +91,11 @@ def _seed_project(repo: Repository, project_id: str = "demo", num_chapters: int 
         conn.commit()
     finally:
         conn.close()
+
+    # Batch revision now executes through the production LangGraph path, whose
+    # readiness gate requires the same project context as a normal chapter run.
+    for chapter_number in range(1, num_chapters + 1):
+        seed_context_for_chapter(repo, project_id, chapter_number)
 
 
 def run_cli(args: list[str]) -> tuple[int, str, str]:

@@ -297,7 +297,7 @@ class TestRunAutoGenerateChapter:
     async def test_continue_next_chapter_creates_missing_chapter_slot(self, client, project_with_context, monkeypatch):
         """continue_next_chapter should not fail when only the next instruction exists."""
         from novel_factory.api.routes.production import _execute_auto_step
-        from novel_factory.config.settings import load_settings
+        from novel_factory.config.loader import load_settings_with_cli as load_settings
         from novel_factory.db.repository import Repository
         import novel_factory.workflow.runner as workflow_runner
 

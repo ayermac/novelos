@@ -105,7 +105,7 @@ def test_node_timeout_applies_floor_for_legacy_partial_overrides():
 
 def test_real_example_config_includes_long_running_node_timeout_overrides():
     """Committed real-mode example config must not leave long nodes on the 300s default watchdog."""
-    from novel_factory.config.settings import load_settings
+    from novel_factory.config.loader import load_settings_with_cli as load_settings
     from novel_factory.workflow.nodes import _node_timeout_seconds
 
     settings = load_settings("config/local.real.example.yaml")

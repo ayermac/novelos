@@ -10,7 +10,8 @@ import time
 import pytest
 from fastapi.testclient import TestClient
 
-from novel_factory.config.settings import LLMConfig, load_settings
+from novel_factory.config.loader import load_settings_with_cli as load_settings
+from novel_factory.config.settings import LLMConfig
 from novel_factory.db.connection import init_db
 from novel_factory.db.repository import Repository
 from novel_factory.llm.openai_compatible import OpenAICompatibleProvider

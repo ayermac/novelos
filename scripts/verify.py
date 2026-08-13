@@ -7,6 +7,7 @@
   v57       - v5.7 编辑/版本相关测试
   frontend  - 前端 typecheck + lint + vitest
   full      - 全量后端 + 前端（稳定基线/提交前闸门）
+  release   - 发布预检 + 全量后端/前端/桌面 + release smoke
   durations - 查看最慢的 30 个 pytest 用例耗时
 
 用法:
@@ -14,6 +15,7 @@
   python3 scripts/verify.py v57
   python3 scripts/verify.py frontend
   python3 scripts/verify.py full
+  python3 scripts/verify.py release
   python3 scripts/verify.py durations
 """
 
@@ -107,7 +109,9 @@ def cmd_full() -> None:
     root = repo_root()
 
     banner("FULL: pytest")
-    run([sys.executable, "-m", "pytest", "-q"], cwd=root)
+    # Bound xdist concurrency for deterministic subprocess/SQLite timing on
+    # developer machines and release runners. Project addopts uses ``-n auto``.
+    run([sys.executable, "-m", "pytest", "-q", "-n", "4"], cwd=root)
 
     banner("FULL: frontend typecheck")
     run(["npm", "run", "typecheck"], cwd=root / "frontend")
@@ -122,6 +126,34 @@ def cmd_full() -> None:
     run(["npm", "run", "test", "--", "--run"], cwd=root / "frontend")
 
     print("\n✓ full 完成\n", flush=True)
+
+
+def cmd_release() -> None:
+    """Run the canonical, ordered release-evidence gate."""
+    banner("RELEASE: 发布完整性与全栈验证")
+
+    root = repo_root()
+
+    banner("RELEASE 1/5: read-only preflight")
+    run([sys.executable, "scripts/release_preflight.py"], cwd=root)
+
+    banner("RELEASE 2/5: full pytest (4 workers)")
+    run([sys.executable, "-m", "pytest", "-q", "-n", "4"], cwd=root)
+
+    banner("RELEASE 3/5: frontend typecheck + lint + build + vitest")
+    run(["npm", "run", "typecheck"], cwd=root / "frontend")
+    run(["npm", "run", "lint"], cwd=root / "frontend")
+    run(["npm", "run", "build"], cwd=root / "frontend")
+    run(["npm", "run", "test", "--", "--run"], cwd=root / "frontend")
+
+    banner("RELEASE 4/5: desktop typecheck + build")
+    run(["npm", "run", "typecheck"], cwd=root / "desktop")
+    run(["npm", "run", "build"], cwd=root / "desktop")
+
+    banner("RELEASE 5/5: release smoke (stub mode, local API skipped)")
+    run([sys.executable, "scripts/release_smoke.py", "--skip-api"], cwd=root)
+
+    print("\n✓ release 完成；该结果可作为 completion report 发布证据\n", flush=True)
 
 
 def cmd_durations() -> None:
@@ -139,6 +171,7 @@ COMMANDS = {
     "v57": cmd_v57,
     "frontend": cmd_frontend,
     "full": cmd_full,
+    "release": cmd_release,
     "durations": cmd_durations,
 }
 
@@ -156,6 +189,7 @@ def main() -> None:
         print("  v57       - v5.7 编辑/版本相关测试（编辑器改动后）")
         print("  frontend  - 前端 typecheck + lint + vitest（前端改动后）")
         print("  full      - 全量后端 + 前端（稳定基线声明或提交前）")
+        print("  release   - 发布预检 + 全量后端/前端/桌面 + release smoke")
         print("  durations - 查看 pytest 最慢用例耗时")
         sys.exit(1)
 
