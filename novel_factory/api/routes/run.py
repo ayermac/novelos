@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from ..envelope import envelope_response, error_response, EnvelopeResponse
 from ..contracts import (
     OperationResult,
+    build_chapter_domain_result,
     success,
     partial_success,
     failed,
@@ -408,14 +409,13 @@ async def run_chapter(request: Request, body: RunChapterRequest) -> EnvelopeResp
             message = "章节生成完成" if llm_mode == "stub" else "章节已提交生成"
 
         # v6.6.12: Build domain_result based on workflow outcome
-        domain_result = _build_run_chapter_domain_result(
+        domain_result = build_chapter_domain_result(
             workflow_status=workflow_status,
             chapter_status=chapter_status,
             error=error,
             requires_human=requires_human,
             awaiting_publish=awaiting_publish,
             has_trusted_memory=has_trusted_memory_batch(repo, body.project_id, body.chapter),
-            llm_mode=llm_mode,
             run_id=result.get("run_id", ""),
         )
 
@@ -933,153 +933,3 @@ async def publish_chapter(request: Request, body: PublishChapterRequest) -> Enve
 # ---------------------------------------------------------------------------
 # v6.6.12: Domain result helpers
 # ---------------------------------------------------------------------------
-
-
-def _build_run_chapter_domain_result(
-    workflow_status: str,
-    chapter_status: str | None,
-    error: str | None,
-    requires_human: bool,
-    awaiting_publish: bool,
-    has_trusted_memory: bool,
-    llm_mode: str,
-    run_id: str,
-) -> dict:
-    """Build domain_result for run_chapter endpoint.
-
-    Maps workflow outcomes to domain-level semantics:
-    - failed -> failed
-    - blocked + revision -> needs_human
-    - blocked -> blocked
-    - completed + awaiting_publish + memory issue -> partial_success
-    - completed -> success
-    """
-    if workflow_status == "failed":
-        return failed(
-            error or "章节生成失败",
-            user_message="章节生成失败，可重试或查看详情",
-            retryable=True,
-            next_action="retry_workflow",
-            action_label="重试工作流",
-            details={
-                "workflow_status": workflow_status,
-                "chapter_status": chapter_status,
-                "run_id": run_id,
-            },
-            flags={"workflow_failed": True},
-        ).to_dict()
-
-    if workflow_status == "blocked":
-        if chapter_status == "revision":
-            return needs_human(
-                "章节需要返修",
-                user_message="审核未通过，需要返修处理",
-                next_action="retry_node",
-                action_label="重试失败节点",
-                details={
-                    "workflow_status": workflow_status,
-                    "chapter_status": chapter_status,
-                    "run_id": run_id,
-                },
-                flags={"workflow_blocked": True, "revision_needed": True},
-            ).to_dict()
-        return blocked(
-            "章节生成被阻塞",
-            user_message="章节生成被阻塞，需要人工处理",
-            next_action="reset_chapter",
-            action_label="重置章节",
-            details={
-                "workflow_status": workflow_status,
-                "chapter_status": chapter_status,
-                "run_id": run_id,
-            },
-            flags={"workflow_blocked": True},
-        ).to_dict()
-
-    if workflow_status == "completed":
-        # Check for partial success: awaiting_publish but memory issue
-        if awaiting_publish or chapter_status == "reviewed":
-            if not has_trusted_memory:
-                return partial_success(
-                    "章节已到待发布状态，但记忆提取未成功",
-                    user_message="章节正文已通过审核，但记忆提取为降级/兜底状态，建议补跑记忆",
-                    next_action="backfill_memory",
-                    action_label="补跑记忆",
-                    details={
-                        "workflow_status": workflow_status,
-                        "chapter_status": chapter_status,
-                        "run_id": run_id,
-                    },
-                    flags={
-                        "workflow_completed": True,
-                        "awaiting_publish": True,
-                        "memory_degraded": True,
-                    },
-                ).to_dict()
-            return success(
-                "AI 审核通过，等待人工确认发布",
-                user_message="章节已通过审核，可确认发布",
-                details={
-                    "workflow_status": workflow_status,
-                    "chapter_status": chapter_status,
-                    "run_id": run_id,
-                },
-                flags={
-                    "workflow_completed": True,
-                    "awaiting_publish": True,
-                    "memory_trusted": True,
-                },
-            ).to_dict()
-
-        if chapter_status == "published":
-            if not has_trusted_memory:
-                return partial_success(
-                    "章节已发布，但记忆提取未成功",
-                    user_message="章节已发布，但记忆提取为降级/兜底状态，建议补跑记忆",
-                    next_action="backfill_memory",
-                    action_label="补跑记忆",
-                    details={
-                        "workflow_status": workflow_status,
-                        "chapter_status": chapter_status,
-                        "run_id": run_id,
-                    },
-                    flags={
-                        "workflow_completed": True,
-                        "chapter_published": True,
-                        "memory_degraded": True,
-                    },
-                ).to_dict()
-            return success(
-                "章节生成完成",
-                user_message="章节已成功生成并发布",
-                details={
-                    "workflow_status": workflow_status,
-                    "chapter_status": chapter_status,
-                    "run_id": run_id,
-                },
-                flags={
-                    "workflow_completed": True,
-                    "chapter_published": True,
-                    "memory_trusted": True,
-                },
-            ).to_dict()
-
-        # Generic completed case
-        return success(
-            "章节生成完成" if llm_mode == "stub" else "章节已提交生成",
-            user_message="章节生成完成" if llm_mode == "stub" else "章节已提交生成",
-            details={
-                "workflow_status": workflow_status,
-                "chapter_status": chapter_status,
-                "run_id": run_id,
-            },
-            flags={"workflow_completed": True},
-        ).to_dict()
-
-    # Fallback: pending/unknown
-    return OperationResult(
-        ok=True,
-        domain_status="pending",
-        message=f"工作流状态: {workflow_status}",
-        details={"workflow_status": workflow_status, "chapter_status": chapter_status, "run_id": run_id},
-    ).to_dict()

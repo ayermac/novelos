@@ -220,6 +220,42 @@ def check_desktop_sidecar() -> dict:
     desktop_pkg = _load_json(REPO_ROOT / "desktop" / "package.json")
     desktop_version = desktop_pkg.get("version", "")
 
+    def check_in_process(reason: str) -> dict:
+        """Validate the same app factory when the environment forbids sockets."""
+        try:
+            from fastapi.testclient import TestClient
+            from novel_factory.api_app import create_api_app
+
+            app = create_api_app(db_path=":memory:", llm_mode="stub")
+            with TestClient(app) as client:
+                response = client.get("/api/health")
+            body = response.json()
+            api_version = body.get("data", {}).get("version", "")
+            healthy = response.status_code == 200 and body.get("ok") is True
+            version_match = api_version == desktop_version
+            return {
+                "name": "desktop_sidecar",
+                "label": "Desktop sidecar health/version",
+                "passed": healthy and version_match,
+                "required": True,
+                "message": (
+                    f"in-process fallback version={api_version}, desktop package={desktop_version} "
+                    f"({reason})"
+                    if healthy and version_match
+                    else f"in-process fallback failed: health={healthy}, sidecar={api_version}, "
+                    f"desktop={desktop_version} ({reason})"
+                ),
+                "details": {"transport": "in-process", "fallback_reason": reason},
+            }
+        except Exception as exc:
+            return {
+                "name": "desktop_sidecar",
+                "label": "Desktop sidecar health/version",
+                "passed": False,
+                "required": True,
+                "message": f"in-process fallback failed ({type(exc).__name__})",
+            }
+
     # Find a free port
     port = 0
     try:
@@ -227,6 +263,8 @@ def check_desktop_sidecar() -> dict:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.bind(("127.0.0.1", 0))
             port = s.getsockname()[1]
+    except PermissionError:
+        return check_in_process("socket binding not permitted")
     except Exception as exc:
         return {
             "name": "desktop_sidecar",

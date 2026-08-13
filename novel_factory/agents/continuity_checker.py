@@ -3,6 +3,12 @@
 ContinuityChecker is a sidecar agent that performs cross-chapter consistency
 checks every 3-5 chapters or on manual trigger. It does NOT run on every
 chapter in the main pipeline.
+
+DEPRECATED (v6.11.01): The production LangGraph path now uses the
+deterministic ``quality/continuity_gate.py`` gate instead of this agent.
+This module is retained only for the legacy ``dispatch/sidecar.py`` path
+and will be removed once that path is retired (see v6.11.01 P0/P3). Do
+not add new usages.
 """
 
 from __future__ import annotations

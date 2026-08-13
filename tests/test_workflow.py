@@ -264,7 +264,7 @@ class TestGraphExitGuard:
 class TestAgentNodeStaleDbGuard:
     def test_agent_runner_stops_before_llm_when_db_is_blocking(self, tmp_path):
         """A stale in-memory status must not let downstream agents execute."""
-        from novel_factory.config.settings import load_settings
+        from novel_factory.config.loader import load_settings_with_cli as load_settings
         from novel_factory.db.connection import init_db
         from novel_factory.db.repository import Repository
         from novel_factory.workflow.nodes import create_node_runners

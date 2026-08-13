@@ -1,7 +1,7 @@
 {
   "name": "novelos-desktop",
-  "version": "6.10.20",
-  "description": "Novelos Desktop Client — v6.10.7 Core Loop Evidence Governance",
+  "version": "6.11.02",
+  "description": "Novelos Desktop Client — AI novel production workbench",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc",

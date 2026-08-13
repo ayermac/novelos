@@ -12,7 +12,8 @@ from typing import Any
 
 from langgraph.graph import END, StateGraph
 
-from ..config.settings import Settings, load_settings
+from ..config.settings import Settings
+from ..config.loader import load_settings_with_cli
 from ..db.repository import Repository
 from ..llm.openai_compatible import OpenAICompatibleProvider
 from ..llm.provider import LLMProvider
@@ -79,7 +80,7 @@ def build_graph(
     Returns:
         Compiled LangGraph StateGraph ready for execution.
     """
-    settings = settings or load_settings()
+    settings = settings or load_settings_with_cli(load_env=False)
     repo = repo or Repository(settings.db_path)
 
     # v5.1.6: If llm_router provided, use create_node_runners

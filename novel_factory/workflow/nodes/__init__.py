@@ -561,33 +561,38 @@ def _check_core_loop_compliance(repo: Repository, project_id: str, chapter_numbe
     from ...models.creative_ledgers import ChapterContractMetrics
     from ...quality.issue_codes import IssueCode
 
+    import json as _json
+
+    def _parse_contract_row(r):
+        """Parse contract_data from a creative_contract row (may raise on bad JSON)."""
+        if not r:
+            return None
+        data = r.get("contract_data")
+        if isinstance(data, str):
+            return _json.loads(data)
+        return data
+
+    def _derive_fallback_story_contract() -> StoryContract:
+        lp = _parse_contract_row(repo.get_creative_contract(project_id, "launch_profile"))
+        gc = _parse_contract_row(repo.get_creative_contract(project_id, "genre_contract"))
+        return derive_fallback_story_contract(project_id, lp, gc)
+
     # Load or derive story contract
     row = repo.get_creative_contract(project_id, "story_contract")
     if row:
         data_str = row.get("contract_data", "{}")
-        import json as _json
         try:
             contract_data = _json.loads(data_str) if isinstance(data_str, str) else data_str
             story_contract = StoryContract(**contract_data)
         except Exception:
-            lp_row = repo.get_creative_contract(project_id, "launch_profile")
-            gc_row = repo.get_creative_contract(project_id, "genre_contract")
-            lp = _json.loads(lp_row["contract_data"]) if lp_row and isinstance(lp_row.get("contract_data"), str) else (lp_row.get("contract_data") if lp_row else None)
-            gc = _json.loads(gc_row["contract_data"]) if gc_row and isinstance(gc_row.get("contract_data"), str) else (gc_row.get("contract_data") if gc_row else None)
-            story_contract = derive_fallback_story_contract(project_id, lp, gc)
+            story_contract = _derive_fallback_story_contract()
     else:
-        lp_row = repo.get_creative_contract(project_id, "launch_profile")
-        gc_row = repo.get_creative_contract(project_id, "genre_contract")
-        import json as _json
-        lp = _json.loads(lp_row["contract_data"]) if lp_row and isinstance(lp_row.get("contract_data"), str) else (lp_row.get("contract_data") if lp_row else None)
-        gc = _json.loads(gc_row["contract_data"]) if gc_row and isinstance(gc_row.get("contract_data"), str) else (gc_row.get("contract_data") if gc_row else None)
-        story_contract = derive_fallback_story_contract(project_id, lp, gc)
+        story_contract = _derive_fallback_story_contract()
 
     # Load chapter brief
     brief_row = repo.get_chapter_brief(project_id, chapter_number)
     chapter_brief = None
     if brief_row:
-        import json as _json
         brief_data = brief_row.get("brief_data", {})
         if isinstance(brief_data, str):
             try:
@@ -1590,13 +1595,10 @@ def rhythm_budget_preflight_node(state: FactoryState, repo: Repository) -> dict:
         logger.warning("Rhythm budget preflight: no chapter brief found")
         return {"rhythm_budget_passed": True}  # Allow to proceed
 
-    # Get previous chapters for rhythm analysis
+    # Get previous chapters for rhythm analysis (single batch query, avoids N+1)
     try:
-        previous_chapters = []
-        for i in range(max(1, chapter_number - 10), chapter_number):
-            chapter = repo.get_chapter(project_id, i)
-            if chapter:
-                previous_chapters.append(chapter)
+        start = max(1, chapter_number - 10)
+        previous_chapters = repo.get_chapters_by_range(project_id, start, chapter_number)
     except Exception as e:
         logger.warning(f"Failed to load previous chapters: {e}")
         previous_chapters = []

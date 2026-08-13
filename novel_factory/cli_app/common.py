@@ -97,10 +97,10 @@ def _build_dispatcher(repo, settings: Settings, llm_mode: str = "real"):
             )
 
             router = LLMRouter(config, stub_provider=stub_llm, llm_mode="stub")
-            return Dispatcher(repo, llm_router=router, max_retries=settings.quality_gate.max_retries)
+            return Dispatcher(repo, llm_router=router, max_retries=settings.quality_gate.max_retries, settings=settings, llm_mode=llm_mode)
         else:
             # No llm_profiles, use single stub LLM
-            return Dispatcher(repo, llm=stub_llm, max_retries=settings.quality_gate.max_retries)
+            return Dispatcher(repo, llm=stub_llm, max_retries=settings.quality_gate.max_retries, settings=settings, llm_mode=llm_mode)
 
     # Real mode: load .env for API keys (non-polluting)
     from ..config.env_loader import load_dotenv, create_env_getter
@@ -132,4 +132,4 @@ def _build_dispatcher(repo, settings: Settings, llm_mode: str = "real"):
             raise ValueError("API key not configured for real mode. Set OPENAI_API_KEY environment variable or configure in .env file.")
 
         llm = _get_llm(settings, llm_mode)
-        return Dispatcher(repo, llm=llm, max_retries=settings.quality_gate.max_retries)
+        return Dispatcher(repo, llm=llm, max_retries=settings.quality_gate.max_retries, settings=settings, llm_mode=llm_mode)

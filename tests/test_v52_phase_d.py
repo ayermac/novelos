@@ -84,7 +84,7 @@ class TestCheckpointPersistence:
     def test_temp_db_does_not_write_repo_root(self, tmp_path):
         """When using a temp DB, checkpoint must NOT be written to the repo root."""
         from novel_factory.workflow.runner import run_with_graph
-        from novel_factory.config.settings import load_settings
+        from novel_factory.config.loader import load_settings_with_cli as load_settings
         from novel_factory.db.repository import Repository
         from novel_factory.db.connection import init_db
 
@@ -211,7 +211,7 @@ class TestCheckpointIntegration:
     def test_run_with_graph_creates_checkpoint(self, tmp_path):
         """Test that run_with_graph creates a checkpoint file."""
         from novel_factory.workflow.runner import run_with_graph
-        from novel_factory.config.settings import load_settings
+        from novel_factory.config.loader import load_settings_with_cli as load_settings
         from novel_factory.db.repository import Repository
 
         # Create test database

@@ -155,6 +155,63 @@ class ArtifactRepositoryMixin:
         finally:
             conn.close()
 
+    def has_artifact_for_run(
+        self,
+        workflow_run_id: str,
+        agent_id: str,
+        artifact_type: str,
+    ) -> bool:
+        """Return True if any artifact exists for the given run/agent/type.
+
+        Lets workflow helpers check for an existing artifact (e.g. a planner
+        ``memory_context_audit``) without reaching into the raw connection.
+        """
+        conn = self._conn()
+        try:
+            row = conn.execute(
+                "SELECT id FROM agent_artifacts "
+                "WHERE workflow_run_id=? AND agent_id=? AND artifact_type=? "
+                "LIMIT 1",
+                (workflow_run_id, agent_id, artifact_type),
+            ).fetchone()
+            return row is not None
+        finally:
+            conn.close()
+
+    def get_latest_artifact_content(
+        self,
+        project_id: str,
+        chapter_number: int,
+        agent_id: str,
+        artifact_type: str,
+        workflow_run_id: str | None = None,
+    ) -> dict:
+        """Return the parsed ``content_json`` of the latest matching artifact.
+
+        Best-effort: returns ``{}`` when no artifact exists or content is empty.
+        Optionally filter by ``workflow_run_id``. Parse failures return ``{}``.
+        """
+        conn = self._conn()
+        try:
+            params: list = [project_id, chapter_number, agent_id, artifact_type]
+            sql = (
+                "SELECT content_json FROM agent_artifacts "
+                "WHERE project_id=? AND chapter_number=? AND agent_id=? AND artifact_type=?"
+            )
+            if workflow_run_id:
+                sql += " AND workflow_run_id=?"
+                params.append(workflow_run_id)
+            sql += " ORDER BY created_at DESC LIMIT 1"
+            row = conn.execute(sql, params).fetchone()
+            if not row or not row["content_json"]:
+                return {}
+            try:
+                return json.loads(row["content_json"])
+            except (json.JSONDecodeError, TypeError):
+                return {}
+        finally:
+            conn.close()
+
     def list_artifacts(
         self, project_id: str, limit: int = 50
     ) -> list[dict]:

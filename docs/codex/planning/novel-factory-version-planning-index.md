@@ -10,9 +10,9 @@ This index maps shipped or reviewed versions to their planning/spec source, comp
 - **Umbrella** means the version is planned as a section inside a broader version spec.
 - **Retrospective** means the planning note was reconstructed from the accepted implementation and report because the original work was an acceptance/hotfix pass.
 
-## Upcoming Optimization Roadmap (v6.10.17 → v6.10.19)
+## Optimization Roadmap (v6.10.17 → v6.11.02)
 
-These versions form a phased optimization arc targeting code slimming, validation simplification, and repository aggregation. Each is informed by the ainovel-cli design philosophy **but adapted to Novelos's specific constraints** (SQLite, LangGraph, Web API, 38 migrations, 3,748 tests).
+These versions form a phased optimization arc targeting code slimming, validation simplification, and repository aggregation. Each is informed by the ainovel-cli design philosophy **but adapted to Novelos's specific constraints** (SQLite, LangGraph, Web API, 34 migrations, 201 test files).
 
 **v6.11.0 is a research topic, NOT part of the release roadmap.** It runs independently via quarterly OKRs and only enters the release roadmap if prototype validation passes.
 
@@ -23,6 +23,8 @@ These versions form a phased optimization arc targeting code slimming, validatio
 | v6.10.19 | Repository Aggregation — Store facade over 34 repositories | P1 | `novel-factory-v6.10.19-repository-consolidation-plan.md` | **Shipped** |
 | v6.10.20 | Exception Unification — layered exception types + pilot migration | P1 | `novel-factory-v6.10.20-exception-unification-plan.md` | **Shipped** |
 | v6.11.0 | Architecture Research — atomic tools + unified exceptions (LangGraph retained) | P2 | `novel-factory-v6.11.0-architecture-refactor-plan.md` | Research (not in release roadmap) |
+| v6.11.01 | Architecture Debt Optimization — converge dual paths, unify config, reuse context, connection/batch-query, dead-code cleanup | P1 | `novel-factory-v6.11.01-architecture-debt-optimization-plan.md` | **Shipped** |
+| v6.11.02 | Release Integrity & Runtime Convergence — restore release gates, remove implicit legacy chapter execution, pilot persistence boundaries | P0 | `novel-factory-v6.11.02-release-integrity-runtime-convergence-plan.md` | **Draft** |
 
 ### Roadmap Targets (Revised)
 
@@ -38,6 +40,8 @@ These versions form a phased optimization arc targeting code slimming, validatio
 
 | Version | Planning/spec source | Report | Review | Coverage |
 | --- | --- | --- | --- | --- |
+| v6.11.02 | `novel-factory-v6.11.02-release-integrity-runtime-convergence-plan.md` | none yet | none yet | standalone draft |
+| v6.11.01 | `novel-factory-v6.11.01-architecture-debt-optimization-plan.md` | none yet | none yet | standalone shipped |
 | v6.10.20 | `novel-factory-v6.10.20-exception-unification-plan.md` | `../reports/novel-factory-v6.10.20-completion-report.md` | none yet | standalone |
 | v6.10.19 | `novel-factory-v6.10.19-repository-consolidation-plan.md` | `../reports/novel-factory-v6.10.19-completion-report.md` | none yet | standalone |
 | v6.10.18 | `novel-factory-v6.10.18-validation-simplification-plan.md` | `../reports/novel-factory-v6.10.18-completion-report.md` | none yet | standalone |

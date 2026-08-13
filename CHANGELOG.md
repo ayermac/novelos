@@ -12,6 +12,75 @@ Use this file as the short, canonical version ledger: version, commit(s), key ch
 
 ## Unreleased
 
+## v6.11.02 - Release Integrity & Runtime Convergence
+
+Date: 2026-08-13
+
+Type: Release engineering and runtime convergence
+
+Scope: docs/codex/planning/novel-factory-v6.11.02-release-integrity-runtime-convergence-plan.md
+
+Status: In Progress - Wave 0 complete; runtime convergence waves remain
+
+Key changes:
+
+- Unified runtime, Python package, frontend, desktop, npm lockfile, and uv lock versions.
+- Replaced legacy release-number assertions with version-contract assertions.
+- Added a read-only release preflight and a single `scripts/verify.py release` evidence path.
+- Migrated stale test and verification imports to the canonical configuration loader removed in v6.11.01.
+- Updated batch revision fixtures to satisfy the production LangGraph readiness contract.
+- Added a socket-restricted, in-process sidecar smoke fallback without using real LLM credentials.
+
+Wave 0 verification (2026-08-13, Darwin arm64, Python 3.9.6, Node 22.22.2, npm 11.12.1):
+
+- `python3 scripts/verify.py release`: PASS.
+- Release preflight: 20/20 checks passed; dirty worktree reported without mutation.
+- Backend: 3784 passed, 1 skipped in 614.77s using 4 workers.
+- Frontend: typecheck, lint, and build passed; 25 files / 344 tests passed in 14.64s.
+- Desktop: typecheck and build passed.
+- Release smoke: all required and optional checks passed. The managed sandbox forbade local socket binding, so the sidecar health/version check used the explicit in-process stub fallback; an unrestricted packaging run must still exercise the spawned sidecar transport before distribution.
+
+## v6.11.01 - Architecture Debt Optimization (Convergence & Cleanup)
+
+Date: 2026-07-16
+
+Type: Refactoring (Architecture Debt)
+
+Scope: docs/codex/planning/novel-factory-v6.11.01-architecture-debt-optimization-plan.md
+
+Status: Complete - P0/P1/P3 delivered; P2 partial (N+1, connection reuse, fault-tolerance tests); M1 deferred
+
+Key changes:
+
+### P0 — Dual-Path Convergence
+- `novel_factory/dispatch/chapter.py` `Dispatcher` now delegates to LangGraph `run_with_graph()` when settings are available; legacy path retained as fallback
+- Added `tests/test_v61101_dispatch_langgraph_consistency.py` verifying CLI/API behavior alignment
+
+### P1 — Configuration Unification
+- Removed `config/settings.py` `load_settings()` legacy loader
+- All entry points (API, CLI, workflow graph) now use `config/loader.py` `load_settings_with_cli()` as the single source of truth
+- Consolidated `.env` loading and unconditional override semantics for `db_path` / `llm.api_key` / `base_url`
+
+### P2 — Connection & Query Optimization (Partial)
+- `db/connection.py` `get_connection()` short-lifecycle reuse; `_conn()` privatized in repositories
+- `workflow/nodes/__init__.py` `rhythm_budget_preflight_node` switched from N+1 loop to single batch query
+- `_check_core_loop_compliance` extracted shared `get_creative_contract` + `json.loads` path
+- Added stable mock-transport tests for `openai_compatible.py` retry / fallback / truncation / empty-stream paths
+
+### P3 — Dead Code Cleanup & Shared Builder
+- Moved `agents/guard_example.py` to `examples/guard_example.py`
+- Marked `agents/continuity_checker.py` and retired `dispatch/serial.py|batch.py|queue.py|sidecar.py` as deprecated
+- Extracted `build_chapter_domain_result()` in `api/contracts.py` as the shared builder for CLI and API routes, eliminating field-map drift
+- Removed duplicate `_build_run_chapter_domain_result` and `_build_cli_domain_result` local implementations
+
+### Deferred
+- M1 (audit fallback lightweight): evaluated as low ROI, moved out of version scope
+
+### Verification
+- Full pytest suite: 2616/2616 passing (baseline maintained)
+- Frontend typecheck / lint / build / vitest: passing
+- Smoke validation (`scripts/verify.py` full path): passing
+
 ## v6.10.20 - Exception Unification Framework (Pilot + API Expansion)
 
 Date: 2026-07-10

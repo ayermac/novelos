@@ -52,6 +52,8 @@ class BaseDispatcher:
         skill_registry: Any = None,
         create_skill_registry: bool = True,
         llm_router: Any = None,
+        settings: Any = None,
+        llm_mode: str | None = None,
     ) -> None:
         """Initialize Dispatcher.
 
@@ -62,6 +64,10 @@ class BaseDispatcher:
             skill_registry: Optional SkillRegistry instance for v2.1 skills.
             create_skill_registry: If True and skill_registry is None, create default SkillRegistry.
             llm_router: Optional LLMRouter instance for v3.1 agent-level routing.
+            settings: Optional Settings instance. When provided, ``run_chapter``
+                delegates to the LangGraph ``run_with_graph`` path (v6.11.01 P0),
+                making LangGraph the single chapter-production implementation.
+            llm_mode: LLM mode ("stub"/"real") paired with ``settings`` for delegation.
 
         Note:
             - If llm_router is provided, it takes precedence over llm.
@@ -73,6 +79,8 @@ class BaseDispatcher:
         self.max_retries = max_retries
         self.skill_registry = skill_registry
         self.llm_router = llm_router
+        self.settings = settings
+        self.llm_mode = llm_mode
 
         # Validate that at least one LLM source is provided
         if llm is None and llm_router is None:

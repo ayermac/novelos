@@ -228,7 +228,7 @@ class TestProductionAutoRunPreflight:
         _create_duplicate_characters(repo_obj, db_path, project_id)
 
         from novel_factory.api.routes.production import _execute_auto_step
-        from novel_factory.config.settings import load_settings
+        from novel_factory.config.loader import load_settings_with_cli as load_settings
         import novel_factory.workflow.runner as workflow_runner
 
         def fake_run_with_graph(*, project_id, chapter_number, settings, repo, llm_mode):
@@ -282,7 +282,7 @@ class TestProductionAutoRunPreflight:
         _seed_full_context(repo_obj, project_id)
 
         from novel_factory.api.routes.production import _execute_auto_step
-        from novel_factory.config.settings import load_settings
+        from novel_factory.config.loader import load_settings_with_cli as load_settings
         import novel_factory.workflow.runner as workflow_runner
 
         def fake_run_with_graph(*, project_id, chapter_number, settings, repo, llm_mode):

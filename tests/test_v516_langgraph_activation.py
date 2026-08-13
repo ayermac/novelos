@@ -25,7 +25,7 @@ class TestLangGraphCompilation:
     def test_compile_graph_returns_compiled_graph(self):
         """compile_graph() should return a compiled graph."""
         from novel_factory.workflow.graph import compile_graph
-        from novel_factory.config.settings import load_settings
+        from novel_factory.config.loader import load_settings_with_cli as load_settings
         from novel_factory.db.repository import Repository
 
         settings = load_settings()
@@ -41,7 +41,7 @@ class TestLangGraphCompilation:
         """compile_graph() with an explicit checkpointer should compile."""
         from langgraph.checkpoint.memory import MemorySaver
         from novel_factory.workflow.graph import compile_graph
-        from novel_factory.config.settings import load_settings
+        from novel_factory.config.loader import load_settings_with_cli as load_settings
         from novel_factory.db.repository import Repository
 
         settings = load_settings()
@@ -55,7 +55,7 @@ class TestLangGraphCompilation:
     def test_compile_graph_rejects_implicit_memory_checkpoint(self):
         """checkpoint=True without a durable checkpointer should fail loudly."""
         from novel_factory.workflow.graph import compile_graph
-        from novel_factory.config.settings import load_settings
+        from novel_factory.config.loader import load_settings_with_cli as load_settings
         from novel_factory.db.repository import Repository
 
         settings = load_settings()
@@ -71,7 +71,7 @@ class TestNodeRunners:
     def test_create_node_runners_in_stub_mode(self):
         """create_node_runners should create closures in stub mode."""
         from novel_factory.workflow.nodes import create_node_runners
-        from novel_factory.config.settings import load_settings
+        from novel_factory.config.loader import load_settings_with_cli as load_settings
         from novel_factory.db.repository import Repository
         from novel_factory.llm.router import LLMRouter
         from novel_factory.llm.stub_provider import StubLLM
@@ -104,7 +104,7 @@ class TestNodeRunners:
     def test_create_node_runners_default_skill_registry_executes_agent_skills(self, tmp_path):
         """Router-mode node runners must execute default Agent Skill mounts."""
         from novel_factory.workflow.nodes import create_node_runners
-        from novel_factory.config.settings import load_settings
+        from novel_factory.config.loader import load_settings_with_cli as load_settings
         from novel_factory.db.connection import init_db
         from novel_factory.db.repository import Repository
         from novel_factory.llm.provider import LLMProvider
@@ -198,7 +198,7 @@ class TestRunWithGraph:
     def test_run_with_graph_returns_dispatcher_shape(self):
         """run_with_graph should return same shape as Dispatcher.run_chapter()."""
         from novel_factory.workflow.runner import run_with_graph
-        from novel_factory.config.settings import load_settings
+        from novel_factory.config.loader import load_settings_with_cli as load_settings
         from novel_factory.db.repository import Repository
         from novel_factory.db.connection import init_db
 
@@ -247,7 +247,7 @@ class TestRunWithGraph:
     def test_run_with_graph_published_short_circuits(self):
         """Published chapters should short-circuit without running the graph."""
         from novel_factory.workflow.runner import run_with_graph
-        from novel_factory.config.settings import load_settings
+        from novel_factory.config.loader import load_settings_with_cli as load_settings
         from novel_factory.db.repository import Repository
         from novel_factory.db.connection import init_db
 

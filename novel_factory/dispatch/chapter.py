@@ -27,14 +27,32 @@ class ChapterDispatchMixin:
     ) -> dict[str, Any]:
         """Drive a chapter through the production pipeline.
 
+        v6.11.01 P0: when ``settings`` is available, delegates to the LangGraph
+        ``run_with_graph`` implementation so chapter production has a single
+        path. The legacy loop below is retained only as a fallback for
+        Dispatchers constructed without ``settings``.
+
         Args:
             project_id: Project identifier.
             chapter_number: Chapter number.
             max_steps: Maximum dispatch steps to prevent infinite loops.
+                (Ignored on the LangGraph path, which uses its own recursion limit.)
 
         Returns:
             Dict with final status, steps taken, error, requires_human.
         """
+        if getattr(self, "settings", None) is not None:
+            from ..workflow.runner import run_with_graph
+
+            return run_with_graph(
+                project_id,
+                chapter_number,
+                self.settings,
+                self.repo,
+                llm_mode=getattr(self, "llm_mode", None) or "stub",
+            )
+
+        # ── Legacy fallback loop (pre-LangGraph, no settings) ─────────
         # Verify chapter exists in DB
         chapter = self.repo.get_chapter(project_id, chapter_number)
         if not chapter:

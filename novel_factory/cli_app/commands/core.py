@@ -224,9 +224,10 @@ def _build_cli_domain_result(
 ) -> dict:
     """Build domain_result for CLI run-chapter output.
 
-    Mirrors the domain_result logic in api/routes/run.py's
-    _build_run_chapter_domain_result().
+    Delegates to the shared :func:`build_chapter_domain_result` so that
+    CLI and API field mapping has a single source of truth (v6.11.01 P3).
     """
+    from novel_factory.api.contracts import build_chapter_domain_result
     from novel_factory.api.routes._memory_curator_gate import has_trusted_memory_batch
 
     chapter_status = result.get("chapter_status")
@@ -236,91 +237,21 @@ def _build_cli_domain_result(
     run_id = result.get("run_id", "")
     has_trusted_memory = has_trusted_memory_batch(repo, project_id, chapter_number)
 
+    # Infer workflow_status from the result dict (run_with_graph does not
+    # include a workflow_status field, so we derive it from other fields).
     if error:
-        from novel_factory.api.contracts import failed
-        return failed(
-            error,
-            user_message="章节生成失败，可重试或查看详情",
-            retryable=True,
-            next_action="retry_workflow",
-            action_label="重试工作流",
-            details={
-                "chapter_status": chapter_status,
-                "run_id": run_id,
-            },
-            flags={"workflow_failed": True},
-        ).to_dict()
+        workflow_status = "failed"
+    elif requires_human or chapter_status == "blocking":
+        workflow_status = "blocked"
+    else:
+        workflow_status = "completed"
 
-    if requires_human or chapter_status == "blocking":
-        if chapter_status == "revision":
-            from novel_factory.api.contracts import needs_human
-            return needs_human(
-                "章节需要返修",
-                user_message="审核未通过，需要返修处理",
-                next_action="retry_node",
-                action_label="重试失败节点",
-                details={
-                    "chapter_status": chapter_status,
-                    "run_id": run_id,
-                },
-                flags={"workflow_blocked": True, "revision_needed": True},
-            ).to_dict()
-        from novel_factory.api.contracts import blocked as _blocked
-        return _blocked(
-            "章节生成被阻塞",
-            user_message="章节生成被阻塞，需要人工处理",
-            next_action="reset_chapter",
-            action_label="重置章节",
-            details={
-                "chapter_status": chapter_status,
-                "run_id": run_id,
-            },
-            flags={"workflow_blocked": True},
-        ).to_dict()
-
-    # Completed / awaiting_publish / published
-    if awaiting_publish or chapter_status in ("reviewed", "published"):
-        if not has_trusted_memory:
-            from novel_factory.api.contracts import partial_success
-            return partial_success(
-                "章节已到待发布状态，但记忆提取未成功",
-                user_message="章节正文已通过审核，但记忆提取为降级/兜底状态，建议补跑记忆",
-                next_action="backfill_memory",
-                action_label="补跑记忆",
-                details={
-                    "chapter_status": chapter_status,
-                    "run_id": run_id,
-                },
-                flags={
-                    "workflow_completed": True,
-                    "awaiting_publish": awaiting_publish,
-                    "memory_degraded": True,
-                },
-            ).to_dict()
-
-        from novel_factory.api.contracts import success
-        return success(
-            "章节生成完成" if chapter_status == "published" else "AI 审核通过，等待人工确认发布",
-            user_message="章节生成完成",
-            details={
-                "chapter_status": chapter_status,
-                "run_id": run_id,
-            },
-            flags={
-                "workflow_completed": True,
-                "memory_trusted": True,
-            },
-        ).to_dict()
-
-    # Default: pending/unknown
-    from novel_factory.api.contracts import OperationResult
-    return OperationResult(
-        ok=True,
-        domain_status="pending",
-        message="工作流完成",
-        details={
-            "chapter_status": chapter_status,
-            "run_id": run_id,
-        },
-        flags={"workflow_completed": True},
-    ).to_dict()
+    return build_chapter_domain_result(
+        workflow_status=workflow_status,
+        chapter_status=chapter_status,
+        error=error,
+        requires_human=requires_human,
+        awaiting_publish=awaiting_publish,
+        has_trusted_memory=has_trusted_memory,
+        run_id=run_id,
+    )
