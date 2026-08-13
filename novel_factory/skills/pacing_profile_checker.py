@@ -32,8 +32,8 @@ class PacingProfileChecker(ValidatorSkill):
         "时间流逝", "数小时后", "几天后",
     )
 
-    # 对话标记
-    DIALOGUE_MARKERS = ('"', '"', "'", "'", '「', '」')
+    # 对话片段（兼容直引号、中文弯引号和书名号式引号）
+    DIALOGUE_PATTERN = re.compile(r'["“「『]([^"“”「」『』]+)["”」』]')
 
     def run(self, payload: dict[str, Any]) -> dict[str, Any]:
         content = str(payload.get("content") or "")
@@ -198,13 +198,9 @@ class PacingProfileChecker(ValidatorSkill):
         findings = []
 
         # 统计对话字符数
-        dialogue_chars = 0
-        in_dialogue = False
-        for char in content:
-            if char in self.DIALOGUE_MARKERS:
-                in_dialogue = not in_dialogue
-            elif in_dialogue:
-                dialogue_chars += 1
+        dialogue_chars = sum(
+            len(match.group(1)) for match in self.DIALOGUE_PATTERN.finditer(content)
+        )
 
         total_chars = len(content)
         if total_chars == 0:

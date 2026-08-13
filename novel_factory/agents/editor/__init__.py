@@ -1232,7 +1232,14 @@ class EditorAgent(BaseAgent):
         if not self.skill_registry:
             return {}
 
-        skill_payload: dict[str, Any] = {"text": inputs.content, "content": inputs.content, "chapter_number": inputs.chapter_number}
+        skill_payload: dict[str, Any] = {
+            "text": inputs.content,
+            "content": inputs.content,
+            "title": inputs.chapter.get("title", "") if inputs.chapter else "",
+            "project_id": inputs.project_id,
+            "chapter_number": inputs.chapter_number,
+            "_repo": self.repo,
+        }
         try:
             bible_record = self.repo.get_style_bible(inputs.project_id)
             if bible_record:

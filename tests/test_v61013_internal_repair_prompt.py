@@ -208,6 +208,38 @@ class TestInternalRepairPromptCompaction:
         assert "内部修复" in context
         assert "字数压缩" in context
 
+    def test_author_nested_word_count_repair_preserves_editor_feedback(self, repo):
+        agent = AuthorAgent(repo, StubLLMProvider())
+        internal_state: FactoryState = {
+            "project_id": "test",
+            "chapter_number": 1,
+            "chapter_status": ChapterStatus.REVISION.value,
+            "_revision_review": {
+                "review_id": "rev-keep",
+                "score": 44,
+                "revision_target": "author",
+                "issues": ["时间线倒退，必须修正 00:00:29 的来源"],
+                "suggestions": ["保留已修正文段，只补足场景细节"],
+            },
+            "quality_gate": {
+                "pass": False,
+                "word_count_fail": True,
+                "internal_repair": True,
+                "consume_revision_retry": False,
+                "repair_scope": "internal_word_count_expansion",
+                "actual_word_count": 1660,
+                "word_target": 3000,
+                "preserve_revision_feedback": True,
+                "revision_source_review_id": "rev-keep",
+            },
+        }
+
+        context = agent.build_context(internal_state)
+
+        assert "内部修复：字数扩写" in context
+        assert "时间线倒退" in context
+        assert "只补足场景细节" in context
+
     def test_author_editor_revision_includes_feedback(self, repo):
         agent = AuthorAgent(repo, StubLLMProvider())
         editor_state: FactoryState = {

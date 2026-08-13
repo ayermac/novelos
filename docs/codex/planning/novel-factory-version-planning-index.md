@@ -24,7 +24,7 @@ These versions form a phased optimization arc targeting code slimming, validatio
 | v6.10.20 | Exception Unification — layered exception types + pilot migration | P1 | `novel-factory-v6.10.20-exception-unification-plan.md` | **Shipped** |
 | v6.11.0 | Architecture Research — atomic tools + unified exceptions (LangGraph retained) | P2 | `novel-factory-v6.11.0-architecture-refactor-plan.md` | Research (not in release roadmap) |
 | v6.11.01 | Architecture Debt Optimization — converge dual paths, unify config, reuse context, connection/batch-query, dead-code cleanup | P1 | `novel-factory-v6.11.01-architecture-debt-optimization-plan.md` | **Shipped** |
-| v6.11.02 | Release Integrity & Runtime Convergence — restore release gates, remove implicit legacy chapter execution, pilot persistence boundaries | P0 | `novel-factory-v6.11.02-release-integrity-runtime-convergence-plan.md` | **Draft** |
+| v6.11.02 | Release Integrity & Runtime Convergence; Chapter Revision Reliability | P0 | `novel-factory-v6.11.02-release-integrity-runtime-convergence-plan.md`; `novel-factory-v6.11.02-chapter-revision-reliability-plan.md` | **Draft / partially implemented** |
 
 ### Roadmap Targets (Revised)
 
@@ -40,7 +40,7 @@ These versions form a phased optimization arc targeting code slimming, validatio
 
 | Version | Planning/spec source | Report | Review | Coverage |
 | --- | --- | --- | --- | --- |
-| v6.11.02 | `novel-factory-v6.11.02-release-integrity-runtime-convergence-plan.md` | none yet | none yet | standalone draft |
+| v6.11.02 | `novel-factory-v6.11.02-release-integrity-runtime-convergence-plan.md` and `novel-factory-v6.11.02-chapter-revision-reliability-plan.md` | none yet | none yet | two coordinated plans; revision reliability partially implemented |
 | v6.11.01 | `novel-factory-v6.11.01-architecture-debt-optimization-plan.md` | none yet | none yet | standalone shipped |
 | v6.10.20 | `novel-factory-v6.10.20-exception-unification-plan.md` | `../reports/novel-factory-v6.10.20-completion-report.md` | none yet | standalone |
 | v6.10.19 | `novel-factory-v6.10.19-repository-consolidation-plan.md` | `../reports/novel-factory-v6.10.19-completion-report.md` | none yet | standalone |

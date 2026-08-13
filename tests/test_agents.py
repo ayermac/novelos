@@ -1441,6 +1441,9 @@ class TestAuthorAgent:
         assert result["chapter_status"] == "scripted"
         assert result["quality_gate"]["word_count_fail"] is True
         assert result["quality_gate"]["word_target"] == 12500
+        assert result["quality_gate"]["internal_repair"] is True
+        assert result["quality_gate"]["consume_revision_retry"] is False
+        assert result["quality_gate"]["repair_scope"] == "internal_word_count_expansion"
         assert "字数未达标" in result["quality_gate"]["message"]
         assert "8000" not in result.get("error", "")
         chapter = seeded_repo.get_chapter("test_proj", 1)

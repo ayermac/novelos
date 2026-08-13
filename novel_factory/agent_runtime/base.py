@@ -454,6 +454,17 @@ class BaseAgent:
                 "重复描写和同义反复，不得删除关键事件、伏笔或章末钩子。"
             )
 
+        if repair_scope == "internal_word_count_expansion":
+            word_target = gate.get("word_target")
+            actual = gate.get("actual_word_count")
+            target_hint = f"至少 {int(float(word_target) * 0.85)} 字符" if word_target else "最低字数要求"
+            actual_hint = f"当前正文约 {actual} 字符，" if actual is not None else ""
+            return (
+                "【内部修复：字数扩写】\n"
+                f"{actual_hint}请扩写到{target_hint}。只补足现有场景中的动作、对白、"
+                "感官细节和因果过渡，不得另起炉灶，不得删除已完成的 Editor 返修内容。"
+            )
+
         if repair_scope == "internal_polisher_expansion_drift":
             original = gate.get("original_word_count")
             polished = gate.get("polished_word_count")

@@ -36,7 +36,7 @@ class CharacterVoiceChecker(ValidatorSkill):
     }
 
     # 对话标记
-    DIALOGUE_PATTERN = re.compile(r'[""「」\'\'"]([^""「」\'\'"]{2,})[""「」\'\'"]')
+    DIALOGUE_PATTERN = re.compile(r'["“「『]([^"“”「」『』]{2,})["”」』]')
 
     def run(self, payload: dict[str, Any]) -> dict[str, Any]:
         content = str(payload.get("content") or "")

@@ -312,6 +312,60 @@ class TestEditorSkillizationIntegration:
         assert findings[0].code == "TEST_CODE"
         assert findings[0].severity == "warning"
 
+    def test_before_review_payload_contains_continuity_context(self):
+        class CapturingRegistry:
+            skills_config = {}
+
+            def __init__(self):
+                self.payload = None
+
+            def get_skills_for_agent(self, *args, **kwargs):
+                return []
+
+            def run_skills_for_agent(self, *, payload, **kwargs):
+                self.payload = payload
+                return []
+
+        registry = CapturingRegistry()
+        repo = MagicMock()
+        repo.get_style_bible.return_value = None
+        repo.get_project.return_value = {"genre_contract": {}}
+        agent = EditorAgent(repo, MagicMock(), skill_registry=registry)
+        agent._get_project_skill_overrides = lambda _project_id: None
+        inputs = EditorInputs(
+            project_id="novel-test",
+            chapter_number=43,
+            chapter={"title": "第43章 零点回声"},
+            content="“零点前离开。”林默按下确认键。",
+        )
+        output = EditorOutput.model_validate({
+            "pass": True,
+            "score": 90,
+            "scores": {},
+            "issues": [],
+            "suggestions": [],
+            "revision_target": None,
+            "state_card": {},
+        })
+
+        agent._run_before_review_skills(inputs, output)
+
+        assert registry.payload["title"] == "第43章 零点回声"
+        assert registry.payload["project_id"] == "novel-test"
+        assert registry.payload["_repo"] is repo
+
+    def test_skill_run_compaction_omits_runtime_repository(self):
+        from novel_factory.agent_runtime.skill_hooks import _compact_payload
+
+        repo = MagicMock()
+        compact = _compact_payload({
+            "project_id": "novel-test",
+            "content": "正文",
+            "_repo": repo,
+        })
+
+        assert compact == {"project_id": "novel-test", "content": "正文"}
+
     def test_parse_skill_findings_legacy(self):
         """Test parse_skill_findings with legacy format."""
         legacy_format = {

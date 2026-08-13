@@ -261,7 +261,10 @@ class TestProjectSkillOverridesRuntime:
                 "payload": {
                     "text": content,
                     "content": content,
+                    "title": "",
+                    "project_id": "override_proj",
                     "chapter_number": 1,
+                    "_repo": repo,
                     "style_bible": {"forbidden_expressions": []},
                 },
                 "project_overrides": overrides,

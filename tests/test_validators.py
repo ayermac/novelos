@@ -35,6 +35,12 @@ class TestDeathPenalty:
         assert "嘴角忽然抬了一下" in result.violations
         assert result.details[0].get("matched_text")
 
+    def test_catch_reversed_corner_motion_variant_as_critical(self):
+        result = check_death_penalty_structured("他沉默片刻，忽然弯起嘴角。")
+        assert result.has_critical is True
+        assert "弯起嘴角" in result.violations
+        assert any(detail.get("code") == "DP_EXPR_03B" for detail in result.details)
+
     def test_corner_motion_variant_does_not_swallow_dialogue_after_colon(self):
         result = check_death_penalty_structured('嘴角微微一动："零点前，全部撤离。"')
         assert result.has_critical is True

@@ -154,6 +154,8 @@ def _manifest_blocks_on_error(skill_registry: Any, skill_id: str) -> bool:
 def _compact_payload(payload: dict[str, Any]) -> dict[str, Any]:
     compact: dict[str, Any] = {}
     for key, value in (payload or {}).items():
+        if key == "_repo":
+            continue
         if isinstance(value, str):
             compact[key] = value[:500]
         elif isinstance(value, list):

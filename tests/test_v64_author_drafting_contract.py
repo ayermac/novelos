@@ -986,6 +986,44 @@ class TestAuthorLiveCallBudget:
         assert "旧稿主体继续推进。" in prompt
         assert "短返修稿补了章末钩子。" in prompt
 
+    def test_revision_length_regression_skips_merge_without_review_evidence(self, repo):
+        from novel_factory.agents.author import AuthorAgent
+        from novel_factory.llm.provider import LLMProvider
+        from novel_factory.models.schemas import AuthorOutput
+
+        class NoCallLLM(LLMProvider):
+            def invoke_json(self, messages, schema=None, temperature=None, **kwargs):
+                return {}
+
+            def invoke_text(self, messages, temperature=None, max_tokens=None, **kwargs):
+                raise AssertionError("missing review evidence must not trigger semantic merge")
+
+        current = "第1章 测试\n\n" + ("旧稿主体继续推进。" * 260)
+        repo.save_chapter_content("test_proj", 1, current, "第一章 测试")
+        repo.update_chapter_status("test_proj", 1, "revision")
+
+        agent = AuthorAgent(repo, NoCallLLM())
+        repaired = agent._try_repair_revision_length_regression(
+            state={
+                "project_id": "test_proj",
+                "chapter_number": 1,
+                "chapter_status": "revision",
+                "llm_mode": "real",
+            },
+            output=AuthorOutput(
+                title="第一章 测试",
+                content="第1章 测试\n\n" + ("无依据短稿。" * 40),
+                word_count=100,
+                implemented_events=[],
+                used_plot_refs=[],
+            ),
+            chapter=repo.get_chapter("test_proj", 1),
+            revision_review=None,
+            fallback_context="",
+        )
+
+        assert repaired is None
+
     def test_revision_diff_flags_overexpanded_candidate(self, repo):
         from novel_factory.agents.author import AuthorAgent
         from novel_factory.llm.stub_provider import StubLLM

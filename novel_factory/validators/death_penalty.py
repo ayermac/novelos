@@ -51,6 +51,15 @@ DEFAULT_RULES: list[DeathPenaltyRule] = [
         alternatives=[],
     ),
     DeathPenaltyRule(
+        code="DP_EXPR_03B",
+        pattern=r'(抬|扬|勾|弯|翘|动)(?:起|了|着|过|一下|一瞬|一抹|微微|轻轻|忽然|动){0,4}(嘴角|唇角)',
+        match_type=PenaltyMatchType.REGEX,
+        severity=PenaltySeverity.CRITICAL,
+        category="ai_trace",
+        description="典型AI表情倒装变体",
+        alternatives=[],
+    ),
+    DeathPenaltyRule(
         code="DP_EXPR_04", pattern="倒吸一口凉气", match_type=PenaltyMatchType.EXACT,
         severity=PenaltySeverity.CRITICAL, category="ai_trace",
         description="典型AI反应", alternatives=["心中一凛", "瞳孔微缩"],
@@ -149,6 +158,7 @@ STATIC_DEATH_PENALTY_REPLACEMENTS: dict[str, str] = {
 
 REGEX_DEATH_PENALTY_REPLACEMENTS: dict[str, str] = {
     "DP_EXPR_03A": "停了一瞬",
+    "DP_EXPR_03B": "停了一瞬",
 }
 
 

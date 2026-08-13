@@ -169,12 +169,22 @@ class AuthorAgent(BaseAgent, TitleGenerationMixin, PlainTextDraftMixin):
             )
         )
 
+    @staticmethod
+    def _preserve_revision_feedback_for_internal_repair(state: FactoryState) -> bool:
+        """Keep explicit Editor evidence during a nested word-count repair only."""
+        gate = state.get("quality_gate") or {}
+        return bool(
+            gate.get("preserve_revision_feedback")
+            and normalize_revision_review(state.get("_revision_review"))
+        )
+
     def build_context(self, state: FactoryState) -> str:
         parts = []
         project_id = state["project_id"]
         chapter_number = state["chapter_number"]
         is_internal_repair = self._is_internal_repair(state)
         is_editor_revision = self._is_editor_revision(state)
+        preserve_revision_feedback = self._preserve_revision_feedback_for_internal_repair(state)
 
         title_contract = self._get_title_contract_context(project_id)
         if title_contract and not is_internal_repair:
@@ -186,7 +196,7 @@ class AuthorAgent(BaseAgent, TitleGenerationMixin, PlainTextDraftMixin):
         # (including QualityGate non-internal failures) also need a smaller bundle
         # to fit within the model context window.
         # Prevent the builder from pulling in stale Editor revision feedback.
-        builder_state = state if not is_internal_repair else {
+        builder_state = state if not is_internal_repair or preserve_revision_feedback else {
             **state,
             "_revision_review": None,
         }
@@ -362,6 +372,10 @@ class AuthorAgent(BaseAgent, TitleGenerationMixin, PlainTextDraftMixin):
             repair_instruction = self._build_internal_repair_instruction(state)
             if repair_instruction:
                 parts.append(repair_instruction)
+            if preserve_revision_feedback:
+                feedback = revision_feedback_block(state.get("_revision_review"))
+                if feedback:
+                    parts.append(feedback)
         elif is_editor_revision:
             chapter = self._get_chapter_info(state)
             review = state.get("_revision_review")
@@ -408,12 +422,21 @@ class AuthorAgent(BaseAgent, TitleGenerationMixin, PlainTextDraftMixin):
         chapter = self._get_chapter_info(state)
         is_revision = chapter and chapter.get("status") == ChapterStatus.REVISION.value
         is_internal_repair = self._is_internal_repair(state) if is_revision else False
+        preserve_revision_feedback = (
+            self._preserve_revision_feedback_for_internal_repair(state)
+            if is_internal_repair
+            else False
+        )
         revision_review = self._load_revision_review(state, chapter) if is_revision else None
         # v6.10.13: Internal repairs must not carry a stale Editor review into
         # events, artifacts, or the next prompt (build_context already handles
         # prompts).  Quality-gate non-internal revisions keep their review.
         if is_internal_repair:
-            revision_review = None
+            revision_review = (
+                normalize_revision_review(state.get("_revision_review"))
+                if preserve_revision_feedback
+                else None
+            )
         if is_revision and revision_review and not state.get("_revision_review"):
             state = {
                 **state,
@@ -500,11 +523,11 @@ class AuthorAgent(BaseAgent, TitleGenerationMixin, PlainTextDraftMixin):
         genre = self._get_project_genre(project_id) if self.knowledge_manager else None
         project_skill_overrides = self._get_project_skill_overrides(project_id)
         knowledge_budget = self.agent_config.get("knowledge_token_budget")
-        if is_internal_repair:
+        if is_internal_repair and not preserve_revision_feedback:
             knowledge_budget = self.agent_config.get(
                 "knowledge_token_budget_internal_repair", min(knowledge_budget or 2400, 1200)
             )
-        elif is_editor_revision:
+        elif is_editor_revision or preserve_revision_feedback:
             knowledge_budget = self.agent_config.get(
                 "knowledge_token_budget_editor_revision", min(knowledge_budget or 2400, 3000)
             )
@@ -1066,6 +1089,11 @@ class AuthorAgent(BaseAgent, TitleGenerationMixin, PlainTextDraftMixin):
                     "word_target": word_target,
                     "agent": "author",
                     "workflow_run_id": state.get("workflow_run_id"),
+                    "internal_repair": True,
+                    "consume_revision_retry": False,
+                    "repair_scope": "internal_word_count_expansion",
+                    "preserve_revision_feedback": bool(revision_review),
+                    "revision_source_review_id": (revision_review or {}).get("review_id"),
                 },
                 "_trace": trace,
                 "_autonomy": autonomy,
@@ -1115,6 +1143,8 @@ class AuthorAgent(BaseAgent, TitleGenerationMixin, PlainTextDraftMixin):
                         "internal_repair": True,
                         "consume_revision_retry": False,
                         "repair_scope": "internal_word_count_compression",
+                        "preserve_revision_feedback": bool(revision_review),
+                        "revision_source_review_id": (revision_review or {}).get("review_id"),
                     },
                     "_trace": trace,
                     "_autonomy": autonomy,
@@ -1140,6 +1170,8 @@ class AuthorAgent(BaseAgent, TitleGenerationMixin, PlainTextDraftMixin):
                         "internal_repair": True,
                         "consume_revision_retry": False,
                         "repair_scope": "internal_word_count_compression",
+                        "preserve_revision_feedback": bool(revision_review),
+                        "revision_source_review_id": (revision_review or {}).get("review_id"),
                     },
                     "_trace": trace,
                     "_autonomy": autonomy,
@@ -1963,6 +1995,15 @@ class AuthorAgent(BaseAgent, TitleGenerationMixin, PlainTextDraftMixin):
         """Repair a revision candidate that fixed issues but collapsed the draft length."""
         if state.get("llm_mode") != "real":
             return None
+        normalized_review = normalize_revision_review(revision_review)
+        if not normalized_review or not (
+            normalized_review.get("issues") or normalized_review.get("suggestions")
+        ):
+            logger.warning(
+                "Author: skip revision length merge because no actionable revision evidence is available"
+            )
+            return None
+        revision_review = normalized_review
         if self._revision_requests_compression(revision_review):
             return None
 
